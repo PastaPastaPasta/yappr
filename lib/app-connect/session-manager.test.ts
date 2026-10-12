@@ -283,6 +283,29 @@ describe('AppConnectSessionManager across tabs', () => {
     save.mockRestore()
   })
 
+  it('a revoke overtaken by a raw-key sign-in does not sign the new session out', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    await appConnectSessions.restore('alice')
+    const old = currentSession('alice')
+    const store = appConnectSessions.keyStore()
+    const realLoad = store.load.bind(store)
+    let proceed: () => void = () => undefined
+    const load = vi.spyOn(store, 'load').mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => { proceed = resolve })
+      return realLoad(...args)
+    })
+
+    const revoking = appConnectSessions.signOutRevoked(old)
+    await vi.waitFor(() => expect(load).toHaveBeenCalled())
+    await appConnectSessions.yieldToRawKey('alice')
+    proceed()
+    await revoking
+
+    expect(signedOut).not.toHaveBeenCalled()
+    expect(useAppConnectStatus.getState().signedOutByWallet).toBe(false)
+    load.mockRestore()
+  })
+
   it('a raw-key sign-in replaces this tab’s wallet grant but keeps a newer one another tab stored', async () => {
     await storeFromAnotherTab(grant('alice', 1))
     await appConnectSessions.restore('alice')

@@ -181,7 +181,7 @@ class AppConnectSessionManager {
     }
     // The user logged out of this identity while the grant was being stored:
     // the logout stands, so forget exactly this grant and activate nothing.
-    if ((this.loggedOutAt.get(session.identityId) ?? 0) > startedAt) {
+    if (this.signedOutSince(session.identityId, startedAt)) {
       if (stored) await this.clearStored(exactGrant(session))
       throw new Error('Signed out while the wallet was connecting')
     }
@@ -261,6 +261,11 @@ class AppConnectSessionManager {
    */
   cancelAdoptions(identityId: string): void {
     this.loggedOutAt.set(identityId, ++this.lifecycle)
+  }
+
+  /** Whether `identityId` was signed out (or a raw key replaced its grant) after `lifecycle` read `since`. */
+  private signedOutSince(identityId: string, since: number): boolean {
+    return (this.loggedOutAt.get(identityId) ?? 0) > since
   }
 
   /**
@@ -354,6 +359,7 @@ class AppConnectSessionManager {
    * there is none does this tab sign out, clearing its own grant and nothing else.
    */
   async signOutRevoked(session: AppConnectSession): Promise<void> {
+    const startedAt = this.lifecycle
     let stored: AppConnectSession | null = null
     try {
       stored = await this.keyStore().load(this.network())
@@ -367,6 +373,9 @@ class AppConnectSessionManager {
     }
     logger.warn(`App Connect: the wallet revoked this browser's keys for ${session.identityId}; signing out`)
     await this.discard(session)
+    // A logout or a raw-key sign-in for this identity overtook the revoke: the
+    // session it would end is no longer this grant's, so it signs nothing out.
+    if (this.signedOutSince(session.identityId, startedAt)) return
     useAppConnectStatus.setState({ signedOutByWallet: true })
     this.signedOutListener?.(session.identityId)
   }
