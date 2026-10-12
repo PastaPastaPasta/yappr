@@ -476,10 +476,12 @@ async function answerAs(
   const record = ports.grants.get(persona.identityId, plan.appId)
   const previous = plan.connectionId === undefined ? undefined : record.connections[plan.connectionId]
 
-  // Faults that shape key registration need fresh keys, so they always answer as a login.
-  const registrationFault = faults.unregisteredKey || faults.unboundKey || faults.critical || faults.foreignGroup !== undefined
-  const renewal = plan.request.mode === 'renew' && previous && !registrationFault
-    ? await planRenewal(persona, plan, faults, previous, chainKeys, ports)
+  // Faults that shape the registered keys need fresh keys, so they always
+  // answer as a login: a renewal can only raise limits, never cut them.
+  const keyFault = faults.unregisteredKey || faults.unboundKey || faults.critical || faults.foreignGroup !== undefined
+    || faults.expired || faults.expiresInSeconds !== undefined || faults.budget !== undefined
+  const renewal = plan.request.mode === 'renew' && previous && !keyFault
+    ? await planRenewal(persona, plan, previous, chainKeys, ports)
     : undefined
   const raisedKeyIds: number[] = []
   const toAdd: Array<{ slot: Slot; key: NewIdentityKey }> = []
@@ -637,7 +639,6 @@ interface RenewalPlan {
 async function planRenewal(
   persona: Persona,
   plan: Plan,
-  faults: AppConnectFaults,
   previous: ConnectionGrant,
   chainKeys: AppConnectIdentityKey[],
   ports: AppConnectPorts,
@@ -664,7 +665,7 @@ async function planRenewal(
     const savedTarget = saved?.[chainKey.id]
     const target = savedTarget
       ? { totalBudget: savedTarget.totalBudget === undefined ? undefined : BigInt(savedTarget.totalBudget), expiresAt: savedTarget.expiresAt }
-      : renewalTarget(binding, chainKey, plan.now, faults)
+      : renewalTarget(binding, chainKey, plan.now)
     keys.push({ chainKey, target, slot: { role: binding.kind, bindingIndex: index, privateKey, keyId: chainKey.id, bounds } })
   }
 
@@ -704,11 +705,11 @@ function keyServesBinding(key: AppConnectIdentityKey, binding: AppConnectAuthBin
 }
 
 /** The renewed limits: the proposal added to the total (within the cap), the expiry moved out. */
-function renewalTarget(binding: AppConnectAuthBinding, key: AppConnectIdentityKey, now: number, faults: AppConnectFaults): RenewalTarget {
-  const wanted = grantedLimits(binding, now, faults)
+function renewalTarget(binding: AppConnectAuthBinding, key: AppConnectIdentityKey, now: number): RenewalTarget {
+  const wanted = grantedLimits(binding, now, noFaults())
   let totalBudget = key.totalBudget
   if (totalBudget !== undefined && wanted.totalBudget !== undefined) {
-    const add = faults.budget ?? minBigint(wanted.totalBudget, BUDGET_CAP - totalBudget)
+    const add = minBigint(wanted.totalBudget, BUDGET_CAP - totalBudget)
     if (add > 0n) totalBudget += add
   }
   const expiresAt = key.expiresAt === undefined ? undefined : Math.max(key.expiresAt, wanted.expiresAt)

@@ -167,8 +167,9 @@ status: `stale`, `unsupported`, `invalid`, `declined` or `failed`.
   twice. It answers as a new login instead, which supersedes the old keys
   (the profile's phase-1 renewal), when there is no such grant, when an old
   key lacks the level or a limit the request needs, when a key would have
-  no budget left within the cap, or when a key-registration fault flag
-  (`unregistered-key`, `unbound-key`, `critical`, `foreign-group`) is set.
+  no budget left within the cap, or when a fault flag shapes the keys
+  (`unregistered-key`, `unbound-key`, `critical`, `foreign-group`, `expired`,
+  `expires-in`, `budget`; a renewal can only raise limits, never cut them).
 - **Revoke** (disable-only): `--revoke --persona <idx> --app-id <id>
   [--connection-id <hex>]`, or `POST /revoke`. MASTER-signed IdentityUpdates,
   ten keys each (Platform's limit), disable the auth keys of that

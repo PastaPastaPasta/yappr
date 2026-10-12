@@ -406,6 +406,8 @@ describe('App Connect renew', () => {
     ['unregistered-key', 'key-not-found'],
     ['unbound-key', 'key-unbound'],
     [`foreign-group=${FOREIGN_GROUP}`, 'key-unmatched'],
+    ['expired', 'key-expired'],
+    ['expires-in=120', 'key-expired'],
   ])('honours %s on a renewal by answering with fresh keys', async (fault, expected) => {
     const chain = newChain()
     await answer(chain, newRequest().uri)
@@ -414,6 +416,15 @@ describe('App Connect renew', () => {
     const result = await answer(chain, renew.uri, { faults: [fault] })
     expect(result.answer.mode).toBe('login')
     expect(reason(await verdictFor(chain, renew.request, renew.appPrivateKey))).toBe(expected)
+  })
+
+  it('honours budget=<n> on a renewal with fresh keys of exactly n credits', async () => {
+    const chain = newChain()
+    await answer(chain, newRequest().uri)
+    chain.now += DAY_MS
+    const result = await answer(chain, renewRequest(chain, 1_000n).uri, { faults: ['budget=500'] })
+    expect(result.answer.mode).toBe('login')
+    expect(chain.keysOf(alice).at(-1)?.totalBudget).toBe(500n)
   })
 
   it('answers as a new login when the old key cannot serve the renewal', async () => {
