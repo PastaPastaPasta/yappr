@@ -169,4 +169,12 @@ describe('AppConnectKeyRingStore', () => {
     expect(await store.clear('devnet', exactGrant(session()))).toBe(false)
     expect(await store.clear('devnet', exactGrant(later))).toBe(true)
   })
+  it('keeps a newer wallet grant over an older one confirmed later', async () => {
+    const store = new AppConnectKeyRingStore(memoryBackend())
+    const newerKeys = { ...session(), grantedAt: 1, authKeys: [{ ...session().authKeys[0], keyId: 9 }] }
+    const olderConfirmedLate = { ...session(), grantedAt: 50 }
+    expect(await store.save(newerKeys, keys())).toBe(true)
+    expect(await store.save(olderConfirmedLate, keys())).toBe(false)
+    expect((await store.load('devnet'))?.authKeys[0].keyId).toBe(9)
+  })
 })

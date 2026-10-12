@@ -58,9 +58,15 @@ export function exactGrant(session: AppConnectSession): SessionMatch {
   return { identityId: session.identityId, grantedAt: session.grantedAt, grantKeyId: grantKeyId(session) }
 }
 
-/** Whether `a` is a newer grant than `b`: stored later, or at the same time with newer keys. */
+/**
+ * Whether `a` is a newer grant than `b`. The wallet's key ids decide, since a
+ * later grant always registers higher ones; `grantedAt` is only this browser's
+ * confirm time (an older grant can be confirmed late) and just breaks ties.
+ */
 export function isNewerGrant(a: AppConnectSession, b: AppConnectSession): boolean {
-  return a.grantedAt !== b.grantedAt ? a.grantedAt > b.grantedAt : grantKeyId(a) > grantKeyId(b)
+  const keyA = grantKeyId(a)
+  const keyB = grantKeyId(b)
+  return keyA !== keyB ? keyA > keyB : a.grantedAt > b.grantedAt
 }
 
 const DEVICE_KEY = 'device-key'
