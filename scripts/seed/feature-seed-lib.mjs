@@ -15,8 +15,9 @@ import { join } from 'node:path';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
+import { ensureInitialized } from '@dashevo/evo-sdk';
 import {
-  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
+  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, NOT_QUERYABLE_BY_OWNER, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
   buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
@@ -157,11 +158,11 @@ const MAX_ATTEMPTS = 4;
  * not the code, decides what counts as this write's document (pollr's ballot probe accepts any ballot in the voter's
  * slot, because the seeder replaces it to the planned choice next).
  */
-export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined }) {
+export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined, create = createDocument, wait = sleep }) {
   const stored = (docType, id, contract) => handle.sdk.documents.get(contract, docType, id);
   const settles = async (landed) => {
     for (let i = 0; i < SETTLE_POLLS; i++) {
-      await sleep(SETTLE_MS);
+      await wait(SETTLE_MS);
       try {
         if (await landed()) return true;
       } catch { /* a read that faults here is noise, not a verdict */ }
@@ -170,32 +171,42 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
   };
 
   async function createDoc(actor, docType, key, data, opts = {}) {
-    const { tokenCost, accepted, duplicateIsSuccess, contract = contractId, payment = paymentInfo } = opts;
+    const { tokenCost, accepted, duplicateIsSuccess, scope, contract = contractId, payment = paymentInfo } = opts;
     const entropy = entropyFor(key);
     const { document } = buildDocument({ contractId: contract, docType, ownerId: actor.ownerId, data, entropy });
-    // A doctype whose create is PRICED in credits (v8 post/reply) must agree to
-    // the fee, and `sdk.documents.create` has no option for it — so those go
-    // through a hand-built batch instead. Everything else is unchanged.
-    const agreement = await agreementFor(docType, contract);
     // Protocol 14: the stored id commits to the nonce `documents.create()` picks, so the id
     // a logical key used to determine is gone. It is learned from the create's RETURN (and
     // then checkpointed by the caller under the key); a create that threw after landing is
     // recognised by the caller's `accepted` probe, or by a value readback for a stored type.
     let id = null;
+    // Every id a priced create derived before broadcasting, one per attempt: an
+    // earlier attempt whose wait threw may land after a later one was sent.
+    const derivedIds = [];
     // Unbounded in time on purpose: the pre-write probe is how a resumed run
     // with a lost checkpoint recognises its own earlier document.
     const landed = async () => {
       if (accepted) return accepted(id);
-      if (id) return (await stored(docType, id, contract)) != null;
-      id = await readback(handle, () => findRecentByValues(handle.sdk, { contractId: contract, docType, ownerId: actor.ownerId, data }));
-      return id != null;
+      for (const candidate of new Set([id, ...derivedIds].filter(Boolean))) {
+        if ((await stored(docType, candidate, contract)) != null) { id = candidate; return true; }
+      }
+      const found = await readback(handle, () => findRecentByValues(handle.sdk, { contractId: contract, docType, ownerId: actor.ownerId, data, scope }));
+      if (found) id = found;
+      return found != null;
     };
     if (await landed()) return { id, skipped: true };
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const created = await actor.lock(() => createDocument(handle.sdk, {
+        // A doctype whose create is PRICED in credits (v8 post/reply) must agree to
+        // the fee, and `sdk.documents.create` has no option for it — so those go
+        // through a hand-built batch instead. Resolved per attempt: a 40134 forgets
+        // the cached epoch multiplier, and only a fresh agreement can pick up the new one.
+        const agreement = await agreementFor(docType, contract);
+        const created = await actor.lock(() => create(handle.sdk, {
           contractId: contract, actor, docType, document, data, entropy, agreement, payment: payment(tokenCost),
+          // A priced create derives its id before broadcasting: keep it, so a create whose
+          // wait throws after landing is recognised by id even on a doctype with no owner index.
+          onDerivedId: (derived) => { derivedIds.push(derived); },
         }));
         id = createdId(created) ?? id;
         if (await landed()) return { id };
@@ -210,14 +221,15 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
         }
         const deadSdk = TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text);
         if (deadSdk) await handle.reconnect(text).catch(() => {});
-        if (await settles(landed)) return { id };
-        // A stale cached fee multiplier is the one consensus refusal a retry fixes.
+        // A stale cached fee multiplier is the one consensus refusal a retry fixes; refused
+        // outright, it never landed, so there is nothing to wait for.
         const staleMultiplier = FEE_MULTIPLIER_NOT_TOLERATED.test(text);
+        if (!staleMultiplier && await settles(landed)) return { id };
         if (staleMultiplier) forgetFeeMultiplier();
         const retryable = deadSdk || staleMultiplier || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
         if (!retryable && (/code=4\d{4}/.test(text) || /consensus/i.test(text))) throw error; // Platform said no
       }
-      await sleep(2_000 * attempt);
+      await wait(2_000 * attempt);
     }
     throw lastError ?? new Error(`${docType} create failed after ${MAX_ATTEMPTS} attempts`);
   }
@@ -446,7 +458,92 @@ export async function plumbingAssertions() {
     const repeat = await createDoc({ ownerId: 'owner' }, 'thing', 'k1', {});
     const boom = createRecorder({ writer: { createDoc: async () => { throw new Error('refused'); } }, state: { docs: {} }, file });
     const failed = await boom.createDoc({ ownerId: 'owner' }, 'thing', 'k3', {});
+    // Drive's refusal of an owner scan on a doctype with no $ownerId index, as sakura returned it for
+    // storefront v8's `orderStatusUpdate`: the "(429 bytes truncated)" tail once read as a rate limit.
+    const indexRefusal = `message=transport error: grpc error: code: 'Client specified an invalid argument', message: "where clause on non indexed property error: query must be for valid indexes, valid indexes are: {…} (429 bytes truncated)" | json={"__wbg_ptr":1429504}`;
+    const queries = [];
+    const refusing = { documents: { query: async (q) => { queries.push(q); throw new Error(indexRefusal); } } };
+    const refusedProbe = await findRecentByValues(refusing, { contractId: 'c', docType: 'orderStatusUpdate', ownerId: 'owner', data: { status: 'shipped' } });
+    const refusedQueries = queries.length;
+    const ownerBytes = bs58.decode(fakeId('owner'));
+    const scoped = { documents: { query: async (q) => { queries.push(q); return new Map([
+      ['a', { $id: 'other-owners', $ownerId: bs58.decode(fakeId('someone-else')), status: 'shipped' }],
+      ['b', { $id: 'mine', $ownerId: ownerBytes, status: 'shipped' }],
+    ]); } } };
+    const scope = { where: [['orderId', '==', 'o1']], orderBy: [['orderId', 'desc'], ['$createdAt', 'desc']] };
+    const scopedProbe = await findRecentByValues(scoped, { contractId: 'c', docType: 'orderStatusUpdate', ownerId: fakeId('owner'), data: { status: 'shipped' }, scope });
+    // A priced create refused 40134 (the epoch multiplier moved past the 20% tolerance) must
+    // retry with a FRESH agreement; re-sending the first one is refused the same way forever.
+    await ensureInitialized();
+    const signer = { ownerId: fakeId('owner'), lock: (fn) => fn() };
+    /** A writer over a fake chain: `visible(id, creates)` says whether a stored id is readable yet, `byValue(creates)` what the owner scan returns. */
+    const fakeWriter = ({ create, visible = () => false, byValue = () => [], agreementFor }) => {
+      let creates = 0;
+      const writer = createDocWriter({
+        handle: { sdk: { documents: {
+          get: async (c, t, docId) => (visible(docId, creates) ? {} : null),
+          query: async () => new Map(byValue(creates).map((doc) => [doc.$id, doc])),
+        } }, reconnect: async () => {} },
+        contractId: fakeId('contract'), entropyFor: (k) => sha256(utf8(k)), paymentInfo: () => ({}),
+        ...(agreementFor ? { agreementFor } : {}),
+        create: async (sdk, opts) => { creates += 1; return create(opts, creates); },
+        wait: async () => {},
+      });
+      return { writer, creates: () => creates };
+    };
+    // A wait that throws after the broadcast landed (the DAPI 504 quirk) is not a refusal.
+    const LOST_WAIT = 'wait for state transition result failed: 504 Gateway Timeout';
+    const recover = async (chain, key) => {
+      const docs = { docs: {} };
+      const { createDoc, id } = createRecorder({ writer: chain.writer, state: docs, file });
+      await createDoc(signer, 'blog', key, { name: key });
+      return { recorded: id(key), creates: chain.creates() };
+    };
+    // A priced create refused 40134 (the epoch multiplier moved past the 20% tolerance) must
+    // retry with a FRESH agreement; re-sending the first one is refused the same way forever.
+    let agreements = 0;
+    const offered = [];
+    const priced = fakeWriter({
+      agreementFor: async () => ({ permille: ++agreements }),
+      visible: (docId) => docId === 'landed',
+      create: ({ agreement }) => {
+        offered.push(agreement.permille);
+        if (agreement.permille === 1) throw new Error('consensus error code=40134: fee multiplier is 1500 permille, outside the agreement');
+        return { id: 'landed' };
+      },
+    });
+    const retried = await priced.writer.createDoc(signer, 'blog', 'priced', { name: 'x' });
+    // (a) the create derives its id, lands, then its wait throws: recovered by that id.
+    const derivedThenThrew = await recover(fakeWriter({
+      visible: (docId) => docId === 'derived-1',
+      create: ({ onDerivedId }) => { onDerivedId('derived-1'); throw new Error(LOST_WAIT); },
+    }), 'a');
+    // (b) attempt 1's document only shows up after attempt 2 derived a second id: attempt 1's id is the one kept.
+    const lateFirst = await recover(fakeWriter({
+      visible: (docId, creates) => docId === 'derived-1' && creates >= 2,
+      create: ({ onDerivedId }, n) => { onDerivedId(`derived-${n}`); throw new Error(LOST_WAIT); },
+    }), 'b');
+    // (c) no derived id is ever readable, but the owner's value readback finds the document.
+    const byValueOnly = await recover(fakeWriter({
+      byValue: (creates) => (creates > 0 ? [{ $id: 'found-by-value', $ownerId: signer.ownerId, name: 'c' }] : []),
+      create: ({ onDerivedId }) => { onDerivedId('never-visible'); throw new Error(LOST_WAIT); },
+    }), 'c');
     return [
+      ['a 40134 is retried with a freshly resolved agreement, and the retry lands', retried.id === 'landed' && JSON.stringify(offered) === '[1,2]'],
+      ['a create whose wait threw after landing is recovered by its derived id, with no second create',
+        derivedThenThrew.recorded === 'derived-1' && derivedThenThrew.creates === 1],
+      ['an earlier attempt that lands late is recovered by ITS id after a later attempt derived another, and creates stop',
+        lateFirst.recorded === 'derived-1' && lateFirst.creates === 2],
+      ['when no derived id is readable the value readback still finds the document, with no second create',
+        byValueOnly.recorded === 'found-by-value' && byValueOnly.creates === 1],
+      ['an index refusal is not transient, whatever byte count its truncated text carries',
+        NOT_QUERYABLE_BY_OWNER.test(indexRefusal) && !RETRYABLE.test(indexRefusal) && !WAIT_MAYBE_LANDED.test(indexRefusal)],
+      ['real 429/503/504 statuses still read as transient', RETRYABLE.test('HTTP 429 Too Many Requests') && RETRYABLE.test('status: 503') && WAIT_MAYBE_LANDED.test('504 Gateway Time-out')],
+      ['a status code inside an id is not a status', !RETRYABLE.test('document 7Hx503abc not found') && !WAIT_MAYBE_LANDED.test('id 9k504Zq refused')],
+      ['a value probe on a doctype with no owner index answers null after two queries, without throwing', refusedProbe === null && refusedQueries === 2],
+      ['a scoped value probe queries the scope and only adopts the owner\'s document',
+        scopedProbe === 'mine' && queries[2]?.where === scope.where && queries[2]?.orderBy === scope.orderBy],
+
       ['a destructured recorder.createDoc records the id it wrote', wrote === 'id/k1' && id('k1') === 'id/k1'],
       ['a destructured recorder.createDoc counts the write', afterWrite.created === 1 && afterWrite.failed === 0],
       ['an adopted document is recorded as already present', adopted === 'adopted-id' && id('k2') === 'adopted-id' && afterAdopt.skipped === 1],

@@ -814,28 +814,34 @@ const CLOCK_SKEW_MS = 120_000;
  * recognisable within the call that built it, so after a lost checkpoint it
  * is written again; and an owner with more than `limit` documents of the type
  * newer than the one sought is not recognised at all.
+ *
+ * `scope` (`{ where, orderBy }`) replaces the owner scan for a doctype with no
+ * `$ownerId` index (storefront's `orderStatusUpdate` is listed only by
+ * `orderId`); candidates are still required to be `ownerId`'s.
  */
-export async function findRecentByValues(sdk, { contractId, docType, ownerId, data, since, limit = 100 }) {
+export async function findRecentByValues(sdk, { contractId, docType, ownerId, data, since, limit = 100, scope }) {
   const fields = Object.entries(data ?? {});
   if (fields.length === 0) return null; // nothing to match on — every candidate would "match"
   // A v13 post is listed by its author on [live, $ownerId, $createdAt], which holds only posts
   // carrying `live`: without the pin no index serves `$ownerId ==` and the scan finds nothing.
   const owner = docType === 'post' && data.live === true ? [['live', '==', true], ['$ownerId', '==', ownerId]] : [['$ownerId', '==', ownerId]];
-  const base = { dataContractId: contractId, documentTypeName: docType, where: owner, limit };
+  const base = { dataContractId: contractId, documentTypeName: docType, where: scope?.where ?? owner, limit };
+  // Checked before the transient patterns: an index refusal never succeeds on retry,
+  // whatever else its (truncated) text happens to contain.
+  const transient = (text) => !NOT_QUERYABLE_BY_OWNER.test(text) && (TRANSPORT_COLLAPSE.test(text) || RETRYABLE.test(text));
   let result;
   try {
-    result = await sdk.documents.query({ ...base, orderBy: [['$createdAt', 'desc']] });
+    result = await sdk.documents.query({ ...base, orderBy: scope?.orderBy ?? [['$createdAt', 'desc']] });
   } catch (e) {
     // Only an index-shape refusal falls back to an unordered page (a doctype
     // whose owner index carries no $createdAt); transport faults propagate so
     // the caller's `readback` retries them instead of scanning a random page.
-    const text = describeErr(e);
-    if (TRANSPORT_COLLAPSE.test(text) || RETRYABLE.test(text)) throw e;
+    if (transient(describeErr(e))) throw e;
     try {
       result = await sdk.documents.query(base);
     } catch (inner) {
       const innerText = describeErr(inner);
-      if (TRANSPORT_COLLAPSE.test(innerText) || RETRYABLE.test(innerText)) throw inner;
+      if (transient(innerText)) throw inner;
       // Some doctypes cannot be reached by `$ownerId` at all — storefront's
       // `shippingZone` indexes only (storeId, name) and (storeId, priority), so
       // the query is refused "where clause on non indexed property". That is a
@@ -852,6 +858,7 @@ export async function findRecentByValues(sdk, { contractId, docType, ownerId, da
     if (!doc) continue;
     const stored = doc.toObject ? doc.toObject() : doc;
     if (!stored) continue;
+    if (scope && asBase58(stored.$ownerId) !== ownerId) continue;
     if (floor !== null && stored.$createdAt !== undefined && BigInt(stored.$createdAt) < floor) continue;
     if (fields.every(([name, value]) => sameValue(value, stored[name]))) return asBase58(stored.$id ?? doc.id);
   }
@@ -1047,7 +1054,7 @@ export function createDocument(sdk, { contractId, actor, docType, document, data
 /** Errors that mean "this SDK instance is dead", not "this request was refused". */
 export const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
 /** Confirmation-wait shapes that do NOT mean the write was refused (readback decides). */
-export const WAIT_MAYBE_LANDED = /504|gateway|deadline|timed? ?out|timeout|wait.*state.*transition|AffectedState/i;
+export const WAIT_MAYBE_LANDED = /\b504\b(?! bytes)|gateway|deadline|timed? ?out|timeout|wait.*state.*transition|AffectedState/i;
 
 /**
  * After a write threw: false when the error is a refusal; otherwise (a gateway
@@ -1061,7 +1068,6 @@ export async function landedAfter(handle, error, probe) {
   await sleep(3000);
   return probe();
 }
-/** Retry-worthy transient transport noise. */
 /**
  * A query refused because the doctype has no index for the where clause. Unlike
  * a transport fault this never succeeds on retry, so `findRecentByValues`
@@ -1069,7 +1075,13 @@ export async function landedAfter(handle, error, probe) {
  */
 export const NOT_QUERYABLE_BY_OWNER = /non indexed property|must be for valid indexes|invalid indexes/i;
 
-export const RETRYABLE = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket|network error|503|502|429|unavailable|rate limited|resource has been exhausted/i;
+/**
+ * Retry-worthy transient transport noise. The HTTP status codes only count as
+ * whole words (not inside a base58/hex id) that are not a byte count: Drive truncates a long refusal with
+ * "… (429 bytes truncated)", and a bare /429/ read that as a rate limit, so a
+ * permanent index refusal was retried until the readback gave up.
+ */
+export const RETRYABLE = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket|network error|\b(?:503|502|429)\b(?! bytes)|unavailable|rate limited|resource has been exhausted/i;
 /** Identity (contract) nonce desync — cured by a reconnect (fresh nonce cache). */
 export const NONCE_DESYNC = /nonce/i;
 /** Structural duplicate (unique index) — the end state already holds. */
