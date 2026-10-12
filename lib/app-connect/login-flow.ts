@@ -282,8 +282,13 @@ export class AppConnectLogin {
     await this.start({ identityHint: hint, fresh: true })
   }
 
-  /** Stops polling and wipes the request (here and in the record store) and any verified keys. */
+  /**
+   * Stops polling and wipes the request (here and in the record store) and any
+   * verified keys. A start still preparing its request is overtaken too: it
+   * activates nothing, and the clear follows any save it already issued.
+   */
   finish(): void {
+    this.generation += 1
     this.teardown()
     this.clearRecord()
   }

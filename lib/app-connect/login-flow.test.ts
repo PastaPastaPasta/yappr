@@ -239,6 +239,48 @@ describe('AppConnectLogin teardown', () => {
     expect(h.login.requestHashHex()).not.toBeNull()
   })
 
+  it('a finish while start is preparing its request stops it: nothing stored, activated or polled', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const h = harness()
+    const deps = (h.login as unknown as { deps: { connectionId: () => Promise<string> } }).deps
+    deps.connectionId = async () => {
+      await gate
+      return 'ab'.repeat(16)
+    }
+
+    const starting = h.login.start({ fresh: true })
+    await h.flush()
+    h.login.finish()
+    release()
+    await starting
+    await h.flush()
+
+    expect(h.records.value).toBeNull()
+    expect(h.login.requestHashHex()).toBeNull()
+  })
+
+  it('a finish after start issued its save still clears the request and activates nothing', async () => {
+    let releaseSave: () => void = () => undefined
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve })
+    const h = harness()
+    // An ordered store: the clear runs after the save already issued.
+    let queue = Promise.resolve()
+    const deps = (h.login as unknown as { deps: { records: { save: (r: StoredAppConnectRequest) => Promise<void>; clear: () => Promise<void> } } }).deps
+    deps.records.save = (r) => (queue = queue.then(async () => { await saveGate; h.records.value = r }))
+    deps.records.clear = () => (queue = queue.then(() => { h.records.value = null }))
+
+    const starting = h.login.start({ fresh: true })
+    await h.flush()
+    h.login.finish()
+    releaseSave()
+    await starting
+    await h.flush()
+
+    expect(h.records.value).toBeNull()
+    expect(h.login.requestHashHex()).toBeNull()
+  })
+
   it('wipes the previous ephemeral key when a new request replaces it', async () => {
     const h = harness()
     await h.login.start()
