@@ -1,11 +1,11 @@
-# Platform 5.0.0-beta.5: the SDK bump and what it changes for Yappr
+# Platform 5.0.0-beta.5: the SDK bump, the contract re-cuts, and what they change for Yappr
 
 Beta.5 (tagged 2026-10-12) follows [PLATFORM_V5_BETA4_UPGRADE.md](PLATFORM_V5_BETA4_UPGRADE.md). The protocol version stays **14**. Several of its changes alter PV14 behaviour, so every validator must swap images together; the platform team expects an in-place upgrade of sakura.
 
 | PR | What |
 | --- | --- |
 | `chore/sdk-5.0.0-beta.5` (this one) | `@dashevo/evo-sdk`, `wasm-sdk` and `wasm-dpp2` 5.0.0-beta.5 in lockstep (with `package-lock.json` and the mobile `licenses.json` regenerated); the beta.5 document meta-schema v3 vendored (sha256 `d8676bfd…`); error copy for 40148 and 40149; this record. No contract or topology change. **Merge at the sakura beta.5 cut-over, not before** (see the next section). |
-| beta.5 re-cuts (separate PR) | contracts using the beta.5-only grammar |
+| `feat/beta5-recuts` (#729) | pollr v7, storefront v8, blog v8 and social v15's mentions and report rule, their clients, batteries and tooling ([The contract re-cuts](#the-contract-re-cuts) below) |
 
 ## SDK compatibility with sakura (beta.3 nodes)
 
@@ -66,3 +66,114 @@ The npm `wasm-sdk` 5.0.0-beta.5 wasm is about 26.38 MB. That is over Cloudflare 
 4. Then register the beta.5 re-cuts and the App Connect set. `scripts/register-app-connect-contracts.mjs` reads the Drive version from the status API and refuses to run against anything older than 5.0.0-beta.5.
 
 **Wiped:** rebuild as in [PLATFORM_V5_BETA2_UPGRADE.md](PLATFORM_V5_BETA2_UPGRADE.md) and [SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md).
+
+## The contract re-cuts
+
+Sakura restarts from a beta.5 genesis, so every Yappr contract is registered fresh there by `scripts/register-app-connect-contracts.mjs` ([APP_CONNECT_CONTRACTS.md](APP_CONNECT_CONTRACTS.md)). That lets four contracts be re-cut in place with the new grammar, with no compatibility shims.
+
+### What beta.5 adds that the cuts use
+
+| Feature | Platform PR | Used by |
+| --- | --- | --- |
+| `refersTo.where` conditions: `{ "const" }`, `{ "notEqual" }`, `{ "in" }` and orderings against the referenced document; a failed one is 40127 | #5369 | pollr (close time), storefront (open store), blog (comments on) |
+| Rules reading the referenced document, `{ "referenced": [reference, field] }` | #5369 | pollr (option count, single choice) |
+| Rules reading the stored version, `$old.` and `$revision` | #5373 | social report `staysResolved` |
+| Indexes on the elements of a typed array, read with `contains` / `containsAny` | #5370, #5372 | pollr `choices`, social `mentionedUserIds` |
+| Unsigned integer index keys in value order (plain big-endian bytes, no flipped top bit) | #5350 | every grouped count of a small unsigned integer (pollr choices, storefront ratings) |
+
+### The cuts
+
+Signed sizes are rs-dpp 5.0.0-beta.5's create transition with full validation (`b5val`), plus the repo's 100 B signature allowance, without the ~33 B group membership the publisher adds.
+
+| File | Cut | sha256 | Signed | Before |
+| --- | --- | --- | ---: | ---: |
+| `pollr-contract.json` | pollr v7 (topology `v7`) | `4b660df8d095f931c9b422714ddb4ed7bcc629ab1ff5a9919d8df4079469b7d4` | 3,706 B | 4,173 B (v6) |
+| `yappr-storefront-contract.json` | storefront v8 (`v8`) | `8f0feeebd2e8b1ac1cf415d93f47b606077118b192473938b39f7c324cd68ed8` | 16,316 B | 16,606 B (v7) |
+| `yappr-blog-contract.json` | blog v8 (`v8`) | `79c8a4620cf1756cbc91dcb89d05fc902be74a703b24372f8cf93fe405c085a9` | 6,659 B | 6,756 B (v7) |
+| `yappr-social-contract-v15.json` | social v15, re-cut in place (never registered) | `9b6c7eeda3194044040a9eb0822956f3dc81eaee99f0abea5f3e215b5762e078` | 16,458 B | 16,290 B |
+
+All four pass `b5val` full validation, and are well under the 20,000 B budget.
+
+#### Pollr v7: one ballot per voter
+
+v6 kept one ballot per option for a multi-choice voter (`slot`, `choice`) and copied three poll fields into every ballot so a rule could read them. v7:
+
+- **`vote`** holds `pollId` and an optional `choices` (distinct integers 0-9, 1 to 10 of them; absent = withdrawn, since an empty list is refused). `byPollVoter [pollId, $ownerId]` is unique: one ballot per voter per poll, created once and replaced after.
+- **Close** is the reference's `where: { "endsAt": { "greaterThanOrEqual": "$updatedAt" } }`. An ordering bounded by `$updatedAt` is checked on every replace, so a create, a change or a withdrawal after the close is refused **40127** (v6: 10422 `writtenBeforeClose`). The client maps 40127 on a ballot write to "poll closed".
+- **Rules read the poll** (`referenced`), so nothing is copied:
+  - `choicesAreOptions` and `choicesAreOptionsHigh`: no element names an option the poll lacks. Elements are 0-9 and a poll has 2-10 options, so a bad element is one of `options.length + 0 … 7`; the two rules test `not contains` for offsets 0-3 and 4-7 (23 and 25 nodes; one rule would be 47, over the 32-node cap). Counting the elements against the options (variant A2's `count(choices) <= optionCount`) would let `[9]` through on a 3-option poll.
+  - `singleChoice`: at most one element unless the poll is `multiChoice`.
+- **`poll.optionCount` is gone** (and its `optionCountMatches` rule): it existed only for ballots to copy. A poll is `{ question, options, multiChoice, endsAt }`.
+- **Tally**: `byPollChoice [pollId, choices]` is countable per element: a multi-choice ballot counts once under each choice. One grouped count, `choices containsAny [0..n-1]` grouped by `choices`, gives every option; `byPoll [pollId]` counts ballots, withdrawn ones too.
+- **Unchanged product rules**, re-checked: ballots editable until the close and final after (the `where` above, and `canBeDeleted: false`); the owner may delete a poll only before its first ballot, withdrawn ones included (`deleteConstraints.noBallots`, counting `byPoll`); `endsAt` after creation and within 31 days.
+
+The rule cases were also judged with rs-dpp 5.0.0-beta.5's own evaluator (`validate_referencing_property_constraints`) in a one-off harness: every accept and refuse in `property-constraint-cases.mjs` came out as recorded, at each boundary (an option equal to the count, the count + 4, 9 on a 9-option poll, 9 on a 10-option poll).
+
+#### Storefront v8 and blog v8: conditions instead of copies
+
+- **Storefront**: `storeOrder.storeStatus` (a copy of the store's status, bound by the reference and refused by `storeIsOpen` unless active) becomes `storeId.where.status: { "const": "active" }`. An order at a paused or closed store is 40127. The order carries one field less.
+- **Blog**: `blogComment.postCommentsEnabled` (a copy of the post's flag, refused by `commentsOpen` when false) becomes `blogPostId.where.commentsEnabled: { "notEqual": { "const": false } }`. A post that leaves the flag out, or sets it true, takes comments; comments off, and a tombstone, is 40127.
+
+Clients on v8 send neither copy and word a 40127 as "This store isn't taking orders right now" / "Comments are turned off for this post". v7 keeps working for `/devnet` until the cut-over.
+
+#### Social v15: mentions and resolved reports
+
+- **Multiple mentions** (product decision): post and reply carry `mentionedUserIds`, up to 8 identities (each `refersTo` identity), in place of the single `mentionedUserId`. `mentionedUserAndTime [mentionedUserIds, $createdAt]` enters a document once per mention, so "mentions of me" is `mentionedUserIds contains <me>`. A tombstone clears the list (`blankTombstone`) and the list is frozen unless deleted, as the single field was. +98 B. Hashtags stay single (`hashtag`, which trending and the likes bind to).
+- **`staysResolved`** on `report`: `{ "ifThen": [{ "present": "$old.status" }, { "present": "status" }] }`. A moderator may change a resolved report's outcome or note, but never remove its status, which would reopen the reporter's withdrawal (`deleteConstraints.pending`). +70 B.
+
+  The measured variant E made status final (`status == $old.status` once set). That conflicts with the app: status 1-3 are outcomes ("No action taken", "Content removed", "Author actioned"), and the report queue deliberately lets a moderator re-resolve (`resolutionFormStart`, `reportsNeedingResolution`; removing the reported post moves its reports to "Content removed"). The rule adopted keeps exactly the property that matters, that resolved stays resolved, and leaves the outcome editable.
+
+### The client
+
+- **Pollr** (`v7` replaces `v5`/`v6`; `v3` testnet and read-only `v4` unchanged): `pollrHasEditableBallots`, `planBallotWrite` (one create or replace per vote), `getMyBallot` off `byPollVoter`, the tally from one `containsAny` grouped count with a per-option `contains` fallback (`decodeChoiceKey` reads both key encodings), 40127 = closed, 40120 = gone, 40105/40106 = stale. A poll is written without `optionCount`. The card's flows are the same for the voter.
+- **Storefront / blog v8**: no `storeStatus` / `postCommentsEnabled`; a 40127 naming the store's `status` is "This store isn't taking orders right now", a 40127 on a comment "Comments are turned off for this post". Rating group keys are read in both encodings.
+- **Mentions (v15)**: `inlineMentions()` describes the cut's mention field (`mentionedUserId` on v10–v14, `mentionedUserIds` up to 8 on v15). A post or reply writes the first 8 distinct @names that resolve (`mentionFieldsFor`); the composer says "Only the first 8 people you mention will be notified." past 8. "Mentions of me" and the mention notifications read `mentionedUserIds contains <me>` (`mentionsOfUserQuery`). That query needs the 5.0.0-beta.5 SDK: on beta.4 it reaches no node, and the source counts as failed.
+
+### Offline tooling while the SDK is beta.4
+
+The 5.0.0-beta.4 packages cannot parse these: the wasm-sdk refuses the conditions and both kinds of rule (10231), and wasm-dpp2 also refuses an element index (10206). `scripts/beta5-grammar.mjs`:
+
+- **`beta5Constructs(source)`** lists them: `whereCondition`, `referencedRead`, `storedVersionRead`, `typedArrayIndex`.
+- **`beta4Rendering(source)`** strips exactly those, nothing else, for the wasm parses only: condition entries leave their `where`, such rules leave `propertyConstraints`, element indexes leave `indices`. On a 5.0.0-beta.5 SDK (`SDK_PARSES_BETA5`) it is the identity.
+- **`requireSdkFor(source)`** makes the publisher refuse to build a create carrying them on an older SDK, so a stripped file can never be signed.
+
+Who judges what:
+
+| Check | Sees | Judges the beta.5 constructs? |
+| --- | --- | --- |
+| wasm-sdk / wasm-dpp2 parse (`validate-contract-offline.mjs`, `--probes`) | the file without them; each stripped one is printed `NOT PARSED BY THE SDK` (the `refersTo:` lines and the offline update check read the parse, so they omit them too) | no |
+| `auditNodeRules` | the whole file | yes: `where` conditions (40126: referenced side exists and holds one value, literals of the property's type and in its enum, orderings on integers bounded by integers or required times), typed-array indexes (10205/10231: one top-level array, ≤16 items or 4 under a window, element key limits, not unique, no skip on the array alone, ≤256 entries per document) |
+| meta-schema (ajv) | the whole file | yes: `scripts/meta-schema/document-meta-v3.json` is now rs-dpp's at the beta.5 tag (sha256 `d8676bfd…`) |
+| `--constraints` | rules the SDK parses | a rule reading a referenced document is never judged offline (no SDK pre-check reads it); a stripped rule's cases print `SKIP` |
+| `b5val` (rs-dpp 5.0.0-beta.5, full validation) | the whole file | yes: the authority until the bump |
+
+The size the wasm parse reports is a lower bound while constructs are stripped; `b5val`'s is the real one. The probes whose refusal is a beta.5 construct expect the audit layer now and the parse layer after the bump (`b5(...)` in `contract-probes.mjs`). The `where` cases now model the conditions off the file (`whereEntryHolds`): before, at and after a poll's close; an active, paused and closed store; comments on, unset and off.
+
+Run:
+
+```sh
+node scripts/validate-contract-offline.mjs contracts/pollr-contract.json --strict-size
+node scripts/validate-contract-offline.mjs --probes
+node scripts/validate-contract-offline.mjs --constraints
+# b5val (out of tree): rs-dpp 5.0.0-beta.5 DataContract::from_json(full validation) and the
+# create transition's size, on a file assembled as validate-contract-offline.mjs assembles it
+b5val-bin <assembled-contract.json>
+```
+
+### The register plan
+
+- **Ids do not change**: they are `generateId(maker, nonce)`; the anchor, the group and the member order are as before.
+- **Pins**: `APP_CONNECT_ENTRIES` pins the four new sha256s above (`verify-appconnect.mjs --self-test` checks them).
+- **SDK**: on the beta.4 SDK `--plan` builds the anchor and then stops at social with "uses Platform 5.0.0-beta.5 grammar the installed SDK 5.0.0-beta.4 cannot build". Every mode needs the bump first.
+- **Cost**: the set shrinks by about 690 B (pollr −467, storefront −290, blog −97, social +168).
+- **Env**: the cut-over sets `NEXT_PUBLIC_POLLR_TOPOLOGY=v7`, `NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v8`, `NEXT_PUBLIC_BLOG_TOPOLOGY=v8` and `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v15` with the new ids.
+
+### /devnet until the cut-over
+
+The pollr client reads only v7 ballots now (v5/v6 slot ballots are gone from the code), so `.env.devnet` turns polls off (`NEXT_PUBLIC_POLLR_CONTRACT_ID=` blank, topology `v7`) until the beta.5 cut-over registers pollr v7. Storefront and blog keep `v7` there, which the client still serves.
+
+### For the SDK bump PR
+
+- Bump the three packages; `SDK_PARSES_BETA5` turns true and the wasm parses see the whole files. Re-run `--probes` (the `b5(...)` expectations flip to the parse layers) and `--constraints` (the `staysResolved` cases are judged with the stored report).
+- The `contains` / `containsAny` queries (pollr tally, mentions of me) start working; until then they reach no beta.4 node.
+- Group keys of unsigned integers are plain bytes on PV14 (#5350). Pollr, storefront ratings and the battery decoder already read both forms.

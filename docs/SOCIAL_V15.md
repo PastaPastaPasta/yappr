@@ -13,6 +13,17 @@ This document was written with the PR that adds the contract, the client topolog
 | 5 | **Shorthands** | Every 32-byte identifier is `{"type": "identifier"}` and every other fixed-size byte array is `{"type": "bytes", "size": n}`. Platform expands them before validating and parses the contract exactly as the long form. |
 | 6 | **Everything else is v14's** | Document types, properties, indexes, rules, `deleteConstraints`, action fees, moderation and the blocks contract. |
 
+### The 5.0.0-beta.5 re-cut (in place)
+
+v15 was never registered, so the beta.5 changes went into the same file and topology ([PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)):
+
+| # | Decision | What changes |
+| --- | --- | --- |
+| 7 | **Several mentions** | Post and reply: `mentionedUserIds`, 1-8 distinct identities (each `refersTo` identity), replaces `mentionedUserId`. `mentionedUserAndTime [mentionedUserIds, $createdAt]` is an element index (one entry per mention, no `skipIfAbsent`: an empty list is entered nowhere); "mentions of me" reads it with `contains`. `blankTombstone` and the conditional `immutable` cover the list where they covered the single field. +98 B. One hashtag stays. |
+| 8 | **A resolved report stays resolved** | `report.propertyConstraints.staysResolved`: `{"ifThen": [{"present": "$old.status"}, {"present": "status"}]}`. A moderator can change the outcome or the note, never remove the status (which would reopen the reporter's withdrawal). +70 B. |
+
+After it: sha256 `9b6c7eeda3194044040a9eb0822956f3dc81eaee99f0abea5f3e215b5762e078`, 16,458 B signed (rs-dpp 5.0.0-beta.5, `b5val`). It needs the 5.0.0-beta.5 SDK to register and to query mentions; the beta.4 SDK parses it only without the element indexes and `staysResolved` (`scripts/beta5-grammar.mjs`). The tables below describe the beta.4 cut.
+
 No byte rules (`byteAt`, byte-array `startsWith`/`endsWith`, also new in beta.4) are used. Every candidate measured cost more bytes than it was worth: a `report.box` shape check +192 B, `mediaKinds` values +372 B, a public-key prefix +77 to +89 B.
 
 ## The file
@@ -20,7 +31,7 @@ No byte rules (`byteAt`, byte-array `startsWith`/`endsWith`, also new in beta.4)
 | | Social v15 |
 | --- | --- |
 | File | `contracts/yappr-social-contract-v15.json` |
-| sha256 | `d2e729005ce68688a7663c605efa37f979321d0b0a5e5c417fd03b12ce179859` |
+| sha256 | `d2e729005ce68688a7663c605efa37f979321d0b0a5e5c417fd03b12ce179859` (the beta.4 cut; the beta.5 re-cut is `9b6c7eed…`, above) |
 | Serialized (beta.4 rs-dpp) | 16,182 B (v14: 17,868 B) |
 | Signed create | **16,290 B** (v14: 17,976 B): 1,686 B smaller, 3,710 B under the 20,000 B budget. The validator's estimate is ~16,289 B. Mainnet's rendering (interim `notYetUsable`) is the same size. |
 | Document types | 12, as v14 |

@@ -5,7 +5,7 @@ import { documentCount } from './pagination-utils';
 import { markPollHasBallots, pollHasKnownBallots } from './pollr-known-ballots';
 import { noteReplacedBallots, pollrWriteMayStillExecute, settlePendingPollrReplaces } from './pollr-pending-writes';
 import { stateTransitionService } from './state-transition-service';
-import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, POLLR_TOPOLOGY, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants';
+import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, POLLR_TOPOLOGY, pollrHasEditableBallots, pollrPollsDeletable } from '@/lib/constants';
 import { isDeleteConstraintError } from '@/lib/error-utils';
 import {
   POLL_MAX_OPTIONS,
@@ -19,11 +19,11 @@ import {
 /**
  * A poll on the shared Pollr contract.
  *
- * v5 stores the choices as an `options` string array; v3/v4 as enumerated
+ * v7 stores the choices as an `options` string array; v3/v4 as enumerated
  * `option0`..`option9` fields (option0/option1 required). This service reads
  * either into `options`. Poll documents are immutable and contain no
- * byte-array fields. v6 keeps v5's poll, and lets its owner delete it until
- * the first ballot (`deletePoll`).
+ * byte-array fields. On v7 the owner may delete a poll until its first ballot
+ * (`deletePoll`).
  */
 export interface Poll {
   id: string;
@@ -31,15 +31,10 @@ export interface Poll {
   createdAt: Date;
   question: string;
   options: string[];
-  /**
-   * How many options the poll declares: v5's stored `optionCount`, which every
-   * ballot copies (40127 on a mismatch); `options.length` before v5.
-   */
-  optionCount: number;
   /** True when voters may select more than one choice. */
   multiChoice: boolean;
   /**
-   * Close time in ms since epoch. Required on v5, where consensus refuses a
+   * Close time in ms since epoch. Required on v7, where consensus refuses a
    * ballot written after it; advisory (and optional) on v3/v4.
    */
   endsAt?: number;
@@ -49,7 +44,7 @@ export interface CreatePollData {
   question: string;
   options: string[];
   multiChoice?: boolean;
-  /** Close time in ms since epoch: required on v5, within 31 days. */
+  /** Close time in ms since epoch: required on v7, within 31 days. */
   endsAt?: number;
 }
 
@@ -66,7 +61,7 @@ function toFiniteNumber(value: unknown): number | undefined {
 }
 
 /**
- * A poll's choices from its document: v5's `options` array when present, else
+ * A poll's choices from its document: v7's `options` array when present, else
  * the v3/v4 enumerated fields. Choices are contiguous by construction, so the
  * enumerated read stops at the first gap and a malformed document can never
  * produce holes.
@@ -93,14 +88,12 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // Fields may arrive nested under `data` or flat on the document.
     const data = { ...doc, ...((doc.data as Record<string, unknown> | undefined) ?? {}) };
 
-    const options = readPollOptions(data);
     return {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
       createdAt: new Date(Number((doc.$createdAt || doc.createdAt) ?? Date.now())),
       question: (data.question || '') as string,
-      options,
-      optionCount: toFiniteNumber(data.optionCount) ?? options.length,
+      options: readPollOptions(data),
       multiChoice: Boolean(data.multiChoice ?? false),
       endsAt: toFiniteNumber(data.endsAt),
     };
@@ -126,9 +119,8 @@ class PollrPollService extends BaseDocumentService<Poll> {
    * optional properties are omitted entirely (never sent as null) so the
    * contract's `additionalProperties: false` schema stays satisfied.
    *
-   * v5 writes `options` with its `optionCount` (rule-bound to it), and both
-   * `multiChoice` and `endsAt` always: every ballot copies all three, bound by
-   * consensus to the poll, so the poll has to carry them explicitly.
+   * v7 writes exactly `options`, `multiChoice` (even false) and `endsAt`: the
+   * contract requires all of them, and the ballot rules read them off the poll.
    */
   async createPoll(ownerId: string, data: CreatePollData): Promise<Poll> {
     const { question, options } = this.normalize(data);
@@ -137,11 +129,10 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // back until its reservation expires. A no-op when nothing is pending.
     await settlePendingPollrReplaces(ownerId);
 
-    if (pollrHasV5Ballots()) {
+    if (pollrHasEditableBallots()) {
       return this.create(ownerId, {
         question,
         options,
-        optionCount: options.length,
         multiChoice: Boolean(data.multiChoice),
         endsAt,
       });
@@ -167,7 +158,7 @@ class PollrPollService extends BaseDocumentService<Poll> {
 
   /**
    * Like {@link getPoll}, but only a poll Platform says does not exist reads as
-   * null: a failed read throws. On v6 a missing poll may have been deleted by
+   * null: a failed read throws. On v7 a missing poll may have been deleted by
    * its owner, which must never be shown for a read that merely failed.
    */
   async fetchPoll(pollId: string): Promise<Poll | null> {
@@ -175,7 +166,7 @@ class PollrPollService extends BaseDocumentService<Poll> {
   }
 
   /**
-   * Every ballot naming the poll, withdrawn ones included, off v6's countable
+   * Every ballot naming the poll, withdrawn ones included, off v7's countable
    * `byPoll` index: what the poll's `noBallots` delete rule counts. Throws when
    * the count cannot be read.
    */
@@ -196,7 +187,7 @@ class PollrPollService extends BaseDocumentService<Poll> {
   }
 
   /**
-   * Delete the owner's poll (v6), which consensus allows only until its first
+   * Delete the owner's poll (v7), which consensus allows only until its first
    * ballot. The ballots are counted first so a poll someone has voted on is
    * refused without paying for a rejected delete; a ballot landing between that
    * count and the delete is refused by consensus instead (40147, paid), and

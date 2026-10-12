@@ -66,8 +66,8 @@ contract id is an input to every registration.
 `contracts/yappr-storefront-contract.json` — `store`, `storeItem`,
 `shippingZone`, `itemDeliverable`, `storeOrder`, `orderStatusUpdate`,
 `orderDelivery`, `storeReview`, `itemReview`, `savedAddress`. Client gate:
-`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v7`, resolved in `lib/constants.ts`).
-**The file is storefront v7**: v6 (below) with `storeItem.variants` as a typed
+`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v8`, resolved in `lib/constants.ts`).
+**The file is storefront v8**, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)), not yet registered. v7 is v6 (below) with `storeItem.variants` as a typed
 table instead of a JSON string, and up to 12 image URLs per item
 ([STOREFRONT_V7.md](STOREFRONT_V7.md)). v6, the 5.0.0-beta.2 mainnet-ready cut
 that also carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638), was
@@ -83,11 +83,15 @@ on sakura as `2P2KqWzZXqULWMD1e2tL1dr67YAjNqUTP8cyNGkekzdz` (maker nonce 12,
 | `storeItem` | `canBeDeleted: false`, `moderatorAbilities.delete`; `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]`; `fulfillment` (`shipped`/`digital`); v7 `variants` table (options with stable ids, a byte-array selector and a price per combination, optional stock/SKU/weight/image lists; 9 alignment rules); 50M action fee | item reviews, ghost-store rejection, seller-only listings, variant pickers |
 | `shippingZone` | `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]` | seller-only zones |
 | `itemDeliverable` | one per item; `itemId`→storeItem (moderatedDocument) **writer-gated**; `immutable [itemId]`; seller-encrypted kit (≤ 5,120 B) | digital products |
-| `storeOrder` | permanent; `storeId`→store `{$ownerId: sellerId, status: storeStatus}`; `sellerId` distinctFrom `$ownerId`; `buyerOrders [$ownerId, $createdAt]` rangeCountable; `storeOrders [storeId, $createdAt]` rangeCountable, ranked at `storeId`; payload ≤ 5,120 B | buyer and seller order lists and counts, "most ordered stores" |
+| `storeOrder` | permanent; `storeId`→store `{$ownerId: sellerId, status: {const: active}}` (v8); `sellerId` distinctFrom `$ownerId`; `buyerOrders [$ownerId, $createdAt]` rangeCountable; `storeOrders [storeId, $createdAt]` rangeCountable, ranked at `storeId`; payload ≤ 5,120 B | buyer and seller order lists and counts, "most ordered stores" |
 | `orderStatusUpdate` | `orderId`→storeOrder **writer-gated to the seller**; neither deletable nor mutable; `buyerFeed [orderId.$ownerId, $createdAt]` (derived) | the order's history; buyer notifications carrying only the seller's updates |
 | `orderDelivery` | `orderId`→storeOrder **writer-gated to the seller**; permanent, append-only; `buyerDeliveries [orderId.$ownerId, $createdAt]` (derived); payload ≤ 5,120 B | encrypted digital delivery, buyer library |
 | `storeReview` | `orderId`→storeOrder **writer-gated to the buyer**; `storeRating` avg ranked; `storeRatingDistribution` grouped count; 16M action fee | averages, distribution, top rated |
 | `itemReview` | one per (order, item); `itemId`→storeItem `{storeId}`; `orderId` **writer-gated**; `storeItemRating [storeId, itemId]` avg+count, avg ranked; 8M action fee | item averages and counts within a store, top items in a store |
+
+### What v8 changed (from v7)
+
+- **An order's store must be active through a `where` condition**: `storeId.where.status: {"const": "active"}` (5.0.0-beta.5). `storeOrder.storeStatus`, the copy of the store's status, and its `storeIsOpen` rule are gone. An order at a paused or closed store is 40127 (v7: 10422 `storeIsOpen`, or 40127 on a stale copy). The client writes no `storeStatus` on v8 and says "This store isn't taking orders right now". Signed size 16,316 B (v7 16,606 B).
 
 ### What v7 changed (from v6)
 
@@ -253,9 +257,9 @@ gated the other way rather than a loosened gate; `immutable` on
 ## Blog
 
 `contracts/yappr-blog-contract.json` — `blog`, `blogPost`, `blogComment`,
-`blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v7`, resolved
+`blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v8`, resolved
 in `lib/constants.ts` at call time so unit tests can stub it). **The file is
-blog v7**, the 5.0.0-beta.2 mainnet-ready cut, registered on sakura as
+blog v8**, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)), not yet registered. v7, the 5.0.0-beta.2 mainnet-ready cut, is registered on sakura as
 `4F1Wi4dim7j6eWrFQ3aHWEB9az5dHcJBmdvMvpx7sx1j` (re-registered after the
 2026-10-08 beta.3 wipe); `/devnet` runs it ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
 
@@ -263,8 +267,12 @@ blog v7**, the 5.0.0-beta.2 mainnet-ready cut, registered on sakura as
 | --- | --- | --- |
 | `blog` | `canBeDeleted: false`, `moderatorAbilities.delete`; `timeline [$createdAt]`; 80M action fee | "new blogs" newest first; moderatedDocument target |
 | `blogPost` | `blogId`→blog (moderatedDocument, only the blog's owner posts); `timeline [$createdAt]`; `immutable [blogId, {publishedAt when present}, {deleted when present}]`; the tombstone rules; `retractedWhen {present: deleted}`; 80M action fee | "latest posts" across blogs; an author's delete (a tombstone) |
-| `blogComment` | `blogPostId`→blogPost (moderatedDocument, copies `commentsEnabled`); `postAndTime [blogPostId, $createdAt]` rangeCountable; `postOwnerAndTime [blogPostId.$ownerId, $createdAt]`; ranked `discussedRecent [$createdAt, blogPostId]` (72h window, a new one every 24h, 7-day ttl); 16M action fee | comment lists and exact counts, "most discussed (3 days)", unforgeable "comments on my posts" |
+| `blogComment` | `blogPostId`→blogPost (moderatedDocument, `where {commentsEnabled: {notEqual: {const: false}}}` on v8); `postAndTime [blogPostId, $createdAt]` rangeCountable; `postOwnerAndTime [blogPostId.$ownerId, $createdAt]`; ranked `discussedRecent [$createdAt, blogPostId]` (72h window, a new one every 24h, 7-day ttl); 16M action fee | comment lists and exact counts, "most discussed (3 days)", unforgeable "comments on my posts" |
 | `blogFollow` | `blogId`→blog (moderatedDocument); unique `ownerAndBlog`; `followers [blogId, $createdAt]` rangeCountable, ranked at `blogId`; ranked `followersTrend [$createdAt, blogId]` (72h / 24h / 7-day ttl) | a reader's follows, exact follower counts, "most followed", "trending (3 days)" |
+
+### What v8 changed (from v7)
+
+- **Comments-off is a `where` condition**: `blogPostId.where.commentsEnabled: {"notEqual": {"const": false}}` (5.0.0-beta.5). `blogComment.postCommentsEnabled`, the copy of the post's flag, and its `commentsOpen` rule are gone. A post that leaves the flag out or sets it true takes comments; one with comments off (a tombstone included) refuses them with 40127 (v7: 10422 `commentsOpen`). The client sends neither copy nor pre-read on v8. Signed size 6,659 B (v7 6,756 B).
 
 ### What v7 changed (from v6)
 
@@ -457,9 +465,7 @@ battery probes this and never fails on it.
 
 ## Polls (Pollr)
 
-`contracts/pollr-contract.json` is **pollr v6**, the 5.0.0-beta.3 cut: `poll`
-and one `vote` doctype. Client gate: `NEXT_PUBLIC_POLLR_TOPOLOGY=v6`. v6 is v5
-plus the owner's delete before the first ballot (below). Sakura runs it as
+`contracts/pollr-contract.json` is **pollr v7**, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)): `poll` and one `vote` doctype, one ballot per voter. Client gate: `NEXT_PUBLIC_POLLR_TOPOLOGY=v7`; the client no longer reads v5/v6 ballots, so `/devnet` has polls off until v7 is registered. v6, v5 plus the owner's delete before the first ballot (below), runs on sakura as
 `Fq5yTk2YqJZ2wa7uESKB119nX3ea23QP2gUsLqGtEu8c` since the 2026-10-08 beta.3
 wipe (`/devnet`); `verify-pollr.mjs` passed 64/64 there, the `noBallots`
 delete refusals (40147) included ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
@@ -468,10 +474,18 @@ replaced the v4 cut (indexOnly `vote`/`multiVote`; recover both from git history
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `poll` | immutable, `canBeDeleted: true` with `deleteConstraints.noBallots`, no moderation; `question` (1-280 chars, 560 B), `options[]` (2-10 unique, each 1-80 chars / 160 B), `optionCount`, `multiChoice`, `endsAt` (all required) | a fixed question, choices, mode and close time that every ballot copies; its owner may delete it until the first ballot |
-| `vote` | stored, mutable, `canBeDeleted: false`; `immutable: [pollId, slot]`; `pollId` → deletableDocument poll `where {optionCount: pollOptionCount, multiChoice: pollMultiChoice, endsAt: pollEndsAt}`; optional `choice`; unique `byPollVoter [pollId, $ownerId, slot]`; `byPollChoice [pollId, choice]` countable, `skipIfAbsent: [choice]`; `byPoll [pollId]` countable | one editable ballot per voter (single choice) or per voter and option (multi choice), tallied in O(1) per option, and counted in O(1) per poll for `noBallots` |
+| `poll` | immutable, `canBeDeleted: true` with `deleteConstraints.noBallots`, no moderation; `question` (1-280 chars, 560 B), `options[]` (2-10 unique, each 1-80 chars / 160 B), `multiChoice`, `endsAt` (all required) | a fixed question, choices, mode and close time that every ballot's rules read; its owner may delete it until the first ballot |
+| `vote` | stored, mutable, `canBeDeleted: false`; `immutable: [pollId]`; `pollId` → deletableDocument poll `where {endsAt: {greaterThanOrEqual: $updatedAt}}`; optional `choices` (1-10 distinct of 0-9; absent = withdrawn); rules `choicesAreOptions`, `choicesAreOptionsHigh`, `singleChoice` reading the poll; unique `byPollVoter [pollId, $ownerId]`; `byPollChoice [pollId, choices]` countable per element; `byPoll [pollId]` countable | one editable ballot per voter, tallied in O(1) per option, and counted in O(1) per poll for `noBallots` |
 
 Ballots are free — no `tokenCost`.
+
+### What v7 changed (from v6)
+
+- **One ballot per voter**: `choices` holds every selected option; no `slot`/`choice`, and no copied `pollOptionCount`/`pollMultiChoice`/`pollEndsAt`. A multi-choice voter changes their selection with one replace.
+- **The close is a `where` condition** on `pollId` (`endsAt >= $updatedAt`, checked on every replace): a late create, change or withdrawal is 40127 (v6: 10422 `writtenBeforeClose`).
+- **Rules read the poll** (`referenced`): every element names an option the poll has (`choicesAreOptions` for options+0…3, `choicesAreOptionsHigh` for +4…7), and a single-choice poll takes at most one (`singleChoice`). `poll.optionCount` and `optionCountMatches` are gone.
+- **Tallies are per element**: `byPollChoice [pollId, choices]` enters a ballot once per choice; the client reads one grouped `containsAny` count. Group keys of these unsigned values are plain bytes on PV14 (`00`…`09`).
+- Unchanged: editable until the close and final after, the owner's delete only before the first ballot (withdrawn ones count), `endsAt` within 31 days. Signed size 3,706 B (v6 4,173 B).
 
 ### What v6 changed (from v5)
 
@@ -555,48 +569,45 @@ the tally empty, still counts 1 on byPoll, and is 40147. `--self-test` pins the
 `noBallots` rule body, `poll.canBeDeleted`, the `deletableDocument` reference
 and `byPoll`.
 
-**Rules (`propertyConstraints`, 10422).** On `poll`: `optionCountMatches`
-(`optionCount == count(options)`), `endsAfterCreation` (`endsAt > $createdAt`)
-and `endsWithin31Days` (`endsAt - $createdAt <= 31 days`), so every poll closes
-and none is born closed. On `vote`: `writtenBeforeClose`
-(`$updatedAt <= pollEndsAt`, judged on every create AND replace), `choiceIsAnOption`
-and `slotIsAnOption` (both `< pollOptionCount`), `singleUsesSlotZero` (a
-single-choice ballot is slot 0) and `multiChoiceIsSlot` (a multi-choice
-ballot's `choice` is absent or equals its slot). The copied poll fields are
-consensus-bound through the reference (40127 on a mismatch, 40120 for a ghost
-poll), and the poll is immutable, so they never move under a ballot.
-`scripts/property-constraint-cases.mjs` holds the accept/refuse cases;
-`node scripts/validate-contract-offline.mjs --constraints` runs them offline.
+### Rules, ballots and reads (v7)
 
-**Ballots are editable until the close and final after.** `$updatedAt` is the
-write's block time, so `writtenBeforeClose` refuses any write that lands after
-`pollEndsAt`, and nothing deletes a ballot:
+**Rules (`propertyConstraints`, 10422).** On `poll`: `endsAfterCreation`
+(`endsAt > $createdAt`) and `endsWithin31Days` (`endsAt - $createdAt <= 31
+days`), so every poll closes and none is born closed. On `vote`, every rule
+reads the poll the ballot names (`referenced`): `choicesAreOptions` and
+`choicesAreOptionsHigh` (no element is `options.length + 0…3`, or `+ 4…7`; the
+elements are 0-9 and a poll has 2-10 options, so that covers every element a
+poll lacks) and `singleChoice` (at most one element unless `multiChoice`). A
+ghost poll is 40120. `scripts/property-constraint-cases.mjs` holds the cases;
+no SDK pre-check reads a referenced document, so the vote cases are judged on
+the node (`verify-pollr.mjs` p10) and were checked with rs-dpp 5.0.0-beta.5.
 
-- Single choice: one ballot, slot 0. The first vote creates it; changing the
-  vote replaces `choice`; withdrawing replaces it with `choice` left out.
-- Multi choice: one ballot per option, `slot` = the option. Ticking an option
-  creates its ballot (or replaces it with `choice = slot`); unticking replaces
-  it without `choice`.
-- `byPollChoice` skips ballots without a `choice`, so the tally counts current
-  selections: withdrawn and unticked ballots drop out. On a single-choice poll
-  the total is the number of voters; on a multi-choice poll it is selections.
+**Ballots are editable until the close and final after.** The pollId `where`
+condition `endsAt >= $updatedAt` is checked on every create and replace
+(`$updatedAt` is the write's block time), so a write landing after the close
+is 40127, and nothing deletes a ballot. One ballot per voter (`byPollVoter`):
+the first vote creates it with `choices`; changing the vote, on either kind of
+poll, replaces `choices`; withdrawing replaces it with `choices` left out.
+`byPollChoice` enters a ballot once per element and none for a withdrawn
+ballot, so the tally counts current selections: on a single-choice poll the
+total is the number of voters, on a multi-choice poll the selections.
 
 What the design could not do: a tally index can only be `preallocated` on an
-indexOnly type, and an indexOnly ballot has no stored row to replace, so the ballot trees are
-not preallocated (the first ballot on a poll pays for its branch). And before
-5.0.0-beta.3 a delete could not be gated by a rule, so ballots were made not
-deletable at all — a withdrawal is a replace. v6 keeps that: a ballot that
-could be deleted would let its voter free the poll for deletion again.
+indexOnly type, and an indexOnly ballot has no stored row to replace, so the
+ballot trees are not preallocated (the first ballot on a poll pays for its
+branch). A ballot that could be deleted would let its voter free the poll for
+deletion again, so ballots stay undeletable and a withdrawal is a replace.
 
 ```js
-// Per-option tally (keys are hex of 0x80 + choice).
+// Per-option tally, one group per element (keys: plain bytes on PV14, 00…09;
+// older chains 0x80 + choice — the client reads both).
 sdk.documents.count({ dataContractId, documentTypeName: 'vote',
-  where: [['pollId', '==', P], ['choice', 'in', [0, 1, 2]]], groupBy: ['choice'] })
-// The voter's ballots on one poll (withdrawn ones included, with their revisions).
+  where: [['pollId', '==', P], ['choices', 'containsAny', [0, 1, 2]]], groupBy: ['choices'] })
+// The voter's ballot on one poll (a withdrawn one included, with its revision).
 sdk.documents.query({ dataContractId, documentTypeName: 'vote',
   where: [['pollId', '==', P], ['$ownerId', '==', me]],
-  orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['slot', 'asc']] })
-// v6: every ballot on a poll, withdrawn ones included (byPoll), as noBallots counts them.
+  orderBy: [['pollId', 'asc'], ['$ownerId', 'asc']], limit: 1 })
+// Every ballot on a poll, withdrawn ones included (byPoll), as noBallots counts them.
 sdk.documents.count({ dataContractId, documentTypeName: 'vote', where: [['pollId', '==', P]] })
 ```
 
@@ -623,23 +634,23 @@ runs that too.
 
 While `pending`, the card shows the results read-only with "Confirming your
 vote… Check again", which re-reads that state; editing comes back once nothing
-is pending. If a submission was interrupted, "Finish your vote" opens the
-editor on what the voter last asked for, with the options the chain does not
-show marked "not sent yet" (`editorStart`); nothing is resent until the voter
+is pending. If a submission did not go through, "Vote again" opens the editor
+on what the voter last asked for, with the options the chain does not show
+marked "not sent yet" (`editorStart`); nothing is resent until the voter
 submits.
 
 `setVote(poll, wanted, me)` refuses to plan while anything is pending
 (`heldBack`, nothing sent; an unreadable store refuses too). Otherwise it reads
-the ballots fresh, plans the writes that make them select exactly `wanted`
-(`planBallotWrites`), and runs them one at a time, each reserved with the
-poll's scope. A 10422 naming `writtenBeforeClose` is reported as "This poll has
-closed"; a stale revision (40106) or a ballot another tab created first (40105)
-as `stale`, and the card reloads. After a refused write it re-reads the
-ballots and reports what the chain shows. A write whose confirmation timed out
-stops the run and comes back `unconfirmed`, with no re-read (one this soon
-would likely predate the write), and the card shows the ballots as pending.
-Every submission is a fresh plan against the chain. The ballots copy the poll's
-stored `optionCount`. Optimistic tallies move down as well as up.
+the ballot fresh and makes at most one write (`planBallotWrite`): a create, or
+a replace of `choices` (left out to withdraw), reserved with the poll's scope.
+A 40127 (the close condition) is reported as "This poll has closed"; a stale
+revision (40106) or a ballot another tab created first (40105) as `stale`, and
+the card reloads; a 40120 as `gone` (the owner deleted the poll). After a
+refused write it re-reads the ballot and reports what the chain shows. A write
+whose confirmation timed out comes back `unconfirmed`, with no re-read (one
+this soon would likely predate the write), and the card shows the ballot as
+pending. Every submission is a fresh plan against the chain. Optimistic
+tallies move down as well as up.
 `tallyIsFinal` is true only for a tally read off the chain after `endsAt`
 (plus a 30 s margin for the device clock against block time); the card says
 "Final results" only then. The poll editor offers 1, 3, 7, 14 and 30 days
@@ -647,24 +658,20 @@ stored `optionCount`. Optimistic tallies move down as well as up.
 clock and the rule judges block time — and enforces the character and byte
 limits and distinct options.
 
-A submission cannot be one atomic batch: the batch cap is one document
-transition (see "Not possible at 4.2" below), so a multi-choice change is
-several transitions, and the pending state above is what keeps a partial one
-from being read as settled.
-
 **v3 and v4.** v3 (testnet) keeps its immutable, one-document-per-selection
 ballots and the time-bounded "final results" read. v4 is **read-only** in the
 client: its polls, tallies and the voter's own choices still load, but its
 indexOnly write path (affected-state confirmation, entry probes, the keyset
 tally fallback and the ranked winner) is gone. A deployment still on v4 shows
-results but takes no votes until it moves to v5.
+results but takes no votes. v5/v6 slot ballots are no longer read: those
+contracts went with the beta.3/beta.4 sakura chain.
 
 **The standalone Pollr app needs the same cut.** The testnet contract
 (`GBCR8Jqt…`) is externally owned and is what
 `https://pastapastapasta.github.io/pollr` reads; only the devnet clone is ours.
-A v5 poll stores `options[]` rather than `option0..9`, so that app needs both
-its poll and its ballot paths changed before it can read or write a v5
-contract.
+A v7 poll stores `options[]` rather than `option0..9`, and a v7 ballot is one
+`choices` list, so that app needs both its poll and its ballot paths changed
+before it can read or write a v7 contract.
 
 ---
 

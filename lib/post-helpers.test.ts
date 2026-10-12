@@ -8,7 +8,6 @@ import {
   extractMentions,
   firstHashtag,
   firstIndexedTag,
-  firstMention,
   getTagDisplayText,
   hashtagDisplayToStorage,
   isCashtagStorage,
@@ -103,9 +102,8 @@ describe('mentions', () => {
       .toEqual(['qa-multi-part-42', 'hamzak78', 'another-name'])
   })
 
-  it('indexes only the first mention, normalized, and nothing without one', () => {
-    expect(firstMention('cc @Bob.dash then @alice and @bob')).toBe('bob')
-    expect(firstMention('Hello @ingrid-vinyl9!')).toBe('ingrid-vinyl9')
-    expect(firstMention('no mentions here')).toBe('')
+  it('lists mentions in order of first appearance, the order they are indexed in', () => {
+    expect(extractMentions('cc @Bob.dash then @alice and @bob')).toEqual(['bob', 'alice'])
+    expect(extractMentions('no mentions here')).toEqual([])
   })
 })

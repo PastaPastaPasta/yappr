@@ -18,8 +18,17 @@ import { documentToPlainObject, type DocumentWhereClause } from './sdk-helpers';
 
 const SUMMARY_TTL_MS = 60 * 1000;
 const RANKING_TTL_MS = 60 * 1000;
-/** Grouped count keys for small integers are hex of the platform-encoded byte 0x80 + value. */
+/**
+ * Grouped count keys for small integers are hex of one byte: 0x80 + value on
+ * chains before 5.0.0-beta.5, the plain value from it (an unsigned integer
+ * index value is keyed as big-endian bytes, platform #5350). Values below 128
+ * make the two unambiguous.
+ */
 const INTEGER_KEY_OFFSET = 0x80;
+const integerFromGroupKey = (key: string) => {
+  const byte = parseInt(key, 16);
+  return byte >= INTEGER_KEY_OFFSET ? byte - INTEGER_KEY_OFFSET : byte;
+};
 const RATINGS = [1, 2, 3, 4, 5] as const;
 
 export interface RankedEntry {
@@ -131,7 +140,7 @@ class StoreStatsService {
     });
     for (const [key, value] of groupedCountEntries(raw)) {
       if (key === '') continue;
-      const rating = parseInt(key, 16) - INTEGER_KEY_OFFSET;
+      const rating = integerFromGroupKey(key);
       if (rating >= 1 && rating <= 5) distribution[rating as 1 | 2 | 3 | 4 | 5] = Number(value as bigint | number);
     }
     return distribution;

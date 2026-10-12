@@ -290,14 +290,11 @@ class ReplyService extends BaseDocumentService<Reply> {
     Object.assign(data, mediaDocumentFields(options.media));
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
-    // v10: the one indexed mention, by the rule posts use — the first
-    // @mention of the PUBLIC content (a private reply's teaser or placeholder,
-    // never its ciphertext), resolved through DPNS; omitted when there is none
-    // or it does not resolve.
+    // v10: the indexed mentions, by the rule posts use, off the PUBLIC content
+    // (a private reply's teaser or placeholder, never its ciphertext).
     if (mentionsAreInline()) {
-      const { resolveMentionedIdentity } = await import('./post-service');
-      const mentionedUserId = await resolveMentionedIdentity(data.content as string);
-      if (mentionedUserId) data.mentionedUserId = identifierStringToDocumentBytes(mentionedUserId);
+      const { mentionFieldsFor } = await import('./post-service');
+      Object.assign(data, await mentionFieldsFor(data.content as string));
     }
 
     return this.create(ownerId, data);

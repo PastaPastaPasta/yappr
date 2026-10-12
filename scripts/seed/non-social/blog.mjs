@@ -21,7 +21,7 @@ import {
  * list of at most 64 (blog) / 16 (post) labels of 1-40 characters; v1-v3 the
  * comma-separated string. Chosen by NEXT_PUBLIC_BLOG_TOPOLOGY, like the app.
  */
-const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6'];
+const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'];
 /** The target cut is \`topology\` or later (lib/constants.ts blogTopologyAtLeast; unset is v1). */
 const blogAtLeast = (topology) => topologyAtLeast(BLOG_TOPOLOGIES, 'NEXT_PUBLIC_BLOG_TOPOLOGY', topology);
 const labelsTyped = () => blogAtLeast('v4');
@@ -29,16 +29,17 @@ const labelsTyped = () => blogAtLeast('v4');
  * Blog v5 (4.2.0-beta.6) makes a comment copy its post's `commentsEnabled`
  * (`postCommentsEnabled`, bound by the `blogPostId` agreement, 40127 on a
  * mismatch). Every seeded post stores the flag, and only posts with it true get
- * comments, so a v5 comment always carries `true`.
+ * comments, so a v5 comment always carries `true`. Blog v8 (5.0.0-beta.5) drops
+ * the copy: the `blogPostId` reference requires comments not to be off.
  */
-const commentsCopyPostFlag = () => blogAtLeast('v5');
+const commentsCopyPostFlag = () => blogAtLeast('v5') && !blogAtLeast('v8');
 /**
  * Blog v6 (5.0.0-beta.1) derives the post owner through `blogPostId`
  * (`postOwnerAndTime` indexes `blogPostId.$ownerId`): a v6 comment carries no
  * `blogPostOwnerId`, and the contract refuses one that does.
  */
 const commentsDerivePostOwner = () => blogAtLeast('v6');
-/** A seeded comment's fields; \`postCommentsEnabled\` only on v5+, and only ever \`true\` (see above); no \`blogPostOwnerId\` on v6+. */
+/** A seeded comment's fields; \`postCommentsEnabled\` only on v5-v7, and only ever \`true\` (see above); no \`blogPostOwnerId\` on v6+. */
 const commentFields = ({ blogPostId, blogPostOwnerId, content }) => ({
   blogPostId, ...(commentsDerivePostOwner() ? {} : { blogPostOwnerId }), content, ...(commentsCopyPostFlag() ? { postCommentsEnabled: true } : {}),
 });
@@ -713,13 +714,15 @@ function selfTest(args) {
   const [v4Blog, v4Post, v4Comment] = labelShapes('v4');
   const [v5Blog, v5Post, v5Comment] = labelShapes('v5');
   const [v6Blog, , v6Comment] = labelShapes('v6');
+  const [, , v8Comment] = labelShapes('v8');
   return reportSelfTest('the blog plan', [
     ['labels are comma-separated strings for blog v1–v3', typeof v3Blog === 'string' && typeof v3Post === 'string'],
     ['labels are typed lists for blog v4', Array.isArray(v4Blog) && Array.isArray(v4Post) && v4Blog.join(',') === v3Blog],
     ['labels stay typed lists for blog v5', Array.isArray(v5Blog) && Array.isArray(v5Post) && v5Blog.join(',') === v3Blog],
     ['a v4 comment carries no postCommentsEnabled; a v5 comment copies true', !('postCommentsEnabled' in v4Comment) && v5Comment.postCommentsEnabled === true],
     ['a v5 comment copies blogPostOwnerId; a v6 comment leaves it out and still copies true', v5Comment.blogPostOwnerId === 'o' && !('blogPostOwnerId' in v6Comment) && v6Comment.postCommentsEnabled === true && Array.isArray(v6Blog)],
-    ['every commented post stores commentsEnabled true (what a v5 comment copies)', plan.comments.every((comment) => plan.posts.find((post) => post.key === comment.postKey)?.data.commentsEnabled === true)],
+    ['a v8 comment is only the post and the content: no postCommentsEnabled, no blogPostOwnerId', JSON.stringify(Object.keys(v8Comment)) === '["blogPostId","content"]'],
+    ['every commented post stores commentsEnabled true (what a v5-v7 comment copies, and what v8 requires not to be false)', plan.comments.every((comment) => plan.posts.find((post) => post.key === comment.postKey)?.data.commentsEnabled === true)],
     [`8 blogs / 42 posts (${plan.blogs.length}/${plan.posts.length})`, plan.blogs.length === 8 && plan.posts.length === 42],
     [`40 follows / 4 edits (${plan.follows.length}/${plan.edits.length})`, plan.follows.length === 40 && plan.edits.length === 4],
     [`73 comments (${plan.comments.length})`, plan.comments.length === 73],

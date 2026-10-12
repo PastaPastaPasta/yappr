@@ -2,10 +2,11 @@ import { isReferenceNotFoundError } from '@/lib/error-utils';
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes } from './sdk-helpers';
+import type { DocumentWhereOperator } from '@dashevo/wasm-sdk';
+import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes, type QueryDocumentsOptions } from './sdk-helpers';
 import { dpnsService } from './dpns-service';
 import { paginateFetchAll } from './pagination-utils';
-import { mentionDocTypes, mentionsAreInline, type TargetKind } from '../contract-topology';
+import { inlineMentions, mentionDocTypes, mentionsAreInline, type TargetKind } from '../contract-topology';
 import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
 import type { Post } from '../../types';
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
@@ -16,9 +17,35 @@ export interface PostMentionDocument {
   $createdAt: number;
   /** The mentioning post, or on v10 the mentioning reply (see `targetKind`). */
   postId: string;
+  /** The mentioned identity: on v15, the element of the document's `mentionedUserIds` this record stands for. */
   mentionedUserId: string;
-  /** v10: `reply` when the mention is a reply's own `mentionedUserId`; a post otherwise. */
+  /** v10: `reply` when the mention is a reply's own; a post otherwise. */
   targetKind?: TargetKind;
+}
+
+/**
+ * The 5.0.0-beta.5 query operator reading one element of a typed array: an
+ * equality on the element, which takes an `orderBy` on the index properties
+ * after the array and a cursor. The 5.0.0-beta.4 SDK this app builds against
+ * neither types nor sends it, so the v15 mention reads only work once the SDK
+ * is bumped to 5.0.0-beta.5 (its own PR).
+ */
+const CONTAINS = 'contains' as string as DocumentWhereOperator;
+
+/**
+ * The `where` and `orderBy` walking, by `$createdAt` after `since` in
+ * `direction`, the documents of a {@link mentionDocTypes} type that mention
+ * `userId`, on its `mentionedUserAndTime`: `mentionedUserId ==` on a
+ * `postMention` and on a v10–v14 post or reply; on v15 the post's or reply's
+ * `mentionedUserIds` element index, pinned with `contains` and ordered by
+ * `$createdAt` alone (a typed array is ordered by only under `containsAny`).
+ */
+export function mentionsOfUserQuery(userId: string, since: number, direction: 'asc' | 'desc'): Required<Pick<QueryDocumentsOptions, 'where' | 'orderBy'>> {
+  const after: [string, DocumentWhereOperator, number] = ['$createdAt', '>', since];
+  if (inlineMentions()?.isArray) {
+    return { where: [['mentionedUserIds', CONTAINS, userId], after], orderBy: [['$createdAt', direction]] };
+  }
+  return { where: [['mentionedUserId', '==', userId], after], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', direction]] };
 }
 
 /**
@@ -41,7 +68,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
     super('postMention');
   }
 
-  /** v10: a post or reply naming the user in `mentionedUserId`, as a mention record (the document IS the mention). */
+  /** v10: a post or reply naming the user, as the user's mention record (the document IS the mention). */
   private mentionFromDocument(doc: Record<string, unknown>, userId: string, targetKind: TargetKind): PostMentionDocument {
     const $id = doc.$id as string;
     return {
@@ -85,7 +112,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    */
   async createPostMention(postId: string, ownerId: string, mentionedUserId: string): Promise<boolean> {
     if (mentionsAreInline()) {
-      // v10: no postMention doctype. The post's one indexed mention is written
+      // v10: no postMention doctype. A post's indexed mentions are written
       // with the post itself (postService.createPost) and cannot be added later.
       logger.warn('MentionService: mentions are inline on this contract; no mention document to create');
       return false;
@@ -253,10 +280,10 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * ownership ({@link loadMentioningPosts}).
    *
    * v10: the mentioning posts AND replies themselves, off their permanent
-   * `mentionedUserAndTime [mentionedUserId, $createdAt]` (the same walk as
-   * `postMention`'s), read in parallel and merged newest first, mapped onto
-   * the mention shape with `postId` = the document's id, `$ownerId` its
-   * author and `targetKind` its kind.
+   * `mentionedUserAndTime` (the same walk as `postMention`'s, see
+   * {@link mentionsOfUserQuery}), read in parallel and merged newest first,
+   * mapped onto the mention shape with `postId` = the document's id,
+   * `$ownerId` its author and `targetKind` its kind.
    *
    * A failed read returns `[]` unless `throwOnError` is set.
    */
@@ -271,11 +298,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         () => ({
           dataContractId: this.contractId,
           documentTypeName,
-          where: [
-            ['mentionedUserId', '==', userId],
-            ['$createdAt', '>', 0]
-          ],
-          orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']]
+          ...mentionsOfUserQuery(userId, 0, 'asc'),
         }),
         (doc) => inline ? this.mentionFromDocument(doc, userId, documentTypeName === 'reply' ? 'reply' : 'post') : this.transformDocument(doc),
         { maxResults: Infinity }
@@ -309,8 +332,9 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
         : [],
     ]);
     const authentic = new Set(mentions.map((mention) => `${mention.postId}:${mention.$ownerId}`));
-    // v11 tombstones clear `mentionedUserId` and leave the index anyway; this
-    // covers a node a block behind.
+    // A v11+ tombstone clears the mentions, which takes it out of
+    // mentionedUserAndTime; a mention read off a node a block behind can still
+    // list it, so a tombstone is dropped here.
     const found = withoutHiddenTombstones([...posts, ...replies.map(replyToPost)]).filter((post) => authentic.has(`${post.id}:${post.author.id}`));
     found.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     return { posts: found, preloaded };

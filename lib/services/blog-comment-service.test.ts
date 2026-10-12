@@ -194,6 +194,41 @@ describe('creating a comment', () => {
   });
 });
 
+describe('commenting on blog v8', () => {
+  const author = bs58.encode(new Uint8Array(32).fill(7));
+  const reader = bs58.encode(new Uint8Array(32).fill(8));
+
+  it('writes only the post and content: no copied flag, no post owner, and no post read', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v8');
+    const { blogPostService } = await import('./blog-post-service');
+    const getPost = vi.spyOn(blogPostService, 'getPost');
+    const create = vi.spyOn(blogCommentService, 'create').mockResolvedValue({ id: 'c' } as never);
+    await blogCommentService.createComment(reader, postA, author, ' hi ');
+    expect(create.mock.calls[0][1]).toEqual({ blogPostId: bs58.decode(postA), content: 'hi' });
+    expect(getPost).not.toHaveBeenCalled();
+  });
+
+  it('maps the 40127 of a comments-off post (or a tombstone) to the comments-off copy, without retrying', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v8');
+    const create = vi.spyOn(blogCommentService, 'create').mockRejectedValue(new Error('refused (code=40127)'));
+    await expect(blogCommentService.createComment(reader, postA, author, 'hi')).rejects.toThrow('Comments are turned off for this post');
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes other failures through', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v8');
+    vi.spyOn(blogCommentService, 'create').mockRejectedValue(new Error('offline'));
+    await expect(blogCommentService.createComment(reader, postA, author, 'hi')).rejects.toThrow('offline');
+  });
+
+  it('pins the derived blogPostId.$ownerId, as on v6', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v8');
+    const query = vi.spyOn(blogCommentService, 'query').mockResolvedValue({ documents: [] } as never);
+    await blogCommentService.getCommentsOnMyPosts(postA, 5);
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({ where: [['blogPostId.$ownerId', '==', postA], ['$createdAt', '>', 5]] }));
+  });
+});
+
 describe('commenting on blog v7', () => {
   const author = bs58.encode(new Uint8Array(32).fill(7));
   const reader = bs58.encode(new Uint8Array(32).fill(8));

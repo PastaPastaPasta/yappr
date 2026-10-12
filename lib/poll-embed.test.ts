@@ -13,8 +13,8 @@ beforeEach(() => vi.resetModules())
 afterEach(() => vi.unstubAllEnvs())
 
 describe('pollMissingMeansDeleted', () => {
-  it('reads a missing native poll on v6 as deleted', async () => {
-    const missingMeansDeleted = await load('v6', DEVNET_CONTRACT)
+  it('reads a missing native poll on v7 as deleted', async () => {
+    const missingMeansDeleted = await load('v7', DEVNET_CONTRACT)
     expect(missingMeansDeleted(true)).toBe(true)
     // A legacy link names a poll in the standalone app's contract, which a
     // devnet clone cannot see: not deleted, just unavailable here.
@@ -22,12 +22,12 @@ describe('pollMissingMeansDeleted', () => {
   })
 
   it('trusts a legacy link when the app reads this same contract', async () => {
-    const missingMeansDeleted = await load('v6', APP_CONTRACT)
+    const missingMeansDeleted = await load('v7', APP_CONTRACT)
     expect(missingMeansDeleted(false)).toBe(true)
   })
 
-  it('never says deleted before v6, where polls are permanent', async () => {
-    const missingMeansDeleted = await load('v5', DEVNET_CONTRACT)
+  it('never says deleted on v3, where polls are permanent', async () => {
+    const missingMeansDeleted = await load('v3', DEVNET_CONTRACT)
     expect(missingMeansDeleted(true)).toBe(false)
   })
 })

@@ -111,6 +111,18 @@
  *     `effect: 1` on every cost. It needs the 5.0.0-beta.4 SDK (shorthands,
  *     token configuration v1).
  *
+ * At its 5.0.0-beta.5 registration v15 also names up to eight mentions per
+ * post or reply, in the typed array `mentionedUserIds` (read off the file):
+ *
+ *   - n1 writes `mentionedUserIds` and reads `mentionedUserAndTime` with
+ *     `mentionedUserIds contains` (a 5.0.0-beta.5 operator: the live run
+ *     needs that SDK); n1h a post naming A and B is listed in each one's
+ *     mentions; n1i nine mentions, n1j a repeated one and n1k an empty list
+ *     are refused by the schema (10101); n1l an element naming no identity is
+ *     refused 40120 for path `mentionedUserIds[1]`;
+ *   - x1t's target names A; x1tb2 adding B is 40128, and x1tc2 a tombstone
+ *     keeping the mentions is 10422 blankTombstone.
+ *
  * The rest of this header describes v10.
  *
  * Registration-day battery for **contract v10**
@@ -310,6 +322,7 @@ import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { DECLARED_DELETE_RULES, DECLARED_RULES, constraintViolation, deleteConstraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 import { BLOCK_TYPES, MEDIA_DIGEST_BYTES, socialShapes } from './social-shapes.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
+import { beta4Rendering, describeConstructs } from './beta5-grammar.mjs';
 
 const CONTRACT_FILE = takeFlag('--contract-file', 'contracts/yappr-social-contract-v10.json');
 const V10 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
@@ -369,6 +382,8 @@ const YAPP_STATE = YAPP_PAUSED ? 'paused' : 'unpaused';
  * the total supply shrinks by the cost.
  */
 const YAPP_TRANSFERABLE = V10.tokens['0'].transferable !== false;
+/** v15 (5.0.0-beta.5): a post or reply names up to eight mentions in the typed array `mentionedUserIds`. */
+const MENTION_ARRAY = SOCIAL.cut.mentionArray;
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
 // r2 (post-seat): a member of the SEATED team, and a `reason` document its proposal lists (41203).
 const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
@@ -506,13 +521,14 @@ async function mediaFields(url = 'ipfs://bafyv10batterymedia', count = 1) {
 
 /**
  * Untagged means `hashtag` is ABSENT; every optional property is omitted unless
- * given. There is no `language`. A post names at most one `mentionedUserId`.
- * v13 adds `live: true` (SOCIAL.post).
+ * given. There is no `language`. `mentioned` lists the mentioned identities
+ * (bytes): one `mentionedUserId` up to v14, `mentionedUserIds` on v15
+ * (SOCIAL.mentions). v13 adds `live: true` (SOCIAL.post).
  */
-const postData = ({ content = 'v10 battery post', hashtag, sensitive, quotedPostId, quotedPostOwnerId, mentionedUserId, media } = {}) => SOCIAL.post({
+const postData = ({ content = 'v10 battery post', hashtag, sensitive, quotedPostId, quotedPostOwnerId, mentioned, media } = {}) => SOCIAL.post({
   content,
   ...(hashtag === undefined ? {} : { hashtag }),
-  ...(mentionedUserId ? { mentionedUserId } : {}),
+  ...SOCIAL.mentions(mentioned),
   ...(sensitive === undefined ? {} : { sensitive }),
   ...(quotedPostId ? { quotedPostId } : {}),
   ...(quotedPostOwnerId ? { quotedPostOwnerId } : {}),
@@ -526,8 +542,8 @@ const repostOf = ({ postId, replyId, ownerId }) => SOCIAL.post({ ...(postId ? { 
  * reply's owner, and on v13 the root post's owner (SOCIAL.reply). On v14 a
  * reply names no owner: SOCIAL.reply drops both, whatever the caller passes.
  */
-const replyData = ({ content = 'v10 battery reply', rootPostId, rootOwnerId, replyToReplyId, parentOwnerId, mentionedUserId } = {}) => SOCIAL.reply({
-  content, rootPostId, rootOwnerId, replyToReplyId, parentOwnerId, ...(mentionedUserId ? { mentionedUserId } : {}),
+const replyData = ({ content = 'v10 battery reply', rootPostId, rootOwnerId, replyToReplyId, parentOwnerId, mentioned } = {}) => SOCIAL.reply({
+  content, rootPostId, rootOwnerId, replyToReplyId, parentOwnerId, ...SOCIAL.mentions(mentioned),
 });
 const blockData = ({ blockedId }) => ({ blockedId });
 const followRequestData = ({ targetId }) => ({ targetId });
@@ -1071,7 +1087,9 @@ async function caseX1Tombstones(ctx) {
   const { sdk, contractId, botA, botB, moderator } = ctx;
   console.log('\n--- x1t. design M: an author tombstones (never deletes); references outlive a moderator removal ---');
   const targetText = `x1t target ${Date.now()}`;
-  const target = await createFeed(ctx, botB, 'post', postData({ content: targetText, hashtag: ctx.tag }), 'x1t target');
+  // v15: the target names A, so its tombstone must clear a mention (x1tc2).
+  const targetMentions = MENTION_ARRAY ? [bs58.decode(botA.ownerId)] : undefined;
+  const target = await createFeed(ctx, botB, 'post', postData({ content: targetText, hashtag: ctx.tag, mentioned: targetMentions }), 'x1t target');
   if (!target) { check('x1t fixture', false, 'no target post'); return; }
   const [targetBytes, owner] = [target, botB.ownerId].map((id) => bs58.decode(id));
   // One quote or repost per author per target: B quotes its own post, A reposts it.
@@ -1086,8 +1104,15 @@ async function caseX1Tombstones(ctx) {
 
   expectRejected('x1ta an author cannot delete its post (canBeDeleted false)', asOutcome(await deleteOwnDocument(ctx, botB, 'post', target)), NOT_DELETABLE);
   expectRejected('x1tb an edit of the text without the tombstone flag is refused (40128)', await replace(postData({ content: 'x1t edited', hashtag: ctx.tag })), IMMUTABLE_CHANGED);
-  expectRejected('x1tb2 adding a mention the post never had is refused (40128: a value the stored post lacked counts as a change)', await replace(postData({ content: targetText, hashtag: ctx.tag, mentionedUserId: bs58.decode(botA.ownerId) })), IMMUTABLE_CHANGED);
+  if (MENTION_ARRAY) {
+    expectRejected('x1tb2 (v15) adding B to the mentions is refused (40128: frozen while the post is live)', await replace(postData({ content: targetText, hashtag: ctx.tag, mentioned: [...targetMentions, bs58.decode(botB.ownerId)] })), IMMUTABLE_CHANGED);
+  } else {
+    expectRejected('x1tb2 adding a mention the post never had is refused (40128: a value the stored post lacked counts as a change)', await replace(postData({ content: targetText, hashtag: ctx.tag, mentioned: [bs58.decode(botA.ownerId)] })), IMMUTABLE_CHANGED);
+  }
   expectRejected(`x1tc a tombstone that keeps the text is refused (10422 ${BLANK_TOMBSTONE})`, await replace({ deleted: true, content: 'still here', hashtag: ctx.tag }), constraintViolation(BLANK_TOMBSTONE));
+  if (MENTION_ARRAY) {
+    expectRejected(`x1tc2 (v15) a tombstone that keeps the mentions is refused (10422 ${BLANK_TOMBSTONE})`, await replace({ deleted: true, hashtag: ctx.tag, mentionedUserIds: targetMentions }), constraintViolation(BLANK_TOMBSTONE));
+  }
   expectRejected('x1td a tombstone that changes the hashtag is refused (40128: frozen by name)', await replace({ deleted: true, hashtag: `${ctx.tag}x` }), IMMUTABLE_CHANGED);
   expectRejected('x1te a tombstone that drops the hashtag is refused (40128)', await replace({ deleted: true }), IMMUTABLE_CHANGED);
   const quotesBefore = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
@@ -1097,7 +1122,7 @@ async function caseX1Tombstones(ctx) {
   const balanceAfter = await balanceOf(ctx, botB);
   console.log(`INFO  x1t the tombstone replace cost B ${balanceBefore - balanceAfter} credits`);
   const tomb = (await fetchDocument(sdk, contractId, 'post', target))?.toJSON?.() ?? {};
-  check('x1tg it reads back as a tombstone: deleted, the hashtag, no content', tomb.deleted === true && tomb.hashtag === ctx.tag && tomb.content === undefined, describeValue({ deleted: tomb.deleted, hashtag: tomb.hashtag, content: tomb.content }));
+  check('x1tg it reads back as a tombstone: deleted, the hashtag, no content (and no mention)', tomb.deleted === true && tomb.hashtag === ctx.tag && tomb.content === undefined && tomb.mentionedUserIds === undefined, describeValue({ deleted: tomb.deleted, hashtag: tomb.hashtag, content: tomb.content, mentionedUserIds: tomb.mentionedUserIds }));
   check('x1th the quotes and the reply of a tombstoned post stay, counted', (await countBy(sdk, contractId, 'post', 'quotedPostId', target)) === quotesBefore && (await countBy(sdk, contractId, 'reply', 'rootPostId', target)) === 1 && (await fetchDocument(sdk, contractId, 'reply', reply)) !== null, `quotes ${quotesBefore}`);
   const tombRevision = BigInt((await fetchDocument(sdk, contractId, 'post', target))?.revision ?? 2);
   const again = (data) => attemptReplace(sdk, botB, { contractId, docType: 'post', id: target, revision: tombRevision, data });
@@ -1334,6 +1359,16 @@ async function caseR1Reports(ctx) {
   expectRejected('r1p a field outside changeFields is refused (41123)', asOutcome(foreign), FIELD_NOT_CHANGEABLE);
   const orphan = await changeReport(ctx, moderator, postReport.id, { resolution: 'status dropped', status: null });
   expectRejected(`r1q a resolution without a status is refused (10422 ${RESOLVED_STATUS})`, asOutcome(orphan), constraintViolation(RESOLVED_STATUS));
+  // v15 (5.0.0-beta.5) staysResolved: a resolved report never loses its status (that would reopen
+  // the reporter's withdrawal), but its outcome can still change.
+  if (DECLARED_RULES[CONTRACT_NAME]?.report?.includes('staysResolved')) {
+    const reopened = await changeReport(ctx, moderator, postReport.id, { status: null, resolution: null });
+    expectRejected('r1q2 (v15) removing a resolved report\'s status is refused (10422 staysResolved)', asOutcome(reopened), constraintViolation('staysResolved'));
+    const recast = await changeReport(ctx, moderator, postReport.id, { status: 3 });
+    await settle();
+    const recastFields = (await fetchDocument(sdk, contractId, 'report', postReport.id))?.toJSON?.() ?? {};
+    check('r1q3 (v15) a moderator may still change the outcome (status 2 → 3)', recast === null && recastFields.status === 3, (recast ?? describeValue({ status: recastFields.status })).slice(0, 200));
+  }
 
   // References are not checked again: a report on a post that is gone still resolves.
   const gonePost = await createFeed(ctx, botB, 'post', postData({ content: `r1 gone ${Date.now()}` }), 'r1 gone post');
@@ -1663,42 +1698,80 @@ async function timelessUnlike(ctx, { tagged, untagged, tag, owner, like }) {
 
 // ---- v10: one mention per post or reply, the notification windows ---------------------
 
-/** The `docType` documents naming `mentionedUserId` since an hour ago, newest first, on the permanent mentionedUserAndTime. */
-async function mentionsSinceAnHour(ctx, docType, mentionedUserId) {
+/**
+ * The `docType` documents mentioning `mentioned` since an hour ago, newest first, on the
+ * permanent mentionedUserAndTime (SOCIAL.mentionsOf: `contains` one element on v15).
+ */
+async function mentionsSinceAnHour(ctx, docType, mentioned) {
   const mentions = await readback(() => ctx.sdk.documents.query({
     dataContractId: ctx.contractId, documentTypeName: docType,
-    where: [['mentionedUserId', '==', mentionedUserId], ['$createdAt', '>', Date.now() - 3_600_000]],
-    orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']], limit: 100,
+    ...SOCIAL.mentionsOf(mentioned, Date.now() - 3_600_000, 'desc'), limit: 100,
   }));
   return [...(mentions instanceof Map ? mentions.values() : Object.values(mentions ?? {}))].filter(Boolean).map((document) => idOf(document.id));
 }
 
+/** The mentioned identities a stored post or reply reads back with, base58: its `mentionedUserId`, or v15's `mentionedUserIds`. */
+const storedMentions = (stored) => (MENTION_ARRAY ? (stored.mentionedUserIds ?? []).map(idOf) : [stored.mentionedUserId].filter(Boolean).map(idOf));
+
+/** 40120 naming the element of the mentions array that points at no identity (rs-dpp: "referenced identity <id> not found for path mentionedUserIds[1]"). */
+const elementNotFound = (index) => new RegExp(`referenced .{0,80}not found for path mentionedUserIds\\[${index}\\]`, 'i');
+
 async function caseN1Mention(ctx) {
   const { sdk, contractId, botA, botB } = ctx;
-  console.log('\n--- n1. one mention per post or reply: mentionedUserId (refersTo identity), listed by the permanent mentionedUserAndTime ---');
-  const post = await createFeedOutcome(ctx, botA, 'post', postData({ content: `n1 hello B ${Date.now()}`, mentionedUserId: bs58.decode(botB.ownerId) }));
-  expectAccepted('n1a A\'s post naming B in mentionedUserId lands', post);
+  const field = MENTION_ARRAY ? 'mentionedUserIds' : 'mentionedUserId';
+  console.log(`\n--- n1. ${MENTION_ARRAY ? 'up to eight mentions' : 'one mention'} per post or reply: ${field} (refersTo identity), listed by the permanent mentionedUserAndTime ---`);
+  const [aBytes, bBytes] = [botA.ownerId, botB.ownerId].map((id) => bs58.decode(id));
+  const post = await createFeedOutcome(ctx, botA, 'post', postData({ content: `n1 hello B ${Date.now()}`, mentioned: [bBytes] }));
+  expectAccepted(`n1a A's post naming B in ${field} lands`, post);
   if (post.ok) {
     await settle();
     const stored = (await fetchDocument(sdk, contractId, 'post', post.id))?.toJSON?.() ?? {};
-    check('n1b it reads back naming B', stored.mentionedUserId === botB.ownerId, describeValue({ mentionedUserId: stored.mentionedUserId }));
+    check('n1b it reads back naming B', JSON.stringify(storedMentions(stored)) === JSON.stringify([botB.ownerId]), describeValue({ [field]: stored[field] }));
     const listedIds = await mentionsSinceAnHour(ctx, 'post', botB.ownerId);
     check('n1c the permanent mentionedUserAndTime lists it for B, newest first since an hour ago (the "mentioned you" source and the Mentions tab)', listedIds.includes(post.id), `${listedIds.length} post(s)`);
   }
-  await expectFeedRefused(ctx, 'n1d a mention of an identity that does not exist is refused (40120)', botA, 'post', postData({ content: 'n1 ghost mention', mentionedUserId: randomIdBytes() }), REFERENCE_NOT_FOUND);
+  await expectFeedRefused(ctx, 'n1d a mention of an identity that does not exist is refused (40120)', botA, 'post', postData({ content: 'n1 ghost mention', mentioned: [randomIdBytes()] }), REFERENCE_NOT_FOUND);
 
   // A reply mentions the same way, on its own reply.mentionedUserAndTime.
   const root = await createFeed(ctx, botA, 'post', postData({ content: `n1 reply root ${Date.now()}` }), 'n1 reply root');
   if (!root) { check('n1 reply fixture', false, 'no root post'); return; }
-  const onRoot = { rootPostId: bs58.decode(root), parentOwnerId: bs58.decode(botA.ownerId) };
-  const reply = await createFeedOutcome(ctx, botA, 'reply', replyData({ content: `n1 hi B ${Date.now()}`, ...onRoot, mentionedUserId: bs58.decode(botB.ownerId) }));
-  expectAccepted('n1e A\'s reply naming B in mentionedUserId lands', reply);
+  const onRoot = { rootPostId: bs58.decode(root), parentOwnerId: aBytes };
+  const reply = await createFeedOutcome(ctx, botA, 'reply', replyData({ content: `n1 hi B ${Date.now()}`, ...onRoot, mentioned: [bBytes] }));
+  expectAccepted(`n1e A's reply naming B in ${field} lands`, reply);
   if (reply.ok) {
     await settle();
     const listedIds = await mentionsSinceAnHour(ctx, 'reply', botB.ownerId);
     check('n1f the permanent reply.mentionedUserAndTime lists it for B, newest first since an hour ago (the reply "mentioned you" source)', listedIds.includes(reply.id), `${listedIds.length} reply(ies)`);
   }
-  await expectFeedRefused(ctx, 'n1g a reply mention of an identity that does not exist is refused (40120)', botA, 'reply', replyData({ content: 'n1 ghost reply mention', ...onRoot, mentionedUserId: randomIdBytes() }), REFERENCE_NOT_FOUND);
+  await expectFeedRefused(ctx, 'n1g a reply mention of an identity that does not exist is refused (40120)', botA, 'reply', replyData({ content: 'n1 ghost reply mention', ...onRoot, mentioned: [randomIdBytes()] }), REFERENCE_NOT_FOUND);
+  if (MENTION_ARRAY) await caseN1MentionArray(ctx, { aBytes, bBytes, onRoot });
+}
+
+/** v15: several mentions in one post or reply, one index entry per element; the array's schema and per-element references. */
+async function caseN1MentionArray(ctx, { aBytes, bBytes, onRoot }) {
+  const { sdk, contractId, botA, botB } = ctx;
+  // A mentions itself and B: two identities this run holds, each listed under its own element.
+  const post = await createFeedOutcome(ctx, botA, 'post', postData({ content: `n1 hello A and B ${Date.now()}`, mentioned: [aBytes, bBytes] }));
+  expectAccepted('n1h (v15) A\'s post naming A and B lands', post);
+  if (post.ok) {
+    await settle();
+    const stored = (await fetchDocument(sdk, contractId, 'post', post.id))?.toJSON?.() ?? {};
+    check('n1h2 …it reads back naming A then B', JSON.stringify(storedMentions(stored)) === JSON.stringify([botA.ownerId, botB.ownerId]), describeValue({ mentionedUserIds: stored.mentionedUserIds }));
+    const [forA, forB] = await Promise.all([botA, botB].map((bot) => mentionsSinceAnHour(ctx, 'post', bot.ownerId)));
+    check('n1h3 …and mentionedUserAndTime lists it for A and for B, once each (one entry per element)', forA.filter((id) => id === post.id).length === 1 && forB.filter((id) => id === post.id).length === 1, `A ${forA.length}, B ${forB.length}`);
+  }
+  const reply = await createFeedOutcome(ctx, botB, 'reply', replyData({ content: `n1 hi A and B ${Date.now()}`, ...onRoot, mentioned: [bBytes, aBytes] }));
+  expectAccepted('n1h4 (v15) B\'s reply naming B and A lands', reply);
+  if (reply.ok) {
+    await settle();
+    const [forA, forB] = await Promise.all([botA, botB].map((bot) => mentionsSinceAnHour(ctx, 'reply', bot.ownerId)));
+    check('n1h5 …and reply.mentionedUserAndTime lists it for each of them', forA.includes(reply.id) && forB.includes(reply.id), `A ${forA.length}, B ${forB.length}`);
+  }
+  const nine = [aBytes, bBytes, ...Array.from({ length: 7 }, randomIdBytes)];
+  await expectFeedRefused(ctx, 'n1i (v15) a post naming nine identities is refused by the schema (10101: maxItems 8)', botA, 'post', { ...postData({ content: 'n1 nine mentions' }), mentionedUserIds: nine }, SCHEMA_REFUSED);
+  await expectFeedRefused(ctx, 'n1j (v15) a post naming B twice is refused (10101: uniqueItems)', botA, 'post', { ...postData({ content: 'n1 B twice' }), mentionedUserIds: [bBytes, bBytes] }, DUPLICATE_ITEMS);
+  await expectFeedRefused(ctx, 'n1k (v15) an empty mentions list is refused (10101: minItems 1; no mention omits the property)', botA, 'post', { ...postData({ content: 'n1 no one' }), mentionedUserIds: [] }, SCHEMA_REFUSED);
+  await expectFeedRefused(ctx, 'n1l (v15) a mention of B and of an identity that does not exist is refused 40120, naming mentionedUserIds[1]', botA, 'post', postData({ content: 'n1 B and a ghost', mentioned: [bBytes, randomIdBytes()] }), elementNotFound(1));
 }
 
 async function caseN2NotificationWindows(ctx) {
@@ -2575,11 +2648,23 @@ function selfTest() {
     expect('v14: reply parentOwnerRecent [$createdAt, replyToReplyId.$ownerId] is on the 3.5-day grid kept a week and skips a top-level reply (skipIfAbsent on the derived owner) (n2i, n2k)',
       halfWeekly('reply', 'parentOwnerRecent', '$createdAt,replyToReplyId.$ownerId') && JSON.stringify(index('reply', 'parentOwnerRecent').skipIfAbsent) === '["replyToReplyId.$ownerId"]');
   }
+  const isIdentityId = (schema) => schema?.type === 'array' && schema.byteArray === true && schema.minItems === 32 && schema.maxItems === 32
+    && schema.contentMediaType === 'application/x.dash.dpp.identifier' && schema.refersTo?.type === 'identity';
   for (const [type, cases] of [['post', 'n1c'], ['reply', 'n1f']]) {
-    expect(`${type} mentionedUserAndTime [mentionedUserId, $createdAt] is permanent (no window), skipped when absent, like tagAndTime (${cases})`, shape(type, 'mentionedUserAndTime') === 'mentionedUserId,$createdAt' && index(type, 'mentionedUserAndTime').skipIfAbsent === true && index(type, 'mentionedUserAndTime').timeRange === undefined);
-    const mentioned = schemas[type].properties.mentionedUserId;
-    expect(`${type}.mentionedUserId is an optional identifier referring to an identity (n1d, n1g)`, mentioned?.type === 'array' && mentioned.byteArray === true && mentioned.minItems === 32 && mentioned.maxItems === 32
-      && mentioned.contentMediaType === 'application/x.dash.dpp.identifier' && mentioned.refersTo?.type === 'identity' && !(schemas[type].required ?? []).includes('mentionedUserId'));
+    if (MENTION_ARRAY) {
+      // An array index enters the document once per element and always skips an empty list, so no skipIfAbsent.
+      expect(`v15: ${type} mentionedUserAndTime [mentionedUserIds, $createdAt] is permanent (no window), one entry per element (${cases}, n1h)`, shape(type, 'mentionedUserAndTime') === 'mentionedUserIds,$createdAt' && index(type, 'mentionedUserAndTime').skipIfAbsent === undefined && index(type, 'mentionedUserAndTime').timeRange === undefined);
+      const mentioned = schemas[type].properties.mentionedUserIds;
+      expect(`v15: ${type}.mentionedUserIds is an optional list of 1–8 distinct identifiers, each referring to an identity, and no mentionedUserId (n1d, n1g, n1i–n1l)`,
+        mentioned?.type === 'array' && mentioned.minItems === 1 && mentioned.maxItems === 8 && mentioned.uniqueItems === true && isIdentityId(mentioned.items)
+          && !(schemas[type].required ?? []).includes('mentionedUserIds') && !schemas[type].properties.mentionedUserId);
+      expect(`v15: ${type}.mentionedUserIds is frozen unless the ${type} is a tombstone, and the tombstone clears it (x1tb2, x1tc2)`,
+        schemas[type].immutable.some((entry) => entry.property === 'mentionedUserIds' && JSON.stringify(entry.when) === '{"absent":"deleted"}')
+          && JSON.stringify(schemas[type].propertyConstraints[BLANK_TOMBSTONE]).includes('"mentionedUserIds"'));
+    } else {
+      expect(`${type} mentionedUserAndTime [mentionedUserId, $createdAt] is permanent (no window), skipped when absent, like tagAndTime (${cases})`, shape(type, 'mentionedUserAndTime') === 'mentionedUserId,$createdAt' && index(type, 'mentionedUserAndTime').skipIfAbsent === true && index(type, 'mentionedUserAndTime').timeRange === undefined);
+      expect(`${type}.mentionedUserId is an optional identifier referring to an identity (n1d, n1g)`, isIdentityId(schemas[type].properties.mentionedUserId) && !(schemas[type].required ?? []).includes('mentionedUserId'));
+    }
   }
   // Likes keep their permanent indexes: a windowed indexOnly index cannot be
   // read as documents (the node refuses it). Design C: the heart state reads
@@ -2609,10 +2694,8 @@ function selfTest() {
   expect('follow.followers and followRequest.target stay permanent (no window)', index('follow', 'followers')?.timeRange === undefined && index('followRequest', 'target')?.timeRange === undefined);
   const retired = { post: ['quotedPostOwnerAndTime'], reply: ['parentOwnerAndTime'] };
   expect('the permanent notification indexes are gone (replaced by the windows)', Object.entries(retired).every(([type, names]) => names.every((n) => !index(type, n))));
-  const mention = schemas.post.properties.mentionedUserId;
-  expect('there is no postMention: a post names one optional mentionedUserId, an identifier that refersTo an identity (n1)',
-    !schemas.postMention && mention?.contentMediaType === 'application/x.dash.dpp.identifier' && mention.byteArray === true && mention.minItems === 32 && mention.maxItems === 32
-      && mention.refersTo?.type === 'identity' && !schemas.post.required?.includes('mentionedUserId'));
+  expect(`there is no postMention: a post names its mentions itself, ${MENTION_ARRAY ? 'in mentionedUserIds (v15)' : 'one optional mentionedUserId'} (n1)`,
+    !schemas.postMention && (schemas.post.properties.mentionedUserIds ?? schemas.post.properties.mentionedUserId) !== undefined);
   expect('reply repliesOf [rootPostId, replyToReplyId, $createdAt] is rangeCountable, ranked at rootPostId, and keeps direct replies (nullable replyToReplyId, no skipIfAbsent) (x1b, x1e, x1f, q2c–q2g, q2p)',
     shape('reply', 'repliesOf') === 'rootPostId,replyToReplyId,$createdAt' && countsAt('reply', 'repliesOf', 'rootPostId')
       && index('reply', 'repliesOf').skipIfAbsent === undefined && !schemas.reply.required.includes('replyToReplyId'));
@@ -2716,9 +2799,13 @@ const SHAPES = [
   ['post (tagged, quote + owner denorm)', 'post', postData({ hashtag: 'v10tag', quotedPostId: someId(), quotedPostOwnerId: someId() })],
   ['post (media triple + sensitive)', 'post', postData({ media: SHAPE_MEDIA, sensitive: true })],
   ['post (1000 characters)', 'post', postData({ content: 'x'.repeat(1000) })],
-  ['post (one mention)', 'post', postData({ content: 'hi', mentionedUserId: someId() })],
+  ['post (one mention)', 'post', postData({ content: 'hi', mentioned: [someId()] })],
   ['reply', 'reply', replyData({ rootPostId: someId(), parentOwnerId: someId() })],
-  ['reply (one mention)', 'reply', replyData({ rootPostId: someId(), parentOwnerId: someId(), mentionedUserId: someId() })],
+  ['reply (one mention)', 'reply', replyData({ rootPostId: someId(), parentOwnerId: someId(), mentioned: [someId()] })],
+  ...(MENTION_ARRAY ? [
+    ['post (eight mentions, n1)', 'post', postData({ content: 'hi all', mentioned: Array.from({ length: 8 }, someId) })],
+    ['reply (two mentions, n1h4)', 'reply', replyData({ rootPostId: someId(), mentioned: [someId(), someId()] })],
+  ] : []),
   ['like (tagged)', 'like', likeData({ postId: someId(), hashtag: 'v10tag', postAuthor: someId() })],
   ['like (hashtag absent)', 'like', likeData({ postId: someId(), postAuthor: someId() })],
   ['likeReply', 'likeReply', SOCIAL.likeReply({ replyId: someId(), replyAuthor: someId() })],
@@ -2744,7 +2831,11 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
   // checker, the dry run still runs, and the process exits 1 at the end.
   let contract = null;
   try {
-    contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: V10.documentSchemas, config: V10.config, tokens: V10.tokens }, true, platformVersion);
+    // 5.0.0-beta.5 grammar an older SDK cannot parse (v15's element indexes and staysResolved) is
+    // left out of this parse only (beta5-grammar.mjs); the declarations are pinned off the file above.
+    const { source: parseable, stripped } = beta4Rendering(V10);
+    if (stripped.length > 0) console.log(`NOTE  ${CONTRACT_NAME} parsed without: ${describeConstructs(stripped).join('; ')}`);
+    contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: parseable.documentSchemas, config: parseable.config, tokens: parseable.tokens }, true, platformVersion);
   } catch (e) {
     console.error(`FAIL  ${CONTRACT_NAME} does not parse with the installed SDK (a newer cut needs a newer SDK; shapes below are judged by the shape checker alone): ${String(e?.message ?? e).slice(0, 200)}`);
     process.on('exit', (code) => {

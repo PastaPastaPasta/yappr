@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { PlusIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { Switch } from '@/components/ui/switch'
 import { IconButton } from '@/components/ui/icon-button'
-import { POLLR_TOPOLOGY, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants'
+import { POLLR_TOPOLOGY, pollrHasEditableBallots } from '@/lib/constants'
 import {
   DEFAULT_POLL_DURATION,
   POLL_DURATIONS,
@@ -21,17 +21,15 @@ import {
 export interface PollDraft {
   options: string[]
   multiChoice: boolean
-  /** How long the poll stays open; every poll closes (v5 requires it, within 31 days). */
+  /** How long the poll stays open; every poll closes (v7 requires it, within 31 days). */
   duration: PollDuration
 }
 
 const LIMITS = pollLimits(POLLR_TOPOLOGY)
 const LOCKED_NOTE = 'This poll is already on Platform and can no longer be edited — retrying the post re-uses it.'
-const VOTING_NOTE = pollrPollsDeletable()
+const VOTING_NOTE = pollrHasEditableBallots()
   ? 'Polls live on the Pollr contract. You can delete your poll until someone votes. Voters can change their vote until the poll closes; after that the results are final.'
-  : pollrHasV5Ballots()
-    ? 'Polls live on the Pollr contract. Voters can change their vote until the poll closes; after that the results are final.'
-    : 'Polls live on the Pollr contract. Votes are permanent and cannot be changed.'
+  : 'Polls live on the Pollr contract. Votes are permanent and cannot be changed.'
 
 export function createPollDraft(): PollDraft {
   return { options: ['', ''], multiChoice: false, duration: DEFAULT_POLL_DURATION }

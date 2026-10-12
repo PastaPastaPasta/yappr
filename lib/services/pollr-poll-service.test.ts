@@ -23,7 +23,7 @@ const OWNER = '11111111111111111111111111111111';
 const OTHER = '22222222222222222222222222222222';
 const DAY = 24 * 60 * 60 * 1000;
 
-async function loadService(topology: 'v3' | 'v5' | 'v6') {
+async function loadService(topology: 'v3' | 'v7') {
   vi.stubEnv('NEXT_PUBLIC_POLLR_TOPOLOGY', topology);
   return (await import('./pollr-poll-service')).pollrPollService;
 }
@@ -44,12 +44,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('createPoll', () => {
-  it('v5 writes options[], optionCount, multiChoice (even false) and endsAt', async () => {
-    const service = await loadService('v5');
+  it('v7 writes exactly question, options[], multiChoice (even false) and endsAt', async () => {
+    const service = await loadService('v7');
     const endsAt = Date.now() + DAY + 0.5;
     await service.createPoll(OWNER, { question: '  Best? ', options: [' a ', 'b', ''], endsAt });
 
-    expect(await written()).toEqual({ question: 'Best?', options: ['a', 'b'], optionCount: 2, multiChoice: false, endsAt: Math.floor(endsAt) });
+    expect(await written()).toEqual({ question: 'Best?', options: ['a', 'b'], multiChoice: false, endsAt: Math.floor(endsAt) });
   });
 
   it.each([
@@ -58,8 +58,8 @@ describe('createPoll', () => {
     ['duplicate options', { options: ['Yes', 'Yes'] }, /different/],
     ['an 81-character option', { options: ['a'.repeat(81), 'b'] }, /80 characters/],
     ['a 281-character question', { question: 'q'.repeat(281) }, /280 characters/],
-  ])('v5 refuses %s before writing', async (_, overrides, message) => {
-    const service = await loadService('v5');
+  ])('v7 refuses %s before writing', async (_, overrides, message) => {
+    const service = await loadService('v7');
     await expect(
       service.createPoll(OWNER, { question: 'Best?', options: ['a', 'b'], endsAt: Date.now() + DAY, ...overrides })
     ).rejects.toThrow(message);
@@ -67,7 +67,7 @@ describe('createPoll', () => {
   });
 
   it('settles a landed, timed-out ballot replace before creating, with no vote in between', async () => {
-    const service = await loadService('v5');
+    const service = await loadService('v7');
     const order: string[] = [];
     // The voter's last ballot replace timed out but landed: its reservation is
     // still pending, and only the proof-based settle releases it.
@@ -85,7 +85,7 @@ describe('createPoll', () => {
   });
 
   it('still creates the poll when settling pending replaces fails', async () => {
-    const service = await loadService('v5');
+    const service = await loadService('v7');
     mocks.settle.mockRejectedValue(new Error('down'));
 
     await service.createPoll(OWNER, { question: 'Best?', options: ['a', 'b'], endsAt: Date.now() + DAY });
@@ -101,34 +101,35 @@ describe('createPoll', () => {
 });
 
 describe('reading a poll', () => {
-  it('keeps v5’s stored optionCount and falls back to the options read before v5', async () => {
-    const service = await loadService('v5');
+  it('reads v7’s options array, mode and close time, and v3’s enumerated options', async () => {
+    const service = await loadService('v7');
     mocks.createDocument.mockResolvedValue({
       success: true,
-      document: { $id: 'doc', $ownerId: OWNER, question: 'q', options: ['a', 'b'], optionCount: 2, multiChoice: true, endsAt: 5 },
+      document: { $id: 'doc', $ownerId: OWNER, question: 'q', options: ['a', 'b'], multiChoice: true, endsAt: 5 },
     });
-    expect(await service.createPoll(OWNER, { question: 'q', options: ['a', 'b'], multiChoice: true, endsAt: Date.now() + DAY }))
-      .toMatchObject({ options: ['a', 'b'], optionCount: 2, multiChoice: true, endsAt: 5 });
+    const poll = await service.createPoll(OWNER, { question: 'q', options: ['a', 'b'], multiChoice: true, endsAt: Date.now() + DAY });
+    expect(poll).toMatchObject({ options: ['a', 'b'], multiChoice: true, endsAt: 5 });
+    expect(poll).not.toHaveProperty('optionCount');
 
     mocks.createDocument.mockResolvedValue({ success: true, document: { $id: 'doc', $ownerId: OWNER, question: 'q', option0: 'a', option1: 'b' } });
     expect(await service.createPoll(OWNER, { question: 'q', options: ['a', 'b'], endsAt: Date.now() + DAY }))
-      .toMatchObject({ optionCount: 2, multiChoice: false });
+      .toMatchObject({ options: ['a', 'b'], multiChoice: false });
   });
 });
 
 describe('readPollOptions', () => {
-  it('reads v5’s options array and the v3/v4 enumerated fields, stopping at a gap', async () => {
+  it('reads v7’s options array and the v3/v4 enumerated fields, stopping at a gap', async () => {
     const { readPollOptions } = await import('./pollr-poll-service');
     expect(readPollOptions({ options: ['a', 'b', 'c'] })).toEqual(['a', 'b', 'c']);
     expect(readPollOptions({ option0: 'a', option1: 'b', option3: 'gap' })).toEqual(['a', 'b']);
   });
 });
 
-describe('deleting a poll (v6)', () => {
-  const poll = { id: 'poll-1', ownerId: OWNER, createdAt: new Date(0), question: 'q', options: ['a', 'b'], optionCount: 2, multiChoice: false, endsAt: 5 };
+describe('deleting a poll (v7)', () => {
+  const poll = { id: 'poll-1', ownerId: OWNER, createdAt: new Date(0), question: 'q', options: ['a', 'b'], multiChoice: false, endsAt: 5 };
 
   it('counts every ballot off byPoll, then deletes a poll nobody voted on', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     // Count trees do not materialise an empty branch: no ballots is an empty map.
     mocks.count.mockResolvedValue(new Map());
     mocks.deleteDocument.mockResolvedValue({ success: true });
@@ -142,7 +143,7 @@ describe('deleting a poll (v6)', () => {
   });
 
   it('refuses without a write once any ballot names the poll, withdrawn ones included', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     mocks.count.mockResolvedValue(new Map([['', 1n]]));
 
     expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
@@ -150,7 +151,7 @@ describe('deleting a poll (v6)', () => {
   });
 
   it('reports a ballot that landed after the count (40147) as voted', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     mocks.count.mockResolvedValue(new Map());
     mocks.deleteDocument.mockResolvedValue({
       success: false,
@@ -161,7 +162,7 @@ describe('deleting a poll (v6)', () => {
   });
 
   it('keeps a poll proven voted non-deletable, even when a lagging node later counts 0', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     mocks.count.mockResolvedValue(new Map());
     mocks.deleteDocument.mockResolvedValue({ success: false, error: 'rejected: code=40147' });
     expect(service.hasBallots(poll.id)).toBe(false);
@@ -177,7 +178,7 @@ describe('deleting a poll (v6)', () => {
   });
 
   it('holds back, writing nothing, while an own ballot write on the poll may still land', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     // An unconfirmed first vote from another card: its create reservation is still out.
     mocks.mayExecute.mockResolvedValue(true);
     mocks.count.mockResolvedValue(new Map());
@@ -194,7 +195,7 @@ describe('deleting a poll (v6)', () => {
   });
 
   it('re-checks under the write lock, so a first vote that lands while the delete waits stops it', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     const { WRITE_PRECONDITION_FAILED } = await import('./identity-nonce');
     // The preflight counts 0; the owner's first vote, queued ahead under the
     // lock, then lands, and the count inside the lock sees it.
@@ -212,7 +213,7 @@ describe('deleting a poll (v6)', () => {
   });
 
   it('re-checks pending own writes under the write lock too, reporting them as pending', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     const { WRITE_PRECONDITION_FAILED } = await import('./identity-nonce');
     mocks.count.mockResolvedValue(new Map());
     // Nothing pending at the preflight; a ballot write of the owner's is out by the time the lock is held.
@@ -229,7 +230,7 @@ describe('deleting a poll (v6)', () => {
   });
 
   it('re-checks the known ballots after its count, so evidence seen meanwhile stops the delete', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     const { markPollHasBallots } = await import('./pollr-known-ballots');
     // Another card reads a ballot while this delete's count is out; the count then lags at 0.
     mocks.count.mockImplementation(async () => {
@@ -242,7 +243,7 @@ describe('deleting a poll (v6)', () => {
   });
 
   it('remembers a positive ballot count', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     mocks.count.mockResolvedValue(new Map([['', 2n]]));
     expect(await service.countBallots(poll.id)).toBe(2);
     expect(service.hasBallots(poll.id)).toBe(true);
@@ -250,7 +251,7 @@ describe('deleting a poll (v6)', () => {
   });
 
   it('passes any other refusal through, and throws when the ballots cannot be counted', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     mocks.count.mockResolvedValue(new Map());
     mocks.deleteDocument.mockResolvedValue({ success: false, error: 'Insufficient balance' });
     expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'failed', error: 'Insufficient balance' });
@@ -259,12 +260,12 @@ describe('deleting a poll (v6)', () => {
     await expect(service.deletePoll(poll, OWNER)).rejects.toThrow('offline');
   });
 
-  it('never deletes before v6 or for anyone but the owner', async () => {
-    const v5 = await loadService('v5');
-    expect((await v5.deletePoll(poll, OWNER)).status).toBe('failed');
+  it('never deletes on v3 or for anyone but the owner', async () => {
+    const v3 = await loadService('v3');
+    expect((await v3.deletePoll(poll, OWNER)).status).toBe('failed');
     vi.resetModules();
-    const v6 = await loadService('v6');
-    expect((await v6.deletePoll(poll, OTHER)).status).toBe('failed');
+    const v7 = await loadService('v7');
+    expect((await v7.deletePoll(poll, OTHER)).status).toBe('failed');
     expect(mocks.count).not.toHaveBeenCalled();
     expect(mocks.deleteDocument).not.toHaveBeenCalled();
   });
@@ -272,7 +273,7 @@ describe('deleting a poll (v6)', () => {
 
 describe('fetchPoll', () => {
   it('reads a missing poll as null but lets a failed read throw', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     mocks.get.mockResolvedValue(undefined);
     expect(await service.fetchPoll('gone')).toBeNull();
 

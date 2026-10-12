@@ -51,7 +51,7 @@ function loadUncertain(ownerId: string): UncertainReplace[] {
     throw new Error(NONCE_STORE_ERROR);
   }
   // A replace targets a ballot read off the chain, and ballots are never
-  // deleted: each record proves its poll has one for good (v6 noBallots),
+  // deleted: each record proves its poll has one for good (noBallots),
   // whatever a lagging read shows later. Recorded on every load, before any
   // caller prunes a record (settled, past its poll's close, or another poll's).
   for (const entry of entries) markPollHasBallots(entry.pollId);
@@ -60,7 +60,7 @@ function loadUncertain(ownerId: string): UncertainReplace[] {
 
 /**
  * Record, as ballot evidence, every poll this voter's stored ballot replaces
- * name (see loadUncertain). For the v6 delete paths, which may not otherwise
+ * name (see loadUncertain). For the poll delete paths, which may not otherwise
  * read the records (a closed poll's ballot state skips them). An unreadable
  * store adds nothing.
  */
@@ -146,7 +146,7 @@ async function uncertainReplaceMayLand(ownerId: string, pollId: string): Promise
 }
 
 /**
- * Run before any Pollr write (a ballot, a poll). A v5 ballot replace whose
+ * Run before any Pollr write (a ballot, a poll). A ballot replace whose
  * confirmation timed out leaves its nonce reservation pending with no known
  * nonce, and that holds back every later write this identity makes on the
  * contract — the next ballot edit, a ballot on another poll, a new poll —

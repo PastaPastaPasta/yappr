@@ -28,6 +28,7 @@ import {
   isPropertyMaxBytesError,
   isReferenceNotFoundError,
   isReferenceRequirementError,
+  referencedPathFromError,
   isBarredFromContractError,
   isFeeMultiplierNotToleratedError,
   isGasPayerError,
@@ -501,6 +502,13 @@ describe('4.2.0-beta.4 rejections', () => {
 
   it('keeps the account message for an identity reference', () => {
     expect(categorizeError(new Error('referenced identity 9t2e not found for path followingId'))).toMatch(/account no longer exists/)
+  })
+
+  it('reads a 40120 on one element of v15 mentionedUserIds as a missing account, naming the element', () => {
+    const error = new Error('referenced identity 9t2e not found for path mentionedUserIds[2], code=40120')
+    expect(isReferenceNotFoundError(error)).toBe(true)
+    expect(referencedPathFromError(error)).toBe('mentionedUserIds[2]')
+    expect(categorizeError(error)).toMatch(/account no longer exists/)
   })
 
   it.each([

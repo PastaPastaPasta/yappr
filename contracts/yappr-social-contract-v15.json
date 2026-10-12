@@ -513,13 +513,12 @@
           "name": "mentionedUserAndTime",
           "properties": [
             {
-              "mentionedUserId": "asc"
+              "mentionedUserIds": "asc"
             },
             {
               "$createdAt": "asc"
             }
-          ],
-          "skipIfAbsent": true
+          ]
         }
       ],
       "documentsCountable": true,
@@ -628,13 +627,6 @@
           "maxItems": 4,
           "position": 14
         },
-        "mentionedUserId": {
-          "type": "identifier",
-          "position": 15,
-          "refersTo": {
-            "type": "identity"
-          }
-        },
         "deleted": {
           "type": "boolean",
           "position": 16
@@ -643,6 +635,19 @@
           "type": "boolean",
           "const": true,
           "position": 17
+        },
+        "mentionedUserIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "identifier",
+            "refersTo": {
+              "type": "identity"
+            }
+          },
+          "position": 15
         }
       },
       "tokenCost": {
@@ -800,7 +805,7 @@
                         "embedContractId",
                         "embedDocType",
                         "embedId",
-                        "mentionedUserId",
+                        "mentionedUserIds",
                         "quotedPostId",
                         "quotedReplyId",
                         "quotedPostOwnerId"
@@ -933,7 +938,7 @@
           }
         },
         {
-          "property": "mentionedUserId",
+          "property": "mentionedUserIds",
           "when": {
             "absent": "deleted"
           }
@@ -1182,13 +1187,12 @@
           "name": "mentionedUserAndTime",
           "properties": [
             {
-              "mentionedUserId": "asc"
+              "mentionedUserIds": "asc"
             },
             {
               "$createdAt": "asc"
             }
-          ],
-          "skipIfAbsent": true
+          ]
         },
         {
           "name": "rootOwnerRecent",
@@ -1307,16 +1311,22 @@
           "maxItems": 4,
           "position": 9
         },
-        "mentionedUserId": {
-          "type": "identifier",
-          "refersTo": {
-            "type": "identity"
-          },
-          "position": 10
-        },
         "deleted": {
           "type": "boolean",
           "position": 11
+        },
+        "mentionedUserIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "identifier",
+            "refersTo": {
+              "type": "identity"
+            }
+          },
+          "position": 10
         }
       },
       "tokenCost": {
@@ -1400,7 +1410,7 @@
                         "encryptedContent",
                         "keyGeneration",
                         "nonce",
-                        "mentionedUserId"
+                        "mentionedUserIds"
                       ]
                     },
                     0
@@ -1502,7 +1512,7 @@
           }
         },
         {
-          "property": "mentionedUserId",
+          "property": "mentionedUserIds",
           "when": {
             "absent": "deleted"
           }
@@ -1697,6 +1707,16 @@
           "anyOf": [
             {
               "absent": "resolution"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        },
+        "staysResolved": {
+          "ifThen": [
+            {
+              "present": "$old.status"
             },
             {
               "present": "status"

@@ -55,6 +55,7 @@ import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as
 import { contractSource, registrationJson, renderModeration, withInterim } from './register-lib.mjs';
 import { CREATE_TRANSITION_BUDGET, STATE_TRANSITION_CAP, auditNodeRules, createTransitionSize, metaSchemaProblems, runContractProbes } from './contract-probes.mjs';
 import { runConstraintCases } from './property-constraint-cases.mjs';
+import { SDK_VERSION, beta4Rendering, describeConstructs } from './beta5-grammar.mjs';
 
 /** Any valid 32-byte identifier; schema validation never looks at it. */
 const PLACEHOLDER_ID = '11111111111111111111111111111111';
@@ -137,10 +138,15 @@ function validateFile(file, { immutable, strictSize, network, interim }) {
   const declared = loadContractSource(file);
   const source = { ...declared, config: withInterim(declared.config, { network, interim }) };
   const platformVersion = PlatformVersion.latest();
-  const contract = parseContract(source, platformVersion);
-  console.log(`OK  ${file} parses under FULL validation (wasm-sdk)`);
-  parseWithNodeRules(source);
-  console.log(`OK  ${file} parses under the node rules (wasm-dpp2: meta-schema + index shapes)`);
+  // 5.0.0-beta.5 grammar an older SDK cannot parse is stripped from the wasm parses only, and named;
+  // the audits below judge the whole file, and b5val (rs-dpp 5.0.0-beta.5) the stripped parts.
+  const { source: parseable, stripped } = beta4Rendering(source);
+  const contract = parseContract(parseable, platformVersion);
+  const without = stripped.length > 0 ? ` without its ${stripped.length} 5.0.0-beta.5 construct(s)` : '';
+  console.log(`OK  ${file} parses under FULL validation (wasm-sdk ${SDK_VERSION})${without}`);
+  parseWithNodeRules(parseable);
+  console.log(`OK  ${file} parses under the node rules (wasm-dpp2: meta-schema + index shapes)${without}`);
+  for (const line of describeConstructs(stripped)) console.log(`    NOT PARSED BY THE SDK (5.0.0-beta.5 grammar; judged by the audit below and by b5val): ${line}`);
   console.log(`    platform version: ${platformVersion.version} (${platformVersion.__type})`);
   const declaredInterim = declared.config.moderation?.moderators?.interim?.$type;
   const renderedInterim = source.config.moderation?.moderators?.interim?.$type;
@@ -180,7 +186,8 @@ function validateFile(file, { immutable, strictSize, network, interim }) {
   }
   // The node-side rules neither parse runs, for the declarations Yappr uses.
   const size = createTransitionSize(contract, { DataContractCreateTransition, platformVersion });
-  console.log(`    create size:      ~${size.bytes} B signed (budget ${CREATE_TRANSITION_BUDGET}, cap ${STATE_TRANSITION_CAP})`);
+  const lowerBound = stripped.length > 0 ? ' — a lower bound: the stripped constructs are not in it; b5val measures the real create' : '';
+  console.log(`    create size:      ~${size.bytes} B signed (budget ${CREATE_TRANSITION_BUDGET}, cap ${STATE_TRANSITION_CAP})${lowerBound}`);
   const meta = metaSchemaProblems(source);
   console.log(`    meta-schema v3:   ${meta.length === 0 ? 'ok' : `${meta.length} problem(s)`}`);
   const problems = [...auditNodeRules(source, { network }), ...meta];
@@ -296,7 +303,16 @@ async function main() {
   if (probes) {
     const platformVersion = PlatformVersion.latest();
     const sizeOf = (contract) => createTransitionSize(contract, { DataContractCreateTransition, platformVersion });
-    const failed = runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf, updateRefusals });
+    // As for a file: the wasm parses see each probe without the 5.0.0-beta.5 grammar an older SDK
+    // cannot parse; the audit judges it whole (beta5-grammar.mjs).
+    const parseable = (parse) => (source, ...rest) => parse(beta4Rendering(source).source, ...rest);
+    const failed = runContractProbes({
+      loadContractSource,
+      parseContract: parseable(parseContract),
+      parseWithNodeRules: parseable(parseWithNodeRules),
+      sizeOf,
+      updateRefusals: (stored, updated) => updateRefusals(beta4Rendering(stored).source, beta4Rendering(updated).source),
+    });
     if (failed > 0) throw new Error(`${failed} probe(s) did not behave as recorded`);
   }
   if (constraints) {

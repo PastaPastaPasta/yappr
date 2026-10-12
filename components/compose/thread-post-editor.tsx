@@ -34,6 +34,8 @@ interface ThreadPostEditorProps {
    * question of a poll that already landed on Platform.
    */
   locked?: boolean
+  /** Shown under the body when it mentions more people than the post notifies (`mentionLimitHint`). */
+  mentionHint?: string | null
 }
 
 export function ThreadPostEditor({
@@ -53,6 +55,7 @@ export function ThreadPostEditor({
   onPollClick,
   pollAttached = false,
   locked = false,
+  mentionHint = null,
 }: ThreadPostEditorProps) {
   const localRef = useRef<HTMLTextAreaElement>(null)
   const ref = textareaRef || localRef
@@ -377,6 +380,10 @@ export function ThreadPostEditor({
               This text is your poll&apos;s question and can&apos;t change now that the poll is
               live. Remove the poll to edit it.
             </p>
+          )}
+
+          {isActive && !isPosted && !locked && mentionHint && (
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{mentionHint}</p>
           )}
 
           {/* Keep attachment cost and the count visible in edit, preview and locked states. */}

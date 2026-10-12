@@ -2,7 +2,7 @@
 
 App Connect logs a user in by having their wallet add keys to their identity that are scoped to Yappr. The main one is an AUTHENTICATION key bound to a **contract group**, so one key can sign for every Yappr contract and nothing else. This document covers the contract side: the anchor contract that registers the group, which contracts join it, how they are registered, and how the app decides whether to trust the group.
 
-**Status: nothing is registered anywhere yet, and no client code reads any of this.** The PR that added it ships the anchor contract, the publisher (`scripts/register-app-connect-contracts.mjs`), the battery (`scripts/verify-appconnect.mjs`), the offline probes and empty env names. The first registration is planned for sakura at the beta.5 cut-over, where every member contract is re-created into the new group together with social v15.
+**Status: nothing is registered anywhere yet, and no client code reads any of this.** The PR that added it ships the anchor contract, the publisher (`scripts/register-app-connect-contracts.mjs`), the battery (`scripts/verify-appconnect.mjs`), the offline probes and empty env names. The first registration is planned for sakura's 5.0.0-beta.5 genesis, where every member contract is created into the new group, with the beta.5 re-cuts ([PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)). It needs the 5.0.0-beta.5 SDK: on 5.0.0-beta.4 the publisher stops at the first file using beta.5 grammar.
 
 Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
@@ -70,16 +70,17 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 | Nonce | Entry | File | sha256 | Signed create | Env |
 | ---: | --- | --- | --- | ---: | --- |
 | N | `app` (registers the group) | `yappr-app-contract.json` | `d3acd888…` | 707 B | `NEXT_PUBLIC_APP_CONNECT_APP_ID` |
-| N+1 | `social` (v15) | `yappr-social-contract-v15.json` | `d2e72900…` | 16,288 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
+| N+1 | `social` (v15) | `yappr-social-contract-v15.json` | `9b6c7eed…` | ~16,456 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
 | N+2 | `blocks` | `yappr-blocks-contract.json` | `ba0ef67a…` | 1,258 B | `NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID` |
 | N+3 | `dmV5` | `yappr-dm-contract-v5.json` | `4fe2b3f4…` | 3,557 B | `NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID` |
-| N+4 | `blog` (v7) | `yappr-blog-contract.json` | `0b7d6839…` | 6,754 B | `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` |
-| N+5 | `pollr` (v6) | `pollr-contract.json` | `75a9deec…` | 4,171 B | `NEXT_PUBLIC_POLLR_CONTRACT_ID` |
-| N+6 | `storefront` (v7) | `yappr-storefront-contract.json` | `ab7cd333…` | 16,604 B | `NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID` |
+| N+4 | `blog` (v8) | `yappr-blog-contract.json` | `79c8a462…` | ~6,657 B | `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` |
+| N+5 | `pollr` (v7) | `pollr-contract.json` | `4b660df8…` | ~3,704 B | `NEXT_PUBLIC_POLLR_CONTRACT_ID` |
+| N+6 | `storefront` (v8) | `yappr-storefront-contract.json` | `8f0feeeb…` | ~16,314 B | `NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID` |
 | N+7 | `authVault` | `yappr-auth-vault-contract.json` | `cecf0ccc…` | 2,029 B | `NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID` |
 
 - Signed sizes are the PV14 version 1 creates with the membership. A membership adds about 33 B to a create.
-- Every file passes rs-dpp 5.0.0-beta.4 full validation at PV14 (`b4val`), the two wasm full parses, meta-schema v3 and the node-rule audit. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
+- Every file passes rs-dpp's full validation at PV14 (5.0.0-beta.5 `b5val` for the four beta.5 re-cuts, 5.0.0-beta.4 `b4val` for the others), meta-schema v3 at beta.5 and the node-rule audit. The beta.5 re-cuts pass the two 5.0.0-beta.4 wasm parses without their beta.5 constructs (`scripts/beta5-grammar.mjs`), the others as written. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
+- The `~` sizes of the beta.5 re-cuts come from `b5val`'s create transition (the same offset to the publisher's measurement as for the earlier cuts); the publisher measures them exactly once it runs on the 5.0.0-beta.5 SDK.
 - None embeds another contract's id. The publisher refuses a `SOCIAL_CONTRACT_ID` placeholder, so the order inside the set only fixes the ids.
 - **Cost:** about 263e9 credits (2.6 DASH, ~15,800¢) by the beta.3 per-contract costs on sakura. The shorthand files are smaller, so expect a little less.
 
@@ -161,7 +162,7 @@ GROUP_ID=3S3owNijnVrxE9FvgcHbCTG6iogKBwg69iwFhV7Pke8c
 GROUP_OWNER=9RPq2JuMsmrTUoxQLricaT245t4bYskCj4hXWcedCagH
 nonce  contract    id                                            source
    13  app         CWbSpGNiKGL1i3bmLSWiMQvv364FBCh8sgBqNb1Qo9N9  yappr-app-contract.json d3acd888168f… (registers the group and joins it)
-   14  social      BVW1hBXxLSSTo7V5ZXUf6vhJ3Zkb2CgWoCQz3fHt9t9F  yappr-social-contract-v15.json d2e729005ce6…
+   14  social      BVW1hBXxLSSTo7V5ZXUf6vhJ3Zkb2CgWoCQz3fHt9t9F  yappr-social-contract-v15.json 9b6c7eeda319…
    …
    20  authVault   6u6Ztd6V64L1tn7YuCMzZntqAcv1rAFfmVWrXCN6xC3e  yappr-auth-vault-contract.json cecf0ccca95a…
 ```

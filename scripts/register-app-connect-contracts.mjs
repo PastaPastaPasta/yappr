@@ -52,6 +52,7 @@ import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
 import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, planAppConnectSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
+import { requireSdkFor } from './beta5-grammar.mjs';
 import { describeErr, signerFor } from './owner-keys.mjs';
 import { auditModeration, contractSource, registrationJson, withInterim } from './register-lib.mjs';
 import { envValue, network } from './sdk-env.mjs';
@@ -112,6 +113,8 @@ function assemble(entry, ownerId) {
 /** A create at the entry's nonce, carrying the group registration (anchor only) and the membership. */
 function buildCreate(entry, { plan, platformVersion, signing }) {
   const { source, json } = assemble(entry, plan.groupOwner);
+  // The create carries the file as written: 5.0.0-beta.5 grammar needs the 5.0.0-beta.5 SDK.
+  requireSdkFor(source, entry.file);
   const dataContract = DataContract.fromJSON(json, true, platformVersion);
   if (dataContract.id.toBase58() !== entry.id) throw new Error(`${entry.name}: parsed id ${dataContract.id.toBase58()} != ${entry.id}`);
   if (json.config.moderation) auditModeration(json.documentSchemas, dataContract);

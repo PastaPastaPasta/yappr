@@ -312,10 +312,12 @@ export function isFrozenBalanceError(error: unknown): boolean {
  *
  * This is the `refersTo` family introduced with protocol v14. On the yappr v9
  * contract `follow.followingId` and `postMention.mentionedUserId` (v10:
- * `post.mentionedUserId`) declare
- * `refersTo: { type: 'identity' }`, so following or mentioning an identity that
- * is not on chain is rejected by consensus instead of creating a dangling
- * document. The rejection is permanent: retrying cannot make the target appear.
+ * `post.mentionedUserId`; v15: every element of `post.mentionedUserIds`)
+ * declare `refersTo: { type: 'identity' }`, so following or mentioning an
+ * identity that is not on chain is rejected by consensus instead of creating a
+ * dangling document. A typed array's rejection names the element, e.g. "for
+ * path mentionedUserIds[2]". The rejection is permanent: retrying cannot make
+ * the target appear.
  *
  * Matches both the camel-cased consensus error names and the human phrasings
  * Drive renders, e.g. "referenced identity <id> not found for path followingId"

@@ -21,7 +21,7 @@ import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsConfigured, pollrIsV4 } from '@/lib/constants'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
-import { characterCount, contentOverage, hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
+import { characterCount, contentOverage, firstPostMentionHints, hasVisibleContent, isOverContentLimit, mentionLimitHint } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { mediaTypeOfMime } from '@/lib/media/media-fields'
 import { POSTING_CLOSED_COPY } from '@/lib/error-utils'
@@ -359,6 +359,11 @@ export function ComposeModal() {
   }
 
   const teaserLength = firstPost?.teaser ? characterCount(firstPost.teaser) : 0
+  const firstMentionHints = firstPostMentionHints({
+    body: firstPost?.content ?? '',
+    encrypted: willBeEncrypted,
+    teaser: visibility === 'private-with-teaser' ? firstPost?.teaser : undefined,
+  })
 
   return (
     <>
@@ -523,7 +528,10 @@ export function ComposeModal() {
                                     className="w-full min-h-[60px] text-sm resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600"
                                     maxLength={TEASER_LIMIT + 50}
                                   />
-                                  <div className="flex items-center justify-end mt-2">
+                                  <div className="flex items-center justify-end gap-3 mt-2">
+                                    {firstMentionHints.teaser && (
+                                      <span className="mr-auto text-xs text-gray-500 dark:text-gray-400">{firstMentionHints.teaser}</span>
+                                    )}
                                     <span className={`text-xs ${teaserLength > TEASER_LIMIT ? 'text-red-500' : teaserLength > TEASER_LIMIT - 20 ? 'text-amber-500' : 'text-gray-400'}`}>
                                       {teaserLength}/{TEASER_LIMIT}
                                     </span>
@@ -551,6 +559,7 @@ export function ComposeModal() {
                                 onContentChange={(content) => updateThreadPost(post.id, content)}
                                 // Poll documents are immutable; once one lands the question is fixed.
                                 locked={index === 0 && !!poll.createdPollId}
+                                mentionHint={index === 0 ? firstMentionHints.body : mentionLimitHint(post.content)}
                                 textareaRef={index === 0 ? firstTextareaRef : undefined}
                                 extraCharacters={post.id === firstUnposted?.id ? imageUrlExtraLength : 0}
                                 {...(!post.postedPostId

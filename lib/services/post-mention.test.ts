@@ -1,7 +1,8 @@
 /**
- * v10 indexes one mention per post or reply, inline: `createPost` and
+ * v10 indexes a post's or reply's mentions inline: `createPost` and
  * `createReply` resolve the first @mention of the PUBLIC content and write it
- * as the document's own `mentionedUserId`.
+ * as the document's own `mentionedUserId`; v15 writes the first eight as
+ * `mentionedUserIds`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import bs58 from 'bs58'
@@ -111,5 +112,72 @@ describe('inline reply mention (v10)', () => {
       expect(await writtenReply(topology, 'hey @bob'), topology).not.toHaveProperty('mentionedUserId')
     }
     expect(resolveIdentity).not.toHaveBeenCalled()
+  })
+})
+
+describe('inline mentions on v15 (mentionedUserIds, up to 8)', () => {
+  const ids = Object.fromEntries(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].map((name, n) => [name, bs58.encode(new Uint8Array(32).fill(10 + n))]))
+  const mentioned = (data: Record<string, unknown>) => (data.mentionedUserIds as Uint8Array[] | undefined)?.map((bytes) => bs58.encode(bytes))
+
+  beforeEach(() => {
+    // `alias` is a second name of b's identity; `ghost` resolves to nobody.
+    resolveIdentity.mockImplementation(async (name: string) => (name === 'alias' ? ids.b : ids[name] ?? null))
+  })
+
+  it('writes the distinct mentions in order of appearance as raw identifiers', async () => {
+    const data = await written('v15', 'hi @C and @a.dash, then @c again and @b')
+    expect(mentioned(data)).toEqual([ids.c, ids.a, ids.b])
+    expect((data.mentionedUserIds as Uint8Array[])[0]).toBeInstanceOf(Uint8Array)
+    expect(data).not.toHaveProperty('mentionedUserId')
+    expect(resolveIdentity.mock.calls.map(([name]) => name)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('fills all 8 slots: skips a name that does not resolve and names an identity once', async () => {
+    const data = await written('v15', '@a @ghost @alias @b @c @d @e @f @g @h @i')
+    // ghost is skipped and alias is b, so the 8 identities run to h; i is the ninth.
+    expect(mentioned(data)).toEqual([ids.a, ids.b, ids.c, ids.d, ids.e, ids.f, ids.g, ids.h])
+    expect(resolveIdentity).toHaveBeenCalledTimes(11)
+  })
+
+  it('looks up at most 16 names, in one batch', async () => {
+    const ghosts = Array.from({ length: 15 }, (_, n) => `@ghost${n}`).join(' ')
+    const data = await written('v15', `${ghosts} @a @b`)
+    expect(mentioned(data)).toEqual([ids.a])
+    expect(resolveIdentity).toHaveBeenCalledTimes(16)
+    expect(resolveIdentity).not.toHaveBeenCalledWith('b')
+  })
+
+  it('writes no mentions, and still posts, when the username lookup cannot load', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v15')
+    const { postService } = await import('./post-service')
+    const create = vi.spyOn(postService, 'create').mockResolvedValue({} as Awaited<ReturnType<typeof postService.create>>)
+    // Only the lazy lookup fails to load, after the post module itself has.
+    vi.doMock('./dpns-service', () => {
+      throw new Error('chunk failed to load')
+    })
+    try {
+      await postService.createPost('owner', 'hi @a')
+      expect(create).toHaveBeenCalledTimes(1)
+      expect(create.mock.calls[0][1]).not.toHaveProperty('mentionedUserIds')
+      expect(resolveIdentity).not.toHaveBeenCalled()
+    } finally {
+      vi.doMock('./dpns-service', () => ({ dpnsService: { resolveIdentity } }))
+    }
+  })
+
+  it('omits the property when nothing resolves (an empty list is refused)', async () => {
+    expect(await written('v15', 'no mentions')).not.toHaveProperty('mentionedUserIds')
+    expect(await written('v15', 'only @ghost')).not.toHaveProperty('mentionedUserIds')
+  })
+
+  it('writes a reply\'s mentions the same way', async () => {
+    expect(mentioned(await writtenReply('v15', 'agreed @b, cc @a'))).toEqual([ids.b, ids.a])
+  })
+
+  it('keeps v14 at one mentionedUserId, the first name', async () => {
+    const data = await written('v14', 'hi @a and @b')
+    expect(data.mentionedUserId).toEqual(bs58.decode(ids.a))
+    expect(data).not.toHaveProperty('mentionedUserIds')
+    expect(resolveIdentity).toHaveBeenCalledTimes(1)
   })
 })

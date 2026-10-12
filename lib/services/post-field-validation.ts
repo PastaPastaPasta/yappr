@@ -144,8 +144,9 @@ export const hashtagValidation = new PostFieldValidator({
 export const mentionValidation = new PostFieldValidator({
   kind: 'mention',
   extract: extractMentions,
-  // v10: the post's one indexed mention is written with the post and the
-  // rest are plain text by design, so nothing can have failed to register.
+  // v10: the post's indexed mentions (one, or eight on v15) are written with
+  // the post and the rest are plain text by design, so nothing can have
+  // failed to register.
   isInline: mentionsAreInline,
   // Mention documents carry identity ids; content carries usernames, so the
   // registered set is resolved back to normalized usernames for comparison.

@@ -22,6 +22,8 @@
  * nothing here names a real document.
  */
 
+import { SDK_VERSION, beta4Rendering, describeConstructs, strippedRules } from './beta5-grammar.mjs';
+
 const bytes = (n) => crypto.getRandomValues(new Uint8Array(n));
 const id = () => bytes(32);
 
@@ -32,16 +34,20 @@ export const DECLARED_RULES = {
     reply: ['privateAllOrNone', 'privateHasNoMedia'],
     report: ['oneTarget', 'otherHasNote', 'resolvedHasStatus'],
   },
+  // Storefront v8 (5.0.0-beta.5): an order's store must be active through a `where`
+  // condition on storeId (40127), so storeOrder declares no rule.
   'yappr-storefront-contract.json': {
     storeItem: ['pricedHasCurrency', 'onePrice', 'oneStock', 'optionTable', 'comboTable', 'comboStocks', 'comboSkus', 'comboWeights', 'comboImages'],
     shippingZone: ['flatRateHasCurrency', 'tieredHasTiers'],
-    storeOrder: ['storeIsOpen'],
   },
+  // Pollr v7 (5.0.0-beta.5): every vote rule reads the poll (`referenced`); the close is the
+  // pollId `where` condition `endsAt >= $updatedAt` (40127), not a rule.
   'pollr-contract.json': {
-    poll: ['endsAfterCreation', 'endsWithin31Days', 'optionCountMatches'],
-    vote: ['choiceIsAnOption', 'multiChoiceIsSlot', 'singleUsesSlotZero', 'slotIsAnOption', 'writtenBeforeClose'],
+    poll: ['endsAfterCreation', 'endsWithin31Days'],
+    vote: ['choicesAreOptions', 'choicesAreOptionsHigh', 'singleChoice'],
   },
-  'yappr-blog-contract.json': { blogPost: ['chunksContiguous', 'hasBody', 'tombstoneIsBlank', 'publishedNotAhead'], blogComment: ['commentsOpen'] },
+  // Blog v8 (5.0.0-beta.5): comments-off is a `where` condition on blogPostId (40127).
+  'yappr-blog-contract.json': { blogPost: ['chunksContiguous', 'hasBody', 'tombstoneIsBlank', 'publishedNotAhead'] },
 };
 
 // ---- Base documents (valid under every rule) --------------------------------
@@ -54,7 +60,6 @@ const privateFields = () => ({ encryptedContent: bytes(48), keyGeneration: 1, no
 const embed = () => ({ embedContractId: id(), embedDocType: 'poll', embedId: id() });
 /** v10: a mediaUrl needs its hash and fingerprint (dependentRequired, 10101 before any rule runs). */
 const media = (mediaUrl) => ({ mediaUrl, mediaHash: bytes(32), mediaFingerprint: bytes(8) });
-export const baseOrder = () => ({ storeId: id(), sellerId: id(), encryptedPayload: bytes(64), nonce: bytes(24), storeStatus: 'active' });
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
 export const baseZone = () => ({ storeId: id(), name: 'constraint probe', rateType: 'flat' });
 /**
@@ -106,16 +111,18 @@ export const fullVariants = () => {
 export const CASE_NOW = Date.now();
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-/** Pollr v5: a three-option single-choice poll closing in a day. */
-export const basePoll = () => ({ question: 'constraint probe?', options: ['a', 'b', 'c'], optionCount: 3, multiChoice: false, endsAt: CASE_NOW + DAY });
-/** A single-choice ballot (slot 0) for option 1, on a poll closing in an hour. */
-const singleBallot = (fields = {}) => ({ pollId: id(), slot: 0, choice: 1, pollOptionCount: 3, pollMultiChoice: false, pollEndsAt: CASE_NOW + HOUR, ...fields });
-/** A multi-choice ballot ticking option 2 (slot 2), on a poll closing in an hour. */
-const multiBallot = (fields = {}) => ({ pollId: id(), slot: 2, choice: 2, pollOptionCount: 3, pollMultiChoice: true, pollEndsAt: CASE_NOW + HOUR, ...fields });
-/** A later write of a ballot: `$revision` 2+ and its own block time. */
-const replaced = (revision = 2n, created = CASE_NOW - HOUR) => ({ replace: true, at: { createdAt: created, updatedAt: CASE_NOW, revision } });
-/** Blog v6 derives the post owner through blogPostId; there is no blogPostOwnerId to send. */
-export const baseComment = () => ({ blogPostId: id(), content: 'constraint probe' });
+/** Pollr v7: a three-option single-choice poll closing in a day. */
+export const basePoll = () => ({ question: 'constraint probe?', options: ['a', 'b', 'c'], multiChoice: false, endsAt: CASE_NOW + DAY });
+/** A pollr v7 ballot naming `choices` (none = withdrawn). */
+const ballot = (choices) => ({ pollId: id(), ...(choices.length > 0 ? { choices } : {}) });
+/**
+ * The case option naming the poll a ballot's rules read (`referenced`): its
+ * options (three unless the case says otherwise) and mode. Every vote rule
+ * reads the poll, which no SDK pre-check can, so the offline oracle skips
+ * these cases; the live battery (verify-pollr p10) broadcasts the refused ones
+ * on a real poll of that shape.
+ */
+const onPoll = (multiChoice, options = 3) => ({ referenced: { pollId: { options: Array.from({ length: options }, (_, i) => `o${i}`), multiChoice } } });
 export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', slug: 'constraint-probe', data0: bytes(16) });
 /**
  * Blog v7: an author's delete. `deleted` and comments off, every content field
@@ -206,57 +213,43 @@ export const CONSTRAINT_CASES = {
     ['shippingZone: a flat rate with no currency', 'shippingZone', { ...baseZone(), flatRate: 500 }, 'flatRateHasCurrency'],
     ['shippingZone: weight_tiered with no tiers', 'shippingZone', { ...baseZone(), rateType: 'weight_tiered' }, 'tieredHasTiers'],
     ['shippingZone: price_tiered with no tiers', 'shippingZone', { ...baseZone(), rateType: 'price_tiered', flatRate: 100, currency: 'USD' }, 'tieredHasTiers'],
-    // QA D-25: storeStatus copies the store's status through the storeId agreement
-    // (40127 on a mismatch), so the rule judges the store's own status.
-    ['storeOrder: at an active store', 'storeOrder', baseOrder(), null],
-    ['storeOrder: at a paused store', 'storeOrder', { ...baseOrder(), storeStatus: 'paused' }, 'storeIsOpen'],
-    ['storeOrder: at a closed store', 'storeOrder', { ...baseOrder(), storeStatus: 'closed' }, 'storeIsOpen'],
     // Storefront v6 (the mainnet re-cut) kept these rules; its new shapes must
-    // still pass them: a digital product and an order payload at the 5,120 B cap.
+    // still pass them.
     ['storeItem: a digital product priced with a currency', 'storeItem', { ...baseItem(), basePrice: 1000, currency: 'USD', fulfillment: 'digital' }, null],
     ['storeItem: a digital product priced with no currency', 'storeItem', { ...baseItem(), basePrice: 1000, fulfillment: 'digital' }, 'pricedHasCurrency'],
     ['storeItem: a digital product with variants', 'storeItem', { ...variantItem(), fulfillment: 'digital' }, null],
     ['storeItem: a price at 2^53-1 with a currency', 'storeItem', { ...baseItem(), basePrice: Number.MAX_SAFE_INTEGER, currency: 'DASH' }, null],
-    ['storeOrder: a 5,120 B payload at an active store', 'storeOrder', { ...baseOrder(), encryptedPayload: bytes(5120) }, null],
   ],
-  // Pollr v5 (docs/NON_SOCIAL_CONTRACTS.md). The offline check judges system
-  // times by what the case says, so "after close" is a pollEndsAt in the past.
-  // `offlineOnly` marks a case a live create cannot reproduce: one the JSON
-  // schema refuses before any rule runs, or one whose margin is a single
-  // millisecond of block time.
+  // Pollr v7 (5.0.0-beta.5, docs/NON_SOCIAL_CONTRACTS.md). The poll's rules read
+  // the poll alone; `offlineOnly` marks a case a live create cannot reproduce
+  // (the schema refuses it first, or its margin is a millisecond of block time).
+  // The vote rules read the poll a ballot names: elements 0-9 must each be below
+  // its options count (`choicesAreOptions` for options+0…3, `choicesAreOptionsHigh`
+  // for options+4…7) and a single-choice poll takes at most one. Withdrawn = no
+  // `choices`. The close is the pollId `where` (40127), which no rule case models.
   'pollr-contract.json': [
     ['poll: closes in 1 day', 'poll', basePoll(), null],
     ['poll: closes in exactly 31 days', 'poll', { ...basePoll(), endsAt: CASE_NOW + 31 * DAY }, null],
-    ['poll: ten options', 'poll', { ...basePoll(), options: Array.from({ length: 10 }, (_, i) => `o${i}`), optionCount: 10 }, null],
+    ['poll: ten options', 'poll', { ...basePoll(), options: Array.from({ length: 10 }, (_, i) => `o${i}`) }, null],
     ['poll: closes in 31 days + 1 ms', 'poll', { ...basePoll(), endsAt: CASE_NOW + 31 * DAY + 1 }, 'endsWithin31Days', { offlineOnly: true }],
     ['poll: no endsAt (the schema requires it; the rules alone refuse it too)', 'poll', drop(basePoll(), 'endsAt'), 'endsAfterCreation', { offlineOnly: true }],
-    ['poll: optionCount disagrees with options', 'poll', { ...basePoll(), optionCount: 2 }, 'optionCountMatches'],
     ['poll: born closed', 'poll', { ...basePoll(), endsAt: CASE_NOW - 1000 }, 'endsAfterCreation'],
-    ['vote: single, created before close', 'vote', singleBallot(), null],
-    ['vote: single, created after close', 'vote', singleBallot({ pollEndsAt: CASE_NOW - HOUR }), 'writtenBeforeClose'],
-    ['vote: single, choice changed before close', 'vote', singleBallot({ choice: 2 }), null, replaced()],
-    ['vote: single, choice changed after close', 'vote', singleBallot({ choice: 2, pollEndsAt: CASE_NOW - HOUR }), 'writtenBeforeClose', replaced(2n, CASE_NOW - 2 * HOUR)],
-    ['vote: single, withdrawn (choice dropped) before close', 'vote', drop(singleBallot(), 'choice'), null, replaced()],
-    ['vote: single, withdrawn after close', 'vote', drop(singleBallot({ pollEndsAt: CASE_NOW - HOUR }), 'choice'), 'writtenBeforeClose', replaced()],
-    ['vote: no pollEndsAt', 'vote', drop(singleBallot(), 'pollEndsAt'), 'writtenBeforeClose', { offlineOnly: true }],
-    ['vote: single, choice past the options', 'vote', singleBallot({ choice: 3 }), 'choiceIsAnOption'],
-    ['vote: single, a second ballot (slot 2)', 'vote', singleBallot({ slot: 2, choice: 2 }), 'singleUsesSlotZero'],
-    ['vote: multi, option 2 ticked (slot 2)', 'vote', multiBallot(), null],
-    ['vote: multi, unticked (choice dropped) before close', 'vote', drop(multiBallot(), 'choice'), null, replaced()],
-    ['vote: multi, re-ticked after close', 'vote', multiBallot({ pollEndsAt: CASE_NOW - HOUR }), 'writtenBeforeClose', replaced(3n)],
-    ['vote: multi, slot 2 holding choice 1', 'vote', multiBallot({ choice: 1 }), 'multiChoiceIsSlot'],
-    ['vote: multi, slot past the options', 'vote', drop(multiBallot({ slot: 5 }), 'choice'), 'slotIsAnOption'],
+    ['vote: single, one option', 'vote', ballot([1]), null, onPoll(false)],
+    ['vote: single, withdrawn (no choices)', 'vote', ballot([]), null, onPoll(false)],
+    ['vote: single, two options', 'vote', ballot([0, 1]), 'singleChoice', onPoll(false)],
+    ['vote: single, the option past the last (3 of 3)', 'vote', ballot([3]), 'choicesAreOptions', onPoll(false)],
+    ['vote: multi, every option', 'vote', ballot([0, 1, 2]), null, onPoll(true)],
+    ['vote: multi, two of three in any order', 'vote', ballot([2, 0]), null, onPoll(true)],
+    ['vote: multi, ten options of ten', 'vote', ballot([9, 0, 4]), null, onPoll(true, 10)],
+    ['vote: multi, option 4 of three (options + 1)', 'vote', ballot([0, 4]), 'choicesAreOptions', onPoll(true)],
+    ['vote: multi, option 7 of three (options + 4)', 'vote', ballot([7]), 'choicesAreOptionsHigh', onPoll(true)],
+    ['vote: multi, option 9 of two (options + 7)', 'vote', ballot([1, 9]), 'choicesAreOptionsHigh', onPoll(true, 2)],
   ],
   'yappr-blog-contract.json': [
     ['blogPost: one chunk', 'blogPost', baseBlogPost(), null],
     ['blogPost: four chunks', 'blogPost', { ...baseBlogPost(), data1: bytes(8), data2: bytes(8), data3: bytes(8) }, null],
     ['blogPost: data2 with no data1', 'blogPost', { ...baseBlogPost(), data2: bytes(8) }, 'chunksContiguous'],
     ['blogPost: data3 with no data2', 'blogPost', { ...baseBlogPost(), data1: bytes(8), data3: bytes(8) }, 'chunksContiguous'],
-    // postCommentsEnabled copies the post's commentsEnabled through the blogPostId
-    // agreement (40127 on a mismatch), so the rule judges the post's own flag.
-    ['blogComment: on a post that leaves commentsEnabled out (on by default)', 'blogComment', baseComment(), null],
-    ['blogComment: on a post with commentsEnabled true', 'blogComment', { ...baseComment(), postCommentsEnabled: true }, null],
-    ['blogComment: on a post with commentsEnabled false', 'blogComment', { ...baseComment(), postCommentsEnabled: false }, 'commentsOpen'],
     // Blog v7 (5.0.0-beta.2): a live post carries a title and a body (`hasBody`); an author's
     // delete is a tombstone (`tombstoneIsBlank`), which `hasBody` admits; `publishedAt` may run
     // at most 10 minutes past `$updatedAt` (`publishedNotAhead`), so a backdated import is fine.
@@ -451,10 +444,34 @@ CONSTRAINT_CASES['yappr-social-contract-v14.json'] = [
   ['report: oneTarget with all three targets (countPresent 3)', 'report', { ...baseReport(), replyId: id(), about: 1 }, 'oneTarget'],
 ];
 
-// Social v15 (5.0.0-beta.4, docs/SOCIAL_V15.md) changes only YAPP (non-transferable, costs burn)
-// and the spelling of its byte arrays (shorthands): every rule and every case is v14's.
-DECLARED_RULES['yappr-social-contract-v15.json'] = DECLARED_RULES['yappr-social-contract-v14.json'];
-CONSTRAINT_CASES['yappr-social-contract-v15.json'] = CONSTRAINT_CASES['yappr-social-contract-v14.json'];
+// Social v15 (docs/SOCIAL_V15.md) changes YAPP (non-transferable, costs burn) and the spelling of
+// its byte arrays (shorthands), and its 5.0.0-beta.5 re-cut adds report `staysResolved`: a
+// moderator's field change may move a resolved report to another outcome or edit its note, but
+// never remove its `status` (that would reopen the reporter's withdrawal, deleteConstraints
+// `pending`). The rule reads `$old.status`, so its cases carry the stored report (`stored`) a
+// moderator's change is judged against; a create has none.
+DECLARED_RULES['yappr-social-contract-v15.json'] = {
+  ...DECLARED_RULES['yappr-social-contract-v14.json'],
+  report: [...DECLARED_RULES['yappr-social-contract-v14.json'].report, 'staysResolved'],
+};
+/** A v14 case as v15 writes it: v15 names up to 8 mentions in `mentionedUserIds` (an indexed typed array). */
+const withMentionList = (entry) => {
+  const [label, docType, data, ...rest] = entry;
+  if (data.mentionedUserId === undefined) return entry;
+  return [
+    label.replace('mentionedUserId', 'mentionedUserIds'), docType,
+    { ...drop(data, 'mentionedUserId'), mentionedUserIds: [data.mentionedUserId, id()] }, ...rest,
+  ];
+};
+CONSTRAINT_CASES['yappr-social-contract-v15.json'] = [
+  ...CONSTRAINT_CASES['yappr-social-contract-v14.json'].map(withMentionList),
+  ['post: three mentions with text', 'post', { ...v13Post(), mentionedUserIds: [id(), id(), id()] }, null],
+  ['reply: two mentions with text', 'reply', { ...v14Reply(), mentionedUserIds: [id(), id()] }, null],
+  ['report: a moderator resolves an open report', 'report', { ...baseReport(), status: 1 }, null, { replace: true, stored: baseReport() }],
+  ['report: a moderator changes the outcome (no action → content removed)', 'report', { ...baseReport(), status: 2 }, null, { replace: true, stored: { ...baseReport(), status: 1 } }],
+  ['report: a moderator edits the note of a resolved report', 'report', { ...baseReport(), status: 2, resolution: 'spam' }, null, { replace: true, stored: { ...baseReport(), status: 2 } }],
+  ['report: a moderator removes the status of a resolved report', 'report', baseReport(), 'staysResolved', { replace: true, stored: { ...baseReport(), status: 3 } }],
+];
 
 /**
  * The `deleteConstraints` rules a contract declares (5.0.0-beta.3), keyed like
@@ -511,11 +528,15 @@ export function refusedReplaces(file, docType) {
     .map(([label, , data, rule]) => [label, data, rule]);
 }
 
-/** The refused CREATE cases of one contract and doctype, as [label, data, rule]. */
+/**
+ * The refused CREATE cases of one contract and doctype, as [label, data, rule,
+ * options]; `options.referenced` describes the document a rule reads (pollr:
+ * the poll a ballot names), which the battery creates to that shape.
+ */
 export function refusedCreates(file, docType) {
   return CONSTRAINT_CASES[file]
     .filter(([, type, , rule, options]) => type === docType && rule !== null && !options?.replace && !options?.offlineOnly)
-    .map(([label, , data, rule]) => [label, data, rule]);
+    .map(([label, , data, rule, options]) => [label, data, rule, options ?? {}]);
 }
 
 // ---- Offline oracle ------------------------------------------------------------
@@ -528,6 +549,17 @@ export function refusedCreates(file, docType) {
  * alone (not the JSON schema). System times are the case's own (`options.at`,
  * default CASE_NOW): the pollr rules read `$createdAt` and `$updatedAt`; no
  * rule reads a height or a total.
+ *
+ * Two kinds of case are not judged here, and say so:
+ *   - `options.referenced`: the rule reads the document a reference points at
+ *     (pollr's vote rules read the poll). No SDK pre-check reads it, so only
+ *     the node judges these; the live battery broadcasts the refused ones.
+ *   - a case whose rule `beta4Rendering` stripped (5.0.0-beta.5 grammar the
+ *     installed SDK cannot parse, scripts/beta5-grammar.mjs): judged by
+ *     rs-dpp 5.0.0-beta.5 (b5val) until the SDK bump. The file's other rules
+ *     are judged as usual.
+ * A case with `options.stored` is a write replacing that stored version, which
+ * rules reading `$old.` compare against.
  *
  * Returns the number of cases whose outcome is not the recorded one.
  */
@@ -545,16 +577,24 @@ export async function runConstraintCases({ loadContractSource, parseContract, pl
         console.log(`FAIL  ${file.replace(/\.json$/, '')}: ${docType} declares rules ${declared.join(', ')}, DECLARED_RULES says ${rules.join(', ')}`);
       }
     }
-    const contract = parseContract(source, platformVersion);
+    const { source: parseable, stripped } = beta4Rendering(source);
+    if (stripped.length > 0) console.log(`NOTE  ${file.replace(/\.json$/, '')}: judged without the 5.0.0-beta.5 grammar the SDK ${SDK_VERSION} cannot parse: ${describeConstructs(stripped).join('; ')}`);
+    const contract = parseContract(parseable, platformVersion);
+    const build = (docType, data, at = {}) => Document.fromObject({
+      $formatVersion: '0', $id: id(), $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
+      $revision: at.revision ?? 1n, $createdAt: at.createdAt ?? CASE_NOW, $updatedAt: at.updatedAt ?? CASE_NOW, ...data,
+    }, platformVersion);
     for (const [label, docType, data, rule, options] of cases) {
-      const at = options?.at ?? {};
+      const skip = options?.referenced ? 'reads a referenced document, which only the node reads'
+        : rule !== null && strippedRules(stripped, docType).has(rule) ? `"${rule}" is 5.0.0-beta.5 grammar (b5val judges it)` : null;
+      if (skip) {
+        console.log(`SKIP  ${file.replace(/\.json$/, '')}: ${label} — ${skip}`);
+        continue;
+      }
       let violation = null;
       try {
-        const document = Document.fromObject({
-          $formatVersion: '0', $id: id(), $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
-          $revision: at.revision ?? 1n, $createdAt: at.createdAt ?? CASE_NOW, $updatedAt: at.updatedAt ?? CASE_NOW, ...data,
-        }, platformVersion);
-        violation = contract.checkDocumentPropertyConstraints(document) ?? null;
+        const stored = options?.stored ? build(docType, options.stored) : null;
+        violation = contract.checkDocumentPropertyConstraints(build(docType, data, options?.at), stored) ?? null;
       } catch (e) {
         violation = { rule: null, message: String(e?.message ?? e) };
       }
@@ -586,7 +626,8 @@ async function runDeleteCases({ loadContractSource, parseContract, platformVersi
         console.log(`FAIL  ${file.replace(/\.json$/, '')}: ${docType} declares delete rules ${declared.join(', ')}, DECLARED_DELETE_RULES says ${rules.join(', ')}`);
       }
     }
-    const asWriteRules = structuredClone(source);
+    // The delete rules stand in for each type's write rules; the rest of the file as the SDK parses it.
+    const asWriteRules = structuredClone(beta4Rendering(source).source);
     for (const schema of Object.values(asWriteRules.documentSchemas)) {
       if (!schema.deleteConstraints) continue;
       schema.propertyConstraints = schema.deleteConstraints;

@@ -31,11 +31,11 @@ import {
  * storefront v4 (4.2.0-beta.4) a typed list, v1-v3 a JSON string. Chosen by
  * NEXT_PUBLIC_STOREFRONT_TOPOLOGY, like the app.
  */
-const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7'];
+const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'];
 const storefrontAtLeast = (topology) => topologyAtLeast(STOREFRONT_TOPOLOGIES, 'NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
 const listsTyped = () => storefrontAtLeast('v4');
-/** v5 (QA D-25): an order copies its store's status into `storeStatus`. */
-const ordersCarryStoreStatus = () => storefrontAtLeast('v5');
+/** v5-v7 (QA D-25): an order copies its store's status into `storeStatus`; v8 checks it through the `storeId` reference instead. */
+const ordersCarryStoreStatus = () => storefrontAtLeast('v5') && !storefrontAtLeast('v8');
 /** v6: store categories, action fees instead of YAPP reviews, no stored buyerId on status updates. */
 const isV6 = () => storefrontAtLeast('v6');
 /** v7: `storeItem.variants` is the typed table, not a JSON string. */
@@ -663,9 +663,9 @@ async function run({ args, handle, battery, socialId, contractId }) {
         (itemKey) => itemIds.get(`${store.key}/${itemKey}`) ?? '');
       const { encryptedPayload, nonce } = sealOrder(order, payload, orderKeys(ledger, order, false), storeId);
       sealed += 1;
-      // `sellerId` must equal the store's own $ownerId or consensus rejects (40127). On storefront v5
+      // `sellerId` must equal the store's own $ownerId or consensus rejects (40127). On storefront v5-v7
       // (QA D-25) `storeStatus` must equal the store's status, and only an active store takes orders;
-      // every seeded store is active.
+      // v8 requires the store to be active through the storeId reference. Every seeded store is active.
       const id = await createDoc(actors.get(BUYERS[order.buyer].persona), 'storeOrder', `order/${order.key}`,
         { storeId: id32(storeId), sellerId: id32(actors.get(store.persona).ownerId), encryptedPayload, nonce, ...(ordersCarryStoreStatus() ? { storeStatus: 'active' } : {}) });
       if (id) orderIds.set(order.key, id);
@@ -863,6 +863,16 @@ function selfTest() {
     }
   };
   const [v6Cube, v7Cube] = [cubeUnder('v6'), cubeUnder('v7')];
+  /** Whether an order carries `storeStatus` under `topology`. */
+  const orderCopiesStatus = (topology) => {
+    const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
+    process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = topology;
+    try {
+      return ordersCarryStoreStatus();
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY; else process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = saved;
+    }
+  };
   /** Under v6, whether every order line's variant id reads back from its listing's stored JSON as that combination. */
   const legacyOrderIdsMatch = () => {
     const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
@@ -887,6 +897,8 @@ function selfTest() {
     ['tags/imageUrls are JSON strings for storefront v1–v3', typeof v3Item.tags === 'string' && typeof v3Item.imageUrls === 'string'],
     ['tags/imageUrls are typed lists for storefront v4, the same values',
       Array.isArray(v4Item.tags) && Array.isArray(v4Item.imageUrls) && JSON.stringify(v4Item.tags) === v3Item.tags],
+    ['an order copies storeStatus on storefront v5-v7 only (v8 checks the store through the storeId reference)',
+      !orderCopiesStatus('v4') && orderCopiesStatus('v5') && orderCopiesStatus('v7') && !orderCopiesStatus('v8')],
     [`7 stores / 51 items / 17 zones (${plan.stores}/${plan.items}/${plan.zones})`, plan.stores === 7 && plan.items === 51 && plan.zones === 17],
     [`28 orders / 91 status updates (${plan.orders}/${plan.statuses})`, plan.orders === 28 && plan.statuses === 91],
     [`20 store reviews / 32 item reviews (${plan.storeReviews}/${plan.itemReviews})`, plan.storeReviews === 20 && plan.itemReviews === 32],
