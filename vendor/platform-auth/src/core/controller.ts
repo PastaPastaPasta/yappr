@@ -223,13 +223,39 @@ export class PlatformAuthController {
     privateKey: string,
     options: { skipUsernameCheck?: boolean } = {},
   ): Promise<PlatformAuthResult> {
+    if (!identityId || !privateKey) {
+      this.patchState({ error: 'Identity ID and private key are required' })
+      throw new Error('Identity ID and private key are required')
+    }
+    return this.establishSession(identityId, privateKey, options)
+  }
+
+  /**
+   * Signs in an identity whose signing keys the platform already holds outside
+   * the secret store's single private key (an App Connect key ring, stored by
+   * the caller before this call). `secretStore.hasPrivateKey` must answer true
+   * for it, or a later restore drops the session.
+   */
+  public async loginWithKeyRing(
+    identityId: string,
+    options: { skipUsernameCheck?: boolean } = {},
+  ): Promise<PlatformAuthResult> {
+    if (!identityId) {
+      this.patchState({ error: 'Identity ID is required' })
+      throw new Error('Identity ID is required')
+    }
+    return this.establishSession(identityId, null, options)
+  }
+
+  private async establishSession(
+    identityId: string,
+    privateKey: string | null,
+    options: { skipUsernameCheck?: boolean },
+  ): Promise<PlatformAuthResult> {
     const skipUsernameCheck = options.skipUsernameCheck ?? false
     this.patchState({ isLoading: true, error: null })
 
     try {
-      if (!identityId || !privateKey) {
-        throw new Error('Identity ID and private key are required')
-      }
 
       const identity = await this.deps.identity.getIdentity(identityId)
       if (!identity) {
@@ -255,7 +281,7 @@ export class PlatformAuthController {
       }
 
       await this.persistSessionUser(user)
-      await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
+      if (privateKey !== null) await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
       await this.deps.clientIdentity?.setIdentity(identity.id)
 
       this.patchState({
@@ -265,7 +291,7 @@ export class PlatformAuthController {
 
       await this.emit({ type: 'login-succeeded', user })
       this.startBalanceRefresh()
-      this.tryAutoDeriveEncryptionKey(identity.id, privateKey, user.publicKeys)
+      if (privateKey !== null) this.tryAutoDeriveEncryptionKey(identity.id, privateKey, user.publicKeys)
       if (!usernameKnown) {
         void this.syncUsername(identity.id)
       }

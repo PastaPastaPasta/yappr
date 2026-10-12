@@ -13,9 +13,7 @@
  * this device) and decrypts the reported post or reply read-only.
  */
 import { reportShape, targetKindOf } from '@/lib/contract-topology'
-import { normalizeBytes } from '@/lib/bytes'
-import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
-import { KeyType } from '@/lib/crypto/identity-keys'
+import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { logger } from '@/lib/logger'
 import { maxReportBoxRecipients, openReportBox, sealReportBox, type ReportBoxPayload } from '@/lib/report-box'
 import type { Post } from '@/lib/types'
@@ -46,11 +44,7 @@ export function reportNeedsBox(target: Pick<Post, 'encryptedContent' | 'keyGener
  * Throws when the read fails.
  */
 async function encryptionKeyOf(identityId: string): Promise<Uint8Array | null> {
-  const identity = await identityService.getIdentity(identityId, { fresh: true })
-  const key = identity ? findEncryptionKey(identity.publicKeys) : undefined
-  if (!key || key.type !== KeyType.ECDSA_SECP256K1) return null
-  const bytes = normalizeBytes(key.data)
-  return bytes?.length === 33 ? bytes : null
+  return resolveEncryptionPublicKey(identityId, async () => (await identityService.getIdentity(identityId, { fresh: true }))?.publicKeys ?? null)
 }
 
 /**

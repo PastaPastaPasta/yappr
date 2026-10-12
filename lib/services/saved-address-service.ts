@@ -11,7 +11,7 @@ import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import { identityService } from './identity-service';
-import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
+import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup';
 import { normalizeBytes } from '@/lib/bytes';
 import type {
   SavedAddress,
@@ -83,14 +83,7 @@ class SavedAddressService extends BaseDocumentService<InternalSavedAddressDocume
    * Get user's encryption public key from their identity
    */
   async getUserEncryptionPublicKey(userId: string): Promise<Uint8Array | null> {
-    const identity = await identityService.getIdentity(userId);
-    if (!identity) return null;
-
-    // Find encryption key (purpose=1, type=0 ECDSA_SECP256K1, not disabled)
-    const encryptionKey = findEncryptionKey(identity.publicKeys);
-
-    if (!encryptionKey?.data) return null;
-    return normalizeBytes(encryptionKey.data);
+    return resolveEncryptionPublicKey(userId, async () => (await identityService.getIdentity(userId))?.publicKeys ?? null);
   }
 
   /**

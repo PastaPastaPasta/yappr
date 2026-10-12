@@ -3,11 +3,10 @@ import { scopedKey } from '@/lib/storage-scope';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
-import { matchIdentityKey } from '@/lib/crypto/keys';
-import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import { promptForAuthKey } from '../auth-utils';
-import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogCommentsCostYapp, keyNetwork, storefrontReviewsCostYapp } from '../constants';
+import { reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
+import { documentSigningRequest } from '@/lib/app-connect/signing-plan';
+import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogCommentsCostYapp, storefrontReviewsCostYapp } from '../constants';
 import { tokenCostFor, yappIsPausedForGood, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, declaredActionFeeFor, tokenPaymentOptions } from '../transition-agreements';
@@ -230,47 +229,26 @@ function cleanupOldPendingSTs(): void {
 
 class StateTransitionService {
   /**
-   * Get the private key from secure storage
+   * The key that signs a write of `documentType` on `contractId`: the App
+   * Connect key ring's narrowest covering key, or the stored raw key
+   * (lib/auth/signing-keys.ts). Throws before anything is built when no key
+   * can sign it.
    */
-  private async getPrivateKey(identityId: string): Promise<string> {
-    if (typeof window === 'undefined') {
-      throw new Error('State transitions can only be performed in browser');
-    }
-
-    const { getPrivateKey } = await import('../secure-storage');
-    const privateKey = getPrivateKey(identityId);
-
-    if (!privateKey) {
-      promptForAuthKey();
-      throw new Error('Private key not found. Please re-enter your key.');
-    }
-
-    return privateKey;
+  private async signingKeyFor(
+    ownerId: string,
+    publicKeys: WasmIdentityPublicKey[],
+    contractId: string,
+    documentType: string
+  ): Promise<SigningKey> {
+    const key = await resolveSigningKey(ownerId, publicKeys, documentSigningRequest(contractId, documentType));
+    logger.debug(`Using signing key id=${key.identityKey.keyId} with security level ${key.identityKey.securityLevel}`);
+    return key;
   }
 
-  /**
-   * The enabled CRITICAL or HIGH authentication key the stored private key
-   * corresponds to. Document operations may not be signed with MASTER.
-   */
-  private findMatchingSigningKey(
-    privateKeyWif: string,
-    wasmPublicKeys: WasmIdentityPublicKey[]
-  ): WasmIdentityPublicKey | null {
-    const result = matchIdentityKey(privateKeyWif, wasmPublicKeys, {
-      network: keyNetwork(),
-      purpose: KeyPurpose.AUTHENTICATION,
-      allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
-    });
-    if (!result.ok) {
-      logger.error(
-        result.reason === 'rejected'
-          ? `Private key matches key id=${result.match.keyId} (purpose ${getPurposeName(result.match.purpose)}, level ${getSecurityLevelName(result.match.securityLevel)}), which cannot sign this operation: CRITICAL or HIGH AUTHENTICATION required`
-          : `Private key does not match any enabled key on this identity`
-      );
-      return null;
-    }
-    logger.debug(`Matched private key to identity key: id=${result.match.keyId}, securityLevel=${getSecurityLevelName(result.match.securityLevel)}`);
-    return result.key;
+  /** A refused write's result, after the key ring has seen the refusal. */
+  private async refused(ownerId: string, signingKey: SigningKey | null, error: unknown): Promise<StateTransitionResult> {
+    if (signingKey) await reportSigningFailure(ownerId, signingKey, error);
+    return { success: false, error: messageWithConsensusCode(error) };
   }
 
   /**
@@ -572,7 +550,9 @@ class StateTransitionService {
       beforeBroadcast?: () => void;
     }
   ): Promise<StateTransitionResult> {
-    return withIdentityWriteLock(ownerId, contractId, () => this.createDocumentLocked(contractId, documentType, ownerId, documentData, options));
+    const result = await withIdentityWriteLock(ownerId, contractId, () => this.createDocumentLocked(contractId, documentType, ownerId, documentData, options));
+    if (result.success) reportSigningSuccess(ownerId);
+    return result;
   }
 
   private async createDocumentLocked(
@@ -583,24 +563,17 @@ class StateTransitionService {
     options: Parameters<StateTransitionService['createDocument']>[4]
   ): Promise<StateTransitionResult> {
     const affectedStateMode = options?.confirmation === 'affectedState';
+    let signingKey: SigningKey | null = null;
     try {
       const sdk = await getEvoSdk();
       const wasm = sdk.wasm;
-      const privateKeyWif = await this.getPrivateKey(ownerId);
 
-      // Validate signing key
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {
         throw new Error('Identity not found');
       }
-
-      const wasmPublicKeys = identity.publicKeys;
-      const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys);
-      if (!identityKey) {
-        throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
-      }
-
-      logger.debug(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+      signingKey = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType);
+      const { identityKey } = signingKey;
 
       // --- The nonce comes first: the document id is derived from it ---
       // DIP-30: nonce is u64 where lower 40 bits = sequence number,
@@ -732,7 +705,7 @@ class StateTransitionService {
         identityContractNonce: newNonce,
         tokenPaymentInfo,
         actionFeeAgreement,
-        privateKey: PrivateKey.fromWIF(privateKeyWif),
+        privateKey: PrivateKey.fromWIF(signingKey.wif),
         identityKey,
       });
       logger.debug('StateTransition built and signed');
@@ -884,10 +857,7 @@ class StateTransitionService {
       // (a paid refusal bumped the nonce; the caller decides).
       if (isFeeMultiplierNotToleratedError(error)) knownFeeMultiplierPermille = null;
       logger.error('Error creating document:', error);
-      return {
-        success: false,
-        error: messageWithConsensusCode(error)
-      };
+      return this.refused(ownerId, signingKey, error);
     }
   }
 
@@ -905,10 +875,10 @@ class StateTransitionService {
     /** Stored with the nonce reservation: what this replace writes (see `PendingTransition.scope`). */
     reservationScope?: string
   ): Promise<StateTransitionResult> {
+    let key: SigningKey | null = null;
     try {
       this.assertUnpricedAction(contractId, documentType, 'replace');
       const sdk = await getEvoSdk();
-      const privateKey = await this.getPrivateKey(ownerId);
 
       logger.debug(`Updating ${documentType} document ${documentId}...`);
 
@@ -916,14 +886,7 @@ class StateTransitionService {
       if (!identity) {
         throw new Error('Identity not found');
       }
-
-      const wasmPublicKeys = identity.publicKeys;
-      const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys);
-      if (!identityKey) {
-        throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
-      }
-
-      logger.debug(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType);
 
       const newRevision = revision + 1;
       const document = await documentBuilderService.buildDocumentForReplace(
@@ -936,10 +899,7 @@ class StateTransitionService {
       );
       logger.debug('Built document for replacement');
 
-      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
-        privateKey,
-        identityKey
-      );
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
       await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.replace({ document, identityKey: signingKey, signer }), {
         documentType,
@@ -947,6 +907,7 @@ class StateTransitionService {
         revision: newRevision,
       }, reservationScope);
       logger.debug('Document update submitted successfully');
+      reportSigningSuccess(ownerId);
 
       return {
         success: true,
@@ -961,10 +922,7 @@ class StateTransitionService {
       };
     } catch (error) {
       logger.error('Error updating document:', error);
-      return {
-        success: false,
-        error: messageWithConsensusCode(error)
-      };
+      return this.refused(ownerId, key, error);
     }
   }
 
@@ -979,10 +937,10 @@ class StateTransitionService {
     /** Re-checked under the write lock right before sending (see withSdkSignedWrite). */
     precondition?: () => Promise<boolean>
   ): Promise<StateTransitionResult> {
+    let key: SigningKey | null = null;
     try {
       this.assertUnpricedAction(contractId, documentType, 'delete');
       const sdk = await getEvoSdk();
-      const privateKey = await this.getPrivateKey(ownerId);
 
       logger.debug(`Deleting ${documentType} document ${documentId}...`);
 
@@ -990,14 +948,7 @@ class StateTransitionService {
       if (!identity) {
         throw new Error('Identity not found');
       }
-
-      const wasmPublicKeys = identity.publicKeys;
-      const identityKey = this.findMatchingSigningKey(privateKey, wasmPublicKeys);
-      if (!identityKey) {
-        throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
-      }
-
-      logger.debug(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
+      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType);
 
       const documentForDelete = documentBuilderService.buildDocumentForDelete(
         contractId,
@@ -1007,13 +958,11 @@ class StateTransitionService {
       );
       logger.debug('Built document identifier for deletion');
 
-      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
-        privateKey,
-        identityKey
-      );
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
       await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer }), undefined, undefined, precondition);
       logger.debug('Document deletion submitted successfully');
+      reportSigningSuccess(ownerId);
 
       return {
         success: true,
@@ -1021,10 +970,7 @@ class StateTransitionService {
       };
     } catch (error) {
       logger.error('Error deleting document:', error);
-      return {
-        success: false,
-        error: messageWithConsensusCode(error)
-      };
+      return this.refused(ownerId, key, error);
     }
   }
 
@@ -1065,10 +1011,10 @@ class StateTransitionService {
     }
   ): Promise<StateTransitionResult> {
     const { documentId, createdAtMs, data } = tuple;
+    let key: SigningKey | null = null;
     try {
       this.assertUnpricedAction(contractId, documentType, 'delete');
       const sdk = await getEvoSdk();
-      const privateKeyWif = await this.getPrivateKey(ownerId);
 
       logger.debug(`Deleting ${documentType} by values (indexOnly): ${documentId}`);
 
@@ -1076,11 +1022,7 @@ class StateTransitionService {
       if (!identity) {
         throw new Error('Identity not found');
       }
-
-      const identityKey = this.findMatchingSigningKey(privateKeyWif, identity.publicKeys);
-      if (!identityKey) {
-        throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
-      }
+      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType);
 
       const document = await documentBuilderService.buildDocumentForValuesDelete(
         contractId,
@@ -1091,10 +1033,7 @@ class StateTransitionService {
         createdAtMs
       );
 
-      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
-        privateKeyWif,
-        identityKey
-      );
+      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
       try {
         // From evo-sdk 4.2.0-beta.7 (platform#5136) this resolves once the
@@ -1102,6 +1041,7 @@ class StateTransitionService {
         // affected state instead of throwing the strict wait's snapshot error.
         await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document, identityKey: signingKey, signer }));
         logger.debug(`indexOnly delete ${documentId} confirmed`);
+        reportSigningSuccess(ownerId);
       } catch (waitErr) {
         if (!isTimeoutError(waitErr) && !isNonFatalWaitError(waitErr) && !isAlreadyExistsError(waitErr)) {
           throw waitErr;
@@ -1113,10 +1053,7 @@ class StateTransitionService {
       return { success: true, transactionHash: documentId, confirmed: true };
     } catch (error) {
       logger.error('Error deleting document by values:', error);
-      return {
-        success: false,
-        error: messageWithConsensusCode(error)
-      };
+      return this.refused(ownerId, key, error);
     }
   }
 }

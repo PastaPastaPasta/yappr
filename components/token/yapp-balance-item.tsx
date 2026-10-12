@@ -8,6 +8,7 @@ import { tokenService } from '@/lib/services/token-service'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useStarterGrantModal } from '@/hooks/use-starter-grant-modal'
 import { yappTopUp } from '@/lib/starter-grant'
+import { useTokenClaimHidden } from '@/lib/app-connect/session-manager'
 
 /**
  * YAPP balance + "Buy" row for the account dropdown. Mirrors the credits
@@ -21,6 +22,7 @@ export function YappBalanceItem() {
   const openGrant = useStarterGrantModal((s) => s.open)
   const [yapp, setYapp] = useState<bigint | null>(null)
   const identityId = user?.identityId
+  const claimHidden = useTokenClaimHidden(identityId)
 
   useEffect(() => {
     // Clear the previous identity's balance immediately so an account switch
@@ -43,7 +45,9 @@ export function YappBalanceItem() {
 
   if (!user) return null
 
-  const topUp = yappTopUp(user.identityId)
+  // A wallet sign-in without the CRITICAL group key cannot sign the claim, so it is not offered.
+  const offered = yappTopUp(user.identityId)
+  const topUp = offered === 'buy' || !claimHidden ? offered : null
   const balance = (
     <div>
       <div className="text-xs text-gray-500">YAPP</div>

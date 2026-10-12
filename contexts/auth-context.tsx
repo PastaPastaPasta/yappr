@@ -6,11 +6,12 @@ import { base64ToBytes } from '@/lib/bytes'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { usePathname, useRouter } from 'next/navigation'
-import { PlatformAuthController, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
+import { PlatformAuthController, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { currentRoute, dpnsRegisterHref } from '@/lib/auth/return-to'
 import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
 import { useUsernameModal } from '@/hooks/use-username-modal'
+import { appConnectSessions } from '@/lib/app-connect/session-manager'
 
 export interface AuthUser {
   identityId: string
@@ -38,6 +39,8 @@ interface AuthContextType {
   loginWithPasskey: (identityOrUsername?: string) => Promise<void>
   /** Resolves with the post-login intent so the caller can tell a fully set-up account from one still needing a username. */
   loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number) => Promise<PlatformAuthIntent>
+  /** Signs in with a verified App Connect grant (the user already confirmed the identity). Wipes the grant's keys. */
+  loginWithAppConnect: (grant: AppConnectGrant) => Promise<PlatformAuthIntent>
   createOrUpdateUnifiedVaultFromLoginKey: (identityId: string, loginKey: Uint8Array) => Promise<void>
   createOrUpdateUnifiedVaultFromAuthKey: (identityId: string, authKeyWif: string) => Promise<void>
   addPasskeyWrapper: (label?: string) => Promise<void>
@@ -109,6 +112,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => controller.subscribe(setControllerState), [controller])
 
+  // The wallet revoked this browser's App Connect keys: end the session here too.
+  useEffect(() => {
+    appConnectSessions.onSignedOut(() => {
+      controller.logout()
+        .then(() => router.push('/'))
+        .catch((error) => logger.error('Auth: sign-out after a wallet revoke failed:', error))
+    })
+    return () => appConnectSessions.onSignedOut(null)
+  }, [controller, router])
+
   useEffect(() => {
     controller.restoreSession().catch((error) => {
       logger.error('Auth: Failed to restore session:', error)
@@ -154,6 +167,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const result = await controller.loginWithLoginKey(identityId, loginKey, keyIndex)
     await applyIntent(result.intent)
     return result.intent
+  }, [applyIntent, controller])
+
+  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
+    const session = await appConnectSessions.adopt(grant)
+    try {
+      const result = await controller.loginWithKeyRing(session.identityId)
+      await applyIntent(result.intent)
+      return result.intent
+    } catch (error) {
+      await appConnectSessions.clear()
+      throw error
+    }
   }, [applyIntent, controller])
 
   const createOrUpdateUnifiedVaultFromLoginKey = useCallback(async (identityId: string, loginKey: Uint8Array) => {
@@ -232,6 +257,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loginWithPassword,
     loginWithPasskey,
     loginWithKeyExchange,
+    loginWithAppConnect,
     createOrUpdateUnifiedVaultFromLoginKey,
     createOrUpdateUnifiedVaultFromAuthKey,
     addPasskeyWrapper,
@@ -252,6 +278,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     createOrUpdateUnifiedVaultFromAuthKey,
     createOrUpdateUnifiedVaultFromLoginKey,
     login,
+    loginWithAppConnect,
     loginWithKeyExchange,
     loginWithPasskey,
     loginWithPassword,

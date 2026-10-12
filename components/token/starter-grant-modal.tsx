@@ -12,6 +12,7 @@ import { starterGrantAmount, yappIsLocked, yappIsPausedForGood } from '@/lib/con
 import { logger } from '@/lib/logger'
 import { isStarterGrantSettled, markStarterGrantSettled } from '@/lib/starter-grant'
 import { tokenService } from '@/lib/services/token-service'
+import { useTokenClaimHidden } from '@/lib/app-connect/session-manager'
 
 /**
  * On a contract whose token declares a once-per-identity grant (v9, v10: 100
@@ -34,12 +35,14 @@ export function StarterGrantModal() {
   const [wif, setWif] = useState('')
   const identityId = user?.identityId
   const amount = starterGrantAmount()
+  // A wallet sign-in whose group key is only HIGH cannot sign the claim: never offer it.
+  const claimHidden = useTokenClaimHidden(identityId)
 
   const locked = yappIsLocked()
   const paused = yappIsPausedForGood()
 
   useEffect(() => {
-    if (!identityId || amount === null || paused || isStarterGrantSettled(identityId)) return
+    if (!identityId || amount === null || paused || claimHidden || isStarterGrantSettled(identityId)) return
     let cancelled = false
     tokenService.getBalance(identityId)
       .then((balance) => {
@@ -49,7 +52,7 @@ export function StarterGrantModal() {
     return () => {
       cancelled = true
     }
-  }, [identityId, amount, paused, open])
+  }, [identityId, amount, paused, claimHidden, open])
 
   if (!identityId || amount === null) return null
 
@@ -96,6 +99,8 @@ export function StarterGrantModal() {
       </Modal>
     )
   }
+
+  if (claimHidden) return null
 
   return (
     <Modal open={isOpen} onOpenChange={(next) => !next && !busy && close()} className="w-[420px] max-w-[90vw]">
