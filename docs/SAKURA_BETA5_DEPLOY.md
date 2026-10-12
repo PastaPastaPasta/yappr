@@ -66,9 +66,9 @@ System contracts (DPNS, DashPay, token history) kept their ids.
 
 ## Client
 
-`.env.devnet` points at the ids above and sets the topologies: `v15`, storefront `v8`, blog `v8`, pollr `v7`, DM `v5`. It sets `NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID` blank and the four `NEXT_PUBLIC_APP_CONNECT_*` values. `NEXT_PUBLIC_LOGIN_PROTOCOL` stays unset, so `/devnet` signs in with the legacy protocol (key exchange, password vault and key backup are registered for it).
+`.env.devnet` points at the ids above and sets the topologies: `v15`, storefront `v8`, blog `v8`, pollr `v7`, DM `v5`. It sets `NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID` blank and the four `NEXT_PUBLIC_APP_CONNECT_*` values. `NEXT_PUBLIC_LOGIN_PROTOCOL` was first left unset (legacy sign-in); the flip (#737) set it to `app-connect`. Key exchange, password vault and key backup stay registered, outside the group, as the rollback: unsetting the variable restores the legacy sign-in.
 
-Web App Connect (#726, #727) has merged, and the live responder checklist passes on an app-connect build. The flip (#737) is on hold for one reason. App Connect builds accept only an ENCRYPTION key bound to the anchor, so raw-key users and every identity that never signed in through a wallet cannot be sent DMs or store orders. On the app-connect build, the devnet DM e2e fails for that reason (#742). `lib/contracts/bundled/devnet-sakura.json` was re-snapshotted with `--prune`.
+Web App Connect (#726, #727) merged, and the live responder checklist passed on an app-connect build. The flip waited on #742: App Connect builds accept only an ENCRYPTION key bound to the anchor, so identities without one could not be sent DMs or store orders. #745 settled it as "anchor key only; prompt others": people without one get "Set up messaging", and everyone else sees "@name hasn't set up messaging yet". `ops/add-anchor-messaging-keys.mjs` gave the seeded and test identities their key; CI pool slot 0 is kept without one as the e2e fixture. `lib/contracts/bundled/devnet-sakura.json` was re-snapshotted with `--prune`.
 
 ## Data
 
