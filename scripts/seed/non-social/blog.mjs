@@ -12,9 +12,9 @@ import { join } from 'node:path';
 import { zlibSync } from 'fflate';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { COLD_BUCKET, id32, normalizeId, reportSelfTest } from '../../battery-lib.mjs';
-import { REPO_ROOT, YAPP_TOKEN_POSITION, describeErr, feeAgreementFor } from '../seed-lib.mjs';
+import { REPO_ROOT, YAPP_TOKEN_POSITION, describeErr, feeAgreementFor, findRecentByValues } from '../seed-lib.mjs';
 import {
-  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, groupTasks, loadCheckpoint,
+  actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, fakeId, groupTasks, loadCheckpoint,
   network, phaseRunner, pick, printTable, rngFrom, runByActor, shuffled, topologyAtLeast, utf8,
 } from '../feature-seed-lib.mjs';
 
@@ -68,6 +68,8 @@ const discussedWindow = () => (blogIsV7() ? { timeRange: trendWindow('blogCommen
 const commentFields = ({ blogPostId, blogPostOwnerId, content }) => ({
   blogPostId, ...(commentsDerivePostOwner() ? {} : { blogPostOwnerId }), content, ...(commentsCopyPostFlag() ? { postCommentsEnabled: true } : {}),
 });
+/** Where a comment's value readback looks: the post's comments, newest first (`postAndTime`, on every cut). */
+const commentScope = (blogPostId) => ({ where: [['blogPostId', '==', blogPostId]], orderBy: [['blogPostId', 'desc'], ['$createdAt', 'desc']] });
 const labelList = (csv) => [...new Set(csv.split(',').map((label) => label.trim()).filter(Boolean))];
 const storedLabels = (csv) => (labelsTyped() ? labelList(csv) : csv);
 const TYPED_LABEL_LIMITS = { blog: 64, post: 16, length: 40 };
@@ -553,8 +555,6 @@ async function run({ args, handle, battery, socialId, contractId }) {
   const blogIds = new Map();
   const postIds = new Map();
   const ownerOf = (postKey) => plan.posts.find((post) => post.key === postKey);
-  /** A fresh checkpoint cannot have written anything, so resume-only probes are skipped. */
-  const resumed = Object.keys(state.docs).length > 0;
   /** First row of a query, as a recorded id — the adoption probe for a doctype the id alone cannot recognise. */
   const firstId = async (docType, where, orderBy) => {
     const [found] = await battery.queryDocs(docType, { where, ...(orderBy ? { orderBy } : {}), limit: 1 });
@@ -603,9 +603,10 @@ async function run({ args, handle, battery, socialId, contractId }) {
     groupTasks(plan.follows.filter((follow) => blogIds.has(follow.blogKey)), (follow) => follow.follower, (follow) =>
       createDoc(actors.get(follow.follower), 'blogFollow', `follow:${follow.key}`, { blogId: id32(blogIds.get(follow.blogKey)) },
         { adopt: () => firstId('blogFollow', [['$ownerId', '==', actors.get(follow.follower).ownerId], ['blogId', '==', blogIds.get(follow.blogKey)]]) }), tasks);
-    // `blogComment` has no unique index either, and each one costs a YAPP and
-    // moves the ranked commentCount axis, so a resumed run must recognise its own
-    // by (post, author, content) rather than write a second.
+    // `blogComment` has no unique index either, and each one is priced and moves
+    // the comment ranking, so a re-run must recognise its own by (post, author,
+    // values) rather than write a second — even with an empty checkpoint. v7+
+    // keeps no owner index on comments, so the probe walks the post's comments.
     groupTasks(plan.comments.filter((comment) => postIds.has(comment.postKey)), (comment) => comment.author, (comment) =>
       createDoc(actors.get(comment.author), 'blogComment', `comment:${comment.key}`, commentFields({
         blogPostId: id32(postIds.get(comment.postKey)),
@@ -614,14 +615,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
         content: comment.content,
       }), {
         ...(commentsCostYapp ? { tokenCost: COMMENT_COST } : {}),
-        adopt: resumed ? async () => {
-          const written = await battery.queryDocs('blogComment', {
-            where: [['blogPostId', '==', postIds.get(comment.postKey)]],
-            orderBy: [['blogPostId', 'asc'], ['$createdAt', 'asc']], limit: 100,
-          });
-          const mine = written.find((doc) => normalizeId(doc.$ownerId) === actors.get(comment.author).ownerId && doc.content === comment.content);
-          return mine ? normalizeId(mine.$id) : null;
-        } : undefined,
+        scope: commentScope(postIds.get(comment.postKey)),
       }), tasks);
     groupTasks(plan.edits.filter((edit) => postIds.has(edit.postKey)), (edit) => edit.owner, async (edit) => {
       if (recorder.id(edit.key)) return;
@@ -724,7 +718,7 @@ function dryRun(plan) {
   return 0;
 }
 
-function selfTest(args) {
+async function selfTest(args) {
   const plan = buildPlan({ seed: args.seed, only: null, publishAnchor: 1_800_000_000_000 });
   const drafts = plan.posts.filter((post) => !post.published);
   const spread = plan.posts.reduce((acc, post) => ({ ...acc, [post.chunks]: (acc[post.chunks] ?? 0) + 1 }), {});
@@ -754,6 +748,19 @@ function selfTest(args) {
   });
   const rankingShapes = (topology) => underTopology(topology, () => JSON.stringify([trendingWindow(), discussedWindow()]));
   const window72h = { field: '$createdAt', selector: 'oldest', grid: { range: 259200, step: 86400 } };
+  // A re-run with an empty checkpoint against v7+ comments already on chain: the owner scan is refused
+  // (no owner index), so only the post-scoped probe can recognise the comment instead of paying for it again.
+  const postId = fakeId('post'), author = fakeId('author');
+  const comment = underTopology('v8', () => commentFields({ blogPostId: id32(postId), blogPostOwnerId: id32(fakeId('o')), content: 'Same here.' }));
+  const queries = [];
+  const sdk = { documents: { query: async (q) => {
+    queries.push(q);
+    if (q.where[0][0] !== 'blogPostId') throw new Error('where clause on non indexed property error: query must be for valid indexes (429 bytes truncated)');
+    return new Map([['x', { $id: 'someone-elses', $ownerId: fakeId('reader'), blogPostId: postId, content: 'Same here.' }],
+      ['y', { $id: 'already-written', $ownerId: author, blogPostId: postId, content: 'Same here.' }]]);
+  } } };
+  const unscoped = await findRecentByValues(sdk, { contractId: 'c', docType: 'blogComment', ownerId: author, data: comment });
+  const scoped = await findRecentByValues(sdk, { contractId: 'c', docType: 'blogComment', ownerId: author, data: comment, scope: commentScope(postId) });
   const [v3Blog, v3Post] = labelShapes('v3');
   const [v4Blog, v4Post, v4Comment] = labelShapes('v4');
   const [v5Blog, v5Post, v5Comment] = labelShapes('v5');
@@ -770,6 +777,9 @@ function selfTest(args) {
       rankingShapes('v6') === JSON.stringify([[{ field: '$createdAt', selector: 'newest', grid: DAY_GRID }], {}])],
     ['v7+ trending and most-discussed read the contract\'s 72h windows stepping 24h (followersTrend, discussedRecent)',
       rankingShapes('v8') === JSON.stringify([[window72h], { timeRange: [window72h] }])],
+    ['v7+ comments have no owner index, so the owner scan alone finds nothing', unscoped === null],
+    ['an empty checkpoint still recognises an existing v7+ comment by its post (postAndTime, newest first), and only its author\'s',
+      scoped === 'already-written' && queries.at(-1).where[0][2] === postId && JSON.stringify(queries.at(-1).orderBy) === '[["blogPostId","desc"],["$createdAt","desc"]]'],
     ['every commented post stores commentsEnabled true (what a v5-v7 comment copies, and what v8 requires not to be false)', plan.comments.every((comment) => plan.posts.find((post) => post.key === comment.postKey)?.data.commentsEnabled === true)],
     [`8 blogs / 42 posts (${plan.blogs.length}/${plan.posts.length})`, plan.blogs.length === 8 && plan.posts.length === 42],
     [`40 follows / 4 edits (${plan.follows.length}/${plan.edits.length})`, plan.follows.length === 40 && plan.edits.length === 4],

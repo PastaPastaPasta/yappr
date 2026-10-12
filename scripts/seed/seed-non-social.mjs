@@ -68,7 +68,7 @@ function parse(argv) {
 async function main() {
   const { feature, args } = parse(process.argv.slice(2));
   // The shared plumbing is checked on every --self-test, not once somewhere.
-  if (args.selfTest) return reportSelfTest('the seeder plumbing', await plumbingAssertions()) + feature.selfTest(args);
+  if (args.selfTest) return reportSelfTest('the seeder plumbing', await plumbingAssertions()) + (await feature.selfTest(args));
   if (network() === 'mainnet') throw new Error(`${feature.name}: this seeder writes fake content. Refusing to run against mainnet.`);
 
   args.contract = resolveContractId(args.contract, feature.contractEnv ?? []);
