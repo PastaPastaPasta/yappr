@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import {
+  APP_CONNECT_SESSION_VERSION,
   buildAppConnectSession,
   classifyAppConnectError,
   clearSensitiveBytes,
@@ -18,10 +19,16 @@ import { getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { privateKeyToWif } from '@/lib/crypto/wif'
 import { appConnectPins } from './config'
 import { checkAppConnectTrust, type AppConnectTrust } from './group-trust'
-import { AppConnectKeyRingStore, indexedDbKeyRingBackend } from './key-ring-store'
+import { AppConnectKeyRingStore, indexedDbKeyRingBackend, type SessionMatch } from './key-ring-store'
 import { clearAppConnectEncryptionKey, setAppConnectEncryptionKey } from './memory-keys'
 import { appConnectPlatformPort } from './platform-port'
-import { appConnectHealth, primaryGroupKey, reconcileSessionWithChain, type AppConnectHealth } from './session-health'
+import {
+  appConnectHealth,
+  primaryGroupKey,
+  reconcileSessionWithChain,
+  withoutOutdatedEncryptionKeys,
+  type AppConnectHealth,
+} from './session-health'
 
 /**
  * The browser's App Connect session: the key ring of the identity signed in
@@ -31,7 +38,7 @@ import { appConnectHealth, primaryGroupKey, reconcileSessionWithChain, type AppC
  */
 
 /** Why writes stopped until the user renews in their wallet. */
-export type RenewReason = 'expired' | 'allowance-spent' | 'insufficient-allowance' | 'revoked-key'
+export type RenewReason = 'expired' | 'allowance-spent' | 'insufficient-allowance'
 
 interface AppConnectStatus {
   /** The identity with an App Connect session, or null. */
@@ -92,7 +99,8 @@ class AppConnectSessionManager {
     return getConfiguredNetwork()
   }
 
-  private keyStore(): AppConnectKeyRingStore {
+  /** The browser's key ring (also holds the wrapped pending sign-in request). */
+  keyStore(): AppConnectKeyRingStore {
     this.store ??= new AppConnectKeyRingStore(indexedDbKeyRingBackend(scopedKey('yappr-app-connect')))
     return this.store
   }
@@ -103,13 +111,15 @@ class AppConnectSessionManager {
   }
 
   /**
-   * The proved group trust check, run once per page load (and again after a
-   * failed read). Login is offered only when it passes; signing routes group
-   * keys only to the members it vouched for.
+   * The proved group trust check, cached for the page and run again by the
+   * hourly refresh, before every sign-in (`fresh`) and after a failed read.
+   * Login is offered only when it passes; signing routes group keys only to
+   * the members it vouched for.
    */
-  trust(): Promise<AppConnectTrust> {
+  trust(options: { fresh?: boolean } = {}): Promise<AppConnectTrust> {
     const pins = appConnectPins()
     if (!pins) return Promise.reject(new Error('App Connect is not configured on this build'))
+    if (options.fresh) this.trustPromise = null
     this.trustPromise ??= checkAppConnectTrust(appConnectPlatformPort, pins)
       .then((trust) => {
         if (!trust.ok) logger.error('App Connect group trust check failed; new logins are blocked:', trust.reason, trust.contracts ?? '')
@@ -134,25 +144,27 @@ class AppConnectSessionManager {
 
   /** Stores a verified grant as this browser's session and makes it active. Wipes the grant's keys. */
   async adopt(grant: AppConnectGrant): Promise<AppConnectSession> {
-    const pins = appConnectPins()
-    if (!pins) throw new Error('App Connect is not configured on this build')
     const keys = new Map<string, Uint8Array>()
-    const session = buildAppConnectSession(grant, {
-      network: this.network(),
-      appId: pins.appId,
-      groupId: pins.groupId,
-      connectionId: await this.connectionId(),
-      grantedAt: Date.now(),
-      keyRef: (privateKey, keyId) => {
-        const ref = `key-${keyId}`
-        keys.set(ref, privateKey.slice())
-        return ref
-      },
-    })
+    let session: AppConnectSession
     try {
+      const pins = appConnectPins()
+      if (!pins) throw new Error('App Connect is not configured on this build')
+      session = buildAppConnectSession(grant, {
+        network: this.network(),
+        appId: pins.appId,
+        groupId: pins.groupId,
+        connectionId: await this.connectionId(),
+        grantedAt: Date.now(),
+        keyRef: (privateKey, keyId) => {
+          const ref = `key-${keyId}`
+          keys.set(ref, privateKey.slice())
+          return ref
+        },
+      })
       await this.keyStore().save(session, keys)
     } finally {
       keys.forEach(clearSensitiveBytes)
+      for (const granted of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(granted.privateKey)
     }
     await this.activate(session)
     return session
@@ -169,6 +181,14 @@ class AppConnectSessionManager {
       return false
     }
     if (!session || session.identityId !== identityId) return false
+    // A session from a build with other pins (a re-cut anchor or group) covers nothing here.
+    const pins = appConnectPins()
+    if (!pins || session.v !== APP_CONNECT_SESSION_VERSION || session.network !== this.network()
+      || session.appId !== pins.appId || session.groupId !== pins.groupId) {
+      logger.warn('App Connect: the stored session does not match this build; dropping it')
+      await this.discard(session)
+      return false
+    }
     await this.activate(session)
     return true
   }
@@ -186,17 +206,35 @@ class AppConnectSessionManager {
     this.startRefresh()
   }
 
-  /** Forgets the session and its keys (logout or revoke). The connection id stays. */
-  async clear(): Promise<void> {
+  /** Drops this tab's in-memory session; the stored ring is left alone. */
+  private deactivate(): void {
     this.active = null
     clearAppConnectEncryptionKey()
     this.stopRefresh()
     publishSession(null)
+  }
+
+  private async clearStored(match: SessionMatch): Promise<void> {
     try {
-      await this.keyStore().clear(this.network())
+      await this.keyStore().clear(this.network(), match)
     } catch (error) {
       logger.error('App Connect: could not clear the key ring:', error)
     }
+  }
+
+  /** Logout: forgets this browser's session for `identityId`, whichever tab stored it. The connection id stays. */
+  async logout(identityId: string): Promise<void> {
+    if (this.active?.identityId === identityId) this.deactivate()
+    await this.clearStored({ identityId })
+  }
+
+  /**
+   * Forgets exactly `session` (a login that failed after its grant was stored),
+   * never a newer grant another tab has stored since.
+   */
+  async discard(session: AppConnectSession): Promise<void> {
+    if (this.active === session) this.deactivate()
+    await this.clearStored({ identityId: session.identityId, grantedAt: session.grantedAt })
   }
 
   /** A stored private key as a compressed WIF, or null when the ring has none under `keyRef`. */
@@ -219,6 +257,7 @@ class AppConnectSessionManager {
     const session = this.active
     if (!session) return
     let reconciled: ReturnType<typeof reconcileSessionWithChain>
+    let encryptionOutdated = false
     try {
       const identity = await appConnectPlatformPort.getIdentityFresh(session.identityId)
       if (!identity) return
@@ -227,27 +266,58 @@ class AppConnectSessionManager {
         ? await appConnectPlatformPort.remainingBudgets(session.identityId, budgeted)
         : new Map<number, bigint | undefined>()
       reconciled = reconcileSessionWithChain(session, identity.publicKeys, budgets)
+      const appId = appConnectPins()?.appId
+      if (!reconciled.revoked && appId && reconciled.session.encKeys.some((key) => key.contractId === appId)) {
+        const current = await appConnectPlatformPort.contractKeys(session.identityId, appId, KeyPurpose.ENCRYPTION)
+        const updated = withoutOutdatedEncryptionKeys(reconciled.session, appId, current)
+        if (updated) {
+          encryptionOutdated = true
+          reconciled = { revoked: false, session: updated }
+        }
+      }
     } catch (error) {
       logger.warn('App Connect: session refresh failed:', error)
       return
     }
     if (this.active !== session) return
     if (reconciled.revoked) {
-      await this.signOutByWallet(session.identityId)
+      await this.signOutRevoked(session)
       return
+    }
+    if (encryptionOutdated) {
+      // Peers now encrypt to the newer key another wallet registered; the messaging prompts lead to renewing for it.
+      logger.warn(`App Connect: ${session.identityId} has a newer messaging key from another wallet; this session stops using its own`)
+      clearAppConnectEncryptionKey()
     }
     this.active = reconciled.session
     publishSession(reconciled.session)
     await this.keyStore().updateSession(reconciled.session).catch((error: unknown) => {
-      logger.warn('App Connect: could not persist refreshed budgets:', error)
+      logger.warn('App Connect: could not persist the refreshed session:', error)
     })
   }
 
-  private async signOutByWallet(identityId: string): Promise<void> {
-    logger.warn(`App Connect: the wallet revoked this browser's keys for ${identityId}; signing out`)
-    await this.clear()
+  /**
+   * `session`'s keys are revoked, superseded or unusable. A wallet supersedes
+   * the old grant whenever another tab signs in again, so first look for a
+   * newer grant for the same identity in the store and switch to it; only when
+   * there is none does this tab sign out, clearing its own grant and nothing else.
+   */
+  async signOutRevoked(session: AppConnectSession): Promise<void> {
+    let stored: AppConnectSession | null = null
+    try {
+      stored = await this.keyStore().load(this.network())
+    } catch (error) {
+      logger.warn('App Connect: could not re-read the key ring:', error)
+    }
+    if (stored && stored.identityId === session.identityId && stored.grantedAt > session.grantedAt) {
+      logger.info(`App Connect: another tab renewed the session for ${session.identityId}; switching to it`)
+      if (this.active === session) await this.activate(stored)
+      return
+    }
+    logger.warn(`App Connect: the wallet revoked this browser's keys for ${session.identityId}; signing out`)
+    await this.discard(session)
     useAppConnectStatus.setState({ signedOutByWallet: true })
-    this.signedOutListener?.(identityId)
+    this.signedOutListener?.(session.identityId)
   }
 
   /**
@@ -256,7 +326,8 @@ class AppConnectSessionManager {
    */
   async handleWriteFailure(identityId: string, code: number | null): Promise<AppConnectSigningFailure | null> {
     const classification = classifyAppConnectError(code)
-    if (!classification || this.active?.identityId !== identityId) return null
+    const session = this.active
+    if (!classification || !session || session.identityId !== identityId) return null
     switch (classification.action) {
       case 'renew': {
         const reason: RenewReason = classification.failure === 'expired'
@@ -267,7 +338,7 @@ class AppConnectSessionManager {
         break
       }
       case 'logout':
-        await this.signOutByWallet(identityId)
+        await this.signOutRevoked(session)
         break
       case 'invalidate':
         logger.error(`App Connect: a write was refused out of its key's bounds (code ${code}). The selector should make this impossible.`)
@@ -295,6 +366,8 @@ class AppConnectSessionManager {
     if (this.refreshTimer || typeof window === 'undefined') return
     this.refreshTimer = setInterval(() => {
       this.refresh().catch((error: unknown) => logger.warn('App Connect: hourly check failed:', error))
+      // A member update since page load narrows what the group key may sign for.
+      this.trust({ fresh: true }).catch((error: unknown) => logger.warn('App Connect: hourly trust check failed:', error))
     }, REFRESH_INTERVAL_MS)
     // First check soon after start, off the restore path.
     setTimeout(() => {

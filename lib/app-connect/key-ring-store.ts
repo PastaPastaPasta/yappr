@@ -1,5 +1,6 @@
 import type { AppConnectSession } from 'platform-auth'
 import { bytesToHex } from '@/lib/bytes'
+import { toArrayBuffer } from '@/lib/crypto/aes-gcm'
 
 /**
  * Where an App Connect session lives in the browser: the session record (key
@@ -11,36 +12,47 @@ import { bytesToHex } from '@/lib/bytes'
  * The connection id (16 random bytes per browser and network) is kept apart
  * from the session and survives logout, so the next login supersedes this
  * browser's previous grant instead of piling keys up on the identity.
+ *
+ * The pending sign-in request (whose ephemeral key opens the wallet's answer)
+ * is wrapped the same way, so a reload or the wallet's return page can resume
+ * it without the key ever sitting in plain storage.
  */
 
 export interface KeyRingBackend {
   get<T>(key: string): Promise<T | undefined>
   put(key: string, value: unknown): Promise<void>
   delete(key: string): Promise<void>
+  /** Deletes `key` only when `predicate` holds for its value, atomically. True when it deleted. */
+  deleteIf(key: string, predicate: (value: unknown) => boolean): Promise<boolean>
+  /** Replaces `key`'s value with `next(value)` only when `predicate` holds for it, atomically. True when it wrote. */
+  updateIf(key: string, predicate: (value: unknown) => boolean, next: (value: unknown) => unknown): Promise<boolean>
 }
 
-interface WrappedKey {
+interface WrappedBytes {
   iv: Uint8Array
   data: ArrayBuffer
 }
 
 interface StoredRing {
   session: AppConnectSession
-  wrapped: Record<string, WrappedKey>
+  wrapped: Record<string, WrappedBytes>
+}
+
+/** Which stored session a clear may remove: any for this identity, or only one exact grant. */
+export interface SessionMatch {
+  identityId: string
+  grantedAt?: number
 }
 
 const DEVICE_KEY = 'device-key'
 const connectionKey = (network: string) => `connection:${network}`
 const sessionKey = (network: string) => `session:${network}`
+const secretKey = (network: string, name: string) => `secret:${network}:${name}`
 const encoder = new TextEncoder()
 
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
-}
-
-/** Ties a wrapped key to its slot, so a blob moved to another identity or ref does not unwrap. */
-function wrapAad(session: Pick<AppConnectSession, 'network' | 'identityId'>, keyRef: string): ArrayBuffer {
-  return toArrayBuffer(encoder.encode(`yappr:app-connect:key-ring:v1|${session.network}|${session.identityId}|${keyRef}`))
+function sessionMatches(value: unknown, match: SessionMatch): boolean {
+  const session = (value as StoredRing | undefined)?.session
+  return session?.identityId === match.identityId && (match.grantedAt === undefined || session.grantedAt === match.grantedAt)
 }
 
 export class AppConnectKeyRingStore {
@@ -66,6 +78,27 @@ export class AppConnectKeyRingStore {
     return this.deviceKeyPromise
   }
 
+  /** Wraps `plaintext` under the device key, bound to `label`; wipes its own copy of the plaintext. */
+  private async wrap(plaintext: Uint8Array, label: string): Promise<WrappedBytes> {
+    const iv = this.random(new Uint8Array(12))
+    const copy = toArrayBuffer(plaintext)
+    try {
+      const additionalData = toArrayBuffer(encoder.encode(label))
+      return { iv, data: await this.subtle.encrypt({ name: 'AES-GCM', iv: toArrayBuffer(iv), additionalData }, await this.deviceKey(), copy) }
+    } finally {
+      new Uint8Array(copy).fill(0)
+    }
+  }
+
+  private async unwrap(wrapped: WrappedBytes, label: string): Promise<Uint8Array | null> {
+    try {
+      const additionalData = toArrayBuffer(encoder.encode(label))
+      return new Uint8Array(await this.subtle.decrypt({ name: 'AES-GCM', iv: toArrayBuffer(wrapped.iv), additionalData }, await this.deviceKey(), wrapped.data))
+    } catch {
+      return null
+    }
+  }
+
   /** This browser's connection id for `network` (hex), created on first use and kept across logouts. */
   async connectionId(network: string): Promise<string> {
     const existing = await this.backend.get<string>(connectionKey(network))
@@ -82,21 +115,11 @@ export class AppConnectKeyRingStore {
    */
   async save(session: AppConnectSession, privateKeys: ReadonlyMap<string, Uint8Array>): Promise<void> {
     const refs = [...session.authKeys.map((key) => key.keyRef), ...session.encKeys.map((key) => key.keyRef)]
-    const deviceKey = await this.deviceKey()
-    const wrapped: Record<string, WrappedKey> = {}
+    const wrapped: Record<string, WrappedBytes> = {}
     for (const ref of refs) {
       const privateKey = privateKeys.get(ref)
       if (!privateKey) throw new Error(`no private key for ${ref}`)
-      const iv = this.random(new Uint8Array(12))
-      const plaintext = toArrayBuffer(privateKey)
-      try {
-        wrapped[ref] = {
-          iv,
-          data: await this.subtle.encrypt({ name: 'AES-GCM', iv: toArrayBuffer(iv), additionalData: wrapAad(session, ref) }, deviceKey, plaintext),
-        }
-      } finally {
-        new Uint8Array(plaintext).fill(0)
-      }
+      wrapped[ref] = await this.wrap(privateKey, keyLabel(session, ref))
     }
     const record: StoredRing = { session, wrapped }
     await this.backend.put(sessionKey(session.network), record)
@@ -107,11 +130,17 @@ export class AppConnectKeyRingStore {
     return record?.session ?? null
   }
 
-  /** Replaces the stored session record (refreshed budgets, a disabled key) and keeps the wrapped keys. */
-  async updateSession(session: AppConnectSession): Promise<void> {
-    const record = await this.backend.get<StoredRing>(sessionKey(session.network))
-    if (!record || record.session.identityId !== session.identityId) return
-    await this.backend.put(sessionKey(session.network), { ...record, session })
+  /**
+   * Replaces the stored record of this exact grant (refreshed budgets) and
+   * keeps the wrapped keys. The read and the write are one transaction, so a
+   * newer grant another tab stores meanwhile is never overwritten.
+   */
+  updateSession(session: AppConnectSession): Promise<boolean> {
+    return this.backend.updateIf(
+      sessionKey(session.network),
+      (value) => sessionMatches(value, session),
+      (value) => ({ ...(value as StoredRing), session }),
+    )
   }
 
   /** The private key behind `keyRef` (the caller wipes it after use), or null when it is not stored. */
@@ -119,23 +148,36 @@ export class AppConnectKeyRingStore {
     const record = await this.backend.get<StoredRing>(sessionKey(session.network))
     if (!record || record.session.identityId !== session.identityId) return null
     const wrapped = record.wrapped[keyRef]
-    if (!wrapped) return null
-    const deviceKey = await this.deviceKey()
-    try {
-      return new Uint8Array(await this.subtle.decrypt(
-        { name: 'AES-GCM', iv: toArrayBuffer(wrapped.iv), additionalData: wrapAad(session, keyRef) },
-        deviceKey,
-        wrapped.data,
-      ))
-    } catch {
-      return null
-    }
+    return wrapped ? this.unwrap(wrapped, keyLabel(session, keyRef)) : null
   }
 
-  /** Forgets the session and its keys; the connection id stays. */
-  async clear(network: string): Promise<void> {
-    await this.backend.delete(sessionKey(network))
+  /**
+   * Forgets the stored session and its keys if it is the one `match` names, so
+   * a tab holding an older grant never deletes the grant another tab just
+   * stored. The connection id stays.
+   */
+  clear(network: string, match: SessionMatch): Promise<boolean> {
+    return this.backend.deleteIf(sessionKey(network), (value) => sessionMatches(value, match))
   }
+
+  /** Stores a small secret (the pending sign-in request) wrapped under the device key. */
+  async saveSecret(network: string, name: string, plaintext: Uint8Array): Promise<void> {
+    await this.backend.put(secretKey(network, name), await this.wrap(plaintext, `yappr:app-connect:secret:v1|${network}|${name}`))
+  }
+
+  async loadSecret(network: string, name: string): Promise<Uint8Array | null> {
+    const wrapped = await this.backend.get<WrappedBytes>(secretKey(network, name))
+    return wrapped ? this.unwrap(wrapped, `yappr:app-connect:secret:v1|${network}|${name}`) : null
+  }
+
+  async deleteSecret(network: string, name: string): Promise<void> {
+    await this.backend.delete(secretKey(network, name))
+  }
+}
+
+/** Ties a wrapped key to its slot, so a blob moved to another identity or ref does not unwrap. */
+function keyLabel(session: Pick<AppConnectSession, 'network' | 'identityId'>, keyRef: string): string {
+  return `yappr:app-connect:key-ring:v1|${session.network}|${session.identityId}|${keyRef}`
 }
 
 /** A single-object-store IndexedDB backend; values are structured clones (CryptoKey, bigint and bytes included). */
@@ -154,23 +196,43 @@ export function indexedDbKeyRingBackend(databaseName: string): KeyRingBackend {
     })
     return dbPromise
   }
-  const run = async <T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest): Promise<T> => {
+  const transaction = async <T>(mode: IDBTransactionMode, action: (store: IDBObjectStore, done: (value: T) => void) => void): Promise<T> => {
     const db = await open()
     return new Promise<T>((resolve, reject) => {
-      const transaction = db.transaction(STORE, mode)
-      const request = action(transaction.objectStore(STORE))
-      transaction.oncomplete = () => resolve(request.result as T)
-      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB transaction failed'))
-      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB transaction aborted'))
+      const tx = db.transaction(STORE, mode)
+      let result: T
+      action(tx.objectStore(STORE), (value) => { result = value })
+      tx.oncomplete = () => resolve(result)
+      tx.onerror = () => reject(tx.error ?? new Error('IndexedDB transaction failed'))
+      tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'))
     })
   }
   return {
-    get: <T>(key: string) => run<T | undefined>('readonly', (store) => store.get(key)),
-    put: async (key, value) => {
-      await run('readwrite', (store) => store.put(value, key))
-    },
-    delete: async (key) => {
-      await run('readwrite', (store) => store.delete(key))
-    },
+    get: <T>(key: string) => transaction<T | undefined>('readonly', (store, done) => {
+      const request = store.get(key)
+      request.onsuccess = () => done(request.result as T | undefined)
+    }),
+    put: (key, value) => transaction<void>('readwrite', (store) => { store.put(value, key) }),
+    delete: (key) => transaction<void>('readwrite', (store) => { store.delete(key) }),
+    deleteIf: (key, predicate) => transaction<boolean>('readwrite', (store, done) => {
+      done(false)
+      const request = store.get(key)
+      request.onsuccess = () => {
+        if (request.result !== undefined && predicate(request.result)) {
+          store.delete(key)
+          done(true)
+        }
+      }
+    }),
+    updateIf: (key, predicate, next) => transaction<boolean>('readwrite', (store, done) => {
+      done(false)
+      const request = store.get(key)
+      request.onsuccess = () => {
+        if (request.result !== undefined && predicate(request.result)) {
+          store.put(next(request.result), key)
+          done(true)
+        }
+      }
+    }),
   }
 }

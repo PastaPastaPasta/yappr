@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AppConnectIdentityKey, AppConnectSession, AppConnectSessionKey } from 'platform-auth'
-import { appConnectHealth, reconcileSessionWithChain } from './session-health'
+import { appConnectHealth, reconcileSessionWithChain, withoutOutdatedEncryptionKeys } from './session-health'
 
 const DAY = 24 * 60 * 60_000
 const NOW = 1_000 * DAY
@@ -68,5 +68,21 @@ describe('reconcileSessionWithChain', () => {
     expect(reconcileSessionWithChain(session(), chain().slice(0, 1), new Map()).revoked).toBe(true)
     expect(reconcileSessionWithChain(session(), chain({ bounds: { kind: 'contractGroup', groupId: 'other' } }), new Map()).revoked).toBe(true)
     expect(reconcileSessionWithChain(session(), chain({ securityLevel: 2 }), new Map()).revoked).toBe(true)
+  })
+})
+
+describe('withoutOutdatedEncryptionKeys', () => {
+  const chainKey = (id: number) => ({ id }) as AppConnectIdentityKey
+
+  it('keeps the session when its encryption key is the current one', () => {
+    expect(withoutOutdatedEncryptionKeys(session(), 'app', [chainKey(7)])).toBeNull()
+  })
+
+  it('drops an encryption key another wallet has replaced', () => {
+    expect(withoutOutdatedEncryptionKeys(session(), 'app', [chainKey(9)])?.encKeys).toEqual([])
+  })
+
+  it('only judges keys bound to the given contract', () => {
+    expect(withoutOutdatedEncryptionKeys(session(), 'other', [])).toBeNull()
   })
 })

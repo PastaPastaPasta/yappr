@@ -13,6 +13,16 @@ function memoryBackend(): KeyRingBackend & { data: Map<string, unknown> } {
     delete: async (key) => {
       data.delete(key)
     },
+    deleteIf: async (key, predicate) => {
+      if (!data.has(key) || !predicate(data.get(key))) return false
+      data.delete(key)
+      return true
+    },
+    updateIf: async (key, predicate, next) => {
+      if (!data.has(key) || !predicate(data.get(key))) return false
+      data.set(key, structuredClone(next(data.get(key))))
+      return true
+    },
   }
 }
 
@@ -83,12 +93,37 @@ describe('AppConnectKeyRingStore', () => {
     expect((await store.load('devnet'))?.identityId).toBe('alice')
   })
 
+  it('never lets an older grant clear or overwrite a newer one', async () => {
+    const store = new AppConnectKeyRingStore(memoryBackend())
+    const renewed = { ...session(), grantedAt: 2 }
+    await store.save(renewed, keys())
+    // A tab still holding the first grant finds its keys revoked.
+    expect(await store.clear('devnet', { identityId: 'alice', grantedAt: 1 })).toBe(false)
+    await store.updateSession({ ...session(), authKeys: [] })
+    expect(await store.load('devnet')).toEqual(renewed)
+    expect(await store.clear('devnet', { identityId: 'mallory' })).toBe(false)
+    expect(await store.clear('devnet', { identityId: 'alice', grantedAt: 2 })).toBe(true)
+  })
+
+  it('wraps secrets per network and name', async () => {
+    const backend = memoryBackend()
+    const store = new AppConnectKeyRingStore(backend)
+    const secret = new TextEncoder().encode('{"ephemeralPrivateKey":"11"}')
+    await store.saveSecret('devnet', 'request', secret)
+    expect(await store.loadSecret('devnet', 'request')).toEqual(secret)
+    expect(JSON.stringify(Array.from(new Uint8Array((backend.data.get('secret:devnet:request') as { data: ArrayBuffer }).data)))).not.toContain(Array.from(secret).join(','))
+    backend.data.set('secret:testnet:request', backend.data.get('secret:devnet:request'))
+    expect(await store.loadSecret('testnet', 'request')).toBeNull()
+    await store.deleteSecret('devnet', 'request')
+    expect(await store.loadSecret('devnet', 'request')).toBeNull()
+  })
+
   it('keeps one connection id per network across logout', async () => {
     const store = new AppConnectKeyRingStore(memoryBackend())
     const first = await store.connectionId('devnet')
     expect(first).toMatch(/^[0-9a-f]{32}$/)
     await store.save(session(), keys())
-    await store.clear('devnet')
+    await store.clear('devnet', { identityId: 'alice' })
     expect(await store.load('devnet')).toBeNull()
     expect(await store.connectionId('devnet')).toBe(first)
     expect(await store.connectionId('testnet')).not.toBe(first)

@@ -58,10 +58,16 @@ export interface StoredAppConnectRequest {
   identityHint?: string
 }
 
+/**
+ * Where the pending request lives between polls (and across a reload or the
+ * wallet's return page). The ephemeral private key it holds opens the wallet's
+ * answer, which carries the granted keys, so a real store wraps it rather than
+ * leaving it in plain storage. Async so that store can be IndexedDB.
+ */
 export interface RequestRecordStore {
-  load(): StoredAppConnectRequest | null
-  save(record: StoredAppConnectRequest): void
-  clear(): void
+  load(): Promise<StoredAppConnectRequest | null>
+  save(record: StoredAppConnectRequest): Promise<void>
+  clear(): Promise<void>
 }
 
 export interface AppConnectLoginDeps {
@@ -128,6 +134,9 @@ export class AppConnectLogin {
   private wake: (() => void) | null = null
   private progress = new Map<string, CandidateProgress>()
   private verified: VerifiedCandidate[] = []
+  /** Bumped by every start and by dispose, so an older start that is still awaiting stops where it is. */
+  private generation = 0
+  private disposed = false
   private readonly now: () => number
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>
   private readonly verify: (input: VerifyAppConnectCandidateInput) => Promise<AppConnectVerification>
@@ -159,28 +168,36 @@ export class AppConnectLogin {
    * (renewal) accepts only that identity.
    */
   async start(options: { identityHint?: string; fresh?: boolean } = {}): Promise<void> {
+    if (this.disposed) return
+    const generation = ++this.generation
+    const current = () => !this.disposed && this.generation === generation
     this.stop()
     this.set({ phase: 'checking' })
     try {
       const status = await this.deps.port.chainStatus()
+      if (!current()) return
       if (status.protocolVersion < APP_CONNECT_MIN_PROTOCOL_VERSION) {
         this.set({ phase: 'unavailable', reason: 'network-not-ready' })
         return
       }
       const trust = await this.deps.trust()
+      if (!current()) return
       if (!trust.ok) {
         this.set({ phase: 'unavailable', reason: 'untrusted' })
         return
       }
     } catch (error) {
+      if (!current()) return
       this.deps.onError?.('App Connect: the network check failed', error)
       this.set({ phase: 'unavailable', reason: 'offline' })
       return
     }
 
-    const stored = options.fresh ? null : this.deps.records.load()
+    const stored = options.fresh ? null : await this.deps.records.load()
+    if (!current()) return
     const resumable = stored && stored.identityHint === options.identityHint ? stored : null
     const record = resumable ?? await this.newRecord(options.identityHint)
+    if (!current()) return
     this.activate(record)
     this.poll()
   }
@@ -194,11 +211,13 @@ export class AppConnectLogin {
       ...(identityHint ? { identityHint } : {}),
     }
     clearSensitiveBytes(privateKey)
-    this.deps.records.save(record)
+    await this.deps.records.save(record)
     return record
   }
 
   private activate(record: StoredAppConnectRequest): void {
+    // A new request replaces the old one: its ephemeral key is no longer needed.
+    if (this.active) clearSensitiveBytes(this.active.privateKey)
     const privateKey = hexToBytes(record.ephemeralPrivateKey)
     const request = buildYapprAppConnectRequest({
       pins: this.deps.pins,
@@ -255,21 +274,38 @@ export class AppConnectLogin {
     await this.start({ identityHint: hint, fresh: true })
   }
 
-  /** Stops polling and wipes the request and any verified keys. */
+  /** Stops polling and wipes the request (here and in the record store) and any verified keys. */
   finish(): void {
-    this.stop()
-    this.discardVerified()
-    if (this.active) clearSensitiveBytes(this.active.privateKey)
-    this.active = null
-    this.deps.records.clear()
+    this.teardown()
+    this.clearRecord()
   }
 
+  /**
+   * Unmount: stops everything, including a start still awaiting its checks,
+   * and wipes the keys held here. The stored request stays while the wallet
+   * may still answer it, so a reload or the wallet's return page can resume
+   * it; a request that has run out is cleared.
+   */
   dispose(): void {
+    const active = this.active
+    this.disposed = true
+    this.generation += 1
+    this.teardown()
+    this.listeners.clear()
+    // Before a request is active there is nothing of ours to forget; a stale
+    // stored one is dropped the next time it is loaded.
+    if (active && this.now() - active.record.createdAt >= APP_CONNECT_MAX_REQUEST_AGE_MS) this.clearRecord()
+  }
+
+  private teardown(): void {
     this.stop()
     this.discardVerified()
     if (this.active) clearSensitiveBytes(this.active.privateKey)
     this.active = null
-    this.listeners.clear()
+  }
+
+  private clearRecord(): void {
+    this.deps.records.clear().catch((error: unknown) => this.deps.onError?.('App Connect: could not clear the request', error))
   }
 
   private stop(): void {
@@ -279,9 +315,7 @@ export class AppConnectLogin {
   }
 
   private discardVerified(): void {
-    for (const candidate of this.verified) {
-      for (const key of [...candidate.grant.authKeys, ...candidate.grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
-    }
+    for (const candidate of this.verified) this.wipeGrant(candidate.grant)
     this.verified = []
   }
 
@@ -357,6 +391,8 @@ export class AppConnectLogin {
       }
       if (result.ok) {
         progress.done = true
+        // An identity that republished replaces its earlier answer; wipe that one's keys.
+        for (const replaced of this.verified.filter((v) => v.identityId === result.grant.identityId)) this.wipeGrant(replaced.grant)
         this.verified = [...this.verified.filter((v) => v.identityId !== result.grant.identityId), { identityId: result.grant.identityId, grant: result.grant }]
       } else if (!result.retryable || progress.attempts >= MAX_VERIFY_ATTEMPTS || this.now() - progress.firstSeen > RETRY_WINDOW_MS) {
         progress.done = true

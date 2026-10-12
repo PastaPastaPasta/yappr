@@ -56,10 +56,14 @@ export async function checkAppConnectTrust(
   if (!groupTrust.ok && groupTrust.reason === 'missing-members') {
     for (const member of groupTrust.members) failed.add(member.contractId)
   }
-  const groupMissing = !groupTrust.ok && groupTrust.reason === 'group-not-found'
+  // With no group, or one under a different owner or with admins, membership
+  // was never checked and nothing about the group can be relied on: route
+  // nothing to the group key.
+  const failClosed = !groupTrust.ok
+    && (groupTrust.reason === 'group-not-found' || groupTrust.reason === 'owner-mismatch' || groupTrust.reason === 'admins-mismatch')
   const group: PinnedGroup = {
     groupId: pins.groupId,
-    members: groupMissing
+    members: failClosed
       ? []
       : pins.members
         .filter((member) => !failed.has(member.contractId))

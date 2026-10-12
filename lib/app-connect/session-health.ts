@@ -73,3 +73,20 @@ export function reconcileSessionWithChain(
     },
   }
 }
+
+/**
+ * Drops the session's encryption keys for `contractId` that are no longer the
+ * identity's current key there: another wallet registered a newer one, which
+ * peers now encrypt to. The session stops encrypting with the outdated key,
+ * and the messaging prompts lead to renewing in the wallet, which brings the
+ * current one. Returns null when nothing changed.
+ */
+export function withoutOutdatedEncryptionKeys(
+  session: AppConnectSession,
+  contractId: string,
+  currentKeys: readonly AppConnectIdentityKey[],
+): AppConnectSession | null {
+  const current = new Set(currentKeys.map((key) => key.id))
+  const encKeys = session.encKeys.filter((key) => key.contractId !== contractId || current.has(key.keyId))
+  return encKeys.length === session.encKeys.length ? null : { ...session, encKeys }
+}

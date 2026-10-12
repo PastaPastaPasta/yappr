@@ -1,6 +1,6 @@
 'use client'
 
-import { APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS, selectSigningKey, type PinnedGroup, type SigningRequest } from 'platform-auth'
+import { APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS, selectSigningKey, type AppConnectSession, type PinnedGroup, type SigningRequest } from 'platform-auth'
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed'
 import { logger } from '@/lib/logger'
 import { keyNetwork } from '@/lib/constants'
@@ -32,6 +32,7 @@ export type SigningUnavailableReason = 'renew' | 'wallet' | 'signed-out'
 export const RENEW_IN_WALLET_MESSAGE = 'Renew Yappr in your Dash wallet to keep posting.'
 export const NEEDS_WALLET_MESSAGE = 'This can\'t be done from this browser. Use your Dash wallet for it.'
 export const SIGNED_OUT_MESSAGE = 'You were signed out from your Dash wallet. Sign in again to continue.'
+const TRY_AGAIN_MESSAGE = 'That didn\'t go through. Please try again in a moment.'
 
 export class SigningUnavailableError extends Error {
   constructor(readonly reason: SigningUnavailableReason, message: string) {
@@ -85,10 +86,29 @@ export async function resolveSigningKey(
   return resolveFromRawKey(ownerId, publicKeys, request, options)
 }
 
+/**
+ * After this tab's grant turned out unusable: if the session manager switched
+ * to a newer grant another tab stored (a renewal), try once more with it;
+ * otherwise the user really was signed out.
+ */
+async function afterUnusableGrant(
+  session: AppConnectSession,
+  ownerId: string,
+  publicKeys: WasmIdentityPublicKey[],
+  request: SigningRequest,
+  retried: boolean,
+): Promise<SigningKey> {
+  const next = appConnectSessions.current(ownerId)
+  if (!next) throw new SigningUnavailableError('signed-out', SIGNED_OUT_MESSAGE)
+  if (next !== session && !retried) return resolveFromKeyRing(ownerId, publicKeys, request, true)
+  throw new SigningUnavailableError('wallet', TRY_AGAIN_MESSAGE)
+}
+
 async function resolveFromKeyRing(
   ownerId: string,
   publicKeys: WasmIdentityPublicKey[],
   request: SigningRequest,
+  retried = false,
 ): Promise<SigningKey> {
   const session = appConnectSessions.current(ownerId)
   if (!session) throw new SigningUnavailableError('signed-out', SIGNED_OUT_MESSAGE)
@@ -108,17 +128,17 @@ async function resolveFromKeyRing(
 
   const identityKey = publicKeys.find((key) => key.keyId === selection.key.keyId)
   if (!identityKey || identityKey.disabledAt !== undefined) {
-    // The wallet revoked or superseded this browser's grant; the refresh signs out.
+    // The wallet revoked or superseded this browser's grant; the refresh signs out
+    // or switches to a newer grant another tab stored.
     await appConnectSessions.refresh()
-    throw new SigningUnavailableError('signed-out', SIGNED_OUT_MESSAGE)
+    return afterUnusableGrant(session, ownerId, publicKeys, request, retried)
   }
   const wif = await appConnectSessions.privateKeyWif(session, selection.key.keyRef)
   // The private key must be the chain key the ring says it is: never sign with a mismatched pair.
   if (!wif || !matchIdentityKey(wif, [identityKey], { network: keyNetwork(), purpose: KeyPurpose.AUTHENTICATION, keyId: identityKey.keyId }).ok) {
     logger.error(`App Connect: the key ring's key ${selection.key.keyId} is missing or does not match the chain; signing out`)
-    await appConnectSessions.clear()
-    useAppConnectStatus.setState({ signedOutByWallet: true })
-    throw new SigningUnavailableError('signed-out', SIGNED_OUT_MESSAGE)
+    await appConnectSessions.signOutRevoked(session)
+    return afterUnusableGrant(session, ownerId, publicKeys, request, retried)
   }
   logger.debug(`App Connect: signing with key ${identityKey.keyId} (${selection.key.bounds?.kind ?? 'unbound'})`)
   return { wif, identityKey, appConnect: true }

@@ -49,7 +49,11 @@ function harness(options: {
       ? { ok: false, reason: 'unexpected-members', group: { groupId: pins.groupId, members: [] } }
       : { ok: true, group: { groupId: pins.groupId, members: [] } }),
     connectionId: async () => 'ab'.repeat(16),
-    records: { load: () => records.value, save: (r) => { records.value = r }, clear: () => { records.value = null } },
+    records: {
+      load: async () => records.value,
+      save: async (r) => { records.value = r },
+      clear: async () => { records.value = null },
+    },
     origin: 'https://yap.pr',
     basePath: '/devnet',
     now: () => clock.now,
@@ -188,6 +192,70 @@ describe('AppConnectLogin', () => {
     await untrusted.login.start()
     expect(last(untrusted)).toEqual({ phase: 'unavailable', reason: 'untrusted' })
     expect(untrusted.records.value).toBeNull()
+  })
+})
+
+describe('AppConnectLogin teardown', () => {
+  it('a dispose while start is still checking stops it: no request, no polling', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const h = harness()
+    const port = (h.login as unknown as { deps: { port: { chainStatus: () => Promise<unknown> } } }).deps.port
+    const chainStatus = port.chainStatus
+    port.chainStatus = async () => { await gate; return chainStatus() }
+
+    const starting = h.login.start()
+    h.login.dispose()
+    release()
+    await starting
+    await h.flush()
+    expect(h.records.value).toBeNull()
+    expect(h.login.requestHashHex()).toBeNull()
+  })
+
+  it('wipes the previous ephemeral key when a new request replaces it', async () => {
+    const h = harness()
+    await h.login.start()
+    const first = (h.login as unknown as { active: { privateKey: Uint8Array } }).active.privateKey
+    await h.login.start({ fresh: true })
+    expect(first.every((byte) => byte === 0)).toBe(true)
+  })
+
+  it('keeps a live request across an unmount and forgets an expired one', async () => {
+    const live = harness()
+    await live.login.start()
+    live.login.dispose()
+    await live.flush()
+    expect(live.records.value).not.toBeNull()
+
+    const expired = harness()
+    await expired.login.start()
+    expired.clock.now += 10 * 60_000
+    expired.login.dispose()
+    await expired.flush()
+    expect(expired.records.value).toBeNull()
+  })
+
+  it('wipes an answer an identity replaced by republishing', async () => {
+    const grants: AppConnectGrant[] = []
+    const h = harness({
+      verify: (input) => {
+        const g = grant(input.candidate.ownerId)
+        grants.push(g)
+        return { ok: true, grant: g }
+      },
+    })
+    h.setCandidates([candidate(ALICE, 1)])
+    await h.login.start()
+    await h.flush()
+    // Alice publishes a different answer to the same request; it is verified again.
+    await h.login.checkAgain()
+    h.setCandidates([candidate(ALICE, 3)])
+    h.login.pollNow()
+    await h.flush()
+    expect(grants).toHaveLength(2)
+    expect(grants[0].authKeys[0].privateKey.every((byte) => byte === 0)).toBe(true)
+    expect(grants[1].authKeys[0].privateKey.every((byte) => byte === 9)).toBe(true)
   })
 })
 

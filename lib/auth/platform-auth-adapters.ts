@@ -325,7 +325,10 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       clearPrivateKey: async (identityId) => {
         clearPrivateKey(identityId)
         // Logout wipes the key ring too; the connection id stays for the next login.
-        if (isAppConnectBuild()) await appConnectSessions.clear()
+        // Only while this tab holds the session: after a revoke this tab has
+        // already dropped its own grant, and must not take a newer one another
+        // tab stored for the same identity with it.
+        if (isAppConnectBuild() && appConnectSessions.current(identityId)) await appConnectSessions.logout(identityId)
       },
       storeEncryptionKey,
       getEncryptionKey,
