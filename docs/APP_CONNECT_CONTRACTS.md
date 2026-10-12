@@ -139,7 +139,8 @@ During the live run, one entry at a time:
 - The create is signed at the maker's next identity nonce and journaled before its first broadcast.
   - The next nonce is never taken below the highest one the journal already spent. A lagging node can therefore not hand back a used nonce, and with it a registered contract's id.
   - A resumed run re-broadcasts those same bytes and never signs that entry again.
-  - The journal is replaced atomically: written to a temporary file, then renamed.
+  - The journal is replaced durably before each broadcast: written and flushed to a temporary file, renamed, then its directory flushed. A failed flush stops the run.
+  - A maker nonce spent beyond the journal must not have produced a member of the group. If one did, the journal lost a checkpoint, and the run stops instead of registering a second copy.
 - After broadcast, these are read back with proofs:
   - the contract, whose document types must equal the pinned file's, so a wrong id cannot pass;
   - its membership;

@@ -136,6 +136,16 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
     const keys = result.find((r) => normalizeId(r.identityId) === ownerId)?.keys ?? [];
     return keys.length === 1 ? keys[0] : null;
   };
+  /** An identity snapshot that already holds `key` (its id and public bytes); a lagging node may hand back an older one. */
+  const snapshotHolding = async (key) => {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (attempt > 0) await settle();
+      const identity = await battery.readback(() => battery.sdk.identities.fetch(ownerId));
+      const held = identity.getPublicKeyById(key.keyId);
+      if (held && keyBytes(held).equals(key.publicKey)) return identity;
+    }
+    throw new Error(`no identity snapshot holds key ${key.keyId} yet`);
+  };
   /**
    * Submits one anchor-bound key. Returns the key it tried to add whatever the SDK
    * reports: a confirmation timeout can follow an update that landed, so the
@@ -144,16 +154,7 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
   const addAnchorKey = async (previous) => {
     // The update takes its key id and revision from this snapshot, so it must already hold the
     // previous step's key: a node one block behind would hand back the identity without it.
-    let identity = await battery.readback(() => battery.sdk.identities.fetch(ownerId));
-    const holds = (snapshot) => {
-      const key = snapshot.getPublicKeyById(previous.keyId);
-      return Boolean(key) && keyBytes(key).equals(previous.publicKey);
-    };
-    for (let attempt = 0; previous && !holds(identity); attempt++) {
-      if (attempt === 5) throw new Error(`the identity snapshot still lacks key ${previous.keyId} after the first update`);
-      await settle();
-      identity = await battery.readback(() => battery.sdk.identities.fetch(ownerId));
-    }
+    const identity = previous ? await snapshotHolding(previous) : await battery.readback(() => battery.sdk.identities.fetch(ownerId));
     const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1;
     const fresh = generateKeypairHex();
     const signer = new IdentitySigner();
@@ -196,8 +197,16 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
   };
 
   const first = await step('k1a', 'a first');
-  if (!first || !(await step('k1b', 'a second', first))) return;
-  const identity = await battery.readback(() => battery.sdk.identities.fetch(ownerId));
+  const second = first && await step('k1b', 'a second', first);
+  if (!second) return;
+  // Judged on a snapshot that already holds the second key, so it shows the identity after the rotation.
+  let identity;
+  try {
+    identity = await snapshotHolding(second);
+  } catch (e) {
+    battery.check('k1c the superseded key stays enabled and anchor-bound', false, describeErr(e).slice(0, 220));
+    return;
+  }
   const stored = identity.getPublicKeyById(first.keyId);
   battery.check('k1c the superseded key stays enabled and anchor-bound (latest is a pointer, not a revocation)',
     Boolean(stored) && stored.disabledAt === undefined && normalizeId(stored.contractBounds?.identifier) === pinned.appId,

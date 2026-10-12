@@ -45,7 +45,8 @@
  * An elected declaration registers with the network's interim (`withInterim`).
  * Nothing here prints private key material.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey, StateTransition, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
@@ -54,7 +55,7 @@ import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './cont
 import { describeErr, signerFor } from './owner-keys.mjs';
 import { auditModeration, contractSource, registrationJson, withInterim } from './register-lib.mjs';
 import { envValue, network } from './sdk-env.mjs';
-import { NONCE_SEQUENCE_MASK, createSdkHandle, readback, sleep, writePrivateFile } from './seed/seed-lib.mjs';
+import { NONCE_SEQUENCE_MASK, createSdkHandle, readback, sleep } from './seed/seed-lib.mjs';
 import { resolveMakerOwner } from './social-battery-lib.mjs';
 
 const SIGNATURE_ALLOWANCE = 100;
@@ -204,6 +205,30 @@ function checkJournal(journal, plan, path) {
   }
 }
 
+/**
+ * Replaces `path` with `contents` so that it survives a crash or power loss:
+ * the data is flushed in a temporary file, renamed over the journal, and the
+ * directory is flushed too. Any failure throws, which stops the run before
+ * the next broadcast.
+ */
+function writeDurably(path, contents) {
+  const tmp = `${path}.tmp-${process.pid}`;
+  const fd = openSync(tmp, 'w', 0o600);
+  try {
+    writeSync(fd, contents);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, path);
+  const dir = openSync(dirname(resolve(path)), 'r');
+  try {
+    fsyncSync(dir);
+  } finally {
+    closeSync(dir);
+  }
+}
+
 /** Polls for a broadcast create; null when it did not show up (yet). Absence is decided by `createOutcome`. */
 async function awaitContract(handle, id) {
   for (let attempt = 0; attempt < 45; attempt++) {
@@ -261,24 +286,32 @@ async function verifyRegistered(handle, entry, plan, platformVersion) {
 
 /** The live run over the entries up to `--upto`, against the journal `state`. */
 async function registerLive({ args, plan, state, handle, makerNonce, signing, platformVersion }) {
-  // Written to a temporary file and renamed over the journal, so an interrupted save never truncates it.
-  const save = () => writePrivateFile(args.journal, JSON.stringify(state, null, 2) + '\n');
+  const save = () => writeDurably(args.journal, JSON.stringify(state, null, 2) + '\n');
   const read = (fn) => readback(handle, fn);
   /**
    * The maker's next nonce, never below what the journal already spent: a node
    * lagging behind would otherwise hand out a used nonce, and with it the id of
-   * a contract already registered.
+   * a contract already registered. Every nonce the maker spent beyond the
+   * journal must not have produced a member of the group: one that did means
+   * the journal lost a checkpoint, and registering again would put a second
+   * copy of that contract in the group for good.
    */
   const nextNonce = async () => {
     const spent = [...Object.values(state.contracts), ...(state.refused ?? [])].map((c) => BigInt(c.nonce));
     const floor = spent.reduce((max, n) => (n > max ? n : max), plan.anchor.nonce - 1n);
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const chainNonce = await makerNonce();
-      if (chainNonce >= floor) return chainNonce + 1n;
+    let chainNonce = await makerNonce();
+    for (let attempt = 1; chainNonce < floor; attempt++) {
+      if (attempt === 5) throw new Error(`the maker's nonce keeps reading behind the journal's ${floor}; re-run once the nodes catch up`);
       console.log(`  the maker's nonce reads ${chainNonce}, behind the journal's ${floor}; reading again`);
       await sleep(3000);
+      chainNonce = await makerNonce();
     }
-    throw new Error(`the maker's nonce keeps reading behind the journal's ${floor}; re-run once the nodes catch up`);
+    for (let nonce = floor + 1n; nonce <= chainNonce; nonce++) {
+      const id = generateId(plan.groupOwner, nonce);
+      const memberships = await read(() => handle.sdk.contractGroups.forContract(id));
+      if (memberships.contract.includes(plan.groupId)) throw new Error(`${id} (maker nonce ${nonce}) is in the group but not in the journal: the journal lost a checkpoint. Reconcile it by hand before registering anything else.`);
+    }
+    return chainNonce + 1n;
   };
   save();
   console.log('\nregistering:');
