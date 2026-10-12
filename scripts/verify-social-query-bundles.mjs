@@ -33,7 +33,11 @@
  * What the contract under test declares (fetched by id, not the
  * environment's topology) picks the like reads and the notification grids.
  * There is no postMention: a post or reply names at most one mentionedUserId
- * (v15: up to eight in mentionedUserIds, read with `contains`, 5.0.0-beta.5). */
+ * (v15: up to eight in mentionedUserIds, read with `contains`, 5.0.0-beta.5).
+ * A feed page's enrichment is the client's shape: one composite of the page,
+ * its counts and (posts) the viewer's bookmarks, and the viewer's hearts read
+ * beside it. Hearts sit on byPost / byReply, the like count's own index, and a
+ * composite refuses a count and a documents lookup on one index path. */
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
@@ -43,7 +47,7 @@ import { socialShapes } from './social-shapes.mjs';
 
 const social = process.env.V10_CONTRACT_ID;
 if (!social) {
-  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10, v11, v12 or v13 cut (there is no default).');
+  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10 to v15 cut (there is no default).');
   process.exit(1);
 }
 /** A contract id from the environment or `.env.devnet`; the devnet's own, never a baked-in chain's. */
@@ -59,11 +63,12 @@ function contractId(name) {
 // (a system contract, the same id on every chain), keyed by its owner.
 const profile = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7';
 const dpns = envValue('NEXT_PUBLIC_DPNS_CONTRACT_ID') || 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
-const dm = contractId('NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID');
+// DM v4 is read-only legacy and absent on a fresh PV14 chain (blank id): its bundle is skipped then.
+const dm = envValue('NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID') || null;
 const blog = contractId('NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID');
 const sdk = await connectSdk({ net: 'devnet', timeoutMs: 20000 });
 await sdk.contracts.fetch(dpns);
-await sdk.contracts.getMany([social, profile, dm, blog]);
+await sdk.contracts.getMany([social, profile, dm, blog].filter(Boolean));
 
 const records = response => Array.from(response.values()).filter(Boolean).map(doc => doc.toObject());
 const id = bytes => typeof bytes === 'string' ? bytes : bs58.encode(bytes);
@@ -258,6 +263,8 @@ await verify('blog pages with separate row budgets', blogIds.map(blogId => ({
   orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']], limit: 10,
 })));
 
+if (!dm) console.log('SKIP  conversation messages and owner receipts: NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID is blank (no DM v4 on this chain)');
+else {
 const invites = records(await sdk.documents.query({ dataContractId: dm, documentTypeName: 'conversationInvite', limit: 4 }));
 const conversationIds = [...new Set(invites.map(doc => Buffer.from(doc.conversationId).toString('base64')))];
 while (conversationIds.length < 2) conversationIds.push(Buffer.alloc(10, conversationIds.length + 1).toString('base64'));
@@ -268,6 +275,7 @@ await verify('conversation messages and owner receipts', [
   })),
   { dataContractId: dm, documentTypeName: 'readReceipt', where: [['$ownerId', '==', owner], ['conversationId', 'in', conversationIds]], orderBy: [['conversationId', 'asc']], limit: conversationIds.length },
 ]);
+}
 
 await verify('blog comment count pages', timeline.slice(0, 2).map(doc => ({
   dataContractId: blog, documentTypeName: 'blogComment',
@@ -312,10 +320,20 @@ async function verifyEnrichment(kind) {
     const subQueries = countSources.map(([documentType, field, where]) => ({
       documentType, kind: 'counts', ...(where.length ? { where } : {}), bind: { source: 'page', sourceProperty: '$id', field },
     }));
-    // The viewer marks ride byPost / byReply ([target] terminal $ownerId), the slot's limit the page size.
-    subQueries.push({ documentType: likeType, where: [['$ownerId', '==', owner]],
-      bind: { source: 'page', sourceProperty: '$id', field: targetField }, limit: 20 });
     if (kind === 'reply' && ids.length === 0) throw new Error('the thread root has no direct replies to page');
+    // The viewer: someone who liked a page item, so the hearts compared are not all empty.
+    let viewer = owner;
+    for (const targetId of ids) {
+      const [liker] = records(await sdk.documents.query({ dataContractId: social, documentTypeName: likeType,
+        where: [[targetField, '==', targetId]], orderBy: [[targetField, 'asc'], ['$ownerId', 'asc']], limit: 1 }));
+      if (liker) { viewer = id(liker.$ownerId); break; }
+    }
+    // A post's bookmarks ride the composite as the client sends them (`ownerPost [$ownerId, postId]`,
+    // value-bounded: no limit). A reply has none.
+    if (kind === 'post') {
+      subQueries.push({ documentType: 'bookmark', where: [['$ownerId', '==', viewer]],
+        bind: { source: 'page', sourceProperty: '$id', field: targetField } });
+    }
     const byId = (docs) => [...docs].sort((a, b) => id(a.$id).localeCompare(id(b.$id)));
     const result = kind === 'post'
       ? await sdk.documents.composite({
@@ -335,13 +353,30 @@ async function verifyEnrichment(kind) {
         assert.equal(Number(result.subResults[i].counts.get(postId) ?? 0), Number(counts.get(hex) ?? 0));
       }
     }
-    const marks = ids.length ? records(await sdk.documents.query({ dataContractId: social,
-      documentTypeName: likeType, where: [[targetField, 'in', ids], ['$ownerId', '==', owner]],
-      orderBy: [[targetField, 'asc'], ['$ownerId', 'asc']], limit: ids.length })) : [];
     const byTarget = docs => [...docs].sort((a, b) => id(a[targetField]).localeCompare(id(b[targetField])));
-    assert.equal(canonical(byTarget(result.subResults.at(-1).documents.map(doc => doc.toObject()))), canonical(byTarget(marks)));
-    reports.push({ name, before: 2 + countSources.length, after: 1, rows: page.length, equivalent: true });
-    console.log(`PASS ${name}; ${page.length} page rows`);
+    if (kind === 'post') {
+      const bookmarks = ids.length ? records(await sdk.documents.query({ dataContractId: social,
+        documentTypeName: 'bookmark', where: [['$ownerId', '==', viewer], [targetField, 'in', ids]],
+        orderBy: [['$ownerId', 'asc'], [targetField, 'asc']], limit: ids.length })) : [];
+      assert.equal(canonical(byTarget(result.subResults.at(-1).documents.map(doc => doc.toObject()))), canonical(byTarget(bookmarks)), 'bookmarks');
+    }
+    // The viewer's hearts sit on byPost / byReply, the index the like count reads, and Drive
+    // (5.0.0-beta.5) refuses a count and a documents lookup on one index path in a composite.
+    // The client reads them beside it (likeService.getUserLikedPostIds): one `target in` read
+    // with $ownerId pinned on the terminal, which must equal the per-target reads.
+    const hearts = ids.length ? records(await sdk.documents.query({ dataContractId: social,
+      documentTypeName: likeType, where: [[targetField, 'in', ids], ['$ownerId', '==', viewer]],
+      orderBy: [[targetField, 'asc'], ['$ownerId', 'asc']], limit: ids.length })) : [];
+    const perTarget = [];
+    for (const targetId of ids) {
+      perTarget.push(...records(await sdk.documents.query({ dataContractId: social, documentTypeName: likeType,
+        where: [[targetField, '==', targetId], ['$ownerId', '==', viewer]],
+        orderBy: [[targetField, 'asc'], ['$ownerId', 'asc']], limit: 1 })));
+    }
+    assert.equal(canonical(byTarget(hearts)), canonical(byTarget(perTarget)), 'hearts');
+    const before = 1 + countSources.length + (kind === 'post' ? 1 : 0) + 1;
+    reports.push({ name, before, after: 2, rows: page.length, hearts: hearts.length, equivalent: true });
+    console.log(`PASS ${name}: ${before} → 2 (composite + hearts beside it); ${page.length} page rows, ${hearts.length} hearts`);
   } catch (error) {
     const message = String(error.message || JSON.stringify(error));
     reports.push({ name, equivalent: false, error: message });
