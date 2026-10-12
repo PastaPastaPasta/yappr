@@ -59,8 +59,6 @@ export function deriveLoginKey(
   contractId: Uint8Array,
   keyIndex: number,
 ): Uint8Array {
-  requireLength(baseKey, 32, 'base key')
-  requireLength(identityId, 32, 'identity id')
   requireLength(contractId, 32, 'contract id')
   if (!Number.isInteger(keyIndex) || keyIndex < 0 || keyIndex > MAX_KEY_INDEX) {
     throw new Error(`keyIndex must be a u32, got ${keyIndex}`)
@@ -69,13 +67,23 @@ export function deriveLoginKey(
   const info = new Uint8Array(36)
   info.set(contractId, 0)
   new DataView(info.buffer).setUint32(32, keyIndex, true)
+  return hkdfSecretKey(baseKey, identityId, info)
+}
 
+/**
+ * `HKDF-SHA256(ikm = baseKey, salt = identityId, info, 32)`, re-derived with a
+ * counter byte 1..255 appended to `info` while the result is not a valid
+ * secp256k1 scalar.
+ */
+export function hkdfSecretKey(baseKey: Uint8Array, identityId: Uint8Array, info: Uint8Array): Uint8Array {
+  requireLength(baseKey, 32, 'base key')
+  requireLength(identityId, 32, 'identity id')
   for (let counter = 0; counter <= 0xff; counter++) {
     const attemptInfo = counter === 0 ? info : concatBytes(info, Uint8Array.of(counter))
     const candidate = hkdf(sha256, baseKey, identityId, attemptInfo, 32)
     if (secp256k1.utils.isValidSecretKey(candidate)) return candidate
   }
-  throw new Error('login key derivation exhausted its retry counter')
+  throw new Error('key derivation exhausted its retry counter')
 }
 
 /** AES-256-GCM with a random nonce: `nonce(12) || ciphertext || tag(16)` (spec §6.4). */
@@ -109,7 +117,7 @@ export async function answerKeyExchange(input: AnswerKeyExchangeInput): Promise<
   }
 }
 
-function requireLength(bytes: Uint8Array, length: number, label: string): void {
+export function requireLength(bytes: Uint8Array, length: number, label: string): void {
   if (bytes.length !== length) {
     throw new Error(`Invalid ${label} length: expected ${length}, got ${bytes.length}`)
   }
