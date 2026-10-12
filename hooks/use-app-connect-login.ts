@@ -19,6 +19,18 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 /**
+ * Record writes (save, clear) run one after another in the order they are
+ * called. A save wraps the key (async crypto) before it writes, so without
+ * this two saves could land out of order and leave the older request stored.
+ */
+let recordWrites: Promise<unknown> = Promise.resolve()
+function inOrder<T>(write: () => Promise<T>): Promise<T> {
+  const run = recordWrites.then(write, write)
+  recordWrites = run.catch(() => undefined)
+  return run
+}
+
+/**
  * One slot per kind of request, so a sign-in and a renewal (which names its
  * identity) never overwrite each other's pending request.
  */
@@ -39,7 +51,7 @@ function requestRecordsFor(identityHint: string | undefined): RequestRecordStore
           bytes.fill(0)
         }
         // A stale or unreadable request is of no use to anyone: forget it.
-        if (!record) await appConnectSessions.keyStore().deleteSecret(network, secretName)
+        if (!record) await inOrder(() => appConnectSessions.keyStore().deleteSecret(network, secretName))
         return record
       } catch (error) {
         logger.warn('App Connect: could not read the pending request:', error)
@@ -49,7 +61,7 @@ function requestRecordsFor(identityHint: string | undefined): RequestRecordStore
     async save(record) {
       const bytes = encoder.encode(JSON.stringify(record))
       try {
-        await appConnectSessions.keyStore().saveSecret(appConnectSessions.network(), secretName, bytes)
+        await inOrder(() => appConnectSessions.keyStore().saveSecret(appConnectSessions.network(), secretName, bytes))
       } catch (error) {
         // Without storage the request only lives in this tab.
         logger.warn('App Connect: could not keep the pending request:', error)
@@ -58,7 +70,7 @@ function requestRecordsFor(identityHint: string | undefined): RequestRecordStore
       }
     },
     async clear() {
-      await appConnectSessions.keyStore().deleteSecret(appConnectSessions.network(), secretName)
+      await inOrder(() => appConnectSessions.keyStore().deleteSecret(appConnectSessions.network(), secretName))
     },
   }
 }
