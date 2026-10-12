@@ -58,6 +58,11 @@ export function exactGrant(session: AppConnectSession): SessionMatch {
   return { identityId: session.identityId, grantedAt: session.grantedAt, grantKeyId: grantKeyId(session) }
 }
 
+/** Whether `a` and `b` are the same grant (a refresh replaces the session object but not the grant). */
+export function isSameGrant(a: AppConnectSession, b: AppConnectSession): boolean {
+  return a.identityId === b.identityId && a.grantedAt === b.grantedAt && grantKeyId(a) === grantKeyId(b)
+}
+
 /**
  * Whether `a` is a newer grant than `b`. The wallet's key ids decide, since a
  * later grant always registers higher ones; `grantedAt` is only this browser's

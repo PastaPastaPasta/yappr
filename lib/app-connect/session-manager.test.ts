@@ -180,4 +180,18 @@ describe('AppConnectSessionManager across tabs', () => {
     keyRead.mockRestore()
     startRefresh.mockRestore()
   })
+  it('signs out the grant even after a refresh replaced the session object', async () => {
+    const withEncKey: AppConnectSession = { ...grant('alice', 1), encKeys: [{ keyId: 7, contractId: 'app', purpose: 1, keyRef: 'key-enc' }] }
+    await new AppConnectKeyRingStore(backend).save(withEncKey, new Map([['key-group', new Uint8Array(32).fill(7)], ['key-enc', new Uint8Array(32).fill(8)]]))
+    await appConnectSessions.restore('alice')
+    const original = currentSession('alice')
+    // A refresh swaps in a new object for the same grant (as refresh() does with refreshed budgets).
+    ;(appConnectSessions as unknown as { active: AppConnectSession }).active = { ...original }
+
+    await appConnectSessions.signOutRevoked(original)
+
+    expect(appConnectSessions.current()).toBeNull()
+    expect(appConnectEncryptionKey('alice')).toBeNull()
+    expect(signedOut).toHaveBeenCalledWith('alice')
+  })
 })

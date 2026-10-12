@@ -19,7 +19,7 @@ import { getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { privateKeyToWif } from '@/lib/crypto/wif'
 import { appConnectPins } from './config'
 import { checkAppConnectTrust, type AppConnectTrust } from './group-trust'
-import { AppConnectKeyRingStore, exactGrant, indexedDbKeyRingBackend, isNewerGrant, type SessionMatch } from './key-ring-store'
+import { AppConnectKeyRingStore, exactGrant, indexedDbKeyRingBackend, isNewerGrant, isSameGrant, type SessionMatch } from './key-ring-store'
 import { clearAppConnectEncryptionKey, setAppConnectEncryptionKey, setAppConnectSessionIdentity } from './memory-keys'
 import { appConnectPlatformPort } from './platform-port'
 import {
@@ -241,12 +241,17 @@ class AppConnectSessionManager {
     await this.clearStored({ identityId })
   }
 
+  /** Whether this tab's active session is `session`'s grant, even after a refresh replaced the object. */
+  private holds(session: AppConnectSession): boolean {
+    return this.active !== null && isSameGrant(this.active, session)
+  }
+
   /**
    * Forgets exactly `session` (a login that failed after its grant was stored),
    * never a newer grant another tab has stored since.
    */
   async discard(session: AppConnectSession): Promise<void> {
-    if (this.active === session) this.deactivate()
+    if (this.holds(session)) this.deactivate()
     await this.clearStored(exactGrant(session))
   }
 
@@ -324,7 +329,7 @@ class AppConnectSessionManager {
     }
     if (stored && stored.identityId === session.identityId && isNewerGrant(stored, session)) {
       logger.info(`App Connect: another tab renewed the session for ${session.identityId}; switching to it`)
-      if (this.active === session) await this.activate(stored)
+      if (this.holds(session)) await this.activate(stored)
       return
     }
     logger.warn(`App Connect: the wallet revoked this browser's keys for ${session.identityId}; signing out`)
