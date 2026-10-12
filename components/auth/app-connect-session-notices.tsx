@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { KeyRound, LogOut } from 'lucide-react'
-import type { AppConnectGrant } from 'platform-auth'
+import { clearSensitiveBytes, type AppConnectGrant } from 'platform-auth'
 import { useAuth } from '@/contexts/auth-context'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
@@ -27,7 +27,7 @@ const RENEW_REASON_COPY: Record<RenewReason, string> = {
  * - "Signed out from DashPay" when the wallet revoked this browser's keys.
  */
 export function AppConnectSessionNotices() {
-  const { user, renewWithAppConnect, loginWithAppConnect } = useAuth()
+  const { user, renewWithAppConnect } = useAuth()
   const { identityId, health, renewRequired, signedOutByWallet, dismissRenewRequired, dismissSignedOut } = useAppConnectStatus()
   const renew = useRenewModal()
   const openLogin = useLoginModal((state) => state.open)
@@ -59,27 +59,25 @@ export function AppConnectSessionNotices() {
     dismissRenewRequired()
   }, [dismissRenewRequired, renew])
 
-  /** The renewal landed: tell whoever opened the dialog (a settings card, the messaging-key prompt). */
-  const finishRenew = useCallback(() => {
-    const onRenewed = useRenewModal.getState().onRenewed
-    // The renewal may have added keys: callers re-checking the identity must not see a cached copy.
-    if (renewing) identityService.clearCache(renewing)
-    closeRenew()
-    onRenewed?.()
-    window.dispatchEvent(new CustomEvent(APP_CONNECT_RENEWED_EVENT))
-  }, [closeRenew, renewing])
+  /** The panel showed its success state: close the dialog. */
+  const finishRenew = closeRenew
 
   const onGrant = useCallback(async (grant: AppConnectGrant) => {
-    // Still signed in: replace the keys. Signed out meanwhile (the old keys
-    // were revoked first): this grant, for the identity being renewed, signs it back in.
-    if (user?.identityId === grant.identityId) {
-      await renewWithAppConnect(grant)
-      return
+    // Captured now: closing the dialog (even mid-adoption) resets it.
+    const onRenewed = useRenewModal.getState().onRenewed
+    if (grant.identityId !== renewing) {
+      for (const key of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
+      throw new Error('The renewal came from another account')
     }
-    if (grant.identityId !== renewing) throw new Error('The renewal came from another account')
-    await loginWithAppConnect(grant)
-    dismissSignedOut()
-  }, [dismissSignedOut, loginWithAppConnect, renewWithAppConnect, renewing, user?.identityId])
+    // Renews the keys, or signs the identity back in if a revocation signed it out meanwhile.
+    await renewWithAppConnect(grant)
+    // Side effects of a landed renewal run here, not when the panel finishes,
+    // so dismissing the dialog during its success state loses none of them.
+    // The renewal may have added keys: callers re-checking the identity must not see a cached copy.
+    identityService.clearCache(grant.identityId)
+    onRenewed?.()
+    window.dispatchEvent(new CustomEvent(APP_CONNECT_RENEWED_EVENT))
+  }, [renewWithAppConnect, renewing])
 
   return (
     <>

@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
 import { base64ToBytes } from '@/lib/bytes'
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { usePathname, useRouter } from 'next/navigation'
 import { PlatformAuthController, clearSensitiveBytes, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
@@ -114,6 +114,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => controller.subscribe(setControllerState), [controller])
 
+  /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */
+  const revokeLogout = useRef<Promise<void> | null>(null)
+
   // The wallet revoked this browser's App Connect keys: end the session here too,
   // if this tab is still signed in as that identity.
   useEffect(() => {
@@ -125,7 +128,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         useAppConnectStatus.getState().dismissSignedOut()
         return
       }
-      controller.logout()
+      revokeLogout.current = controller.logout()
         .then(() => router.push('/'))
         .catch((error) => logger.error('Auth: sign-out after a wallet revoke failed:', error))
     })
@@ -180,6 +183,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [applyIntent, controller])
 
   const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
+    await revokeLogout.current
     const session = await appConnectSessions.adopt(grant)
     try {
       const result = await controller.loginWithKeyRing(session.identityId)
@@ -198,14 +202,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [applyIntent, controller])
 
   const renewWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
-    const identityId = controllerState.user?.identityId
-    if (!identityId || grant.identityId !== identityId) {
+    // A revocation sign-out may still be running: let it finish first, so it
+    // cannot clear the grant adopted here.
+    await revokeLogout.current
+    const identityId = controller.getState().user?.identityId
+    if (identityId === grant.identityId) {
+      await appConnectSessions.adopt(grant)
+      useAppConnectStatus.getState().dismissRenewRequired()
+      return
+    }
+    if (identityId) {
       for (const key of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
       throw new Error('The renewal came from another account')
     }
-    await appConnectSessions.adopt(grant)
-    useAppConnectStatus.getState().dismissRenewRequired()
-  }, [controllerState.user?.identityId])
+    // Signed out meanwhile (the wallet disabled the old keys first): the renewal signs back in.
+    await loginWithAppConnect(grant)
+    useAppConnectStatus.getState().dismissSignedOut()
+  }, [controller, loginWithAppConnect])
 
   const createOrUpdateUnifiedVaultFromLoginKey = useCallback(async (identityId: string, loginKey: Uint8Array) => {
     await controller.createOrUpdateVaultFromLoginKey(identityId, loginKey)

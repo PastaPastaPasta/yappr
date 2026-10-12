@@ -372,7 +372,8 @@ export class AppConnectLogin {
       }
       const delay = appConnectPollDelayMs(this.now() - active.record.createdAt)
       if (delay === null) {
-        if (!signal.aborted) this.set({ phase: 'timeout', uri: active.uri })
+        // Answers already verified stay on offer; only an unanswered request times out.
+        if (!signal.aborted && this.verified.length === 0) this.set({ phase: 'timeout', uri: active.uri })
         return
       }
       await new Promise<void>((resolve) => {
@@ -403,6 +404,7 @@ export class AppConnectLogin {
     } catch {
       // The wall clock stands in for the block time.
     }
+    let verifiedNow = false
     for (const candidate of pending) {
       if (signal.aborted) return true
       const key = appConnectCandidateKey(candidate)
@@ -421,6 +423,7 @@ export class AppConnectLogin {
       }
       if (result.ok) {
         progress.done = true
+        verifiedNow = true
         // An identity that republished replaces its earlier answer; wipe that one's keys.
         for (const replaced of this.verified.filter((v) => v.identityId === result.grant.identityId)) this.wipeGrant(replaced.grant)
         this.verified = [...this.verified.filter((v) => v.identityId !== result.grant.identityId), { identityId: result.grant.identityId, grant: result.grant }]
@@ -428,10 +431,10 @@ export class AppConnectLogin {
         progress.done = true
       }
     }
-    if (this.verified.length > 0) {
-      this.stop()
+    if (verifiedNow) {
+      // Polling continues while the user decides: anyone else who answers
+      // this code is added, and the confirm card becomes a chooser.
       this.set({ phase: 'confirm', uri: active.uri, candidates: [...this.verified] })
-      return true
     }
     return false
   }

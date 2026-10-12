@@ -116,6 +116,21 @@ describe('AppConnectLogin', () => {
     expect(h.records.value).toBeNull()
   })
 
+  it('keeps polling while confirming, so a later second answer turns into the chooser', async () => {
+    const h = harness()
+    h.setCandidates([candidate(ALICE)])
+    await h.login.start()
+    await h.flush()
+    expect(last(h)).toMatchObject({ phase: 'confirm', candidates: [{ identityId: ALICE }] })
+
+    h.setCandidates([candidate(ALICE), candidate(BOB, 2)])
+    h.login.pollNow()
+    await h.flush()
+    const state = last(h) as { phase: string; candidates: { identityId: string }[] }
+    expect(state.phase).toBe('confirm')
+    expect(state.candidates.map((c) => c.identityId)).toEqual([ALICE, BOB])
+  })
+
   it('"That\'s not me" starts a new request', async () => {
     const h = harness()
     h.setCandidates([candidate(ALICE)])
