@@ -172,7 +172,8 @@ describe('AppConnectSessionManager across tabs', () => {
     await vi.waitFor(() => expect(keyRead).toHaveBeenCalled())
     await appConnectSessions.logout('alice')
     release('cMockWif')
-    await restoring
+    // The caller learns it: nothing may restore the controller's session on an overtaken activation.
+    expect(await restoring).toBe(false)
 
     expect(appConnectEncryptionKey('alice')).toBeNull()
     expect(useAppConnectStatus.getState().identityId).toBeNull()
@@ -236,6 +237,24 @@ describe('AppConnectSessionManager across tabs', () => {
     expect(useAppConnectStatus.getState().identityId).toBeNull()
     expect(storedGrantedAt()).toBeUndefined()
     save.mockRestore()
+  })
+
+  it('fails an adoption whose activation a logout overtook during the key read', async () => {
+    const adopting = walletGrant('alice', 5)
+    adopting.encryptionKeys = [{ role: 'encryption', bindingIndex: 0, privateKey: new Uint8Array(32).fill(8), key: { id: 6, purpose: 1, securityLevel: 2, bounds: { kind: 'singleContract', contractId: 'app' } } as (typeof adopting.encryptionKeys)[number]['key'] }]
+    let release: (wif: string) => void = () => undefined
+    const keyRead = vi.spyOn(appConnectSessions, 'privateKeyWif').mockReturnValueOnce(new Promise((resolve) => { release = resolve }))
+
+    const signingIn = appConnectSessions.adopt(adopting)
+    await vi.waitFor(() => expect(keyRead).toHaveBeenCalled())
+    await appConnectSessions.logout('alice')
+    release('cMockWif')
+
+    await expect(signingIn).rejects.toThrow('Signed out while the wallet was connecting')
+    expect(appConnectSessions.current()).toBeNull()
+    expect(appConnectEncryptionKey('alice')).toBeNull()
+    expect(storedGrantedAt()).toBeUndefined()
+    keyRead.mockRestore()
   })
 
   it('drops a renewal when a revoke signed the identity out while it was being stored', async () => {

@@ -185,7 +185,8 @@ class AppConnectSessionManager {
       if (stored) await this.clearStored(exactGrant(session))
       throw new Error('Signed out while the wallet was connecting')
     }
-    await this.activate(session)
+    // A logout (or another sign-in) while the keys were read overtook this one: nothing may sign in on it.
+    if (!await this.activate(session)) throw new Error('Signed out while the wallet was connecting')
     return session
   }
 
@@ -208,11 +209,11 @@ class AppConnectSessionManager {
       await this.discard(session)
       return false
     }
-    await this.activate(session)
-    return true
+    return this.activate(session)
   }
 
-  private async activate(session: AppConnectSession): Promise<void> {
+  /** Makes `session` this tab's own. False when a logout, discard or newer activation overtook it meanwhile. */
+  private async activate(session: AppConnectSession): Promise<boolean> {
     const activation = ++this.activations
     this.active = session
     setAppConnectSessionIdentity(session.identityId)
@@ -221,10 +222,11 @@ class AppConnectSessionManager {
     const encKey = session.encKeys.find((key) => key.purpose === KeyPurpose.ENCRYPTION && key.contractId === pins?.appId)
     const wif = encKey ? await this.privateKeyWif(session, encKey.keyRef) : null
     // A logout, discard or newer activation during the key read wins: install nothing for this one.
-    if (activation !== this.activations) return
+    if (activation !== this.activations) return false
     if (wif) setAppConnectEncryptionKey(session.identityId, wif)
     publishSession(session)
     this.startRefresh()
+    return true
   }
 
   /** Drops this tab's in-memory session; the stored ring is left alone. */
