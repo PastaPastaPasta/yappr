@@ -2,7 +2,7 @@
 
 App Connect logs a user in by having their wallet add keys to their identity that are scoped to Yappr. The main one is an AUTHENTICATION key bound to a **contract group**, so one key can sign for every Yappr contract and nothing else. This document covers the contract side: the anchor contract that registers the group, which contracts join it, how they are registered, and how the app decides whether to trust the group.
 
-**Status: nothing is registered anywhere yet, and no client code reads any of this.** The PR that added it ships the anchor contract, the publisher (`scripts/register-app-connect-contracts.mjs`), the battery (`scripts/verify-appconnect.mjs`), the offline probes and empty env names. The first registration is planned for sakura's 5.0.0-beta.5 genesis, where every member contract is created into the new group, with the beta.5 re-cuts ([PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)).
+**Status: registered on sakura (5.0.0-beta.5) on 2026-10-12, exactly as planned below: the anchor `CWbSpGNi…` at maker nonce 13 registered the group `3S3owNij…`, and the seven members joined it at nonces 14-20 ([SAKURA_BETA5_DEPLOY.md](SAKURA_BETA5_DEPLOY.md)). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there. `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values; /devnet still signs in with the legacy protocol until the web App Connect client ships.** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md).
 
 Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
@@ -88,7 +88,7 @@ DashPay's `profile` is a system contract and cannot join a group. App Connect co
 
 ## Retired on PV14
 
-These are not re-registered on a PV ≥ 14 network and never join the group (`RETIRED_ON_PV14`). Sakura's current copies stay in the old group, unused once `/devnet` moves to App Connect.
+These never join the group (`RETIRED_ON_PV14`). On sakura's beta.5 genesis, key exchange, vault and key backup were registered again **without any group** (maker nonces 21-23, `ops/publish-legacy-beta5.mjs`), so the legacy sign-in keeps working until `/devnet` switches to App Connect and stays available as its rollback. DM v4 was not registered there.
 
 | Contract | Why it goes |
 | --- | --- |
@@ -174,7 +174,7 @@ Then:
 
 `--dry-run` adds a first line with the protocol version and the maker's nonce and balance. A `--live` run prints its env lines from the journal, with the ids each create actually landed at.
 
-The ids above are only what nonce 13 would produce. Nothing is registered until a `--live` run.
+These are the ids nonce 13 produces, and the ids the sakura `--live` run of 2026-10-12 landed at.
 
 ## Env
 
