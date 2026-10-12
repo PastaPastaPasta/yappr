@@ -22,36 +22,30 @@ import {
 import { describeFaults, parseFaults } from '../src/app-connect/faults'
 import { fileGrantStore } from '../src/app-connect/state'
 import { respondToAppConnect, sealAppConnectResponse } from '../src/app-connect/wallet'
-import { MemoryChain } from './app-connect-chain'
+import { APP_ID, MemoryChain, newChain, newRequest } from './app-connect-chain'
 import { IDENTITY_ID_BYTES, testPersona, testPrivateKey } from './fixtures'
 
 const vectors = JSON.parse(readFileSync(new URL('../../../vendor/platform-auth/src/app-connect/vectors.json', import.meta.url), 'utf8'))
 
 describe('sealing against the App Connect v2 vectors', () => {
   const { inputs, request, response } = vectors
+  const fixed = {
+    request: { appEphemeralPubKey: hexToBytes(request.appEphemeralPubKey) },
+    ownerId: bs58.decode(inputs.ownerId),
+    slots: inputs.slotPrivateKeys.map(hexToBytes),
+    walletEphemeralPrivateKey: hexToBytes(inputs.walletEphemeralPrivateKey),
+    nonce: hexToBytes(inputs.nonce),
+  }
 
   it('reproduces the published response byte for byte', async () => {
-    const sealed = await sealAppConnectResponse({
-      request: { appEphemeralPubKey: hexToBytes(request.appEphemeralPubKey) },
-      ownerId: bs58.decode(inputs.ownerId),
-      slots: inputs.slotPrivateKeys.map(hexToBytes),
-      walletEphemeralPrivateKey: hexToBytes(inputs.walletEphemeralPrivateKey),
-      nonce: hexToBytes(inputs.nonce),
-    })
+    const sealed = await sealAppConnectResponse(fixed)
     expect(bytesToHex(sealed.appEphemeralPubKeyHash)).toBe(request.appEphemeralPubKeyHash)
     expect(bytesToHex(sealed.walletEphemeralPubKey)).toBe(response.walletEphemeralPubKey)
     expect(bytesToHex(sealed.encryptedPayload)).toBe(response.encryptedPayload)
   })
 
   it('bad-tag breaks exactly the tag', async () => {
-    const sealed = await sealAppConnectResponse({
-      request: { appEphemeralPubKey: hexToBytes(request.appEphemeralPubKey) },
-      ownerId: bs58.decode(inputs.ownerId),
-      slots: inputs.slotPrivateKeys.map(hexToBytes),
-      walletEphemeralPrivateKey: hexToBytes(inputs.walletEphemeralPrivateKey),
-      nonce: hexToBytes(inputs.nonce),
-      badTag: true,
-    })
+    const sealed = await sealAppConnectResponse({ ...fixed, badTag: true })
     const published = hexToBytes(response.encryptedPayload)
     expect(bytesToHex(sealed.encryptedPayload.subarray(0, -1))).toBe(bytesToHex(published.subarray(0, -1)))
     await expect(openAppConnectPayload({
@@ -160,25 +154,15 @@ describe('grant state file', () => {
   it('round-trips records per (identity, app), refuses another devnet, and holds no private key', async () => {
     dir = mkdtempSync(join(tmpdir(), 'app-connect-state-'))
     const path = join(dir, 'nested', 'state.json')
-    const chain = new MemoryChain(1_791_676_800_000)
-    const appId = bs58.encode(new Uint8Array(32).fill(0xa1))
-    const owner = bs58.encode(new Uint8Array(32).fill(0xb1))
-    chain.contracts.set(appId, { ownerId: owner, requiresIdentityEncryptionBoundedKey: 2 })
-    chain.groups.set(bs58.encode(new Uint8Array(32).fill(0xa2)), owner)
-    const ports = { ...chain.ports(), grants: fileGrantStore(path, 'sakura') }
-
-    const { request } = parseAppConnectUri(vectors.request.uri)
-    request.appId = new Uint8Array(32).fill(0xa1)
-    request.authBindings = [{ ...request.authBindings[0], id: new Uint8Array(32).fill(0xa2) }]
-    request.encBindings = [{ contractId: request.appId, purpose: 1 }]
-    request.createdAt = chain.now
-    const { buildAppConnectUri } = await import('../../../vendor/platform-auth/src/app-connect/request')
+    const ports = { ...newChain().ports(), grants: fileGrantStore(path, 'sakura') }
+    const { request, uri } = newRequest()
+    const appId = bs58.encode(APP_ID)
     const persona = testPersona()
-    await respondToAppConnect({ uri: buildAppConnectUri(request, 'devnet'), persona }, ports)
+    await respondToAppConnect({ uri, persona }, ports)
 
     const record = fileGrantStore(path, 'sakura').get(persona.identityId, appId)
     expect(record.responses).toHaveLength(1)
-    expect(Object.values(record.connections)[0].keys.map((key) => key.keyId)).toEqual([3])
+    expect(Object.values(record.connections)[0].keys.map((key) => key.keyId)).toEqual([5, 6])
 
     const text = readFileSync(path, 'utf8')
     const secrets = [testPrivateKey(0), testPrivateKey(1), testPrivateKey(2)].map(bytesToHex)

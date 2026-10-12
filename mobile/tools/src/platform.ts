@@ -14,6 +14,7 @@ import {
   PrivateKey,
   type DocumentObject,
   type EvoSDK,
+  type Identity,
   type IdentityPublicKey,
 } from '@dashevo/evo-sdk'
 import type { Persona, PersonaKey } from './pool'
@@ -37,15 +38,24 @@ export async function connectDevnet(repoRoot: string, devnet: DevnetConfig): Pro
   return sdk
 }
 
-/** The on-chain key matching `poolKey`, which must be live. */
-export async function poolKeyOnChain(sdk: EvoSDK, persona: Persona, poolKey: PersonaKey): Promise<IdentityPublicKey> {
+export async function fetchIdentity(sdk: EvoSDK, persona: Persona): Promise<Identity> {
   const identity = await sdk.identities.fetch(persona.identityId)
-  if (!identity) throw new Error(`Identity ${persona.identityId} not found`)
+  if (!identity) throw new Error(`Identity ${persona.identityId} (persona ${persona.personaIdx}) not found`)
+  return identity
+}
+
+/** The identity's key matching `poolKey`, which must be live. */
+export function requirePoolKey(identity: Identity, persona: Persona, poolKey: PersonaKey): IdentityPublicKey {
   const key = identity.getPublicKeyById(poolKey.keyId)
   if (!key || key.disabledAt !== undefined || !key.validatePrivateKey(poolKey.privateKey, 'testnet')) {
     throw new Error(`Identity ${persona.identityId} keyId ${poolKey.keyId} is missing, disabled, or not the pool's key`)
   }
   return key
+}
+
+/** The on-chain key matching `poolKey`, which must be live. */
+export async function poolKeyOnChain(sdk: EvoSDK, persona: Persona, poolKey: PersonaKey): Promise<IdentityPublicKey> {
+  return requirePoolKey(await fetchIdentity(sdk, persona), persona, poolKey)
 }
 
 /** Runs `wait`; a timeout after the broadcast counts as unconfirmed, not failed. */

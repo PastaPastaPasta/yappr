@@ -7,7 +7,6 @@
  * values) and create on the App Connect system contract. Logs carry ids only.
  */
 import bs58 from 'bs58'
-import * as secp256k1 from '@noble/secp256k1'
 import { hexToBytes } from '@noble/hashes/utils.js'
 import {
   ContractBounds,
@@ -16,29 +15,30 @@ import {
   type IdentityPublicKey,
 } from '@dashevo/evo-sdk'
 import type { AppConnectIdentityKey, AppConnectKeyBounds } from '../../../../vendor/platform-auth/src/app-connect/types'
-import { errorMessage, isTimeout } from '../errors'
-import { buildDocument, createDocument, poolKeyOnChain, withSigner } from '../platform'
-import type { Persona } from '../pool'
+import { getYapprPublicKey } from '../../../../vendor/platform-auth/src/key-exchange/yappr-protocol'
+import {
+  buildDocument,
+  confirmedWrite,
+  createDocument,
+  fetchIdentity,
+  poolKeyOnChain,
+  requirePoolKey,
+  withSigner,
+} from '../platform'
 import type { GrantStore } from './state'
 import { APP_CONNECT_CONTRACT_ID, LOGIN_KEY_RESPONSE, bytesEqual, type AppConnectPorts } from './wallet'
 
-/** How long a write that timed out may take to show up before the answer fails. */
+/** How long a write whose confirmation timed out may take to show up before the answer fails. */
 const VISIBILITY_TIMEOUT_MS = 90_000
 const VISIBILITY_POLL_MS = 2_000
 
 export function liveAppConnectPorts(sdk: EvoSDK, grants: GrantStore, log: (line: string) => void): AppConnectPorts {
-  async function fetchIdentity(persona: Persona) {
-    const identity = await sdk.identities.fetch(persona.identityId)
-    if (!identity) throw new Error(`Identity ${persona.identityId} not found`)
-    return identity
-  }
-
   async function identityKeys(identityId: string): Promise<AppConnectIdentityKey[] | null> {
     const identity = await sdk.identities.fetch(identityId)
     return identity ? identity.publicKeys.map(toAppConnectKey) : null
   }
 
-  /** Polls the identity's keys until `done` holds; a write whose wait timed out may still land. */
+  /** Polls the identity's keys until `done` returns a value: a write whose wait timed out may still land. */
   async function waitForKeys<T>(identityId: string, what: string, done: (keys: AppConnectIdentityKey[]) => T | undefined): Promise<T> {
     const deadline = Date.now() + VISIBILITY_TIMEOUT_MS
     for (;;) {
@@ -46,16 +46,6 @@ export function liveAppConnectPorts(sdk: EvoSDK, grants: GrantStore, log: (line:
       if (result !== undefined) return result
       if (Date.now() > deadline) throw new Error(`${what} is not visible on chain after ${VISIBILITY_TIMEOUT_MS / 1000} s`)
       await new Promise((resolve) => setTimeout(resolve, VISIBILITY_POLL_MS))
-    }
-  }
-
-  /** Runs a broadcast that waits for its own proof; a timeout is logged and left to `waitForKeys`. */
-  async function tolerateTimeout(what: string, write: () => Promise<unknown>): Promise<void> {
-    try {
-      await write()
-    } catch (error) {
-      if (!isTimeout(error)) throw error
-      log(`${what}: confirmation timed out (${errorMessage(error)}); waiting for it to show up`)
     }
   }
 
@@ -87,11 +77,11 @@ export function liveAppConnectPorts(sdk: EvoSDK, grants: GrantStore, log: (line:
     },
 
     async updateIdentity(persona, update) {
-      const identity = await fetchIdentity(persona)
+      const identity = await fetchIdentity(sdk, persona)
       const master = persona.key('master')
-      // Checked against chain first: only the pool's own live MASTER key signs.
-      await poolKeyOnChain(sdk, persona, master)
-      const publicKeys = update.add.map((key) => secp256k1.getPublicKey(key.privateKey, true))
+      // Only the pool's own live MASTER key signs.
+      requirePoolKey(identity, persona, master)
+      const publicKeys = update.add.map((key) => getYapprPublicKey(key.privateKey))
       const addPublicKeys = update.add.map((key, index) => new IdentityPublicKeyInCreation({
         // The SDK numbers new keys from the identity's highest id.
         keyId: 0,
@@ -104,11 +94,11 @@ export function liveAppConnectPorts(sdk: EvoSDK, grants: GrantStore, log: (line:
         expiresAt: key.expiresAt === undefined ? undefined : BigInt(key.expiresAt),
       }))
       log(`IdentityUpdate for ${persona.identityId}: add ${update.add.length} key(s), disable [${update.disable.join(', ')}]`)
-      // Each new ECDSA_SECP256K1 key signs its own registration, so the signer holds them too.
       try {
+        // Each new ECDSA_SECP256K1 key signs its own registration, so the signer holds them too.
         await withSigner([master.privateKey, ...update.add.map((key) => key.privateKey)], (signer) =>
-          tolerateTimeout('IdentityUpdate', () =>
-            sdk.identities.update({ identity, addPublicKeys, disablePublicKeys: update.disable, signer })))
+          confirmedWrite('IdentityUpdate', () =>
+            sdk.identities.update({ identity, addPublicKeys, disablePublicKeys: update.disable, signer }), log))
       } finally {
         addPublicKeys.forEach((key) => key.free())
       }
@@ -121,20 +111,20 @@ export function liveAppConnectPorts(sdk: EvoSDK, grants: GrantStore, log: (line:
     },
 
     async raiseKeyLimits(persona, keyId, limits) {
-      const identity = await fetchIdentity(persona)
+      const identity = await fetchIdentity(sdk, persona)
       const master = persona.key('master')
-      await poolKeyOnChain(sdk, persona, master)
+      requirePoolKey(identity, persona, master)
       const before = identity.getPublicKeyById(keyId)?.totalBudget
       log(`IdentityKeyLimitsUpdate for ${persona.identityId} key ${keyId}`)
       await withSigner([master.privateKey], (signer) =>
-        tolerateTimeout('IdentityKeyLimitsUpdate', () =>
+        confirmedWrite('IdentityKeyLimitsUpdate', () =>
           sdk.identities.updateKeyLimits({
             identity,
             keyId,
             addBudget: limits.addBudget,
             expiresAt: limits.expiresAt === undefined ? undefined : BigInt(limits.expiresAt),
             signer,
-          })))
+          }), log))
       await waitForKeys(persona.identityId, `limits of key ${keyId}`, (keys) => {
         const key = keys.find((candidate) => candidate.id === keyId)
         if (!key) return undefined
@@ -172,7 +162,7 @@ export function liveAppConnectPorts(sdk: EvoSDK, grants: GrantStore, log: (line:
         contractId: APP_CONNECT_CONTRACT_ID,
         documentTypeName: LOGIN_KEY_RESPONSE,
         ownerId: persona.identityId,
-        fields: { ...values },
+        fields: values,
         identityKey,
         signer,
         log,
@@ -181,7 +171,7 @@ export function liveAppConnectPorts(sdk: EvoSDK, grants: GrantStore, log: (line:
   }
 }
 
-export function toAppConnectKey(key: IdentityPublicKey): AppConnectIdentityKey {
+function toAppConnectKey(key: IdentityPublicKey): AppConnectIdentityKey {
   const data = key.data as unknown
   return {
     id: key.keyId,

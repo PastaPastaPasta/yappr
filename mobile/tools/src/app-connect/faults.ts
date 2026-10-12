@@ -131,11 +131,6 @@ export function describeFaults(faults: AppConnectFaults): string[] {
   return names
 }
 
-/** The faults that act through a second persona. */
-export function needsOtherPersona(faults: AppConnectFaults): boolean {
-  return faults.copyResponse || faults.secondIdentity
-}
-
 function positiveInteger(value: string, label: string): number {
   const number = /^\d+$/.test(value) ? Number(value) : NaN
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error(`${label} must be a positive integer`)

@@ -24,10 +24,16 @@ import { errorMessage } from './errors'
 import { connectDevnet, livePorts } from './platform'
 import { loadPool, POOL_ENV_VAR, selectPersona, type Pool } from './pool'
 import { respond, type RespondResult, type ResponderPorts } from './responder'
-import { FAULT_NAMES, parseFaults } from './app-connect/faults'
+import { FAULT_NAMES, parseFaults, type AppConnectFaults } from './app-connect/faults'
 import { liveAppConnectPorts } from './app-connect/platform'
 import { defaultStatePath, fileGrantStore, STATE_FILE_VAR, type GrantStore } from './app-connect/state'
-import { AppConnectRefusal, isAppConnectUri, revokeAppConnect, type RevokeResult } from './app-connect/wallet'
+import {
+  AppConnectRefusal,
+  isAppConnectUri,
+  revokeAppConnect,
+  type AppConnectPorts,
+  type RevokeResult,
+} from './app-connect/wallet'
 
 /** src/ and dist/ both sit at mobile/tools/<dir>/. */
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -59,7 +65,7 @@ interface Request {
   uri: string
   personaIdx: number
   keyIndex?: number
-  faults?: string[]
+  faults?: AppConnectFaults
   otherPersonaIdx?: number
   spamPersonaIdxs?: number[]
 }
@@ -71,7 +77,7 @@ interface Revoke {
 }
 
 class Responder {
-  private ports: Promise<ResponderPorts> | undefined
+  private ports: Promise<ResponderPorts & { appConnect: AppConnectPorts }> | undefined
   private queue: Promise<unknown> = Promise.resolve()
 
   constructor(
@@ -92,7 +98,7 @@ class Responder {
         persona: selectPersona(this.pool, request.personaIdx),
         appId: request.appId,
         connectionId: request.connectionId,
-      }, ports.appConnect!)
+      }, ports.appConnect)
     })
   }
 
@@ -102,7 +108,7 @@ class Responder {
     return run
   }
 
-  private connect(): Promise<ResponderPorts> {
+  private connect(): Promise<ResponderPorts & { appConnect: AppConnectPorts }> {
     this.ports ??= connectDevnet(REPO_ROOT, this.config.devnet).then(
       (sdk) => ({ ...livePorts(sdk, this.config, log), appConnect: liveAppConnectPorts(sdk, this.grants, log) }),
       (error: unknown) => {
@@ -119,25 +125,19 @@ class Responder {
     // Everything that can be refused offline is, before connecting.
     const persona = selectPersona(this.pool, request.personaIdx)
     if (uri.startsWith('dash-key:') && !appConnect) requireKeyExchangeContract(this.config)
-    const extras = appConnect ? this.appConnectExtras(request) : {}
-    if (!appConnect && (request.faults || request.otherPersonaIdx !== undefined || request.spamPersonaIdxs)) {
-      throw new Error('Fault flags apply to App Connect (dash-key: v=2) requests only')
-    }
-    return respond({ uri, persona, keyIndex: request.keyIndex, ...extras }, await this.connect())
-  }
-
-  private appConnectExtras(request: Request) {
-    if (request.keyIndex !== undefined) throw new Error('keyIndex applies to legacy (v=1) requests only')
-    const faults = parseFaults(request.faults ?? [])
-    const spamIdxs = request.spamPersonaIdxs ?? (faults.spam ? MOBILE_PERSONAS : [])
-    return {
-      faults,
+    if (appConnect && request.keyIndex !== undefined) throw new Error('keyIndex applies to legacy (v=1) requests only')
+    const spamIdxs = request.spamPersonaIdxs ?? (request.faults?.spam ? MOBILE_PERSONAS : undefined)
+    return respond({
+      uri,
+      persona,
+      keyIndex: request.keyIndex,
+      faults: request.faults,
       otherPersona: request.otherPersonaIdx === undefined ? undefined : selectPersona(this.pool, request.otherPersonaIdx),
+      // The wallet excludes the answering personas itself; missing pool entries are skipped here.
       spamPersonas: spamIdxs
-        .filter((idx) => idx !== request.personaIdx && idx !== request.otherPersonaIdx)
-        .filter((idx) => this.pool.personas.some((entry) => entry.personaIdx === idx))
+        ?.filter((idx) => this.pool.personas.some((entry) => entry.personaIdx === idx))
         .map((idx) => selectPersona(this.pool, idx)),
-    }
+    }, await this.connect())
   }
 }
 
@@ -161,7 +161,9 @@ export async function main(argv: string[]): Promise<number> {
     },
     strict: true,
   })
-  if (values.help || (!values.serve && !values.uri && !values.revoke)) {
+  const modes = [values.serve !== undefined, values.uri !== undefined, values.revoke === true].filter(Boolean).length
+  if (values.help || modes !== 1) {
+    if (modes > 1) console.error('test-wallet-responder: --uri, --revoke and --serve exclude each other')
     console.log(USAGE)
     return values.help ? 0 : 2
   }
@@ -195,7 +197,7 @@ export async function main(argv: string[]): Promise<number> {
       uri: values.uri!,
       personaIdx,
       keyIndex: values['key-index'] === undefined ? undefined : parseIndex(values['key-index'], '--key-index'),
-      faults: values.fault,
+      faults: values.fault === undefined ? undefined : parseFaults(values.fault),
       otherPersonaIdx: values['other-persona'] === undefined ? undefined : parseIndex(values['other-persona'], '--other-persona'),
       spamPersonaIdxs: values['spam-personas'] === undefined ? undefined : parseIndexList(values['spam-personas']),
     })
@@ -263,7 +265,7 @@ async function handle(responder: Responder, port: number, req: IncomingMessage, 
         uri: body.uri,
         personaIdx,
         keyIndex: body.keyIndex === undefined ? undefined : parseIndex(body.keyIndex, 'body.keyIndex'),
-        faults: body.faults === undefined ? undefined : parseStringList(body.faults, 'body.faults'),
+        faults: body.faults === undefined ? undefined : parseFaults(parseStringList(body.faults, 'body.faults')),
         otherPersonaIdx: body.otherPersona === undefined ? undefined : parseIndex(body.otherPersona, 'body.otherPersona'),
         spamPersonaIdxs: body.spamPersonas === undefined ? undefined : parseIndexArray(body.spamPersonas, 'body.spamPersonas'),
       }
@@ -316,7 +318,7 @@ async function readBody(req: IncomingMessage): Promise<string> {
 
 function reply(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json' })
-  res.end(JSON.stringify(body, (_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value)))
+  res.end(JSON.stringify(body))
 }
 
 function parseIndex(value: unknown, label: string): number {

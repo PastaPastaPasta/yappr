@@ -21,10 +21,9 @@
  * byte 1..255 appended to info). Auth keys are fresh per request; the
  * encryption key is the same for every login of the persona to the app.
  */
-import * as secp256k1 from '@noble/secp256k1'
-import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { concatBytes } from '@noble/hashes/utils.js'
+import { hkdfSecretKey, requireLength } from '../key-exchange'
 
 const encoder = new TextEncoder()
 const AUTH_INFO = encoder.encode('yappr-test-wallet/app-connect/auth')
@@ -45,7 +44,7 @@ export function deriveAppConnectAuthKey(
   if (!Number.isInteger(bindingIndex) || bindingIndex < 0 || bindingIndex > 0xff) {
     throw new Error(`binding index must be a byte, got ${bindingIndex}`)
   }
-  return deriveScalar(baseKey, identityId, concatBytes(AUTH_INFO, derivationTag, Uint8Array.of(bindingIndex)))
+  return hkdfSecretKey(baseKey, identityId, concatBytes(AUTH_INFO, derivationTag, Uint8Array.of(bindingIndex)))
 }
 
 export function deriveAppConnectEncryptionKey(
@@ -62,20 +61,5 @@ export function deriveAppConnectEncryptionKey(
   const tail = new Uint8Array(5)
   tail[0] = purpose
   new DataView(tail.buffer).setUint32(1, rotation)
-  return deriveScalar(baseKey, identityId, concatBytes(ENC_INFO, appId, tail))
-}
-
-function deriveScalar(baseKey: Uint8Array, identityId: Uint8Array, info: Uint8Array): Uint8Array {
-  requireLength(baseKey, 32, 'base key')
-  requireLength(identityId, 32, 'identity id')
-  for (let counter = 0; counter <= 0xff; counter++) {
-    const attemptInfo = counter === 0 ? info : concatBytes(info, Uint8Array.of(counter))
-    const candidate = hkdf(sha256, baseKey, identityId, attemptInfo, 32)
-    if (secp256k1.utils.isValidSecretKey(candidate)) return candidate
-  }
-  throw new Error('key derivation exhausted its retry counter')
-}
-
-function requireLength(bytes: Uint8Array, length: number, label: string): void {
-  if (bytes.length !== length) throw new Error(`Invalid ${label} length: expected ${length}, got ${bytes.length}`)
+  return hkdfSecretKey(baseKey, identityId, concatBytes(ENC_INFO, appId, tail))
 }

@@ -136,9 +136,14 @@ codec and the response crypto, so it cannot drift from the app side:
    keys. The responder waits until the change is visible on chain.
 8. **Publish**: delete the persona's previous responses for the app, then
    create the new one. The delete is index-only and carries all three values,
-   which the state file keeps. The response is sealed with
-   `sealAppConnectPayload` and its AAD, and signed with the persona's unbound
-   HIGH key (keyId 2).
+   which the state file keeps. A delete Platform refuses (the entry is gone) is
+   forgotten; any other failure is retried on the next answer. The response
+   is sealed with `sealAppConnectPayload` and its AAD, and signed with the
+   persona's unbound HIGH key (keyId 2).
+
+Answering the same URI again, for example after a publish failed, is safe:
+keys this request already registered are re-sent rather than registered
+twice, which Platform would refuse.
 
 The answer is one JSON line. It has the slots (role, binding index, key id),
 the added, disabled and raised key ids, and `callbackUrl`: the request's `cb`
@@ -152,19 +157,21 @@ status: `stale`, `unsupported`, `invalid`, `declined` or `failed`.
   every requested binding, the responder raises their limits in place. It
   sends one IdentityKeyLimitsUpdate per key (`sdk.identities.updateKeyLimits`,
   signed by MASTER): the binding's budget proposal is *added* to the key's
-  total, and its expiry replaces the current one when it is later. A limit the
-  key does not have is not added, because Platform refuses that. It then
-  republishes the same keys. Without such a grant it answers as a new login,
-  which supersedes the old keys (the profile's phase-1 renewal).
+  total, up to the 5 DASH cap, and its expiry replaces the current one when it
+  is later. A limit the key does not have is not added, because Platform
+  refuses that. It then republishes the same keys. Without such a grant it
+  answers as a new login, which supersedes the old keys (the profile's
+  phase-1 renewal).
 - **Revoke** (disable-only): `--revoke --persona <idx> --app-id <id>
-  [--connection-id <hex>]`, or `POST /revoke`. One MASTER-signed
-  IdentityUpdate disables the auth keys of that connection's grant (or of
-  every connection's), and the grant is forgotten. The shared encryption key
-  and the published response stay.
+  [--connection-id <hex>]`, or `POST /revoke`. MASTER-signed IdentityUpdates,
+  ten keys each (Platform's limit), disable the auth keys of that
+  connection's grant (or of every connection's), and the grant is forgotten.
+  The shared encryption key and the published response stay.
 
-Only keys that look like App Connect grants are ever disabled: non-MASTER
-auth keys that carry bounds or limits. A stale state file cannot disable the
-pool's own keys (0–4), which are V0 and unbound.
+A key is only ever disabled when the responder can prove it made it: a live,
+non-MASTER auth key whose public key re-derives from the grant record. A
+stale or edited state file cannot get anything else disabled, including the
+pool's own keys (0–4) and keys other wallets added.
 
 ### Fault flags
 
@@ -186,7 +193,7 @@ reports; `test/app-connect.test.ts` checks it.
 | `budget=<n>` | Every auth key gets a budget of `n` credits | accepted; 40218 or 20015 on writes |
 | `bad-tag` | Flips a bit of the AES-GCM tag | `decrypt` |
 | `extra-slot` | Appends a slot holding a key that is on no identity | `framing` (`key-not-found` when a binding was declined) |
-| `spam=<n>` | First, `n` other personas publish well-framed junk to the request (`--spam-personas`, default 90–99) | those candidates fail |
+| `spam=<n>` | First, `n` other personas publish well-framed junk to the request (`--spam-personas`, default 90–99). Junk only adds: it never deletes a spammer's live response | those candidates fail |
 | `second-identity` | After its own answer, `--other-persona` answers too, with its own keys | two valid candidates (chooser; a hint filters the stranger) |
 | `omit-enc` | Declines the encryption bindings | accepted, no encryption key |
 | `omit-profile` | Declines the documentType bindings (DashPay profile) | accepted, group key only |

@@ -36,17 +36,19 @@ import {
   type AppConnectKeyBounds,
 } from '../../../../vendor/platform-auth/src/app-connect/types'
 import { getYapprPublicKey } from '../../../../vendor/platform-auth/src/key-exchange/yappr-protocol'
-import { errorMessage, isTimeout } from '../errors'
+import { errorMessage, isConsensusError } from '../errors'
 import type { Persona } from '../pool'
 import { appConnectDerivationTag, deriveAppConnectAuthKey, deriveAppConnectEncryptionKey } from './derive'
-import { describeFaults, needsOtherPersona, noFaults, type AppConnectFaults } from './faults'
+import { describeFaults, noFaults, type AppConnectFaults } from './faults'
 import type { ConnectionGrant, GrantStore, GrantedAuthKey, StoredResponse } from './state'
 
 /** The App Connect system contract (platform docs/protocol/app-connect.md). */
 export const APP_CONNECT_CONTRACT_ID = 'H8F9mP1BM55TE1ShsxPZHzhyinaMdY9bMmP85mkDhcJJ'
 export const LOGIN_KEY_RESPONSE = 'loginKeyResponse'
-/** Platform adds at most this many keys per IdentityUpdate (`max_public_keys_in_creation`). */
-export const MAX_KEYS_PER_UPDATE = 6
+/** Platform adds at most this many keys per IdentityUpdate (`max_public_keys_in_creation`)… */
+const MAX_KEYS_PER_UPDATE = 6
+/** …and disables at most this many (`MAX_KEYS_TO_DISABLE`). */
+const MAX_DISABLES_PER_UPDATE = 10
 
 const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7'
 /** Wallet rule 3: the only foreign document type the profile allowlists. */
@@ -66,6 +68,17 @@ const STRANGER_ID = new Uint8Array(32).fill(0xee)
 
 /** The `ac=` statuses of the profile's callback. */
 export type AppConnectStatus = 'ok' | 'declined' | 'stale' | 'unsupported' | 'invalid' | 'failed'
+
+/**
+ * A misuse of the responder (a fault flag the request cannot honour, a
+ * missing persona): reported as is, not as a wallet outcome with an `ac`.
+ */
+export class AppConnectUsageError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AppConnectUsageError'
+  }
+}
 
 /** A request the wallet refused or could not complete; `callbackUrl` carries `ac=<status>`. */
 export class AppConnectRefusal extends Error {
@@ -201,6 +214,8 @@ interface Slot {
   bindingIndex: number
   privateKey: Uint8Array
   keyId?: number
+  /** Auth slots: the bounds the key is registered with (what the grant record keeps). */
+  bounds?: AppConnectKeyBounds
 }
 
 /** True for a `dash-key:` URI of request v2 (`v=2`); v1 belongs to the legacy key exchange. */
@@ -213,21 +228,16 @@ export function isAppConnectUri(uri: string): boolean {
 export async function respondToAppConnect(input: AppConnectInput, ports: AppConnectPorts): Promise<AppConnectResult> {
   const faults = input.faults ?? noFaults()
   const { persona, otherPersona } = input
-  if (otherPersona?.identityId === persona.identityId) throw new Error('the other persona must be a different identity')
-  if (needsOtherPersona(faults) && !otherPersona) {
-    throw new Error('copy-response and second-identity need another persona (--other-persona / "otherPersona")')
+  if (otherPersona?.identityId === persona.identityId) throw new AppConnectUsageError('the other persona must be a different identity')
+  if ((faults.copyResponse || faults.secondIdentity) && !otherPersona) {
+    throw new AppConnectUsageError('copy-response and second-identity need another persona (--other-persona / "otherPersona")')
   }
   const spamPersonas = selectSpamPersonas(input, faults.spam ?? 0)
 
-  let parsed: ReturnType<typeof parseAppConnectUri>
+  let callbackUrl: string | undefined
   try {
-    parsed = parseAppConnectUri(input.uri)
-  } catch (error) {
-    if (error instanceof AppConnectRequestError) throw new AppConnectRefusal(error.code, error.message)
-    throw error
-  }
-
-  try {
+    const parsed = parseAppConnectUri(input.uri)
+    callbackUrl = parsed.callbackUrl
     // The pool is sakura's: nothing is ever written for another network.
     if (parsed.network !== 'devnet') {
       throw new AppConnectRefusal('invalid', `Request is for ${parsed.network}; this responder serves devnet (sakura pool identities only)`)
@@ -246,7 +256,8 @@ export async function respondToAppConnect(input: AppConnectInput, ports: AppConn
 
     const spam: string[] = []
     for (const spammer of spamPersonas) {
-      await publish(spammer, plan.appId, junkResponse(plan), ports)
+      // Junk only adds: it must not delete a live response another test lane is polling for.
+      await publish(spammer, plan.appId, junkResponse(plan), ports, { replacePrevious: false })
       spam.push(spammer.identityId)
     }
 
@@ -258,7 +269,7 @@ export async function respondToAppConnect(input: AppConnectInput, ports: AppConn
       label: request.label,
       connectionId: plan.connectionId,
       faults: describeFaults(faults),
-      callbackUrl: withStatus(parsed.callbackUrl, 'ok'),
+      callbackUrl: withStatus(callbackUrl, 'ok'),
       answer: main.answer,
     }
     if (spam.length > 0) result.spam = spam
@@ -269,15 +280,22 @@ export async function respondToAppConnect(input: AppConnectInput, ports: AppConn
     }
     return result
   } catch (error) {
-    const refusal = error instanceof AppConnectRefusal ? error : new AppConnectRefusal('failed', errorMessage(error))
-    refusal.callbackUrl = withStatus(parsed.callbackUrl, refusal.status)
+    if (error instanceof AppConnectUsageError) throw error
+    const refusal = toRefusal(error)
+    refusal.callbackUrl = withStatus(callbackUrl, refusal.status)
     throw refusal
   }
 }
 
+function toRefusal(error: unknown): AppConnectRefusal {
+  if (error instanceof AppConnectRefusal) return error
+  if (error instanceof AppConnectRequestError) return new AppConnectRefusal(error.code, error.message)
+  return new AppConnectRefusal('failed', errorMessage(error))
+}
+
 /**
- * Disable-only revoke: one MASTER-signed IdentityUpdate disabling the auth
- * keys of the persona's grants for the app (one connection, or all).
+ * Disable-only revoke: MASTER-signed IdentityUpdates disabling the auth keys
+ * of the persona's grants for the app (one connection, or all), ten at a time.
  */
 export async function revokeAppConnect(input: RevokeInput, ports: AppConnectPorts): Promise<RevokeResult> {
   const { persona, appId } = input
@@ -287,8 +305,10 @@ export async function revokeAppConnect(input: RevokeInput, ports: AppConnectPort
     throw new Error(`persona ${persona.personaIdx} has no grant for app ${appId} on connection ${input.connectionId}`)
   }
   const chainKeys = await requireIdentityKeys(persona, ports)
-  const disable = liveGrantKeyIds(connections.flatMap((id) => record.connections[id].keys), chainKeys)
-  if (disable.length > 0) await ports.updateIdentity(persona, { add: [], disable })
+  const disable = liveGrantKeyIds(persona, connections.flatMap((id) => record.connections[id].keys), chainKeys)
+  for (let start = 0; start < disable.length; start += MAX_DISABLES_PER_UPDATE) {
+    await ports.updateIdentity(persona, { add: [], disable: disable.slice(start, start + MAX_DISABLES_PER_UPDATE) })
+  }
   for (const id of connections) delete record.connections[id]
   ports.grants.put(persona.identityId, appId, record)
   return {
@@ -316,7 +336,7 @@ function selectSpamPersonas(input: AppConnectInput, count: number): Persona[] {
   if (count === 0) return []
   const excluded = new Set([input.persona.identityId, input.otherPersona?.identityId])
   const available = (input.spamPersonas ?? []).filter((candidate) => !excluded.has(candidate.identityId))
-  const unique = available.filter((candidate, index) => available.findIndex((p) => p.identityId === candidate.identityId) === index)
+  const unique = [...new Map(available.map((candidate) => [candidate.identityId, candidate])).values()]
   if (unique.length < count) {
     throw new Error(`spam=${count} needs ${count} other personas; ${unique.length} available (--spam-personas / "spamPersonas")`)
   }
@@ -369,10 +389,10 @@ function buildPlan(request: AppConnectRequest, faults: AppConnectFaults, now: nu
     throw new AppConnectRefusal('declined', 'omit-profile declines the primary binding, which declines the request')
   }
   if (faults.critical && !auth.some(({ binding }) => binding.kind !== 'contractGroup')) {
-    throw new Error('critical needs a granted binding that is not a contractGroup')
+    throw new AppConnectUsageError('critical needs a granted binding that is not a contractGroup')
   }
   if (faults.foreignGroup !== undefined && !auth.some(({ binding }) => binding.kind === 'contractGroup')) {
-    throw new Error('foreign-group needs a contractGroup binding in the request')
+    throw new AppConnectUsageError('foreign-group needs a contractGroup binding in the request')
   }
   return {
     request,
@@ -403,17 +423,41 @@ async function requireIdentityKeys(persona: Persona, ports: AppConnectPorts): Pr
 }
 
 /**
- * The stored grant keys that are still live on chain. Only keys that look
- * like App Connect grants (non-MASTER auth keys with bounds or limits) are
- * ever disabled, so a stale state file cannot touch the pool's own keys.
+ * The grant key's private key when it re-derives to `chainKey`: proof that
+ * this wallet made that key for this grant. Undefined otherwise, including
+ * for a malformed record.
  */
-function liveGrantKeyIds(stored: GrantedAuthKey[], chainKeys: AppConnectIdentityKey[]): number[] {
-  const ids = new Set(stored.map((key) => key.keyId))
-  return chainKeys
-    .filter((key) => ids.has(key.id) && key.disabledAt === undefined)
-    .filter((key) => key.purpose === KeyPurpose.AUTHENTICATION && key.securityLevel !== KeySecurityLevel.MASTER)
-    .filter((key) => key.bounds !== undefined || key.totalBudget !== undefined || key.expiresAt !== undefined)
-    .map((key) => key.id)
+function rederiveGrantKey(persona: Persona, grantKey: GrantedAuthKey, chainKey: AppConnectIdentityKey): Uint8Array | undefined {
+  try {
+    const privateKey = deriveAppConnectAuthKey(
+      persona.key('critical').privateKey,
+      persona.identityIdBytes,
+      hexToBytes(grantKey.derivationTag),
+      grantKey.bindingIndex,
+    )
+    return bytesEqual(chainKey.data, getYapprPublicKey(privateKey)) ? privateKey : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The stored grant keys that are still live on chain and provably this
+ * wallet's App Connect auth keys (non-MASTER, and re-derived from the
+ * record). A stale or edited state file cannot get anything else disabled,
+ * the pool's own keys included.
+ */
+function liveGrantKeyIds(persona: Persona, stored: GrantedAuthKey[], chainKeys: AppConnectIdentityKey[]): number[] {
+  return stored
+    .filter((grantKey) => {
+      const chainKey = chainKeys.find((key) => key.id === grantKey.keyId)
+      return chainKey !== undefined
+        && chainKey.disabledAt === undefined
+        && chainKey.purpose === KeyPurpose.AUTHENTICATION
+        && chainKey.securityLevel !== KeySecurityLevel.MASTER
+        && rederiveGrantKey(persona, grantKey, chainKey) !== undefined
+    })
+    .map((grantKey) => grantKey.keyId)
 }
 
 /** One identity's answer: register (or renew) the keys, then publish the sealed response. */
@@ -427,10 +471,9 @@ async function answerAs(
   const chainKeys = await requireIdentityKeys(persona, ports)
   const record = ports.grants.get(persona.identityId, plan.appId)
   const previous = plan.connectionId === undefined ? undefined : record.connections[plan.connectionId]
-  const baseKey = persona.key('critical').privateKey
 
   const renewal = plan.request.mode === 'renew' && previous
-    ? matchRenewal(persona, plan, previous, chainKeys, baseKey, ports)
+    ? matchRenewal(persona, plan, previous, chainKeys, ports)
     : undefined
   const raisedKeyIds: number[] = []
   const toAdd: Array<{ slot: Slot; key: NewIdentityKey }> = []
@@ -439,8 +482,13 @@ async function answerAs(
   if (renewal) {
     for (const { binding, chainKey } of renewal) {
       const wanted = grantedLimits(binding, plan.now, faults)
-      // A renewal adds the proposed allowance and moves the expiry out; a limit the key lacks cannot be added.
-      const addBudget = chainKey.totalBudget !== undefined ? wanted.totalBudget : undefined
+      // A renewal adds the proposed allowance (keeping the total within the
+      // cap) and moves the expiry out. A limit the key lacks cannot be added.
+      let addBudget: bigint | undefined
+      if (chainKey.totalBudget !== undefined && wanted.totalBudget !== undefined) {
+        addBudget = faults.budget ?? minBigint(wanted.totalBudget, BUDGET_CAP - chainKey.totalBudget)
+        if (addBudget <= 0n) addBudget = undefined
+      }
       const expiresAt = chainKey.expiresAt !== undefined && wanted.expiresAt > chainKey.expiresAt ? wanted.expiresAt : undefined
       if (addBudget === undefined && expiresAt === undefined) continue
       await ports.raiseKeyLimits(persona, chainKey.id, { addBudget, expiresAt })
@@ -449,35 +497,23 @@ async function answerAs(
     authSlots = renewal.map(({ slot }) => slot)
   } else {
     if (plan.request.mode === 'renew') ports.log(`persona ${persona.personaIdx}: no live grant to renew on this connection; answering as a new login`)
-    const firstNonGroup = plan.auth.find(({ binding }) => binding.kind !== 'contractGroup')?.index
-    authSlots = []
-    for (const { binding, index } of plan.auth) {
-      const privateKey = deriveAppConnectAuthKey(baseKey, persona.identityIdBytes, plan.derivationTag, index)
-      const slot: Slot = { role: binding.kind, bindingIndex: index, privateKey }
-      authSlots.push(slot)
-      if (faults.unregisteredKey && index === 0) continue
-
-      let bounds: AppConnectKeyBounds | undefined = authBindingBounds(binding)
-      if (faults.unboundKey && index === 0) bounds = undefined
-      if (faults.foreignGroup !== undefined && binding.kind === 'contractGroup') bounds = { kind: 'contractGroup', groupId: faults.foreignGroup }
-      const securityLevel = faults.critical && index === firstNonGroup ? KeySecurityLevel.CRITICAL : binding.securityLevel
-      toAdd.push({
-        slot,
-        key: { privateKey, purpose: KeyPurpose.AUTHENTICATION, securityLevel, bounds, ...grantedLimits(binding, plan.now, faults) },
-      })
-    }
+    authSlots = planAuthKeys(persona, plan, faults, chainKeys, toAdd)
   }
 
   const encSlots: Slot[] = []
   for (const { binding, index } of plan.enc) {
-    const prepared = await prepareEncryptionKey(persona, plan, binding, index, baseKey, ports)
+    const prepared = await prepareEncryptionKey(persona, plan, binding, index, chainKeys, ports)
     if (!prepared) continue
     encSlots.push(prepared.slot)
     if (prepared.register) toAdd.push({ slot: prepared.slot, key: prepared.register })
   }
 
-  // Wallet rule 8: the previous grant on this connection goes in the same update (not on a renewal: its keys are kept).
-  const disable = !renewal && previous ? liveGrantKeyIds(previous.keys, chainKeys) : []
+  // Wallet rule 8: the previous grant on this connection goes in the same
+  // update (not on a renewal, which keeps its keys; and never a key this
+  // answer re-sends, as on a retry of the same request).
+  const disable = !renewal && previous
+    ? liveGrantKeyIds(persona, previous.keys, chainKeys).filter((id) => !authSlots.some((slot) => slot.keyId === id))
+    : []
   if (toAdd.length > MAX_KEYS_PER_UPDATE) {
     throw new AppConnectRefusal('invalid', `the grant needs ${toAdd.length} new keys; Platform adds at most ${MAX_KEYS_PER_UPDATE} per update`)
   }
@@ -489,18 +525,20 @@ async function answerAs(
     })
   }
 
+  // Saved before publishing, so a failed publish still lets the next login supersede these keys.
   if (plan.connectionId !== undefined && !renewal) {
-    const grantKeys = authSlots
-      .filter((slot) => slot.keyId !== undefined)
-      .map((slot): GrantedAuthKey => ({
-        keyId: slot.keyId!,
-        bindingIndex: slot.bindingIndex,
-        derivationTag: bytesToHex(plan.derivationTag),
-        bounds: toAdd.find((entry) => entry.slot === slot)?.key.bounds,
-      }))
-    const updated = ports.grants.get(persona.identityId, plan.appId)
-    updated.connections[plan.connectionId] = { keys: grantKeys, grantedAt: new Date(plan.now).toISOString() }
-    ports.grants.put(persona.identityId, plan.appId, updated)
+    record.connections[plan.connectionId] = {
+      keys: authSlots
+        .filter((slot) => slot.keyId !== undefined)
+        .map((slot): GrantedAuthKey => ({
+          keyId: slot.keyId!,
+          bindingIndex: slot.bindingIndex,
+          derivationTag: bytesToHex(plan.derivationTag),
+          bounds: slot.bounds,
+        })),
+      grantedAt: new Date(plan.now).toISOString(),
+    }
+    ports.grants.put(persona.identityId, plan.appId, record)
   }
 
   const slots = [...authSlots, ...encSlots]
@@ -529,8 +567,49 @@ async function answerAs(
 }
 
 /**
+ * A login's auth keys: one per granted binding, derived from this request.
+ * Keys for `toAdd` are appended to it. A key already live on the identity
+ * (this exact request answered before, e.g. a retry after a failed publish)
+ * is re-sent instead of registered again, which Platform would refuse.
+ */
+function planAuthKeys(
+  persona: Persona,
+  plan: Plan,
+  faults: AppConnectFaults,
+  chainKeys: AppConnectIdentityKey[],
+  toAdd: Array<{ slot: Slot; key: NewIdentityKey }>,
+): Slot[] {
+  const baseKey = persona.key('critical').privateKey
+  const firstNonGroup = plan.auth.find(({ binding }) => binding.kind !== 'contractGroup')?.index
+  return plan.auth.map(({ binding, index }) => {
+    const privateKey = deriveAppConnectAuthKey(baseKey, persona.identityIdBytes, plan.derivationTag, index)
+    const slot: Slot = { role: binding.kind, bindingIndex: index, privateKey }
+    if (faults.unregisteredKey && index === 0) return slot
+
+    const existing = chainKeys.find((key) => bytesEqual(key.data, getYapprPublicKey(privateKey)))
+    if (existing) {
+      if (existing.disabledAt !== undefined) {
+        throw new AppConnectRefusal('failed', `the key for binding ${index} of this request has been disabled; start a new request`)
+      }
+      return { ...slot, keyId: existing.id, bounds: existing.bounds }
+    }
+
+    let bounds: AppConnectKeyBounds | undefined = authBindingBounds(binding)
+    if (faults.unboundKey && index === 0) bounds = undefined
+    if (faults.foreignGroup !== undefined && binding.kind === 'contractGroup') bounds = { kind: 'contractGroup', groupId: faults.foreignGroup }
+    const securityLevel = faults.critical && index === firstNonGroup ? KeySecurityLevel.CRITICAL : binding.securityLevel
+    slot.bounds = bounds
+    toAdd.push({
+      slot,
+      key: { privateKey, purpose: KeyPurpose.AUTHENTICATION, securityLevel, bounds, ...grantedLimits(binding, plan.now, faults) },
+    })
+    return slot
+  })
+}
+
+/**
  * A renewal keeps the connection's keys: every requested binding must match a
- * live stored key this wallet can re-derive. Otherwise it is answered as a new
+ * live stored key this wallet re-derives. Otherwise it is answered as a new
  * login, which supersedes the old keys (the profile's phase-1 renewal).
  */
 function matchRenewal(
@@ -538,7 +617,6 @@ function matchRenewal(
   plan: Plan,
   previous: ConnectionGrant,
   chainKeys: AppConnectIdentityKey[],
-  baseKey: Uint8Array,
   ports: AppConnectPorts,
 ): Array<{ binding: AppConnectAuthBinding; chainKey: AppConnectIdentityKey; slot: Slot }> | undefined {
   const matches = []
@@ -547,12 +625,12 @@ function matchRenewal(
     const stored = previous.keys.find((key) => key.bounds !== undefined && boundsEqual(key.bounds, bounds))
     const chainKey = stored && chainKeys.find((key) => key.id === stored.keyId && key.disabledAt === undefined)
     if (!stored || !chainKey) return undefined
-    const privateKey = deriveAppConnectAuthKey(baseKey, persona.identityIdBytes, hexToBytes(stored.derivationTag), stored.bindingIndex)
-    if (!bytesEqual(chainKey.data, getYapprPublicKey(privateKey))) {
+    const privateKey = rederiveGrantKey(persona, stored, chainKey)
+    if (!privateKey) {
       ports.log(`persona ${persona.personaIdx}: key ${chainKey.id} does not re-derive from the grant record`)
       return undefined
     }
-    matches.push({ binding, chainKey, slot: { role: binding.kind, bindingIndex: index, privateKey, keyId: chainKey.id } })
+    matches.push({ binding, chainKey, slot: { role: binding.kind, bindingIndex: index, privateKey, keyId: chainKey.id, bounds } })
   }
   return matches
 }
@@ -561,32 +639,36 @@ function matchRenewal(
  * Wallet rule 7: one encryption key per (identity, app), shared by every
  * device. Re-send the current key when this wallet derives it, register
  * rotation 0 when there is none, and leave the slot out when another wallet
- * made the current one. Never rotate.
+ * made the current one or rotation 0 was disabled. Never rotate.
  */
 async function prepareEncryptionKey(
   persona: Persona,
   plan: Plan,
   binding: AppConnectEncBinding,
   index: number,
-  baseKey: Uint8Array,
+  chainKeys: AppConnectIdentityKey[],
   ports: AppConnectPorts,
 ): Promise<{ slot: Slot; register?: NewIdentityKey } | undefined> {
-  const privateKey = deriveAppConnectEncryptionKey(baseKey, persona.identityIdBytes, binding.contractId, binding.purpose, 0)
+  const privateKey = deriveAppConnectEncryptionKey(persona.key('critical').privateKey, persona.identityIdBytes, binding.contractId, binding.purpose, 0)
   const publicKey = getYapprPublicKey(privateKey)
   const role: AppConnectSlotRole = binding.purpose === KeyPurpose.ENCRYPTION ? 'encryption' : 'decryption'
   const current = (await ports.contractKeys(persona.identityId, bs58.encode(binding.contractId), binding.purpose))
     .filter((key) => key.disabledAt === undefined)
 
-  if (current.length === 0) {
-    return {
-      slot: { role, bindingIndex: index, privateKey },
-      register: { privateKey, purpose: binding.purpose, securityLevel: KeySecurityLevel.MEDIUM, bounds: encBindingBounds(binding) },
-    }
-  }
   const mine = current.find((key) => bytesEqual(key.data, publicKey))
   if (mine) return { slot: { role, bindingIndex: index, privateKey, keyId: mine.id } }
-  ports.log(`persona ${persona.personaIdx}: the ${role} key for app ${plan.appId} was made by another wallet; slot omitted`)
-  return undefined
+  if (current.length > 0) {
+    ports.log(`persona ${persona.personaIdx}: the ${role} key for app ${plan.appId} was made by another wallet; slot omitted`)
+    return undefined
+  }
+  if (chainKeys.some((key) => bytesEqual(key.data, publicKey))) {
+    ports.log(`persona ${persona.personaIdx}: the ${role} key for app ${plan.appId} is on the identity but not current (disabled?); slot omitted`)
+    return undefined
+  }
+  return {
+    slot: { role, bindingIndex: index, privateKey },
+    register: { privateKey, purpose: binding.purpose, securityLevel: KeySecurityLevel.MEDIUM, bounds: encBindingBounds(binding) },
+  }
 }
 
 export interface SealResponseInput {
@@ -626,30 +708,34 @@ function junkResponse(plan: Plan): ResponseValues {
 
 /**
  * Wallet rule 9: delete the responses this wallet published earlier for the
- * identity and app (by their values), then create the new one. A delete that
- * failed for a reason other than a timeout is dropped from the record: the
- * entry is gone or was never there.
+ * identity and app (by their values), then create the new one. A delete
+ * Platform refused (a consensus error: the entry is gone) is dropped from the
+ * record; any other failure keeps it for the next answer. Spam junk only
+ * adds (`replacePrevious: false`).
  */
 async function publish(
   persona: Persona,
   appId: string,
   values: ResponseValues,
   ports: AppConnectPorts,
+  { replacePrevious = true } = {},
 ): Promise<{ deletedResponses: number; documentId?: string; confirmed: boolean }> {
   const record = ports.grants.get(persona.identityId, appId)
-  const kept: StoredResponse[] = []
   let deletedResponses = 0
-  for (const old of record.responses) {
-    try {
-      await ports.deleteResponse(persona, old)
-      deletedResponses++
-    } catch (error) {
-      ports.log(`persona ${persona.personaIdx}: deleting the response to ${old.appEphemeralPubKeyHash} failed: ${errorMessage(error)}`)
-      if (isTimeout(error)) kept.push(old)
+  if (replacePrevious) {
+    const kept: StoredResponse[] = []
+    for (const old of record.responses) {
+      try {
+        await ports.deleteResponse(persona, old)
+        deletedResponses++
+      } catch (error) {
+        ports.log(`persona ${persona.personaIdx}: deleting the response to ${old.appEphemeralPubKeyHash} failed: ${errorMessage(error)}`)
+        if (!isConsensusError(error)) kept.push(old)
+      }
     }
+    record.responses = kept
+    ports.grants.put(persona.identityId, appId, record)
   }
-  record.responses = kept
-  ports.grants.put(persona.identityId, appId, record)
 
   const { documentId, confirmed } = await ports.createResponse(persona, values)
   record.responses.push({

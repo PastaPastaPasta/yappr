@@ -73,16 +73,6 @@ export function defaultStatePath(devnetName: string): string {
   return join(base, 'yappr-mobile-tools', `app-connect-${devnetName}.json`)
 }
 
-export function memoryGrantStore(): GrantStore {
-  const records = new Map<string, AppRecord>()
-  return {
-    get: (identityId, appId) => structuredClone(records.get(recordKey(identityId, appId)) ?? emptyRecord()),
-    put: (identityId, appId, record) => {
-      records.set(recordKey(identityId, appId), structuredClone(record))
-    },
-  }
-}
-
 /**
  * A JSON file, re-read on every call and replaced atomically on every write.
  * The responder answers one request at a time, so there is one writer.

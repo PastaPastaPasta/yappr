@@ -15,6 +15,11 @@ export function isTimeout(error: unknown): boolean {
   return /timeout|timed out|deadline|\b504\b/i.test(errorMessage(error))
 }
 
+/** A final consensus refusal: a numeric `code` 10000–99999 on the error or its cause. */
+export function isConsensusError(error: unknown): boolean {
+  return hasConsensusCode(error)
+}
+
 function hasConsensusCode(error: unknown, depth = 0): boolean {
   if (!error || typeof error !== 'object' || depth > 3) return false
   const fields = error as { code?: unknown; error?: unknown; cause?: unknown }
