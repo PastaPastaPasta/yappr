@@ -49,7 +49,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey, StateTransition, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
-import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, planAppConnectSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
+import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, planAppConnectSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
 import { describeErr, signerFor } from './owner-keys.mjs';
 import { auditModeration, contractSource, registrationJson, withInterim } from './register-lib.mjs';
@@ -219,22 +219,22 @@ async function awaitContract(handle, id) {
 }
 
 /**
- * What became of the create at `entry.nonce`, decided on proofs alone:
- *   'pending'       the maker's nonce has not reached it (it may still land);
- *   'landed'        the contract is a member of the group;
- *   'refused'       the nonce is spent, and a membership proof at least as new as the nonce
- *                   proof shows no membership: every create of the set writes its membership
- *                   together with the contract, so the contract did not land;
- *   'inconclusive'  no membership proof caught up with the nonce proof's height.
- * A contract fetch cannot decide absence: it proves "not found" with no height to compare.
+ * What became of the create at `entry.nonce`, decided on proofs alone
+ * (`decideCreateOutcome`): 'landed', 'pending' (the nonce is above the maker's,
+ * or one of the still-missing ones below it, so the create may still land),
+ * 'refused', or 'inconclusive' when no membership proof caught up with the
+ * nonce proof's height. A contract fetch cannot decide absence: it proves
+ * "not found" with no height to compare.
  */
 async function createOutcome(handle, entry, plan) {
   const nonce = await readback(handle, () => handle.sdk.identities.nonceWithProof(plan.groupOwner));
-  if (((nonce.data ?? 0n) & NONCE_SEQUENCE_MASK) < entry.nonce) return 'pending';
   for (let attempt = 0; attempt < 5; attempt++) {
     const memberships = await readback(handle, () => handle.sdk.contractGroups.forContractWithProof(entry.id));
-    if (memberships.data.contract.includes(plan.groupId)) return 'landed';
-    if (memberships.metadata.height >= nonce.metadata.height) return 'refused';
+    const outcome = decideCreateOutcome({
+      rawNonce: nonce.data ?? 0n, nonceHeight: nonce.metadata.height, nonce: entry.nonce,
+      groupIds: memberships.data.contract, membershipHeight: memberships.metadata.height, groupId: plan.groupId,
+    });
+    if (outcome !== 'stale') return outcome;
     await sleep(3000);
   }
   return 'inconclusive';

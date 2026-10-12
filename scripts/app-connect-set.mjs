@@ -75,6 +75,39 @@ export const contractFilePath = (file) => join(REPO_ROOT, 'contracts', file);
 /** The sha256 of a contract file's bytes, as hex. */
 export const fileSha256 = (file) => sha256Hex(readFileSync(contractFilePath(file)));
 
+/**
+ * rs-dpp `identity_nonce.rs`: an identity nonce keeps the highest nonce used in
+ * its low 40 bits, and above them a bitset of the up-to-24 nonces below it that
+ * are still unused (bit 40 + k - 1 set: nonce `top - k` may still land).
+ */
+const NONCE_VALUE_MASK = (1n << 40n) - 1n;
+const MAX_MISSING_NONCES = 24n;
+
+/** Whether `nonce` can no longer be used: at or below the top, and not one of the still-missing ones. */
+export function identityNonceSpent(rawNonce, nonce) {
+  const raw = BigInt(rawNonce);
+  const wanted = BigInt(nonce);
+  const top = raw & NONCE_VALUE_MASK;
+  if (wanted > top) return false;
+  const position = top - wanted;
+  if (position === 0n || position > MAX_MISSING_NONCES) return true;
+  return (raw & (1n << (position - 1n + 40n))) === 0n;
+}
+
+/**
+ * What became of a create at `nonce`, from two proofs: the maker's raw nonce
+ * (at `nonceHeight`) and the contract's group memberships (at
+ * `membershipHeight`). Every create of the set writes its membership together
+ * with the contract, so a membership proof at least as new as a proof that the
+ * nonce is spent, that does not list the group, proves the create never landed.
+ *   'landed' | 'pending' (the nonce may still be used) | 'refused' | 'stale' (the membership proof is older)
+ */
+export function decideCreateOutcome({ rawNonce, nonceHeight, nonce, groupIds, membershipHeight, groupId }) {
+  if (groupIds.includes(groupId)) return 'landed';
+  if (!identityNonceSpent(rawNonce, nonce)) return 'pending';
+  return BigInt(membershipHeight) >= BigInt(nonceHeight) ? 'refused' : 'stale';
+}
+
 /** Deep copy with object keys sorted and BigInts as numbers, so two renderings of one schema compare equal. */
 function canonical(value) {
   if (typeof value === 'bigint') return Number(value);

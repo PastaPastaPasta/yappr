@@ -30,7 +30,8 @@
 import { readFileSync } from 'node:fs';
 import { ContractBounds, DataContract, IdentityPublicKeyInCreation, IdentitySigner, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import {
-  APP_CONNECT_ENTRIES, APP_CONNECT_ENV, APP_CONNECT_GROUP, RETIRED_ON_PV14, contractFilePath, contractGroupId, fileSha256, sameSchemas,
+  APP_CONNECT_ENTRIES, APP_CONNECT_ENV, APP_CONNECT_GROUP, RETIRED_ON_PV14, contractFilePath, contractGroupId, decideCreateOutcome,
+  fileSha256, identityNonceSpent, sameSchemas,
 } from './app-connect-set.mjs';
 import { normalizeId, reportSelfTest, runBattery, settle } from './battery-lib.mjs';
 import { envValue, network } from './sdk-env.mjs';
@@ -203,6 +204,29 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
     stored ? `disabledAt ${stored.disabledAt}, bound to ${normalizeId(stored.contractBounds?.identifier)}` : 'missing');
 });
 
+/**
+ * The publisher's refusal decision (register-app-connect-contracts.mjs `createOutcome`), on
+ * hand-built proofs: only a spent nonce plus a membership proof at least as new as it, without
+ * the group, is a refusal. Raw nonces follow rs-dpp: bit 40 + k - 1 marks `top - k` still unused.
+ */
+function publisherDecisionCases() {
+  const GROUP = 'group';
+  const gap = (top, ...missing) => missing.reduce((raw, n) => raw | (1n << (top - n - 1n + 40n)), top);
+  const outcome = (rawNonce, groupIds, membershipHeight, nonceHeight = 100n) => decideCreateOutcome({ rawNonce, nonceHeight, nonce: 13n, groupIds, membershipHeight, groupId: GROUP });
+  return [
+    ['nonce 13 at the top is spent', identityNonceSpent(13n, 13n)],
+    ['nonce 13 below a later top, with no gap, is spent', identityNonceSpent(14n, 13n)],
+    ['nonce 13 flagged missing below top 14 may still land', !identityNonceSpent(gap(14n, 13n), 13n)],
+    ['a gap at 12 says nothing about 13', identityNonceSpent(gap(14n, 12n), 13n)],
+    ['nonce 13 above top 12 is not spent', !identityNonceSpent(12n, 13n)],
+    ['more than 24 below the top can never be used again', identityNonceSpent(13n + 25n, 13n)],
+    ['a create whose contract lists the group landed, whatever the nonce says', outcome(12n, [GROUP], 1n) === 'landed'],
+    ['a still-missing nonce is pending, never refused', outcome(gap(14n, 13n), [], 200n) === 'pending'],
+    ['a spent nonce and a membership proof as new as it, without the group: refused', outcome(14n, [], 100n) === 'refused'],
+    ['a membership proof older than the nonce proof decides nothing', outcome(14n, [], 99n) === 'stale'],
+  ];
+}
+
 function selfTestAppConnect() {
   const anchor = anchorFile();
   const appInfo = anchor.documentSchemas?.appInfo ?? {};
@@ -219,6 +243,7 @@ function selfTestAppConnect() {
       && appInfo.indices?.length === 1 && appInfo.indices[0].unique === true && JSON.stringify(appInfo.indices[0].properties) === '[{"$ownerId":"asc"}]'],
     ['contractGroupId matches the group sakura registered (rs-dpp generate_contract_group_id)', contractGroupId(GROUP_ID_VECTOR[0], GROUP_ID_VECTOR[1]) === GROUP_ID_VECTOR[2]],
     [`the group is named "${APP_CONNECT_GROUP.name}" with a description of at most 256 characters`, APP_CONNECT_GROUP.name.length <= 64 && APP_CONNECT_GROUP.description.length <= 256],
+    ...publisherDecisionCases(),
   ]);
 }
 
