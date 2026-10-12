@@ -95,6 +95,9 @@ class AppConnectSessionManager {
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   /** Bumped by every activation and deactivation, so an activation finishing late can tell it was overtaken. */
   private activations = 0
+  /** Bumped by every logout; `loggedOutAt` keeps each identity's latest, so an adoption can tell a logout overtook it. */
+  private lifecycle = 0
+  private readonly loggedOutAt = new Map<string, number>()
   private signedOutListener: ((identityId: string) => void) | null = null
 
   network(): YapprKeyExchangeNetworkName {
@@ -146,6 +149,7 @@ class AppConnectSessionManager {
 
   /** Stores a verified grant as this browser's session and makes it active. Wipes the grant's keys. */
   async adopt(grant: AppConnectGrant): Promise<AppConnectSession> {
+    const startedAt = this.lifecycle
     const keys = new Map<string, Uint8Array>()
     let session: AppConnectSession
     let stored = false
@@ -174,6 +178,12 @@ class AppConnectSessionManager {
       const newer = await this.keyStore().load(this.network())
       if (!newer || newer.identityId !== session.identityId) throw new Error('The wallet sign-in was replaced; try again')
       session = newer
+    }
+    // The user logged out of this identity while the grant was being stored:
+    // the logout stands, so forget exactly this grant and activate nothing.
+    if ((this.loggedOutAt.get(session.identityId) ?? 0) > startedAt) {
+      if (stored) await this.clearStored(exactGrant(session))
+      throw new Error('Signed out while the wallet was connecting')
     }
     await this.activate(session)
     return session
@@ -237,6 +247,7 @@ class AppConnectSessionManager {
 
   /** Logout: forgets this browser's session for `identityId`, whichever tab stored it. The connection id stays. */
   async logout(identityId: string): Promise<void> {
+    this.loggedOutAt.set(identityId, ++this.lifecycle)
     if (this.active?.identityId === identityId) this.deactivate()
     await this.clearStored({ identityId })
   }

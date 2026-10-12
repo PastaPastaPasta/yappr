@@ -194,4 +194,47 @@ describe('AppConnectSessionManager across tabs', () => {
     expect(appConnectEncryptionKey('alice')).toBeNull()
     expect(signedOut).toHaveBeenCalledWith('alice')
   })
+
+  /** A verified wallet grant with one group key, as the login flow hands it to adopt(). */
+  function walletGrant(identityId: string, keyId: number): Parameters<typeof appConnectSessions.adopt>[0] {
+    const key = { id: keyId, purpose: 0, securityLevel: 1, bounds: { kind: 'contractGroup', groupId: 'group' }, totalBudget: 10n, expiresAt: 99 }
+    return {
+      identityId,
+      authKeys: [{ role: 'contractGroup', bindingIndex: 0, privateKey: new Uint8Array(32).fill(9), key: key as Parameters<typeof appConnectSessions.adopt>[0]['authKeys'][number]['key'], remainingBudget: 9n }],
+      encryptionKeys: [],
+    }
+  }
+
+  it('adopts a renewed grant and makes it active', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    await appConnectSessions.restore('alice')
+
+    const renewed = await appConnectSessions.adopt(walletGrant('alice', 5))
+
+    expect(currentSession('alice').authKeys[0].keyId).toBe(5)
+    expect(storedGrantedAt()).toBe(renewed.grantedAt)
+  })
+
+  it('drops a renewal that a logout overtook while its grant was being stored', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    await appConnectSessions.restore('alice')
+    const store = appConnectSessions.keyStore()
+    const realSave = store.save.bind(store)
+    let proceed: () => void = () => undefined
+    const save = vi.spyOn(store, 'save').mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => { proceed = resolve })
+      return realSave(...args)
+    })
+
+    const renewing = appConnectSessions.adopt(walletGrant('alice', 5))
+    await vi.waitFor(() => expect(save).toHaveBeenCalled())
+    await appConnectSessions.logout('alice')
+    proceed()
+
+    await expect(renewing).rejects.toThrow('Signed out while the wallet was connecting')
+    expect(appConnectSessions.current()).toBeNull()
+    expect(useAppConnectStatus.getState().identityId).toBeNull()
+    expect(storedGrantedAt()).toBeUndefined()
+    save.mockRestore()
+  })
 })
