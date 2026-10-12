@@ -53,7 +53,12 @@ function appConnectSessionKey(privateKey: Uint8Array, publicKey: Uint8Array): Ui
 }
 
 async function importAesKey(rawKey: Uint8Array, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
-  return crypto.subtle.importKey('raw', toArrayBuffer(rawKey), { name: 'AES-GCM' }, false, [usage])
+  const copy = toArrayBuffer(rawKey)
+  try {
+    return await crypto.subtle.importKey('raw', copy, { name: 'AES-GCM' }, false, [usage])
+  } finally {
+    new Uint8Array(copy).fill(0)
+  }
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -87,7 +92,9 @@ export async function sealAppConnectPayload(
   const walletEphemeralPrivateKey = input.walletEphemeralPrivateKey ?? secp256k1.utils.randomSecretKey()
   const walletEphemeralPubKey = getYapprPublicKey(walletEphemeralPrivateKey)
   const sessionKey = appConnectSessionKey(walletEphemeralPrivateKey, appEphemeralPubKey)
-  const plaintext = new Uint8Array(slots.length * APP_CONNECT_SLOT_BYTES)
+  // Built in its own ArrayBuffer and passed as is, so no copy of the keys escapes the wipe below.
+  const plaintextBuffer = new ArrayBuffer(slots.length * APP_CONNECT_SLOT_BYTES)
+  const plaintext = new Uint8Array(plaintextBuffer)
   slots.forEach((slot, index) => plaintext.set(slot, index * APP_CONNECT_SLOT_BYTES))
 
   try {
@@ -95,7 +102,7 @@ export async function sealAppConnectPayload(
     const sealed = new Uint8Array(await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv: toArrayBuffer(nonce), additionalData: toArrayBuffer(appConnectAad(appEphemeralPubKey, ownerId)) },
       key,
-      toArrayBuffer(plaintext),
+      plaintextBuffer,
     ))
     return { walletEphemeralPubKey, encryptedPayload: concatBytes(nonce, sealed) }
   } finally {
@@ -124,13 +131,13 @@ export async function openAppConnectPayload(input: OpenAppConnectPayloadInput): 
     throw new AppConnectPayloadError('framing', `payload of ${encryptedPayload.length} bytes is not 28 + 32n with 1 <= n <= ${APP_CONNECT_MAX_SLOTS}`)
   }
 
+  const appEphemeralPubKey = getYapprPublicKey(input.appEphemeralPrivateKey)
   let sessionKey: Uint8Array
   try {
     sessionKey = appConnectSessionKey(input.appEphemeralPrivateKey, input.walletEphemeralPubKey)
   } catch {
     throw new AppConnectPayloadError('decrypt', 'wallet ephemeral public key is not a valid point')
   }
-  const appEphemeralPubKey = getYapprPublicKey(input.appEphemeralPrivateKey)
 
   let plaintext: Uint8Array
   try {

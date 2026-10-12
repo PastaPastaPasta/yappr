@@ -1,4 +1,5 @@
 import type { YapprKeyExchangeNetworkName } from '../core/types'
+import { clearSensitiveBytes } from '../key-exchange/yappr-protocol'
 import type { AppConnectGrant } from './verify'
 import { KeySecurityLevel, type AppConnectGroupMember, type AppConnectKeyBounds, type PinnedGroup } from './types'
 
@@ -38,7 +39,16 @@ export interface AppConnectSession {
   connectionId: string
   grantedAt: number
   authKeys: AppConnectSessionKey[]
-  encKey?: { keyId: number; contractId: string; keyRef: string }
+  /** ENCRYPTION and DECRYPTION keys, one per granted encryption binding. */
+  encKeys: AppConnectSessionEncKey[]
+}
+
+export interface AppConnectSessionEncKey {
+  keyId: number
+  contractId: string
+  /** ENCRYPTION or DECRYPTION. */
+  purpose: number
+  keyRef: string
 }
 
 export interface BuildAppConnectSessionInput {
@@ -51,54 +61,74 @@ export interface BuildAppConnectSessionInput {
   keyRef: (privateKey: Uint8Array, keyId: number) => string
 }
 
+/**
+ * Turns a verified grant into a session: every private key goes to `keyRef`
+ * and is then wiped from the grant, so the grant is spent afterwards.
+ */
 export function buildAppConnectSession(grant: AppConnectGrant, input: BuildAppConnectSessionInput): AppConnectSession {
-  const authKeys = grant.authKeys.map((granted): AppConnectSessionKey => ({
-    keyId: granted.key.id,
-    bounds: granted.key.bounds,
-    securityLevel: granted.key.securityLevel,
-    totalBudget: granted.key.totalBudget,
-    remainingBudget: granted.remainingBudget,
-    expiresAt: granted.key.expiresAt,
-    keyRef: input.keyRef(granted.privateKey, granted.key.id),
-  }))
-  const encryption = grant.encryptionKeys.find((granted) => granted.role === 'encryption')
-  const encBounds = encryption?.key.bounds
-  return {
-    v: APP_CONNECT_SESSION_VERSION,
-    network: input.network,
-    identityId: grant.identityId,
-    appId: input.appId,
-    groupId: input.groupId,
-    connectionId: input.connectionId,
-    grantedAt: input.grantedAt,
-    authKeys,
-    encKey: encryption && encBounds?.kind === 'singleContract'
-      ? {
-          keyId: encryption.key.id,
-          contractId: encBounds.contractId,
-          keyRef: input.keyRef(encryption.privateKey, encryption.key.id),
-        }
-      : undefined,
+  try {
+    const authKeys = grant.authKeys.map((granted): AppConnectSessionKey => ({
+      keyId: granted.key.id,
+      bounds: granted.key.bounds,
+      securityLevel: granted.key.securityLevel,
+      totalBudget: granted.key.totalBudget,
+      remainingBudget: granted.remainingBudget,
+      expiresAt: granted.key.expiresAt,
+      keyRef: input.keyRef(granted.privateKey, granted.key.id),
+    }))
+    const encKeys = grant.encryptionKeys.map((granted): AppConnectSessionEncKey => {
+      // The verifier only accepts encryption keys bound to a single contract.
+      const bounds = granted.key.bounds
+      if (bounds?.kind !== 'singleContract') throw new Error('encryption key is not bound to a contract')
+      return {
+        keyId: granted.key.id,
+        contractId: bounds.contractId,
+        purpose: granted.key.purpose,
+        keyRef: input.keyRef(granted.privateKey, granted.key.id),
+      }
+    })
+    return {
+      v: APP_CONNECT_SESSION_VERSION,
+      network: input.network,
+      identityId: grant.identityId,
+      appId: input.appId,
+      groupId: input.groupId,
+      connectionId: input.connectionId,
+      grantedAt: input.grantedAt,
+      authKeys,
+      encKeys,
+    }
+  } finally {
+    for (const granted of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(granted.privateKey)
   }
 }
 
-/** One member of a batch: a document operation or a token operation. */
+/**
+ * One member of a batch: a document operation or a token operation. A
+ * document create whose type consumes other types (`consume`) is checked
+ * against those types' bounds too, so list them in `consumedDocumentTypes`.
+ */
 export type SigningMember =
-  | { contractId: string; documentType: string }
+  | { contractId: string; documentType: string; consumedDocumentTypes?: string[] }
   | { contractId: string; tokenPosition: number }
 
 export interface SigningRequest {
   /** Bound keys sign batches only (20013 otherwise). */
   transition: 'batch' | 'non-batch'
   members: SigningMember[]
-  /** Strictest level the members' document types require; HIGH by default. Token members force CRITICAL. */
-  requiredSecurityLevel?: number
+  /**
+   * Strictest `securityLevelRequirement` among the members' document types
+   * (HIGH unless a type says otherwise). Required, because guessing low costs a
+   * paid 20004. Token members force CRITICAL on top.
+   */
+  requiredSecurityLevel: number
   /** Expected credit cost; keys whose remaining budget is below it are skipped. */
   estimatedCost?: bigint
 }
 
 export interface SelectSigningKeyContext {
   now: number
+  /** Only pins that passed `checkAppConnectGroupTrust`: the selector trusts them as the group's members. */
   groups: PinnedGroup[]
   expiryMarginMs?: number
 }
@@ -113,7 +143,9 @@ export type SigningKeySelection =
   /**
    * `non-batch`: only an unbound key could sign it; hand off to the wallet.
    * `needs-split`: no one key covers every member, but `plan` signs them in
-   * separate batches (not atomic; the caller decides whether that is fine).
+   * separate batches. Not atomic, and members are regrouped by key, so the
+   * order across steps can differ from the request's; the caller decides
+   * whether that is fine.
    * `no-covering-key`: nothing usable covers some member; renew or hand off.
    */
   | { ok: false; reason: 'empty' | 'non-batch' | 'no-covering-key' }
@@ -123,8 +155,14 @@ function isToken(member: SigningMember): member is { contractId: string; tokenPo
   return 'tokenPosition' in member
 }
 
-/** Whether `bounds` (or no bounds: an unbound key) admits `member`. */
+/** Whether `bounds` (or no bounds: an unbound key) admits `member`, including every type it consumes. */
 function covers(bounds: AppConnectKeyBounds | undefined, member: SigningMember, groups: PinnedGroup[]): boolean {
+  if (isToken(member) || !member.consumedDocumentTypes?.length) return coversOne(bounds, member, groups)
+  return [member.documentType, ...member.consumedDocumentTypes]
+    .every((documentType) => coversOne(bounds, { contractId: member.contractId, documentType }, groups))
+}
+
+function coversOne(bounds: AppConnectKeyBounds | undefined, member: SigningMember, groups: PinnedGroup[]): boolean {
   if (!bounds) return true
   switch (bounds.kind) {
     case 'singleContract':
@@ -170,7 +208,8 @@ function usable(key: AppConnectSessionKey, request: SigningRequest, ctx: SelectS
   if (key.securityLevel === KeySecurityLevel.MASTER) return false
   const margin = ctx.expiryMarginMs ?? APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS
   if (key.expiresAt !== undefined && key.expiresAt - ctx.now <= margin) return false
-  if (key.remainingBudget !== undefined && key.remainingBudget < (request.estimatedCost ?? 1n)) return false
+  if (key.remainingBudget !== undefined
+    && (key.remainingBudget <= 0n || key.remainingBudget < (request.estimatedCost ?? 0n))) return false
   return true
 }
 
@@ -180,7 +219,7 @@ function levelSatisfies(key: AppConnectSessionKey, required: number): boolean {
 }
 
 function requiredLevel(request: SigningRequest, members: SigningMember[]): number {
-  const base = request.requiredSecurityLevel ?? KeySecurityLevel.HIGH
+  const base = request.requiredSecurityLevel
   // Platform requires CRITICAL for any batch that contains a token transition.
   return members.some(isToken) ? Math.min(base, KeySecurityLevel.CRITICAL) : base
 }
@@ -225,6 +264,8 @@ export function selectSigningKey(
   ctx: SelectSigningKeyContext,
 ): SigningKeySelection {
   if (request.transition === 'non-batch') {
+    // Only an unbound authentication key (a raw-key session) can sign these.
+    // Session keys carry no purpose, so TRANSFER-purpose transitions are out of scope.
     const unbound = keys.filter((key) => !key.bounds)
     const key = bestKey(unbound, request.members, request, ctx)
     return key ? { ok: true, key } : { ok: false, reason: 'non-batch' }

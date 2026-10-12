@@ -181,7 +181,7 @@ describe('verifyAppConnectCandidate', () => {
     ['a key that dropped the requested budget', { keys: [groupKey(), profileKey({ totalBudget: undefined }), encryptionKey()] }, 'key-limits'],
     ['a key that dropped the requested expiry', { keys: [groupKey({ expiresAt: undefined }), profileKey(), encryptionKey()] }, 'key-limits'],
     ['a spent budget', { budgets: { 5: 0n, 6: 1n } }, 'budget-exhausted'],
-    ['a budget Platform does not report', { budgets: { 6: 1n } }, 'budget-exhausted'],
+    ['a budget Platform does not report (yet)', { budgets: { 6: 1n } }, 'budget-unknown', true],
     ['an encryption key that is not current', { currentEncryptionKeys: [encryptionKey({ id: 9, data: pub(seed('newer')) })] }, 'encryption-key-not-current', true],
     ['an encryption key at HIGH', { keys: [groupKey(), profileKey(), encryptionKey({ securityLevel: KeySecurityLevel.HIGH })] }, 'key-level'],
     ['a hash-only encryption key', {

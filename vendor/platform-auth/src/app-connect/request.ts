@@ -40,7 +40,8 @@ export const AppConnectTlv = {
 const BINDING_KIND_TAGS = { singleContract: 0, documentType: 1, contractGroup: 2 } as const
 
 export type AppConnectBindingKind = keyof typeof BINDING_KIND_TAGS
-export type AppConnectMode = 'login' | 'renew'
+/** Absent means login; MODE carries only renew. */
+export type AppConnectMode = 'renew'
 
 export interface AppConnectAuthBinding {
   kind: AppConnectBindingKind
@@ -102,6 +103,8 @@ export class AppConnectRequestError extends Error {
 const encoder = new TextEncoder()
 const strictDecoder = new TextDecoder('utf-8', { fatal: true })
 const DOCUMENT_TYPE_NAME = /^[A-Za-z0-9_-]{1,64}$/
+// C0 and C1 controls, and the bidi marks, embeddings, overrides and isolates a label could use to disguise itself.
+const LABEL_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/
 const AUTH_BINDING_FIXED_BYTES = 1 + 1 + 32 + 8 + 8
 const ENC_BINDING_BYTES = 33
 const FIXED_VALUE_BYTES: Partial<Record<number, number>> = {
@@ -112,6 +115,7 @@ const FIXED_VALUE_BYTES: Partial<Record<number, number>> = {
   [AppConnectTlv.CREATED_AT]: 8,
 }
 const MAX_U64 = (1n << 64n) - 1n
+const KNOWN_TLV_TYPES: ReadonlySet<number> = new Set(Object.values(AppConnectTlv))
 
 function invalid(message: string): never {
   throw new AppConnectRequestError('invalid', message)
@@ -151,6 +155,7 @@ export function validateAppConnectRequest(request: AppConnectRequest): void {
   if (encoder.encode(request.label).length > APP_CONNECT_MAX_LABEL_BYTES) {
     invalid(`label is longer than ${APP_CONNECT_MAX_LABEL_BYTES} bytes`)
   }
+  if (LABEL_FORBIDDEN.test(request.label)) invalid('label contains control or bidirectional formatting characters')
 
   const { authBindings, encBindings } = request
   if (authBindings.length < 1 || authBindings.length > APP_CONNECT_MAX_AUTH_BINDINGS) {
@@ -183,7 +188,7 @@ export function validateAppConnectRequest(request: AppConnectRequest): void {
   }
   if (request.identityHint !== undefined) checkLength(request.identityHint, 32, 'identity hint')
   if (request.connectionId !== undefined) checkLength(request.connectionId, 16, 'connection id')
-  if (request.mode !== undefined && request.mode !== 'login' && request.mode !== 'renew') {
+  if (request.mode !== undefined && request.mode !== 'renew') {
     invalid(`unknown mode ${String(request.mode)}`)
   }
 }
@@ -251,7 +256,7 @@ export function encodeAppConnectRequest(request: AppConnectRequest): Uint8Array 
   for (const binding of request.encBindings) {
     tlv(AppConnectTlv.ENC_BINDING, Uint8Array.of(...binding.contractId, binding.purpose))
   }
-  if (request.mode) tlv(AppConnectTlv.MODE, Uint8Array.of(request.mode === 'renew' ? 1 : 0))
+  if (request.mode === 'renew') tlv(AppConnectTlv.MODE, Uint8Array.of(1))
   tlv(AppConnectTlv.CREATED_AT, u64(BigInt(request.createdAt)))
 
   return Uint8Array.from(out)
@@ -329,7 +334,9 @@ export function decodeAppConnectRequest(bytes: Uint8Array): AppConnectRequest {
     const value = bytes.subarray(offset, offset + length)
     offset += length
 
+    // The repeatable known types, and any unknown optional type (a future one may repeat).
     const repeatable = type === AppConnectTlv.AUTH_BINDING || type === AppConnectTlv.ENC_BINDING
+      || (type % 2 === 1 && !KNOWN_TLV_TYPES.has(type))
     if (type < previousType || (type === previousType && !repeatable)) {
       invalid(`TLV 0x${hex2(type)} is out of order or repeated`)
     }
@@ -354,8 +361,8 @@ export function decodeAppConnectRequest(bytes: Uint8Array): AppConnectRequest {
         request.encBindings.push({ contractId: value.slice(0, 32), purpose: value[32] })
         break
       case AppConnectTlv.MODE:
-        if (value[0] > 1) invalid(`unknown mode ${value[0]}`)
-        request.mode = value[0] === 1 ? 'renew' : 'login'
+        if (value[0] !== 1) invalid(`unknown mode ${value[0]}`)
+        request.mode = 'renew'
         break
       case AppConnectTlv.CREATED_AT:
         request.createdAt = readMs(value, 0, 'created-at') ?? invalid('created-at is zero')

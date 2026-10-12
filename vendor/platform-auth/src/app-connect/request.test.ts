@@ -58,6 +58,12 @@ describe('App Connect request v2 codec', () => {
     expect(decodeAppConnectRequest(withTlv(bytes, 0x09, []))).toEqual(request)
   })
 
+  it('accepts repeats of an unknown optional TLV', () => {
+    const request = yapprVectorRequest()
+    const bytes = withTlv(withTlv(encodeAppConnectRequest(request), 0x07, [1]), 0x07, [2])
+    expect(decodeAppConnectRequest(bytes)).toEqual(request)
+  })
+
   it('refuses unknown mandatory (even) TLVs as unsupported', () => {
     const bytes = withTlv(encodeAppConnectRequest(yapprVectorRequest()), 0x08, [0x01])
     expect(refusal(() => decodeAppConnectRequest(bytes)).code).toBe('unsupported')
@@ -99,6 +105,16 @@ describe('App Connect request v2 codec', () => {
     expect(refusal(() => decodeAppConnectRequest(spliced)).code).toBe('invalid')
   })
 
+  it('only knows MODE = renew (absent means login)', () => {
+    const renew = encodeAppConnectRequest(renewVectorRequest())
+    // MODE sits just before the 10-byte CREATED_AT.
+    const modeAt = renew.length - 10 - 3
+    expect([...renew.subarray(modeAt, modeAt + 3)]).toEqual([0x05, 1, 1])
+    const zero = renew.slice()
+    zero[modeAt + 2] = 0
+    expect(refusal(() => decodeAppConnectRequest(zero)).code).toBe('invalid')
+  })
+
   it('requires CREATED_AT', () => {
     const bytes = encodeAppConnectRequest(yapprVectorRequest())
     expect(refusal(() => decodeAppConnectRequest(bytes.subarray(0, bytes.length - 10))).code).toBe('invalid')
@@ -121,6 +137,8 @@ describe('App Connect request v2 codec', () => {
       ['an encryption binding with the AUTHENTICATION purpose', { ...request, encBindings: [{ contractId: request.appId, purpose: 0 }] }],
       ['a short identity hint', { ...request, identityHint: new Uint8Array(31) }],
       ['a long label', { ...request, label: 'x'.repeat(65) }],
+      ['a label with a bidi override', { ...request, label: 'Yappr\u202e' }],
+      ['a label with a control character', { ...request, label: 'Yap\npr' }],
       ['an inherited property as the binding kind', { ...request, authBindings: [{ ...group, kind: 'toString' as 'contractGroup' }] }],
       ['an invalid ephemeral key', { ...request, appEphemeralPubKey: Uint8Array.of(2, ...Array(32).fill(0xff)) }],
     ]

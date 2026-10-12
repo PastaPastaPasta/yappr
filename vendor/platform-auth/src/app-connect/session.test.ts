@@ -49,7 +49,11 @@ const ring = [groupKey, profileKey]
 
 const doc = (contractId: string, documentType: string): SigningMember => ({ contractId, documentType })
 const token = (contractId: string, tokenPosition: number): SigningMember => ({ contractId, tokenPosition })
-const batch = (...members: SigningMember[]): SigningRequest => ({ transition: 'batch', members })
+const batch = (...members: SigningMember[]): SigningRequest => ({
+  transition: 'batch',
+  members,
+  requiredSecurityLevel: KeySecurityLevel.HIGH,
+})
 
 function chosen(keys: AppConnectSessionKey[], request: SigningRequest, now = NOW): number | string {
   const result = selectSigningKey(keys, request, { now, groups })
@@ -76,7 +80,7 @@ describe('selectSigningKey', () => {
   })
 
   it('never uses a bound key for a non-batch transition', () => {
-    expect(chosen(ring, { transition: 'non-batch', members: [] })).toBe('non-batch')
+    expect(chosen(ring, { transition: 'non-batch', members: [], requiredSecurityLevel: KeySecurityLevel.HIGH })).toBe('non-batch')
     const rawKey = key(1, { securityLevel: KeySecurityLevel.CRITICAL })
     expect(chosen([...ring, rawKey], { transition: 'non-batch', members: [], requiredSecurityLevel: KeySecurityLevel.CRITICAL })).toBe(1)
   })
@@ -98,6 +102,15 @@ describe('selectSigningKey', () => {
     expect(chosen(ring, batch(doc(SHOP, 'order')))).toBe('no-covering-key')
   })
 
+  it('checks the types a create consumes against the key too', () => {
+    const postKey = key(10, { bounds: { kind: 'documentType', contractId: SOCIAL, documentTypeName: 'post' } })
+    const consuming = doc(SOCIAL, 'post')
+    expect(chosen([postKey], batch(consuming))).toBe(10)
+    expect(chosen([postKey], batch({ ...consuming, consumedDocumentTypes: ['draft'] }))).toBe('no-covering-key')
+    expect(chosen([postKey, groupKey], batch({ ...consuming, consumedDocumentTypes: ['draft'] }))).toBe(5)
+    expect(chosen(ring, batch({ ...doc(BLOG, 'post'), consumedDocumentTypes: ['draft'] }))).toBe('no-covering-key')
+  })
+
   it('honours a document type that requires CRITICAL', () => {
     const request = { ...batch(doc(DASHPAY, 'profile')), requiredSecurityLevel: KeySecurityLevel.CRITICAL }
     expect(chosen(ring, request)).toBe('no-covering-key')
@@ -107,6 +120,7 @@ describe('selectSigningKey', () => {
     const post = batch(doc(SOCIAL, 'post'))
     expect(chosen([{ ...groupKey, expiresAt: NOW + 4 * 60_000 }], post)).toBe('no-covering-key')
     expect(chosen([{ ...groupKey, remainingBudget: 0n }], post)).toBe('no-covering-key')
+    expect(chosen([{ ...groupKey, remainingBudget: 0n }], { ...post, estimatedCost: 0n })).toBe('no-covering-key')
     expect(chosen([{ ...groupKey, remainingBudget: 100n }], { ...post, estimatedCost: 101n })).toBe('no-covering-key')
     expect(chosen([{ ...groupKey, remainingBudget: 101n }], { ...post, estimatedCost: 101n })).toBe(5)
     expect(chosen([{ ...groupKey, disabled: true }], post)).toBe('no-covering-key')
@@ -138,7 +152,7 @@ describe('selectSigningKey', () => {
 })
 
 describe('buildAppConnectSession', () => {
-  it('keeps key metadata and stores private keys by reference', () => {
+  it('keeps key metadata, stores private keys by reference and wipes them from the grant', () => {
     const grant: AppConnectGrant = {
       identityId: 'Owner',
       authKeys: [{
@@ -193,7 +207,9 @@ describe('buildAppConnectSession', () => {
       expiresAt: NOW,
       keyRef: 'k5',
     }])
-    expect(session.encKey).toEqual({ keyId: 7, contractId: 'Anchor', keyRef: 'k7' })
+    expect(session.encKeys).toEqual([{ keyId: 7, contractId: 'Anchor', purpose: KeyPurpose.ENCRYPTION, keyRef: 'k7' }])
     expect(JSON.stringify(session, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))).not.toContain('privateKey')
+    expect(grant.authKeys[0].privateKey.every((byte) => byte === 0)).toBe(true)
+    expect(grant.encryptionKeys[0].privateKey.every((byte) => byte === 0)).toBe(true)
   })
 })

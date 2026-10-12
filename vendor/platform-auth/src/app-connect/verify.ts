@@ -37,6 +37,8 @@ export type AppConnectRejectReason =
   | 'key-limits'
   | 'key-expired'
   | 'budget-exhausted'
+  /** Platform returned no remaining budget for a budgeted key (a lagging read). */
+  | 'budget-unknown'
   | 'encryption-key-not-current'
   | 'duplicate-binding'
   | 'primary-missing'
@@ -80,6 +82,7 @@ class Rejection {
 const RETRYABLE: ReadonlySet<AppConnectRejectReason> = new Set([
   'identity-not-found',
   'key-not-found',
+  'budget-unknown',
   'encryption-key-not-current',
 ])
 
@@ -99,6 +102,10 @@ interface SlotMatch {
  * each encryption key is the one Platform currently resolves for its contract.
  * Anything else rejects the whole candidate; there is no partial accept of a
  * response that contains a key the app did not ask for.
+ *
+ * `ok: true` means a valid grant from `grant.identityId`, not that this is the
+ * user: anyone can answer a request with their own identity. Without an
+ * identity hint the app must still ask "Continue as @name?".
  */
 export async function verifyAppConnectCandidate(input: VerifyAppConnectCandidateInput): Promise<AppConnectVerification> {
   const { request, candidate } = input
@@ -179,7 +186,8 @@ async function verifySlots(input: VerifyAppConnectCandidateInput, slots: Uint8Ar
     : new Map<number, bigint | undefined>()
   for (const match of budgeted) {
     const left = remaining.get(match.key.id)
-    if (left === undefined || left <= 0n) throw new Rejection('budget-exhausted', match.slot)
+    if (left === undefined) throw new Rejection('budget-unknown', match.slot)
+    if (left <= 0n) throw new Rejection('budget-exhausted', match.slot)
   }
 
   const granted = matches.map((m): AppConnectGrantedKey => ({

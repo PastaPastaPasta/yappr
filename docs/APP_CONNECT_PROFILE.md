@@ -50,13 +50,13 @@ TLV  = type (1) ‖ length (1) ‖ value (length)
 | version | `0x02` |
 | `appEphPub` | compressed secp256k1 point, fresh for every request |
 | `appId` | the app's id: the contract id the wallet brands the request with and checks ownership against |
-| label | UTF-8, at most 64 bytes, shown on the approval sheet only as a hint (the brand comes from `appId`) |
+| label | UTF-8, at most 64 bytes, without C0/C1 control characters or bidirectional formatting characters; shown on the approval sheet only as a hint (the brand comes from `appId`) |
 
 TLV rules:
 
 - **Even types are mandatory to understand.** A wallet that meets an unknown even type refuses the request as `unsupported`.
 - **Odd types are optional.** A wallet skips unknown odd types.
-- TLVs appear in **ascending type order**. Only `AUTH_BINDING` and `ENC_BINDING` repeat, and their repeats are adjacent. Anything out of order, a repeated singleton, a known type with the wrong length, or a TLV running past the end makes the request `invalid`. So every request has exactly one encoding.
+- TLVs appear in **ascending type order**. Among known types only `AUTH_BINDING` and `ENC_BINDING` repeat; an unknown odd type may repeat too (a future optional type might). Repeats are adjacent. Anything out of order, a repeated known singleton, a known type with the wrong length or value, or a TLV running past the end makes the request `invalid`. So every request has exactly one encoding.
 - Integers are big-endian.
 
 | Type | Name | Count | Value |
@@ -65,7 +65,7 @@ TLV rules:
 | `0x02` | `AUTH_BINDING` | 1–4 | see below |
 | `0x03` | `CONNECTION_ID` | 0–1 | 16 random bytes, one per (app install, network) |
 | `0x04` | `ENC_BINDING` | 0–2 | contractId (32) ‖ purpose (1): `1` ENCRYPTION, `2` DECRYPTION |
-| `0x05` | `MODE` | 0–1 | `0` login, `1` renew; other values are invalid |
+| `0x05` | `MODE` | 0–1 | `1` renew. Absent means login; any other value is invalid. |
 | `0x06` | `CREATED_AT` | 1 | u64, milliseconds since the epoch |
 
 `CREATED_AT` and at least one `AUTH_BINDING` are required.
@@ -94,7 +94,7 @@ Budget and expiry are **proposals**: the app proposes, the wallet clamps and let
 `cb` is an absolute `https` URL without credentials, at most 512 characters. The wallet:
 
 - opens it only if it is `https` and its host is one the wallet associates with `appId` (its brand map); otherwise it shows the host and asks, or does not open it;
-- shows the host on the approval sheet;
+- shows the host on the approval sheet, and warns when a branded `appId` arrives without a `cb` on one of its hosts (the host is the user's main phishing signal);
 - appends `ac=<status>` to it (keeping any existing query) when it is done:
 
 | `ac` | Meaning |
@@ -215,7 +215,7 @@ Anything else rejects the whole candidate. A key that is not visible yet is retr
 
 **Group trust.** Before offering App Connect, the app proves that the group's owner and admins are the ones it pinned and that its members are exactly the pinned set. A group-bound key may sign for every member the group ever gains, so an unexpected member or owner blocks new logins.
 
-**Signing.** The session is a key ring. Before building a write, the app picks the narrowest usable key that covers every batch member (a documentType key, then a contract key, then the group key, using the pinned members), requires CRITICAL for any batch with a token operation, never uses a bound key outside a batch, skips keys about to expire or short of budget, and splits a batch no single key covers (a DashPay profile plus a Yappr profile). So the paid out-of-bounds refusal (20014) cannot happen by construction.
+**Signing.** The session is a key ring. Before building a write, the app picks the narrowest usable key that covers every batch member (a documentType key, then a contract key, then the group key, using the pinned members), including every document type a create consumes. It requires CRITICAL for any batch with a token operation and the strictest `securityLevelRequirement` of the members' types, never uses a bound key outside a batch, skips keys about to expire or short of budget, and splits a batch no single key covers (a DashPay profile plus a Yappr profile). As long as the caller describes the batch accurately, the paid out-of-bounds refusal (20014) cannot happen.
 
 ## Errors
 
@@ -228,7 +228,7 @@ Anything else rejects the whole candidate. A key that is not visible yet is retr
 | 40218 | `IdentityPublicKeyBudgetExceededError` | This write needs more than is left. Say how much, then ask to renew. Unpaid. |
 | 20006, 40208 | key disabled | Revoked in the wallet: sign out and wipe the session. |
 | 20003 | `MissingPublicKeyError` | The key is gone: sign out and wipe the session. |
-| 20004, 20007 | security level not met | Send the write to the wallet. |
+| 20004, 20007 | security level not met | Send the write to the wallet. 20004 is paid when a batch member's type requires a higher level. |
 
 **Renewal** (phase 2, `MODE = 1`): the wallet raises the limits of the existing keys with `IdentityKeyLimitsUpdate` and republishes. Until wallets support it, renewal is a new login carrying the same `CONNECTION_ID` and the identity as `IDENTITY_HINT`, which supersedes the old keys.
 

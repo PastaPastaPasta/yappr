@@ -19,7 +19,7 @@ export type AppConnectSigningFailure =
   | 'key-disabled'
   /** 20003: the key is no longer on the identity. */
   | 'key-missing'
-  /** 20004 / 20007: the key's security level does not meet the transition's. */
+  /** 20004 / 20007: the key's security level does not meet the transition's (20004 is paid inside a batch). */
   | 'security-level'
 
 /**
@@ -39,7 +39,7 @@ export interface AppConnectErrorClassification {
 
 const CLASSIFICATIONS: Record<number, AppConnectErrorClassification> = {
   20003: { failure: 'key-missing', action: 'logout', paid: false },
-  20004: { failure: 'security-level', action: 'handoff', paid: false },
+  20004: { failure: 'security-level', action: 'handoff', paid: true },
   20006: { failure: 'key-disabled', action: 'logout', paid: false },
   20007: { failure: 'security-level', action: 'handoff', paid: false },
   20013: { failure: 'bound-key-non-batch', action: 'handoff', paid: false },

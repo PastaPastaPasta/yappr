@@ -5,7 +5,7 @@ import type { AppConnectGroupInfo } from './types'
 
 describe('classifyAppConnectError', () => {
   it('maps the key-ring consensus codes to actions', () => {
-    const table = [20013, 20014, 20015, 20016, 40218, 20006, 40208, 20003].map((code) => {
+    const table = [20013, 20014, 20015, 20016, 40218, 20006, 40208, 20003, 20004, 20007].map((code) => {
       const c = classifyAppConnectError(code)
       return [code, c?.failure, c?.action, c?.paid]
     })
@@ -18,6 +18,8 @@ describe('classifyAppConnectError', () => {
       [20006, 'key-disabled', 'logout', false],
       [40208, 'key-disabled', 'logout', true],
       [20003, 'key-missing', 'logout', false],
+      [20004, 'security-level', 'handoff', true],
+      [20007, 'security-level', 'handoff', false],
     ])
   })
 
