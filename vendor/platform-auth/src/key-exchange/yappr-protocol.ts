@@ -58,19 +58,31 @@ export function generateYapprEphemeralKeyPair(): YapprEphemeralKeyPair {
   return { privateKey, publicKey }
 }
 
+/**
+ * ECDH x-coordinate → HKDF-SHA256 (salt `dash:key-exchange:v1`). ECDH is
+ * symmetric, so the wallet calls this with its private key and the app's
+ * public key. The legacy key exchange uses an empty `info`; App Connect v2
+ * passes `app-connect:v2`.
+ */
 export function deriveYapprSharedSecret(
   appEphemeralPrivateKey: Uint8Array,
   walletEphemeralPublicKey: Uint8Array,
+  info: Uint8Array = new Uint8Array(0),
 ): Uint8Array {
   const sharedPoint = secp256k1.getSharedSecret(appEphemeralPrivateKey, walletEphemeralPublicKey)
   const sharedX = sharedPoint.slice(1, 33)
-  return hkdf(
-    sha256,
-    sharedX,
-    encoder.encode('dash:key-exchange:v1'),
-    new Uint8Array(0),
-    32,
-  )
+  try {
+    return hkdf(
+      sha256,
+      sharedX,
+      encoder.encode('dash:key-exchange:v1'),
+      info,
+      32,
+    )
+  } finally {
+    sharedX.fill(0)
+    sharedPoint.fill(0)
+  }
 }
 
 export async function decryptYapprLoginKey(
