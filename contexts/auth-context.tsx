@@ -119,6 +119,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     appConnectSessions.onSignedOut((identityId) => {
       if (controller.getState().user?.identityId !== identityId) return
+      // A newer grant for this identity became active while the old one was
+      // being signed out (another tab renewed): it stands, so nothing ends here.
+      if (appConnectSessions.current(identityId)) {
+        useAppConnectStatus.getState().dismissSignedOut()
+        return
+      }
       controller.logout()
         .then(() => router.push('/'))
         .catch((error) => logger.error('Auth: sign-out after a wallet revoke failed:', error))

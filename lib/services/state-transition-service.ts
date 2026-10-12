@@ -5,11 +5,11 @@ import { signerService } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
-import { documentSigningRequest } from '@/lib/app-connect/signing-plan';
+import { documentSigningRequest, maxActionFee } from '@/lib/app-connect/signing-plan';
 import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogCommentsCostYapp, storefrontReviewsCostYapp } from '../constants';
 import { tokenCostFor, yappIsPausedForGood, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
-import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, declaredActionFeeFor, tokenPaymentOptions } from '../transition-agreements';
+import { DEFAULT_FEE_MULTIPLIER_PERMILLE, FEE_MULTIPLIER_TOLERANCE_PERCENT, actionFeeAgreementOptions, declaredActionFeeFor, tokenPaymentOptions } from '../transition-agreements';
 import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, extractErrorMessage, messageWithConsensusCode, isConsensusRefusal, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isIdentityNonceConflictError, isNonceSpentRefusal } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
@@ -238,9 +238,17 @@ class StateTransitionService {
     ownerId: string,
     publicKeys: WasmIdentityPublicKey[],
     contractId: string,
-    documentType: string
+    documentType: string,
+    action: DocumentAction
   ): Promise<SigningKey> {
-    const key = await resolveSigningKey(ownerId, publicKeys, documentSigningRequest(contractId, documentType));
+    // A budgeted key must afford the write's declared action fee too, at the
+    // multiplier it will agree to plus the tolerance above it.
+    const actionFee = maxActionFee(
+      declaredActionFeeFor(contractId, documentType, action),
+      knownFeeMultiplierPermille ?? DEFAULT_FEE_MULTIPLIER_PERMILLE,
+      FEE_MULTIPLIER_TOLERANCE_PERCENT
+    );
+    const key = await resolveSigningKey(ownerId, publicKeys, documentSigningRequest(contractId, documentType, actionFee));
     logger.debug(`Using signing key id=${key.identityKey.keyId} with security level ${key.identityKey.securityLevel}`);
     return key;
   }
@@ -572,7 +580,7 @@ class StateTransitionService {
       if (!identity) {
         throw new Error('Identity not found');
       }
-      signingKey = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType);
+      signingKey = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'create');
       const { identityKey } = signingKey;
 
       // --- The nonce comes first: the document id is derived from it ---
@@ -886,7 +894,7 @@ class StateTransitionService {
       if (!identity) {
         throw new Error('Identity not found');
       }
-      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType);
+      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'replace');
 
       const newRevision = revision + 1;
       const document = await documentBuilderService.buildDocumentForReplace(
@@ -948,7 +956,7 @@ class StateTransitionService {
       if (!identity) {
         throw new Error('Identity not found');
       }
-      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType);
+      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'delete');
 
       const documentForDelete = documentBuilderService.buildDocumentForDelete(
         contractId,
@@ -1022,7 +1030,7 @@ class StateTransitionService {
       if (!identity) {
         throw new Error('Identity not found');
       }
-      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType);
+      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'delete');
 
       const document = await documentBuilderService.buildDocumentForValuesDelete(
         contractId,

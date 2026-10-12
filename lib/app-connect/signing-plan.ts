@@ -22,11 +22,32 @@ import {
  */
 export const APP_CONNECT_WRITE_COST_ESTIMATE = 200_000_000n
 
-export function documentSigningRequest(contractId: string, documentType: string): SigningRequest {
+/**
+ * A write's signing request. `actionFee` is the most the write's declared
+ * action fee can charge (see {@link maxActionFee}); it comes on top of the
+ * network cost estimate, so a key that cannot afford both is passed over.
+ */
+export function documentSigningRequest(contractId: string, documentType: string, actionFee = 0n): SigningRequest {
   return {
     transition: 'batch',
-    members: [{ contractId, documentType, securityLevel: KeySecurityLevel.HIGH, estimatedCost: APP_CONNECT_WRITE_COST_ESTIMATE }],
+    members: [{ contractId, documentType, securityLevel: KeySecurityLevel.HIGH, estimatedCost: APP_CONNECT_WRITE_COST_ESTIMATE + actionFee }],
   }
+}
+
+/**
+ * The most a declared action fee can charge: both pots, and for
+ * multiplier-priced fees scaled by the epoch multiplier the write agrees to
+ * plus the tolerance it allows above it.
+ */
+export function maxActionFee(
+  fee: { owner: bigint; moderators: bigint; pricing?: string } | null,
+  knownMultiplierPermille: bigint,
+  tolerancePercent: number,
+): bigint {
+  if (!fee) return 0n
+  const total = fee.owner + fee.moderators
+  if (fee.pricing !== 'feeMultiplier') return total
+  return (total * knownMultiplierPermille * BigInt(100 + tolerancePercent)) / 100_000n
 }
 
 export function tokenSigningRequest(contractId: string, tokenPosition: number): SigningRequest {

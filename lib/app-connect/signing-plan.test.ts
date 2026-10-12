@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { selectSigningKey, type AppConnectSessionKey } from 'platform-auth'
-import { APP_CONNECT_WRITE_COST_ESTIMATE, documentSigningRequest, explainNoCoveringKey, rawSessionKey, tokenSigningRequest } from './signing-plan'
+import { APP_CONNECT_WRITE_COST_ESTIMATE, documentSigningRequest, explainNoCoveringKey, maxActionFee, rawSessionKey, tokenSigningRequest } from './signing-plan'
 
 const NOW = 1_000_000_000
 const ctx = { now: NOW, groups: [{ groupId: 'group', members: [{ kind: 'contract' as const, contractId: 'social' }] }] }
@@ -33,6 +33,21 @@ describe('the write cost estimate', () => {
     expect(explainNoCoveringKey([nearlySpent], documentSigningRequest('social', 'post'), ctx)).toBe('renew')
     expect(selectSigningKey([groupKey({ remainingBudget: APP_CONNECT_WRITE_COST_ESTIMATE })], documentSigningRequest('social', 'post'), ctx))
       .toMatchObject({ ok: true })
+  })
+})
+
+describe('maxActionFee', () => {
+  it('adds both pots, scaled for multiplier pricing with its tolerance', () => {
+    expect(maxActionFee(null, 1000n, 20)).toBe(0n)
+    expect(maxActionFee({ owner: 0n, moderators: 1_000_000_000n, pricing: 'fixed' }, 1000n, 20)).toBe(1_000_000_000n)
+    expect(maxActionFee({ owner: 100n, moderators: 900n, pricing: 'feeMultiplier' }, 1500n, 20)).toBe(1800n)
+  })
+
+  it('makes a key that cannot afford a store create (1e9 action fee) step aside', () => {
+    const fee = maxActionFee({ owner: 0n, moderators: 1_000_000_000n, pricing: 'fixed' }, 1000n, 20)
+    const halfSpent = groupKey({ remainingBudget: 500_000_000n })
+    expect(selectSigningKey([halfSpent], documentSigningRequest('social', 'store', fee), ctx)).toMatchObject({ ok: false })
+    expect(selectSigningKey([halfSpent], documentSigningRequest('social', 'post'), ctx)).toMatchObject({ ok: true })
   })
 })
 
