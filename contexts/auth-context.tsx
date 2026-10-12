@@ -183,6 +183,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const session = await appConnectSessions.adopt(grant)
     try {
       const result = await controller.loginWithKeyRing(session.identityId)
+      // A logout while the controller read the identity ended this session:
+      // undo the sign-in it just stored rather than show a user with no keys.
+      if (!appConnectSessions.current(session.identityId)) {
+        await controller.logout()
+        throw new Error('Signed out while the wallet was connecting')
+      }
       await applyIntent(result.intent)
       return result.intent
     } catch (error) {

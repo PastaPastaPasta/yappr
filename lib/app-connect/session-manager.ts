@@ -359,6 +359,9 @@ class AppConnectSessionManager {
    * there is none does this tab sign out, clearing its own grant and nothing else.
    */
   async signOutRevoked(session: AppConnectSession): Promise<void> {
+    // A grant this tab no longer holds (signed out, or replaced by a raw key or
+    // a newer grant since the caller read it) has nothing left here to end.
+    if (!this.holds(session)) return
     const startedAt = this.lifecycle
     let stored: AppConnectSession | null = null
     try {

@@ -306,6 +306,19 @@ describe('AppConnectSessionManager across tabs', () => {
     load.mockRestore()
   })
 
+  it('a revoke for a grant a raw-key sign-in already replaced does nothing', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    await appConnectSessions.restore('alice')
+    // A signer read this before the raw-key sign-in and reports the grant unusable afterwards.
+    const stale = currentSession('alice')
+    await appConnectSessions.yieldToRawKey('alice')
+
+    await appConnectSessions.signOutRevoked(stale)
+
+    expect(signedOut).not.toHaveBeenCalled()
+    expect(useAppConnectStatus.getState().signedOutByWallet).toBe(false)
+  })
+
   it('a raw-key sign-in replaces this tab’s wallet grant but keeps a newer one another tab stored', async () => {
     await storeFromAnotherTab(grant('alice', 1))
     await appConnectSessions.restore('alice')
