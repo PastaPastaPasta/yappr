@@ -1,3 +1,4 @@
+export * from './app-connect'
 export * from './browser'
 export * from './core/controller'
 export * from './core/types'
