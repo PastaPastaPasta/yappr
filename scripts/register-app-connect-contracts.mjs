@@ -309,6 +309,7 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
       if (nonce !== planned.nonce) console.log(`  NOTE: ${planned.name} takes nonce ${nonce}, not the planned ${planned.nonce}, so its id is not the plan's`);
       const entry = { ...planned, nonce, id: generateId(plan.groupOwner, nonce) };
       if (Object.values(state.contracts).some((c) => c.id === entry.id)) throw new Error(`${entry.name}: ${entry.id} is already in the journal`);
+      if (await read(() => handle.sdk.contracts.fetch(entry.id))) throw new Error(`REFUSING: ${entry.name} ${entry.id} already exists on chain`);
       const bytes = prepare(entry, { plan, platformVersion, signing });
       saved = { nonce: String(nonce), id: entry.id, file: entry.file, sha256: entry.sha256, bytes: bytes.length, transition: bytes.toString('base64'), state: 'prepared' };
       state.contracts[planned.name] = saved;
@@ -387,12 +388,14 @@ async function main() {
   if (args.upto && !plan.contracts.some((c) => c.name === args.upto)) throw new Error(`--upto ${args.upto}: not an entry (${plan.contracts.map((c) => c.name).join(', ')})`);
   if (journal) checkJournal(journal, plan, args.journal);
 
-  if (handle) {
-    const ours = new Set(Object.values(journal?.contracts ?? {}).map((c) => c.id));
+  // A fresh run: nothing of the planned set and not the group may exist yet. A resumed run
+  // checks only what it allocates (registerLive), since a member may have landed at a later
+  // nonce than planned, leaving its planned id to whatever else took that nonce.
+  if (handle && Object.keys(journal?.contracts ?? {}).length === 0) {
     for (const c of plan.contracts) {
-      if (!ours.has(c.id) && await readback(handle, () => handle.sdk.contracts.fetch(c.id))) throw new Error(`REFUSING: ${c.name} ${c.id} already exists on chain`);
+      if (await readback(handle, () => handle.sdk.contracts.fetch(c.id))) throw new Error(`REFUSING: ${c.name} ${c.id} already exists on chain`);
     }
-    if (!ours.has(plan.appId) && await readback(handle, () => handle.sdk.contractGroups.info(plan.groupId))) throw new Error(`REFUSING: group ${plan.groupId} already exists`);
+    if (await readback(handle, () => handle.sdk.contractGroups.info(plan.groupId))) throw new Error(`REFUSING: group ${plan.groupId} already exists`);
   }
 
   // Every mode builds the whole set unsigned first: nothing is signed or broadcast unless all of it would pass.
