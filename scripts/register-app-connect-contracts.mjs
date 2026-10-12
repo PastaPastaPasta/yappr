@@ -45,16 +45,16 @@
  * An elected declaration registers with the network's interim (`withInterim`).
  * Nothing here prints private key material.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey, StateTransition, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
-import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, planAppConnectSet, sha256Hex } from './app-connect-set.mjs';
+import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, planAppConnectSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
 import { describeErr, signerFor } from './owner-keys.mjs';
 import { auditModeration, contractSource, registrationJson, withInterim } from './register-lib.mjs';
 import { envValue, network } from './sdk-env.mjs';
-import { NONCE_SEQUENCE_MASK, createSdkHandle, readback, sleep } from './seed/seed-lib.mjs';
+import { NONCE_SEQUENCE_MASK, createSdkHandle, readback, sleep, writePrivateFile } from './seed/seed-lib.mjs';
 import { resolveMakerOwner } from './social-battery-lib.mjs';
 
 const SIGNATURE_ALLOWANCE = 100;
@@ -204,22 +204,32 @@ function checkJournal(journal, plan, path) {
   }
 }
 
-/** Waits for a broadcast create to show up; null when it did not (yet). */
+/**
+ * Polls for a broadcast create. `absent` is true only when the last read
+ * succeeded and proved the contract absent; a read that failed proves nothing.
+ */
 async function awaitContract(handle, id) {
+  let absent = false;
   for (let attempt = 0; attempt < 45; attempt++) {
     await sleep(2000);
     try {
       const found = await handle.sdk.contracts.fetch(id);
-      if (found) return found;
+      if (found) return { contract: found, absent: false };
+      absent = true;
     } catch (e) {
+      absent = false;
       console.log(`  fetch: ${describeErr(e).slice(0, 120)}`);
     }
   }
-  return null;
+  return { contract: null, absent };
 }
 
-/** Proved read-back: the contract, its owner and membership, and the group itself (owner the maker, no admins). */
-async function verifyRegistered(handle, entry, plan) {
+/**
+ * Proved read-back: the contract (its owner, and its document types equal to
+ * the pinned file's, so a stray id can never pass for this entry), its
+ * membership, and the group itself (owner the maker, no admins).
+ */
+async function verifyRegistered(handle, entry, plan, platformVersion) {
   const read = (fn) => readback(handle, fn);
   const [contract, memberships, info] = await Promise.all([
     read(() => handle.sdk.contracts.fetch(entry.id)),
@@ -227,14 +237,33 @@ async function verifyRegistered(handle, entry, plan) {
     read(() => handle.sdk.contractGroups.info(plan.groupId)),
   ]);
   if (!contract || contract.ownerId.toBase58() !== plan.groupOwner) throw new Error(`${entry.name}: ${entry.id} absent or not owned by the maker`);
+  const expected = DataContract.fromJSON(assemble(entry, plan.groupOwner).json, true, platformVersion).toJSON(platformVersion).documentSchemas;
+  if (!sameSchemas(contract.toJSON(platformVersion).documentSchemas, expected)) throw new Error(`${entry.name}: ${entry.id} does not carry ${entry.file}'s document types`);
   if (!memberships.contract.includes(plan.groupId)) throw new Error(`${entry.name}: ${entry.id} is not a member of ${plan.groupId}`);
   if (!info || info.ownerId !== plan.groupOwner || info.adminIds.length !== 0) throw new Error(`group ${plan.groupId}: owner ${info?.ownerId}, admins ${info?.adminIds}; expected ${plan.groupOwner} alone`);
 }
 
 /** The live run over the entries up to `--upto`, against the journal `state`. */
 async function registerLive({ args, plan, state, handle, makerNonce, signing, platformVersion }) {
-  const save = () => writeFileSync(args.journal, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
+  // Written to a temporary file and renamed over the journal, so an interrupted save never truncates it.
+  const save = () => writePrivateFile(args.journal, JSON.stringify(state, null, 2) + '\n');
   const read = (fn) => readback(handle, fn);
+  /**
+   * The maker's next nonce, never below what the journal already spent: a node
+   * lagging behind would otherwise hand out a used nonce, and with it the id of
+   * a contract already registered.
+   */
+  const nextNonce = async () => {
+    const spent = [...Object.values(state.contracts), ...(state.refused ?? [])].map((c) => BigInt(c.nonce));
+    const floor = spent.reduce((max, n) => (n > max ? n : max), plan.anchor.nonce - 1n);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const chainNonce = await makerNonce();
+      if (chainNonce >= floor) return chainNonce + 1n;
+      console.log(`  the maker's nonce reads ${chainNonce}, behind the journal's ${floor}; reading again`);
+      await sleep(3000);
+    }
+    throw new Error(`the maker's nonce keeps reading behind the journal's ${floor}; re-run once the nodes catch up`);
+  };
   save();
   console.log('\nregistering:');
   const last = args.upto ? plan.contracts.findIndex((c) => c.name === args.upto) : plan.contracts.length - 1;
@@ -244,16 +273,23 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
     if (saved?.state === 'refused') {
       if (planned === plan.anchor) throw new Error('the anchor create was refused, so neither it nor the group exists: start a fresh journal');
       if (!args.retryRefused) throw new Error(`${planned.name} was refused at nonce ${saved.nonce}; investigate, then re-run with --retry-refused to prepare it at the next nonce (a new id)`);
-      state.refused = [...(state.refused ?? []), { name: planned.name, nonce: saved.nonce, id: saved.id }];
-      delete state.contracts[planned.name];
-      saved = undefined;
+      // Proved absent once more before it is replaced: a create that did land must never get a twin.
+      if (await read(() => handle.sdk.contracts.fetch(saved.id))) {
+        console.log(`  ${planned.name}: ${saved.id} turns out to exist; verifying it instead of replacing it`);
+        saved.state = 'broadcasting';
+      } else {
+        state.refused = [...(state.refused ?? []), { name: planned.name, nonce: saved.nonce, id: saved.id }];
+        delete state.contracts[planned.name];
+        saved = undefined;
+      }
       save();
     }
     if (!saved) {
-      const nonce = (await makerNonce()) + 1n;
+      const nonce = await nextNonce();
       if (planned === plan.anchor && nonce !== planned.nonce) throw new Error(`the anchor must take nonce ${planned.nonce} (it fixes APP_ID and GROUP_ID), but the maker's next nonce is ${nonce}`);
       if (nonce !== planned.nonce) console.log(`  NOTE: ${planned.name} takes nonce ${nonce}, not the planned ${planned.nonce}, so its id is not the plan's`);
       const entry = { ...planned, nonce, id: generateId(plan.groupOwner, nonce) };
+      if (Object.values(state.contracts).some((c) => c.id === entry.id)) throw new Error(`${entry.name}: ${entry.id} is already in the journal`);
       const bytes = prepare(entry, { plan, platformVersion, signing });
       saved = { nonce: String(nonce), id: entry.id, file: entry.file, sha256: entry.sha256, bytes: bytes.length, transition: bytes.toString('base64'), state: 'prepared' };
       state.contracts[planned.name] = saved;
@@ -271,17 +307,21 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
       } catch (e) {
         console.log(`  broadcast: ${describeErr(e).slice(0, 300)}`);
       }
-      found = await awaitContract(handle, entry.id);
+      const polled = await awaitContract(handle, entry.id);
+      found = polled.contract;
       if (found) break;
-      const chainNonce = await makerNonce();
-      if (chainNonce >= entry.nonce) {
+      // Refused only on proof: the nonce is spent AND a read that succeeded (readback throws
+      // when every attempt fails) still finds no contract.
+      if (polled.absent && (await makerNonce()) >= entry.nonce) {
+        found = await read(() => handle.sdk.contracts.fetch(entry.id));
+        if (found) break;
         saved.state = 'refused'; save();
-        throw new Error(`${entry.name}: the maker's nonce reached ${chainNonce} but ${entry.id} is absent: the create was refused (paid), or another transition took the nonce. Investigate; --retry-refused prepares it again at the next nonce.`);
+        throw new Error(`${entry.name}: the maker's nonce passed ${entry.nonce} but ${entry.id} is proved absent: the create was refused (paid), or another transition took the nonce. Investigate; --retry-refused prepares it again at the next nonce.`);
       }
       await handle.reconnect('contract not visible yet');
     }
     if (!found) throw new Error(`${entry.name} is not proven yet; re-run with the same journal (it re-broadcasts the same bytes, never a new nonce)`);
-    await verifyRegistered(handle, entry, plan);
+    await verifyRegistered(handle, entry, plan, platformVersion);
     const after = await read(() => handle.sdk.identities.balance(plan.groupOwner));
     Object.assign(saved, { state: 'verified', verifiedAt: new Date().toISOString(), makerCreditsSpent: String(BigInt(before ?? 0) - BigInt(after ?? 0)) });
     save();
@@ -289,6 +329,7 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
   }
 
   const verified = plan.contracts.filter((c) => state.contracts[c.name]?.state === 'verified').map((c) => ({ ...c, nonce: BigInt(state.contracts[c.name].nonce), id: state.contracts[c.name].id }));
+  if (new Set(verified.map((c) => c.id)).size !== verified.length) throw new Error('the journal records one id for two entries; refusing to print env lines');
   const page = await read(() => handle.sdk.contractGroups.members({ contractGroupId: plan.groupId, kind: 'contracts', limit: 100 }));
   for (const c of verified) if (!page.contracts?.includes(c.id)) throw new Error(`${c.name} ${c.id} is not enumerated by the group`);
   state.groupMembers = page.contracts;

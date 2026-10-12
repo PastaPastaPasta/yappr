@@ -30,7 +30,7 @@
 import { readFileSync } from 'node:fs';
 import { ContractBounds, DataContract, IdentityPublicKeyInCreation, IdentitySigner, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import {
-  APP_CONNECT_ENTRIES, APP_CONNECT_ENV, APP_CONNECT_GROUP, RETIRED_ON_PV14, contractFilePath, contractGroupId, fileSha256,
+  APP_CONNECT_ENTRIES, APP_CONNECT_ENV, APP_CONNECT_GROUP, RETIRED_ON_PV14, contractFilePath, contractGroupId, fileSha256, sameSchemas,
 } from './app-connect-set.mjs';
 import { normalizeId, reportSelfTest, runBattery, settle } from './battery-lib.mjs';
 import { envValue, network } from './sdk-env.mjs';
@@ -48,15 +48,6 @@ const GROUP_ID_VECTOR = ['9RPq2JuMsmrTUoxQLricaT245t4bYskCj4hXWcedCagH', 1n, 'Cx
 const anchorEntry = APP_CONNECT_ENTRIES[0];
 const anchorFile = () => JSON.parse(readFileSync(contractFilePath(anchorEntry.file), 'utf8'));
 const idList = (value) => (value ?? '').split(',').map((id) => id.trim()).filter(Boolean);
-
-/** Deep copy with object keys sorted and BigInts as numbers, so two renderings of one schema compare equal. */
-function canonical(value) {
-  if (typeof value === 'bigint') return Number(value);
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
-  return value;
-}
-const sameSchemas = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
 /** A key's public-key bytes, whichever shape the SDK hands them back in. */
 function keyBytes(key) {

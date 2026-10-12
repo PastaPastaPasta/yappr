@@ -75,6 +75,17 @@ export const contractFilePath = (file) => join(REPO_ROOT, 'contracts', file);
 /** The sha256 of a contract file's bytes, as hex. */
 export const fileSha256 = (file) => sha256Hex(readFileSync(contractFilePath(file)));
 
+/** Deep copy with object keys sorted and BigInts as numbers, so two renderings of one schema compare equal. */
+function canonical(value) {
+  if (typeof value === 'bigint') return Number(value);
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
+}
+
+/** Whether two `documentSchemas` renderings (a file's, a parsed or fetched contract's `toJSON`) declare the same types. */
+export const sameSchemas = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
 /**
  * rs-dpp `generate_contract_group_id`: sha256d("contract_group" ‖ ownerId ‖
  * identityNonce as u64 big-endian). The group id is not on the wire; it is the

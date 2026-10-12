@@ -136,10 +136,16 @@ Every mode first builds the whole set unsigned at the planned nonces, so a chang
 Then wasm-dpp2 decodes it and parses the contract with full validation.
 
 During the live run, one entry at a time:
-- The create is signed at the maker's next identity nonce and journaled before its first broadcast. A resumed run re-broadcasts those same bytes and never signs that entry again.
-- After broadcast, the contract, its membership and the group (owner the maker, no admins) are read back with proofs.
-- A create whose nonce was spent without producing the contract was refused (and paid for), or another transition took the nonce. It is marked `refused` in the journal and the run stops.
-- After investigating, `--retry-refused` prepares a refused member again at the maker's next nonce, under a new id. The group already exists, so it can still join. A refused anchor leaves nothing of the set on chain: start a fresh journal.
+- The create is signed at the maker's next identity nonce and journaled before its first broadcast.
+  - The next nonce is never taken below the highest one the journal already spent. A lagging node can therefore not hand back a used nonce, and with it a registered contract's id.
+  - A resumed run re-broadcasts those same bytes and never signs that entry again.
+  - The journal is replaced atomically: written to a temporary file, then renamed.
+- After broadcast, these are read back with proofs:
+  - the contract, whose document types must equal the pinned file's, so a wrong id cannot pass;
+  - its membership;
+  - the group: owner the maker, no admins.
+- A create counts as refused only on proof: its nonce is spent, and a read that succeeded finds no contract. Then it was refused (and paid for), or another transition took the nonce. It is marked `refused` in the journal and the run stops. Reads that keep failing stop the run without marking anything; a re-run re-broadcasts the same bytes.
+- After investigating, `--retry-refused` proves the old id absent once more, then prepares the member again at the maker's next nonce, under a new id. The group already exists, so it can still join. A refused anchor leaves nothing of the set on chain: start a fresh journal.
 
 **Dry-run output.** The header comes first. The `--plan` example below is sakura's maker at nonce 13, the next one after storefront v7:
 
