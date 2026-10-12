@@ -26,6 +26,8 @@ export interface KeyRingBackend {
   deleteIf(key: string, predicate: (value: unknown) => boolean): Promise<boolean>
   /** Replaces `key`'s value with `next(value)` only when `predicate` holds for it, atomically. True when it wrote. */
   updateIf(key: string, predicate: (value: unknown) => boolean, next: (value: unknown) => unknown): Promise<boolean>
+  /** Writes `value` at `key` only when `predicate` holds for its current value, atomically. Resolves to what `key` holds afterwards. */
+  putIf(key: string, predicate: (current: unknown) => boolean, value: unknown): Promise<unknown>
 }
 
 interface WrappedBytes {
@@ -50,6 +52,8 @@ const sessionKey = (network: string) => `session:${network}`
 const secretKey = (network: string, name: string) => `secret:${network}:${name}`
 const encoder = new TextEncoder()
 
+const isConnectionId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value)
+
 function sessionMatches(value: unknown, match: SessionMatch): boolean {
   const session = (value as StoredRing | undefined)?.session
   return session?.identityId === match.identityId && (match.grantedAt === undefined || session.grantedAt === match.grantedAt)
@@ -70,8 +74,8 @@ export class AppConnectKeyRingStore {
       const existing = await this.backend.get<CryptoKey>(DEVICE_KEY)
       if (existing) return existing
       const created = await this.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
-      await this.backend.put(DEVICE_KEY, created)
-      return created
+      // Two tabs initialising at once both end up with whichever key was stored first.
+      return (await this.backend.putIf(DEVICE_KEY, (current) => current === undefined, created)) as CryptoKey
     })().catch((error: unknown) => {
       this.deviceKeyPromise = null
       throw error
@@ -103,18 +107,22 @@ export class AppConnectKeyRingStore {
   /** This browser's connection id for `network` (hex), created on first use and kept across logouts. */
   async connectionId(network: string): Promise<string> {
     const existing = await this.backend.get<string>(connectionKey(network))
-    if (typeof existing === 'string' && /^[0-9a-f]{32}$/.test(existing)) return existing
+    if (isConnectionId(existing)) return existing
     const created = bytesToHex(this.random(16))
-    await this.backend.put(connectionKey(network), created)
-    return created
+    const stored = await this.backend.putIf(connectionKey(network), (current) => !isConnectionId(current), created)
+    if (!isConnectionId(stored)) throw new Error('could not store the connection id')
+    return stored
   }
 
   /**
    * Stores `session` with its private keys (by keyRef). Every keyRef the
    * session names must have a key. The caller still owns `privateKeys` and
    * should wipe them afterwards.
+   *
+   * Never replaces a newer grant for the same identity that another tab stored
+   * meanwhile: false when the store kept that one instead of `session`.
    */
-  async save(session: AppConnectSession, privateKeys: ReadonlyMap<string, Uint8Array>): Promise<void> {
+  async save(session: AppConnectSession, privateKeys: ReadonlyMap<string, Uint8Array>): Promise<boolean> {
     const refs = [...session.authKeys.map((key) => key.keyRef), ...session.encKeys.map((key) => key.keyRef)]
     const wrapped: Record<string, WrappedBytes> = {}
     for (const ref of refs) {
@@ -123,7 +131,11 @@ export class AppConnectKeyRingStore {
       wrapped[ref] = await this.wrap(privateKey, keyLabel(session, ref))
     }
     const record: StoredRing = { session, wrapped }
-    await this.backend.put(sessionKey(session.network), record)
+    const stored = await this.backend.putIf(sessionKey(session.network), (current) => {
+      const existing = (current as StoredRing | undefined)?.session
+      return !existing || existing.identityId !== session.identityId || existing.grantedAt <= session.grantedAt
+    }, record)
+    return sessionMatches(stored, session)
   }
 
   async load(network: string): Promise<AppConnectSession | null> {
@@ -222,6 +234,17 @@ export function indexedDbKeyRingBackend(databaseName: string): KeyRingBackend {
         if (request.result !== undefined && predicate(request.result)) {
           store.delete(key)
           done(true)
+        }
+      }
+    }),
+    putIf: (key, predicate, value) => transaction<unknown>('readwrite', (store, done) => {
+      const request = store.get(key)
+      request.onsuccess = () => {
+        if (predicate(request.result)) {
+          store.put(value, key)
+          done(value)
+        } else {
+          done(request.result)
         }
       }
     }),

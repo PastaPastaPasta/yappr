@@ -23,6 +23,10 @@ function memoryBackend(): KeyRingBackend & { data: Map<string, unknown> } {
       data.set(key, structuredClone(next(data.get(key))))
       return true
     },
+    putIf: async (key, predicate, value) => {
+      if (predicate(data.get(key))) data.set(key, structuredClone(value))
+      return data.get(key)
+    },
   }
 }
 
@@ -127,5 +131,33 @@ describe('AppConnectKeyRingStore', () => {
     expect(await store.load('devnet')).toBeNull()
     expect(await store.connectionId('devnet')).toBe(first)
     expect(await store.connectionId('testnet')).not.toBe(first)
+  })
+  it('agrees on one connection id and one device key when two tabs initialise together', async () => {
+    const backend = memoryBackend()
+    const tabA = new AppConnectKeyRingStore(backend)
+    const tabB = new AppConnectKeyRingStore(backend)
+    const [a, b] = await Promise.all([tabA.connectionId('devnet'), tabB.connectionId('devnet')])
+    expect(a).toBe(b)
+
+    const secret = new TextEncoder().encode('pending')
+    await Promise.all([tabA.saveSecret('devnet', 'a', secret), tabB.saveSecret('devnet', 'b', secret)])
+    // Each tab can open what the other wrapped, so both used the same stored device key.
+    expect(await tabA.loadSecret('devnet', 'b')).toEqual(secret)
+    expect(await tabB.loadSecret('devnet', 'a')).toEqual(secret)
+  })
+
+  it('does not save an older grant over a newer one for the same identity', async () => {
+    const store = new AppConnectKeyRingStore(memoryBackend())
+    const renewed = { ...session(), grantedAt: 2 }
+    expect(await store.save(renewed, keys())).toBe(true)
+    expect(await store.save(session(), keys())).toBe(false)
+    expect(await store.load('devnet')).toEqual(renewed)
+  })
+
+  it('saves over a grant for another identity', async () => {
+    const store = new AppConnectKeyRingStore(memoryBackend())
+    await store.save({ ...session('mallory'), grantedAt: 5 }, keys())
+    expect(await store.save(session(), keys())).toBe(true)
+    expect((await store.load('devnet'))?.identityId).toBe('alice')
   })
 })

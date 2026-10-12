@@ -146,6 +146,7 @@ class AppConnectSessionManager {
   async adopt(grant: AppConnectGrant): Promise<AppConnectSession> {
     const keys = new Map<string, Uint8Array>()
     let session: AppConnectSession
+    let stored = false
     try {
       const pins = appConnectPins()
       if (!pins) throw new Error('App Connect is not configured on this build')
@@ -161,10 +162,16 @@ class AppConnectSessionManager {
           return ref
         },
       })
-      await this.keyStore().save(session, keys)
+      stored = await this.keyStore().save(session, keys)
     } finally {
       keys.forEach(clearSensitiveBytes)
       for (const granted of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(granted.privateKey)
+    }
+    if (!stored) {
+      // Another tab stored a newer grant for this identity meanwhile: use that one.
+      const newer = await this.keyStore().load(this.network())
+      if (!newer || newer.identityId !== session.identityId) throw new Error('The wallet sign-in was replaced; try again')
+      session = newer
     }
     await this.activate(session)
     return session

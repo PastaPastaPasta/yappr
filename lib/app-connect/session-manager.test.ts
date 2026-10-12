@@ -23,6 +23,10 @@ const backend = vi.hoisted(() => {
       data.set(key, structuredClone(next(data.get(key))))
       return true
     },
+    putIf: async (key, predicate, value) => {
+      if (predicate(data.get(key))) data.set(key, structuredClone(value))
+      return data.get(key)
+    },
   }
   return memory
 })
