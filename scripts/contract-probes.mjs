@@ -4,7 +4,7 @@
  * a node makes. Used by `validate-contract-offline.mjs`.
  *
  * Three layers, measured on 4.2.0-beta.7 and re-run on 5.0.0-beta.1,
- * 5.0.0-beta.2, 5.0.0-beta.3 and 5.0.0-beta.4 with `DataContract.fromJSON(json, true, latest)`
+ * 5.0.0-beta.2, 5.0.0-beta.3, 5.0.0-beta.4 and 5.0.0-beta.5 with `DataContract.fromJSON(json, true, latest)`
  * (and a fourth for contract updates, below):
  *
  *   - **wasm-sdk** (`@dashevo/evo-sdk`): the structural parser (findBy/where,
@@ -91,7 +91,11 @@ const SIGNATURE_ALLOWANCE = 100;
 // ---- JSON meta-schema --------------------------------------------------------
 
 /**
- * rs-dpp's document meta-schema v3 at v5.0.0-beta.4 (beta.4 added the
+ * rs-dpp's document meta-schema v3 at v5.0.0-beta.5 (beta.5 added the
+ * `referenced` propertyConstraints operand, the `$old.` prefix and `$revision`
+ * in propertyConstraints rules, the `referenceWhereCondition` forms of a
+ * refersTo `where`, the `$ownerId` param of a sys.hash `findBy`, and `constraints`
+ * (`minimumAgeBlocks`, `chooseFirst`) beside `findBy`; beta.4 added the
  * `byteAt` operand, hex byte-array operands for `startsWith`/`endsWith`, and
  * the note that the `identifier`/`bytes` property shorthands are expanded
  * before it runs; beta.3 added the `countPresent` operand, `deleteConstraints`
@@ -112,7 +116,7 @@ const SIGNATURE_ALLOWANCE = 100;
  * never reach it: the node expands them first, and so does `metaSchemaProblems`.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
-const META_SCHEMA_SHA256 = '5f5360a6f148385c53e660bf0bcf321a68e0727a11116e954778f9512db0b9bb';
+const META_SCHEMA_SHA256 = 'd8676bfd0b7a0fe9de0c2b781e61c01f3104a34dd410fcc32c8374d412c6697e';
 
 let metaValidator;
 /**
@@ -125,7 +129,7 @@ function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
   const text = readFileSync(META_SCHEMA_PATH);
   const digest = createHash('sha256').update(text).digest('hex');
-  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.4 meta-schema (sha256 ${digest})`);
+  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.5 meta-schema (sha256 ${digest})`);
   try {
     const require = createRequire(import.meta.url);
     const Ajv2020 = require('ajv/dist/2020').default;

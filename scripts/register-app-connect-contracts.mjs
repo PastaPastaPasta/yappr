@@ -394,6 +394,44 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
   return verified;
 }
 
+/** The oldest Drive that may take this set: beta.3 nodes report PV14 too but cannot decode it. */
+const MIN_DRIVE_VERSION = '5.0.0-beta.5';
+
+/**
+ * Orders two Drive versions (`major.minor.patch[-beta.N]`): negative when `a`
+ * is older. A release outranks any of its betas; null for a shape it does not know.
+ */
+function compareDriveVersions(a, b) {
+  const parse = (text) => {
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/i.exec(String(text).trim());
+    return match ? { core: [match[1], match[2], match[3]].map(Number), tag: match[4]?.toLowerCase() ?? null, n: Number(match[5] ?? 0) } : null;
+  };
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i += 1) if (x.core[i] !== y.core[i]) return x.core[i] - y.core[i];
+  if (x.tag === y.tag) return x.n - y.n;
+  if (x.tag === null) return 1;
+  if (y.tag === null) return -1;
+  return x.tag < y.tag ? -1 : 1;
+}
+
+/**
+ * Refuses to go on unless the node that answers runs Drive >= {@link MIN_DRIVE_VERSION}.
+ * The protocol-version check above cannot tell beta.3 from beta.5 (both are PV14),
+ * and the set is registered with beta.5-only grammar. The status API names the
+ * Drive of the one node that answered, so this cannot prove every node has
+ * upgraded: confirm that with `ops/status.mjs` first.
+ */
+async function requireDriveVersion(handle) {
+  const status = await readback(handle, () => handle.sdk.system.status());
+  const drive = (status?.toJSON?.() ?? status)?.version?.software?.drive;
+  const order = drive ? compareDriveVersions(drive, MIN_DRIVE_VERSION) : null;
+  if (order === null) throw new Error(`could not read the nodes' Drive version from the status API (got ${JSON.stringify(drive)}); need ${MIN_DRIVE_VERSION} or newer`);
+  if (order < 0) throw new Error(`the nodes run Drive ${drive}; this set needs ${MIN_DRIVE_VERSION} or newer. Upgrade the network first.`);
+  console.log(`node Drive ${drive} (>= ${MIN_DRIVE_VERSION})`);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
@@ -408,6 +446,7 @@ async function main() {
     handle = createSdkHandle({ contractIds: [] });
     const { protocolVersion } = await handle.connect();
     if (!(protocolVersion >= 14)) throw new Error(`contract groups need protocol version 14; the chain reports ${protocolVersion}`);
+    await requireDriveVersion(handle);
     const chainNonce = await makerNonce();
     const balance = await readback(handle, () => handle.sdk.identities.balance(maker.id));
     console.log(`connected to ${network()} (PV${protocolVersion}); maker nonce ${chainNonce}, ${balance} credits`);

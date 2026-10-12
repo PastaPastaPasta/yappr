@@ -2,7 +2,7 @@
 
 App Connect logs a user in by having their wallet add keys to their identity that are scoped to Yappr. The main one is an AUTHENTICATION key bound to a **contract group**, so one key can sign for every Yappr contract and nothing else. This document covers the contract side: the anchor contract that registers the group, which contracts join it, how they are registered, and how the app decides whether to trust the group.
 
-**Status: nothing is registered anywhere yet, and no client code reads any of this.** The PR that added it ships the anchor contract, the publisher (`scripts/register-app-connect-contracts.mjs`), the battery (`scripts/verify-appconnect.mjs`), the offline probes and empty env names. The first registration is planned for sakura at the beta.4 cut-over, where every member contract is re-created into the new group together with social v15.
+**Status: nothing is registered anywhere yet, and no client code reads any of this.** The PR that added it ships the anchor contract, the publisher (`scripts/register-app-connect-contracts.mjs`), the battery (`scripts/verify-appconnect.mjs`), the offline probes and empty env names. The first registration is planned for sakura at the beta.5 cut-over, where every member contract is re-created into the new group together with social v15.
 
 Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
@@ -101,7 +101,7 @@ In the group, each would also widen what every group-bound key can sign, permane
 ## Registering the set
 
 Prerequisites:
-- Every node of the target network runs 5.0.0-beta.4 (social v15's format-1 token is undecodable on beta.3).
+- Every node of the target network runs 5.0.0-beta.5 (social v15's format-1 token is undecodable on beta.3, and the beta.5 SDK cannot read beta.3 nodes). Beta.3 nodes report protocol version 14 too, so the publisher reads the Drive version from the status API and refuses to run in any connected mode (`--dry-run`, `--signed-dry-run`, `--live`) unless it is 5.0.0-beta.5 or newer. The status answers for the one node that responded, so confirm the rest with `ops/status.mjs` first.
 - The maker holds the cost above.
 - From the anchor's nonce to the last member's, the maker signs nothing else that takes an **identity** nonce: no other contract create or update, identity update, or credit transfer. Token mints and document writes use identity-contract nonces and do not interfere. The anchor must take the planned nonce, since it fixes APP_ID and GROUP_ID. A member that finds a later nonce still registers, under a different id than the plan printed; the run says so, and its final env lines carry the real ids.
 
