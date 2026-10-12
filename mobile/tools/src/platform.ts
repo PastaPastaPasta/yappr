@@ -16,13 +16,12 @@ import {
   type EvoSDK,
   type IdentityPublicKey,
 } from '@dashevo/evo-sdk'
-import type { LoginKeyResponseFields } from './key-exchange'
 import type { Persona, PersonaKey } from './pool'
 import type { DevnetConfig, ResponderConfig } from './config'
 import { requireKeyExchangeContract } from './config'
 import { isStaleIdentityNonce, NONCE_SEQUENCE_MASK } from './dash-st'
 import { isTimeout } from './errors'
-import type { ResponderPorts } from './responder'
+import type { ResponderPorts, WriteOutcome } from './responder'
 
 const LOGIN_KEY_RESPONSE = 'loginKeyResponse'
 const SDK_TIMEOUT_MS = 30_000
@@ -38,29 +37,44 @@ export async function connectDevnet(repoRoot: string, devnet: DevnetConfig): Pro
   return sdk
 }
 
-export function livePorts(sdk: EvoSDK, config: ResponderConfig, log: (line: string) => void): ResponderPorts {
-  /** The on-chain key matching `poolKey`, which must be live. */
-  async function onChainKey(persona: Persona, poolKey: PersonaKey): Promise<IdentityPublicKey> {
-    const identity = await sdk.identities.fetch(persona.identityId)
-    if (!identity) throw new Error(`Identity ${persona.identityId} not found on devnet ${config.devnet.devnetName}`)
-    const key = identity.getPublicKeyById(poolKey.keyId)
-    if (!key || key.disabledAt !== undefined || !key.validatePrivateKey(poolKey.privateKey, 'testnet')) {
-      throw new Error(`Identity ${persona.identityId} keyId ${poolKey.keyId} is missing, disabled, or not the pool's key`)
-    }
-    return key
+/** The on-chain key matching `poolKey`, which must be live. */
+export async function poolKeyOnChain(sdk: EvoSDK, persona: Persona, poolKey: PersonaKey): Promise<IdentityPublicKey> {
+  const identity = await sdk.identities.fetch(persona.identityId)
+  if (!identity) throw new Error(`Identity ${persona.identityId} not found`)
+  const key = identity.getPublicKeyById(poolKey.keyId)
+  if (!key || key.disabledAt !== undefined || !key.validatePrivateKey(poolKey.privateKey, 'testnet')) {
+    throw new Error(`Identity ${persona.identityId} keyId ${poolKey.keyId} is missing, disabled, or not the pool's key`)
   }
+  return key
+}
 
-  /** Runs `wait`; a timeout after the broadcast counts as unconfirmed, not failed. */
-  async function confirmed(what: string, wait: () => Promise<unknown>): Promise<boolean> {
-    try {
-      await wait()
-      return true
-    } catch (error) {
-      if (!isTimeout(error)) throw error
-      log(`${what}: confirmation timed out; it may still land`)
-      return false
-    }
+/** Runs `wait`; a timeout after the broadcast counts as unconfirmed, not failed. */
+export async function confirmedWrite(what: string, wait: () => Promise<unknown>, log: (line: string) => void): Promise<boolean> {
+  try {
+    await wait()
+    return true
+  } catch (error) {
+    if (!isTimeout(error)) throw error
+    log(`${what}: confirmation timed out; it may still land`)
+    return false
   }
+}
+
+/** Runs `use` with an IdentitySigner holding `privateKeys`, and frees the wasm objects after. */
+export async function withSigner<T>(privateKeys: Uint8Array[], use: (signer: IdentitySigner) => Promise<T>): Promise<T> {
+  const signer = new IdentitySigner()
+  const keys = privateKeys.map((bytes) => PrivateKey.fromBytes(bytes, 'testnet'))
+  try {
+    keys.forEach((key) => signer.addKey(key))
+    return await use(signer)
+  } finally {
+    keys.forEach((key) => key.free())
+    signer.free()
+  }
+}
+
+export function livePorts(sdk: EvoSDK, config: ResponderConfig, log: (line: string) => void): ResponderPorts {
+  const confirmed = (what: string, wait: () => Promise<unknown>) => confirmedWrite(what, wait, log)
 
   return {
     async findLoginKeyResponse(persona, appContractId) {
@@ -87,41 +101,27 @@ export function livePorts(sdk: EvoSDK, config: ResponderConfig, log: (line: stri
     async writeLoginKeyResponse(persona, fields, existing) {
       const contractId = requireKeyExchangeContract(config)
       const high = persona.key('high')
-      const identityKey = await onChainKey(persona, high)
-      const signer = new IdentitySigner()
-      const privateKey = PrivateKey.fromBytes(high.privateKey, 'testnet')
-      try {
-        signer.addKey(privateKey)
+      const identityKey = await poolKeyOnChain(sdk, persona, high)
+      return withSigner([high.privateKey], async (signer): Promise<WriteOutcome> => {
         if (existing) {
           // One response per (owner, app contract): a re-login replaces it
           // (spec §7.3; every wallet does the same).
           const revision = existing.revision + BigInt(1)
-          const document = buildDocument({ contractId, ownerId: persona.identityId, id: bs58.decode(existing.documentId), revision, fields })
+          const document = buildDocument({ contractId, documentTypeName: LOGIN_KEY_RESPONSE, ownerId: persona.identityId, id: bs58.decode(existing.documentId), revision, fields })
           log(`replacing ${LOGIN_KEY_RESPONSE} ${existing.documentId} (revision ${revision}) with keyId ${identityKey.keyId}`)
           const ok = await confirmed(`replace ${existing.documentId}`, () => sdk.documents.replace({ document, identityKey, signer }))
           return { documentId: existing.documentId, action: 'replaced', confirmed: ok }
         }
-        // From protocol 14 the id commits to the contract nonce. The SDK
-        // re-derives it when it builds the transition, so this one is only
-        // reported if the confirmation wait times out.
-        const entropy = crypto.getRandomValues(new Uint8Array(32))
-        const nonce = ((await sdk.identities.contractNonce(persona.identityId, contractId)) ?? BigInt(0)) & NONCE_SEQUENCE_MASK
-        const id = Document.generateId(LOGIN_KEY_RESPONSE, persona.identityId, contractId, entropy, nonce + BigInt(1))
-        const document = buildDocument({ contractId, ownerId: persona.identityId, id, revision: BigInt(1), entropy, fields })
         log(`creating ${LOGIN_KEY_RESPONSE} with keyId ${identityKey.keyId}`)
-        let documentId = bs58.encode(id)
-        const ok = await confirmed(`create ${documentId}`, async () => {
-          documentId = (await sdk.documents.create({ document, identityKey, signer })).id.toBase58()
+        const { documentId, confirmed: ok } = await createDocument(sdk, {
+          contractId, documentTypeName: LOGIN_KEY_RESPONSE, ownerId: persona.identityId, fields, identityKey, signer, log,
         })
         return { documentId, action: 'created', confirmed: ok }
-      } finally {
-        privateKey.free()
-        signer.free()
-      }
+      })
     },
 
     masterKey(persona) {
-      return onChainKey(persona, persona.key('master'))
+      return poolKeyOnChain(sdk, persona, persona.key('master'))
     },
 
     async checkIdentityUpdate(persona, stateTransition) {
@@ -144,13 +144,40 @@ export function livePorts(sdk: EvoSDK, config: ResponderConfig, log: (line: stri
   }
 }
 
-function buildDocument(input: {
+/**
+ * Creates a document. From protocol 14 the id commits to the contract nonce;
+ * the SDK re-derives it when it builds the transition, so the one computed
+ * here is only reported if the confirmation wait times out.
+ */
+export async function createDocument(sdk: EvoSDK, input: {
   contractId: string
+  documentTypeName: string
+  ownerId: string
+  fields: object
+  identityKey: IdentityPublicKey
+  signer: IdentitySigner
+  log: (line: string) => void
+}): Promise<{ documentId: string; confirmed: boolean }> {
+  const { contractId, documentTypeName, ownerId } = input
+  const entropy = crypto.getRandomValues(new Uint8Array(32))
+  const nonce = ((await sdk.identities.contractNonce(ownerId, contractId)) ?? BigInt(0)) & NONCE_SEQUENCE_MASK
+  const id = Document.generateId(documentTypeName, ownerId, contractId, entropy, nonce + BigInt(1))
+  const document = buildDocument({ contractId, documentTypeName, ownerId, id, revision: BigInt(1), entropy, fields: input.fields })
+  let documentId = bs58.encode(id)
+  const confirmed = await confirmedWrite(`create ${documentTypeName} ${documentId}`, async () => {
+    documentId = (await sdk.documents.create({ document, identityKey: input.identityKey, signer: input.signer })).id.toBase58()
+  }, input.log)
+  return { documentId, confirmed }
+}
+
+export function buildDocument(input: {
+  contractId: string
+  documentTypeName: string
   ownerId: string
   id: Uint8Array
   revision: bigint
   entropy?: Uint8Array
-  fields: LoginKeyResponseFields
+  fields: object
 }): Document {
   // Document.fromObject keeps Uint8Array fields as bytes; the constructor
   // does not (lib/services/document-builder-service.ts).
@@ -160,7 +187,7 @@ function buildDocument(input: {
       $id: input.id,
       $ownerId: bs58.decode(input.ownerId),
       $dataContractId: bs58.decode(input.contractId),
-      $type: LOGIN_KEY_RESPONSE,
+      $type: input.documentTypeName,
       $revision: input.revision,
       ...(input.entropy ? { $entropy: input.entropy } : {}),
       ...input.fields,

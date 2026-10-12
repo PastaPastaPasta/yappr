@@ -6,7 +6,8 @@ a human tapping through a wallet (ADR-001 E5.4). Given a `dash-key:` or
 
 | URI | What the responder does |
 | --- | --- |
-| `dash-key:` key-exchange request | Parses it with `parseYapprKeyExchangeUri`. Derives the persona's login key for the app contract (see [Derivation](#derivation)). Does ECDH with the app's ephemeral key and encrypts the login key with AES-GCM. Then it creates the persona's `loginKeyResponse` on the key-exchange contract, or replaces it on a re-login, signed with keyId 2 (AUTHENTICATION/HIGH). |
+| `dash-key:…&v=2` App Connect request | Follows [`docs/APP_CONNECT_PROFILE.md`](../../docs/APP_CONNECT_PROFILE.md): checks the request, registers the granted V1 keys in one MASTER-signed IdentityUpdate, then replaces the persona's `loginKeyResponse` on the App Connect system contract. See [App Connect](#app-connect-request-v2). |
+| `dash-key:…&v=1` legacy key-exchange request | Parses it with `parseYapprKeyExchangeUri`. Derives the persona's login key for the app contract (see [Derivation](#derivation)). Does ECDH with the app's ephemeral key and encrypts the login key with AES-GCM. Then it creates the persona's `loginKeyResponse` on the key-exchange contract, or replaces it on a re-login, signed with keyId 2 (AUTHENTICATION/HIGH). |
 | `dash-st:` unsigned IdentityUpdate | Decodes it. Checks that it updates the persona's identity, that it only adds AUTHENTICATION/HIGH and ENCRYPTION/MEDIUM keys and disables none (the 1.0 key registration), and that its identity nonce is not stale. Signs it with keyId 0 (MASTER), broadcasts it, and waits for the result. |
 
 It only serves **devnet** (sakura) requests. A request whose `n=` names another
@@ -31,7 +32,8 @@ run, then runs it. npm packages are left external and resolve from the root
 | --- | --- |
 | Pool | `YAPPR_SAKURA_IDENTITIES`: path to the sakura ops `identities.json` (ENGINE.md §12.3). It is never copied into the repo, and no key material is ever printed. |
 | Network | One variant env file: `--env-file <path>`, else `YAPPR_ENV_FILE`, else `<repo>/.env.devnet`. It must set `NEXT_PUBLIC_NETWORK=devnet`, `NEXT_PUBLIC_DEVNET_NAME` and `NEXT_PUBLIC_DAPI_ADDRESSES`. `NEXT_PUBLIC_QUORUM_URL` is optional. Values missing from that file are errors; they never fall back to another file. |
-| Key-exchange contract | `NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID` in the same env file. It is needed for `dash-key:` only. |
+| Key-exchange contract | `NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID` in the same env file. It is needed for legacy `dash-key:` (`v=1`) only. |
+| App Connect state | `--state-file <path>`, else `YAPPR_APP_CONNECT_STATE`, else `~/.local/state/yappr-mobile-tools/app-connect-<devnet>.json`. See [Grant state](#grant-state). |
 
 The pool is tagged with its devnet (`"network": "devnet-sakura"`). The
 responder refuses to start when the env file targets a different devnet. That
@@ -58,6 +60,9 @@ curl -s 127.0.0.1:8789/health
   stored one is refused (spec §12.2). The spec's request (§8.1) carries a
   keyIndex; the request format Yappr ships (`vendor/platform-auth`) does not,
   so the index is chosen on the responder side, as the wallets do.
+- Routes: `POST /respond` (any URI above; App Connect also takes `faults`,
+  `otherPersona` and `spamPersonas`), `POST /revoke` (App Connect,
+  [below](#renew-and-revoke)) and `GET /health`.
 - HTTP status codes: `200` with the answer; `400` for a malformed body; `422`
   when the request was refused or failed; `404` for any other route; `403` for
   anything a browser could send. Loopback binding keeps other machines out but
@@ -99,9 +104,150 @@ The app then derives `auth = HKDF(login_key, identityId, "auth")` and
 same (identity, app contract, keyIndex) always gives the same keys, so a
 re-login does not need a second IdentityUpdate.
 
+## App Connect (request v2)
+
+The responder answers App Connect requests the way the profile's wallet rules
+describe. It reuses `vendor/platform-auth/src/app-connect/` for the request
+codec and the response crypto, so it cannot drift from the app side:
+
+1. **Decode strictly** with `parseAppConnectUri`. Codec errors are refused as
+   `unsupported` or `invalid`. Only `n=d` (devnet) requests are served.
+2. **Freshness**: refused as `stale` when created more than 10 minutes ago or
+   more than 2 minutes ahead.
+3. **Identity hint**: with an `IDENTITY_HINT`, only that identity answers.
+   Another persona is refused as `invalid`.
+4. **Owner consistency** (chain reads): the group's owner, and the owner of
+   every singleContract or documentType contract, must be the owner of
+   `appId`. The only foreign document type allowed is DashPay `profile`. An
+   `ENC_BINDING` must name `appId`, and `appId` must opt in to bounded keys of
+   that purpose. A proposed expiry in the past is `invalid`.
+5. **Limits**: each auth key gets the binding's level and its proposals,
+   clamped to 5 DASH and 365 days. A binding without an expiry gets the
+   90-day preset, so every auth key is V1.
+6. **Keys**: one fresh auth key per granted binding (see
+   [Derivation](#app-connect-derivation)). The encryption key is re-sent when
+   `identities.contractKeys` already returns the one this wallet derives. It
+   is registered (rotation 0) when there is none, and left out when another
+   wallet made it. It is never rotated.
+7. **One IdentityUpdate**, signed by MASTER (keyId 0). It adds the new keys
+   with `contractBounds`, `totalBudget` and `expiresAt`
+   (`IdentityPublicKeyInCreation` V1, evo-sdk 5.0.0-beta.4), and disables the
+   auth keys of the previous grant for the same `CONNECTION_ID`. At most 6
+   keys. The responder waits until the change is visible on chain.
+8. **Publish**: delete the persona's previous responses for the app, then
+   create the new one. The delete is index-only and carries all three values,
+   which the state file keeps. The response is sealed with
+   `sealAppConnectPayload` and its AAD, and signed with the persona's unbound
+   HIGH key (keyId 2).
+
+The answer is one JSON line. It has the slots (role, binding index, key id),
+the added, disabled and raised key ids, and `callbackUrl`: the request's `cb`
+with `ac=ok` appended, for a test to open. A refusal prints (CLI) or returns
+(HTTP `422`) `{"error", "ac", "callbackUrl"}`, where `ac` is the profile's
+status: `stale`, `unsupported`, `invalid`, `declined` or `failed`.
+
+### Renew and revoke
+
+- **Renew** (`MODE = 1`): when the connection's grant has a live key for
+  every requested binding, the responder raises their limits in place. It
+  sends one IdentityKeyLimitsUpdate per key (`sdk.identities.updateKeyLimits`,
+  signed by MASTER): the binding's budget proposal is *added* to the key's
+  total, and its expiry replaces the current one when it is later. A limit the
+  key does not have is not added, because Platform refuses that. It then
+  republishes the same keys. Without such a grant it answers as a new login,
+  which supersedes the old keys (the profile's phase-1 renewal).
+- **Revoke** (disable-only): `--revoke --persona <idx> --app-id <id>
+  [--connection-id <hex>]`, or `POST /revoke`. One MASTER-signed
+  IdentityUpdate disables the auth keys of that connection's grant (or of
+  every connection's), and the grant is forgotten. The shared encryption key
+  and the published response stay.
+
+Only keys that look like App Connect grants are ever disabled: non-MASTER
+auth keys that carry bounds or limits. A stale state file cannot disable the
+pool's own keys (0–4), which are V0 and unbound.
+
+### Fault flags
+
+`--fault <flag>` (repeatable) or `"faults": [...]` makes the responder
+misbehave in one specific way, so app-side tests can check that the bad
+answer is refused. The last column is what `verifyAppConnectCandidate`
+reports; `test/app-connect.test.ts` checks it.
+
+| Flag | What the responder does | App sees |
+| --- | --- | --- |
+| `wrong-owner` | Seals the AAD for another `$ownerId` (`--other-persona`, else a fixed stranger id) and publishes under the persona | `decrypt` |
+| `copy-response` | Answers honestly, then `--other-persona` republishes the same payload under its own id | that candidate: `decrypt` |
+| `unregistered-key` | Sends the primary binding's key without registering it | `key-not-found` |
+| `unbound-key` | Registers the primary key without contract bounds | `key-unbound` |
+| `critical` | Registers the first non-group auth key at CRITICAL | `key-level` |
+| `foreign-group=<id>` | Binds the group key to another existing group | `key-unmatched` |
+| `expired` | Every auth key expires 60 s from now (Platform refuses an already-expired key) | `key-expired`, then 20016 |
+| `expires-in=<s>` | Every auth key expires `s` seconds from now | `key-expired` under an hour; then 20016 |
+| `budget=<n>` | Every auth key gets a budget of `n` credits | accepted; 40218 or 20015 on writes |
+| `bad-tag` | Flips a bit of the AES-GCM tag | `decrypt` |
+| `extra-slot` | Appends a slot holding a key that is on no identity | `framing` (`key-not-found` when a binding was declined) |
+| `spam=<n>` | First, `n` other personas publish well-framed junk to the request (`--spam-personas`, default 90–99) | those candidates fail |
+| `second-identity` | After its own answer, `--other-persona` answers too, with its own keys | two valid candidates (chooser; a hint filters the stranger) |
+| `omit-enc` | Declines the encryption bindings | accepted, no encryption key |
+| `omit-profile` | Declines the documentType bindings (DashPay profile) | accepted, group key only |
+
+### App Connect derivation
+
+The profile's leaves are BIP32 paths from the wallet seed. The pool holds no
+seed, so the responder keeps the same inputs and uses HKDF-SHA256 over the
+persona's AUTHENTICATION/CRITICAL key (keyId 1), like the legacy derivation
+below (`src/app-connect/derive.ts`):
+
+```
+auth_i = HKDF-SHA256(ikm = keyId 1 private key, salt = identityId,
+                     info = "yappr-test-wallet/app-connect/auth" || hash256(appEphPub) || u8(bindingIndex))
+enc    = HKDF-SHA256(ikm = keyId 1 private key, salt = identityId,
+                     info = "yappr-test-wallet/app-connect/enc" || appId || u8(purpose) || u32be(rotation))
+         (an invalid scalar re-derives with a counter byte 1..255 appended to info)
+```
+
+Auth keys are fresh per request: they follow `hash256(appEphPub)` and the
+binding's position in the request. The encryption key is the same for every
+login of the persona to the app. All keys are ECDSA_SECP256K1, so each signs
+its own registration.
+
+### Grant state
+
+One JSON file per devnet, outside the repo, records per (identity, app):
+
+- the responses the responder published, with their three values. The
+  indexOnly delete needs them, and nothing on chain lists responses by owner;
+- per `CONNECTION_ID`, the key ids of the current grant, with each key's
+  binding index and derivation tag.
+
+It holds no private key. Losing it is harmless: old responses stay on chain,
+and the next login does not disable the old keys (they still expire).
+
+### Running it live
+
+Not possible yet: sakura runs Platform 5.0.0-beta.3, and the `yappr-app`
+anchor contract and its group are not registered. The App Connect system
+contract (`H8F9…`) exists, and the responder's chain reads were checked
+against sakura (read-only). Once sakura runs beta.4 and the anchor is
+registered, answer a request from the app (or one built with
+`buildAppConnectUri`) like this:
+
+```bash
+export YAPPR_SAKURA_IDENTITIES=~/.local/share/yappr-sakura-<date>/identities.json
+node mobile/tools/test-wallet-responder.mjs --uri 'dash-key:…?n=d&v=2&cb=…' --persona 90
+node mobile/tools/test-wallet-responder.mjs --uri 'dash-key:…?n=d&v=2' --persona 90 --fault expires-in=120
+node mobile/tools/test-wallet-responder.mjs --uri 'dash-key:…?n=d&v=2' --persona 90 --fault second-identity --other-persona 91
+node mobile/tools/test-wallet-responder.mjs --revoke --persona 90 --app-id <anchor id>
+
+# Playwright / Maestro
+node mobile/tools/test-wallet-responder.mjs --serve 127.0.0.1:8789
+curl -s -XPOST 127.0.0.1:8789/respond -H 'content-type: application/json' \
+  -d '{"uri":"dash-key:…&v=2","persona":90,"faults":["budget=1000"]}'
+```
+
 ## Live status
 
-The live `dash-key:` path is **blocked until W-SAKURA**: the sakura Yappr
+The live legacy `dash-key:` (`v=1`) path is **blocked until W-SAKURA**: the sakura Yappr
 contracts, including key-exchange, are not published yet. Until then, a
 `dash-key:` request fails before it connects to the network:
 
@@ -122,7 +268,10 @@ for `dash-st:`.
 | `src/key-exchange.ts` | Login-key derivation and the encrypted response (pure) |
 | `src/dash-st.ts` | IdentityUpdate decode and MASTER signing (wasm, offline) |
 | `src/responder.ts` | URI dispatch, network and keyIndex rules; Platform access goes through `ResponderPorts` |
+| `src/app-connect/wallet.ts` | App Connect wallet rules, key plan, sealing, renew and revoke; Platform access goes through `AppConnectPorts` |
+| `src/app-connect/derive.ts`, `faults.ts`, `state.ts` | Key derivation, fault flags, grant state file |
+| `src/app-connect/platform.ts` | The live App Connect ports (identity update, key limits, response delete and create) |
 | `src/platform.ts` | The live ports: devnet SDK from `scripts/sdk-env.mjs`, the `loginKeyResponse` write, the broadcast |
 | `src/pool.ts`, `src/config.ts` | Pool and env-file loading |
 | `src/main.ts` | CLI and HTTP server |
-| `test/` | A full app ↔ wallet round trip with the write stubbed; `dash-st:` parse, sign and signature check |
+| `test/` | A full app ↔ wallet round trip with the write stubbed; `dash-st:` parse, sign and signature check; App Connect against an in-memory chain (`test/app-connect-chain.ts`) judged by the shared verifier, and the interop vectors through the responder's sealing |

@@ -1,7 +1,9 @@
 /**
- * Answers one `dash-key:` or `dash-st:` URI for one pool persona. Platform
- * access goes through the {@link ResponderPorts} so the whole exchange runs in
- * unit tests with the write and the broadcast stubbed.
+ * Answers one `dash-key:` or `dash-st:` URI for one pool persona: App Connect
+ * request v2 (`dash-key:…&v=2`, app-connect/wallet.ts), the legacy key
+ * exchange (`v=1`) or a `dash-st:` IdentityUpdate. Platform access goes
+ * through the {@link ResponderPorts} so the whole exchange runs in unit tests
+ * with the write and the broadcast stubbed.
  */
 import bs58 from 'bs58'
 import { bytesToHex } from '@noble/hashes/utils.js'
@@ -16,6 +18,13 @@ import type { YapprKeyExchangeNetworkName } from '../../../vendor/platform-auth/
 import { answerKeyExchange, type LoginKeyResponseFields } from './key-exchange'
 import { decodeIdentityUpdate, inspectIdentityUpdate, signIdentityUpdate } from './dash-st'
 import type { Persona } from './pool'
+import type { AppConnectFaults } from './app-connect/faults'
+import {
+  isAppConnectUri,
+  respondToAppConnect,
+  type AppConnectPorts,
+  type AppConnectResult,
+} from './app-connect/wallet'
 
 /** The pool is sakura's: requests for any other network are refused, so nothing reaches testnet or mainnet. */
 const SERVED_NETWORK: YapprKeyExchangeNetworkName = 'devnet'
@@ -48,6 +57,8 @@ export interface ResponderPorts {
   /** Refuses a stale nonce before anything is signed. */
   checkIdentityUpdate(persona: Persona, stateTransition: StateTransition): Promise<void>
   broadcast(stateTransition: StateTransition): Promise<BroadcastOutcome>
+  /** App Connect (request v2); absent where only the legacy flows are wired. */
+  appConnect?: AppConnectPorts
 }
 
 export interface RespondInput {
@@ -55,6 +66,10 @@ export interface RespondInput {
   persona: Persona
   /** Rotation: ask for this keyIndex instead of reusing the stored one. */
   keyIndex?: number
+  /** App Connect only: fault flags and the personas some of them act through. */
+  faults?: AppConnectFaults
+  otherPersona?: Persona
+  spamPersonas?: Persona[]
 }
 
 export type RespondResult =
@@ -74,9 +89,15 @@ export type RespondResult =
       signaturePublicKeyId: number
       addedKeyIds: number[]
     } & BroadcastOutcome)
+  | AppConnectResult
 
 export async function respond(input: RespondInput, ports: ResponderPorts): Promise<RespondResult> {
   const { uri } = input
+  if (isAppConnectUri(uri)) {
+    if (!ports.appConnect) throw new Error('App Connect is not wired in this responder')
+    return respondToAppConnect(input, ports.appConnect)
+  }
+  if (input.faults || input.otherPersona || input.spamPersonas) throw new Error('Fault flags apply to App Connect (v=2) requests only')
   if (uri.startsWith('dash-key:')) return respondToKeyExchange(input, ports)
   if (uri.startsWith('dash-st:')) return respondToStateTransition(input, ports)
   throw new Error('Unsupported URI: expected dash-key: or dash-st:')

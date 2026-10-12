@@ -70,7 +70,7 @@ export function requireKeyExchangeContract(config: ResponderConfig): string {
   if (!config.keyExchangeContractId) {
     throw new Error(
       `${KEY_EXCHANGE_CONTRACT_VAR} is unset in ${config.envFile}: the key-exchange contract is not published on ` +
-        `devnet ${config.devnet.devnetName} yet (W-SAKURA), so dash-key: requests cannot be answered. dash-st: still works.`,
+        `devnet ${config.devnet.devnetName} yet (W-SAKURA), so legacy dash-key: (v=1) requests cannot be answered. App Connect (v=2) and dash-st: still work.`,
     )
   }
   return config.keyExchangeContractId

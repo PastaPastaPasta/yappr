@@ -10,6 +10,8 @@ import { parsePool, selectPersona, type Persona, type Pool } from '../src/pool'
 export const PERSONA_IDX = 90
 export const IDENTITY_ID_BYTES = new Uint8Array(32).fill(0x42)
 export const IDENTITY_ID = bs58.encode(IDENTITY_ID_BYTES)
+/** Personas 90–95; 90 is the one most tests answer as. */
+export const PERSONA_IDXS = [90, 91, 92, 93, 94, 95]
 
 const LAYOUT = [
   { keyId: 0, purpose: 'authentication', securityLevel: 'master' },
@@ -19,28 +21,30 @@ const LAYOUT = [
   { keyId: 4, purpose: 'encryption', securityLevel: 'medium' },
 ]
 
-/** keyId k's test private key: 32 bytes of k + 1. */
-export function testPrivateKey(keyId: number): Uint8Array {
-  return new Uint8Array(32).fill(keyId + 1)
+/** Persona 90's keyId k test private key: 32 bytes of k + 1 (other personas shift by 16 per index). */
+export function testPrivateKey(keyId: number, personaIdx = PERSONA_IDX): Uint8Array {
+  return new Uint8Array(32).fill(keyId + 1 + 16 * (personaIdx - PERSONA_IDX))
+}
+
+export function testIdentityIdBytes(personaIdx: number): Uint8Array {
+  return new Uint8Array(32).fill(0x42 + personaIdx - PERSONA_IDX)
 }
 
 export function testPool(): Pool {
   return parsePool({
     network: 'devnet-test',
-    identities: [
-      {
-        personaIdx: PERSONA_IDX,
-        identityId: IDENTITY_ID,
-        identityKeys: LAYOUT.map((key) => ({
-          ...key,
-          privateKeyHex: bytesToHex(testPrivateKey(key.keyId)),
-          publicKeyHex: bytesToHex(secp256k1.getPublicKey(testPrivateKey(key.keyId), true)),
-        })),
-      },
-    ],
+    identities: PERSONA_IDXS.map((personaIdx) => ({
+      personaIdx,
+      identityId: bs58.encode(testIdentityIdBytes(personaIdx)),
+      identityKeys: LAYOUT.map((key) => ({
+        ...key,
+        privateKeyHex: bytesToHex(testPrivateKey(key.keyId, personaIdx)),
+        publicKeyHex: bytesToHex(secp256k1.getPublicKey(testPrivateKey(key.keyId, personaIdx), true)),
+      })),
+    })),
   })
 }
 
-export function testPersona(): Persona {
-  return selectPersona(testPool(), PERSONA_IDX)
+export function testPersona(personaIdx = PERSONA_IDX): Persona {
+  return selectPersona(testPool(), personaIdx)
 }
