@@ -7,7 +7,7 @@ import {
 import { isLikelyWif, parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { scopedKey } from '@/lib/storage-scope'
 import { keyNetwork } from '@/lib/constants'
-import { appConnectEncryptionKey } from '@/lib/app-connect/memory-keys'
+import { appConnectEncryptionKey, hasAppConnectSession } from '@/lib/app-connect/memory-keys'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 
 const browserSecretStore = createBrowserSecretStore({
@@ -48,24 +48,31 @@ export const {
  */
 const SESSION_ONLY_KEY_PREFIX = scopedKey('yappr_session_pk_')
 
+/** Where sessionStorage is blocked the key is kept in memory instead, so it still signs until the tab closes. */
+const sessionOnlyMemory = new Map<string, string>()
+
 export function storeSessionOnlyPrivateKey(identityId: string, wif: string): void {
   if (typeof window === 'undefined') return
   const normalized = privateKeyToWif(parsePrivateKey(wif).privateKey, keyNetwork(), true)
   try {
     sessionStorage.setItem(SESSION_ONLY_KEY_PREFIX + identityId, normalized)
+    sessionOnlyMemory.delete(identityId)
   } catch {
-    // Storage blocked: the key simply does not survive a reload.
+    sessionOnlyMemory.set(identityId, normalized)
   }
+  // Only now that this tab holds it is the persisted copy dropped.
   browserSecretStore.clearPrivateKey(identityId)
 }
 
 function getSessionOnlyPrivateKey(identityId: string): string | null {
   if (typeof window === 'undefined') return null
   try {
-    return sessionStorage.getItem(SESSION_ONLY_KEY_PREFIX + identityId)
+    const stored = sessionStorage.getItem(SESSION_ONLY_KEY_PREFIX + identityId)
+    if (stored !== null) return stored
   } catch {
-    return null
+    // Storage blocked: fall back to the in-memory copy.
   }
+  return sessionOnlyMemory.get(identityId) ?? null
 }
 
 export function getPrivateKey(identityId: string): string | null {
@@ -78,6 +85,7 @@ export function hasPrivateKey(identityId: string): boolean {
 
 export function clearPrivateKey(identityId: string): boolean {
   const hadSessionOnly = getSessionOnlyPrivateKey(identityId) !== null
+  sessionOnlyMemory.delete(identityId)
   if (hadSessionOnly) {
     try {
       sessionStorage.removeItem(SESSION_ONLY_KEY_PREFIX + identityId)
@@ -96,7 +104,9 @@ export function clearPrivateKey(identityId: string): boolean {
  * must not be used in its place.
  */
 function storedEncryptionKeyAllowed(identityId: string): boolean {
-  return !isAppConnectBuild() || getPrivateKey(identityId) !== null
+  if (!isAppConnectBuild()) return true
+  // Decided by how this tab signed in, not by whatever an earlier sign-in left in storage.
+  return !hasAppConnectSession(identityId) && getPrivateKey(identityId) !== null
 }
 
 /**

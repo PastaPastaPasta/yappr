@@ -44,6 +44,23 @@ interface StoredRing {
 export interface SessionMatch {
   identityId: string
   grantedAt?: number
+  /** With `grantedAt`: the grant's newest auth key id, which tells apart two grants stored in the same millisecond. */
+  grantKeyId?: number
+}
+
+/** A grant's newest auth key id. A later wallet grant registers its keys after the earlier one's, so its ids are higher. */
+export function grantKeyId(session: Pick<AppConnectSession, 'authKeys'>): number {
+  return session.authKeys.reduce((max, key) => Math.max(max, key.keyId), -1)
+}
+
+/** The match for exactly this grant. */
+export function exactGrant(session: AppConnectSession): SessionMatch {
+  return { identityId: session.identityId, grantedAt: session.grantedAt, grantKeyId: grantKeyId(session) }
+}
+
+/** Whether `a` is a newer grant than `b`: stored later, or at the same time with newer keys. */
+export function isNewerGrant(a: AppConnectSession, b: AppConnectSession): boolean {
+  return a.grantedAt !== b.grantedAt ? a.grantedAt > b.grantedAt : grantKeyId(a) > grantKeyId(b)
 }
 
 const DEVICE_KEY = 'device-key'
@@ -56,7 +73,9 @@ const isConnectionId = (value: unknown): value is string => typeof value === 'st
 
 function sessionMatches(value: unknown, match: SessionMatch): boolean {
   const session = (value as StoredRing | undefined)?.session
-  return session?.identityId === match.identityId && (match.grantedAt === undefined || session.grantedAt === match.grantedAt)
+  return session?.identityId === match.identityId &&
+    (match.grantedAt === undefined || session.grantedAt === match.grantedAt) &&
+    (match.grantKeyId === undefined || grantKeyId(session) === match.grantKeyId)
 }
 
 export class AppConnectKeyRingStore {
@@ -133,9 +152,9 @@ export class AppConnectKeyRingStore {
     const record: StoredRing = { session, wrapped }
     const stored = await this.backend.putIf(sessionKey(session.network), (current) => {
       const existing = (current as StoredRing | undefined)?.session
-      return !existing || existing.identityId !== session.identityId || existing.grantedAt <= session.grantedAt
+      return !existing || existing.identityId !== session.identityId || !isNewerGrant(existing, session)
     }, record)
-    return sessionMatches(stored, session)
+    return sessionMatches(stored, exactGrant(session))
   }
 
   async load(network: string): Promise<AppConnectSession | null> {
@@ -151,7 +170,7 @@ export class AppConnectKeyRingStore {
   updateSession(session: AppConnectSession): Promise<boolean> {
     return this.backend.updateIf(
       sessionKey(session.network),
-      (value) => sessionMatches(value, session),
+      (value) => sessionMatches(value, exactGrant(session)),
       (value) => ({ ...(value as StoredRing), session }),
     )
   }

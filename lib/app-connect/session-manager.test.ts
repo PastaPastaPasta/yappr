@@ -45,7 +45,7 @@ vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: 
 const { AppConnectKeyRingStore } = await import('./key-ring-store')
 const { appConnectSessions, useAppConnectStatus } = await import('./session-manager')
 
-function grant(identityId: string, grantedAt: number): AppConnectSession {
+function grant(identityId: string, grantedAt: number, keyId = grantedAt): AppConnectSession {
   return {
     v: 1,
     network: 'devnet',
@@ -54,7 +54,7 @@ function grant(identityId: string, grantedAt: number): AppConnectSession {
     groupId: 'group',
     connectionId: '00'.repeat(16),
     grantedAt,
-    authKeys: [{ keyId: grantedAt, bounds: { kind: 'contractGroup', groupId: 'group' }, securityLevel: 1, totalBudget: 10n, remainingBudget: 9n, expiresAt: 99, keyRef: 'key-group' }],
+    authKeys: [{ keyId, bounds: { kind: 'contractGroup', groupId: 'group' }, securityLevel: 1, totalBudget: 10n, remainingBudget: 9n, expiresAt: 99, keyRef: 'key-group' }],
     encKeys: [],
   }
 }
@@ -145,5 +145,19 @@ describe('AppConnectSessionManager across tabs', () => {
 
     expect(appConnectSessions.current()).toBeNull()
     expect(storedGrantedAt()).toBeUndefined()
+  })
+  it('tells apart two grants stored in the same millisecond by their keys', async () => {
+    await storeFromAnotherTab(grant('alice', 1, 10))
+    await appConnectSessions.restore('alice')
+    const old = currentSession('alice')
+    await storeFromAnotherTab(grant('alice', 1, 12))
+
+    await appConnectSessions.signOutRevoked(old)
+    expect(currentSession('alice').authKeys[0].keyId).toBe(12)
+    expect(signedOut).not.toHaveBeenCalled()
+
+    // The older grant of that same millisecond can no longer clear the newer one.
+    await appConnectSessions.discard(old)
+    expect(storedGrantedAt()).toBe(1)
   })
 })

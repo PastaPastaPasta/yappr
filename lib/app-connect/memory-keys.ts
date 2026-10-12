@@ -9,6 +9,16 @@
  */
 
 let encryptionKey: { identityId: string; wif: string } | null = null
+/** The identity this tab is signed in as through a wallet (App Connect), or null. */
+let sessionIdentity: string | null = null
+
+export function setAppConnectSessionIdentity(identityId: string | null): void {
+  sessionIdentity = identityId
+}
+
+export function hasAppConnectSession(identityId: string): boolean {
+  return sessionIdentity === identityId
+}
 
 export function setAppConnectEncryptionKey(identityId: string, wif: string): void {
   encryptionKey = { identityId, wif }

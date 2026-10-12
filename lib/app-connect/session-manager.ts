@@ -19,8 +19,8 @@ import { getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { privateKeyToWif } from '@/lib/crypto/wif'
 import { appConnectPins } from './config'
 import { checkAppConnectTrust, type AppConnectTrust } from './group-trust'
-import { AppConnectKeyRingStore, indexedDbKeyRingBackend, type SessionMatch } from './key-ring-store'
-import { clearAppConnectEncryptionKey, setAppConnectEncryptionKey } from './memory-keys'
+import { AppConnectKeyRingStore, exactGrant, indexedDbKeyRingBackend, isNewerGrant, type SessionMatch } from './key-ring-store'
+import { clearAppConnectEncryptionKey, setAppConnectEncryptionKey, setAppConnectSessionIdentity } from './memory-keys'
 import { appConnectPlatformPort } from './platform-port'
 import {
   appConnectHealth,
@@ -202,6 +202,7 @@ class AppConnectSessionManager {
 
   private async activate(session: AppConnectSession): Promise<void> {
     this.active = session
+    setAppConnectSessionIdentity(session.identityId)
     clearAppConnectEncryptionKey()
     const pins = appConnectPins()
     const encKey = session.encKeys.find((key) => key.purpose === KeyPurpose.ENCRYPTION && key.contractId === pins?.appId)
@@ -216,6 +217,7 @@ class AppConnectSessionManager {
   /** Drops this tab's in-memory session; the stored ring is left alone. */
   private deactivate(): void {
     this.active = null
+    setAppConnectSessionIdentity(null)
     clearAppConnectEncryptionKey()
     this.stopRefresh()
     publishSession(null)
@@ -241,7 +243,7 @@ class AppConnectSessionManager {
    */
   async discard(session: AppConnectSession): Promise<void> {
     if (this.active === session) this.deactivate()
-    await this.clearStored({ identityId: session.identityId, grantedAt: session.grantedAt })
+    await this.clearStored(exactGrant(session))
   }
 
   /** A stored private key as a compressed WIF, or null when the ring has none under `keyRef`. */
@@ -316,7 +318,7 @@ class AppConnectSessionManager {
     } catch (error) {
       logger.warn('App Connect: could not re-read the key ring:', error)
     }
-    if (stored && stored.identityId === session.identityId && stored.grantedAt > session.grantedAt) {
+    if (stored && stored.identityId === session.identityId && isNewerGrant(stored, session)) {
       logger.info(`App Connect: another tab renewed the session for ${session.identityId}; switching to it`)
       if (this.active === session) await this.activate(stored)
       return

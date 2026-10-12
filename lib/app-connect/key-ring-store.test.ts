@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AppConnectSession } from 'platform-auth'
-import { AppConnectKeyRingStore, type KeyRingBackend } from './key-ring-store'
+import { AppConnectKeyRingStore, exactGrant, type KeyRingBackend } from './key-ring-store'
 
 function memoryBackend(): KeyRingBackend & { data: Map<string, unknown> } {
   const data = new Map<string, unknown>()
@@ -159,5 +159,14 @@ describe('AppConnectKeyRingStore', () => {
     await store.save({ ...session('mallory'), grantedAt: 5 }, keys())
     expect(await store.save(session(), keys())).toBe(true)
     expect((await store.load('devnet'))?.identityId).toBe('alice')
+  })
+  it('orders grants of the same millisecond by their keys', async () => {
+    const store = new AppConnectKeyRingStore(memoryBackend())
+    const later = { ...session(), authKeys: [{ ...session().authKeys[0], keyId: 9 }] }
+    expect(await store.save(later, new Map([['key-5', groupKey.slice()], ['key-6', encKey.slice()]]))).toBe(true)
+    expect(await store.save(session(), keys())).toBe(false)
+    expect((await store.load('devnet'))?.authKeys[0].keyId).toBe(9)
+    expect(await store.clear('devnet', exactGrant(session()))).toBe(false)
+    expect(await store.clear('devnet', exactGrant(later))).toBe(true)
   })
 })
