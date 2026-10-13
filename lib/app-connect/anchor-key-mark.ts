@@ -19,9 +19,22 @@ import { bytesToHex } from '@/lib/bytes'
 import { readScoped, writeScoped } from '@/lib/storage-scope'
 
 const PREFIX = 'yappr_anchor_ek_'
+const listeners = new Set<(identityId: string) => void>()
 
 export function rememberAnchorKey(identityId: string, publicKey: Uint8Array): void {
-  writeScoped(PREFIX + identityId, bytesToHex(publicKey))
+  const hex = bytesToHex(publicKey)
+  if (readScoped(PREFIX + identityId) === hex) return
+  writeScoped(PREFIX + identityId, hex)
+  // A stored key that was unusable may be usable now: let whatever waits on it (the DM engine) start.
+  for (const listener of Array.from(listeners)) listener(identityId)
+}
+
+/** Called with the identity whenever a newly confirmed anchor key is recorded. Returns the unsubscribe. */
+export function onAnchorKeyRemembered(listener: (identityId: string) => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
 }
 
 /** The confirmed anchor key as hex, or null when none was confirmed in this browser. */

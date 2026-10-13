@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { logger } from '@/lib/logger'
+import { onAnchorKeyRemembered } from '@/lib/app-connect/anchor-key-mark'
 import {
   currentDmEngine,
   getDmEngine,
@@ -32,6 +33,13 @@ export function useDmEngine(identityId: string | undefined): { engine: DmEngine 
     if (!identityId) return
     getDmEngine(identityId)?.start().catch((error) => logger.warn('DM v5 engine failed to start:', error))
   }, [identityId, attempt])
+  // A stored key confirmed later (e.g. a vault key checked against the anchor) can start the engine then.
+  useEffect(() => {
+    if (!identityId) return
+    return onAnchorKeyRemembered((confirmed) => {
+      if (confirmed === identityId) setAttempt((n) => n + 1)
+    })
+  }, [identityId])
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
   return { engine, retry }
 }
