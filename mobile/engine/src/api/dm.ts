@@ -1,3 +1,5 @@
+import { onAnchorKeyRemembered } from '@/lib/app-connect/anchor-key-mark'
+import { messagingAnchorId } from '@/lib/app-connect/config'
 import { YAPPR_DM_V5_CONTRACT_ID, dmIsV5, keyNetwork } from '@/lib/constants'
 import { deriveEncryptionKey } from '@/lib/crypto/derive-encryption-key'
 import { validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
@@ -9,6 +11,8 @@ import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
 import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
 import { identityService } from '@/lib/services/identity-service'
+import { KeyRetiredError } from '@/lib/services/identity-update-builder'
+import { draftMessagingKey, MessagingAlreadySetUpError, messagingKeyHandOffUri } from '@/lib/services/messaging-key-service'
 import { findEncryptionKey, hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { base58ToBytes, getCurrentUserId } from '@/lib/services/sdk-helpers'
 import { TtlMap } from '@/lib/caches/ttl-map'
@@ -94,8 +98,16 @@ const libBlocks: AccountBlocks = { refresh: ownBlocks, subscribe: onOwnBlocks }
 /** The result of `dm.unlock` (PRD DM-02). */
 export type DmUnlockResult =
   | { unlocked: true; status: DmStatusDTO }
-  /** `no-key-on-identity`: the identity has no encryption key at all; `not-derivable`: enter it. */
-  | { unlocked: false; reason: 'no-key-on-identity' | 'not-derivable' }
+  /**
+   * `no-key-on-identity`: the identity has no encryption key this app can use or add (legacy builds; App
+   * Connect builds when this sign-in's messaging key was disabled): set one up on the web;
+   * `needs-setup`: it has no messaging key yet (App Connect builds: `dm.setUpMessaging`);
+   * `not-derivable`: enter it.
+   */
+  | { unlocked: false; reason: 'no-key-on-identity' | 'needs-setup' | 'not-derivable' }
+
+/** The result of `dm.setUpMessaging`: the wallet link to approve, or (set up already) what `dm.unlock` answers. */
+export type DmSetupResult = DmUnlockResult | { unlocked: false; reason: 'approve-in-wallet'; uri: string }
 
 const libEngines: DmEngineSource = { engineFor: getDmEngine, release: (_identityId, engine) => stopDmEngine(engine) }
 
@@ -228,6 +240,16 @@ export function createDmModule(options: DmModuleOptions) {
     }
     else if (ticket.op === 'unblock' && ticket.state === 'failed' && ticket.error?.code === 'STILL_BLOCKED') {
       backend.followAccountBlock(identityId, peerId, false)
+    }
+  })
+  // A stored key lib confirms as the anchor key later (a wallet sign-in's, checked in the background) unlocks
+  // Messages then: the backend starts, and the host hears it.
+  onAnchorKeyRemembered(identityId => {
+    if (halted || identityId !== viewer()) return
+    try {
+      backend.activate(identityId)
+    } catch (error) {
+      logger.warn('Starting messages failed:', error)
     }
   })
   // Every whole read of the account's block list (this start's, the Blocked screen's) keeps Messages in step.
@@ -691,10 +713,13 @@ export function createDmModule(options: DmModuleOptions) {
      */
     async unlock(input: { key?: string } | null = {}): Promise<DmUnlockResult> {
       const identityId = session()
+      const anchorId = messagingAnchorId()
       // A failed read is never "no key": lib's identity read throws on network failures (cached for the checks below).
-      const identity = await identityService.getIdentity(identityId)
+      // App Connect builds read afresh, so a messaging key just set up counts at once.
+      const identity = await identityService.getIdentity(identityId, { fresh: anchorId !== null })
       if (!identity) throw new RpcError('The identity was not found', 'IDENTITY_NOT_FOUND')
-      if (!hasEncryptionKeyOnIdentity(identity.publicKeys)) return { unlocked: false, reason: 'no-key-on-identity' }
+      const noKey: DmUnlockResult = { unlocked: false, reason: anchorId ? 'needs-setup' : 'no-key-on-identity' }
+      if (!hasEncryptionKeyOnIdentity(identity.publicKeys)) return noKey
       if (input?.key === undefined) {
         if (options.unhydrated?.has(identityId)) return { unlocked: false, reason: 'not-derivable' }
         const authKey = getPrivateKey(identityId)
@@ -709,7 +734,7 @@ export function createDmModule(options: DmModuleOptions) {
         const validation = await validateEncryptionKey(key, identityId)
         if (!validation.isValid) {
           if (validation.errorType === 'IDENTITY_NOT_FOUND') throw new RpcError(validation.error || 'Could not fetch identity data', 'NETWORK')
-          if (validation.noKeyOnIdentity) return { unlocked: false, reason: 'no-key-on-identity' }
+          if (validation.noKeyOnIdentity) return noKey
           throw new RpcError(validation.error || 'Invalid key', 'KEY_INVALID')
         }
         // lib accepts any of the identity's encryption keys, but messages (and every peer) use only
@@ -723,6 +748,34 @@ export function createDmModule(options: DmModuleOptions) {
       }
       await options.secureDurable?.()
       return { unlocked: true, status: await backend.status(session()) }
+    },
+
+    /**
+     * App Connect builds (PRD DM-02, web's "Set up messaging"): add this
+     * account's messaging key, the anchor-bound key `unlock` derives from the
+     * sign-in key. Answers the `dash-st:` link of the IdentityUpdate adding
+     * it, for the wallet to sign with the identity's MASTER key; the host
+     * then calls `unlock` until the key has landed. Never adds a second
+     * anchor key: with one there already, it answers what `unlock` does.
+     */
+    async setUpMessaging(): Promise<DmSetupResult> {
+      const identityId = session()
+      if (!messagingAnchorId()) throw new RpcError('Setting up messaging is not available on this network', 'NOT_SUPPORTED')
+      if (!getPrivateKey(identityId)) throw new RpcError('Sign in again to set up messaging.', 'NOT_SIGNED_IN')
+      const draft = draftMessagingKey(identityId)
+      try {
+        return { unlocked: false, reason: 'approve-in-wallet', uri: await messagingKeyHandOffUri(draft) }
+      } catch (error) {
+        // This sign-in's messaging key was disabled, and Platform never brings one back.
+        if (error instanceof KeyRetiredError) return { unlocked: false, reason: 'no-key-on-identity' }
+        if (!(error instanceof MessagingAlreadySetUpError)) throw error
+        // The anchor has a key already. One messages cannot use either (not this sign-in's, or of another
+        // type) is never replaced: it must be entered.
+        const result = await api.unlock()
+        return !result.unlocked && result.reason === 'needs-setup' ? { unlocked: false, reason: 'not-derivable' } : result
+      } finally {
+        draft.privateKey.fill(0)
+      }
     },
   }
 

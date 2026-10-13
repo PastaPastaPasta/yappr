@@ -6,13 +6,13 @@ import {
   decodeYapprContractId,
   decodeYapprIdentityId,
   deriveYapprAuthKeyFromLogin,
-  deriveYapprEncryptionKeyFromLogin,
   generateYapprEphemeralKeyPair,
   getYapprPublicKey,
   hash160,
   type PlatformAuthController,
 } from 'platform-auth'
 import { bytesToHex, hexToBytes } from '@/lib/bytes'
+import { deriveLoginEncryptionKey } from '@/lib/crypto/derive-encryption-key'
 import { scopedKey } from '@/lib/storage-scope'
 import { readJson } from '../read-json'
 import { RpcError } from '../protocol/envelope'
@@ -31,6 +31,10 @@ import { RpcError } from '../protocol/envelope'
  *  - Until the wallet answers, the request (ephemeral key included) is also
  *    kept in the secure area, so a request survives the app being killed.
  *    Nothing derived from the wallet's answer is ever persisted.
+ *
+ * The encryption key is `deriveLoginEncryptionKey`'s: on App Connect builds
+ * the messaging key bound to the `yappr-app` anchor, which the registration
+ * adds only when the identity has no anchor key yet.
  */
 
 const REQUEST_LIFETIME_MS = 10 * 60 * 1000
@@ -254,10 +258,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
       })
       approval.registration = {
         uri: buildYapprStateTransitionUri(transition.transitionBytes, config.network),
-        keys: [
-          { keyId: transition.authKeyId, purpose: 'authentication', securityLevel: 'high' },
-          { keyId: transition.encryptionKeyId, purpose: 'encryption', securityLevel: 'medium' },
-        ],
+        keys: transition.keys,
       }
     }
     return { status: 'needs-registration', ...toRequestDTO(request), uri: approval.registration.uri, keys: approval.registration.keys }
@@ -353,7 +354,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
             loginKey: decrypted.loginKey,
             keyIndex: decrypted.keyIndex,
             authKey: deriveYapprAuthKeyFromLogin(decrypted.loginKey, identityIdBytes),
-            encryptionKey: deriveYapprEncryptionKeyFromLogin(decrypted.loginKey, identityIdBytes),
+            encryptionKey: deriveLoginEncryptionKey(decrypted.loginKey, identityIdBytes),
           }
           // Answered: the ephemeral key has done its job, and nothing past this point is persisted.
           clearSensitiveBytes(request.ephemeralKey)

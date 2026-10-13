@@ -23,6 +23,8 @@
 
 import { sha256 } from '@noble/hashes/sha2.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
+import bs58 from 'bs58'
+import { deriveYapprAuthKeyFromLogin, deriveYapprEncryptionKeyFromLogin } from 'platform-auth'
 import { messagingAnchorId } from '@/lib/app-connect/config'
 
 // HKDF info string for encryption key derivation
@@ -70,4 +72,24 @@ export function deriveEncryptionKey(
   const salt = identityIdToSalt(identityId)
   const info = anchorId ? `${INFO_ANCHOR_ENCRYPTION_KEY}:${anchorId}` : INFO_ENCRYPTION_KEY
   return hkdf(sha256, authPrivateKey, salt, utf8Encode(info), KEY_SIZE)
+}
+
+/**
+ * The encryption key a wallet sign-in (`dash-key:` login key) holds and its
+ * first-login registration adds. Legacy builds: the key exchange's own
+ * HKDF(loginKey, "encryption"). App Connect builds: the anchor key derived
+ * from the sign-in's auth key, the same key "Set up messaging" adds and
+ * `dm.unlock` re-derives, so every device that signs in with the wallet
+ * recovers it.
+ */
+export function deriveLoginEncryptionKey(
+  loginKey: Uint8Array,
+  identityIdBytes: Uint8Array,
+  anchorId: string | null = messagingAnchorId(),
+): Uint8Array {
+  if (!anchorId) return deriveYapprEncryptionKeyFromLogin(loginKey, identityIdBytes)
+  const authKey = deriveYapprAuthKeyFromLogin(loginKey, identityIdBytes)
+  const key = deriveEncryptionKey(authKey, bs58.encode(identityIdBytes), anchorId)
+  authKey.fill(0)
+  return key
 }

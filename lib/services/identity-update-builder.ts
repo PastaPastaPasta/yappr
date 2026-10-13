@@ -8,6 +8,7 @@
  * Spec: YAPPR_DET_SIGNER_SPEC.md Section 11.5
  */
 
+import type { YapprRegisteredKey } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { getEvoSdk } from './evo-sdk-service'
 import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed'
@@ -15,9 +16,11 @@ import * as secp256k1 from '@noble/secp256k1'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { hash160 } from '../crypto/hash'
 import { getPublicKey } from '../crypto/keys'
-import { requireBytes } from '@/lib/bytes'
+import { bytesEqual, requireBytes } from '@/lib/bytes'
 import { KeyPurpose, KeyType, resolveKeyPurpose } from '@/lib/crypto/identity-keys'
 import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup'
+import { deriveEncryptionKey } from '@/lib/crypto/derive-encryption-key'
+import { messagingAnchorId } from '@/lib/app-connect/config'
 
 let wasmInitialized = false
 async function ensureWasmInitialized() {
@@ -50,11 +53,9 @@ export interface KeyRegistrationRequest {
 export interface UnsignedTransitionResult {
   /** Serialized transition bytes (for dash-st: URI) */
   transitionBytes: Uint8Array
-  /** The auth key ID that will be assigned */
-  authKeyId: number
-  /** The encryption key ID that will be assigned */
-  encryptionKeyId: number
-  /** Current identity revision */
+  /** The keys it adds, in key id order */
+  keys: YapprRegisteredKey[]
+  /** The identity's revision after the update */
   identityRevision: bigint
 }
 
@@ -62,13 +63,17 @@ export interface UnsignedTransitionResult {
 const COMPACT_SIG_BASE = 27
 const COMPACT_SIG_COMPRESSED_FLAG = 4
 
+/** An identity key as the SDK's fetched identity holds it (a wasm IdentityPublicKey). */
 type RegisteredIdentityKey = {
+  keyId: number
   purpose?: string | number
   purposeNumber?: number
   keyType?: string | number
   keyTypeNumber?: number
   type?: number
   data?: string
+  disabledAt?: unknown
+  contractBounds?: unknown
   toJSON: () => { data: string | Uint8Array }
 }
 
@@ -88,6 +93,43 @@ function keyMatchesPurposeAndType(
     keyEnumMatches(key.purpose, key.purposeNumber, expectedPurposeNumber, expectedPurposeName) &&
     keyEnumMatches(key.keyType ?? key.type, key.keyTypeNumber ?? key.type, expectedTypeNumber, expectedTypeName)
   )
+}
+
+/** Whether `publicKeys` hold `data` (a public key, or its hash160) as a key of this purpose and type. */
+function hasKey(
+  publicKeys: RegisteredIdentityKey[],
+  purpose: [number, string],
+  type: [number, string],
+  data: Uint8Array,
+): boolean {
+  return publicKeys.some((key) => keyMatchesPurposeAndType(key, purpose[0], purpose[1], type[0], type[1])
+    // The WASM `.data` getter returns a hex string; `.toJSON().data` may differ.
+    && bytesEqual(requireBytes(key.data ?? key.toJSON().data, 'identity key data'), data))
+}
+
+/** Whether the identity has the auth key a sign-in registers (its hash160, as an ECDSA_HASH160 key). */
+function hasAuthKey(publicKeys: RegisteredIdentityKey[], authPublicKey: Uint8Array): boolean {
+  return hasKey(publicKeys, [KeyPurpose.AUTHENTICATION, 'authentication'], [KeyType.ECDSA_HASH160, 'ecdsa_hash160'], hash160(authPublicKey))
+}
+
+/**
+ * Whether the identity already holds `publicKey` as an encryption key,
+ * disabled ones included: Platform never adds a key twice, nor brings a
+ * disabled one back.
+ */
+function holdsEncryptionKey(publicKeys: RegisteredIdentityKey[], publicKey: Uint8Array): boolean {
+  return hasKey(publicKeys, [KeyPurpose.ENCRYPTION, 'encryption'], [KeyType.ECDSA_SECP256K1, 'ecdsa_secp256k1'], publicKey)
+}
+
+/**
+ * Whether the identity has an enabled ENCRYPTION key (of any type) bound to
+ * `contractId`. The newest such key is the contract's current one, so adding
+ * another would replace it and orphan everything peers encrypted to it.
+ */
+function hasBoundEncryptionKey(publicKeys: RegisteredIdentityKey[], contractId: string): boolean {
+  return publicKeys.some((key) => resolveKeyPurpose(key.purposeNumber ?? key.purpose) === KeyPurpose.ENCRYPTION
+    && !key.disabledAt
+    && isBoundToContract(key.contractBounds, contractId))
 }
 
 /**
@@ -147,20 +189,25 @@ export class BoundKeyExistsError extends Error {
   }
 }
 
-type IdentityKeySnapshot = { purpose?: unknown; purposeNumber?: number; disabledAt?: unknown; contractBounds?: unknown }
+/** The identity already holds the key to add, disabled: Platform will not add it again. */
+export class KeyRetiredError extends Error {
+  constructor() {
+    super('The identity already holds this encryption key, disabled')
+  }
+}
 
 /**
- * Build an unsigned IdentityUpdateTransition adding `keys` (ids assigned in
- * order after the identity's highest). Each key with a `proofPrivateKey`
- * signs the transition's signable bytes to prove ownership; the transition
- * itself is NOT signed: the wallet signs it with a MASTER key. `refuse` sees
- * the same identity snapshot the transition is built from and may throw.
+ * Build an unsigned IdentityUpdateTransition adding the keys `select` picks
+ * from the identity's current keys (ids assigned in order after the
+ * identity's highest); `select` may throw instead. Each key with a
+ * `proofPrivateKey` signs the transition's signable bytes to prove
+ * ownership; the transition itself is NOT signed: the wallet signs it with a
+ * MASTER key.
  */
 async function buildUnsignedAddKeysTransition(
   identityId: string,
-  keys: KeyToAdd[],
-  refuse?: (publicKeys: IdentityKeySnapshot[]) => void,
-): Promise<{ transitionBytes: Uint8Array; keyIds: number[]; identityRevision: bigint }> {
+  select: (publicKeys: RegisteredIdentityKey[]) => KeyToAdd[],
+): Promise<UnsignedTransitionResult> {
   const sdk = await getEvoSdk()
   const wasm = await ensureWasmInitialized()
 
@@ -169,7 +216,8 @@ async function buildUnsignedAddKeysTransition(
   if (!identity) {
     throw new Error(`Identity not found: ${identityId}`)
   }
-  refuse?.(identity.publicKeys as unknown as IdentityKeySnapshot[])
+  const keys = select(identity.publicKeys as unknown as RegisteredIdentityKey[])
+  if (keys.length === 0) throw new Error('The identity already has every key to add')
   const newRevision = BigInt(identity.toJSON().revision || 0) + BigInt(1)
   const maxKeyId = identity.publicKeys.reduce((max: number, key: { keyId: number }) => Math.max(max, key.keyId), 0)
   const keyIds = keys.map((key, index) => maxKeyId + 1 + index)
@@ -225,7 +273,8 @@ async function buildUnsignedAddKeysTransition(
   // Pass 2: the same transition carrying the proofs.
   const transitionBytes = buildTransitionBytes(signatures, (transition) => transition.toBytes())
   logger.debug('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
-  return { transitionBytes, keyIds, identityRevision: newRevision }
+  const added = keys.map((key, index): YapprRegisteredKey => ({ keyId: keyIds[index], purpose: key.purpose, securityLevel: key.securityLevel }))
+  return { transitionBytes, keys: added, identityRevision: newRevision }
 }
 
 function requireKeyLength(bytes: Uint8Array, expected: number, what: string): void {
@@ -235,14 +284,19 @@ function requireKeyLength(bytes: Uint8Array, expected: number, what: string): vo
 }
 
 /**
- * Build an unsigned IdentityUpdateTransition for key registration.
+ * Build the unsigned IdentityUpdateTransition of a wallet sign-in's
+ * first-login key registration (the `dash-st:` hand-off).
  *
- * This creates a state transition that adds auth and encryption keys to an identity.
- * Each new key signs the transition's signable bytes to prove ownership.
- * The overall transition is NOT signed by a master key - that's for the wallet to do.
+ * The auth key stays on the hash160 workaround (no ownership proof, which
+ * would reveal the full key); the encryption key (`deriveLoginEncryptionKey`)
+ * is a full secp256k1 key with an ownership proof, so encrypted features can
+ * use the on-chain point directly.
  *
- * @param request - The key registration request
- * @returns The transition bytes (with key signatures) and key IDs
+ * Legacy builds add both keys, unbound. App Connect builds bind the
+ * encryption key `singleContract(anchor)`: it is the messaging key, and must
+ * be the anchor key `dm.unlock` re-derives from the auth key. They add only
+ * the keys the identity lacks: never a second anchor key, which would replace
+ * the one peers encrypt to.
  */
 export async function buildUnsignedKeyRegistrationTransition(
   request: KeyRegistrationRequest
@@ -253,15 +307,26 @@ export async function buildUnsignedKeyRegistrationTransition(
   requireKeyLength(encryptionPrivateKey, 32, 'encryption private key')
   requireKeyLength(encryptionPublicKey, 33, 'encryption public key')
 
-  // The auth key stays on the hash160 workaround (no ownership proof, which
-  // would reveal the full key); the encryption key is a full secp256k1 key so
-  // encrypted features can use the on-chain point directly. Both are unbound
-  // here: this is the legacy login's registration.
-  const { transitionBytes, keyIds: [authKeyId, encryptionKeyId], identityRevision } = await buildUnsignedAddKeysTransition(identityId, [
-    { purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_hash160', data: hash160(authPublicKey) },
-    { purpose: 'encryption', securityLevel: 'medium', keyType: 'ecdsa_secp256k1', data: encryptionPublicKey, proofPrivateKey: encryptionPrivateKey },
-  ])
-  return { transitionBytes, authKeyId, encryptionKeyId, identityRevision }
+  const auth: KeyToAdd = { purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_hash160', data: hash160(authPublicKey) }
+  const encryption: KeyToAdd = { purpose: 'encryption', securityLevel: 'medium', keyType: 'ecdsa_secp256k1', data: encryptionPublicKey, proofPrivateKey: encryptionPrivateKey }
+  const anchorId = messagingAnchorId()
+  if (!anchorId) return buildUnsignedAddKeysTransition(identityId, () => [auth, encryption])
+
+  const messagingKey = deriveEncryptionKey(authPrivateKey, identityId, anchorId)
+  const messagingPublicKey = getPublicKey(messagingKey)
+  messagingKey.fill(0)
+  if (!bytesEqual(encryptionPublicKey, messagingPublicKey)) {
+    throw new Error('The encryption key to register is not the messaging key this sign-in derives')
+  }
+  return buildUnsignedAddKeysTransition(identityId, (publicKeys) => {
+    const adding: KeyToAdd[] = []
+    if (!hasAuthKey(publicKeys, authPublicKey)) adding.push(auth)
+    // A disabled copy of this key would make Platform refuse the whole update, auth key included.
+    if (!hasBoundEncryptionKey(publicKeys, anchorId) && !holdsEncryptionKey(publicKeys, encryptionPublicKey)) {
+      adding.push({ ...encryption, boundToContract: anchorId })
+    }
+    return adding
+  })
 }
 
 /**
@@ -270,7 +335,8 @@ export async function buildUnsignedKeyRegistrationTransition(
  * messaging key, for a wallet to sign with the identity's MASTER key. Throws
  * `BoundKeyExistsError` when the identity already has one: the newest bound
  * key becomes the current one, so adding a second would orphan everything
- * peers encrypted to the first.
+ * peers encrypted to the first. `KeyRetiredError` when it holds this key
+ * disabled.
  */
 export async function buildUnsignedBoundEncryptionKeyTransition(request: {
   identityId: string
@@ -279,29 +345,30 @@ export async function buildUnsignedBoundEncryptionKeyTransition(request: {
   contractId: string
 }): Promise<{ transitionBytes: Uint8Array; keyId: number; identityRevision: bigint }> {
   requireKeyLength(request.encryptionPrivateKey, 32, 'encryption private key')
-  const { transitionBytes, keyIds: [keyId], identityRevision } = await buildUnsignedAddKeysTransition(request.identityId, [{
-    purpose: 'encryption',
-    securityLevel: 'medium',
-    keyType: 'ecdsa_secp256k1',
-    data: getPublicKey(request.encryptionPrivateKey),
-    proofPrivateKey: request.encryptionPrivateKey,
-    boundToContract: request.contractId,
-  }], (publicKeys) => {
-    const bound = publicKeys.some((key) => resolveKeyPurpose(key.purposeNumber ?? key.purpose) === KeyPurpose.ENCRYPTION
-      && !key.disabledAt
-      && isBoundToContract(key.contractBounds, request.contractId))
-    if (bound) throw new BoundKeyExistsError()
+  const { transitionBytes, keys: [{ keyId }], identityRevision } = await buildUnsignedAddKeysTransition(request.identityId, (publicKeys) => {
+    if (hasBoundEncryptionKey(publicKeys, request.contractId)) throw new BoundKeyExistsError()
+    const publicKey = getPublicKey(request.encryptionPrivateKey)
+    if (holdsEncryptionKey(publicKeys, publicKey)) throw new KeyRetiredError()
+    return [{
+      purpose: 'encryption',
+      securityLevel: 'medium',
+      keyType: 'ecdsa_secp256k1',
+      data: publicKey,
+      proofPrivateKey: request.encryptionPrivateKey,
+      boundToContract: request.contractId,
+    }]
   })
   return { transitionBytes, keyId, identityRevision }
 }
 
 /**
- * Check if an identity has the expected keys registered.
+ * Whether a wallet sign-in can go ahead: the identity has the keys its
+ * first-login registration adds (a fresh read).
  *
- * @param identityId - The identity ID to check
- * @param authPublicKey - Expected auth public key (33 bytes)
- * @param encryptionPublicKey - Expected encryption public key (33 bytes)
- * @returns True if both keys exist on the identity
+ * Legacy builds: the auth key and this encryption key. App Connect builds:
+ * the auth key. Messaging is not a condition of signing in there: an
+ * identity without an anchor key signs in and sets messaging up from
+ * Messages, and one whose anchor key is another key unlocks with that key.
  */
 export async function checkKeysRegistered(
   identityId: string,
@@ -309,46 +376,12 @@ export async function checkKeysRegistered(
   encryptionPublicKey: Uint8Array
 ): Promise<boolean> {
   const sdk = await getEvoSdk()
-
-  // Fetch fresh identity data
   const identity = await sdk.identities.fetch(identityId)
   if (!identity) {
     return false
   }
-
-  const publicKeys = identity.publicKeys
-
-  // Helper to extract key data as Uint8Array from a WASM IdentityPublicKey.
-  // The WASM `.data` getter returns a hex string; `.toJSON().data` may differ.
-  // Try the direct `.data` hex property first, then toJSON as fallback.
-  const getKeyData = (key: RegisteredIdentityKey): Uint8Array =>
-    requireBytes(key.data ?? key.toJSON().data, 'identity key data')
-
-  const authHash = hash160(authPublicKey)
-
-  // Check for auth key (purpose=AUTHENTICATION, keyType=ECDSA_HASH160)
-  const authKeyExists = publicKeys.some((key: RegisteredIdentityKey) => {
-    if (!keyMatchesPurposeAndType(key, KeyPurpose.AUTHENTICATION, 'authentication', KeyType.ECDSA_HASH160, 'ecdsa_hash160')) {
-      return false
-    }
-    const keyData = getKeyData(key)
-    if (keyData.length !== authHash.length) {
-      return false
-    }
-    return keyData.every((b: number, i: number) => b === authHash[i])
-  })
-
-  // Check for encryption key (purpose=ENCRYPTION, keyType=ECDSA_SECP256K1)
-  const encKeyExists = publicKeys.some((key: RegisteredIdentityKey) => {
-    if (!keyMatchesPurposeAndType(key, KeyPurpose.ENCRYPTION, 'encryption', KeyType.ECDSA_SECP256K1, 'ecdsa_secp256k1')) {
-      return false
-    }
-    const keyData = getKeyData(key)
-    if (keyData.length !== encryptionPublicKey.length) {
-      return false
-    }
-    return keyData.every((b: number, i: number) => b === encryptionPublicKey[i])
-  })
-
-  return authKeyExists && encKeyExists
+  const publicKeys = identity.publicKeys as unknown as RegisteredIdentityKey[]
+  if (!hasAuthKey(publicKeys, authPublicKey)) return false
+  return messagingAnchorId() !== null
+    || hasKey(publicKeys, [KeyPurpose.ENCRYPTION, 'encryption'], [KeyType.ECDSA_SECP256K1, 'ecdsa_secp256k1'], encryptionPublicKey)
 }

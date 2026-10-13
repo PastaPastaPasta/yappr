@@ -1417,6 +1417,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ### 4.38 Unlock messages sheet
 
 - Bottom sheet (large detent). First "Unlocking your messages…" with a spinner (the automatic recovery). On success the sheet closes onto the inbox with the toast "Messages unlocked", with no "recovered" step. If recovery can't work, the manual form: title "Unlock your messages", body `dm.unlock.body`, one secure field (placeholder "Paste your encryption key"), error line, "Unlock" (primary block); success is the same "Messages unlocked". The key's formats are named only in the error for text that is not a key (`dm.unlock.invalid`); a key that is one but not this account's reads `dm.unlock.mismatch`. Sentence case, no "!".
+- App Connect builds, an account with no messaging key yet (signed up before first login added one): title "Set up messaging", body `dm.setup`, "Continue in wallet" (primary block, opens the wallet's approval) and "Use a wallet on another device" (outline block, shows the approval as a QR code with "Copy link"). Then "Waiting for your wallet…" with "Check now" (and "Open wallet again" on this device); the app checks every 5 s and on return from the wallet, and closes with "Messages unlocked" once the key lands. No wallet app on the device shows the QR code instead.
 
 ### 4.39 Report sheet and block sheet
 
@@ -1786,6 +1787,8 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | dm.unlock | Unlock your messages / Your messages are encrypted. Paste your encryption key to read and send them on this device. / Unlock |
 | dm.unlock.placeholder | Paste your encryption key |
 | dm.unlock.done | Messages unlocked |
+| dm.setup | Set up messaging / Approve one request in your Dash wallet to start sending and reading private messages. You only do this once. / Continue in wallet / Use a wallet on another device |
+| dm.setup.waiting | Approve the request in your wallet, then come back here. / Scan this code with the wallet you sign in with. / Waiting for your wallet… / Check now / Open wallet again |
 | dm.unlock.invalid | That doesn't look like an encryption key. It's a WIF or 64-character hex key from yap.pr. |
 | dm.unlock.mismatch | That isn't the encryption key for this account's messages. (another account's key, another of this account's keys, or another network's) |
 | dm.thread.empty | No messages yet. Start the conversation! **(web)** |

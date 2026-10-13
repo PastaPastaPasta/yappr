@@ -89,12 +89,22 @@ export function StatusBlock({
  * The request as a QR code (AUTH-04): at least 240 pt, on white with a
  * 16 pt quiet zone in both themes, so any wallet camera reads it.
  */
-export function QrCard({ value, dimmed = false, testID }: { value: string; dimmed?: boolean; testID?: string }) {
+export function QrCard({
+  value,
+  dimmed = false,
+  label = 'Sign-in QR code',
+  testID,
+}: {
+  value: string;
+  dimmed?: boolean;
+  label?: string;
+  testID?: string;
+}) {
   return (
     <View
       accessible
       accessibilityRole="image"
-      accessibilityLabel="Sign-in QR code"
+      accessibilityLabel={label}
       testID={testID}
       className={cn('self-center rounded-2xl border bg-white p-4', tw.border, dimmed && 'opacity-30')}
     >
