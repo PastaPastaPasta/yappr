@@ -131,7 +131,8 @@ async function reuseStore(ctx, who, label) {
   const id = battery.b58(first.$id);
   if (first.status !== 'active') {
     const reopened = await battery.probeReplace(`${label} reopened (it was ${first.status})`, null, who, 'store', id, withStatus(first, 'active'), first.$revision);
-    if (reopened.ok) ctx.reopenedStores.set(id, first.status);
+    if (!reopened.ok) throw new Error(`${label}: could not reopen store ${id}: ${reopened.error ?? 'not confirmed'}`);
+    ctx.reopenedStores.set(id, first.status);
   }
   return id;
 }

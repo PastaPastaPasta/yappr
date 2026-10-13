@@ -105,6 +105,9 @@ async function queryAll(battery, docType, where, orderBy) {
   return rows;
 }
 
+/** `rows` without repeats of a document (the same `$id` read through two indexes). */
+const distinctDocs = (rows) => [...new Map(rows.map((row) => [normalizeId(row.$id), row])).values()];
+
 /** One read per item, flattened (sequential: the devnet's DAPI is easily overrun). */
 async function readEach(items, read) {
   const rows = [];
@@ -188,8 +191,12 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
   const blogs = await readEach(owners, (who) => queryAll(battery, 'blog', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]));
   // Only a blog's owner posts to it (b21), so the owners' posts are the posts on their blogs.
   const posts = await readEach(blogs, (blog) => queryAll(battery, 'blogPost', [['blogId', '==', normalizeId(blog.$id)], ['$createdAt', '>=', since]], [['blogId', 'asc'], ['$createdAt', 'asc']]));
-  // blogComment keeps no owner index: comments on the owners' posts (postOwnerAndTime), written by the owners.
-  const comments = await readEach(owners, (who) => queryAll(battery, 'blogComment', [['blogPostId.$ownerId', '==', who.ownerId], ['$createdAt', '>=', since]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]));
+  // blogComment keeps no owner index, so the owners' comments are found through every post author's
+  // postOwnerAndTime from `since` (the authors from the blogPost timeline), then kept by owner below:
+  // an owner's comment on anyone's post, not only on the owners' own.
+  const authors = new Set((await queryAll(battery, 'blogPost', [['$createdAt', '>', 0]], [['$createdAt', 'asc']])).map((row) => normalizeId(row.$ownerId)));
+  for (const who of owners) authors.add(who.ownerId);
+  const comments = await readEach([...authors], (author) => queryAll(battery, 'blogComment', [['blogPostId.$ownerId', '==', author], ['$createdAt', '>=', since]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]));
   const follows = await readEach(owners, (who) => queryAll(battery, 'blogFollow', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['blogId', 'asc']]));
   const scope = { owners: ownerSet(owners), since };
   const targets = {
@@ -223,16 +230,23 @@ export async function cleanStorefront({ battery, owners, since, reopened = new M
   const stores = await readEach(owners, (who) => battery.queryDocs('store', { where: [['$ownerId', '==', who.ownerId]], limit: 1 }));
   const inWindow = (docType, index) => readEach(stores, (store) => queryAll(battery, docType, [[index, '==', normalizeId(store.$id)], ['$createdAt', '>=', since]], [[index, 'asc'], ['$createdAt', 'asc']]));
   const items = createdSince(await inWindow('storeItem', 'storeId'), scope);
-  const itemReviews = await readEach(items, (item) => queryAll(battery, 'itemReview', [['itemId', '==', normalizeId(item.$id)], ['$createdAt', '>=', since]], [['itemId', 'asc'], ['$createdAt', 'asc']]));
+  // The owners' own orders, at anyone's store (buyerOrders), and the reviews written on them (a review names
+  // its order): with the reads under the owners' stores, every order and review an owner wrote in the window.
+  const ownOrders = createdSince(await readEach(owners, (who) => queryAll(battery, 'storeOrder', [['$ownerId', '==', who.ownerId], ['$createdAt', '>=', since]], [['$ownerId', 'asc'], ['$createdAt', 'asc']])), scope);
+  const reviewsOfOrder = (docType, index) => readEach(ownOrders, (order) => queryAll(battery, docType, [[index, '==', normalizeId(order.$id)]], [[index, 'asc']]));
+  const itemReviews = distinctDocs([
+    ...await readEach(items, (item) => queryAll(battery, 'itemReview', [['itemId', '==', normalizeId(item.$id)], ['$createdAt', '>=', since]], [['itemId', 'asc'], ['$createdAt', 'asc']])),
+    ...await reviewsOfOrder('itemReview', 'orderId'),
+  ]);
   const kits = await readEach(items, (item) => battery.queryDocs('itemDeliverable', { where: [['itemId', '==', normalizeId(item.$id)]], limit: 1 }));
   const zones = await readEach(stores, (store) => queryAll(battery, 'shippingZone', [['storeId', '==', normalizeId(store.$id)]], [['storeId', 'asc'], ['priority', 'asc']]));
   // Buyers among the owners: a real customer's order on a persona's store is not the run's.
-  const orders = createdSince(await inWindow('storeOrder', 'storeId'), scope);
+  const orders = distinctDocs([...createdSince(await inWindow('storeOrder', 'storeId'), scope), ...ownOrders]);
   const restore = new Map(reopened);
   const statusAfter = (row) => restore.get(normalizeId(row.$id)) ?? (createdSince([row], scope).length > 0 ? 'closed' : null);
   const targets = {
     itemReview: createdSince(itemReviews, scope),
-    storeReview: createdSince(await inWindow('storeReview', 'storeId'), scope),
+    storeReview: createdSince(distinctDocs([...await inWindow('storeReview', 'storeId'), ...await reviewsOfOrder('storeReview', 'orderId')]), scope),
     itemDeliverable: createdSince(kits, scope),
     shippingZone: createdSince(zones, scope),
     storeItem: items.filter((row) => row.status !== 'deleted'),
