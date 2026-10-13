@@ -345,7 +345,9 @@ New contracts start empty and the old ones are simply abandoned. Paste the
 printed IDs into `.env.testing` and commit — the next `build:testing` (local and
 deployed) picks them up.
 
-### Test content on the public devnet timeline
+### Test content on the public devnet
+
+#### The social timeline
 
 The devnet has no test copy of the social contract: the /devnet site, the
 batteries and the devnet e2e job all use the published one, so a test post sits
@@ -387,6 +389,63 @@ NETWORK=devnet DEVNET_IDENTITY_IDS=<bot0>,<bot1>,<bot2> \
 run exits 1 when something could not be tombstoned; run it again, since it only
 touches what is still live. The library behind both is
 `scripts/test-content-cleanup.mjs`.
+
+#### Pollr, blog and storefront
+
+The feature batteries (`verify-pollr`, `verify-blog`, `verify-storefront`) act
+as seed-ledger personas on contracts the /devnet site lists. What each run
+leaves is handled per contract (`scripts/surface-cleanup.mjs`):
+
+- **pollr runs on a test contract.** A poll with a ballot can never be removed:
+  `vote` is `canBeDeleted: false`, and `noBallots` counts a withdrawn ballot
+  too. So by default the battery runs on the *pollr-test* contract, a copy of
+  `contracts/pollr-contract.json` that the creator persona (230) registered once
+  and every later run reuses. The app never reads it, so its polls stay there
+  out of sight. The copy names no other contract, token or moderator, so the
+  cases and their error codes are the same as on the published contract.
+  Its id is recorded per network in the gitignored `.test-contracts.local.json`
+  beside the sha256 of the file it was registered from. When none is recorded,
+  the devnet was wiped, or the file has changed, the run stops and asks for
+  `--register-test-contract`, which registers a new one for about 19×10⁹ credits
+  (≈1,150¢). The creator pays, funded through the treasury like any persona;
+  the maker never registers one. `--live-contract` aims the cases at the
+  published contract instead. Its cleanup then deletes the run's polls that
+  took no ballot and lists the rest as leftovers.
+- **blog** cleans up after every run, once every case has run. Comments and
+  follows go by their owners' deletes, and posts and drafts by the author's
+  tombstone (the client's delete). The run's blogs go by the `--moderator`'s
+  removal, since a blog's owner cannot delete it. On sakura that moderator is
+  the maker, the contract's interim moderator, so run with `--moderator maker`
+  (the battery acts as it for b13–b17 too). With a moderator that cannot
+  remove them, the removals fail and the blogs stay; the cleanup prints them.
+- **storefront** cleans up after every run, once every case has run. Reviews,
+  digital kits and shipping zones go by their owners' deletes, and items by
+  `status: 'deleted'`. A store cannot be deleted and is unique per owner, so
+  a store the run created is closed. The app lists active stores only. The
+  next run reopens it for its cases and then gives it its earlier status back.
+  Orders, their status updates
+  and deliveries are permanent. They are printed as leftovers; they are
+  encrypted and only their buyer and seller read them.
+
+`--keep-content` skips a battery's cleanup. A cleanup never changes a battery's
+verdict; one that fails prints a WARNING. It removes everything the run's
+personas wrote since the run started, so two runs must not share personas at
+once.
+
+By hand, keyed by the owners' persona indexes and a start time (`--since` is
+required, since the same personas own seeded content; `--plan` writes nothing):
+
+```bash
+NETWORK=devnet node scripts/clean-test-content.mjs --plan --surface blog,storefront,pollr \
+  --personas 200,201,202,210,211,212,230,231,232 --since 2026-10-13T15:42:00Z
+NETWORK=devnet node scripts/clean-test-content.mjs --live --surface blog,storefront \
+  --personas 200,201,202,210,211,212 --since 2026-10-13T15:42:00Z --moderator maker
+```
+
+`--personas p:<id>` names an identity when the seed ledger is not at hand,
+which is enough for a plan; a live run signs with the ledger's keys.
+`--moderator` removes the blogs the personas created in the window. Leftovers
+do not fail a run; anything that could not be removed does (exit 1).
 
 ## 6. Adding a pool identity
 

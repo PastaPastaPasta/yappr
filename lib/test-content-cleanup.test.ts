@@ -171,3 +171,12 @@ describe('which refused writes a cleanup re-reads and re-broadcasts', () => {
     expect(isStaleWrite('{"code":40127}')).toBe(false)
   })
 })
+
+describe('the feature surfaces take their window from --since only', () => {
+  it('refuses --until and --after outside --surface social', () => {
+    const base = ['--plan', '--surface', 'blog', '--personas', '1:abc', '--since', '1791904855115']
+    expect(() => parseArgs([...base, '--until', '1791904855116'])).toThrow(/--surface social only/)
+    expect(() => parseArgs([...base, '--after', 'reply:abc'])).toThrow(/--surface social only/)
+    expect(parseArgs(base).surfaces).toEqual(['blog'])
+  })
+})

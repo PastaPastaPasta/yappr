@@ -11,13 +11,17 @@
  * scripts/seed/provision-seed-identities.mjs); `personaActor` signs with the
  * persona's CRITICAL auth key, which also covers the YAPP starter claim.
  */
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { IdentitySigner, TokenPaymentInfo, ensureInitialized } from '@dashevo/evo-sdk';
+import { DataContract, IdentitySigner, PlatformVersion, TokenPaymentInfo, ensureInitialized } from '@dashevo/evo-sdk';
 import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
 import { signerFor } from './owner-keys.mjs';
+import { contractSource, registrationJson } from './register-lib.mjs';
+import { devnetName, envValue, network } from './sdk-env.mjs';
 import { resolveMakerOwner } from './social-battery-lib.mjs';
+import { CLEANUP_CLOCK_SLACK_MS } from './verify-lib.mjs';
 import {
   ALREADY_CLAIMED,
   REPO_ROOT,
@@ -38,6 +42,7 @@ import {
   socialContractId,
   tokenBalance,
   wifFromHex,
+  writePrivateFile,
 } from './seed/seed-lib.mjs';
 
 export const SETTLE_MS = 3000;
@@ -130,6 +135,26 @@ const PERSONAL_PERSONA_IDX = 900;
 /** A `--moderator` value: a ledger persona index, `maker` or `personal`. */
 export const MODERATOR_FLAG = { parse: (raw) => raw };
 
+/**
+ * A seed-ledger persona as an actor that signs with its CRITICAL auth key:
+ * `{ ownerId, identityKey, signer, wif, label, starterClaimed }`.
+ */
+export async function personaActor(handle, personaIdx) {
+  const entry = ledgerEntry(loadLedger(), personaIdx);
+  if (!entry) throw new Error(`persona ${personaIdx} is not in the seed ledger`);
+  const identity = await readbackWith(handle, () => handle.sdk.identities.fetch(entry.identityId));
+  if (!identity) throw new Error(`identity ${entry.identityId} not found on this devnet`);
+  const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID);
+  const authKey = entry.identityKeys.find((key) => key.keyId === CRITICAL_AUTH_KEY_ID);
+  if (!identityKey || !authKey) throw new Error(`persona ${personaIdx} has no CRITICAL auth key`);
+  const wif = wifFromHex(authKey.privateKeyHex);
+  const signer = new IdentitySigner();
+  signer.addKeyFromWif(wif);
+  // `wif` is what a hand-built batch signs with — the only shape that can
+  // carry an `$actionFeeAgreement` (v8 post/reply); the signer covers the rest.
+  return { ownerId: entry.identityId, identityKey, signer, wif, label: `${entry.handle}(${personaIdx})`, starterClaimed: entry.starterClaimed === true };
+}
+
 /** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
 export function createBattery({ handle, contractId, socialId, agreementFor }) {
   let failures = 0;
@@ -143,21 +168,7 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
     if (!condition) failures += 1;
   }
 
-  async function personaActor(personaIdx) {
-    const entry = ledgerEntry(loadLedger(), personaIdx);
-    if (!entry) throw new Error(`persona ${personaIdx} is not in the seed ledger`);
-    const identity = await readback(() => sdk.identities.fetch(entry.identityId));
-    if (!identity) throw new Error(`identity ${entry.identityId} not found on this devnet`);
-    const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID);
-    const authKey = entry.identityKeys.find((key) => key.keyId === CRITICAL_AUTH_KEY_ID);
-    if (!identityKey || !authKey) throw new Error(`persona ${personaIdx} has no CRITICAL auth key`);
-    const wif = wifFromHex(authKey.privateKeyHex);
-    const signer = new IdentitySigner();
-    signer.addKeyFromWif(wif);
-    // `wif` is what a hand-built batch signs with — the only shape that can
-    // carry an `$actionFeeAgreement` (v8 post/reply); the signer covers the rest.
-    return { ownerId: entry.identityId, identityKey, signer, wif, label: `${entry.handle}(${personaIdx})`, starterClaimed: entry.starterClaimed === true };
-  }
+  const actorOf = (personaIdx) => personaActor(handle, personaIdx);
 
   /**
    * The moderator a `--moderator` spec names, with the Identity the moderation
@@ -177,9 +188,9 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
       if (!ledgerEntry(loadLedger(), PERSONAL_PERSONA_IDX)) {
         throw new Error(`--moderator personal is seed-ledger persona ${PERSONAL_PERSONA_IDX}, which this ledger does not hold`);
       }
-      actor = await personaActor(PERSONAL_PERSONA_IDX);
+      actor = await actorOf(PERSONAL_PERSONA_IDX);
     } else if (/^\d+$/.test(value)) {
-      actor = await personaActor(Number(value));
+      actor = await actorOf(Number(value));
     } else {
       throw new Error(`--moderator must be a persona index, maker or personal (got "${value}")`);
     }
@@ -511,7 +522,7 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
   }
 
   return {
-    sdk, readback, check, personaActor, moderatorActor, yappBalance, balanceOf, ensureYapp, fetchDocument, revisionOf,
+    sdk, readback, check, personaActor: actorOf, moderatorActor, yappBalance, balanceOf, ensureYapp, fetchDocument, revisionOf,
     attemptWrite, paymentInfo, attemptCreate, attemptReplace, attemptDelete, attemptDeleteByValues,
     attemptCreateByValues, entryExists, expectAccepted, expectRejected, probeCreate, probeReplace, probeDelete,
     countBy, groupedCount, averageBy, sumBy, ranked, checkRanked, queryDocs, groupValueOf, avgOf, approx, b58,
@@ -537,12 +548,178 @@ export function parseOnly(value, cases) {
   return only;
 }
 
+// ---- Test contracts ----------------------------------------------------------
+
+/**
+ * A battery whose cases leave content nobody can remove (pollr: a poll with a
+ * ballot is permanent) runs them on a TEST contract by default: one copy of the
+ * checked-in file, registered once by a battery persona and reused run after
+ * run. The app never reads it, so what the cases leave there stays out of
+ * sight. Its id is recorded per network in this gitignored file beside the
+ * sha256 of the file it was registered from, so a schema change asks for a new
+ * one (`--register-test-contract`) instead of running the cases against an old
+ * schema. Shape: `{ "<network>": { "<name>": { contractId, sha256, file, ownerId, registeredAt, credits } } }`.
+ */
+export const TEST_CONTRACTS_FILE = join(REPO_ROOT, '.test-contracts.local.json');
+/** What 1M credits cost at $60/DASH (1 DASH = 10^11 credits), in US cents. */
+export const CENTS_PER_MILLION_CREDITS = 0.06;
+const centsOf = (credits) => (Number(credits) * CENTS_PER_MILLION_CREDITS / 1e6).toFixed(2);
+
+/** A network's key in the registry: a devnet by its name, since each devnet is a different chain. */
+export function testContractNetworkKey(net, devnet) {
+  return net === 'devnet' ? `devnet:${devnet}` : net;
+}
+
+/** The sha256 (hex) of a checked-in contract file's bytes. */
+export function contractFileSha256(file) {
+  return createHash('sha256').update(readFileSync(join(REPO_ROOT, 'contracts', file))).digest('hex');
+}
+
+/**
+ * The test contract `name` recorded for `networkKey`, judged against the
+ * file's current `sha256`: `current`, `stale` (registered from another version
+ * of the file) or `missing`.
+ */
+export function recordedTestContract(registry, { networkKey, name, sha256 }) {
+  const entry = registry?.[networkKey]?.[name] ?? null;
+  if (!entry) return { state: 'missing', entry: null };
+  return { state: entry.sha256 === sha256 ? 'current' : 'stale', entry };
+}
+
+/** `registry` with `entry` recorded as the test contract `name` of `networkKey`. */
+export function withTestContract(registry, { networkKey, name, entry }) {
+  return { ...registry, [networkKey]: { ...registry?.[networkKey], [name]: entry } };
+}
+
+/**
+ * Where a battery with a test contract runs: `{ live: false }`, the test
+ * contract (the default), or with `--live-contract` `{ live: true, contractId }`,
+ * the contract `--contract` names, else the battery's env var, else the
+ * deployment's (`deployed`). `--contract` alone is refused, so a stray id
+ * cannot quietly aim the cases at a published contract.
+ */
+export function contractTarget({ liveContract, registerTestContract, contract, fromEnv, deployed, envName }) {
+  if (!liveContract) {
+    if (contract) throw new Error('--contract names the contract for --live-contract; without it the cases run on the test contract');
+    return { live: false };
+  }
+  if (registerTestContract) throw new Error('--register-test-contract registers the test contract, which --live-contract does not use');
+  const contractId = contract ?? fromEnv ?? deployed;
+  if (!contractId) throw new Error(`--live-contract: pass --contract <id>, or set ${envName}`);
+  return { live: true, contractId };
+}
+
+const loadTestContracts = () => (existsSync(TEST_CONTRACTS_FILE) ? JSON.parse(readFileSync(TEST_CONTRACTS_FILE, 'utf8')) : {});
+/** How many of the registrar's newest identity nonces are searched for an earlier registration. */
+const REGISTRATION_SCAN = 32;
+/** A contract create can land well after the gateway gave up on it: this many settles before it counts as lost. */
+const REGISTRATION_POLLS = 10;
+
+/** `file` as a contract owned by `ownerId` at identity nonce `nonce` (its id derives from both). */
+function testContractDraft(file, ownerId, nonce) {
+  const text = readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8');
+  if (text.includes('"SOCIAL_CONTRACT_ID"')) throw new Error(`contracts/${file} prices a type in the social contract's YAPP; a test copy cannot carry that`);
+  const id = DataContract.generateId(ownerId, nonce).toBase58();
+  return DataContract.fromJSON(registrationJson(contractSource(text), { id, ownerId }), true, PlatformVersion.current());
+}
+
+/** A contract's document schemas as parsed JSON: equal for the file and every contract registered from it. */
+const schemasJson = (contract) => JSON.stringify(contract.toJSON(PlatformVersion.current()).documentSchemas, (_key, value) => (typeof value === 'bigint' ? String(value) : value));
+
+/**
+ * The newest contract `owner` registered with exactly `file`'s schemas, or
+ * null. A contract's id derives from its owner's identity nonce, so the
+ * registrar's recent nonces name every contract it could have registered:
+ * a registration whose record was never written (a 504 that landed late,
+ * another checkout) is found again instead of being paid for twice.
+ */
+async function findRegistered(handle, { file, owner }) {
+  const nonce = BigInt((await readbackWith(handle, () => handle.sdk.identities.nonce(owner.ownerId))) ?? 0n);
+  const want = schemasJson(testContractDraft(file, owner.ownerId, 1n));
+  for (let n = nonce; n >= 1n && n > nonce - BigInt(REGISTRATION_SCAN); n--) {
+    const id = DataContract.generateId(owner.ownerId, n).toBase58();
+    const found = await readbackWith(handle, () => handle.sdk.contracts.fetch(id));
+    if (found && schemasJson(found) === want) return id;
+  }
+  return null;
+}
+
+/**
+ * Registers `file` as a new contract owned by `owner`. Never the maker: it must
+ * not spend an identity nonce on a test contract. Decided by reading the
+ * contract back, since the gateway 504s waits that landed.
+ */
+async function registerTestContract(handle, { file, owner }) {
+  const { sdk } = handle;
+  if (owner.ownerId === envValue('DEVNET_MAKER_IDENTITY_ID')) throw new Error(`${owner.label} is the devnet maker, which never registers a test contract`);
+  const nonce = ((await readbackWith(handle, () => sdk.identities.nonce(owner.ownerId))) ?? 0n) + 1n;
+  const dataContract = testContractDraft(file, owner.ownerId, nonce);
+  const balance = async () => BigInt(await readbackWith(handle, () => sdk.identities.balance(owner.ownerId)));
+  const before = await balance();
+  let contractId = DataContract.generateId(owner.ownerId, nonce).toBase58();
+  let error = null;
+  try {
+    contractId = (await sdk.contracts.publish({ dataContract, identityKey: owner.identityKey, signer: owner.signer })).id.toBase58();
+  } catch (e) {
+    error = describeErr(e);
+  }
+  for (let poll = 0; poll < REGISTRATION_POLLS; poll++) {
+    await settle();
+    if (await readbackWith(handle, () => sdk.contracts.fetch(contractId)).catch(() => null)) {
+      const credits = before - await balance();
+      console.log(`registered ${contractId} from contracts/${file}, paid by ${owner.label}: ${credits} credits (${centsOf(credits)}¢)`);
+      return { contractId, ownerId: owner.ownerId, registeredAt: new Date().toISOString(), credits: String(credits) };
+    }
+  }
+  throw new Error(`registering contracts/${file} failed: ${error ?? 'the contract does not read back'}. If it lands later, the next run finds it without registering again`);
+}
+
+/**
+ * The id of the battery's test contract (`test`: `{ name, file, registrar, cost }`)
+ * on this network: the recorded one when it matches the file and is on chain,
+ * else one `registrar` registered from the same schemas earlier (recorded on
+ * the spot), else, only with `register`, a new one paid by `registrar`.
+ * Without `register` there is no new registration, so a run never spends
+ * `cost` by surprise.
+ */
+async function testContractId(handle, { test, registrar, register }) {
+  const sha256 = contractFileSha256(test.file);
+  const networkKey = testContractNetworkKey(network(), network() === 'devnet' ? devnetName() : null);
+  const registry = loadTestContracts();
+  const { state, entry } = recordedTestContract(registry, { networkKey, name: test.name, sha256 });
+  const label = `the ${test.name}-test contract`;
+  if (state === 'current' && await readbackWith(handle, () => handle.sdk.contracts.fetch(entry.contractId))) {
+    if (register) console.log(`${label} ${entry.contractId} already matches contracts/${test.file}: nothing registered`);
+    return entry.contractId;
+  }
+  const record = (found) => {
+    writePrivateFile(TEST_CONTRACTS_FILE, `${JSON.stringify(withTestContract(registry, { networkKey, name: test.name, entry: { ...found, sha256, file: test.file } }), null, 2)}\n`);
+    return found.contractId;
+  };
+  const earlier = await findRegistered(handle, { file: test.file, owner: registrar });
+  if (earlier) {
+    console.log(`${label}: ${registrar.label} registered ${earlier} from this contracts/${test.file} earlier; recorded it in ${TEST_CONTRACTS_FILE}`);
+    return record({ contractId: earlier, ownerId: registrar.ownerId, foundAt: new Date().toISOString() });
+  }
+  const why = {
+    missing: `no ${label} is recorded for ${networkKey}`,
+    stale: `${label} ${entry?.contractId} was registered from another contracts/${test.file}`,
+    current: `${label} ${entry?.contractId} is not on this chain`,
+  }[state];
+  if (!register) {
+    throw new Error(`${why}, and ${registrar.label} registered none from this one. Pass --register-test-contract to register one (${test.cost}, paid by ${registrar.label}), or --live-contract to run on the deployed contract`);
+  }
+  console.log(`${why}: registering one`);
+  return record(await registerTestContract(handle, { file: test.file, owner: registrar }));
+}
+
 // ---- Entrypoint --------------------------------------------------------------
 
 /**
  * `flags` and `actors` map a flag name to its default, and the default's TYPE is
- * the coercion (number → Number, bigint → BigInt, anything else → the raw
- * string). Pass `{ default, parse }` when a flag needs its own.
+ * the coercion (number → Number, bigint → BigInt, boolean → a switch that
+ * takes no value, anything else → the raw string). Pass `{ default, parse }`
+ * when a flag needs its own.
  */
 function coerceFlag({ default: fallback, parse }, raw) {
   if (parse) return parse(raw);
@@ -559,7 +736,15 @@ function parseBatteryArgs(argv, spec) {
     specs.set(name, entry);
     args[name] = entry.default;
   };
-  if (spec.contract?.env) define('contract', process.env[spec.contract.env]?.trim() || null);
+  const test = spec.contract?.test;
+  const fromEnv = spec.contract?.env ? process.env[spec.contract.env]?.trim() || null : null;
+  // With a test contract the env var only names the contract for --live-contract.
+  if (spec.contract?.env) define('contract', test ? null : fromEnv);
+  if (test) {
+    define('live-contract', false);
+    define('register-test-contract', false);
+  }
+  if (spec.cleanup) define('keep-content', false);
   if (spec.yapp?.default !== undefined) define('yapp', spec.yapp.default);
   for (const [name, value] of Object.entries({ ...spec.actors, ...spec.flags })) define(name, value);
 
@@ -567,19 +752,51 @@ function parseBatteryArgs(argv, spec) {
     const name = argv[i].startsWith('--') ? argv[i].slice(2) : null;
     if (name === 'only') { args.only = parseOnly(argv[++i], spec.cases); continue; }
     const entry = name === null ? undefined : specs.get(name);
+    if (!entry && name === 'keep-content') throw new Error('--keep-content: this battery cleans up nothing, so there is no content to keep');
     if (!entry) throw new Error(`Unknown argument: ${argv[i]}`);
-    args[name] = coerceFlag(entry, argv[++i]);
+    args[name] = typeof entry.default === 'boolean' ? true : coerceFlag(entry, argv[++i]);
   }
-  if (spec.contract?.env && !args.contract) throw new Error(`Pass --contract <id> or set ${spec.contract.env}`);
+  if (test) {
+    args.target = contractTarget({
+      liveContract: args['live-contract'], registerTestContract: args['register-test-contract'], contract: args.contract,
+      // The deployment's id is read from .env.devnet, so only a devnet run falls back to it.
+      fromEnv, deployed: network() === 'devnet' ? envValue(test.deployedEnv) ?? null : null, envName: spec.contract.env,
+    });
+  } else if (spec.contract?.env && !args.contract) {
+    throw new Error(`Pass --contract <id> or set ${spec.contract.env}`);
+  }
   spec.validate?.(args);
   return args;
 }
 
 /**
+ * runBattery's end-of-run cleanup: `spec.cleanup(ctx, { since })` takes down
+ * what the run left on the published surfaces, `since` being the run's start
+ * less the chain-clock slack. `--keep-content` skips it. A cleanup that throws
+ * prints a WARNING and never changes the verdict.
+ */
+async function cleanUpRun(spec, ctx, runStart) {
+  if (!spec.cleanup) return;
+  if (ctx.args['keep-content']) {
+    console.log("\n--keep-content: the run's content stays (scripts/clean-test-content.mjs --surface takes it down later)");
+    return;
+  }
+  console.log('\n--- cleanup of the run\'s content (skip with --keep-content) ---');
+  try {
+    await spec.cleanup(ctx, { since: runStart - CLEANUP_CLOCK_SLACK_MS });
+  } catch (e) {
+    console.log(`WARNING  cleanup did not finish: ${describeErr(e).slice(0, 220)}; run scripts/clean-test-content.mjs --surface by hand`);
+  }
+}
+
+/**
  * The whole battery entrypoint: `--self-test` guard, argument parsing, connect,
- * persona actors, the optional YAPP pre-flight, the case run and the exit code.
+ * persona actors, the test contract (`spec.contract.test`), the optional YAPP
+ * pre-flight, the case run, the cleanup (`spec.cleanup`) and the exit code.
  * `setup` returns the extra ctx a battery's cases need; `battery`, `contractId`,
- * `socialId`, `tokenId`, `args`, `run` and every actor are merged in for free.
+ * `liveContract`, `socialId`, `tokenId`, `args`, `run` and every actor are
+ * merged in for free. `liveContract` is false when the cases run on the test
+ * contract.
  */
 export async function runBattery(spec) {
   if (spec.selfTest && process.argv.includes('--self-test')) process.exit(spec.selfTest());
@@ -587,17 +804,29 @@ export async function runBattery(spec) {
     const args = parseBatteryArgs(process.argv.slice(2), spec);
     await ensureInitialized();
     const socialId = socialContractId();
-    const contractId = spec.contract.fixed ?? args.contract;
+    const known = spec.contract.fixed ?? (args.target ? args.target.contractId : args.contract);
     const extra = (spec.extraContracts?.(args) ?? []).filter(Boolean);
-    const handle = createSdkHandle({ contractIds: [socialId, contractId, ...extra] });
+    // The handle re-fetches these on every reconnect, so a test contract registered below is pushed in.
+    const contractIds = [socialId, known, ...extra].filter(Boolean);
+    const handle = createSdkHandle({ contractIds });
     const { protocolVersion } = await handle.connect();
-    const battery = createBattery({ handle, contractId, socialId, agreementFor: spec.agreementFor });
-    console.log(`connected (PV${protocolVersion}); ${spec.label} ${contractId}${spec.banner?.({ args, socialId }) ?? ''}`);
+    console.log(`connected (PV${protocolVersion})`);
 
     const names = Object.keys(spec.actors ?? {});
-    const resolved = await Promise.all(names.map((name) => battery.personaActor(args[name])));
+    const resolved = await Promise.all(names.map((name) => personaActor(handle, args[name])));
     const actors = Object.fromEntries(names.map((name, index) => [name, resolved[index]]));
     if (names.length > 0) console.log(names.map((name) => `${name}=${actors[name].label}`).join(' '));
+
+    const liveContract = args.target?.live ?? true;
+    let contractId = known;
+    if (!liveContract) {
+      const { test } = spec.contract;
+      contractId = await testContractId(handle, { test, registrar: actors[test.registrar], register: args['register-test-contract'] });
+      contractIds.push(contractId);
+      await handle.sdk.contracts.fetch(contractId);
+    }
+    const battery = createBattery({ handle, contractId, socialId, agreementFor: spec.agreementFor });
+    console.log(`${spec.label} ${contractId}${liveContract ? '' : ` (the ${spec.contract.test.name}-test contract)`}${spec.banner?.({ args, socialId }) ?? ''}`);
 
     let tokenId = null;
     if (spec.yapp) {
@@ -612,9 +841,14 @@ export async function runBattery(spec) {
       }
     }
 
-    const base = { battery, contractId, socialId, tokenId, args, run: Date.now().toString(36), ...actors };
+    const runStart = Date.now();
+    const base = { battery, contractId, liveContract, socialId, tokenId, args, run: runStart.toString(36), ...actors };
     const ctx = { ...base, ...(await spec.setup?.({ ...base, protocolVersion }) ?? {}) };
-    await runCases(battery, spec.cases, args.only, ctx);
+    try {
+      await runCases(battery, spec.cases, args.only, ctx);
+    } finally {
+      await cleanUpRun(spec, ctx, runStart);
+    }
     process.exit(battery.report(spec.summary?.(ctx) ?? '') === 0 ? 0 : 1);
   } catch (e) {
     console.error('ERROR:', describeErr(e));
