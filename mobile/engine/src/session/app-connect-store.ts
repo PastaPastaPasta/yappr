@@ -16,9 +16,9 @@ import { scopedKey } from '@/lib/storage-scope'
  *  - The pending sign-in request (wrapped too) goes to the secure area.
  *  - The connection id and the wrapping key go to the plain area, an
  *    encrypted MMKV instance whose own key is in the Keychain. Both are per
- *    device and network and survive sign-out, as on web. The wrapping key is
- *    imported as a non-extractable WebCrypto key, so the ring's private keys
- *    are only ever unwrapped inside the engine.
+ *    device and network and survive sign-out, as on web. What protects the
+ *    keys at rest is the Keychain/Keystore and the encrypted MMKV; wrapping
+ *    keeps the ring's keys apart from the key that opens them, as on web.
  *
  * The ring holds one session per network, as on web: writing one removes
  * any other identity's ring this engine holds (only the active account's is
@@ -36,10 +36,8 @@ const secretKey = (network: string, name: string) => scopedKey(`yappr_secure_ac_
 const IDENTITY_ID = /^[1-9A-HJ-NP-Za-km-z]{42,44}$/
 const HEX_32 = /^[0-9a-f]{64}$/
 
-type Slot =
-  | { kind: 'device' }
-  | { kind: 'ring'; network: string }
-  | { kind: 'item'; key: string }
+type StoredSlot = { kind: 'ring'; network: string } | { kind: 'item'; key: string }
+type Slot = { kind: 'device' } | StoredSlot
 
 function slotOf(key: string): Slot {
   if (key === 'device-key') return { kind: 'device' }
@@ -61,14 +59,17 @@ function encode(value: unknown): string {
   })
 }
 
+/** A fresh array (offset 0, its own buffer); `hexToBytes` refuses the empty string. */
+const fromHex = (hex: string): Uint8Array<ArrayBuffer> => (hex === '' ? new Uint8Array() : new Uint8Array(hexToBytes(hex)))
+
 function decode(raw: string): unknown {
   return JSON.parse(raw, (_key, item: unknown) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return item
     const tagged = item as Record<string, unknown>
     if (Object.keys(tagged).length !== 1) return item
     if (typeof tagged.$bigint === 'string') return BigInt(tagged.$bigint)
-    if (typeof tagged.$bytes === 'string') return tagged.$bytes === '' ? new Uint8Array() : hexToBytes(tagged.$bytes)
-    if (typeof tagged.$buffer === 'string') return (tagged.$buffer === '' ? new Uint8Array() : hexToBytes(tagged.$buffer)).slice().buffer
+    if (typeof tagged.$bytes === 'string') return fromHex(tagged.$bytes)
+    if (typeof tagged.$buffer === 'string') return fromHex(tagged.$buffer).buffer
     return item
   })
 }
@@ -80,23 +81,19 @@ function ringIdentity(value: unknown): string {
   return identityId
 }
 
-export function engineKeyRingBackend(
-  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key' | 'length'>,
-  subtle: SubtleCrypto = globalThis.crypto.subtle,
-  random: (length: number) => Uint8Array = (length) => globalThis.crypto.getRandomValues(new Uint8Array(length)),
-): KeyRingBackend {
+export function engineKeyRingBackend(storage: Storage): KeyRingBackend {
   let deviceKey: Promise<CryptoKey> | null = null
 
   function loadDeviceKey(): Promise<CryptoKey> {
     deviceKey ??= (async () => {
       let hex = storage.getItem(DEVICE_KEY)
       if (!hex || !HEX_32.test(hex)) {
-        hex = bytesToHex(random(32))
+        hex = bytesToHex(globalThis.crypto.getRandomValues(new Uint8Array(32)))
         storage.setItem(DEVICE_KEY, hex)
       }
-      const raw = hexToBytes(hex)
+      const raw = fromHex(hex)
       try {
-        return await subtle.importKey('raw', raw.slice().buffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+        return await globalThis.crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
       } finally {
         raw.fill(0)
       }
@@ -141,11 +138,11 @@ export function engineKeyRingBackend(
     return found
   }
 
-  function read(slot: Exclude<Slot, { kind: 'device' }>): unknown {
+  function read(slot: StoredSlot): unknown {
     return slot.kind === 'ring' ? readRing(slot.network)?.value : readItem(slot.key)
   }
 
-  function write(slot: Exclude<Slot, { kind: 'device' }>, value: unknown): void {
+  function write(slot: StoredSlot, value: unknown): void {
     if (slot.kind === 'item') {
       storage.setItem(slot.key, encode(value))
       return
@@ -155,37 +152,32 @@ export function engineKeyRingBackend(
     storage.setItem(key, encode(value))
   }
 
-  function remove(slot: Exclude<Slot, { kind: 'device' }>): void {
+  function remove(slot: StoredSlot): void {
     if (slot.kind === 'item') storage.removeItem(slot.key)
     else for (const key of ringKeys(slot.network)) storage.removeItem(key)
   }
 
-  /** The device key is the engine's own: the store only ever reads it (and offers one when it finds none). */
-  async function deviceSlot(predicate?: (current: unknown) => boolean): Promise<CryptoKey> {
-    const current = await loadDeviceKey()
-    if (predicate?.(current)) throw new Error('The engine keeps its own key ring device key')
-    return current
+  /** The device key is the engine's own: the store only reads it (and, finding one, never offers its own). */
+  function storedSlot(key: string): StoredSlot {
+    const slot = slotOf(key)
+    if (slot.kind === 'device') throw new Error('The engine keeps its own key ring device key')
+    return slot
   }
 
   return {
     async get<T>(key: string): Promise<T | undefined> {
       const slot = slotOf(key)
-      if (slot.kind === 'device') return await deviceSlot() as T
+      if (slot.kind === 'device') return await loadDeviceKey() as T
       return read(slot) as T | undefined
     },
     async put(key, value) {
-      const slot = slotOf(key)
-      if (slot.kind === 'device') throw new Error('The engine keeps its own key ring device key')
-      write(slot, value)
+      write(storedSlot(key), value)
     },
     async delete(key) {
-      const slot = slotOf(key)
-      if (slot.kind === 'device') throw new Error('The engine keeps its own key ring device key')
-      remove(slot)
+      remove(storedSlot(key))
     },
     async deleteIf(key, predicate) {
-      const slot = slotOf(key)
-      if (slot.kind === 'device') throw new Error('The engine keeps its own key ring device key')
+      const slot = storedSlot(key)
       if (slot.kind === 'item') {
         const current = readItem(slot.key)
         if (current === undefined || !predicate(current)) return false
@@ -199,8 +191,7 @@ export function engineKeyRingBackend(
       return true
     },
     async updateIf(key, predicate, next) {
-      const slot = slotOf(key)
-      if (slot.kind === 'device') throw new Error('The engine keeps its own key ring device key')
+      const slot = storedSlot(key)
       const current = read(slot)
       if (current === undefined || !predicate(current)) return false
       write(slot, next(current))
@@ -208,7 +199,7 @@ export function engineKeyRingBackend(
     },
     async putIf(key, predicate, value) {
       const slot = slotOf(key)
-      if (slot.kind === 'device') return deviceSlot(predicate)
+      if (slot.kind === 'device') return loadDeviceKey()
       const current = read(slot)
       if (!predicate(current)) return current
       write(slot, value)

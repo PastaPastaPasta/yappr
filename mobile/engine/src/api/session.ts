@@ -23,7 +23,7 @@ import type { AppConnectHealth } from '@/lib/app-connect/session-health'
 import { walletKeyRows, type WalletKeyRow } from '@/lib/app-connect/wallet-keys'
 import { RpcError } from '../protocol/envelope'
 import { createAccountRegistry, type SignInMethod } from '../session/accounts'
-import { createAppConnectFlow, type AppConnectFlowDTO } from '../session/app-connect'
+import { createAppConnectFlow, type AppConnectFlowDTO, type AppConnectReturn } from '../session/app-connect'
 import { engineKeyRingBackend } from '../session/app-connect-store'
 import { createKeyExchange, type KeyExchangeRequestDTO, type KeyExchangeStep } from '../session/key-exchange'
 import { assertWalletKeyEnabled, verifySignInKey } from '../session/keys'
@@ -131,8 +131,6 @@ export interface SessionModuleOptions {
    * module adds to it; the controller and `dm.unlock` read it.
    */
   unhydrated?: Set<string>
-  /** Where the App Connect key ring is kept (default: the engine's `localStorage`). */
-  keyRingStorage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key' | 'length'>
 }
 
 /** AuthUser.balance (a number of credits) as the DTOs carry credits. */
@@ -237,7 +235,7 @@ function currentAppConnectStatus(): AppConnectStatusDTO {
 export function createSessionModule(options: SessionModuleOptions) {
   const storage = options.storage ?? localStorage
   // lib's App Connect key ring lives in the engine's storage (the device's secure storage), not IndexedDB.
-  appConnectSessions.useKeyRingBackend(engineKeyRingBackend(options.keyRingStorage ?? localStorage))
+  appConnectSessions.useKeyRingBackend(engineKeyRingBackend(localStorage))
   const controller = options.controller ?? createMobileAuthController()
   const registry = createAccountRegistry(storage)
   const stopDm = options.stopDm ?? (async () => stopDmEngine())
@@ -397,7 +395,9 @@ export function createSessionModule(options: SessionModuleOptions) {
   // account stands, and a revoke that a sign-out or another sign-in overtook ends nothing.
   appConnectSessions.onSignedOut(identityId => {
     if (controller.getState().user?.identityId !== identityId) return
-    if (appConnectSessions.current(identityId)) {
+    // A renewal supersedes the old keys the moment the wallet answers it: the renewal in progress
+    // is what replaces them, so it stands (writes fail meanwhile; abandoned, the next check signs out).
+    if (appConnectSessions.current(identityId) || appConnect.renewing() === identityId) {
       useAppConnectStatus.getState().dismissSignedOut()
       return
     }
@@ -424,6 +424,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
       await appConnectSessions.adopt(grant)
       useAppConnectStatus.getState().dismissRenewRequired()
+      useAppConnectStatus.getState().dismissSignedOut()
       // The renewal may have added keys: whatever reads the identity next must not see a cached copy.
       identityService.clearCache(identityId)
       await options.secureDurable?.()
@@ -449,6 +450,8 @@ export function createSessionModule(options: SessionModuleOptions) {
         }
       } catch (error) {
         await appConnectSessions.discard(ring)
+        // A login that got as far as storing its session leaves none behind (a parked account's deletes are held, and dropped).
+        if (controller.getState().user?.identityId === identityId) await controller.logout()
         throw error
       }
       succeeded = true
@@ -456,7 +459,10 @@ export function createSessionModule(options: SessionModuleOptions) {
       hold?.release(succeeded)
     }
     useAppConnectStatus.getState().dismissSignedOut()
-    return { status: 'signed-in', session: await signedIn(identityId, 'app-connect'), reload: parked }
+    const session = await signedIn(identityId, 'app-connect')
+    // Its other stored secrets were never loaded here: nothing more runs until the host restarts into it.
+    if (parked) requireRestart()
+    return { status: 'signed-in', session, reload: parked }
   }
 
   /** The keys the wallets granted the active account, with this device's marked (Settings). */
@@ -604,14 +610,17 @@ export function createSessionModule(options: SessionModuleOptions) {
      * prefix and scheme, for the wallet's return link. The flow reports every
      * change as `session.appConnect`.
      */
-    async appConnectStart(opts: { renew?: boolean; fresh?: boolean; returnTo: { webBasePath: string; scheme: string } }): Promise<AppConnectFlowDTO> {
+    async appConnectStart(opts: { renew?: boolean; fresh?: boolean; returnTo: AppConnectReturn }): Promise<AppConnectFlowDTO> {
       assertUsable()
       await restored()
+      const active = registry.activeIdentityId()
       let identityHint: string | undefined
       if (opts?.renew) {
-        const active = registry.activeIdentityId()
         if (!active || !appConnectSessions.current(active)) throw new RpcError('Only an account signed in with a wallet can renew', 'BAD_REQUEST')
         identityHint = active
+      } else if (active) {
+        // The wallet would register keys a sign-in here could never use: add the account first.
+        throw new RpcError('Another account is signed in. Add the account (session.prepareAddAccount) and restart the engine first.', 'BAD_REQUEST')
       }
       return appConnect.start({ identityHint, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
     },
@@ -685,12 +694,14 @@ export function createSessionModule(options: SessionModuleOptions) {
     /** Wait up to `waitMs` (default 45 s, at most 120 s) for the wallet; `pending` means call again. */
     async awaitKeyExchange(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
       assertUsable()
+      if (isAppConnectBuild()) throw new RpcError('This network signs in with App Connect', 'NOT_SUPPORTED')
       return keyExchange.await(requestId, opts.waitMs)
     },
 
     /** After the wallet broadcast the key registration: wait up to `waitMs` for the keys, then sign in. */
     async awaitKeyRegistration(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
       assertUsable()
+      if (isAppConnectBuild()) throw new RpcError('This network signs in with App Connect', 'NOT_SUPPORTED')
       return keyExchange.awaitRegistration(requestId, opts.waitMs)
     },
 

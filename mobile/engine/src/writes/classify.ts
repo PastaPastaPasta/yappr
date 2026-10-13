@@ -101,15 +101,15 @@ function signingUnavailable(error: unknown): string | undefined {
 }
 
 /**
- * An App Connect key is out of allowance (20015, or 40218 for this write) or
- * time (20016, while signed in through a wallet), or lib's signer saw it
- * coming: renewing in the wallet brings writes back (docs/APP_CONNECT_PROFILE.md
- * "Errors"). An expired raw key is still `KEY_REVOKED`.
+ * While signed in through a wallet: its key is out of allowance (20015, or
+ * 40218 for this write) or time (20016), or lib's signer saw it coming, and
+ * renewing in the wallet brings writes back (docs/APP_CONNECT_PROFILE.md
+ * "Errors"). Otherwise an expired key is `KEY_REVOKED`.
  */
 function isRenewRequiredError(error: unknown): boolean {
-  return signingUnavailable(error) === 'renew' ||
-    hasConsensusCode(error, [20015, 40218]) ||
-    (hasConsensusCode(error, [20016]) && appConnectSessions.current() !== null)
+  // Only a wallet session renews; a limited key typed in by hand has nothing to renew it with.
+  return appConnectSessions.current() !== null &&
+    (signingUnavailable(error) === 'renew' || hasConsensusCode(error, [20015, 20016, 40218]))
 }
 
 type Outcome = EngineErrorData['outcome']

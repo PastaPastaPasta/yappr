@@ -143,6 +143,8 @@ async function walletAnswers(uri: string, owner: string, slots: Uint8Array[]): P
 }
 
 const randomKey = () => secp256k1.utils.randomSecretKey()
+/** The key rings the engine holds in its secure area. */
+const rings = () => Object.keys(engineStorage.snapshot().secure).filter(key => key.startsWith('yappr_secure_ac_ring_'))
 
 let session: Session
 let refresh: () => Promise<void>
@@ -246,7 +248,6 @@ describe('the key ring in the engine storage', () => {
     const b = ringSession(second, 4)
     await store.save(a, new Map([['key-1', randomKey()]]))
     await store.save(b, new Map([['key-1', randomKey()]]))
-    const rings = () => Object.keys(engineStorage.snapshot().secure).filter(key => key.startsWith('yappr_secure_ac_ring_'))
     expect(rings()).toEqual([`yappr_secure_ac_ring_${network}_${second}`])
     // The first grant is gone: its exact clear changes nothing.
     expect(await store.clear(network, { identityId: first, grantedAt: a.grantedAt, grantKeyId: 3 })).toBe(false)
@@ -287,6 +288,7 @@ describe('App Connect sign-in', () => {
       expect(bytesToHex(parsed.requestBytes)).toBe(vectors.request.bytes)
       expect(started.requestHash).toBe(bytesToHex(auth.appConnectRequestHash(parsed.request)))
       expect(parsed.callbackUrl).toBe(`https://yap.pr/devnet/connect/?r=${started.requestHash}&app=yappr-dev`)
+      expect(appConnectReturnUrl({ webBasePath: '', scheme: 'yappr-beta' }, started.requestHash)).toBe(`https://yap.pr/connect/?r=${started.requestHash}&app=yappr-beta`)
     } finally {
       vi.useRealTimers()
     }
@@ -364,6 +366,10 @@ describe('App Connect sign-in', () => {
       ...grantKeys([8, 9, 7], [...renewed, slots[2]], encryption),
     ])
     await walletAnswers(started.uri, OWNER, [...renewed, slots[2]])
+    // The wallet superseded the old keys as it answered: a check now finds them revoked, but the renewal stands.
+    await refresh()
+    expect(await session.current()).toMatchObject({ identityId: OWNER })
+    expect(useAppConnectStatus.getState().signedOutByWallet).toBe(false)
     await session.appConnectPollNow({ requestHash: started.requestHash })
     const confirm = await waitForPhase('confirm')
     expect(confirm.candidates.map(c => c.identityId)).toEqual([OWNER])
@@ -377,7 +383,8 @@ describe('App Connect sign-in', () => {
     expect(await resolveSigningKey(OWNER, keys, documentSigningRequest(SOCIAL, 'post'))).toMatchObject({ identityKey: { keyId: 8 } })
   })
 
-  it('refuses a renewal answered by another account, and an answer already taken', async () => {
+  it('refuses a renewal answered by another account, an answer already taken, and a sign-in beside this one', async () => {
+    await expect(session.appConnectStart({ returnTo: RETURN_TO })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     const started = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
     if (started.phase !== 'waiting') throw new Error('not waiting')
     await expect(session.appConnectAccept({ identityId: MAKER })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
@@ -392,7 +399,7 @@ describe('App Connect sign-in', () => {
     await until(() => emitted.find(e => e.event === 'session.changed' && (e.payload as { reason: string }).reason === 'signed-out'), 'the sign-out')
     expect(await session.current()).toBeNull()
     expect(await session.appConnectStatus()).toMatchObject({ identityId: null, signedOutByWallet: true })
-    expect(Object.keys(engineStorage.snapshot().secure).filter(key => key.startsWith('yappr_secure_ac_ring_'))).toEqual([])
+    expect(rings()).toEqual([])
     await session.appConnectDismiss({ signedOut: true })
     expect(useAppConnectStatus.getState().signedOutByWallet).toBe(false)
   })
@@ -400,7 +407,6 @@ describe('App Connect sign-in', () => {
   it('refuses a renewal with nobody signed in through a wallet, and a request that cannot reach the app', async () => {
     await expect(session.appConnectStart({ renew: true, returnTo: RETURN_TO })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(session.appConnectStart({ returnTo: { webBasePath: '/devnet', scheme: 'evil' } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    expect(appConnectReturnUrl(RETURN_TO, 'ab'.repeat(20))).toBe(`https://yap.pr/devnet/connect/?r=${'ab'.repeat(20)}&app=yappr-dev`)
   })
 
   it('signs in once when two confirmations of the same answer race', async () => {
@@ -421,6 +427,6 @@ describe('App Connect sign-in', () => {
     expect(appConnectSessions.current(OWNER)?.authKeys.map(key => key.keyId).sort()).toEqual([10, 11])
     await session.signOut()
     expect(appConnectSessions.current(OWNER)).toBeNull()
-    expect(Object.keys(engineStorage.snapshot().secure).filter(key => key.startsWith('yappr_secure_ac_ring_'))).toEqual([])
+    expect(rings()).toEqual([])
   })
 })

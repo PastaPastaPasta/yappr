@@ -106,7 +106,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       case 'confirm':
         names(next.candidates)
           .then((candidates) => {
-            if (id === flow && latest === next) set({ ...base, phase: 'confirm', uri: next.uri, requestHash, candidates })
+            if (latest === next) set({ ...base, phase: 'confirm', uri: next.uri, requestHash, candidates })
           })
           .catch((error: unknown) => logger.warn('App Connect: could not read the answering accounts:', error))
         return
@@ -124,13 +124,20 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     login?.dispose()
     login = null
     latest = null
+    renewFor = undefined
+  }
+
+  /** Ends the flow: the host hears it is idle. */
+  function reset(): void {
+    stop()
+    set({ flow: ++flow, renew: false, phase: 'idle' })
   }
 
   return {
     state: (): AppConnectFlowDTO => state,
 
     /** The identity the running flow renews, if it is a renewal. */
-    renewing: (): string | undefined => (login ? renewFor : undefined),
+    renewing: (): string | undefined => renewFor,
 
     /**
      * Starts a sign-in (or, with `identityHint`, a renewal only that identity
@@ -138,11 +145,16 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
      * `fresh`. Resolves once the request is ready (or unavailable).
      */
     async start(input: { identityHint?: string; fresh?: boolean; returnTo: unknown }): Promise<AppConnectFlowDTO> {
-      const pins = isAppConnectBuild() ? appConnectPins() : null
-      if (!pins) throw new RpcError('Wallet sign-in through App Connect is not available on this network', 'NOT_SUPPORTED')
+      if (!isAppConnectBuild()) throw new RpcError('This network signs in with the wallet key exchange', 'NOT_SUPPORTED')
       const returnTo = checkReturn(input.returnTo)
       stop()
       const id = ++flow
+      const pins = appConnectPins()
+      // An App Connect build without its pinned anchor and group (web: "not-configured").
+      if (!pins) {
+        set({ flow: id, renew: input.identityHint !== undefined, phase: 'unavailable', reason: 'not-configured' })
+        return state
+      }
       renewFor = input.identityHint
       const instance = new AppConnectLogin({
         pins,
@@ -182,9 +194,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     /** Abandons the flow and forgets its request and any verified answer. */
     cancel(): void {
       login?.finish()
-      stop()
-      renewFor = undefined
-      set({ flow: ++flow, renew: false, phase: 'idle' })
+      reset()
     },
 
     /**
@@ -193,9 +203,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
      */
     accept(identityId: string): AppConnectGrant | null {
       const grant = login?.accept(identityId) ?? null
-      stop()
-      renewFor = undefined
-      set({ flow: ++flow, renew: false, phase: 'idle' })
+      reset()
       return grant
     },
 
