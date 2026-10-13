@@ -36,7 +36,8 @@ tags:
 - extendedWaitUntil:
     visible:
       id: "terms-agree|kx-register-qr|home-header|kx-signed-in|kx-check-again|ac-continue"
-    timeout: 180000
+    # Legacy: one poll run is 2 minutes; App Connect: the request's 10 minutes.
+    timeout: 660000
 # One poll run lasts two minutes, then the screen offers "Check again" (AUTH-07).
 # While sakura's quorum cache lags, the responder can take longer than that to
 # publish its answer: "Check again" polls the same request, which finds it.

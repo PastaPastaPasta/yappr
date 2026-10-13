@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { View } from 'react-native';
 import { ArrowPathIcon } from 'react-native-heroicons/outline';
 
+import { useEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { useSession, useSessionStore } from '~/data/session';
@@ -60,6 +61,10 @@ export function WalletConnectionScreen() {
     (api) => api.session.appConnectConnections(),
     { enabled: identityId !== '' },
   );
+  // A renewal replaces the keys listed here.
+  useEngineEvent('session.changed', ({ reason }) => {
+    if (reason === 'renewed') connections.refetch().catch(() => undefined);
+  });
 
   if (!session) {
     return (
@@ -88,7 +93,9 @@ export function WalletConnectionScreen() {
   } else if (connections.data.length === 0) {
     rows = <SettingsRow label={copy.none} />;
   } else {
-    rows = connections.data.map((row) => <ConnectionRow key={row.keyId} row={row} />);
+    // What Yappr can do first, then the Dash profile.
+    const ordered = [...connections.data].sort((a, b) => Number(a.scope !== 'yappr') - Number(b.scope !== 'yappr'));
+    rows = ordered.map((row) => <ConnectionRow key={row.keyId} row={row} />);
   }
 
   return (

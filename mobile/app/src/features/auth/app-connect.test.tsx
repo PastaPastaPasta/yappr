@@ -7,17 +7,23 @@ import { Linking } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import ConnectScreen from '~/app/sign-in/connect';
+import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 
-import { loadSignedInAgain } from './accounts';
+import { afterSignOut, loadSignedInAgain, reauthenticate } from './accounts';
 import { parseAppConnectReturn, takeAppConnectReturnLink, useAppConnect } from './app-connect';
+import { useRevokedNotice } from './app-connect-status';
+import { AppConnectNotices } from './AppConnectNotices';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 jest.mock('./accounts', () => ({
   ...jest.requireActual<typeof import('./accounts')>('./accounts'),
   loadSignedInAgain: jest.fn(async (session: unknown) => session),
+  afterSignOut: jest.fn(async () => undefined),
+  reauthenticate: jest.fn(async () => undefined),
 }));
+let mockPathname = '/';
 const mockGoBack = jest.fn();
 let mockParams: Record<string, string> = {};
 jest.mock('expo-router', () => ({
@@ -30,6 +36,7 @@ jest.mock('expo-router', () => ({
   }),
   useRoute: () => ({ key: 'connect' }),
   useLocalSearchParams: () => mockParams,
+  usePathname: () => mockPathname,
   useIsFocused: () => true,
 }));
 
@@ -53,10 +60,10 @@ const render = (element: ReactElement) =>
 beforeAll(() => notifyManager.setScheduler((callback) => callback()));
 afterAll(() => queryClient.clear());
 
-const flow = (phase: AppConnectPhaseDTO & { flow?: number; renew?: boolean }): AppConnectFlowDTO => ({ flow: 1, renew: false, ...phase });
-const waiting = flow({ phase: 'waiting', uri: URI, requestHash: HASH });
-
-async function open(params: Record<string, string>, first: AppConnectFlowDTO = waiting) {
+/** The engine numbers its flows for the app's lifetime: each test's flows come after the last test's. */
+let testFlow = 0;
+const flow = (phase: AppConnectPhaseDTO & { flow?: number; renew?: boolean }): AppConnectFlowDTO => ({ flow: testFlow, renew: false, ...phase });
+async function open(params: Record<string, string>, first: AppConnectFlowDTO = flow({ phase: 'waiting', uri: URI, requestHash: HASH })) {
   mockParams = params;
   fakeEngine.method('session.appConnectStart').mockResolvedValue(first);
   render(<ConnectScreen />);
@@ -74,6 +81,10 @@ beforeEach(() => {
   fakeEngine.method('profiles.get').mockResolvedValue({ id: alice.identityId, username: 'alice', displayName: 'Alice', avatar: null });
   jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
   useAppConnect.setState(useAppConnect.getInitialState());
+  useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [] });
+  useRevokedNotice.setState({ account: null });
+  mockPathname = '/';
+  testFlow += 10;
 });
 afterEach(() => jest.useRealTimers());
 
@@ -141,8 +152,43 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(screen.getByTestId('ac-continue-1')).toBeTruthy();
     await act(async () => fireEvent.press(screen.getByTestId('ac-not-me')));
     expect(fakeEngine.method('session.appConnectReject')).toHaveBeenCalled();
-    act(() => fakeEngine.emit('session.appConnect', flow({ phase: 'waiting', uri: URI, requestHash: HASH, flow: 1 })));
+    act(() => fakeEngine.emit('session.appConnect', flow({ phase: 'waiting', uri: URI, requestHash: HASH })));
     expect(screen.getByText(/Someone else may have scanned your code/)).toBeTruthy();
+  });
+
+  it('signs in once however often "Continue" is tapped', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: 'alice' }] }));
+    let answer: (value: unknown) => void = () => undefined;
+    fakeEngine.method('session.appConnectAccept').mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    fireEvent.press(screen.getByTestId('ac-continue'));
+    // The card is gone; a second confirmation (the same tick, another account) changes nothing.
+    await act(async () => {
+      const { acceptAccount } = jest.requireActual<typeof import('./app-connect')>('./app-connect');
+      await Promise.race([acceptAccount(alice.identityId), Promise.resolve()]);
+    });
+    expect(fakeEngine.method('session.appConnectAccept')).toHaveBeenCalledTimes(1);
+    await act(async () => answer({ status: 'signed-in', session: alice, reload: false }));
+    expect(screen.getByTestId('kx-signed-in')).toBeTruthy();
+  });
+
+  it('drops a late answer of an earlier request once a new one starts', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'waiting', uri: URI, requestHash: HASH, flow: testFlow + 4 }));
+    fakeEngine.method('session.appConnectStart').mockReturnValue(new Promise(() => undefined));
+    const { startAppConnect } = jest.requireActual<typeof import('./app-connect')>('./app-connect');
+    act(() => {
+      startAppConnect('qr', { fresh: true }).catch(() => undefined);
+    });
+    act(() => fakeEngine.emit('session.appConnect', flow({ phase: 'confirm', uri: URI, requestHash: HASH, flow: testFlow + 4, candidates: [{ identityId: alice.identityId, username: 'alice' }] })));
+    expect(useAppConnect.getState().step.name).toBe('starting');
+    act(() => fakeEngine.emit('session.appConnect', flow({ phase: 'waiting', uri: URI, requestHash: HASH, flow: testFlow + 6 })));
+    expect(useAppConnect.getState().flow).toMatchObject({ flow: testFlow + 6, phase: 'waiting' });
+  });
+
+  it('never renews for an account that is not the one signed in', async () => {
+    const stranger = 'StrangerIdentity33333333333333333333333333';
+    fakeEngine.method('session.appConnectAccept').mockResolvedValue({ status: 'renewed', session: alice });
+    await open({ mode: 'qr', renew: '1' }, flow({ renew: true, phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: stranger, username: null }] }));
+    expect(fakeEngine.method('session.appConnectAccept')).not.toHaveBeenCalled();
   });
 
   it('renews without asking: the one answer is the signed-in account', async () => {
@@ -204,5 +250,42 @@ describe("the wallet's return link", () => {
     expect(takeAppConnectReturnLink(`yappr-dev://connect?r=${HASH}&ac=ok`)).toBe(true);
     expect(fakeEngine.method('session.appConnectPollNow')).not.toHaveBeenCalled();
     expect(router.push).not.toHaveBeenCalled();
+  });
+});
+
+describe('the wallet session prompts', () => {
+  const status = (patch: Record<string, unknown>) =>
+    act(() => fakeEngine.emit('session.appConnectStatus', { identityId: alice.identityId, health: 'ok', renewRequired: null, signedOutByWallet: null, ...patch }));
+
+  beforeEach(() => {
+    fakeEngine.method('session.appConnectStatus').mockResolvedValue({ identityId: alice.identityId, health: 'ok', renewRequired: null, signedOutByWallet: null });
+    fakeEngine.method('session.appConnectDismiss').mockResolvedValue(undefined);
+  });
+
+  it('opens "Renew in your wallet" once for a stopped write, and closing it does not open it again', async () => {
+    const view = render(<AppConnectNotices ready />);
+    await act(async () => {});
+    status({ renewRequired: 'allowance-spent' });
+    expect(router.push).toHaveBeenCalledWith('/sign-in/renew?reason=allowance-spent');
+    expect(fakeEngine.method('session.appConnectDismiss')).toHaveBeenCalledWith({ renewRequired: true });
+    // In the prompt, then closed before the engine's "seen" arrives.
+    mockPathname = '/sign-in/renew';
+    view.rerender(<SafeAreaProvider initialMetrics={METRICS}><QueryClientProvider client={queryClient}><AppConnectNotices ready /></QueryClientProvider></SafeAreaProvider>);
+    mockPathname = '/';
+    status({ renewRequired: null });
+    view.rerender(<SafeAreaProvider initialMetrics={METRICS}><QueryClientProvider client={queryClient}><AppConnectNotices ready /></QueryClientProvider></SafeAreaProvider>);
+    expect(router.push).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the wallet signed the account out only once the engine has, and "Sign in" signs that account in again', async () => {
+    render(<AppConnectNotices ready />);
+    await act(async () => {});
+    expect(screen.queryByTestId('wallet-signed-out')).toBeNull();
+    status({ identityId: null, signedOutByWallet: alice.identityId });
+    expect(afterSignOut).toHaveBeenCalledWith(alice.identityId, true);
+    expect(fakeEngine.method('session.appConnectDismiss')).toHaveBeenCalledWith({ signedOut: true });
+    expect(screen.getByText('Signed out from your wallet')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('wallet-signed-out-sign-in'));
+    expect(reauthenticate).toHaveBeenCalledWith(alice.identityId);
   });
 });

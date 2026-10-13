@@ -1,5 +1,5 @@
 import { router, usePathname } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 import { ArrowRightStartOnRectangleIcon } from 'react-native-heroicons/outline';
 
@@ -11,8 +11,8 @@ import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 import { useColors } from '~/ui/tokens';
 
-import { afterSignOut } from './accounts';
-import { startAppConnectStatusSync, useAppConnectStatus } from './app-connect-status';
+import { reauthenticate } from './accounts';
+import { startAppConnectStatusSync, useAppConnectStatus, useRevokedNotice } from './app-connect-status';
 import { copy } from './copy';
 
 const inSignIn = (pathname: string) => pathname === '/sign-in' || pathname.startsWith('/sign-in/');
@@ -28,14 +28,11 @@ export function AppConnectNotices({ ready }: { ready: boolean }) {
   const c = useColors();
   const pathname = usePathname();
   const { session } = useSession();
-  const { identityId, health, renewRequired, signedOutByWallet } = useAppConnectStatus();
-  const [revoked, setRevoked] = useState<string | null>(null);
-  const lastSession = useRef<string | null>(null);
+  const { identityId, health, renewRequired } = useAppConnectStatus();
+  const revoked = useRevokedNotice((s) => s.account);
+  const dismiss = () => useRevokedNotice.setState({ account: null });
 
   useEffect(() => startAppConnectStatusSync(), []);
-  useEffect(() => {
-    if (session) lastSession.current = session.identityId;
-  }, [session]);
 
   const walletSession = session !== null && identityId === session.identityId;
   const blocked = !ready || inSignIn(pathname);
@@ -47,28 +44,17 @@ export function AppConnectNotices({ ready }: { ready: boolean }) {
     toast(copy.renew.soon, { action: { label: copy.renew.soonAction, onPress: () => router.push('/sign-in/renew') } });
   }, [walletSession, health, blocked]);
 
+  // A write stopped for the allowance or the expiry: the prompt opens once, and is seen as it opens
+  // (closing it must not open it again while the engine forgets the stopped write).
   useEffect(() => {
-    if (walletSession && renewRequired && !blocked) router.push('/sign-in/renew');
+    if (!walletSession || !renewRequired || blocked) return;
+    engine.api.session.appConnectDismiss({ renewRequired: true }).catch(() => undefined);
+    router.push(`/sign-in/renew?reason=${renewRequired}`);
   }, [walletSession, renewRequired, blocked]);
 
-  // The engine signs the account out after it reports the revoke; once that sign-out has landed,
-  // what follows any sign-out here follows (the next account, or a fresh engine).
-  const revokedAccount = useRef<string | null>(null);
-  useEffect(() => {
-    if (signedOutByWallet && revokedAccount.current === null) {
-      revokedAccount.current = lastSession.current ?? '';
-      setRevoked(revokedAccount.current);
-      engine.api.session.appConnectDismiss({ signedOut: true }).catch(() => undefined);
-    }
-    if (revokedAccount.current !== null && session === null) {
-      const signedOut = revokedAccount.current;
-      revokedAccount.current = null;
-      if (signedOut) afterSignOut(signedOut, true).catch(() => undefined);
-    }
-  }, [signedOutByWallet, session]);
 
   return (
-    <Dialog open={revoked !== null && ready} onClose={() => setRevoked(null)} testID="wallet-signed-out">
+    <Dialog open={revoked !== null && ready} onClose={dismiss} testID="wallet-signed-out">
       <View className="gap-2">
         <ArrowRightStartOnRectangleIcon size={28} color={c.accent} />
         <Text variant="headline" tone="emphasis" accessibilityRole="header">
@@ -79,12 +65,13 @@ export function AppConnectNotices({ ready }: { ready: boolean }) {
         </Text>
       </View>
       <View className="mt-6 flex-row flex-wrap justify-end gap-3">
-        <Button label={copy.renew.close} variant="outline" onPress={() => setRevoked(null)} />
+        <Button label={copy.renew.close} variant="outline" onPress={dismiss} />
         <Button
           label={copy.renew.signIn}
           onPress={() => {
-            setRevoked(null);
-            router.push('/sign-in');
+            const account = revoked;
+            dismiss();
+            if (account) reauthenticate(account).catch(() => undefined);
           }}
           testID="wallet-signed-out-sign-in"
         />

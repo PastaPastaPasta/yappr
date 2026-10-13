@@ -4,6 +4,7 @@ import { create } from 'zustand';
 
 import { config } from '~/config';
 import { onEngineEvent } from '~/data/events';
+import { errorCode } from '~/data/writes';
 import { engine, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { syncStorage } from '~/state/storage';
@@ -89,19 +90,24 @@ export function appConnectInProgress(): boolean {
 }
 
 let listening = false;
-/** Wallet mode opens the wallet once the first request of a start is ready. */
+/** Wallet mode opens the wallet once the request of a start is ready, unless that request was opened already. */
 let openOnReady = false;
+let openedHash: string | null = null;
 /** The engine epoch the flow runs on: a restarted engine resumes the request. */
 let flowEpoch = -1;
+/** The newest flow number seen; events numbered at or below a start's floor belong to an earlier flow. */
+let lastFlow = 0;
+let floor = 0;
 
 function listen(): void {
   if (listening) return;
   listening = true;
   onEngineEvent('session.appConnect', (flow) => {
-    const { step, flow: current } = get();
+    lastFlow = Math.max(lastFlow, flow.flow);
+    const { step, flow: current, renew } = get();
     if (step.name !== 'flow' && step.name !== 'starting') return;
-    // A late event of an earlier start.
-    if (current && flow.flow < current.flow) return;
+    // A late event of an earlier start (or of the other kind of flow).
+    if (flow.flow <= floor || (current && flow.flow < current.flow) || flow.renew !== renew) return;
     receive(flow);
   });
   engineSupervisor.subscribeStatus(() => {
@@ -122,7 +128,11 @@ function receive(flow: AppConnectFlowDTO): void {
   set({ flow, step: { name: 'flow' } });
   if (flow.phase === 'waiting' && openOnReady) {
     openOnReady = false;
-    if (get().mode === 'wallet') openWallet();
+    // "Check again" polls the same request while it lasts: the wallet has seen that one already.
+    if (get().mode === 'wallet' && flow.requestHash !== openedHash) {
+      openedHash = flow.requestHash;
+      openWallet();
+    }
   }
 }
 
@@ -139,6 +149,7 @@ export async function startAppConnect(
   const gen = next();
   if (!renew) syncStorage.setItem(MODE_KEY, mode);
   openOnReady = !resume;
+  floor = lastFlow;
   set({ ...initial, mode, renew, rejected: get().rejected && fresh, step: { name: 'starting' } });
   try {
     flowEpoch = engineSupervisor.getStatus().epoch;
@@ -148,6 +159,7 @@ export async function startAppConnect(
       returnTo: { webBasePath: config.webBasePath, scheme: config.scheme },
     });
     if (stale(gen)) return;
+    lastFlow = Math.max(lastFlow, flow.flow);
     const current = get().flow;
     if (!current || flow.flow >= current.flow) receive(flow);
   } catch (error) {
@@ -194,6 +206,8 @@ export async function notMe(): Promise<void> {
  * other stored keys, as after "Sign in again".
  */
 export async function acceptAccount(identityId: string): Promise<void> {
+  // One answer, once: a second tap (or another account in the chooser) would only fail after the first signed in.
+  if (get().step.name === 'accepting') return;
   const gen = next();
   const { renew } = get();
   set({ step: { name: 'accepting' } });
@@ -210,7 +224,7 @@ export async function acceptAccount(identityId: string): Promise<void> {
       step: {
         name: 'error',
         title: renew ? copy.renew.failed : copy.signin.failed,
-        message: /signed in/i.test(errorMessage(error))
+        message: errorCode(error) === 'BAD_REQUEST' && /signed in/i.test(errorMessage(error))
           ? walletErrorText(error, networkName)
           : renew ? copy.renew.acceptFailed : copy.connect.acceptFailed,
       },
@@ -286,9 +300,9 @@ export function takeAppConnectReturnLink(url: string): boolean {
   const link = parseAppConnectReturn(url);
   if (!link) return false;
   if (!appConnectInProgress()) return true;
-  // A return for an earlier request (a code that was replaced) says nothing about this one.
+  // Only a return for the request on screen says anything; a code that was replaced, or none yet, is ignored.
   const flow = get().flow;
-  if (flow && 'requestHash' in flow && flow.requestHash !== link.requestHash) return true;
+  if (!flow || !('requestHash' in flow) || flow.requestHash !== link.requestHash) return true;
   if (link.status && link.status !== 'ok') walletReported(link.status);
   else pollNow(link.requestHash);
   return true;

@@ -5,6 +5,7 @@ import { AppState, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
+import { useSessionStore } from '~/data/session';
 import {
   acceptAccount,
   cancelAppConnect,
@@ -102,17 +103,25 @@ export default function ConnectScreen() {
 
   // Signed in (or renewed): "Signed in" for a moment, then back where the user was (or the terms gate).
   const done = step.name === 'done';
+  const closeRef = useRef(close);
+  useEffect(() => {
+    closeRef.current = close;
+  });
   useEffect(() => {
     if (!done) return undefined;
     const timer = setTimeout(() => {
+      closeRef.current();
       resetAppConnect();
-      close();
     }, 900);
     return () => clearTimeout(timer);
-  }, [done, close]);
+  }, [done]);
 
-  // A renewal names its account, so its one verified answer is accepted without asking.
-  const renewalAnswer = renew && step.name === 'flow' && flow?.phase === 'confirm' ? flow.candidates[0]?.identityId : undefined;
+  // A renewal names its account: its one verified answer, the account signed in here, is accepted without asking.
+  const viewer = useSessionStore((s) => s.session?.identityId ?? null);
+  const renewalAnswer =
+    renew && step.name === 'flow' && flow?.phase === 'confirm' && flow.renew && flow.candidates.length === 1 && flow.candidates[0].identityId === viewer
+      ? viewer
+      : undefined;
   useEffect(() => {
     if (renewalAnswer) acceptAccount(renewalAnswer).catch(() => undefined);
   }, [renewalAnswer]);
@@ -222,9 +231,7 @@ export default function ConnectScreen() {
         </View>
       </StatusBlock>
     ) : (
-      <StatusBlock tone="waiting" title={copy.signin.waiting} body={copy.signin.waitingHint} testID="kx-waiting">
-        {rejected ? <Notice text={copy.connect.newCode} /> : null}
-      </StatusBlock>
+      <StatusBlock tone="waiting" title={copy.signin.waiting} body={copy.signin.waitingHint} testID="kx-waiting" />
     );
     footer = walletOpenFailed ? (
       <>

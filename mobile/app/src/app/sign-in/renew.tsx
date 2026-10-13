@@ -1,9 +1,6 @@
-import { router, Stack } from 'expo-router';
-import { useEffect } from 'react';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { View } from 'react-native';
 
-import { engine } from '~/engine';
-import { useAppConnectStatus } from '~/features/auth/app-connect-status';
 import { copy } from '~/features/auth/copy';
 import { WalletGlyph } from '~/features/auth/KeyExchangeParts';
 import { useCloseSignIn } from '~/features/auth/navigation';
@@ -20,14 +17,9 @@ import { Text } from '~/ui/Text';
  */
 export default function RenewScreen() {
   const close = useCloseSignIn();
-  const reason = useAppConnectStatus((s) => s.renewRequired);
-  // The prompt was seen: a stopped write asks again only if another one is stopped.
-  useEffect(
-    () => () => {
-      engine.api.session.appConnectDismiss({ renewRequired: true }).catch(() => undefined);
-    },
-    [],
-  );
+  // Why a write was stopped, when one was (the prompt that opened this screen says).
+  const { reason: param } = useLocalSearchParams<{ reason?: string }>();
+  const reason = param && Object.hasOwn(copy.renew.reason, param) ? (param as keyof typeof copy.renew.reason) : null;
   return (
     <>
       <Stack.Screen
