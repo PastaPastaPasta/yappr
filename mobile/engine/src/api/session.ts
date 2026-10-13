@@ -409,6 +409,11 @@ export function createSessionModule(options: SessionModuleOptions) {
   function signOutRevoked(identityId: string): void {
     exclusive(async () => {
       if (registry.activeIdentityId() !== identityId || appConnectSessions.current(identityId)) return
+      // A renewal started while this waited its turn: it replaces the keys, so the sign-out waits for it.
+      if (appConnect.renewing() === identityId) {
+        deferredRevoke = identityId
+        return
+      }
       await signOutNow({ identityId })
       revokedSignOut = identityId
       emitAppConnectStatus()
@@ -434,10 +439,17 @@ export function createSessionModule(options: SessionModuleOptions) {
       return
     }
     // The app was killed while the wallet answered a renewal: the host resumes that renewal at launch.
+    // The lookup is async, so what it finds counts only if no flow started or ended meanwhile.
+    const flowBefore = appConnect.state().flow
     appConnect.pending(identityId)
       .catch(() => false)
       .then(waiting => {
-        if (waiting) deferredRevoke = identityId
+        if (appConnectSessions.current(identityId)) return
+        if (appConnect.renewing() === identityId) {
+          deferredRevoke = identityId
+          return
+        }
+        if (waiting && appConnect.state().flow === flowBefore) deferredRevoke = identityId
         else signOutRevoked(identityId)
       })
       .catch(error => logger.error('Handling a revoke failed:', error))
