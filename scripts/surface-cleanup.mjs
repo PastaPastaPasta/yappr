@@ -109,6 +109,17 @@ async function queryAll(battery, docType, where, orderBy) {
   throw new Error(`${docType}: more than ${MAX_PAGES * PAGE} documents match one read; not cleaning from a partial list (narrow it with a later --since)`);
 }
 
+/** Every page of a read, however many: for a discovery read that `since` cannot narrow (reads only, no writes depend on a cap). */
+async function queryEvery(battery, docType, where, orderBy) {
+  const rows = [];
+  for (let startAfter; ;) {
+    const batch = await battery.queryDocs(docType, { where, orderBy, limit: PAGE, ...(startAfter ? { startAfter } : {}) });
+    rows.push(...batch);
+    if (batch.length < PAGE) return rows;
+    startAfter = normalizeId(batch.at(-1).$id);
+  }
+}
+
 /** `rows` without repeats of a document (the same `$id` read through two indexes). */
 const distinctDocs = (rows) => [...new Map(rows.map((row) => [normalizeId(row.$id), row])).values()];
 
@@ -197,10 +208,10 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
   const posts = await readEach(blogs, (blog) => queryAll(battery, 'blogPost', [['blogId', '==', normalizeId(blog.$id)], ['$createdAt', '>=', since]], [['blogId', 'asc'], ['$createdAt', 'asc']]));
   // blogComment keeps no owner index, so the owners' comments are found through every post author's
   // postOwnerAndTime from `since`, then kept by owner below: an owner's comment on anyone's post, not only
-  // on the owners' own. Only a blog's owner posts to it (b21), so the post authors are the blog owners, read
-  // from the blog timeline: far fewer documents than the posts. (discussedRecent is a timeRange index, which
-  // document queries do not read.)
-  const authors = new Set((await queryAll(battery, 'blog', [['$createdAt', '>', 0]], [['$createdAt', 'asc']])).map((row) => normalizeId(row.$ownerId)));
+  // on the owners' own. The authors come from the whole blogPost timeline, read to the end: posts outlive a
+  // moderator's removal of their blog, so the blogs alone would miss them. (discussedRecent is a timeRange
+  // index, which document queries do not read.)
+  const authors = new Set((await queryEvery(battery, 'blogPost', [['$createdAt', '>', 0]], [['$createdAt', 'asc']])).map((row) => normalizeId(row.$ownerId)));
   for (const who of owners) authors.add(who.ownerId);
   const comments = await readEach([...authors], (author) => queryAll(battery, 'blogComment', [['blogPostId.$ownerId', '==', author], ['$createdAt', '>=', since]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]));
   const follows = await readEach(owners, (who) => queryAll(battery, 'blogFollow', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['blogId', 'asc']]));
@@ -219,7 +230,14 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
     for (const row of targets.blog) report.leftovers.push({ type: 'blog', id: normalizeId(row.$id), name: row.name, why: 'a blog cannot be deleted by its owner; run with a moderator to remove it' });
     return report;
   }
-  await applyEach(report, live, targets.blog, `blog (removed by ${moderator.label})`, (row) => moderatorRemove(battery, { contractId, moderator, docType: 'blog', id: normalizeId(row.$id), reason: 'test fixture of the blog battery' }));
+  // A blog whose post could not be tombstoned stays up, so a re-run still finds that post through it.
+  const failedPosts = new Set(report.failed.filter((f) => f.label === 'blogPost (tombstone)').map((f) => f.id));
+  const blogsWithFailedPosts = new Set(targets.blogPost.filter((row) => failedPosts.has(normalizeId(row.$id))).map((row) => normalizeId(row.blogId)));
+  const removable = targets.blog.filter((row) => !blogsWithFailedPosts.has(normalizeId(row.$id)));
+  for (const row of targets.blog.filter((blog) => !removable.includes(blog))) {
+    report.failed.push({ label: 'blog (kept: a post failed)', id: normalizeId(row.$id), error: 'a post on it was not tombstoned; re-run to finish' });
+  }
+  await applyEach(report, live, removable, `blog (removed by ${moderator.label})`, (row) => moderatorRemove(battery, { contractId, moderator, docType: 'blog', id: normalizeId(row.$id), reason: 'test fixture of the blog battery' }));
   return report;
 }
 

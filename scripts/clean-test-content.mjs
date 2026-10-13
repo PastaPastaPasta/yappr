@@ -127,6 +127,8 @@ export function parseArgs(argv) {
   }
   if (args.mode === null) throw new Error('pass --plan (read-only) or --live');
   if (args.since !== null && args.until !== null && args.until < args.since) throw new Error('--until must not be earlier than --since');
+  // --until and --after resume a capped social scan; the feature cleaners take a window from --since only.
+  if ((args.until !== null || Object.keys(args.after).length > 0) && args.surfaces.some((surface) => surface !== 'social')) throw new Error('--until and --after apply to --surface social only');
   const social = args.surfaces.includes('social');
   const features = featureSurfaces(args.surfaces);
   if (social && args.bots.length === 0 && args.ciPool === null) throw new Error('name the identities: --bots <i,…> and/or --ci-pool [n]');
