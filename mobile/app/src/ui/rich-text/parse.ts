@@ -10,7 +10,7 @@
  * compose editor reads it (features/compose/text.ts uses these patterns), so
  * a tag longer than the contract indexes is linked whole, never cut
  * mid-word. Its link opens the page the tag was indexed under: the first
- * `tagMaxLength` characters (lib `firstHashtag` / `extractHashtags`).
+ * `tagMaxLength` characters (lib `indexedTags` / `extractHashtags`).
  */
 
 export type InlineKind = 'text' | 'url' | 'hashtag' | 'cashtag' | 'mention';

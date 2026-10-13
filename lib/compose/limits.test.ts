@@ -103,3 +103,35 @@ describe('mentionLimitHint', () => {
     for (const topology of ['v2', 'v9', 'v10', 'v14']) expect(await hintOn(topology, people(9)), topology).toBeNull()
   })
 })
+
+describe('tagLimitProblem', () => {
+  const tags = (n: number) => Array.from({ length: n }, (_, i) => `#tag${i}`).join(' ')
+  async function limitsOn(topology: string) {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+    return import('./limits')
+  }
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('refuses a v16 post naming more than 4 distinct tags, cashtags included', async () => {
+    const { tagLimitProblem } = await limitsOn('v16')
+    expect(tagLimitProblem(tags(4))).toBeNull()
+    expect(tagLimitProblem(`${tags(4)} #TAG0 #tag1`)).toBeNull()
+    expect(tagLimitProblem(tags(5))).toBe('A post can have at most 4 tags. Remove 1 tag.')
+    expect(tagLimitProblem(`${tags(5)} $DASH`)).toBe('A post can have at most 4 tags. Remove 2 tags.')
+  })
+
+  it('judges the first post\'s public text only, and never a reply', async () => {
+    const { firstPostTagProblems } = await limitsOn('v16')
+    const problem = 'A post can have at most 4 tags. Remove 1 tag.'
+    expect(firstPostTagProblems({ body: tags(5), encrypted: false, isReply: false })).toEqual({ body: problem, teaser: null })
+    // An encrypted body is never indexed: only its teaser names tags.
+    expect(firstPostTagProblems({ body: tags(5), encrypted: true, isReply: false })).toEqual({ body: null, teaser: null })
+    expect(firstPostTagProblems({ body: 'secret', encrypted: true, teaser: tags(5), isReply: false })).toEqual({ body: null, teaser: problem })
+    expect(firstPostTagProblems({ body: tags(5), encrypted: false, isReply: true })).toEqual({ body: null, teaser: null })
+  })
+
+  it('refuses nothing before v16, as before', async () => {
+    for (const topology of ['v2', 'v9', 'v15']) expect((await limitsOn(topology)).tagLimitProblem(tags(5)), topology).toBeNull()
+  })
+})

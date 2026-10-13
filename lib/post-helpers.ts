@@ -41,7 +41,7 @@ export function cashtagDisplayToStorage(tag: string, maxLength?: number): string
 /**
  * Convert a display hashtag to storage format
  * e.g., "#Dash" -> "dash"
- * An optional ceiling truncates it the way `firstHashtag` does, so a link to
+ * An optional ceiling truncates it the way `indexedTags` does, so a link to
  * an over-long tag opens the page it was indexed under.
  */
 export function hashtagDisplayToStorage(tag: string, maxLength?: number): string {
@@ -71,31 +71,41 @@ export function extractHashtags(content: string): string[] {
 }
 
 /**
- * The FIRST hashtag in the content, in `post.hashtag` storage form: lowercase,
- * no `#`, and `''` when the content carries no (valid) hashtag. The
- * single-hashtag model indexes exactly one tag per post, and "first in the
- * text" is the rule the client applies.
+ * The tags a post is indexed under, in storage form: the content's hashtags
+ * in order, then its cashtags, distinct, at most `max` of them, each at most
+ * `maxLength` characters (a longer one is truncated to its first `maxLength`). With `max` 1 that is the first hashtag, or the first cashtag when
+ * there is none: the one-tag cuts' rule. `[]` when the content names no tag.
  *
  * `maxLength` is the contract's pattern ceiling (`HASHTAG_MAX_LENGTH` in
  * lib/contract-topology, 61: the ranked key-size limit). It is required so no
- * caller can build a tag longer than consensus accepts. A longer tag is
- * truncated to the ceiling. How `''` is spelled on-chain is the CALLER's
- * concern: the write paths omit the property.
+ * caller can build a tag longer than consensus accepts. How `[]` is spelled
+ * on-chain is the CALLER's concern: the write paths omit the property.
  */
-export function firstHashtag(content: string, maxLength: number): string {
-  const match = content.match(new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`))
-  return match ? match[1].toLowerCase() : ''
+export function indexedTags(content: string, max: number, maxLength: number): string[] {
+  const tags: string[] = []
+  const add = (tag: string) => {
+    if (tag !== '' && tags.length < max && !tags.includes(tag)) tags.push(tag)
+  }
+  for (const match of Array.from(content.matchAll(new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`, 'g')))) {
+    add(match[1].toLowerCase())
+  }
+  for (const match of Array.from(content.matchAll(/\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g))) {
+    add(cashtagDisplayToStorage(match[1], maxLength))
+  }
+  return tags
 }
 
 /**
- * The single inline tag: preserve the first hashtag's precedence, then fall
- * back to the first cashtag when there is no hashtag in the public content.
+ * A stored post's (or removal record's) tags, read back off either spelling:
+ * `[hashtag]` (one tag, through social v15) or the `tags` list (v16), `[]`
+ * when the document carries none. Undefined for a value that is neither, so a
+ * caller can tell "untagged" from "unreadable".
  */
-export function firstIndexedTag(content: string, maxLength: number): string {
-  const hashtag = firstHashtag(content, maxLength)
-  if (hashtag) return hashtag
-  const cashtag = content.match(/\$([a-zA-Z][a-zA-Z0-9_]{0,62})/)
-  return cashtag ? cashtagDisplayToStorage(cashtag[1], maxLength) : ''
+export function storedTags(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return []
+  if (typeof value === 'string') return value === '' ? [] : [value]
+  if (Array.isArray(value) && value.every((tag) => typeof tag === 'string')) return [...value]
+  return undefined
 }
 
 /**

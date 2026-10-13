@@ -7,6 +7,8 @@
  *
  * - global:          `byPost [postId]`                 — no pins
  * - per-hashtag:     `byHashtagPost [hashtag, postId]` — pin `['hashtag','==',tag]`
+ *                    (v16: `[tags, postId]`, one entry per tag of the post —
+ *                    pin `['tags','contains',tag]`, {@link tagPin})
  * - per-author:      `byAuthorPost [postAuthor, postId]` — pin `['postAuthor','==',id]`
  *                    (v10: `byAuthorPostTime [postAuthor, postId, $createdAt]`,
  *                    ranked at `[postAuthor, postId]` — the same query shape)
@@ -42,7 +44,7 @@ import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
 import { getEvoSdk } from './evo-sdk-service';
-import { postOwnerIndexPrefix, referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
+import { inlineTags, postOwnerIndexPrefix, referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
  * Which slice of time a ranking covers. `'all'` is the all-time axis;
@@ -84,6 +86,24 @@ export function isColdBucketError(error: unknown): boolean {
   return /single-path axis read must produce exactly one axis descent/i.test(message);
 }
 
+/**
+ * The pin on one tag of the like tag indexes: `hashtag ==` through v15; on
+ * v16 `tags contains`, which the node keys as an equality on one element of
+ * the list (a like enters the index once per tag of its post). The SDK's
+ * `DocumentsIndexPin` type still lists only `==` and `in`, though its ranked
+ * grammar accepts `contains` and keys it the same way, hence the widening.
+ */
+function tagPin(tag: string): DocumentsIndexPin {
+  return inlineTags()?.isArray
+    ? (['tags', 'contains', tag] as unknown as DocumentsIndexPin)
+    : ['hashtag', '==', tag];
+}
+
+/** The like property trending tags are grouped by: `hashtag`, or `tags` (v16, an element level). */
+function tagGroupBy(): string {
+  return inlineTags()?.field ?? 'hashtag';
+}
+
 export interface RankedLikedPost {
   /** The ranked group key — the liked post's id (base58). */
   postId: string;
@@ -120,11 +140,11 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
 
   try {
     const sdk = await getEvoSdk();
-    const where =
+    const where: DocumentsIndexPin[] | undefined =
       hashtag !== undefined
-        ? [['hashtag', '==', hashtag] as [string, '==', unknown]]
+        ? [tagPin(hashtag)]
         : postAuthor !== undefined
-          ? [['postAuthor', '==', postAuthor] as [string, '==', unknown]]
+          ? [['postAuthor', '==', postAuthor]]
           : undefined;
 
     // The windowed per-tag top lives on the `beat` companion on v9; every
@@ -217,16 +237,17 @@ async function rankedGroupCounts(
 
 /**
  * The top hashtags by LIKE count — the proved v9 trending axis: prefix groupBy
- * at `hashtag` on `like.byHashtagPost {at: hashtag}`. The index is
- * `skipIfAbsent`, so untagged likes are structurally invisible here and no
- * "untagged bucket" group can appear.
+ * at `hashtag` on `like.byHashtagPost {at: hashtag}` (v16: at `tags`, where a
+ * like of a post with several tags counts under each). Untagged likes are
+ * structurally invisible here (`skipIfAbsent` through v15; an empty list
+ * enters no index over it on v16), so no "untagged bucket" group can appear.
  */
 export async function topHashtagsByLikes(limit: number = 12, window: RankingWindow = 'all'): Promise<RankedGroupCount[]> {
   if (window === 'today' && !windowedRankingsAvailable()) return [];
   // Windowed trending: `beat.byDayHashtagPost` on v9, `like.byTrendHashtagPost` on v10.
   // A failed read rejects, so the trending cache never holds it as "no tags".
   const windowed = windowFor('hashtags', window);
-  return rankedGroupCounts(windowed?.docType ?? 'like', 'hashtag', limit, windowed, true);
+  return rankedGroupCounts(windowed?.docType ?? 'like', tagGroupBy(), limit, windowed, true);
 }
 
 /**

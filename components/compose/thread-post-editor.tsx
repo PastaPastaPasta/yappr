@@ -36,6 +36,8 @@ interface ThreadPostEditorProps {
   locked?: boolean
   /** Shown under the body when it mentions more people than the post notifies (`mentionLimitHint`). */
   mentionHint?: string | null
+  /** Shown under the body, as an error, when it names more tags than a post holds (v16, `tagLimitProblem`); the composer refuses to post it. */
+  tagProblem?: string | null
 }
 
 export function ThreadPostEditor({
@@ -56,6 +58,7 @@ export function ThreadPostEditor({
   pollAttached = false,
   locked = false,
   mentionHint = null,
+  tagProblem = null,
 }: ThreadPostEditorProps) {
   const localRef = useRef<HTMLTextAreaElement>(null)
   const ref = textareaRef || localRef
@@ -384,6 +387,10 @@ export function ThreadPostEditor({
 
           {isActive && !isPosted && !locked && mentionHint && (
             <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{mentionHint}</p>
+          )}
+
+          {!isPosted && !locked && tagProblem && (
+            <p className="mt-2 text-xs text-red-500">{tagProblem}</p>
           )}
 
           {/* Keep attachment cost and the count visible in edit, preview and locked states. */}

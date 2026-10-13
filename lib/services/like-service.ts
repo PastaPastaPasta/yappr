@@ -7,7 +7,7 @@ import { paginateFetchAll, documentCount, groupedDocumentCount, mapLimit, queryO
 import { isFrozenBalanceError, isInsufficientTokenError, isTokenPausedError } from '../error-utils';
 import type { getEvoSdk } from './evo-sdk-service';
 import type { RecentTarget } from '../like-notification-snapshot';
-import { indexOnlyLikeShapeFor, likeIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
+import { indexOnlyLikeShapeFor, likeIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor, inlineTags } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -27,17 +27,17 @@ export interface LikeDocument {
  * What the UI knows about a like's target, forwarded so the v9 (indexOnly)
  * write paths can fill the agreement-bound fields without a fetch. Both values
  * are consensus-checked against the target document (40127), so they must be
- * the TARGET's own values: `author` its `$ownerId` and `hashtag` its
- * `post.hashtag` (`''` when untagged — the CLIENT convention; the chain stores
- * untagged as an absent property and `indexOnlyLikeData` translates at the
- * boundary. Irrelevant for replies).
+ * the TARGET's own values: `author` its `$ownerId` and `tags` its `Post.tags`
+ * in the stored order (`[]` when untagged — the CLIENT convention; the chain
+ * stores untagged as an absent property and `indexOnlyLikeData` translates at
+ * the boundary. Irrelevant for replies).
  * `undefined` means "unknown" and is fetched from the target document instead
  * — it must NEVER be used to mean "untagged", or a like of a tagged post
- * sourced from a hashtag-less UI object would fail the agreement.
+ * sourced from a tag-less UI object would fail the agreement.
  */
 export interface LikeTargetInfo {
   author?: string;
-  hashtag?: string;
+  tags?: string[];
 }
 
 /** The delete tuple an indexOnly unlike needs beyond the content values. */
@@ -200,7 +200,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       if (shape) {
         return await this.likeIndexOnly(postId, ownerId, kind, shape, {
           author: target?.author ?? postOwnerId,
-          hashtag: target?.hashtag,
+          tags: target?.tags,
         });
       }
 
@@ -284,13 +284,13 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     kind: TargetKind,
     shape: IndexOnlyLikeShape,
     target?: LikeTargetInfo
-  ): Promise<{ author: string; hashtag: string | null }> {
+  ): Promise<{ author: string; tags: string[] | null }> {
     // v13 `likeReply` names the reply alone: nothing to agree with.
-    if (shape.authorField === null && shape.hashtagField === null) return { author: target?.author ?? '', hashtag: null };
+    if (shape.authorField === null && shape.hashtagField === null) return { author: target?.author ?? '', tags: null };
     let author = target?.author;
-    let hashtag: string | undefined = shape.hashtagField ? target?.hashtag : undefined;
+    let tags: string[] | undefined = shape.hashtagField ? target?.tags : undefined;
 
-    if (!author || (shape.hashtagField !== null && hashtag === undefined)) {
+    if (!author || (shape.hashtagField !== null && tags === undefined)) {
       if (kind === 'reply') {
         const { replyService } = await import('./reply-service');
         const reply = await replyService.getReplyById(targetId, { skipEnrichment: true });
@@ -301,12 +301,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         const post = await postService.getPostById(targetId, { skipEnrichment: true });
         if (!post) throw new Error(`Cannot resolve like target: post ${targetId} not found`);
         author = author || post.author.id;
-        if (hashtag === undefined) hashtag = post.hashtag ?? '';
+        if (tags === undefined) tags = post.tags ?? [];
       }
     }
 
     if (!author) throw new Error(`Cannot resolve like target author for ${targetId}`);
-    return { author, hashtag: shape.hashtagField !== null ? hashtag ?? '' : null };
+    return { author, tags: shape.hashtagField !== null ? tags ?? [] : null };
   }
 
   /**
@@ -314,26 +314,31 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * AND the delete-by-values tuple, so like and unlike can never disagree on
    * how a value (or its absence) is spelled.
    *
-   * The hashtag translation happens here, once: the client-side '' sentinel
-   * ("known untagged") becomes an OMITTED property, because `hashtag` is
-   * optional and the propertyAgreement is absence-aware (both absent = agree;
-   * writing '' against an absent `post.hashtag` is a 40127 mismatch, and ''
-   * fails the pattern anyway). Because the unlike path rebuilds its tuple
-   * through this same method, the delete reproduces the create's absence
-   * exactly.
+   * The tag translation happens here, once: the client-side `[]` ("known
+   * untagged") becomes an OMITTED property, because the tag property is
+   * optional and the agreement is absence-aware (both absent = agree; writing
+   * `''` against an absent `post.hashtag` is a 40127 mismatch, and `''` fails
+   * the pattern anyway). A tagged post's tags go out as the post stores them:
+   * its one tag as `hashtag` through v15, its whole list as `tags` on v16,
+   * where the agreement compares the lists element for element, in order.
+   * Because the unlike path rebuilds its tuple through this same method, the
+   * delete reproduces the create's values exactly, which the like's row
+   * commitment requires.
    */
   private indexOnlyLikeData(
     targetId: string,
     shape: IndexOnlyLikeShape,
     kind: TargetKind,
-    info: { author: string; hashtag: string | null }
+    info: { author: string; tags: string[] | null }
   ): Record<string, unknown> {
     const { field } = likeIndexFor(kind);
-    const tag = info.hashtag ?? '';
+    const tags = info.tags ?? [];
     return {
       [field]: identifierStringToDocumentBytes(targetId),
       ...(shape.authorField !== null ? { [shape.authorField]: identifierStringToDocumentBytes(info.author) } : {}),
-      ...(shape.hashtagField !== null && tag !== '' ? { [shape.hashtagField]: tag } : {}),
+      ...(shape.hashtagField !== null && tags.length > 0
+        ? { [shape.hashtagField]: inlineTags()?.isArray ? [...tags] : tags[0] }
+        : {}),
     };
   }
 
@@ -398,13 +403,13 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     // trending count. A beat failure is logged, never surfaced — the like is
     // the user's action; the beat is the ranking's bookkeeping, and a missing
     // one only under-counts one tag for the rest of the UTC day.
-    const companion = beatCompanionFor(kind, info.hashtag);
+    const companion = beatCompanionFor(kind, info.tags?.[0]);
     if (companion) {
       const beat = await stateTransitionService.createDocument(
         this.contractId,
         companion.docType,
         ownerId,
-        this.beatData(targetId, info.hashtag ?? ''),
+        this.beatData(targetId, info.tags?.[0] ?? ''),
         { confirmation: 'affectedState' }
       );
       if (!beat.success) {
@@ -523,7 +528,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * property plus the consensus `$createdAt`, which only Platform knows.
    * Recovery ({@link recoverLikeTuple}): walk the author-time index — the only
    * projection carrying `$createdAt` — newest first, and match the entry whose
-   * target id and `$ownerId` are ours. The remaining values (hashtag, author)
+   * target id and `$ownerId` are ours. The remaining values (tags, author)
    * come from the target document, exactly as the create wrote them.
    */
   private async unlikeIndexOnly(
@@ -593,8 +598,8 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     // gone, and is awaited like the create's beat. A beat that stays is
     // logged, never surfaced — the unlike itself landed; a stale beat only
     // over-counts one tag for the rest of the UTC day.
-    if (beatCompanionFor(kind, info.hashtag)) {
-      const removed = await this.removeBeatCompanion(targetId, ownerId, info.hashtag ?? '').catch((error) => {
+    if (beatCompanionFor(kind, info.tags?.[0])) {
+      const removed = await this.removeBeatCompanion(targetId, ownerId, info.tags?.[0] ?? '').catch((error) => {
         logger.warn('Unlike landed but removing its beat companion failed:', error);
         return false;
       });

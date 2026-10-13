@@ -21,7 +21,7 @@ import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsConfigured, pollrIsV4 } from '@/lib/constants'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
-import { characterCount, contentOverage, firstPostMentionHints, hasVisibleContent, isOverContentLimit, mentionLimitHint } from '@/lib/compose/limits'
+import { characterCount, contentOverage, firstPostMentionHints, firstPostTagProblems, hasVisibleContent, isOverContentLimit, mentionLimitHint } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { mediaTypeOfMime } from '@/lib/media/media-fields'
 import { POSTING_CLOSED_COPY } from '@/lib/error-utils'
@@ -167,6 +167,15 @@ export function ComposeModal() {
   const imageOverageBy = isOverLimitDueToImage ? contentOverage(firstUnposted.content, imageUrlExtraLength) : null
   const imageOverage = imageOverageBy ? Math.max(imageOverageBy.charactersOver, imageOverageBy.bytesOver) : 0
 
+  // v16: a post holds at most four tags (`post.tags`); a fifth refuses the post.
+  const firstTagProblems = firstPostTagProblems({
+    body: firstPost?.content ?? '',
+    encrypted: willBeEncrypted,
+    teaser: visibility === 'private-with-teaser' ? firstPost?.teaser : undefined,
+    isReply: !!replyingTo,
+  })
+  const hasTagOverLimit = !!firstPost && !firstPost.postedPostId && (firstTagProblems.body !== null || firstTagProblems.teaser !== null)
+
   const isValidEncryptedPost = !willBeEncrypted || threadPosts.length <= 1
   const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) || (!inherited.loading && !inherited.error)
   // Mainnet v13 (`notYetUsable`): nothing posts until the first team is seated.
@@ -175,6 +184,7 @@ export function ComposeModal() {
     postingOpen &&
     unpostedWithContent.length > 0 &&
     !hasOverLimit &&
+    !hasTagOverLimit &&
     !isPosting &&
     !image.isUploading &&
     isValidEncryptedPost &&
@@ -529,7 +539,9 @@ export function ComposeModal() {
                                     maxLength={TEASER_LIMIT + 50}
                                   />
                                   <div className="flex items-center justify-end gap-3 mt-2">
-                                    {firstMentionHints.teaser && (
+                                    {firstTagProblems.teaser ? (
+                                      <span className="mr-auto text-xs text-red-500">{firstTagProblems.teaser}</span>
+                                    ) : firstMentionHints.teaser && (
                                       <span className="mr-auto text-xs text-gray-500 dark:text-gray-400">{firstMentionHints.teaser}</span>
                                     )}
                                     <span className={`text-xs ${teaserLength > TEASER_LIMIT ? 'text-red-500' : teaserLength > TEASER_LIMIT - 20 ? 'text-amber-500' : 'text-gray-400'}`}>
@@ -560,6 +572,7 @@ export function ComposeModal() {
                                 // Poll documents are immutable; once one lands the question is fixed.
                                 locked={index === 0 && !!poll.createdPollId}
                                 mentionHint={index === 0 ? firstMentionHints.body : mentionLimitHint(post.content)}
+                                tagProblem={index === 0 ? firstTagProblems.body : null}
                                 textareaRef={index === 0 ? firstTextareaRef : undefined}
                                 extraCharacters={post.id === firstUnposted?.id ? imageUrlExtraLength : 0}
                                 {...(!post.postedPostId

@@ -7,7 +7,7 @@ import { TtlMap } from '@/lib/caches/ttl-map'
 import { queryPostsByOwnersSince, queryPostsSince } from '@/lib/services/document-service'
 import { followService } from '@/lib/services/follow-service'
 import { hashtagService } from '@/lib/services/hashtag-service'
-import { postService } from '@/lib/services/post-service'
+import { postService, postsTaggedQuery } from '@/lib/services/post-service'
 import { topLikedPostsByAuthorsHydrated, topLikedPostsHydrated } from '@/lib/services/ranked-likes'
 import { CASHTAG_SUFFIX, cashtagDisplayToStorage, hashtagDisplayToStorage } from '@/lib/post-helpers'
 import { useSettingsStore } from '@/lib/store'
@@ -166,8 +166,7 @@ async function top(query: HomeQuery): Promise<Page<PostDTO>> {
 function hashtagRecentInline(tag: string, cursor: string | null | undefined): Promise<Page<PostDTO>> {
   return pageAfter(`tag:${tag}`, cursor,
     after => postService.queryForDisplay({
-      where: [['hashtag', '==', tag], ['$createdAt', '>', 0]],
-      orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
+      ...postsTaggedQuery(tag),
       limit: TAG_PAGE,
       ...(after ? { startAfter: after } : {}),
     }),
@@ -267,7 +266,7 @@ export const feed = {
   },
 
   /**
-   * A tag page. **Recent:** v9/v10 query `post.tagAndTime` (50 a page,
+   * A tag page. **Recent:** v9 on query `post.tagAndTime` (50 a page,
    * composite-enriched); v2 lists the tag's postHashtag documents and pages
    * them in memory. **Top:** the tag-pinned proved ranking, one page.
    */

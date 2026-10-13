@@ -20,6 +20,7 @@ import socialContractV12 from '@/contracts/yappr-social-contract-v12.json'
 import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
 import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
 import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
+import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
@@ -55,6 +56,7 @@ const V12 = socialContractV12.documentSchemas as unknown as Schemas
 const V13 = socialContractV13.documentSchemas as unknown as Schemas
 const V14 = socialContractV14.documentSchemas as unknown as Schemas
 const V15 = socialContractV15.documentSchemas as unknown as Schemas
+const V16 = socialContractV16.documentSchemas as unknown as Schemas
 const BLOCKS = blocksContract as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
 
@@ -70,7 +72,7 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
@@ -132,7 +134,7 @@ describe('contract topology', () => {
   })
 
   it('names like fields and indexes that exist on each contract', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
@@ -230,7 +232,7 @@ describe('contract topology', () => {
   })
 
   it('reads the author index as a counter exactly where the contract keeps one (summableOffCountIndex)', async () => {
-    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15]] as const) {
+    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const shape = m.indexOnlyLikeShapeFor(kind)
@@ -255,7 +257,7 @@ describe('contract topology', () => {
   })
 
   it('lets a barred author tombstone exactly where post and reply declare retractedWhen on deleted', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16]] as const) {
       const m = await topologyModule(topology)
       const declared = (['post', 'reply'] as const).map((kind) => schemas[kind].retractedWhen)
       const retracts = declared.every((rule) => JSON.stringify(rule) === JSON.stringify({ present: 'deleted' }))
@@ -1315,6 +1317,95 @@ describe('contract topology', () => {
         }
       }
       expect(await read('v15')).toEqual(await read('v14'))
+    })
+  })
+
+  describe('v16 (5.0.0-beta.6)', () => {
+    const tagList = { type: 'array', minItems: 1, maxItems: 4, uniqueItems: true, items: { type: 'string', pattern: '^[a-z0-9_]{1,61}$', maxLength: 61 } }
+    const indexOf = (schemas: Schemas, docType: string, name: string) => schemas[docType].indices?.find((entry) => entry.name === name)
+
+    /** v16 with its tag list written back as v15's single `hashtag`, and the tag indexes' `skipIfAbsent` restored. */
+    const withSingleTag = (schemas: Schemas): Schemas => {
+      const single = JSON.parse(JSON.stringify(schemas).replaceAll('"tags"', '"hashtag"')) as Schemas
+      for (const docType of ['post', 'like']) {
+        const { position } = single[docType].properties.hashtag as { position: number }
+        single[docType].properties.hashtag = { type: 'string', pattern: '^[a-z0-9_]{1,61}$', maxLength: 61, position } as Schemas[string]['properties'][string]
+      }
+      for (const [docType, name] of [['post', 'tagAndTime'], ['like', 'byHashtagPost'], ['like', 'byTrendHashtagPost']] as const) {
+        const index = indexOf(single, docType, name)
+        if (index) index.skipIfAbsent = true
+      }
+      return single
+    }
+
+    it('is v15 with the post\'s tag a list of up to 4 and the like repeating it', () => {
+      expect(withSingleTag(V16)).toEqual(V15)
+      for (const docType of ['post', 'like']) {
+        expect(V16[docType].properties.tags, docType).toEqual({ ...tagList, position: docType === 'post' ? 12 : 1 })
+        expect(V16[docType].properties.hashtag, docType).toBeUndefined()
+      }
+      expect(V16.like.properties.postId.refersTo?.where).toEqual({ tags: 'tags', $ownerId: 'postAuthor' })
+      expect(V16.post.immutable).toContain('tags')
+      expect((V16.post.moderatorAbilities as { deleteKeepsFields?: string[] }).deleteKeepsFields).toEqual(['tags', '$createdAt'])
+    })
+
+    it('indexes the tags per element, with no skipIfAbsent (an empty list enters no index), the like counter preallocated', () => {
+      expect(indexOf(V16, 'post', 'tagAndTime')).toEqual({ name: 'tagAndTime', properties: [{ tags: 'asc' }, { $createdAt: 'asc' }] })
+      expect(indexOf(V16, 'like', 'byHashtagPost')).toEqual({
+        name: 'byHashtagPost', properties: [{ tags: 'asc' }, { postId: 'asc' }], summableOffCountIndex: 'byPost',
+        rangeCountable: true, rangeSummable: true, rankedCountable: { at: ['tags', 'postId'] }, preallocated: true,
+      })
+      expect(indexOf(V16, 'like', 'byTrendHashtagPost')?.properties).toEqual([{ $createdAt: 'asc' }, { tags: 'asc' }, { postId: 'asc' }])
+      expect(indexOf(V16, 'like', 'byTrendHashtagPost')?.skipIfAbsent).toBeUndefined()
+    })
+
+    it('reads and writes the tag list where v15 read one tag', async () => {
+      const shapes: Record<string, unknown> = {}
+      for (const topology of ['v2', 'v9', 'v15', 'v16']) shapes[topology] = (await topologyModule(topology)).inlineTags()
+      expect(shapes).toEqual({
+        v2: null,
+        v9: { field: 'hashtag', max: 1, isArray: false },
+        v15: { field: 'hashtag', max: 1, isArray: false },
+        v16: { field: 'tags', max: 4, isArray: true },
+      })
+
+      const v16 = await topologyModule('v16')
+      expect(v16.tagFieldsFor(['dash', 'news'])).toEqual({ tags: ['dash', 'news'] })
+      expect(v16.tagFieldsFor([])).toEqual({})
+      expect(v16.inlinePostTags({ tags: ['dash', 'news'] })).toEqual(['dash', 'news'])
+      expect(v16.inlinePostTags({}, {})).toEqual([])
+      expect(v16.indexOnlyLikeShapeFor('post')?.hashtagField).toBe('tags')
+      expect(v16.tombstonePreservationFor('post')).toEqual({ identifiers: [], scalars: ['tags'] })
+
+      const v15 = await topologyModule('v15')
+      expect(v15.tagFieldsFor(['dash', 'news'])).toEqual({ hashtag: 'dash' })
+      expect(v15.inlinePostTags({ hashtag: 'dash' })).toEqual(['dash'])
+      // An already-built Post passed back through a transform carries `tags`.
+      expect(v15.inlinePostTags({ tags: ['dash'] })).toEqual(['dash'])
+      expect(v15.inlinePostTags({ hashtag: 7 })).toBeUndefined()
+
+      const v2 = await topologyModule('v2')
+      expect([v2.tagFieldsFor(['dash']), v2.inlinePostTags({ hashtag: 'dash' })]).toEqual([{}, undefined])
+    })
+
+    it('keeps every v15 surface but the tag field', async () => {
+      const read = async (topology: string) => {
+        const m = await topologyModule(topology)
+        const descriptor = m.topologyDescriptor()
+        const postLike = descriptor.interactions.post.indexOnlyLike
+        return {
+          descriptor: {
+            ...descriptor,
+            topology: null,
+            tombstonePreserves: { ...descriptor.tombstonePreserves, post: null },
+            interactions: { ...descriptor.interactions, post: { ...descriptor.interactions.post, indexOnlyLike: postLike && { ...postLike, hashtagField: null } } },
+          },
+          windows: (['reply', 'quote', 'threadReply'] as const).map((source) => m.notificationWindowFor(source)),
+          rankings: (['posts', 'hashtags', 'creators'] as const).map((axis) => m.windowedRankingFor(axis)),
+          flags: [m.replyOwnersAreDerived(), m.reportsWithdrawOnlyWhilePending(), m.reportShape(), m.electedModeration(), m.blocksContractId(), m.inlineMentions(), m.yappIsTransferable()],
+        }
+      }
+      expect(await read('v16')).toEqual(await read('v15'))
     })
   })
 })

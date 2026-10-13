@@ -33,7 +33,9 @@ import socialContractV12 from '@/contracts/yappr-social-contract-v12.json'
 import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
 import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
 import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
+import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
+import { storedTags } from './post-helpers'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -102,11 +104,14 @@ export interface IndexOnlyLikeShape {
    */
   authorField: string | null
   /**
-   * Property carrying the post's hashtag (agreement-bound to `post.hashtag`),
-   * or null on a doctype without one (`likeReply`). The property is optional
-   * and an untagged like OMITS it — absence-aware propertyAgreement treats
-   * both-absent as agreement, and sending `''` against an absent
-   * `post.hashtag` would be a 40127 mismatch.
+   * Property carrying the post's tags, agreement-bound to the post's own:
+   * `hashtag` (one tag, bound to `post.hashtag`) through v15, `tags` (the
+   * post's list, bound to `post.tags` as a whole: same tags, same order) on
+   * v16 ({@link inlineTags}); null on a doctype without one (`likeReply`).
+   * The property is optional and an untagged like OMITS it — absence-aware
+   * propertyAgreement treats both-absent as agreement, and sending `''` (or
+   * `[]`, which the array's `minItems` refuses) against an absent post value
+   * would be a 40127 mismatch.
    */
   hashtagField: string | null
   /**
@@ -218,7 +223,7 @@ export interface ReplyLinkage {
 export interface TombstonePreservation {
   /** Identifier-typed properties; re-encoded to raw bytes for the write path. */
   readonly identifiers: readonly string[]
-  /** Scalar properties, carried over as-is. */
+  /** Every other property (scalars, and v16's `tags` list), carried over as-is. */
   readonly scalars: readonly string[]
 }
 
@@ -532,6 +537,28 @@ const V15_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v15',
 }
 
+/**
+ * v16 — `contracts/yappr-social-contract-v16.json`, the 5.0.0-beta.6 cut
+ * (docs/SOCIAL_V16.md). v15 with up to four tags per post: `post.hashtag`
+ * becomes the typed array `post.tags` ({@link inlineTags}), and a like
+ * repeats the post's list (`where { "tags": "tags" }`, platform#5388), so the
+ * like enters `byHashtagPost` and `byTrendHashtagPost` once per tag
+ * (platform#5390) and `byHashtagPost` stays a preallocated counter of
+ * `byPost` (platform#5394). A removal record keeps the list.
+ */
+const V16_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V15_DESCRIPTOR,
+  topology: 'v16',
+  tombstonePreserves: { ...V15_DESCRIPTOR.tombstonePreserves, post: { identifiers: [], scalars: ['tags'] } },
+  interactions: {
+    post: {
+      ...V15_DESCRIPTOR.interactions.post,
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'tags', authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: true },
+    },
+    reply: V15_DESCRIPTOR.interactions.reply,
+  },
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -550,6 +577,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v13: V13_DESCRIPTOR,
   v14: V14_DESCRIPTOR,
   v15: V15_DESCRIPTOR,
+  v16: V16_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -562,7 +590,7 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
 
 /**
  * True on `cut` and on every cut after it, in {@link CONTRACT_TOPOLOGIES}
- * order (v2 < v9 < v10 < v11 < v12 < v13 < v14 < v15). Each later cut keeps what the
+ * order (v2 < v9 < v10 < v11 < v12 < v13 < v14 < v15 < v16). Each later cut keeps what the
  * earlier ones introduced unless a predicate says otherwise.
  */
 function isAtLeast(cut: ContractTopology): boolean {
@@ -934,25 +962,88 @@ export function likeNotificationsAreTimeless(): boolean {
 }
 
 /**
- * True when a post carries its (single) hashtag inline in `post.hashtag` and
- * the `postHashtag` doctype does not exist (v9). Tag listings then query
+ * True when a post carries its tags inline — one in `post.hashtag` (v9–v15)
+ * or up to four in the typed array `post.tags` (v16), see {@link inlineTags}
+ * — and the `postHashtag` doctype does not exist. Tag listings then query
  * `post.tagAndTime` directly, the compose flow writes no secondary hashtag
  * documents, and there is nothing to "recover" when one is missing.
  *
- * The inline `hashtag` is OPTIONAL: an untagged post omits it, and a like
+ * The inline property is OPTIONAL: an untagged post omits it, and a like
  * must mirror the post's absence — absence-aware propertyAgreement treats
  * both-absent as agreement, while writing `''` against an absent
- * `post.hashtag` is a 40127 mismatch. `like.byHashtagPost` is `skipIfAbsent`,
- * so untagged likes write no per-tag index entries at all.
+ * `post.hashtag` is a 40127 mismatch. Untagged likes write no per-tag index
+ * entries at all (`skipIfAbsent` through v15; on v16 a list without
+ * elements never enters an index over it).
  *
- * In memory `Post.hashtag === ''` still means "known untagged" (and
- * `undefined` means "unknown — fetch the post"), so caches, `LikeTargetInfo`
- * and the tuple plumbing round-trip absence without a third state. The
- * `''` ↔ absent translation happens exactly once, at the chain boundary (post
- * create, like create, unlike delete-by-values, post transform).
+ * In memory `Post.tags` is the post's list (`[]` = known untagged,
+ * `undefined` = unknown — fetch the post) on every inline cut, so caches,
+ * `LikeTargetInfo` and the tuple plumbing round-trip absence without a third
+ * state. The list ↔ chain translation happens exactly once, at the chain
+ * boundary ({@link tagFieldsFor}, {@link inlinePostTags}: post create, like
+ * create, unlike delete-by-values, post transform).
  */
 export function hashtagsAreInline(): boolean {
   return isDevnetCut()
+}
+
+/** How a post names the tags it is indexed under (every devnet cut). Post and like declare the same property. */
+export interface InlineTags {
+  /**
+   * `hashtag` (v9–v15: one optional string) or `tags` (v16: an optional typed
+   * array of distinct tags, at least one, in the order the content names
+   * them).
+   */
+  readonly field: 'hashtag' | 'tags'
+  /**
+   * How many tags one post is indexed under: 1, or the array's `maxItems`
+   * (4). The compose flow indexes the tags of the public content
+   * ({@link indexedTags} in lib/post-helpers): on a one-tag cut the first,
+   * the rest staying plain text; on v16 every one, and a post naming more
+   * than `max` is refused (`tagLimitProblem` in lib/compose/limits).
+   */
+  readonly max: number
+  /**
+   * True on the array (v16): `tagAndTime [tags, $createdAt]` and the like
+   * tag indexes enter a document once per element, so a read pins one tag
+   * with `contains`, never `==`, and orders by `$createdAt` alone.
+   */
+  readonly isArray: boolean
+}
+
+/** The inline tag property of the configured cut ({@link InlineTags}), or null where tags are `postHashtag` documents (v2). */
+export function inlineTags(): InlineTags | null {
+  if (!hashtagsAreInline()) return null
+  const listed = devnetSchemas().post.properties?.tags
+  return listed
+    ? { field: 'tags', max: listed.maxItems ?? 0, isArray: true }
+    : { field: 'hashtag', max: 1, isArray: false }
+}
+
+/**
+ * The chain spelling of a post's (or like's) tags under {@link inlineTags}:
+ * the first tag as `hashtag` on a scalar cut, the whole list as `tags` on
+ * v16, and nothing for an untagged post or on v2. A like passes the post's
+ * list unchanged, so the agreement holds element for element.
+ */
+export function tagFieldsFor(tags: readonly string[]): Record<string, string | string[]> {
+  const inline = inlineTags()
+  if (!inline || tags.length === 0) return {}
+  return inline.isArray ? { [inline.field]: [...tags] } : { [inline.field]: tags[0] }
+}
+
+/**
+ * A post's tags in memory, read off its document (`data`, then the document
+ * itself): the inline property of the configured cut, or an already-built
+ * Post's `tags` (an optimistic card passed back through a transform). `[]`
+ * when untagged; undefined on v2, which has no inline tags, and for a value
+ * that is no tag list.
+ */
+export function inlinePostTags(...sources: Array<Record<string, unknown>>): string[] | undefined {
+  const inline = inlineTags()
+  if (!inline) return undefined
+  const value = sources.map((source) => source[inline.field]).find((entry) => entry !== undefined && entry !== null)
+    ?? sources.map((source) => source.tags).find((entry) => entry !== undefined && entry !== null)
+  return storedTags(value)
 }
 
 /**
@@ -1551,11 +1642,12 @@ interface SocialDocumentSchema {
   deleteConstraints?: Record<string, unknown>
 }
 
-type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14 | typeof socialContractV15
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14 | typeof socialContractV15 | typeof socialContractV16
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
   switch (topologyDescriptor().topology) {
+    case 'v16': return socialContractV16
     case 'v15': return socialContractV15
     case 'v14': return socialContractV14
     case 'v13': return socialContractV13

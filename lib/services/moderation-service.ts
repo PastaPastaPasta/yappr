@@ -4,6 +4,7 @@ import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
 import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, isV11, moderationListsKept, moderatorDeletableTypes, moderatorDeleteWindowSeconds, moderatorDeletionKeepsRecord, reportsAreResolved, settledDeletionFor, type ElectedModerationDeclaration, type SettledDeletionRule, type TargetKind } from '@/lib/contract-topology';
+import { storedTags } from '@/lib/post-helpers';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, isUnverifiedOutcomeError, type ModerationErrorKind } from '@/lib/error-utils';
@@ -165,11 +166,11 @@ export interface DocumentRemoval {
 
 /**
  * The fields a removal record kept of the removed document, each only when
- * the record holds it: a post's `hashtag`, a reply's `rootPostId`, and either's
- * `$createdAt` (ms).
+ * the record holds it: a post's tags (its one `hashtag` through v15, its
+ * `tags` list on v16), a reply's `rootPostId`, and either's `$createdAt` (ms).
  */
 export interface RemovalKeptFields {
-  hashtag?: string;
+  tags?: string[];
   rootPostId?: string;
   createdAt?: number;
 }
@@ -544,8 +545,9 @@ function keptTime(value: unknown): number | undefined {
 export function toKeptFields(keptFields: Readonly<Record<string, unknown>> | undefined): RemovalKeptFields {
   if (!keptFields) return {};
   const kept: RemovalKeptFields = {};
-  const { hashtag, rootPostId, $createdAt: createdAt } = keptFields;
-  if (typeof hashtag === 'string' && hashtag) kept.hashtag = hashtag;
+  const { hashtag, tags, rootPostId, $createdAt: createdAt } = keptFields;
+  const keptTags = storedTags(tags ?? hashtag);
+  if (keptTags && keptTags.length > 0) kept.tags = keptTags;
   const root = rootPostId === undefined || rootPostId === null ? null : identifierToBase58(rootPostId);
   if (root) kept.rootPostId = root;
   const at = keptTime(createdAt);
