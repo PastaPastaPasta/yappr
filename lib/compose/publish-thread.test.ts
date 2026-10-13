@@ -57,6 +57,42 @@ describe('planPosts predecessor', () => {
   })
 })
 
+describe('the thread root\'s tags (v16: at most four)', () => {
+  const five = '#a #b #c #d #e'
+  async function onV16() {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v16')
+    return import('./publish-thread')
+  }
+  afterEach(() => vi.unstubAllEnvs())
+  const options = { replying: false, encrypted: false, teaser: false }
+  const problem = 'A post can have at most 4 tags. Remove 1 tag.'
+
+  it('judges the part publication creates as a post, past an empty first slot', async () => {
+    const { plannedRootPost, planPosts: plan, threadTagProblem } = await onV16()
+    const thread = [{ id: 'empty', content: '   ' }, { id: 'tagged', content: five }, { id: 'next', content: five }]
+    expect(plannedRootPost(plan(thread, undefined, false), false)?.threadPostId).toBe('tagged')
+    // The later part is a reply and carries no tags: only the root is judged.
+    expect(threadTagProblem(thread, options)).toEqual({ threadPostId: 'tagged', body: problem, teaser: null })
+    expect(threadTagProblem([{ id: 'empty', content: '' }, { id: 'tagged', content: '#a #b #c #d' }, { id: 'next', content: five }], options)).toBeNull()
+  })
+
+  it('judges no part of a reply, or of a thread whose root already landed', async () => {
+    const { plannedRootPost, planPosts: plan, threadTagProblem } = await onV16()
+    expect(threadTagProblem([{ id: 'a', content: five }], { ...options, replying: true })).toBeNull()
+    const resumed = [{ id: 'root', content: 'landed', postedPostId: 'r' }, { id: 'b', content: five }]
+    expect(plannedRootPost(plan(resumed, undefined, false), false)).toBeNull()
+    expect(threadTagProblem(resumed, options)).toBeNull()
+  })
+
+  it('judges an encrypted post by its teaser alone', async () => {
+    const { threadTagProblem } = await onV16()
+    const secret = [{ id: 'p', content: five, teaser: five }]
+    expect(threadTagProblem(secret, { ...options, encrypted: true, teaser: true })).toEqual({ threadPostId: 'p', body: null, teaser: problem })
+    expect(threadTagProblem(secret, { ...options, encrypted: true, teaser: false })).toBeNull()
+  })
+})
+
 describe('publishThread retry linkage', () => {
   const input = (lastPostedId: string | null): PublishInput => ({
     authorId: 'author',

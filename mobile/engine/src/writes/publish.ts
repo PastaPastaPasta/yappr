@@ -1,4 +1,4 @@
-import { planPosts, publishThread, type PostToCreate, type PublishOutcome } from '@/lib/compose/publish-thread'
+import { plannedRootPost, planPosts, publishThread, type PostToCreate, type PublishOutcome } from '@/lib/compose/publish-thread'
 import { hasVisibleContent, isOverContentLimit, tagLimitProblem } from '@/lib/compose/limits'
 import { mediaCarriesHashes, threadRootIdOf } from '@/lib/contract-topology'
 import { extractErrorMessage } from '@/lib/error-utils'
@@ -64,8 +64,11 @@ export function validateDraft(draft: DraftDTO): void {
   if (unposted.length === 0) throw badRequest('Nothing to post')
   // Characters, and on v10 UTF-8 bytes too: the contract refuses either overage (compose-modal `hasOverLimit`).
   if (unposted.some(part => isOverContentLimit(part.text.trim()))) throw badRequest('A part is over the length limit')
-  // v16: a post holds at most four tags; only a thread's first part is a post (the rest, and a reply, carry none).
-  const tooManyTags = !draft.replyTo && !posted[0] ? tagLimitProblem(parts[0].text.trim()) : null
+  // v16: a post holds at most four tags. Only the part the thread creates as a post carries any, found as
+  // publication plans it: an empty first part is skipped, and a reply, or a part following one already
+  // posted, is no post.
+  const root = plannedRootPost(planPosts(parts.map((part, index) => ({ id: String(index), content: part.text, postedPostId: (posted[index] as string | null) ?? undefined })), undefined, false), !!draft.replyTo)
+  const tooManyTags = root ? tagLimitProblem(root.content) : null
   if (tooManyTags) throw badRequest(tooManyTags)
 }
 

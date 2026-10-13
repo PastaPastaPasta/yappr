@@ -96,15 +96,3 @@ export function tagLimitProblem(text: string): string | null {
   const over = named - tags.max
   return `A post can have at most ${tags.max} tags. Remove ${over} ${over === 1 ? 'tag' : 'tags'}.`
 }
-
-/**
- * The tag problems of a thread's first post ({@link tagLimitProblem}): under
- * its body, or under its teaser box. Only the public text is indexed: an
- * encrypted post's tags come from its teaser alone, so its body never has
- * one. A reply carries no tags.
- */
-export function firstPostTagProblems({ body, encrypted, teaser, isReply }: { body: string; encrypted: boolean; teaser?: string; isReply: boolean }): { body: string | null; teaser: string | null } {
-  if (isReply) return { body: null, teaser: null }
-  if (!encrypted) return { body: tagLimitProblem(body), teaser: null }
-  return { body: null, teaser: teaser ? tagLimitProblem(teaser) : null }
-}

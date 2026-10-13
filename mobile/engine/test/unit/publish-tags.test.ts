@@ -1,7 +1,8 @@
 /**
  * `validateDraft` on social v16: a post holds at most four tags, so a draft
- * whose first part names a fifth is refused before a ticket exists, as web's
- * composer refuses it (`tagLimitProblem`). A thread's later parts and a reply
+ * whose post names a fifth is refused before a ticket exists, as web's
+ * composer refuses it (`tagLimitProblem`). The post is the part publication
+ * creates as one (`plannedRootPost`): a thread's later parts and a reply
  * carry no tags.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -26,6 +27,15 @@ describe('validateDraft tags', () => {
     // Only the first part is a post; a reply carries no tags.
     expect(() => validateDraft({ parts: [{ text: 'one' }, { text: tags(5) }] })).not.toThrow()
     expect(() => validateDraft({ parts: [{ text: tags(5) }], replyTo: TARGET })).not.toThrow()
+  })
+
+  it('judges the part publication creates as a post, past an empty first part', async () => {
+    const validateDraft = await validateOn('v16')
+    // planPosts skips the empty part, so the second one is the post.
+    expect(() => validateDraft({ parts: [{ text: '   ' }, { text: tags(5) }] })).toThrow(expect.objectContaining({ code: 'BAD_REQUEST' }))
+    expect(() => validateDraft({ parts: [{ text: '' }, { text: tags(4) }, { text: tags(5) }] })).not.toThrow()
+    // Resumed past the root, every remaining part is a reply.
+    expect(() => validateDraft({ parts: [{ text: 'root' }, { text: tags(5) }], resume: { postedIds: [id('Root'), null] } })).not.toThrow()
   })
 
   it('refuses nothing before v16, where a post indexes its first tag', async () => {

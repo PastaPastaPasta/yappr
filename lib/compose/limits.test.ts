@@ -121,16 +121,6 @@ describe('tagLimitProblem', () => {
     expect(tagLimitProblem(`${tags(5)} $DASH`)).toBe('A post can have at most 4 tags. Remove 2 tags.')
   })
 
-  it('judges the first post\'s public text only, and never a reply', async () => {
-    const { firstPostTagProblems } = await limitsOn('v16')
-    const problem = 'A post can have at most 4 tags. Remove 1 tag.'
-    expect(firstPostTagProblems({ body: tags(5), encrypted: false, isReply: false })).toEqual({ body: problem, teaser: null })
-    // An encrypted body is never indexed: only its teaser names tags.
-    expect(firstPostTagProblems({ body: tags(5), encrypted: true, isReply: false })).toEqual({ body: null, teaser: null })
-    expect(firstPostTagProblems({ body: 'secret', encrypted: true, teaser: tags(5), isReply: false })).toEqual({ body: null, teaser: problem })
-    expect(firstPostTagProblems({ body: tags(5), encrypted: false, isReply: true })).toEqual({ body: null, teaser: null })
-  })
-
   it('refuses nothing before v16, as before', async () => {
     for (const topology of ['v2', 'v9', 'v15']) expect((await limitsOn(topology)).tagLimitProblem(tags(5)), topology).toBeNull()
   })
