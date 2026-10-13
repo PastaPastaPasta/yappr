@@ -93,9 +93,22 @@ let openOnReady = false;
 let openedHash: string | null = null;
 /** The engine epoch the flow runs on: a restarted engine resumes the request. */
 let flowEpoch = -1;
-/** The newest flow number seen; events numbered at or below a start's floor belong to an earlier flow. */
+/**
+ * The newest flow number seen; events numbered at or below a start's floor
+ * belong to an earlier flow. Flows are numbered per engine, so both start
+ * over with each engine epoch.
+ */
 let lastFlow = 0;
 let floor = 0;
+let numberingEpoch = -1;
+
+/** A new engine numbers its flows from the start again. */
+function followEpoch(epoch: number): void {
+  if (epoch === numberingEpoch) return;
+  numberingEpoch = epoch;
+  lastFlow = 0;
+  floor = 0;
+}
 
 function listen(): void {
   if (listening) return;
@@ -111,6 +124,7 @@ function listen(): void {
   engineSupervisor.subscribeStatus(() => {
     const { state, epoch } = engineSupervisor.getStatus();
     if (state !== 'ready' && state !== 'degraded') return;
+    followEpoch(epoch);
     if (flowEpoch === -1 || epoch === flowEpoch) return;
     flowEpoch = epoch;
     // The engine restarted under a waiting request: pick the stored request up again.
@@ -144,6 +158,7 @@ export async function startAppConnect(
   { renew = false, resume = false, fresh = false }: { renew?: boolean; resume?: boolean; fresh?: boolean } = {},
 ): Promise<void> {
   listen();
+  followEpoch(engineSupervisor.getStatus().epoch);
   const gen = next();
   if (!renew) syncStorage.setItem(MODE_KEY, mode);
   openOnReady = !resume;

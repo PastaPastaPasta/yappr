@@ -184,6 +184,15 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(useAppConnect.getState().flow).toMatchObject({ flow: testFlow + 6, phase: 'waiting' });
   });
 
+  it('follows a restarted engine, whose flows are numbered from the start again', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'waiting', uri: URI, requestHash: HASH, flow: testFlow + 5 }));
+    fakeEngine.method('session.appConnectStart').mockResolvedValue(flow({ phase: 'waiting', uri: URI, requestHash: HASH, flow: 1 }));
+    await act(async () => fakeEngine.setStatus({ state: 'ready', epoch: 2 + testFlow }));
+    expect(fakeEngine.method('session.appConnectStart')).toHaveBeenLastCalledWith(expect.objectContaining({ fresh: false }));
+    act(() => fakeEngine.emit('session.appConnect', flow({ phase: 'confirm', uri: URI, requestHash: HASH, flow: 1, candidates: [{ identityId: alice.identityId, username: 'alice' }] })));
+    expect(useAppConnect.getState().flow).toMatchObject({ phase: 'confirm', flow: 1 });
+  });
+
   it('never renews for an account that is not the one signed in', async () => {
     const stranger = 'StrangerIdentity33333333333333333333333333';
     fakeEngine.method('session.appConnectAccept').mockResolvedValue({ status: 'renewed', session: alice });
@@ -268,13 +277,19 @@ describe('the wallet session prompts', () => {
     status({ renewRequired: 'allowance-spent' });
     expect(router.push).toHaveBeenCalledWith('/sign-in/renew?reason=allowance-spent');
     expect(fakeEngine.method('session.appConnectDismiss')).toHaveBeenCalledWith({ renewRequired: true });
+    const again = () =>
+      view.rerender(<SafeAreaProvider initialMetrics={METRICS}><QueryClientProvider client={queryClient}><AppConnectNotices ready /></QueryClientProvider></SafeAreaProvider>);
     // In the prompt, then closed before the engine's "seen" arrives.
     mockPathname = '/sign-in/renew';
-    view.rerender(<SafeAreaProvider initialMetrics={METRICS}><QueryClientProvider client={queryClient}><AppConnectNotices ready /></QueryClientProvider></SafeAreaProvider>);
+    again();
     mockPathname = '/';
-    status({ renewRequired: null });
-    view.rerender(<SafeAreaProvider initialMetrics={METRICS}><QueryClientProvider client={queryClient}><AppConnectNotices ready /></QueryClientProvider></SafeAreaProvider>);
+    again();
     expect(router.push).toHaveBeenCalledTimes(1);
+    // Once the engine forgets the stop, the next stopped write prompts again.
+    status({ renewRequired: null });
+    status({ renewRequired: 'expired' });
+    expect(router.push).toHaveBeenLastCalledWith('/sign-in/renew?reason=expired');
+    expect(router.push).toHaveBeenCalledTimes(2);
   });
 
   it('says the wallet signed the account out only once the engine has, and "Sign in" signs that account in again', async () => {

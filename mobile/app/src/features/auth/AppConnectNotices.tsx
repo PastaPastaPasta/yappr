@@ -43,10 +43,16 @@ export function AppConnectNotices({ ready }: { ready: boolean }) {
     toast(copy.renew.soon, { action: { label: copy.renew.soonAction, onPress: () => router.push('/sign-in/renew') } });
   }, [walletSession, health, blocked]);
 
-  // A write stopped for the allowance or the expiry: the prompt opens once, and is seen as it opens
-  // (closing it must not open it again while the engine forgets the stopped write).
+  // A write stopped for the allowance or the expiry: the prompt opens once per stop. It is handled
+  // here as it opens, and re-armed only once the engine has forgotten the stop (closing the prompt
+  // before the engine's answer, or a dismissal that failed, must not open it again).
+  const prompted = useRef(false);
   useEffect(() => {
-    if (!walletSession || !renewRequired || blocked) return;
+    if (!renewRequired) prompted.current = false;
+  }, [renewRequired]);
+  useEffect(() => {
+    if (!walletSession || !renewRequired || blocked || prompted.current) return;
+    prompted.current = true;
     engine.api.session.appConnectDismiss({ renewRequired: true }).catch(() => undefined);
     router.push(`/sign-in/renew?reason=${renewRequired}`);
   }, [walletSession, renewRequired, blocked]);
