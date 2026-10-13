@@ -10,6 +10,7 @@ import { useRenewModal } from '@/hooks/use-renew-modal'
 import { isPendingRenewal } from '@/hooks/use-app-connect-login'
 import {
   APP_CONNECT_CHANNEL,
+  appReturnLink,
   isConnectCallbackAck,
   parseConnectCallback,
   type ConnectCallbackMessage,
@@ -26,13 +27,20 @@ const STATUS_COPY: Record<string, { title: string; description: string }> = {
   failed: { title: 'Your wallet couldn\'t sign you in', description: 'Try again from Yappr with a fresh code.' },
 }
 
-type View = { kind: 'waiting' } | { kind: 'other-tab' } | { kind: 'status'; title: string; description: string }
+type View =
+  | { kind: 'waiting' }
+  | { kind: 'other-tab' }
+  | { kind: 'status'; title: string; description: string }
+  /** The request came from the Yappr app: hand the user back to it. */
+  | { kind: 'app'; link: string }
 
 /**
  * Where a wallet returns after an App Connect sign-in (`cb` in the request).
  * It is only a nudge: it tells the tab showing the QR code to check now, and
  * if no tab answers it opens sign-in here, which picks up the same request.
- * Nothing on this page is trusted; the poll and the on-chain checks decide.
+ * A request the Yappr app made (`app=<scheme>`, a known scheme only) goes back
+ * to the app instead, which checks at once. Nothing on this page is trusted;
+ * the poll and the on-chain checks decide.
  */
 export default function ConnectPage() {
   const router = useRouter()
@@ -64,6 +72,13 @@ export default function ConnectPage() {
     const callback = parseConnectCallback(window.location.search)
     if (!callback) {
       router.replace('/')
+      return
+    }
+    // The app shows what the wallet reported, so every status goes back to it.
+    if (callback.app) {
+      const link = appReturnLink({ ...callback, app: callback.app })
+      setView({ kind: 'app', link })
+      window.location.replace(link)
       return
     }
     const failure = callback.status && callback.status !== 'ok' ? STATUS_COPY[callback.status] : undefined
@@ -101,6 +116,15 @@ export default function ConnectPage() {
           <>
             <Spinner size="lg" />
             <p className="text-sm text-gray-600 dark:text-gray-400">Finishing sign-in</p>
+          </>
+        )}
+        {view.kind === 'app' && (
+          <>
+            <p className="font-medium text-gray-900 dark:text-white">Back to the Yappr app</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">If it didn&apos;t open, tap below.</p>
+            <Button asChild>
+              <a href={view.link}>Open Yappr</a>
+            </Button>
           </>
         )}
         {view.kind === 'other-tab' && (
