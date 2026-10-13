@@ -344,6 +344,9 @@ jobs:
           E2E_BASE_PATH: /devnet
           E2E_ENV_FILE: .env.devnet
           NETWORK: devnet
+          # Print each device's DM v5 warnings and write errors (e2e/fixtures/dm.ts): with traces
+          # off they are the only record of why a write in the app failed.
+          E2E_DM_DEBUG: '1'
         run: npx playwright test --project=write --trace=off dm-v5-direct dm-v5-groups
 
       - name: Upload Playwright report

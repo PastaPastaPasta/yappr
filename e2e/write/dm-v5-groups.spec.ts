@@ -38,6 +38,7 @@ import {
   dmBot,
   ensureNotBlocked,
   expectAbsentFor,
+  expectToast,
   gotoMessages,
   groupDocsOf,
   groupStream,
@@ -134,7 +135,7 @@ test.describe('DM v5: groups', () => {
       const dialog = await openSettings(a.page)
       await dialog.getByRole('button', { name: 'End group' }).click()
       await confirm(a.page, 'End this group?', 'End group')
-      await expect(a.page.getByText('Group ended')).toBeVisible({ timeout: 180_000 })
+      await expectToast(a.page, 'Group ended', 180_000)
     } finally {
       await closeDevices([a])
     }
@@ -229,7 +230,7 @@ test.describe('DM v5: groups', () => {
     name = `${name} v2`
     await dialog.getByLabel('Name').fill(name)
     await dialog.getByRole('button', { name: 'Rename' }).click()
-    await expect(a.page.getByText('Group renamed')).toBeVisible({ timeout: 180_000 })
+    await expectToast(a.page, 'Group renamed', 180_000)
     await a.page.keyboard.press('Escape')
     expect((await ownerRoster(A, n))?.name).toBe(name)
     const b = await dev(browser, B, 'B')
@@ -244,7 +245,7 @@ test.describe('DM v5: groups', () => {
     const dialog = await openSettings(a.page)
     await dialog.getByRole('button', { name: 'Add member' }).click()
     await pickUser(dialog, a.page, username(D))
-    await expect(a.page.getByText(/added$/)).toBeVisible({ timeout: 240_000 })
+    await expectToast(a.page, /added$/, 240_000)
     await a.page.keyboard.press('Escape')
     const roster = await ownerRoster(A, n)
     expect(roster?.members.map(bytesToHex)).toContain(D.hex)
@@ -335,7 +336,7 @@ test.describe('DM v5: groups', () => {
     const cRow = await memberRow(dialog, C)
     await cRow.getByRole('button', { name: 'Remove' }).click()
     await confirm(a.page, 'Remove member?', 'Remove')
-    await expect(a.page.getByText('Member removed')).toBeVisible({ timeout: 300_000 })
+    await expectToast(a.page, 'Member removed', 300_000)
     await a.page.keyboard.press('Escape')
     const after = (await ownerRoster(A, n))!
     expect(after.b).toBe(before.b + 1)
@@ -385,7 +386,7 @@ test.describe('DM v5: groups', () => {
     const dialog = await openSettings(b.page)
     await dialog.getByRole('button', { name: 'Leave group' }).click()
     await confirm(b.page, 'Leave this group?', 'Leave')
-    await expect(b.page.getByText('You left the group')).toBeVisible({ timeout: 180_000 })
+    await expectToast(b.page, 'You left the group', 180_000)
     // B's inbox stops showing it.
     await gotoMessages(b.page)
     await expect(row(b.page, key)).toHaveCount(0, { timeout: 60_000 })
@@ -409,7 +410,7 @@ test.describe('DM v5: groups', () => {
     await openGroup(a.page)
     const dialog = await openSettings(a.page)
     await (await memberRow(dialog, D)).getByRole('button', { name: 'Resend keys' }).click()
-    await expect(a.page.getByText('Keys sent')).toBeVisible({ timeout: 180_000 })
+    await expectToast(a.page, 'Keys sent', 180_000)
     await a.page.keyboard.press('Escape')
     const after = await streamWeek(toD, w)
     expect(after.length).toBe(before + 1)
@@ -436,7 +437,7 @@ test.describe('DM v5: groups', () => {
     const dialog = await openSettings(a.page)
     await dialog.getByRole('button', { name: 'End group' }).click()
     await confirm(a.page, 'End this group?', 'End group')
-    await expect(a.page.getByText('Group ended')).toBeVisible({ timeout: 180_000 })
+    await expectToast(a.page, 'Group ended', 180_000)
     expect((await ownerRoster(A, n))?.ended).toBe(true)
     const [doc] = await groupDocsOf(A, [rosterHandle(gid)])
     expect(asBytes(doc.blob).length).toBeLessThanOrEqual(128 + 28)
