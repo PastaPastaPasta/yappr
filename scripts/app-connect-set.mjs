@@ -9,7 +9,7 @@
  *   APP_ID      = generateId(maker, N)              the anchor contract, the App Connect app id
  *   GROUP_ID    = contractGroupId(maker, N)         registered by the anchor's own create
  *   GROUP_OWNER = maker
- *   member i    = generateId(maker, N + i)          i = 1 … 8, in APP_CONNECT_ENTRIES order
+ *   member i    = generateId(maker, N + i)          i = 1 … 7, in APP_CONNECT_ENTRIES order
  *
  * APP_ID and GROUP_ID depend on N alone. A member's id is only N + i when
  * nothing else spends a maker nonce in between; the publisher's journal
@@ -34,23 +34,25 @@ export const APP_CONNECT_GROUP = {
 /**
  * In nonce order: the anchor first (it registers the group and joins it), then
  * every member. `envKey` is the variable the deployment's id goes to, or null
- * for a member a later cut replaced: memberships can never be removed, so it
- * stays in the set (and in the pinned member list) without a variable of its
- * own. Entries are only ever appended, so a journal of the registered set
- * resumes with the new ones.
+ * for a member a later cut replaced: memberships can never be removed, so on a
+ * live chain it stays in the set (and in the pinned member list) without a
+ * variable of its own, and entries are only ever appended so a journal of the
+ * registered set resumes with the new ones.
+ *
+ * A fresh Platform genesis starts a new set: nothing of the old group survives,
+ * so a replaced member is dropped and its replacement takes its place. This is
+ * the set of sakura's 5.0.0-beta.6 genesis (docs/SAKURA_BETA6_DEPLOY.md), with
+ * social v16 where v15 was.
  */
 export const APP_CONNECT_ENTRIES = [
   { name: 'app', file: 'yappr-app-contract.json', envKey: 'NEXT_PUBLIC_APP_CONNECT_APP_ID', sha256: 'd3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41' },
-  // Social v15, registered on sakura (beta.5) and in the group for good; v16 below replaces it as the client's social contract.
-  { name: 'social', file: 'yappr-social-contract-v15.json', envKey: null, sha256: '9b6c7eeda3194044040a9eb0822956f3dc81eaee99f0abea5f3e215b5762e078' },
+  { name: 'social', file: 'yappr-social-contract-v16.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '63dcfa91da1e6fba0c9759101cca4c3d515c34f3ba0ac9594261f03cf2d428fa' },
   { name: 'blocks', file: 'yappr-blocks-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID', sha256: 'ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677' },
   { name: 'dmV5', file: 'yappr-dm-contract-v5.json', envKey: 'NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID', sha256: '4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21' },
   { name: 'blog', file: 'yappr-blog-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '79c8a4620cf1756cbc91dcb89d05fc902be74a703b24372f8cf93fe405c085a9' },
   { name: 'pollr', file: 'pollr-contract.json', envKey: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', sha256: '4b660df8d095f931c9b422714ddb4ed7bcc629ab1ff5a9919d8df4079469b7d4' },
   { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: '8f0feeebd2e8b1ac1cf415d93f47b606077118b192473938b39f7c324cd68ed8' },
   { name: 'authVault', file: 'yappr-auth-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID', sha256: 'cecf0ccca95ab0aff76ccf3142405dadd84c8f4c662419a727c0fa157f9738dd' },
-  // Social v16 (docs/SOCIAL_V16.md, Platform 5.0.0-beta.6), appended after the registered set.
-  { name: 'socialV16', file: 'yappr-social-contract-v16.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '63dcfa91da1e6fba0c9759101cca4c3d515c34f3ba0ac9594261f03cf2d428fa' },
 ];
 
 /**
