@@ -115,25 +115,29 @@ export function refuseIdentities(identities, refused) {
  * The reads that list `ownerId`'s posts and replies: each type's owner index
  * (`post.ownerAndTime`, `live == true` pinned first from v13, which leaves the
  * tombstones out; `reply.ownerAndTime`, tombstones included), from `since`
- * when given, and below `before` (exclusive) to resume a capped scan. Newest first: what Recent shows is read before the page cap
+ * when given, and up to `until` (inclusive) to resume a capped scan. Newest first: what Recent shows is read before the page cap
  * could cut a long history short.
  *
  * @param {ReturnType<typeof socialShapes>} shapes
  * @param {string} ownerId
  * @param {number | null} [since]
- * @param {number | null} [before]
+ * @param {number | null} [until]
  */
-export function ownerQueries(shapes, ownerId, since = null, before = null) {
-  const where = [['$ownerId', '==', ownerId], ...createdAtRange(since, before)];
+export function ownerQueries(shapes, ownerId, since = null, until = null) {
+  const where = [['$ownerId', '==', ownerId], ...createdAtRange(since, until)];
   const orderBy = [['$ownerId', 'asc'], ['$createdAt', 'desc']];
   return { post: shapes.ownerPosts({ where, orderBy }), reply: { where, orderBy } };
 }
 
-/** The `$createdAt` bounds of an owner scan: from `since` (inclusive) to `before` (exclusive), either optional. */
-export function createdAtRange(since = null, before = null) {
-  if (since !== null && before !== null) return [['$createdAt', 'BetweenExcludeRight', [since, before]]];
+/**
+ * The `$createdAt` bounds of an owner scan: from `since` to `until`, both
+ * inclusive, either optional. `until` is inclusive so a resumed scan re-reads
+ * the documents that share the capped scan's oldest time instead of skipping them.
+ */
+export function createdAtRange(since = null, until = null) {
+  if (since !== null && until !== null) return [['$createdAt', 'Between', [since, until]]];
   if (since !== null) return [['$createdAt', '>=', since]];
-  if (before !== null) return [['$createdAt', '<', before]];
+  if (until !== null) return [['$createdAt', '<=', until]];
   return [];
 }
 
@@ -166,8 +170,8 @@ function session({ sdk, contractId, reconnect, settleMs }) {
   const docsOf = (page) => [...(page?.values?.() ?? [])].filter(Boolean);
   /**
    * Every page of a read, newest first; `truncated` when MAX_PAGES full pages
-   * left older documents unread, with `resumeBefore`, the oldest `$createdAt`
-   * read: a scan bounded below it (`--before`) carries on past tombstones the
+   * left older documents unread, with `resumeUntil`, the oldest `$createdAt`
+   * read: a scan bounded at it (`--until`, inclusive) carries on past tombstones the
    * capped one kept re-reading.
    */
   const queryAll = async (type, { where, orderBy }) => {
@@ -179,7 +183,7 @@ function session({ sdk, contractId, reconnect, settleMs }) {
       if (batch.length < PAGE) return { docs, truncated: false };
       startAfter = storedOf(batch.at(-1)).id;
     }
-    return { docs, truncated: true, resumeBefore: storedOf(docs.at(-1)).createdAt };
+    return { docs, truncated: true, resumeUntil: storedOf(docs.at(-1)).createdAt };
   };
   const get = async (type, id) => {
     const doc = await retrying((s) => s.documents.get(contractId, type, id));
@@ -248,7 +252,7 @@ async function tombstoneOne(io, { contractId, shapes, settleMs }, who, type, sto
  * those. A plan lists each document (`documents`). One identity's failure is
  * counted, never thrown, so the others are still cleaned.
  */
-export async function cleanTestContent({ sdk, contractId, contract, identities, since = null, before = null, live = false, refuse = [], reconnect, log = console.log, settleMs = 2500 }) {
+export async function cleanTestContent({ sdk, contractId, contract, identities, since = null, until = null, live = false, refuse = [], reconnect, log = console.log, settleMs = 2500 }) {
   const shapes = socialShapes(contract);
   shapes.tombstone('post', {}); // throws on a cut whose authors delete for real (v10): nothing here applies
 
@@ -263,7 +267,7 @@ export async function cleanTestContent({ sdk, contractId, contract, identities, 
     const row = { id: who.id, label: who.label ?? who.id, posts: 0, replies: 0, errors: [] };
     summary.identities.push(row);
     try {
-      await cleanIdentity({ io, contractId, shapes, since, before, live, log, settleMs }, who, row);
+      await cleanIdentity({ io, contractId, shapes, since, until, live, log, settleMs }, who, row);
     } catch (e) {
       row.errors.push(describeErr(e).slice(0, 200));
       summary.incomplete += 1;
@@ -280,15 +284,15 @@ export async function cleanTestContent({ sdk, contractId, contract, identities, 
 }
 
 /** One identity's part of {@link cleanTestContent}, filling `row` as it goes. */
-async function cleanIdentity({ io, contractId, shapes, since, before, live, log, settleMs }, who, row) {
-  const queries = ownerQueries(shapes, who.id, since, before);
+async function cleanIdentity({ io, contractId, shapes, since, until, live, log, settleMs }, who, row) {
+  const queries = ownerQueries(shapes, who.id, since, until);
   const targets = [];
   for (const type of ['post', 'reply']) {
-    const { docs, truncated, resumeBefore } = await io.queryAll(type, queries[type]);
+    const { docs, truncated, resumeUntil } = await io.queryAll(type, queries[type]);
     if (truncated) {
       row.truncated = true;
-      if (resumeBefore !== null && (row.resumeBefore === undefined || resumeBefore > row.resumeBefore)) row.resumeBefore = resumeBefore;
-      log(`WARN  ${row.label}: more than ${MAX_PAGES * PAGE} ${type} documents; only the newest were read. Run again with --before ${resumeBefore} to clean the older ones`);
+      if (resumeUntil !== null && (row.resumeUntil === undefined || resumeUntil > row.resumeUntil)) row.resumeUntil = resumeUntil;
+      log(`WARN  ${row.label}: more than ${MAX_PAGES * PAGE} ${type} documents; only the newest were read. Run again with --until ${resumeUntil} to clean the older ones`);
     }
     for (const stored of cleanupTargets(docs, { ownerId: who.id, since })) targets.push({ type, stored });
   }
