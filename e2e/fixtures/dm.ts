@@ -238,7 +238,8 @@ export async function send(page: Page, text: string, timeout = 180_000): Promise
 export async function expectToast(page: Page, text: string | RegExp, timeout = 180_000): Promise<void> {
   const matches = (toast: string) => (typeof text === 'string' ? toast.includes(text) : text.test(toast))
   const seen = new Set<string>()
-  const toasts = page.getByRole('status').filter({ hasText: /\S/ })
+  // The open dialog marks everything outside it aria-hidden (Radix hideOthers), the toaster included.
+  const toasts = page.getByRole('status', { includeHidden: true }).filter({ hasText: /\S/ })
   await expect
     .poll(async () => {
       for (const toast of await toasts.allInnerTexts().catch(() => [] as string[])) seen.add(toast.trim())
