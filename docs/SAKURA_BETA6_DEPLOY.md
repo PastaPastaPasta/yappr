@@ -68,13 +68,13 @@ tess1999 (persona 5) filed the charter `EJR1wPKEW8futJAfqnyouBFuyBWgeiHkh2sUBb3x
 | battery | result |
 | --- | --- |
 | `verify-appconnect --only g1,g2,g3,a1` | 32/0 |
-| `verify-v10` on v16 (full) | 347 PASS, 4 FAIL, 9 SKIP. Every v16 case passed: a like's list reordered, cut short or extended is refused 40127 and the exact list lands (o1h–o1k); tombstones and removal records keep the list (x1td2, x1td3, x1tp2); a two-tag like counts under each tag, and an unlike with a reordered or shortened list is refused 40101 (t2p–t2s, t2u–t2x). The 4 failures (t2c, t2j, t2t, t2k) expect the run's fresh entry on the first 100-group page of a **global** ranking, which the reseeded chain fills past 100 groups; the scoped reads of the same entries pass. A battery limit, not a client or contract bug |
+| `verify-v10` on v16 (full) | First run 347 PASS, 4 FAIL, 9 SKIP; re-run on #752's scripts **349 PASS, 0 FAIL after a re-run of a3** (5/5), 9 SKIP. Every v16 case passed: a like's list reordered, cut short or extended is refused 40127 and the exact list lands (o1h–o1k); tombstones and removal records keep the list (x1td2, x1td3, x1tp2); a two-tag like counts under each tag, and an unlike with a reordered or shortened list is refused 40101 (t2p–t2s, t2u–t2x). The first run's 4 failures (t2c, t2j, t2t, t2k) expected the run's fresh entry on the first 100-group page of a global ranking, which the reseeded chain fills past 100 groups; #752 pages through the ranking with `offset` (153–177 groups read). a3c/a3e (the moderators' fee pot) once saw another writer's fees land in the same window. The skips are features v16 lacks, fresh-bot cases run separately, and r2 (E1 not seated) |
 | `verify-v10 --only k2 --poor 3`, `--only x3,y1 --fresh-bot 3` | 1/1, 18/18 |
 | `prove-merged-counts` (v16) | 174 PASS, 2 SKIP, including the `tg-*` phase (per-tag counters at 0 from creation, one like counted once under each tag and once on the post, rank 1 under both tags all time and in the window, trending lists both, an unlike drops both, the window keeps the unliked entry), `cn-b4` (a tag's posts grouped by post) and `cn-e2` (a documents read through the per-tag counter is refused: "where clause on non indexed property") |
 | `verify-social-query-bundles`, `verify-tips` | all PASS; 6 PASS, 5 SKIP (credit tips) |
 | `verify-pollr` (v7), `verify-blog` (v8), `verify-dm-v5` | 77/77, 101/101, 106/106 |
 | `verify-storefront` (v8) | 153 PASS; s14c (a stale-nonce flake) passed on a re-run |
-| `verify-appconnect --only k1 --keyholder 241` | 3/3 |
+| `verify-appconnect --only k1 --keyholder 241` | 3/3; on #752's scripts 4/4. k1 now adds only keys the test wallet derives (its next rotations), and its k1d leaves a held key newest. Its first run had left persona 241's newest anchor key one nobody held; `--restore-anchor-key` repaired it live (key 8, 18.2M credits, 1.1¢) |
 | `e2e/write/topology.spec.ts` against https://yap.pr/devnet | 23/23, including a fifth tag refused in the composer and a two-tag post on both tag pages, counted under both |
 | smoke against https://yap.pr/devnet | 28 passed; the 2 embed-offline specs cannot run against an https base URL, as on beta.5 |
 | CI devnet e2e (#748) | topology 26, recovery 2, DM v5 22: all passed |
@@ -114,5 +114,3 @@ The maker kept 1,152.1e9 (69,128¢) at identity nonce 34, 77% of what the replay
 
 - E1 seats about 2026-10-20 14:53Z; then `verify-v10 --only r2`.
 - The iOS and Android release candidates need a rebuild on the 5.0.0-beta.6 SDK with these ids and topology v16. The engine shares `lib/`, and the persona pools keep their identity ids. The rebuild picks up #749 (bcd7104f): the mobile app's first wallet sign-in registers the anchor messaging key, and the mobile "Set up messaging" never re-adds a disabled key.
-- `verify-appconnect --only k1` leaves persona 241's newest anchor key one nobody holds, so on App Connect builds messages to 241 cannot be read until a known key is added again.
-- `verify-v10`'s global-ranking cases (t2c, t2j, t2t, t2k) need scoping on a reseeded chain.
