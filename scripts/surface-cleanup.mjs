@@ -196,9 +196,11 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
   // Only a blog's owner posts to it (b21), so the owners' posts are the posts on their blogs.
   const posts = await readEach(blogs, (blog) => queryAll(battery, 'blogPost', [['blogId', '==', normalizeId(blog.$id)], ['$createdAt', '>=', since]], [['blogId', 'asc'], ['$createdAt', 'asc']]));
   // blogComment keeps no owner index, so the owners' comments are found through every post author's
-  // postOwnerAndTime from `since` (the authors from the blogPost timeline), then kept by owner below:
-  // an owner's comment on anyone's post, not only on the owners' own.
-  const authors = new Set((await queryAll(battery, 'blogPost', [['$createdAt', '>', 0]], [['$createdAt', 'asc']])).map((row) => normalizeId(row.$ownerId)));
+  // postOwnerAndTime from `since`, then kept by owner below: an owner's comment on anyone's post, not only
+  // on the owners' own. Only a blog's owner posts to it (b21), so the post authors are the blog owners, read
+  // from the blog timeline: far fewer documents than the posts. (discussedRecent is a timeRange index, which
+  // document queries do not read.)
+  const authors = new Set((await queryAll(battery, 'blog', [['$createdAt', '>', 0]], [['$createdAt', 'asc']])).map((row) => normalizeId(row.$ownerId)));
   for (const who of owners) authors.add(who.ownerId);
   const comments = await readEach([...authors], (author) => queryAll(battery, 'blogComment', [['blogPostId.$ownerId', '==', author], ['$createdAt', '>=', since]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]));
   const follows = await readEach(owners, (who) => queryAll(battery, 'blogFollow', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['blogId', 'asc']]));
