@@ -28,7 +28,7 @@ installEngineStorage(createEngineStorage())
 const { createDmModule } = await import('../../src/api/dm')
 const { storePrivateKey } = await import('@/lib/secure-storage')
 const { privateKeyToWif } = await import('@/lib/crypto/wif')
-const { deriveEncryptionKey } = await import('@/lib/crypto/key-derivation')
+const { deriveEncryptionKey } = await import('@/lib/crypto/derive-encryption-key')
 // lib's secret store keeps nothing without `window` (set after the imports: DM code listens on a real one).
 Object.assign(globalThis, { window: globalThis })
 const { createTicketStore } = await import('../../src/writes/tickets')

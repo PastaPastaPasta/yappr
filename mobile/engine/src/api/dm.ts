@@ -1,5 +1,6 @@
 import { YAPPR_DM_V5_CONTRACT_ID, dmIsV5, keyNetwork } from '@/lib/constants'
-import { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
+import { deriveEncryptionKey } from '@/lib/crypto/derive-encryption-key'
+import { validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
 import { validateEncryptionKey } from '@/lib/crypto/key-validation'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
