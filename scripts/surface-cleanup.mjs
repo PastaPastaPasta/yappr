@@ -240,7 +240,6 @@ export async function cleanStorefront({ battery, owners, since, reopened = new M
   // The owners' own orders, at anyone's store (buyerOrders), and the reviews written on them (a review names
   // its order): with the reads under the owners' stores, every order and review an owner wrote in the window.
   const ownOrdersAll = await readEach(owners, (who) => queryAll(battery, 'storeOrder', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]));
-  const ownOrders = createdSince(ownOrdersAll, scope);
   const reviewsOfOrder = (docType, index) => readEach(ownOrdersAll, (order) => queryAll(battery, docType, [[index, '==', normalizeId(order.$id)]], [[index, 'asc']]));
   const itemReviews = distinctDocs([
     ...await readEach(allItems, (item) => queryAll(battery, 'itemReview', [['itemId', '==', normalizeId(item.$id)], ['$createdAt', '>=', since]], [['itemId', 'asc'], ['$createdAt', 'asc']])),
@@ -248,8 +247,15 @@ export async function cleanStorefront({ battery, owners, since, reopened = new M
   ]);
   const kits = await readEach(allItems, (item) => battery.queryDocs('itemDeliverable', { where: [['itemId', '==', normalizeId(item.$id)]], limit: 1 }));
   const zones = await readEach(stores, (store) => queryAll(battery, 'shippingZone', [['storeId', '==', normalizeId(store.$id)]], [['storeId', 'asc'], ['priority', 'asc']]));
-  // Buyers among the owners: a real customer's order on a persona's store is not the run's.
-  const orders = distinctDocs([...createdSince(await inWindow('storeOrder', 'storeId'), scope), ...ownOrders]);
+  // Every order the owners are party to, whatever its age (at their stores, and their own at any store): its
+  // permanent children written in the window are the run's too. Buyers among the owners only: a real
+  // customer's order on a persona's store is not the run's.
+  const storeOrdersAll = await readEach(stores, (store) => queryAll(battery, 'storeOrder', [['storeId', '==', normalizeId(store.$id)]], [['storeId', 'asc'], ['$createdAt', 'asc']]));
+  const allOrders = distinctDocs([...storeOrdersAll, ...ownOrdersAll]);
+  const orders = createdSince(allOrders, scope);
+  const childrenInWindow = (docType) => readEach(allOrders, (order) => queryAll(battery, docType, [['orderId', '==', normalizeId(order.$id)], ['$createdAt', '>=', since]], [['orderId', 'asc'], ['$createdAt', 'asc']]));
+  const statusUpdates = createdSince(await childrenInWindow('orderStatusUpdate'), scope);
+  const deliveries = createdSince(await childrenInWindow('orderDelivery'), scope);
   const restore = new Map(reopened);
   const statusAfter = (row) => restore.get(normalizeId(row.$id)) ?? (createdSince([row], scope).length > 0 ? 'closed' : null);
   const targets = {
@@ -260,15 +266,16 @@ export async function cleanStorefront({ battery, owners, since, reopened = new M
     storeItem: items.filter((row) => row.status !== 'deleted'),
     store: stores.filter((row) => statusAfter(row) !== null && row.status !== statusAfter(row)),
   };
-  report.found = { ...countsOf(targets), storeOrder: orders.length };
+  report.found = { ...countsOf(targets), storeOrder: orders.length, orderStatusUpdate: statusUpdates.length, orderDelivery: deliveries.length };
 
   await deleteEach({ report, live, battery, owners, targets, types: ['itemReview', 'storeReview', 'itemDeliverable', 'shippingZone'] });
   await applyEach(report, live, targets.storeItem, "storeItem (status 'deleted')", (row, id) => battery.attemptReplace(ownerOf(owners, row), 'storeItem', id, withStatus(row, 'deleted'), row.$revision));
   for (const status of new Set(targets.store.map(statusAfter))) {
     await applyEach(report, live, targets.store.filter((row) => statusAfter(row) === status), `store (status '${status}')`, (row, id) => battery.attemptReplace(ownerOf(owners, row), 'store', id, withStatus(row, status), row.$revision));
   }
-  if (orders.length > 0) {
-    report.leftovers.push({ type: 'storeOrder', count: orders.length, why: 'orders, their status updates and deliveries are permanent; encrypted, read only by their buyer and seller' });
+  const permanent = 'permanent; encrypted, read only by the order\'s buyer and seller';
+  for (const [type, rows] of [['storeOrder', orders], ['orderStatusUpdate', statusUpdates], ['orderDelivery', deliveries]]) {
+    if (rows.length > 0) report.leftovers.push({ type, count: rows.length, why: permanent });
   }
   return report;
 }
