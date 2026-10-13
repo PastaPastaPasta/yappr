@@ -212,6 +212,12 @@
  * the pool (DEVNET_IDENTITY_IDS, else E2E_IDENTITY_IDS; `--bot n:<id>` names
  * it). A `--key-wif-file` holds one WIF of a HIGH or CRITICAL authentication
  * key of the identity before it. Never the maker: the contract is throwaway.
+ *
+ * No cleanup and no `--keep-content`: every post and reply here lands on the
+ * throwaway contract, which the app never reads, so nothing reaches the public
+ * timeline (verify-v10, which writes on the published contract, tombstones its
+ * run's content; see docs/TESTING.md), and `--team-proof` runs on that
+ * contract again.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

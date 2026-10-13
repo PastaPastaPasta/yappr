@@ -417,8 +417,32 @@ export function socialShapes(contract) {
     return problems;
   };
 
+  /**
+   * An author's tombstone of the stored `docType` (post or reply) `stored`:
+   * `deleted: true` plus every property the type freezes unconditionally (the
+   * plain-string entries of its `immutable`: a post's `hashtag` or `tags`, a
+   * reply's `rootPostId`, `replyToReplyId` and, up to v13, its stored owners),
+   * copied off `stored` when present. Dropping one of them is 40128; every
+   * other field is left out (`blankTombstone`), `live` included. `stored` is a
+   * document's data as `toJSON()` (base58 identifiers) or `toObject()` (bytes)
+   * gives it; identifiers come out as bytes. Throws on a cut whose authors
+   * delete for real (v10) instead of tombstoning.
+   */
+  const tombstone = (docType, stored) => {
+    const schema = schemas[docType];
+    if (schema?.canBeDeleted !== false || !declares(docType, 'deleted')) throw new Error(`${docType} has no author tombstone on this cut`);
+    const kept = {};
+    for (const field of (schema.immutable ?? []).filter((entry) => typeof entry === 'string')) {
+      const value = stored?.[field];
+      if (value === undefined || value === null) continue;
+      if (schema.properties[field]?.contentMediaType === IDENTIFIER_MEDIA_TYPE) kept[field] = typeof value === 'string' ? bs58.decode(value) : Uint8Array.from(value);
+      else kept[field] = Array.isArray(value) ? [...value] : value;
+    }
+    return { deleted: true, ...kept };
+  };
+
   return Object.freeze({
-    schemas, cut, post, reply, likeReply, media, mentions, mentionsOf, report, fit,
+    schemas, cut, post, reply, likeReply, media, mentions, mentionsOf, report, fit, tombstone,
     tagField, tagMax, tags, storedTags, contentTags, tagPin, taggedPosts, tagRanking, tagLikesWhere,
     ownerPostsWhere, ownerPostsOrderBy, ownerPosts, contractFor, check,
     actionFee: (docType) => actionFeeOf(schemas, docType),
@@ -488,6 +512,19 @@ function writesFor(shapes) {
       ['reply tombstone (linkage kept)', 'reply', shapes.reply({ deleted: true, rootPostId: root, parentOwnerId: author }), null],
     );
   }
+  if (shapes.schemas.post.canBeDeleted === false) {
+    // The cleanup's tombstones (scripts/test-content-cleanup.mjs), built off stored documents as toJSON() reads them back.
+    const b58 = (bytes) => bs58.encode(bytes);
+    const storedPost = { ...shapes.post({ content: 'stored', ...shapes.tags(['selftest']), ...shapes.mentions([replier]) }), quotedPostId: b58(root), quotedPostOwnerId: b58(author) };
+    if (storedPost.mentionedUserIds) storedPost.mentionedUserIds = storedPost.mentionedUserIds.map(b58);
+    else if (storedPost.mentionedUserId) storedPost.mentionedUserId = b58(storedPost.mentionedUserId);
+    const storedReply = Object.fromEntries(Object.entries(shapes.reply({ content: 'stored', rootPostId: root, rootOwnerId: author, replyToReplyId: parentReply, parentOwnerId: replier }))
+      .map(([key, value]) => [key, value instanceof Uint8Array ? b58(value) : value]));
+    writes.push(
+      ['cleanup tombstone of a stored tagged quote', 'post', shapes.tombstone('post', storedPost), null],
+      ['cleanup tombstone of a stored nested reply', 'reply', shapes.tombstone('reply', storedReply), null],
+    );
+  }
   if (cut.mediaArrays) {
     writes.push(
       ['post (four media items)', 'post', shapes.post({ content: 'four', ...shapes.media([1, 2, 3, 4].map(item)) }), null],
@@ -551,6 +588,9 @@ function builderExpectations(shapes, version) {
     ['five media items always throw', throws(() => shapes.media([item, item, item, item, item]))],
     ['a profile report throws up to v12 only', throws(() => shapes.report({ about: 1, targetOwnerId: id })) === !fromV13],
     ['a tombstone stays without live', shapes.post({ deleted: true }).live === undefined],
+    ['an author tombstone of a stored post throws on v10 only (real deletes), keeps no live or content after',
+      version === 'v10' ? throws(() => shapes.tombstone('post', {}))
+        : JSON.stringify(shapes.tombstone('post', shapes.post({ content: 'x', ...shapes.tags(['t']) }))) === JSON.stringify({ deleted: true, ...shapes.tags(['t']) })],
     ['the author timeline pins live first from v13',
       JSON.stringify(shapes.ownerPosts({ where: [['$ownerId', '==', 'A']], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }))
         === JSON.stringify(fromV13

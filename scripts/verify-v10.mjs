@@ -291,11 +291,21 @@
  *
  *   node scripts/verify-v10.mjs --self-test [--contract-file contracts/yappr-social-contract-v12.json]   # offline: contract + shapes
  *   NETWORK=devnet node scripts/verify-v10.mjs --contract <freshV10Id> \
- *        [--contract-file <the cut it was registered from>] [--blocks-contract <id> (v13)] [--bot 0] [--bot2 1] [--fresh-bot 2] [--only e0,x1]
+ *        [--contract-file <the cut it was registered from>] [--blocks-contract <id> (v13)] [--bot 0] [--bot2 1] [--fresh-bot 2] [--only e0,x1] [--keep-content]
  *
  * `--fresh-bot <n>` names an identity with no DashPay profile and no starter
  * claim yet (x3a, y1d); without it those probes SKIP. Both bots need credits
  * and YAPP on the contract under test (the register script mints it).
+ *
+ * The battery's posts and replies land on the timeline everyone reads (the
+ * "x2 timeline" post, the 1000-character and maxBytes probes…). Once every
+ * case has run, the run tombstones what A and B (and the fresh bot) wrote
+ * since it started, each signing its own (scripts/test-content-cleanup.mjs),
+ * so cases that count posts or assert on tombstones are unaffected. On v10
+ * (real deletes) there is nothing to tombstone. `--keep-content` skips the
+ * cleanup to inspect a run's content; `scripts/clean-test-content.mjs --live
+ * --bots <A,B>` takes it down afterwards. The cleanup takes everything the
+ * bots wrote since the run began, so two runs must not share a bot at once.
  *
  * `--paused-payments refused|accepted` pins whether the chain refuses a
  * document token payment with the paused YAPP (40711, Platform 5.0.0-beta.3,
@@ -353,6 +363,8 @@ import {
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { DECLARED_DELETE_RULES, DECLARED_RULES, constraintViolation, deleteConstraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 import { BLOCK_TYPES, MEDIA_DIGEST_BYTES, socialShapes } from './social-shapes.mjs';
+import { cleanTestContent } from './test-content-cleanup.mjs';
+import { envValue } from './sdk-env.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
 
 const CONTRACT_FILE = takeFlag('--contract-file', 'contracts/yappr-social-contract-v10.json');
@@ -626,14 +638,11 @@ async function queryOne(ctx, docType, where, contractId = contractOf(ctx, docTyp
   return null;
 }
 
-/** Deletes `who`'s document `id` of `docType`; answers the error or null. */
 /** An author's tombstone of its post or reply (design M): `deleted`, plus the fields the contract freezes. */
 async function tombstoneOwn(ctx, who, docType, id) {
   const stored = await fetchDocument(ctx.sdk, ctx.contractId, docType, id);
   if (!stored) return 'no document to tombstone';
-  const raw = stored.toObject?.() ?? {};
-  const frozen = (V10.documentSchemas[docType].immutable ?? []).filter((entry) => typeof entry === 'string');
-  const data = { deleted: true, ...Object.fromEntries(frozen.filter((field) => raw[field] !== undefined && raw[field] !== null).map((field) => [field, raw[field]])) };
+  const data = SOCIAL.tombstone(docType, stored.toObject?.() ?? {});
   const outcome = await attemptReplace(ctx.sdk, who, { contractId: ctx.contractId, docType, id, revision: BigInt(stored.revision ?? 1), data });
   return outcome.ok ? null : (outcome.error ?? 'tombstone refused');
 }
@@ -2584,6 +2593,23 @@ async function ensurePrepared(ctx) {
 
 const prepared = (run) => async (ctx) => { await ensurePrepared(ctx); return run(ctx); };
 
+/**
+ * runBattery's end-of-run cleanup: tombstones the posts and replies A, B and
+ * the fresh bot wrote since the run started. The contract's owner (a draft's
+ * `--moderator bot:<n>`) is left out; the library refuses it.
+ */
+async function cleanUpRun(ctx, { since, reconnect }) {
+  if (!TOMBSTONES) { console.log(`${CONTRACT_NAME} deletes posts for real: nothing to tombstone`); return; }
+  const owner = (await readback(() => ctx.sdk.contracts.fetch(ctx.contractId)))?.ownerId?.toBase58();
+  const identities = [ctx.botA, ctx.botB, ctx.fresh]
+    .filter((who) => who && who.ownerId !== owner)
+    .map(({ ownerId, label, identityKey, signer }) => ({ id: ownerId, label, identityKey, signer }));
+  const summary = await cleanTestContent({ sdk: ctx.sdk, contractId: ctx.contractId, contract: V10, identities, since, live: true, reconnect, refuse: [envValue('DEVNET_MAKER_IDENTITY_ID')] });
+  const leftovers = summary.failed + summary.incomplete;
+  console.log(`cleanup: tombstoned ${summary.tombstoned} of the run's ${summary.found} live posts and replies`
+    + (leftovers ? `; WARNING ${summary.failed} left live, ${summary.incomplete} identities not read in full (re-run scripts/clean-test-content.mjs --live)` : ''));
+}
+
 const CASES = new Map([
   ['e0', prepared(caseE0Declaration)],
   ['d1', prepared(caseD1DistinctFrom)],
@@ -3046,8 +3072,9 @@ await runBattery({
   contractEnvVar: 'V10_CONTRACT_ID',
   usage:
     'Usage: node scripts/verify-v10.mjs --contract <id> [--bot <n>] [--bot2 <n>] [--fresh-bot <n> [--fresh-owner <id>]]\n' +
-    '       [--moderator maker] [--owner <id>] [--owner2 <id>] [--team-member bot:<n> --reason-doc <id>] [--only e0,x1] [--dry-run|--self-test]',
+    '       [--moderator maker] [--owner <id>] [--owner2 <id>] [--team-member bot:<n> --reason-doc <id>] [--only e0,x1] [--keep-content] [--dry-run|--self-test]',
   cases: CASES,
+  cleanup: cleanUpRun,
   shapes: SHAPES,
   replaceShapes: [
     ['blockFollow (grown list)', 'blockFollow', blockFollowData([someId(), someId(), someId()])],

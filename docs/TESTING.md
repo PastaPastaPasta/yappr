@@ -345,6 +345,49 @@ New contracts start empty and the old ones are simply abandoned. Paste the
 printed IDs into `.env.testing` and commit — the next `build:testing` (local and
 deployed) picks them up.
 
+### Test content on the public devnet timeline
+
+The devnet has no test copy of the social contract: the /devnet site, the
+batteries and the devnet e2e job all use the published one, so a test post sits
+on Recent beside real people's. Test runs therefore take their posts and replies
+down again, with the author's own delete. From social v11 a post or reply
+cannot be deleted; its author replaces it with a tombstone (`deleted: true`
+plus the fields the contract freezes: a post's tags, a reply's `rootPostId`,
+`replyToReplyId` and, up to v13, its stored owners), which every feed hides
+(`tombstonesAreHidden()`). Each
+test identity signs and pays for its own tombstones, and they refund the
+content's storage. The maker's moderator delete is never used for this, and the
+cleanup refuses the maker and the contract owner outright.
+
+- **verify-v10** tombstones what its bots wrote since the run started, once
+  every case has run (so cases that count posts or assert on tombstones are
+  unaffected). Pass `--keep-content` to leave a run's content up for
+  inspection. The cleanup takes everything the run's bots wrote since it
+  began, so two batteries must not share a bot at the same time.
+  `prove-merged-counts` and `measure-social-fees` need nothing:
+  their writes land on a throwaway contract the app never reads.
+- **The devnet e2e job** ends with an `if: always()` step that tombstones what
+  the CI pool wrote since the job started. It warns instead of failing; what a
+  failed cleanup left stays up until the command below is run by hand.
+
+To take test content down by hand (both commands are idempotent; `--plan`
+writes nothing and also reports who wrote the newest timeline posts):
+
+```bash
+# CI pool (E2E_DEVNET_SEED_PHRASE, ids from .env.devnet)
+NETWORK=devnet node scripts/clean-test-content.mjs --plan --ci-pool
+NETWORK=devnet node scripts/clean-test-content.mjs --live --ci-pool --since 2026-10-13T00:00:00Z
+
+# Battery bots (E2E_SEED_PHRASE, ids from DEVNET_IDENTITY_IDS or index:id)
+NETWORK=devnet DEVNET_IDENTITY_IDS=<bot0>,<bot1>,<bot2> \
+  node scripts/clean-test-content.mjs --live --bots 0,1,2
+```
+
+`--since <ms|iso>` limits a run to documents created from then on. A live
+run exits 1 when something could not be tombstoned; run it again, since it only
+touches what is still live. The library behind both is
+`scripts/test-content-cleanup.mjs`.
+
 ## 6. Adding a pool identity
 
 Index 2 (`yappr-e2e-2.dash`) is reserved but not yet registered — provisioning

@@ -68,17 +68,18 @@ export function readEnvFile(path) {
 }
 
 /**
- * Reads the BIP39 mnemonic from `E2E_SEED_PHRASE`, falling back to `.env.local`.
+ * Reads the BIP39 mnemonic from `variable` (default `E2E_SEED_PHRASE`; the
+ * devnet CI pool's is `E2E_DEVNET_SEED_PHRASE`), falling back to `.env.local`.
  * Throws if it is missing or fails the checksum — never echoes the value.
  */
-export function loadMnemonic() {
-  const fromEnv = process.env.E2E_SEED_PHRASE ?? readEnvFile(join(REPO_ROOT, '.env.local')).E2E_SEED_PHRASE;
+export function loadMnemonic(variable = 'E2E_SEED_PHRASE') {
+  const fromEnv = process.env[variable] ?? readEnvFile(join(REPO_ROOT, '.env.local'))[variable];
   const mnemonic = (fromEnv ?? '').trim().replace(/\s+/g, ' ');
   if (!mnemonic) {
-    throw new Error('E2E_SEED_PHRASE is not set (checked the environment and .env.local)');
+    throw new Error(`${variable} is not set (checked the environment and .env.local)`);
   }
   if (!validateMnemonic(mnemonic, wordlist)) {
-    throw new Error('E2E_SEED_PHRASE is not a valid BIP39 mnemonic (checksum failed)');
+    throw new Error(`${variable} is not a valid BIP39 mnemonic (checksum failed)`);
   }
   return mnemonic;
 }
