@@ -126,9 +126,11 @@ codec and the response crypto, so it cannot drift from the app side:
    90-day preset, so every auth key is V1.
 6. **Keys**: one fresh auth key per granted binding (see
    [Derivation](#app-connect-derivation)). The encryption key is re-sent when
-   `identities.contractKeys` already returns the one this wallet derives. It
-   is registered (rotation 0) when there is none, and left out when another
-   wallet made it. It is never rotated.
+   `identities.contractKeys` already returns one this wallet derives, at any
+   rotation (`scripts/verify-appconnect.mjs --restore-anchor-key` registers a
+   later one when a test left the current key one nobody holds). It is
+   registered (rotation 0) when there is none, and left out when another
+   wallet made it. The responder itself never rotates it.
 7. **One IdentityUpdate**, signed by MASTER (keyId 0). It adds the new keys
    with `contractBounds`, `totalBudget` and `expiresAt`
    (`IdentityPublicKeyInCreation` V1, evo-sdk 5.0.0-beta.4), and disables the

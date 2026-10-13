@@ -225,6 +225,8 @@ NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal 
 | g2 | Pinned members = group members, with no document-type or token members. |
 | g3 | `APP_ID` and `GROUP_ID` derive from the same maker nonce, and every member is maker-owned, lists the group, and is still at version 1. |
 | a1 | The deployed anchor's encryption opt-in is 2, with no decryption opt-in, and its schema equals the committed file. |
-| k1 | Writes. A seed-ledger persona with a MASTER key (`--keyholder`, default 242) registers an ENCRYPTION/MEDIUM key bound to the anchor, and `contractKeys` returns it. A second key moves the pointer to itself, and the first stays enabled and bound. Every run adds two keys to that persona. |
+| k1 | Writes. A seed-ledger persona with MASTER and CRITICAL keys (`--keyholder`, default 242; `--ledger` names the ledger file) registers an ENCRYPTION/MEDIUM key bound to the anchor, and `contractKeys` returns it. A second key moves the pointer to itself, and the first stays enabled and bound. Each key is the test wallet's own App Connect key at the next unused rotation, so the persona's wallet sign-in still holds its current key. In a `finally`, k1d checks that it does, and adds the next rotation if it does not. Every run adds two keys to that persona. |
+
+Peers encrypt to the newest anchor key, and Platform never moves that pointer back: a disabled key keeps it, and a key the identity already holds is never added again. `verify-appconnect.mjs --restore-anchor-key --keyholder <n>` is k1d alone. It is the repair for a persona whose current anchor key nobody holds. It prints public keys, key ids and the credits spent.
 
 `--only g1,g2,g3,a1` runs without the seed ledger. The read cases were exercised against sakura's existing group, `Cxxdiq5b…`, and its key-backup creator: g1 and g3 pass, and g2 flags a member left out of the pinned list on purpose.

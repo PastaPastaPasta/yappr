@@ -214,11 +214,13 @@ export class MemoryChain {
     }))
   }
 
-  /** Platform's current-key pointer: the newest live key bound to the contract with that purpose. */
+  /**
+   * Platform's current-key pointer: the newest key bound to the contract with that purpose. Disabling
+   * it does not move the pointer back (rs-drive refreshes the reference without rewriting it).
+   */
   private contractKeys(identityId: string, contractId: string, purpose: number): AppConnectIdentityKey[] {
     const matching = (this.identities.get(identityId) ?? []).filter((key) =>
-      key.purpose === purpose && key.disabledAt === undefined
-      && key.bounds?.kind === 'singleContract' && key.bounds.contractId === contractId)
+      key.purpose === purpose && key.bounds?.kind === 'singleContract' && key.bounds.contractId === contractId)
     return matching.length === 0 ? [] : [structuredClone(matching[matching.length - 1])]
   }
 }
