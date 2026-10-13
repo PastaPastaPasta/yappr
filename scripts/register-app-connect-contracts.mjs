@@ -396,7 +396,7 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
 
 /**
  * The oldest Drive that may take this set: beta.3 nodes report PV14 too but
- * cannot decode it, and social v16 (the `socialV16` entry) needs 5.0.0-beta.6's
+ * cannot decode it, and social v16 needs 5.0.0-beta.6's
  * typed-array `where` and indexOnly element indexes.
  */
 const MIN_DRIVE_VERSION = '5.0.0-beta.6';
