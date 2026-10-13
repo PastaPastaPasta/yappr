@@ -16,6 +16,7 @@ import {
 import { KeyPurpose, KeySecurityLevel, KeyType } from '../../../vendor/platform-auth/src/app-connect/types'
 import { verifyAppConnectCandidate, type AppConnectVerification } from '../../../vendor/platform-auth/src/app-connect/verify'
 import { getYapprPublicKey } from '../../../vendor/platform-auth/src/key-exchange/yappr-protocol'
+import { deriveAppConnectEncryptionKey } from '../src/app-connect/derive'
 import { parseFaults } from '../src/app-connect/faults'
 import {
   AppConnectRefusal,
@@ -260,6 +261,47 @@ describe('App Connect login', () => {
       data: getYapprPublicKey(secp256k1.utils.randomSecretKey()),
       bounds: { kind: 'singleContract', contractId: APP },
     })
+    const { request, appPrivateKey, uri } = newRequest()
+    const result = await answer(chain, uri)
+    expect(result.answer.slots.map((slot) => slot.role)).toEqual(['contractGroup', 'documentType'])
+    expect(result.answer.addedKeyIds).toHaveLength(2)
+    expect((await verdictFor(chain, request, appPrivateKey)).ok).toBe(true)
+  })
+
+  it('re-sends the current key at a later rotation it derives (an operator repair), registering nothing', async () => {
+    const chain = newChain()
+    const rotation = (n: number) => deriveAppConnectEncryptionKey(alice.key('critical').privateKey, alice.identityIdBytes, APP_ID, KeyPurpose.ENCRYPTION, n)
+    for (const [id, n] of [[5, 0], [6, 1]]) {
+      chain.keysOf(alice).push({
+        id,
+        type: KeyType.ECDSA_SECP256K1,
+        purpose: KeyPurpose.ENCRYPTION,
+        securityLevel: KeySecurityLevel.MEDIUM,
+        data: getYapprPublicKey(rotation(n)),
+        bounds: { kind: 'singleContract', contractId: APP },
+      })
+    }
+    const { request, appPrivateKey, uri } = newRequest()
+    const result = await answer(chain, uri)
+    expect(result.answer.slots[2]).toEqual({ role: 'encryption', bindingIndex: 0, keyId: 6 })
+    expect(result.answer.addedKeyIds).toHaveLength(2)
+    expect((await verdictFor(chain, request, appPrivateKey)).ok).toBe(true)
+  })
+
+  it('never re-sends a disabled current key, even one it derives, nor adds rotation 0 again', async () => {
+    const chain = newChain()
+    const rotation = (n: number) => deriveAppConnectEncryptionKey(alice.key('critical').privateKey, alice.identityIdBytes, APP_ID, KeyPurpose.ENCRYPTION, n)
+    for (const [id, n] of [[5, 0], [6, 1]]) {
+      chain.keysOf(alice).push({
+        id,
+        type: KeyType.ECDSA_SECP256K1,
+        purpose: KeyPurpose.ENCRYPTION,
+        securityLevel: KeySecurityLevel.MEDIUM,
+        data: getYapprPublicKey(rotation(n)),
+        bounds: { kind: 'singleContract', contractId: APP },
+        ...(id === 6 ? { disabledAt: NOW - DAY_MS } : {}),
+      })
+    }
     const { request, appPrivateKey, uri } = newRequest()
     const result = await answer(chain, uri)
     expect(result.answer.slots.map((slot) => slot.role)).toEqual(['contractGroup', 'documentType'])

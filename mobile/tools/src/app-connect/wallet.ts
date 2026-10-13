@@ -755,9 +755,11 @@ function renewalTarget(binding: AppConnectAuthBinding, key: AppConnectIdentityKe
 
 /**
  * Wallet rule 7: one encryption key per (identity, app), shared by every
- * device. Re-send the current key when this wallet derives it, register
- * rotation 0 when there is none, and leave the slot out when another wallet
- * made the current one or rotation 0 was disabled. Never rotate.
+ * device. Re-send the current key when this wallet derives it, at any
+ * rotation (an operator may have registered a later one, e.g.
+ * `scripts/verify-appconnect.mjs --restore-anchor-key`), register rotation 0
+ * when there is none, and leave the slot out when another wallet made the
+ * current one or rotation 0 was disabled. Never rotate.
  */
 async function prepareEncryptionKey(
   persona: Persona,
@@ -767,14 +769,21 @@ async function prepareEncryptionKey(
   chainKeys: AppConnectIdentityKey[],
   ports: AppConnectPorts,
 ): Promise<{ slot: Slot; register?: NewIdentityKey } | undefined> {
-  const privateKey = deriveAppConnectEncryptionKey(persona.key('critical').privateKey, persona.identityIdBytes, binding.contractId, binding.purpose, 0)
+  const derive = (rotation: number) =>
+    deriveAppConnectEncryptionKey(persona.key('critical').privateKey, persona.identityIdBytes, binding.contractId, binding.purpose, rotation)
+  const privateKey = derive(0)
   const publicKey = getYapprPublicKey(privateKey)
   const role: AppConnectSlotRole = binding.purpose === KeyPurpose.ENCRYPTION ? 'encryption' : 'decryption'
   const current = (await ports.contractKeys(persona.identityId, bs58.encode(binding.contractId), binding.purpose))
     .filter((key) => key.disabledAt === undefined)
 
-  const mine = current.find((key) => bytesEqual(key.data, publicKey))
-  if (mine) return { slot: { role, bindingIndex: index, privateKey, keyId: mine.id } }
+  // Each rotation is its own key on the identity, added lowest first, so fewer exist than the keys it holds.
+  for (let rotation = 0; current.length > 0 && rotation <= chainKeys.length; rotation++) {
+    const candidate = rotation === 0 ? privateKey : derive(rotation)
+    const candidatePublicKey = getYapprPublicKey(candidate)
+    const mine = current.find((key) => bytesEqual(key.data, candidatePublicKey))
+    if (mine) return { slot: { role, bindingIndex: index, privateKey: candidate, keyId: mine.id } }
+  }
   if (current.length > 0) {
     ports.log(`persona ${persona.personaIdx}: the ${role} key for app ${plan.appId} was made by another wallet; slot omitted`)
     return undefined
