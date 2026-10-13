@@ -36,7 +36,7 @@ const YAPP_TOKEN_POSITION = 0;
 /** Below this the run cannot finish, so it aborts instead of failing cases. */
 const MIN_YAPP_BALANCE = 150n;
 /** How far before its start a run's cleanup reaches back: the chain stamps `$createdAt`, not this machine's clock. */
-const CLEANUP_CLOCK_SLACK_MS = 120_000;
+export const CLEANUP_CLOCK_SLACK_MS = 120_000;
 // ---- Devnet SDK -------------------------------------------------------------
 
 /** The devnet SDK the batteries run on: sdk-env's config (env, then `.env.devnet`). */

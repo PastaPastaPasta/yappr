@@ -100,5 +100,8 @@ worktrees/
 .seed-blog.local*
 .seed-dm.local*
 
+# battery test contracts recorded per network (ids + schema sha256)
+.test-contracts.local*
+
 # generated seed corpora + claude-authored text banks (150 MB at 1M ops) — never commit
 .seed-corpus.local*

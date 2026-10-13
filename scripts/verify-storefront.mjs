@@ -6,7 +6,7 @@
  * (credits) instead of YAPP, so the actors need credits only.
  *
  *   NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> \
- *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator maker|personal|<persona>] [--only s5,s7]
+ *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator maker|personal|<persona>] [--only s5,s7] [--keep-content]
  *
  * `--moderator` is the contract's owner or one it appointed at publish time:
  * `maker` (the default; it publishes and is appointed), `personal` (ledger
@@ -40,6 +40,17 @@
  * longer than five bytes and the v6 JSON string (10101); s20 broadcasts every
  * refused rule case, the nine v7 rules included (10422); s18d allows 12 images.
  *   node scripts/verify-storefront.mjs --self-test   # offline: contract declares what the cases assert
+ *
+ * The cases write on the published storefront contract, which the app lists.
+ * Once every case has run, the run takes down what the seller, buyer and
+ * stranger wrote since it began (scripts/surface-cleanup.mjs cleanStorefront):
+ * reviews, digital kits and shipping zones by their owners' deletes, items by
+ * `status: 'deleted'`, and a store it created by closing it (a store cannot be
+ * deleted and is unique per owner; the app lists active stores only, and the
+ * next run reopens it, then gives it its status back). Orders, their status updates and
+ * deliveries are permanent; they are printed as leftovers (encrypted, read
+ * only by their buyer and seller). `--keep-content` skips the cleanup;
+ * `scripts/clean-test-content.mjs --surface storefront` does it later.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -54,6 +65,7 @@ import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDe
 import { AGREEMENT_MISMATCH, AGREEMENT_NOT_SET } from './social-battery-lib.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
+import { cleanStorefront, printReport, withStatus } from './surface-cleanup.mjs';
 
 const CONTRACT_FILE = 'yappr-storefront-contract.json';
 const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
@@ -106,13 +118,29 @@ const sum = (values) => values.reduce((total, value) => total + value, 0);
 
 // ---- Cases ------------------------------------------------------------------
 
+/**
+ * `who`'s store, or null when it has none. Stores are unique per owner and
+ * outlive a run, so re-runs reuse them; one that is not active (a cleanup
+ * closed it) is reopened first, since every case writes under an active
+ * store, and the run's cleanup gives it its earlier status back.
+ */
+async function reuseStore(ctx, who, label) {
+  const { battery } = ctx;
+  const [first] = await battery.queryDocs('store', { where: [['$ownerId', '==', who.ownerId]], limit: 1 });
+  if (!first) return null;
+  const id = battery.b58(first.$id);
+  if (first.status !== 'active') {
+    const reopened = await battery.probeReplace(`${label} reopened (it was ${first.status})`, null, who, 'store', id, withStatus(first, 'active'), first.$revision);
+    if (reopened.ok) ctx.reopenedStores.set(id, first.status);
+  }
+  return id;
+}
+
 async function caseS1Fixtures(ctx) {
   const { battery, seller, stranger, run } = ctx;
   console.log('\n--- s1. fixtures: seller store + items, stranger store ---');
-  // Stores are unique per owner: reuse an existing one so re-runs work.
-  const existing = async (who) => { const [first] = await battery.queryDocs('store', { where: [['$ownerId', '==', who.ownerId]], limit: 1 }); return first ? battery.b58(first.$id) : null; };
   for (const [key, label, who, name] of [['storeId', 's1a seller store', seller, 'Ann Store'], ['strangerStoreId', 's1b stranger store', stranger, 'Cy Store']]) {
-    ctx[key] = await existing(who);
+    ctx[key] = await reuseStore(ctx, who, label);
     if (ctx[key]) { battery.check(`${label} exists (reused)`, true, `id=${ctx[key]}`); continue; }
     const created = await battery.probeCreate(`${label} created`, null, who, 'store', storeData({ name }));
     ctx[key] = created.ok ? created.id : null;
@@ -436,9 +464,8 @@ async function caseS19SelfOrder(ctx) {
 async function ensureSellerStore(ctx) {
   if (ctx.storeId) return ctx.storeId;
   const { battery, seller } = ctx;
-  const [first] = await battery.queryDocs('store', { where: [['$ownerId', '==', seller.ownerId]], limit: 1 });
-  if (first) ctx.storeId = battery.b58(first.$id);
-  else {
+  ctx.storeId = await reuseStore(ctx, seller, 's20 seller store');
+  if (!ctx.storeId) {
     const created = await battery.probeCreate('s20 seller store created', null, seller, 'store', storeData({ name: 'Ann Store' }));
     ctx.storeId = created.ok ? created.id : null;
   }
@@ -762,9 +789,16 @@ function selfTestRules() {
   }, { moderation: { banlist: true, suspensions: true, warnings: true } });
 }
 
+/** runBattery's cleanup: what the run's three personas wrote since it began; a store it created closes, one it reopened gets its status back. */
+async function cleanUpRun(ctx, { since }) {
+  const { battery, seller, buyer, stranger, reopenedStores } = ctx;
+  printReport(await cleanStorefront({ battery, owners: [seller, buyer, stranger], since, reopened: reopenedStores, live: true }));
+}
+
 await runBattery({
   label: 'storefront',
   contract: { env: 'STOREFRONT_CONTRACT_ID' },
+  cleanup: cleanUpRun,
   cases: CASES,
   actors: { seller: 200, buyer: 201, stranger: 202 },
   flags: { moderator: { ...MODERATOR_FLAG, default: 'maker' } },
@@ -775,7 +809,7 @@ await runBattery({
   setup: async ({ battery, args }) => {
     const moderator = await battery.moderatorActor(args.moderator);
     console.log(`moderator=${moderator.label}`);
-    return { reviews: [], itemRatings: {}, zoneId: null, moderator };
+    return { reviews: [], itemRatings: {}, zoneId: null, moderator, reopenedStores: new Map() };
   },
   summary: (ctx) => `store=${ctx.storeId} items=${ctx.item1},${ctx.item2} orders=${ctx.orderId},${ctx.orderId2}`
     + Object.entries(ctx.variantFees ?? {}).map(([key, value]) => ` ${key}=${credits(value)}`).join(''),

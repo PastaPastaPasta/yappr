@@ -45,6 +45,10 @@ NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-cont
 NETWORK=devnet node scripts/verify-storefront.mjs [--moderator maker]
 NETWORK=devnet node scripts/verify-blog.mjs [--moderator 260]
 NETWORK=devnet node scripts/verify-dm.mjs
+# On the reusable pollr-test contract (--register-test-contract the first time
+# on a network, or after pollr-contract.json changes); --live-contract for the
+# published one. Storefront, blog and live pollr runs clean up after themselves
+# (docs/TESTING.md "Test content on the public devnet").
 NETWORK=devnet node scripts/verify-pollr.mjs
 # YAPP tips (t1-t5) where YAPP is transferable; credit tips (c1-c2) where the
 # social contract locks YAPP (v10).

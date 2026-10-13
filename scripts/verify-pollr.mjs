@@ -25,9 +25,32 @@
  * by reading the ballot back (by its byPollVoter key for a create, by id for a
  * replace), never by the SDK's throw/no-throw.
  *
- *   NETWORK=devnet node scripts/verify-pollr.mjs --contract <id> \
+ *   NETWORK=devnet node scripts/verify-pollr.mjs [--register-test-contract] \
  *     [--creator 230] [--voter 231] [--voter2 232] [--close-in 180000] [--only p3,p6]
+ *   NETWORK=devnet node scripts/verify-pollr.mjs --live-contract [--contract <id>] [--only p1,p2,p10] [--keep-content]
  *   node scripts/verify-pollr.mjs --self-test   # offline: contract declares what the cases assert
+ *
+ * WHERE IT RUNS. A poll with a ballot is permanent (`vote` cannot be deleted and
+ * `noBallots` counts withdrawn ballots), so on the published contract every run
+ * would leave polls in the app for good. By default the cases therefore run on
+ * the pollr-test contract: a copy of `contracts/pollr-contract.json` the creator
+ * registered once, reused by every run on this network and never read by the
+ * app, so its polls stay there harmlessly. It is recorded in the gitignored
+ * `.test-contracts.local.json` beside the sha256 of the file it was registered
+ * from (battery-lib TEST_CONTRACTS_FILE). When none is recorded, or the file
+ * changed since, the run stops and asks for `--register-test-contract`, which
+ * registers a new one for about 19×10⁹ credits (≈1,150¢), paid by the creator
+ * (a battery persona the treasury funds; never the maker). Nothing in the
+ * contract names another contract, a token or a moderator, so the cases, their
+ * ids and their expected error codes are the same on the copy.
+ *
+ * `--live-contract` aims the cases at the published contract instead (`--contract`,
+ * POLLR_CONTRACT_ID, else NEXT_PUBLIC_POLLR_CONTRACT_ID), e.g. to prove a fresh
+ * registration. Its cleanup then deletes the run's polls that took no ballot
+ * and lists the others as leftovers. p2 and p10 cast only refused ballots, so
+ * their polls go; the single, multi and closing polls of p1 take ballots in
+ * p1, p3 and p4, and p8 votes on two of its own, so those stay for good.
+ * `--keep-content` skips that cleanup.
  *
  * `--close-in` (ms, default 3 minutes) is the window of the closing poll p1 opens
  * and p9 waits out to prove the close rule live.
@@ -45,6 +68,7 @@ import {
 import { readFileSync } from 'node:fs';
 import { buildDocument, sleep } from './seed/seed-lib.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
+import { cleanPollr, printReport } from './surface-cleanup.mjs';
 
 const CONTRACT_FILE = 'pollr-contract.json';
 
@@ -381,9 +405,19 @@ const CASES = new Map([
   ['p9', caseP9CloseRule], ['p10', caseP10PropertyConstraints],
 ]);
 
+/** runBattery's cleanup: on the published contract, the creator's polls without a ballot go; the test contract keeps its polls. */
+async function cleanUpRun(ctx, { since }) {
+  if (!ctx.liveContract) { console.log('the pollr-test contract keeps its polls: the app never reads it'); return; }
+  printReport(await cleanPollr({ battery: ctx.battery, owners: [ctx.creator], since, live: true }));
+}
+
 await runBattery({
   label: 'pollr',
-  contract: { env: 'POLLR_CONTRACT_ID' },
+  contract: {
+    env: 'POLLR_CONTRACT_ID',
+    test: { name: 'pollr', file: CONTRACT_FILE, registrar: 'creator', deployedEnv: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', cost: 'about 19×10⁹ credits, ≈1,150¢' },
+  },
+  cleanup: cleanUpRun,
   cases: CASES,
   actors: { creator: 230, voter: 231, voter2: 232 },
   flags: { 'close-in': 180_000 },

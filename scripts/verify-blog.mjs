@@ -6,7 +6,7 @@
  * post-level aggregates are exact without a baseline.
  *
  *   NETWORK=devnet node scripts/verify-blog.mjs --contract <id> \
- *     [--author 210] [--reader 211] [--stranger 212] [--moderator 260|maker|personal] [--only b4,b5]
+ *     [--author 210] [--reader 211] [--stranger 212] [--moderator 260|maker|personal] [--only b4,b5] [--keep-content]
  *
  * `--moderator` is the contract's owner or one it appointed at publish time:
  * a seed-ledger persona index, `maker` or `personal` (ledger persona 900); v3 (beta.3) is a moderated cut, so b13/b14
@@ -47,6 +47,15 @@
  * which the `--moderator` flag must name for b13-b17 and b23 (mainnet
  * registers `notYetUsable`, where nobody can moderate before an election).
  *   node scripts/verify-blog.mjs --self-test   # offline: contract declares what the cases assert
+ *
+ * The cases write on the published blog contract, which the app lists. Once
+ * every case has run, the run takes down what the author, reader and stranger
+ * wrote since it began (scripts/surface-cleanup.mjs cleanBlog): comments and
+ * follows by their owners' deletes, posts and the draft by the author's
+ * tombstone, and the run's blogs by the `--moderator`'s removal (a blog's
+ * owner cannot delete it; on sakura pass `--moderator maker`, the interim).
+ * Whatever cannot go is printed as a leftover. `--keep-content` skips the
+ * cleanup; `scripts/clean-test-content.mjs --surface blog` does it later.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -60,6 +69,7 @@ import { REPO_ROOT, actionFeeAgreementOptions, actionFeeFor, feeAgreementFor, fe
 import { ARRAY_OUT_OF_BOUNDS, BANNED, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
 import { AGREEMENT_MISMATCH, AGREEMENT_NOT_SET, liftBar } from './social-battery-lib.mjs';
 import { DECLARED_RULES, constraintViolation, drop, refusedCreates, refusedReplaces } from './property-constraint-cases.mjs';
+import { cleanBlog, printReport } from './surface-cleanup.mjs';
 
 const CONTRACT_FILE = 'yappr-blog-contract.json';
 const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
@@ -511,9 +521,16 @@ function selfTestV7() {
   ]);
 }
 
+/** runBattery's cleanup: what the run's three personas wrote since it began, the run's blogs by the moderator. */
+async function cleanUpRun(ctx, { since }) {
+  const { battery, contractId, author, reader, stranger, moderator } = ctx;
+  printReport(await cleanBlog({ battery, contractId, owners: [author, reader, stranger], since, moderator, live: true }));
+}
+
 await runBattery({
   label: 'blog',
   contract: { env: 'BLOG_CONTRACT_ID' },
+  cleanup: cleanUpRun,
   cases: CASES,
   actors: { author: 210, reader: 211, stranger: 212 },
   flags: { moderator: { ...MODERATOR_FLAG, default: '260' } },
