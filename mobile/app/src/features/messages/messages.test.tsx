@@ -7,6 +7,7 @@ import {
   Dimensions,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -231,6 +232,77 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     fireEvent.press(screen.getByTestId('dm-unlock-save'));
     await act(async () => {});
     expect(screen.getByTestId('dm-unlock-error')).toHaveTextContent("That isn't the encryption key for this account's messages.");
+  });
+
+  describe('an account with no messaging key yet (App Connect builds)', () => {
+    const URI = 'dash-st:setup?n=d&v=1';
+    let openURL: jest.SpyInstance;
+    beforeEach(() => {
+      openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+      signIn();
+      fakeEngine.method('dm.status').mockResolvedValue(status({ locked: true }));
+      fakeEngine.method('dm.unlock').mockResolvedValue({ unlocked: false, reason: 'needs-setup' });
+      fakeEngine.method('dm.setUpMessaging').mockResolvedValueOnce({ unlocked: false, reason: 'approve-in-wallet', uri: URI });
+    });
+    afterEach(() => openURL.mockRestore());
+
+    async function openSetup() {
+      await renderAt('/messages');
+      fireEvent.press(screen.getByText('Unlock messages'));
+      await act(async () => {});
+      expect(screen.getByText('Set up messaging')).toBeTruthy();
+      expect(screen.queryByTestId('dm-unlock-key')).toBeNull();
+    }
+
+    it('sets messaging up in the wallet on this device, then unlocks once the key lands', async () => {
+      await openSetup();
+      fireEvent.press(screen.getByTestId('dm-setup-wallet'));
+      await act(async () => {});
+      expect(fakeEngine.method('dm.setUpMessaging')).toHaveBeenCalledTimes(1);
+      expect(openURL).toHaveBeenCalledWith(URI);
+      expect(screen.getByText('Waiting for your wallet…')).toBeTruthy();
+
+      // Not there yet, or a node one block behind that misses the new key: still waiting.
+      fireEvent.press(screen.getByTestId('dm-setup-check'));
+      await act(async () => {});
+      expect(screen.getByTestId('dm-setup-waiting')).toBeTruthy();
+      fakeEngine.method('dm.unlock').mockResolvedValueOnce({ unlocked: false, reason: 'not-derivable' });
+      fireEvent.press(screen.getByTestId('dm-setup-check'));
+      await act(async () => {});
+      expect(screen.getByTestId('dm-setup-waiting')).toBeTruthy();
+      expect(screen.queryByTestId('dm-unlock-key')).toBeNull();
+
+      fakeEngine.method('dm.unlock').mockResolvedValueOnce({ unlocked: true, status: status() });
+      fireEvent.press(screen.getByTestId('dm-setup-check'));
+      await act(async () => {});
+      expect(useToastStore.getState().current?.message).toBe('Messages unlocked');
+    });
+
+    it('shows the request as a QR code for a wallet on another device', async () => {
+      await openSetup();
+      fireEvent.press(screen.getByTestId('dm-setup-other-device'));
+      await act(async () => {});
+      expect(screen.getByTestId('dm-setup-qr')).toBeTruthy();
+      expect(screen.getByText('Scan this code with the wallet you sign in with.')).toBeTruthy();
+      expect(openURL).not.toHaveBeenCalled();
+    });
+
+    it('shows the QR code when no wallet on this device opens the request', async () => {
+      openURL.mockRejectedValueOnce(new Error('No app handles dash-st:'));
+      await openSetup();
+      fireEvent.press(screen.getByTestId('dm-setup-wallet'));
+      await act(async () => {});
+      expect(screen.getByTestId('dm-setup-qr')).toBeTruthy();
+    });
+
+    it('asks for the key when the account turns out to have another messaging key', async () => {
+      fakeEngine.method('dm.setUpMessaging').mockReset().mockResolvedValueOnce({ unlocked: false, reason: 'not-derivable' });
+      await openSetup();
+      fireEvent.press(screen.getByTestId('dm-setup-wallet'));
+      await act(async () => {});
+      expect(screen.getByTestId('dm-unlock-key')).toBeTruthy();
+      expect(openURL).not.toHaveBeenCalled();
+    });
   });
 
   it('lists conversations with previews, filters by search, and keeps archived ones behind the footer (#18)', async () => {

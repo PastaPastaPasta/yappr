@@ -235,10 +235,17 @@ export interface YapprKeyRegistrationRequest {
   encryptionPublicKey: Uint8Array
 }
 
+/** A key a first-login registration adds to the identity. */
+export interface YapprRegisteredKey {
+  keyId: number
+  purpose: 'authentication' | 'encryption'
+  securityLevel: 'high' | 'medium'
+}
+
 export interface YapprUnsignedKeyRegistrationResult {
   transitionBytes: Uint8Array
-  authKeyId: number
-  encryptionKeyId: number
+  /** The keys the transition adds, in key id order. */
+  keys: YapprRegisteredKey[]
   identityRevision: bigint
 }
 

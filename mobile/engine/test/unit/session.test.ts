@@ -13,7 +13,13 @@ import * as secp256k1 from '@noble/secp256k1'
 
 const chain = vi.hoisted(() => ({
   keysRegistered: (() => Promise.resolve(true)) as (identityId: string, auth: Uint8Array, enc: Uint8Array) => Promise<boolean>,
-  transition: { transitionBytes: new Uint8Array([1, 2, 3]), authKeyId: 5, encryptionKeyId: 6 },
+  transition: {
+    transitionBytes: new Uint8Array([1, 2, 3]),
+    keys: [
+      { keyId: 5, purpose: 'authentication', securityLevel: 'high' },
+      { keyId: 6, purpose: 'encryption', securityLevel: 'medium' },
+    ],
+  },
 }))
 
 vi.mock('@/lib/services/identity-update-builder', () => ({
@@ -58,6 +64,7 @@ const { privateKeyToWif } = await import('@/lib/crypto/wif')
 const { hash160 } = await import('@/lib/crypto/hash')
 const { bytesToHex } = await import('@/lib/bytes')
 const { deriveEncryptionKey } = await import('@/lib/crypto/derive-encryption-key')
+const { stubAppConnectBuild } = await import('@/lib/test-storage')
 const { useLoginModal } = await import('@/hooks/use-login-modal')
 const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
 
@@ -473,6 +480,23 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     expect(await session.awaitKeyRegistration(request.requestId, { waitMs: 1 })).toMatchObject({ status: 'pending' })
     registerKeys(identityId, loginKey)
     expect(await session.awaitKeyRegistration(request.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in', session: { identityId } })
+  })
+
+  it('App Connect builds: keeps the anchor-bound messaging key, the one dm.unlock derives', async () => {
+    const anchor = randomId()
+    stubAppConnectBuild(anchor, randomId())
+    try {
+      const loginKey = crypto.getRandomValues(new Uint8Array(32))
+      const identityId = walletIdentity(loginKey, true)
+      const request = await session.startKeyExchange()
+      await walletApproves(request.uri, identityId, loginKey)
+      expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in', session: { identityId } })
+      const authKey = auth.deriveYapprAuthKeyFromLogin(loginKey, auth.decodeYapprIdentityId(identityId))
+      const stored = JSON.parse(localStorage.getItem(`yappr_secure_ek_${identityId}`) ?? 'null')
+      expect(stored).toBe(privateKeyToWif(deriveEncryptionKey(authKey, identityId, anchor), 'testnet'))
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('signs in once when two calls race to complete the same approval', async () => {

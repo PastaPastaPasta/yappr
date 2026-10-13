@@ -11,11 +11,7 @@ import type {
   PlatformAuthDependencies,
   PlatformAuthEvent,
 } from 'platform-auth'
-import {
-  decodeYapprIdentityId,
-  deriveYapprAuthKeyFromLogin,
-  deriveYapprEncryptionKeyFromLogin,
-} from 'platform-auth'
+import { decodeYapprIdentityId, deriveYapprAuthKeyFromLogin } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { KEY_EXCHANGE_CONTRACT_ID, YAPPR_CONTRACT_ID, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
@@ -59,7 +55,7 @@ import {
 } from '@/lib/webauthn/passkey-prf'
 import { wrapDekWithPassword, wrapDekWithPrf } from '@/lib/crypto/auth-vault'
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
-import { deriveEncryptionKey } from '@/lib/crypto/derive-encryption-key'
+import { deriveEncryptionKey, deriveLoginEncryptionKey } from '@/lib/crypto/derive-encryption-key'
 import { validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
 import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
@@ -415,7 +411,8 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       identityHasEncryptionKey: hasEncryptionKeyOnIdentity,
       decodeIdentityId: decodeYapprIdentityId,
       deriveAuthKeyFromLogin: deriveYapprAuthKeyFromLogin,
-      deriveEncryptionKeyFromLogin: deriveYapprEncryptionKeyFromLogin,
+      // App Connect builds: the anchor key.
+      deriveEncryptionKeyFromLogin: (loginKey, identityIdBytes) => deriveLoginEncryptionKey(loginKey, identityIdBytes),
     },
     yapprKeyExchangeConfig: {
       appContractId: YAPPR_CONTRACT_ID,

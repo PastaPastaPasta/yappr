@@ -1,5 +1,6 @@
+import type { DmUnlockResult } from '@engine/api';
 import { BottomSheetTextInput } from '@gorhom/bottom-sheet';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Keyboard, View } from 'react-native';
 
 import { config } from '~/config';
@@ -18,15 +19,29 @@ import { toast } from '~/ui/toast';
 import { tw, useColors } from '~/ui/tokens';
 
 import { readErrorMessage, refreshDm } from './dm-data';
+import { MessagingSetup } from './MessagingSetup';
 
-type Phase = 'recovering' | 'manual' | 'no-key';
+type Phase = 'recovering' | 'manual' | 'no-key' | 'setup';
+
+/** Where an unlock that did not unlock goes next. */
+function phaseFor(reason: Extract<DmUnlockResult, { unlocked: false }>['reason']): Phase {
+  switch (reason) {
+    case 'needs-setup':
+      return 'setup';
+    case 'no-key-on-identity':
+      return 'no-key';
+    default:
+      return 'manual';
+  }
+}
 
 /**
  * "Unlock messages" (UX_SPEC §4.38, PRD DM-02): first the automatic recovery
  * (the encryption key derived from the sign-in key), which on success closes
  * with "Messages unlocked"; if that can't work, one secure field for the
  * encryption key, checked against the identity. The key's formats are named
- * only in the error for text that is not one (#22).
+ * only in the error for text that is not one (#22). An account with no
+ * messaging key yet (App Connect builds) sets one up with its wallet instead.
  */
 /** Unlocked: the inbox, read again, with "Messages unlocked". */
 function unlocked(close: () => void): void {
@@ -92,7 +107,7 @@ function UnlockBody({
         if (result.unlocked) {
           unlocked(onClose);
         } else {
-          setPhase(result.reason === 'no-key-on-identity' ? 'no-key' : 'manual');
+          setPhase(phaseFor(result.reason));
         }
       })
       .catch((e: unknown) => {
@@ -116,10 +131,10 @@ function UnlockBody({
           setKey('');
           Keyboard.dismiss();
           unlocked(onClose);
-        } else if (result.reason === 'no-key-on-identity') {
-          setPhase('no-key');
-        } else {
+        } else if (result.reason === 'not-derivable') {
           setError(keyError(value));
+        } else {
+          setPhase(phaseFor(result.reason));
         }
       })
       .catch((e: unknown) => {
@@ -128,7 +143,13 @@ function UnlockBody({
       .finally(() => setSaving(false));
   };
 
-  const title = phase === 'recovering' ? 'Unlocking your messages…' : 'Unlock your messages';
+  // Stable, so MessagingSetup's checks keep their schedule across renders.
+  const setUp = useCallback(() => unlocked(onClose), [onClose]);
+  const otherKey = useCallback(() => setPhase('manual'), []);
+
+  let title = 'Unlock your messages';
+  if (phase === 'recovering') title = 'Unlocking your messages…';
+  else if (phase === 'setup') title = 'Set up messaging';
 
   return (
     <View className="gap-2">
@@ -140,6 +161,7 @@ function UnlockBody({
           <Spinner size="sm" />
         </View>
       ) : null}
+      {phase === 'setup' ? <MessagingSetup onUnlocked={setUp} onOtherKey={otherKey} /> : null}
       {phase === 'no-key' ? (
         <View className="gap-4 pb-2">
           <Text variant="body" tone="secondary">

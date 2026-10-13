@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PlatformAuthController } from '../core/controller'
-import type { YapprKeyExchangeConfig, YapprUnsignedKeyRegistrationResult } from '../core/types'
+import type { YapprKeyExchangeConfig, YapprRegisteredKey, YapprUnsignedKeyRegistrationResult } from '../core/types'
 import {
   buildYapprKeyExchangeUri,
   buildYapprStateTransitionUri,
@@ -59,8 +59,7 @@ export type YapprKeyRegistrationState =
   | 'error'
 
 export interface YapprKeyRegistrationResult {
-  authKeyId: number
-  encryptionKeyId: number
+  keys: YapprRegisteredKey[]
 }
 
 export interface UseYapprKeyRegistrationReturn {
@@ -406,10 +405,7 @@ export function useYapprKeyRegistration(
             return
           }
 
-          setResult({
-            authKeyId: pendingTransition.authKeyId,
-            encryptionKeyId: pendingTransition.encryptionKeyId,
-          })
+          setResult({ keys: pendingTransition.keys })
           setState('complete')
           onComplete?.()
         } catch {
