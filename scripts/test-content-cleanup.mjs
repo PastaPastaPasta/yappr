@@ -115,17 +115,26 @@ export function refuseIdentities(identities, refused) {
  * The reads that list `ownerId`'s posts and replies: each type's owner index
  * (`post.ownerAndTime`, `live == true` pinned first from v13, which leaves the
  * tombstones out; `reply.ownerAndTime`, tombstones included), from `since`
- * when given. Newest first: what Recent shows is read before the page cap
+ * when given, and below `before` (exclusive) to resume a capped scan. Newest first: what Recent shows is read before the page cap
  * could cut a long history short.
  *
  * @param {ReturnType<typeof socialShapes>} shapes
  * @param {string} ownerId
  * @param {number | null} [since]
+ * @param {number | null} [before]
  */
-export function ownerQueries(shapes, ownerId, since = null) {
-  const where = [['$ownerId', '==', ownerId], ...(since === null ? [] : [['$createdAt', '>=', since]])];
+export function ownerQueries(shapes, ownerId, since = null, before = null) {
+  const where = [['$ownerId', '==', ownerId], ...createdAtRange(since, before)];
   const orderBy = [['$ownerId', 'asc'], ['$createdAt', 'desc']];
   return { post: shapes.ownerPosts({ where, orderBy }), reply: { where, orderBy } };
+}
+
+/** The `$createdAt` bounds of an owner scan: from `since` (inclusive) to `before` (exclusive), either optional. */
+export function createdAtRange(since = null, before = null) {
+  if (since !== null && before !== null) return [['$createdAt', 'BetweenExcludeRight', [since, before]]];
+  if (since !== null) return [['$createdAt', '>=', since]];
+  if (before !== null) return [['$createdAt', '<', before]];
+  return [];
 }
 
 /** `--since`: epoch milliseconds, or anything `Date.parse` reads (an ISO time). Epoch seconds or a bare year are refused. */
@@ -155,7 +164,12 @@ function session({ sdk, contractId, reconnect, settleMs }) {
     throw last;
   };
   const docsOf = (page) => [...(page?.values?.() ?? [])].filter(Boolean);
-  /** Every page of a read, newest first; `truncated` when MAX_PAGES full pages left older documents unread. */
+  /**
+   * Every page of a read, newest first; `truncated` when MAX_PAGES full pages
+   * left older documents unread, with `resumeBefore`, the oldest `$createdAt`
+   * read: a scan bounded below it (`--before`) carries on past tombstones the
+   * capped one kept re-reading.
+   */
   const queryAll = async (type, { where, orderBy }) => {
     const docs = [];
     let startAfter;
@@ -165,7 +179,7 @@ function session({ sdk, contractId, reconnect, settleMs }) {
       if (batch.length < PAGE) return { docs, truncated: false };
       startAfter = storedOf(batch.at(-1)).id;
     }
-    return { docs, truncated: true };
+    return { docs, truncated: true, resumeBefore: storedOf(docs.at(-1)).createdAt };
   };
   const get = async (type, id) => {
     const doc = await retrying((s) => s.documents.get(contractId, type, id));
@@ -204,7 +218,8 @@ async function tombstoneOne(io, { contractId, shapes, settleMs }, who, type, sto
       error = describeErr(e);
     }
     for (let poll = 0; poll < CONFIRM_POLLS; poll++) {
-      const now = await io.get(type, stored.id).catch(() => null);
+      // io.get already retried transient faults; one that still fails ends this document (counted as a failure).
+      const now = await io.get(type, stored.id);
       if (now?.data.deleted === true) return { ok: true };
       if (error && CONSENSUS_REFUSAL.test(error) && !isStaleWrite(error)) return { ok: false, error };
       await sleep(settleMs);
@@ -233,7 +248,7 @@ async function tombstoneOne(io, { contractId, shapes, settleMs }, who, type, sto
  * those. A plan lists each document (`documents`). One identity's failure is
  * counted, never thrown, so the others are still cleaned.
  */
-export async function cleanTestContent({ sdk, contractId, contract, identities, since = null, live = false, refuse = [], reconnect, log = console.log, settleMs = 2500 }) {
+export async function cleanTestContent({ sdk, contractId, contract, identities, since = null, before = null, live = false, refuse = [], reconnect, log = console.log, settleMs = 2500 }) {
   const shapes = socialShapes(contract);
   shapes.tombstone('post', {}); // throws on a cut whose authors delete for real (v10): nothing here applies
 
@@ -248,7 +263,7 @@ export async function cleanTestContent({ sdk, contractId, contract, identities, 
     const row = { id: who.id, label: who.label ?? who.id, posts: 0, replies: 0, errors: [] };
     summary.identities.push(row);
     try {
-      await cleanIdentity({ io, contractId, shapes, since, live, log, settleMs }, who, row);
+      await cleanIdentity({ io, contractId, shapes, since, before, live, log, settleMs }, who, row);
     } catch (e) {
       row.errors.push(describeErr(e).slice(0, 200));
       summary.incomplete += 1;
@@ -265,14 +280,15 @@ export async function cleanTestContent({ sdk, contractId, contract, identities, 
 }
 
 /** One identity's part of {@link cleanTestContent}, filling `row` as it goes. */
-async function cleanIdentity({ io, contractId, shapes, since, live, log, settleMs }, who, row) {
-  const queries = ownerQueries(shapes, who.id, since);
+async function cleanIdentity({ io, contractId, shapes, since, before, live, log, settleMs }, who, row) {
+  const queries = ownerQueries(shapes, who.id, since, before);
   const targets = [];
   for (const type of ['post', 'reply']) {
-    const { docs, truncated } = await io.queryAll(type, queries[type]);
+    const { docs, truncated, resumeBefore } = await io.queryAll(type, queries[type]);
     if (truncated) {
       row.truncated = true;
-      log(`WARN  ${row.label}: more than ${MAX_PAGES * PAGE} ${type} documents; only the newest were read (narrow with --since, or run again)`);
+      if (resumeBefore !== null && (row.resumeBefore === undefined || resumeBefore > row.resumeBefore)) row.resumeBefore = resumeBefore;
+      log(`WARN  ${row.label}: more than ${MAX_PAGES * PAGE} ${type} documents; only the newest were read. Run again with --before ${resumeBefore} to clean the older ones`);
     }
     for (const stored of cleanupTargets(docs, { ownerId: who.id, since })) targets.push({ type, stored });
   }
@@ -294,7 +310,7 @@ async function cleanIdentity({ io, contractId, shapes, since, live, log, settleM
     return;
   }
   const balance = () => io.retrying((s) => s.identities.balance(who.id)).then(BigInt, () => null);
-  const before = await balance();
+  const balanceBefore = await balance();
   let failingInARow = 0;
   for (const [index, { type, stored }] of targets.entries()) {
     if (failingInARow >= FAILURES_BEFORE_GIVING_UP) {
@@ -314,7 +330,7 @@ async function cleanIdentity({ io, contractId, shapes, since, live, log, settleM
     }
   }
   const after = await balance();
-  if (before !== null && after !== null) row.spentCredits = before - after;
+  if (balanceBefore !== null && after !== null) row.spentCredits = balanceBefore - after;
   log(`${row.failed ? 'WARN ' : 'OK   '} ${row.label}: tombstoned ${row.tombstoned} of ${targets.length} (${row.posts} posts, ${row.replies} replies)${row.failed ? `; failed ${row.failed}: ${row.errors[0]}` : ''}`);
 }
 

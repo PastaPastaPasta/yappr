@@ -86,6 +86,11 @@ describe('what a cleanup touches', () => {
     expect(queries.reply).toEqual({ where: [['$ownerId', '==', owner], ['$createdAt', '>=', 5]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] })
     expect(ownerQueries(socialShapes(v12), owner).post.where).toEqual([['$ownerId', '==', owner]])
   })
+
+  it('resumes a capped scan below what it read: before alone, or between since and before', () => {
+    expect(ownerQueries(socialShapes(v16), owner, null, 9).reply.where).toEqual([['$ownerId', '==', owner], ['$createdAt', '<', 9]])
+    expect(ownerQueries(socialShapes(v16), owner, 5, 9).reply.where).toEqual([['$ownerId', '==', owner], ['$createdAt', 'BetweenExcludeRight', [5, 9]]])
+  })
 })
 
 describe('whom a cleanup refuses', () => {
@@ -118,6 +123,11 @@ describe('the cleanup CLI', () => {
     expect(parseArgs(['--plan', '--ci-pool']).ciPool).toBe('all')
     expect(parseArgs(['--live', '--ci-pool', '2', '--since', since]).ciPool).toBe(2)
     expect(parseArgs(['--plan', '--ci-pool', '--since', since]).since).toBe(1791904855115)
+  })
+
+  it('takes --before to resume a capped scan, later than --since', () => {
+    expect(parseArgs(['--plan', '--ci-pool', '--before', '1791904855115']).before).toBe(1791904855115)
+    expect(() => parseArgs(['--plan', '--ci-pool', '--since', '1791904855115', '--before', '1791904855115'])).toThrow(/later than --since/)
   })
 
   it('reads bots as seed indexes, optionally naming the identity', () => {

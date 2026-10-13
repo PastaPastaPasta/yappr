@@ -25,6 +25,8 @@
  * Every derived key is checked against the identity on chain before it signs.
  * Options:
  *   --since <ms|iso> only documents created at or after it (the CI step passes its job start)
+ *   --before <ms|iso> only documents created before it: resumes a scan the page cap cut short
+ *                    (the run prints the value to pass)
  *   --contract <id>  the social contract (default NEXT_PUBLIC_YAPPR_CONTRACT_ID)
  *   --contract-file <path>  the cut it was registered from (default the env's
  *                    contracts/yappr-social-contract-<NEXT_PUBLIC_CONTRACT_TOPOLOGY>.json)
@@ -43,14 +45,14 @@ import { describeErr } from './owner-keys.mjs';
 import { connectSdk, network } from './sdk-env.mjs';
 import { cleanTestContent, parseSince, refuseIdentities, surveyTimeline } from './test-content-cleanup.mjs';
 
-const USAGE = 'Usage: node scripts/clean-test-content.mjs --plan|--live [--bots <i[:id],…>] [--ci-pool [n]] [--since <ms|iso>] [--contract <id>] [--contract-file <path>] [--survey <n>]';
+const USAGE = 'Usage: node scripts/clean-test-content.mjs --plan|--live [--bots <i[:id],…>] [--ci-pool [n]] [--since <ms|iso>] [--before <ms|iso>] [--contract <id>] [--contract-file <path>] [--survey <n>]';
 /** What 1M credits cost at $60/DASH (1 DASH = 10^11 credits), in US cents. */
 const CENTS_PER_MILLION_CREDITS = 0.06;
 const AUTH_HIGH_KEY_ID = KEY_ROLES.find((role) => role.purpose === 'AUTHENTICATION' && role.securityLevel === 'HIGH').keyIndex;
 
 /** The command line, parsed without reading the environment. Throws on anything it does not know. */
 export function parseArgs(argv) {
-  const args = { mode: null, bots: [], ciPool: null, since: null, contract: null, contractFile: null, survey: 60 };
+  const args = { mode: null, bots: [], ciPool: null, since: null, before: null, contract: null, contractFile: null, survey: 60 };
   const value = (i, flag) => {
     if (argv[i] === undefined || argv[i].startsWith('--')) throw new Error(`${flag} takes a value`);
     return argv[i];
@@ -75,6 +77,7 @@ export function parseArgs(argv) {
         if (/^\d+$/.test(argv[i + 1] ?? '')) args.ciPool = Number(argv[++i]);
         break;
       case '--since': args.since = parseSince(value(++i, flag)); break;
+      case '--before': args.before = parseSince(value(++i, flag)); break;
       case '--contract': args.contract = value(++i, flag); break;
       case '--contract-file': args.contractFile = value(++i, flag); break;
       case '--survey': args.survey = Number(value(++i, flag)); break;
@@ -82,6 +85,7 @@ export function parseArgs(argv) {
     }
   }
   if (args.mode === null) throw new Error('pass --plan (read-only) or --live');
+  if (args.since !== null && args.before !== null && args.before <= args.since) throw new Error('--before must be later than --since');
   if (args.bots.length === 0 && args.ciPool === null) throw new Error('name the identities: --bots <i,…> and/or --ci-pool [n]');
   if (args.ciPool === 0) throw new Error('--ci-pool takes a slot count of at least 1');
   if (!Number.isInteger(args.survey) || args.survey < 1 || args.survey > 100) throw new Error('--survey takes 1–100');
@@ -155,7 +159,7 @@ async function main(argv) {
     const survey = await surveyTimeline({ sdk, contractId, identities, others: maker ? { [maker]: 'maker' } : {}, limit: args.survey, reconnect });
     console.log(JSON.stringify({ newestTimelinePosts: survey }));
   }
-  const summary = await cleanTestContent({ sdk, contractId, contract, identities, since: args.since, live: args.mode === 'live', refuse: [maker], reconnect });
+  const summary = await cleanTestContent({ sdk, contractId, contract, identities, since: args.since, before: args.before, live: args.mode === 'live', refuse: [maker], reconnect });
   const cents = Number(summary.spentCredits) * CENTS_PER_MILLION_CREDITS / 1e6;
   console.log(JSON.stringify({ ...summary, spentCentsAt60UsdPerDash: Number(cents.toFixed(3)) }, (_k, v) => (typeof v === 'bigint' ? String(v) : v), 1));
   return summary.failed === 0 && summary.incomplete === 0 ? 0 : 1;
