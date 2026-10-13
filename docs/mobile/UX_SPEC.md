@@ -747,6 +747,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ```
 
 - **No wallet installed:** "Open wallet" is replaced by the explanation block (copy 5.1) with "Get a Dash wallet" (primary) above "Use a wallet on another device".
+- **App Connect builds** (`capabilities.walletSignIn: 'app-connect'`, devnet): both wallet buttons open `/sign-in/connect` (`mode=wallet` opens the wallet with the request, `mode=qr` shows it as the 4.4 QR card), with the 4.3/4.4 states and no key registration step. A verified answer shows "Is this you?" with the account's avatar, name and handle, "Continue as @name" and "That's not me" (a new code, with a note that someone else may have scanned it); several answers show "Choose your account". The wallet hands the user back through yap.pr's `/connect` page, which opens the app (`<scheme>://connect?r=…`); the app checks at once. Renewing (`/sign-in/renew`: "Renew in your wallet", from the low-allowance toast, a write stopped for the allowance or expiry, Settings → Account → Wallet connection, or "Allow messaging in your wallet") is the same flow for the signed-in account, accepted without asking. A wallet that revokes this phone's keys signs the account out with "Signed out from your wallet".
 - **Platform:** iOS page sheet with "Cancel" leading; Android full-screen dialog with close ×.
 
 ### 4.3 Waiting for the wallet (same device)

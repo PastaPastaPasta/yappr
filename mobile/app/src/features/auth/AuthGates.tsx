@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 
 import { useEngineEvent } from '~/data/events';
-import { lastIdentity, useSession, useSessionStore } from '~/data/session';
+import { getCapabilities, lastIdentity, useSession, useSessionStore } from '~/data/session';
 import { setReauthHandler } from '~/data/session-expiry';
 import { engine, engineNetworkKey } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
@@ -16,6 +16,8 @@ import { tw } from '~/ui/tokens';
 
 import { AccountSwitcherSheet } from './AccountSwitcher';
 import { reauthenticate, recoverInterruptedAdd, returnFromAddAccount, startReauthTracking, useAccounts } from './accounts';
+import { appConnectInProgress, cancelAppConnect, lastAppConnectMode, useAppConnect } from './app-connect';
+import { AppConnectNotices } from './AppConnectNotices';
 import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
@@ -83,6 +85,7 @@ function useSignInExit(pathname: string): void {
     const inside = inSignIn(pathname);
     if (wasInSignIn.current && !inside && pathname !== '/terms-gate') {
       if (useKeyExchange.getState().phase.name !== 'idle') cancelKeyExchange();
+      if (useAppConnect.getState().step.name !== 'idle') cancelAppConnect();
       returnFromAddAccount();
     }
     wasInSignIn.current = inside;
@@ -124,13 +127,18 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
       return;
     }
     checked.current = true;
-    const signingIn = () => inSignIn(path.current) || useKeyExchange.getState().phase.name !== 'idle';
+    const signingIn = () =>
+      inSignIn(path.current) || useKeyExchange.getState().phase.name !== 'idle' || appConnectInProgress();
     if (signingIn()) {
       recover(true);
       return;
     }
-    engine.api.session
-      .pendingKeyExchange()
+    // App Connect builds keep their pending request apart from the legacy key exchange's.
+    const appConnect = getCapabilities()?.walletSignIn === 'app-connect';
+    const pendingRequest = appConnect
+      ? engine.api.session.appConnectPending()
+      : engine.api.session.pendingKeyExchange().then((request) => request !== null);
+    pendingRequest
       .then((pending) => {
         if (signingIn()) {
           recover(true);
@@ -148,7 +156,8 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
           return;
         }
         recover(true);
-        router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
+        if (appConnect) router.push(`/sign-in/connect?mode=${lastAppConnectMode()}&resume=1`);
+        else router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => {
         appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);
@@ -195,7 +204,8 @@ function AccountTransitionOverlay() {
 /**
  * The app-wide onboarding and auth gates, mounted once by the root layout:
  * Welcome on first launch, the terms gate, the wallet sign-in resume, the
- * account switcher and its progress, and the app lock.
+ * account switcher and its progress, the wallet session's prompts, and the
+ * app lock.
  */
 export function AuthGates() {
   // Nothing opens while the app lock is up: on iOS a modal presented over the lock screen draws
@@ -213,6 +223,7 @@ export function AuthGates() {
   return (
     <>
       <AccountSwitcherSheet />
+      <AppConnectNotices ready={ready} />
       <AccountTransitionOverlay />
       <AppLockOverlay />
     </>

@@ -14,6 +14,10 @@ import { engine } from '~/engine';
 export interface EngineEventMap {
   'session.changed': SessionEvents['session.changed'];
   'session.keyRequired': SessionEvents['session.keyRequired'];
+  /** The App Connect sign-in or renewal in progress (`features/auth/app-connect.ts`). */
+  'session.appConnect': SessionEvents['session.appConnect'];
+  /** The App Connect session's standing: renew prompts, a revoke. */
+  'session.appConnectStatus': SessionEvents['session.appConnectStatus'];
   /** Every write ticket transition. `src/data/writes.ts` already tracks them; screens rarely need this. */
   'write.status': WriteTicket;
   /** A post or reply this device published (the first part of a thread). */

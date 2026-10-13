@@ -116,4 +116,7 @@ export const queryKeys = {
     /** Every `people` read, whatever the ids. */
     peopleAll: [...root, 'dm', 'people'] as const,
   },
+
+  /** `session.appConnectConnections`: the keys the account's wallets granted Yappr. Never persisted. */
+  walletConnections: (identityId: string) => [...root, 'walletConnections', identityId] as const,
 } as const;

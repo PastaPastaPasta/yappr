@@ -8,6 +8,7 @@ import {
   LockClosedIcon,
   UserCircleIcon,
   UserGroupIcon,
+  WalletIcon,
 } from 'react-native-heroicons/outline';
 
 import { useSession, useSessionStore } from '~/data/session';
@@ -15,6 +16,7 @@ import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { useAccounts } from '~/features/auth/accounts';
 import { confirmSignOut } from '~/features/auth/AccountSwitcher';
+import { copy as authCopy } from '~/features/auth/copy';
 import { truncateId } from '~/lib-allowlist';
 import { EmptyState } from '~/ui/EmptyState';
 import { Spinner } from '~/ui/Spinner';
@@ -209,6 +211,15 @@ export function AccountSettingsScreen() {
 
       <SettingsGroup>
         <AccountsRow count={accounts.length} />
+        {session.method === 'app-connect' ? (
+          <SettingsRow
+            label={authCopy.wallet.title}
+            icon={WalletIcon}
+            iconTint={colors.yappr500}
+            onPress={() => router.push('/settings/wallet')}
+            testID="account-wallet"
+          />
+        ) : null}
         <SettingsRow
           label={copy.account.appLock}
           icon={LockClosedIcon}
