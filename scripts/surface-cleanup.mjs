@@ -92,17 +92,21 @@ export const withStatus = (stored, status) => ({ ...contentOf(stored), status })
 
 // ---- Reads and writes ------------------------------------------------------------
 
-/** Every page of a read (newest pages stop at MAX_PAGES × PAGE documents). */
+/**
+ * Every page of a read. A read that fills MAX_PAGES pages throws rather than
+ * return a partial list: a cleanup that silently skipped documents would
+ * report success with test content left up (narrow it with a later --since).
+ */
 async function queryAll(battery, docType, where, orderBy) {
   const rows = [];
   let startAfter;
   for (let page = 0; page < MAX_PAGES; page++) {
     const batch = await battery.queryDocs(docType, { where, orderBy, limit: PAGE, ...(startAfter ? { startAfter } : {}) });
     rows.push(...batch);
-    if (batch.length < PAGE) break;
+    if (batch.length < PAGE) return rows;
     startAfter = normalizeId(batch.at(-1).$id);
   }
-  return rows;
+  throw new Error(`${docType}: more than ${MAX_PAGES * PAGE} documents match one read; not cleaning from a partial list (narrow it with a later --since)`);
 }
 
 /** `rows` without repeats of a document (the same `$id` read through two indexes). */
@@ -229,16 +233,20 @@ export async function cleanStorefront({ battery, owners, since, reopened = new M
   const scope = { owners: ownerSet(owners), since };
   const stores = await readEach(owners, (who) => battery.queryDocs('store', { where: [['$ownerId', '==', who.ownerId]], limit: 1 }));
   const inWindow = (docType, index) => readEach(stores, (store) => queryAll(battery, docType, [[index, '==', normalizeId(store.$id)], ['$createdAt', '>=', since]], [[index, 'asc'], ['$createdAt', 'asc']]));
-  const items = createdSince(await inWindow('storeItem', 'storeId'), scope);
+  // Children are kept by their own creation time, so their parents are read whatever their age: a kit or a
+  // review written in the window under an older item or order is the run's too.
+  const allItems = await readEach(stores, (store) => queryAll(battery, 'storeItem', [['storeId', '==', normalizeId(store.$id)]], [['storeId', 'asc'], ['$createdAt', 'asc']]));
+  const items = createdSince(allItems, scope);
   // The owners' own orders, at anyone's store (buyerOrders), and the reviews written on them (a review names
   // its order): with the reads under the owners' stores, every order and review an owner wrote in the window.
-  const ownOrders = createdSince(await readEach(owners, (who) => queryAll(battery, 'storeOrder', [['$ownerId', '==', who.ownerId], ['$createdAt', '>=', since]], [['$ownerId', 'asc'], ['$createdAt', 'asc']])), scope);
-  const reviewsOfOrder = (docType, index) => readEach(ownOrders, (order) => queryAll(battery, docType, [[index, '==', normalizeId(order.$id)]], [[index, 'asc']]));
+  const ownOrdersAll = await readEach(owners, (who) => queryAll(battery, 'storeOrder', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]));
+  const ownOrders = createdSince(ownOrdersAll, scope);
+  const reviewsOfOrder = (docType, index) => readEach(ownOrdersAll, (order) => queryAll(battery, docType, [[index, '==', normalizeId(order.$id)]], [[index, 'asc']]));
   const itemReviews = distinctDocs([
-    ...await readEach(items, (item) => queryAll(battery, 'itemReview', [['itemId', '==', normalizeId(item.$id)], ['$createdAt', '>=', since]], [['itemId', 'asc'], ['$createdAt', 'asc']])),
+    ...await readEach(allItems, (item) => queryAll(battery, 'itemReview', [['itemId', '==', normalizeId(item.$id)], ['$createdAt', '>=', since]], [['itemId', 'asc'], ['$createdAt', 'asc']])),
     ...await reviewsOfOrder('itemReview', 'orderId'),
   ]);
-  const kits = await readEach(items, (item) => battery.queryDocs('itemDeliverable', { where: [['itemId', '==', normalizeId(item.$id)]], limit: 1 }));
+  const kits = await readEach(allItems, (item) => battery.queryDocs('itemDeliverable', { where: [['itemId', '==', normalizeId(item.$id)]], limit: 1 }));
   const zones = await readEach(stores, (store) => queryAll(battery, 'shippingZone', [['storeId', '==', normalizeId(store.$id)]], [['storeId', 'asc'], ['priority', 'asc']]));
   // Buyers among the owners: a real customer's order on a persona's store is not the run's.
   const orders = distinctDocs([...createdSince(await inWindow('storeOrder', 'storeId'), scope), ...ownOrders]);
