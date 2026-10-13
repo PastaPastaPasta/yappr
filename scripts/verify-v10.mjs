@@ -155,6 +155,17 @@
  *     The live run needs a 5.0.0-beta.6 chain; the installed SDK parses the
  *     file and serializes every write offline.
  *
+ * The global rankings (t2c, t2j, t2k, t2t: the trending tags and the 3-day top
+ * posts, which no `where` can scope, since a ranked read pins only the
+ * properties before the grouped one) are paged with `offset` until each of the
+ * run's entries is found or the ranking ends, up to RANKED_PAGES pages. An
+ * offset read costs O(log n + k) at any depth, so a chain with more than 100
+ * groups in a window no longer pushes the run's count-1 entry off the first
+ * page and fails the case. The scoped reads (t2e, t2g, t2i, t2m, t2o, t2q–t2s)
+ * pin the tag or post and need no paging. The battery must run alone: a
+ * concurrent writer can move a group across a page boundary, which the 10-group
+ * overlap between pages only partly absorbs.
+ *
  * The rest of this header describes v10.
  *
  * Registration-day battery for **contract v10**
@@ -1651,8 +1662,38 @@ async function windowLists(ctx, docType, indexName, where, predicate) {
   return { found: false, scanned: seen.size };
 }
 
+const RANKED_PAGE = 100;
+/** Pages read of one global ranking at most (about 4,500 groups). */
+const RANKED_PAGES = 50;
+/** Groups consecutive pages share. */
+const RANKED_OVERLAP = 10;
+
 async function rankedWindow(ctx, window, extra) {
-  return readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: 'like', aggregate: { type: 'count' }, direction: 'desc', limit: 100, ...window, ...extra }));
+  return readback(() => ctx.sdk.documents.ranked({ dataContractId: ctx.contractId, documentTypeName: 'like', aggregate: { type: 'count' }, direction: 'desc', limit: RANKED_PAGE, ...window, ...extra }));
+}
+
+/**
+ * The counts of `keys` in a global ranking, however many groups rank above them: pages by
+ * `offset` (overlapping, so a group shifted by a write between two reads is still seen) until
+ * every key is found or a short page ends the ranking (the node returns `limit` groups whenever
+ * that many remain). `countOf(key)` is the key's count, 0 when the whole ranking was read
+ * without it, and undefined when RANKED_PAGES ran out first.
+ */
+async function rankedValues(ctx, window, extra, keys) {
+  const values = new Map();
+  let firstPage = [];
+  let read = 0;
+  let whole = false;
+  for (let page = 0; page < RANKED_PAGES && values.size < keys.length; page++) {
+    const offset = page * (RANKED_PAGE - RANKED_OVERLAP);
+    const { entries } = await rankedWindow(ctx, window, { ...extra, offset });
+    if (page === 0) firstPage = entries;
+    for (const entry of entries) if (keys.includes(entry.groupValue)) values.set(entry.groupValue, Number(entry.value));
+    read = offset + entries.length;
+    if (entries.length < RANKED_PAGE) { whole = true; break; }
+  }
+  const end = whole ? ', the whole ranking' : values.size < keys.length ? `, stopped at ${RANKED_PAGES} pages` : '';
+  return { firstPage, countOf: (key) => values.get(key) ?? (whole ? 0 : undefined), detail: `${read} group(s) read${end}` };
 }
 
 /** Per like type: the liked target's field and its author field, the lead of byAuthorPostTime / byAuthorReplyTime. */
@@ -1721,18 +1762,17 @@ async function caseT2TrendingOnLike(ctx) {
   expectAccepted('t2b A likes the untagged post', await like(untagged));
   await settle();
 
-  const tags = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking());
-  const entry = tags.entries.find((e) => e.groupValue === tag);
-  check(`t2c the 24h trending tags (groupBy ${SOCIAL.tagField}) carry the run's tag at 1`, Number(entry?.value ?? -1) === 1, `value=${entry?.value} groups=${tags.entries.length}`);
-  check(`t2d no untagged group appears (${TAG_ARRAY ? 'an empty list is never entered' : 'skipIfAbsent'})`, tags.entries.every((e) => typeof e.groupValue === 'string' && e.groupValue !== ''), describeValue(tags.entries.map((e) => e.groupValue)));
+  const tags = await rankedValues(ctx, TRENDING_TAGS, SOCIAL.tagRanking(), [tag]);
+  check(`t2c the 24h trending tags (groupBy ${SOCIAL.tagField}) carry the run's tag at 1`, tags.countOf(tag) === 1, `value=${tags.countOf(tag)}; ${tags.detail}`);
+  check(`t2d no untagged group appears (${TAG_ARRAY ? 'an empty list is never entered' : 'skipIfAbsent'})`, tags.firstPage.every((e) => typeof e.groupValue === 'string' && e.groupValue !== ''), describeValue(tags.firstPage.map((e) => e.groupValue)));
   const perTag = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking(tag));
   check('t2e the tag\'s 24h top posts rank the tagged post at 1', Number(perTag.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1, `groups=${perTag.entries.length}`);
   const perTagUntagged = perTag.entries.some((e) => e.groupValue === untagged);
   check('t2f the untagged post is not in the tag\'s window', !perTagUntagged);
   const allTime = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', ...SOCIAL.tagRanking(tag), aggregate: { type: 'count' }, limit: 10 }));
-  const topPosts = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
+  const topPosts = await rankedValues(ctx, TOP_POSTS, { groupBy: 'postId' }, [tagged, untagged]);
   check('t2j the 3-day top posts (byTrendPost) count both the tagged and the untagged like',
-    [tagged, untagged].every((id) => Number(topPosts.entries.find((e) => e.groupValue === id)?.value ?? -1) === 1), `groups=${topPosts.entries.length}`);
+    [tagged, untagged].every((id) => topPosts.countOf(id) === 1), `tagged=${topPosts.countOf(tagged)} untagged=${topPosts.countOf(untagged)}; ${topPosts.detail}`);
   check('t2g the all-time per-tag ranking (byHashtagPost) agrees', Number(allTime.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1);
   if (TAG_ARRAY) await tagListTrending(ctx, owner);
 
@@ -1749,8 +1789,9 @@ async function caseT2TrendingOnLike(ctx) {
   try {
     const after = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking(tag));
     check('t2i the tag\'s window no longer counts the post', Number(after.entries.find((e) => e.groupValue === tagged)?.value ?? 0) === 0, `groups=${after.entries.length}`);
-    const afterTop = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
-    check('t2k …nor does the 3-day window (byTrendPost), while the untagged like stays', Number(afterTop.entries.find((e) => e.groupValue === tagged)?.value ?? 0) === 0 && Number(afterTop.entries.find((e) => e.groupValue === untagged)?.value ?? -1) === 1, `groups=${afterTop.entries.length}`);
+    const afterTop = await rankedValues(ctx, TOP_POSTS, { groupBy: 'postId' }, [tagged, untagged]);
+    check('t2k …nor does the 3-day window (byTrendPost), while the untagged like stays', afterTop.countOf(tagged) === 0 && afterTop.countOf(untagged) === 1,
+      `tagged=${afterTop.countOf(tagged)} untagged=${afterTop.countOf(untagged)}; ${afterTop.detail}`);
   } catch (e) {
     // A window bucket that drained to nothing can fail proof generation instead of proving empty (platform#4592).
     const cold = /single-path axis read must produce exactly one axis descent/i.test(describeErr(e));
@@ -1772,8 +1813,9 @@ async function timelessUnlike(ctx, { tagged, untagged, tag, owner, like }) {
   const allTime = () => readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', ...SOCIAL.tagRanking(tag), aggregate: { type: 'count' }, limit: 10 }));
   const perTag = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking(tag));
   check('t2i the tag\'s 24h window still counts the unliked post (outlivesDelete keeps the entry until the window passes)', valueOf(perTag.entries, tagged) === 1, `groups=${perTag.entries.length}`);
-  const top = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
-  check('t2k …and so does the 3-day window, beside the untagged like', valueOf(top.entries, tagged) === 1 && valueOf(top.entries, untagged) === 1, `groups=${top.entries.length}`);
+  const top = await rankedValues(ctx, TOP_POSTS, { groupBy: 'postId' }, [tagged, untagged]);
+  check('t2k …and so does the 3-day window, beside the untagged like', top.countOf(tagged) === 1 && top.countOf(untagged) === 1,
+    `tagged=${top.countOf(tagged)} untagged=${top.countOf(untagged)}; ${top.detail}`);
   check('t2m the all-time per-tag ranking (byHashtagPost) drops it at once', valueOf((await allTime()).entries, tagged) === 0);
   expectAccepted('t2n A likes it again while the kept entry stands', await like(tagged, [tag]));
   await settle();
@@ -1807,8 +1849,9 @@ async function tagListTrending(ctx, owner) {
   const [windowA, windowB] = await Promise.all(pair.map((tag) => rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking(tag))));
   check('t2s (v16) the 24h top posts of a and of b (byTrendHashtagPost) each rank the post at 1',
     valueOf(windowA.entries, post) === 1 && valueOf(windowB.entries, post) === 1, `a=${valueOf(windowA.entries, post)} b=${valueOf(windowB.entries, post)}`);
-  const trending = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking());
-  check('t2t (v16) the 24h trending tags (groupBy tags) list both a and b at 1', pair.every((tag) => valueOf(trending.entries, tag) === 1), `groups=${trending.entries.length}`);
+  const trending = await rankedValues(ctx, TRENDING_TAGS, SOCIAL.tagRanking(), pair);
+  check('t2t (v16) the 24h trending tags (groupBy tags) list both a and b at 1', pair.every((tag) => trending.countOf(tag) === 1),
+    `a=${trending.countOf(pair[0])} b=${trending.countOf(pair[1])}; ${trending.detail}`);
 
   const unlike = (tags) => {
     const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, data: data(tags) });
