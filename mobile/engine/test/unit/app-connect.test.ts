@@ -499,4 +499,13 @@ describe('App Connect sign-in', () => {
     await expect(session.appConnectAccept({ identityId: MAKER })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await session.appConnectCancel()
   })
+
+  it('makes no request for a start cancelled while it waited for the restore', async () => {
+    const fresh = boot()
+    const starting = fresh.appConnectStart({ returnTo: RETURN_TO })
+    await fresh.appConnectCancel()
+    expect(await starting).toMatchObject({ phase: 'idle' })
+    expect(await fresh.appConnectPending()).toBe(false)
+    session = fresh
+  })
 })

@@ -33,7 +33,7 @@ export function AppConnectNotices({ ready }: { ready: boolean }) {
 
   useEffect(() => startAppConnectStatusSync(), []);
 
-  const walletSession = session !== null && identityId === session.identityId;
+  const walletSession = session?.method === 'app-connect' && identityId === session.identityId;
   const blocked = !ready || inSignIn(pathname);
 
   const soonShown = useRef(false);

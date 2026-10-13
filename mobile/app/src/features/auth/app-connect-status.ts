@@ -59,14 +59,17 @@ export function startAppConnectStatusSync(): () => void {
       })
       .catch((error: unknown) => appendLog('warn', 'host', `Reading the wallet session failed: ${errorMessage(error)}`));
   };
-  const stopEvents = onEngineEvent('session.appConnectStatus', apply);
-  const stopStatus = engineSupervisor.subscribeStatus(() => {
+  const onStatus = () => {
     const status = engineSupervisor.getStatus();
     if ((status.state === 'ready' || status.state === 'degraded') && status.epoch !== epoch) {
       epoch = status.epoch;
       read(epoch);
     }
-  });
+  };
+  const stopEvents = onEngineEvent('session.appConnectStatus', apply);
+  const stopStatus = engineSupervisor.subscribeStatus(onStatus);
+  // The engine may be up already.
+  onStatus();
   return () => {
     stopEvents();
     stopStatus();

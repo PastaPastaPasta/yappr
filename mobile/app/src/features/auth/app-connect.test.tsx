@@ -314,6 +314,21 @@ describe('the wallet session prompts', () => {
     expect(reauthenticate).toHaveBeenCalledWith(alice.identityId);
   });
 
+  it('reads the standing at once when the engine is already up', async () => {
+    fakeEngine.method('session.appConnectStatus').mockResolvedValue({ identityId: alice.identityId, health: 'ok', renewRequired: 'expired', signedOutByWallet: null });
+    render(<AppConnectNotices ready />);
+    await act(async () => {});
+    expect(router.push).toHaveBeenCalledWith('/sign-in/renew?reason=expired');
+  });
+
+  it('shows no wallet prompt to an account signed in with a key', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: { ...alice, method: 'key' }, accounts: [] });
+    render(<AppConnectNotices ready />);
+    await act(async () => {});
+    status({ renewRequired: 'expired' });
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
   it('settles a revoke once, however many reports carry it', async () => {
     render(<AppConnectNotices ready />);
     await act(async () => {});

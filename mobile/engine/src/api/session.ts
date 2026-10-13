@@ -390,6 +390,8 @@ export function createSessionModule(options: SessionModuleOptions) {
   })
 
   const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state) })
+  /** Bumped by every App Connect start and cancel, so a start still waiting for the restore can tell it was overtaken. */
+  let appConnectStarts = 0
 
   /** The account a revoke signed out here: reported only once its sign-out is done, never for a revoke that changed nothing. */
   let revokedSignOut: string | null = null
@@ -669,7 +671,10 @@ export function createSessionModule(options: SessionModuleOptions) {
      */
     async appConnectStart(opts: { renew?: boolean; reauth?: string; fresh?: boolean; returnTo: AppConnectReturn }): Promise<AppConnectFlowDTO> {
       assertUsable()
+      // A cancel (or a newer start) while this waits for the restore wins: it makes no request.
+      const start = ++appConnectStarts
       await restored()
+      if (start !== appConnectStarts) return appConnect.state()
       const active = registry.activeIdentityId()
       let identityHint: string | undefined
       if (opts?.renew) {
@@ -725,6 +730,7 @@ export function createSessionModule(options: SessionModuleOptions) {
 
     /** Abandon the flow: its request and any verified answer are forgotten. */
     async appConnectCancel(): Promise<void> {
+      appConnectStarts++
       appConnect.cancel()
       settleDeferredRevoke()
     },
