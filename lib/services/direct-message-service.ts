@@ -26,6 +26,7 @@ import { YAPPR_DM_CONTRACT_ID, dmIsV4 } from '../constants'
 import { useSettingsStore } from '../store'
 import { promptForAuthKey } from '../auth-utils'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 import bs58 from 'bs58'
 import { normalizeBytes } from '@/lib/bytes'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
@@ -69,6 +70,11 @@ class DirectMessageService {
     recipientId: string,
     content: string
   ): Promise<{ success: boolean; message?: DirectMessage; error?: string }> {
+    // Legacy (v3/v4) messages encrypt to the peer's authentication key. On App
+    // Connect builds only the anchor-bound key may be encrypted to (DM v5).
+    if (isAppConnectBuild()) {
+      return { success: false, error: 'These older conversations are read-only here.' }
+    }
     try {
       // 1. Generate 10-byte conversation ID (10 bytes >= platform's byte detection threshold)
       const conversationIdBytes = await generateConversationId(senderId, recipientId)

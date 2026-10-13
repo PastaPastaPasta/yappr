@@ -57,7 +57,7 @@ const { keyExchangeService } = await import('@/lib/services/key-exchange-service
 const { privateKeyToWif } = await import('@/lib/crypto/wif')
 const { hash160 } = await import('@/lib/crypto/hash')
 const { bytesToHex } = await import('@/lib/bytes')
-const { deriveEncryptionKey } = await import('@/lib/crypto/key-derivation')
+const { deriveEncryptionKey } = await import('@/lib/crypto/derive-encryption-key')
 const { useLoginModal } = await import('@/hooks/use-login-modal')
 const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
 

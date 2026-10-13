@@ -5,6 +5,7 @@
  * chain.
  */
 
+import bs58 from 'bs58'
 import { bytesEqual, hexToBytes } from '@/lib/bytes'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { logger } from '@/lib/logger'
@@ -130,8 +131,9 @@ export async function peerKey(ctx: DmContext, id: IdentityId): Promise<Uint8Arra
 
 /** The identity was fetched and has no encryption key: messaging it cannot work until it adds one. */
 export class NoEncryptionKeyError extends Error {
-  constructor() {
-    super('This account has no encryption key yet, so it cannot receive encrypted messages.')
+  /** `identityId` is base58, so the UI can name the person. */
+  constructor(readonly identityId: string) {
+    super("This person hasn't set up messaging yet.")
   }
 }
 
@@ -147,7 +149,7 @@ export async function requirePeerKey(ctx: DmContext, id: IdentityId): Promise<Ui
   const key = await peerKey(ctx, id)
   if (key) return key
   // peerKey caches an identity that has no key; a lookup that failed is not cached.
-  throw ctx.peerKeys.has(hexId(id)) ? new NoEncryptionKeyError() : new PeerKeyLookupError()
+  throw ctx.peerKeys.has(hexId(id)) ? new NoEncryptionKeyError(bs58.encode(id)) : new PeerKeyLookupError()
 }
 
 /** Retry the peer keys of 1:1s whose key lookup failed earlier. */
@@ -160,6 +162,34 @@ export async function retryPeerKeys(ctx: DmContext): Promise<void> {
       seedHeads(ctx, conv)
     }
   }
+}
+
+/** A 1:1 whose peer was looked up and has no encryption key: it has no conversation key and cannot be written to. */
+export function isUnreachable(ctx: DmContext, conv: DirectConv): boolean {
+  return !conv.convKey && ctx.peerKeys.get(hexId(conv.peer)) === null
+}
+
+/**
+ * Look the peer's key up again for an unreachable 1:1, so a peer who has set up
+ * messaging since becomes writable without a reload. Returns whether the
+ * conversation got its key. A lookup that fails keeps what was known before.
+ */
+export async function recheckUnreachable(ctx: DmContext, conv: DirectConv): Promise<boolean> {
+  if (!isUnreachable(ctx, conv)) return false
+  // The cached "has no key" stays until there is an answer: meanwhile the conversation still reads as unreachable.
+  let key: Uint8Array | null
+  try {
+    key = await ctx.chain.encryptionKey(conv.peer)
+  } catch (error) {
+    logger.debug('DM v5: encryption key re-check failed:', error)
+    return false
+  }
+  if (!key || conv.convKey) return false
+  ctx.peerKeys.set(hexId(conv.peer), key)
+  setPeerKey(conv, ctx.me, key)
+  seedHeads(ctx, conv)
+  ctx.changed()
+  return true
 }
 
 export function directConv(ctx: DmContext, peer: IdentityId): DirectConv | null {

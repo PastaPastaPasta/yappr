@@ -59,7 +59,8 @@ import {
 } from '@/lib/webauthn/passkey-prf'
 import { wrapDekWithPassword, wrapDekWithPrf } from '@/lib/crypto/auth-vault'
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
-import { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
+import { deriveEncryptionKey } from '@/lib/crypto/derive-encryption-key'
+import { validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
 import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { invalidateBlockCache } from '@/lib/caches/block-cache'
@@ -336,7 +337,14 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
         if (appConnectSessions.current(identityId)) await appConnectSessions.logout(identityId)
         else appConnectSessions.cancelAdoptions(identityId)
       },
-      storeEncryptionKey,
+      storeEncryptionKey: (identityId, encryptionKey) => {
+        storeEncryptionKey(identityId, encryptionKey)
+        // App Connect builds: a stored key (say, restored from a password vault) counts once it matches the anchor key.
+        if (!isAppConnectBuild()) return
+        import('@/lib/services/messaging-key-service')
+          .then(({ confirmStoredEncryptionKey }) => confirmStoredEncryptionKey(identityId))
+          .catch((error) => logger.warn('Could not check the stored messaging key:', error))
+      },
       getEncryptionKey,
       hasEncryptionKey,
       clearEncryptionKey: async (identityId) => {

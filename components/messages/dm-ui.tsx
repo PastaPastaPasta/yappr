@@ -12,6 +12,20 @@ export function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
+/** "@name" for a person whose username is known, else `fallback`. */
+export function atName(user: { username?: string } | undefined, fallback: string): string {
+  const handle = user?.username?.replace(/\.dash$/, '')
+  return handle ? `@${handle}` : fallback
+}
+
+/** Toast for starting a 1:1 with someone who has not set up messaging. */
+export const noMessagingText = (user: { username?: string } | undefined): string =>
+  `${atName(user, 'This person')} hasn't set up messaging yet.`
+
+/** Toast for adding someone who has not set up messaging to a group. */
+export const memberWithoutMessagingText = (user: { username?: string } | undefined): string =>
+  `${atName(user, 'A member')} hasn't set up messaging yet, so they can't be added to the group.`
+
 /** A group's member count: "1 member", "3 members". */
 export const memberCount = (count: number): string => `${count} member${count === 1 ? '' : 's'}`
 

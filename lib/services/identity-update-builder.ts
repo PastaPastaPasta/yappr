@@ -14,8 +14,10 @@ import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed'
 import * as secp256k1 from '@noble/secp256k1'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { hash160 } from '../crypto/hash'
+import { getPublicKey } from '../crypto/keys'
 import { requireBytes } from '@/lib/bytes'
-import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys'
+import { KeyPurpose, KeyType, resolveKeyPurpose } from '@/lib/crypto/identity-keys'
+import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup'
 
 let wasmInitialized = false
 async function ensureWasmInitialized() {
@@ -122,6 +124,115 @@ async function signWithKey(privateKey: Uint8Array, data: Uint8Array): Promise<Ui
   result.set(signature.slice(1), 1)
   return result
 }
+/** One key an unsigned IdentityUpdate adds. */
+interface KeyToAdd {
+  purpose: 'authentication' | 'encryption'
+  securityLevel: 'high' | 'medium'
+  keyType: 'ecdsa_hash160' | 'ecdsa_secp256k1'
+  /** The key data on chain: the 33-byte public key, or its hash160. */
+  data: Uint8Array
+  /**
+   * Signs the ownership proof. Omitted for ECDSA_HASH160 keys: their proof
+   * would reveal the full public key.
+   */
+  proofPrivateKey?: Uint8Array
+  /** Binds the key to this contract (`singleContract`). */
+  boundToContract?: string
+}
+
+/** The identity already has an enabled encryption key bound to the contract: adding another would replace it. */
+export class BoundKeyExistsError extends Error {
+  constructor() {
+    super('The identity already has an encryption key bound to this contract')
+  }
+}
+
+type IdentityKeySnapshot = { purpose?: unknown; purposeNumber?: number; disabledAt?: unknown; contractBounds?: unknown }
+
+/**
+ * Build an unsigned IdentityUpdateTransition adding `keys` (ids assigned in
+ * order after the identity's highest). Each key with a `proofPrivateKey`
+ * signs the transition's signable bytes to prove ownership; the transition
+ * itself is NOT signed: the wallet signs it with a MASTER key. `refuse` sees
+ * the same identity snapshot the transition is built from and may throw.
+ */
+async function buildUnsignedAddKeysTransition(
+  identityId: string,
+  keys: KeyToAdd[],
+  refuse?: (publicKeys: IdentityKeySnapshot[]) => void,
+): Promise<{ transitionBytes: Uint8Array; keyIds: number[]; identityRevision: bigint }> {
+  const sdk = await getEvoSdk()
+  const wasm = await ensureWasmInitialized()
+
+  logger.debug('IdentityUpdateBuilder: Fetching identity', identityId)
+  const identity = await sdk.identities.fetch(identityId)
+  if (!identity) {
+    throw new Error(`Identity not found: ${identityId}`)
+  }
+  refuse?.(identity.publicKeys as unknown as IdentityKeySnapshot[])
+  const newRevision = BigInt(identity.toJSON().revision || 0) + BigInt(1)
+  const maxKeyId = identity.publicKeys.reduce((max: number, key: { keyId: number }) => Math.max(max, key.keyId), 0)
+  const keyIds = keys.map((key, index) => maxKeyId + 1 + index)
+
+  // The identity nonce is the last one used: the update takes the next.
+  const currentNonce = await sdk.identities.nonce(identityId)
+  if (currentNonce === null || currentNonce === undefined) {
+    throw new Error('Failed to fetch identity nonce')
+  }
+  const nextNonce = currentNonce + BigInt(1)
+  logger.debug('IdentityUpdateBuilder: revision', newRevision, 'nonce', nextNonce, 'key ids', keyIds)
+
+  // Each pass builds (and frees) its own wasm objects.
+  const buildTransitionBytes = (signatures: Uint8Array[], read: (transition: InstanceType<typeof wasm.IdentityUpdateTransition>) => Uint8Array): Uint8Array => {
+    const created = keys.map((key, index) => new wasm.IdentityPublicKeyInCreation({
+      keyId: keyIds[index],
+      purpose: key.purpose,
+      securityLevel: key.securityLevel,
+      keyType: key.keyType,
+      isReadOnly: false,
+      data: key.data,
+      signature: signatures[index],
+      ...(key.boundToContract ? { contractBounds: wasm.ContractBounds.SingleContract(key.boundToContract) } : {}),
+    }))
+    try {
+      const transition = new wasm.IdentityUpdateTransition({
+        identityId,
+        revision: newRevision,
+        nonce: nextNonce,
+        addPublicKeys: created,
+        disablePublicKeys: [],
+      })
+      try {
+        return read(transition)
+      } finally {
+        transition.free()
+      }
+    } finally {
+      for (const key of created) key.free()
+    }
+  }
+
+  // Pass 1: the signable bytes (which exclude every signature), for the ownership proofs.
+  const signableBytes = buildTransitionBytes(keys.map(() => new Uint8Array(0)), (transition) => {
+    const stateTransition = transition.toStateTransition()
+    try {
+      return stateTransition.getSignableBytes()
+    } finally {
+      stateTransition.free()
+    }
+  })
+  const signatures = await Promise.all(keys.map((key) => key.proofPrivateKey ? signWithKey(key.proofPrivateKey, signableBytes) : Promise.resolve(new Uint8Array(0))))
+  // Pass 2: the same transition carrying the proofs.
+  const transitionBytes = buildTransitionBytes(signatures, (transition) => transition.toBytes())
+  logger.debug('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
+  return { transitionBytes, keyIds, identityRevision: newRevision }
+}
+
+function requireKeyLength(bytes: Uint8Array, expected: number, what: string): void {
+  if (bytes.length !== expected) {
+    throw new Error(`Invalid ${what} length: expected ${expected}, got ${bytes.length}`)
+  }
+}
 
 /**
  * Build an unsigned IdentityUpdateTransition for key registration.
@@ -137,182 +248,51 @@ export async function buildUnsignedKeyRegistrationTransition(
   request: KeyRegistrationRequest
 ): Promise<UnsignedTransitionResult> {
   const { identityId, authPrivateKey, authPublicKey, encryptionPrivateKey, encryptionPublicKey } = request
+  requireKeyLength(authPrivateKey, 32, 'auth private key')
+  requireKeyLength(authPublicKey, 33, 'auth public key')
+  requireKeyLength(encryptionPrivateKey, 32, 'encryption private key')
+  requireKeyLength(encryptionPublicKey, 33, 'encryption public key')
 
-  // Validate inputs
-  if (authPrivateKey.length !== 32) {
-    throw new Error(`Invalid auth private key length: expected 32, got ${authPrivateKey.length}`)
-  }
-  if (authPublicKey.length !== 33) {
-    throw new Error(`Invalid auth public key length: expected 33, got ${authPublicKey.length}`)
-  }
-  if (encryptionPrivateKey.length !== 32) {
-    throw new Error(`Invalid encryption private key length: expected 32, got ${encryptionPrivateKey.length}`)
-  }
-  if (encryptionPublicKey.length !== 33) {
-    throw new Error(`Invalid encryption public key length: expected 33, got ${encryptionPublicKey.length}`)
-  }
+  // The auth key stays on the hash160 workaround (no ownership proof, which
+  // would reveal the full key); the encryption key is a full secp256k1 key so
+  // encrypted features can use the on-chain point directly. Both are unbound
+  // here: this is the legacy login's registration.
+  const { transitionBytes, keyIds: [authKeyId, encryptionKeyId], identityRevision } = await buildUnsignedAddKeysTransition(identityId, [
+    { purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_hash160', data: hash160(authPublicKey) },
+    { purpose: 'encryption', securityLevel: 'medium', keyType: 'ecdsa_secp256k1', data: encryptionPublicKey, proofPrivateKey: encryptionPrivateKey },
+  ])
+  return { transitionBytes, authKeyId, encryptionKeyId, identityRevision }
+}
 
-  const sdk = await getEvoSdk()
-  const wasm = await ensureWasmInitialized()
-
-  // Fetch identity to get current revision and existing keys
-  logger.debug('IdentityUpdateBuilder: Fetching identity', identityId)
-  const identity = await sdk.identities.fetch(identityId)
-  if (!identity) {
-    throw new Error(`Identity not found: ${identityId}`)
-  }
-
-  const identityJson = identity.toJSON()
-  const currentRevision = BigInt(identityJson.revision || 0)
-  logger.debug('IdentityUpdateBuilder: Current revision:', currentRevision)
-
-  // Get existing keys to calculate next key IDs
-  const existingKeys = identity.publicKeys
-  const maxKeyId = existingKeys.reduce((max: number, key: { keyId: number }) => Math.max(max, key.keyId), 0)
-  const authKeyId = maxKeyId + 1
-  const encryptionKeyId = maxKeyId + 2
-  logger.debug('IdentityUpdateBuilder: Key IDs - auth:', authKeyId, ', encryption:', encryptionKeyId)
-
-  // Fetch identity nonce - returns the last used nonce, so we need +1 for the next one
-  logger.debug('IdentityUpdateBuilder: Fetching identity nonce')
-  const currentNonce = await sdk.identities.nonce(identityId)
-  if (currentNonce === null || currentNonce === undefined) {
-    throw new Error('Failed to fetch identity nonce')
-  }
-  const nextNonce = currentNonce + BigInt(1)
-  logger.debug('IdentityUpdateBuilder: Current nonce:', currentNonce, ', next nonce:', nextNonce)
-
-  const newRevision = currentRevision + BigInt(1)
-
-  // Keep the auth key on the existing hash160 workaround, but register the
-  // encryption key as a full secp256k1 public key so encrypted features can
-  // consume the on-chain key material directly.
-  const authKeyType = 'ecdsa_hash160' as const
-  const encryptionKeyType = 'ecdsa_secp256k1' as const
-
-  const authKeyData = hash160(authPublicKey)
-  const encryptionKeyData = encryptionPublicKey
-
-  // NOTE: Contract-bound encryption keys (ContractBounds.SingleContract) are disabled
-  // due to SDK/tooling bugs. We create unbound encryption keys instead.
-  const encryptionContractBounds = undefined
-
-  // Step 1: Create keys with empty signatures initially and get signable bytes
-  const authSignature: Uint8Array = new Uint8Array(0)
-  let encryptionSignature: Uint8Array = new Uint8Array(0)
-
-  logger.debug(
-    `IdentityUpdateBuilder: Creating keys (auth=${authKeyType}, encryption=${encryptionKeyType}), unbound encryption key`
-  )
-  const authKey = new wasm.IdentityPublicKeyInCreation({
-    keyId: authKeyId,
-    purpose: 'authentication',
-    securityLevel: 'high',
-    keyType: authKeyType,
-    isReadOnly: false,
-    data: authKeyData,
-    signature: new Uint8Array(0),
-  })
-
-  const encryptionKey = new wasm.IdentityPublicKeyInCreation({
-    keyId: encryptionKeyId,
+/**
+ * Build an unsigned IdentityUpdateTransition that adds one ENCRYPTION/MEDIUM
+ * ECDSA_SECP256K1 key bound `singleContract(contractId)`: the App Connect
+ * messaging key, for a wallet to sign with the identity's MASTER key. Throws
+ * `BoundKeyExistsError` when the identity already has one: the newest bound
+ * key becomes the current one, so adding a second would orphan everything
+ * peers encrypted to the first.
+ */
+export async function buildUnsignedBoundEncryptionKeyTransition(request: {
+  identityId: string
+  /** The new key's private key (32 bytes): signs its ownership proof. */
+  encryptionPrivateKey: Uint8Array
+  contractId: string
+}): Promise<{ transitionBytes: Uint8Array; keyId: number; identityRevision: bigint }> {
+  requireKeyLength(request.encryptionPrivateKey, 32, 'encryption private key')
+  const { transitionBytes, keyIds: [keyId], identityRevision } = await buildUnsignedAddKeysTransition(request.identityId, [{
     purpose: 'encryption',
     securityLevel: 'medium',
-    keyType: encryptionKeyType,
-    isReadOnly: false,
-    data: encryptionKeyData,
-    signature: new Uint8Array(0),
-    ...(encryptionContractBounds ? { contractBounds: encryptionContractBounds } : {}),
+    keyType: 'ecdsa_secp256k1',
+    data: getPublicKey(request.encryptionPrivateKey),
+    proofPrivateKey: request.encryptionPrivateKey,
+    boundToContract: request.contractId,
+  }], (publicKeys) => {
+    const bound = publicKeys.some((key) => resolveKeyPurpose(key.purposeNumber ?? key.purpose) === KeyPurpose.ENCRYPTION
+      && !key.disabledAt
+      && isBoundToContract(key.contractBounds, request.contractId))
+    if (bound) throw new BoundKeyExistsError()
   })
-
-  try {
-    // Step 2: Create the transition to get signable bytes
-    logger.debug('IdentityUpdateBuilder: Creating transition for signable bytes')
-    const transition = new wasm.IdentityUpdateTransition({
-      identityId,
-      revision: newRevision,
-      nonce: nextNonce,
-      addPublicKeys: [authKey, encryptionKey],
-      disablePublicKeys: [],
-    })
-
-    try {
-      // Step 3: Get signable bytes for any full-pubkey additions that need key proofs.
-      const stateTransition = transition.toStateTransition()
-      const signableBytes = stateTransition.getSignableBytes()
-      logger.debug('IdentityUpdateBuilder: Signable bytes length:', signableBytes.length)
-
-      // ECDSA_HASH160 keys must NOT have ownership signatures because the proof
-      // would reveal the full public key. The encryption key is registered as a
-      // full secp256k1 key, so it still needs the ownership signature.
-      logger.debug('IdentityUpdateBuilder: Leaving auth key signature empty for hash160 key type')
-
-      logger.debug('IdentityUpdateBuilder: Signing with encryption key')
-      encryptionSignature = await signWithKey(encryptionPrivateKey, signableBytes)
-      logger.debug('IdentityUpdateBuilder: Encryption signature length:', encryptionSignature.length)
-    } finally {
-      transition.free()
-    }
-  } finally {
-    authKey.free()
-    encryptionKey.free()
-  }
-
-  // Step 5: Recreate keys with the final signatures.
-  logger.debug(
-    `IdentityUpdateBuilder: Recreating keys with auth=${authKeyType} and encryption=${encryptionKeyType} signatures`
-  )
-  const authKeyWithSig = new wasm.IdentityPublicKeyInCreation({
-    keyId: authKeyId,
-    purpose: 'authentication',
-    securityLevel: 'high',
-    keyType: authKeyType,
-    isReadOnly: false,
-    data: authKeyData,
-    signature: authSignature,
-  })
-
-  const encryptionKeyWithSig = new wasm.IdentityPublicKeyInCreation({
-    keyId: encryptionKeyId,
-    purpose: 'encryption',
-    securityLevel: 'medium',
-    keyType: encryptionKeyType,
-    isReadOnly: false,
-    data: encryptionKeyData,
-    signature: encryptionSignature,
-    ...(encryptionContractBounds ? { contractBounds: encryptionContractBounds } : {}),
-  })
-
-  let transitionBytes: Uint8Array
-  try {
-    // Step 6: Create final transition with keys
-    logger.debug('IdentityUpdateBuilder: Creating final transition')
-    const finalTransition = new wasm.IdentityUpdateTransition({
-      identityId,
-      revision: newRevision,
-      nonce: nextNonce,
-      addPublicKeys: [authKeyWithSig, encryptionKeyWithSig],
-      disablePublicKeys: [],
-    })
-
-    try {
-      // Get the final transition bytes (IdentityUpdateTransition)
-      transitionBytes = finalTransition.toBytes()
-      logger.debug('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
-    } finally {
-      finalTransition.free()
-    }
-  } finally {
-    authKeyWithSig.free()
-    encryptionKeyWithSig.free()
-  }
-
-  return {
-    transitionBytes,
-    authKeyId,
-    encryptionKeyId,
-    identityRevision: newRevision
-  }
+  return { transitionBytes, keyId, identityRevision }
 }
 
 /**

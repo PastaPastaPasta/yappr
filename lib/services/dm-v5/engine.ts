@@ -21,7 +21,7 @@ import {
   type GroupConv,
   type HeldMessage,
 } from './conversation'
-import { attachSaved, createContext, isMe, type DmContext } from './context'
+import { attachSaved, createContext, isMe, isUnreachable, recheckUnreachable, type DmContext } from './context'
 import { ensureStarted, openDirect } from './directs'
 import { applyGroups } from './group-apply'
 import { addMember, createGroup, endGroup, leaveGroup, removeMember, renameGroup, resendKeys } from './groups'
@@ -77,6 +77,8 @@ export interface ConversationView {
   blocked: boolean
   /** Opened in the UI but nothing sent yet. */
   draft: boolean
+  /** A 1:1 whose peer was looked up and has no encryption key (hasn't set up messaging): nothing can be sent until they do. */
+  unreachable: boolean
 }
 
 export interface EngineSnapshot {
@@ -363,6 +365,7 @@ export class DmEngine {
       ended: conv.kind === 'group' && conv.ended,
       blocked,
       draft: conv.kind === 'direct' && conv.draft,
+      unreachable: conv.kind === 'direct' && isUnreachable(ctx, conv),
     }
   }
 
@@ -411,6 +414,7 @@ export class DmEngine {
     conv.deepProbe = true
     await this.run(async () => {
       if (conv.kind === 'group') await applyGroups(this.ctx, [conv])
+      else await recheckUnreachable(this.ctx, conv)
       await pollStreams(this.ctx, conv)
       await runDeferred(this.ctx, conv)
     })
@@ -448,6 +452,28 @@ export class DmEngine {
   /** Save an explicit choice (block, delete, leave) now rather than on the coalescing timer (§5.5). */
   private saveNow(what: string): void {
     this.flush().catch((error) => logger.warn(`DM v5: saving ${what} failed:`, error))
+  }
+
+  /**
+   * Whether `peerId` can be messaged: true with an encryption key, false when
+   * the lookup found none (they haven't set up messaging), null when it failed.
+   * A fresh read that leaves the conversation-key cache to the serialized
+   * paths: a key found here only clears a cached "no key", so the next lookup
+   * (starting the chat, or the retry for an attached conversation) installs it.
+   */
+  async canMessage(peerId: string): Promise<boolean | null> {
+    const peer = bs58.decode(peerId)
+    let key: Uint8Array | null
+    try {
+      key = await this.ctx.chain.encryptionKey(peer)
+    } catch (error) {
+      logger.debug('DM v5: encryption key lookup failed:', error)
+      return null
+    }
+    if (!key) return false
+    const cacheKey = hexId(peer)
+    if (this.ctx.peerKeys.get(cacheKey) === null) this.ctx.peerKeys.delete(cacheKey)
+    return true
   }
 
   /** Open (without writing anything) a 1:1 with `peerId`. Returns its key. */

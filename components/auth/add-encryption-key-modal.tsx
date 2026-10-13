@@ -11,8 +11,10 @@ import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants'
 import { WalletEncryptionKeyPrompt, useWalletSession } from './wallet-encryption-key-prompt'
+import { SetUpMessaging, type MessagingSetupContext } from './set-up-messaging'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 
-type EncryptionKeyContext = 'private-feed' | 'store' | 'generic'
+type EncryptionKeyContext = MessagingSetupContext
 
 interface AddEncryptionKeyModalProps {
   isOpen: boolean
@@ -49,6 +51,9 @@ function KeyEntryAddEncryptionKeyModal({
   context = 'generic',
 }: AddEncryptionKeyModalProps) {
   const { user, mergeSecretsIntoAuthVault } = useAuth()
+  const userId = user?.identityId
+  // App Connect builds: the messaging key is bound to the anchor, set up with a MASTER signature, and never replaced here.
+  const appConnect = isAppConnectBuild()
   const masterKeyInputId = useId()
 
   // Context-specific messaging
@@ -134,14 +139,25 @@ function KeyEntryAddEncryptionKeyModal({
     }
   }, [mergeSecretsIntoAuthVault, user])
 
+  // App Connect setup finished: the key is the anchor's current one and stored for this session.
+  const handleMessagingReady = useCallback((identityId: string, encryptionKeyWif: string) => {
+    // A switch of account mid-setup must not merge one identity's key into another's vault.
+    if (user?.identityId !== identityId) return
+    setStep('success')
+    mergeEncryptionKeyIntoVault(encryptionKeyWif).catch((err) => logger.error('Failed to save the messaging key to the vault:', err))
+    onSuccess?.()
+  }, [mergeEncryptionKeyIntoVault, onSuccess, user])
+
   // On modal open: check if user already has an encryption key on their identity.
   // If so, redirect to the enter-existing path instead of the create-new path.
+  // Keyed on the identity, not the user object: that is replaced on every balance refresh, and
+  // restarting here would drop a wallet hand-off in progress.
   useEffect(() => {
-    if (!isOpen || !user) return
+    if (!isOpen || !userId) return
     let cancelled = false
     setStep('checking')
     import('@/lib/services/identity-service').then(({ identityService }) =>
-      identityService.hasEncryptionKey(user.identityId)
+      identityService.hasEncryptionKey(userId)
     ).then(hasKey => {
       if (!cancelled) setStep(hasKey ? 'existing-key' : 'intro')
     }).catch(() => {
@@ -149,7 +165,7 @@ function KeyEntryAddEncryptionKeyModal({
       if (!cancelled) setStep('intro')
     })
     return () => { cancelled = true }
-  }, [isOpen, user])
+  }, [isOpen, userId])
 
   // Attempt auto-derivation then fall back to manual entry for an existing on-chain key
   const enterExistingKey = useCallback(async () => {
@@ -165,7 +181,8 @@ function KeyEntryAddEncryptionKeyModal({
       if (authKeyWif) {
         try {
           const { parsePrivateKey, privateKeyToWif } = await import('@/lib/crypto/wif')
-          const { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } = await import('@/lib/crypto/key-derivation')
+          const { deriveEncryptionKey } = await import('@/lib/crypto/derive-encryption-key')
+          const { validateDerivedKeyMatchesIdentity } = await import('@/lib/crypto/key-derivation')
 
           const parsed = parsePrivateKey(authKeyWif)
           const derivedKey = deriveEncryptionKey(parsed.privateKey, user.identityId)
@@ -255,7 +272,7 @@ function KeyEntryAddEncryptionKeyModal({
       const authPrivateKey = parsed.privateKey
 
       // Derive encryption key using HKDF
-      const { deriveEncryptionKey } = await import('@/lib/crypto/key-derivation')
+      const { deriveEncryptionKey } = await import('@/lib/crypto/derive-encryption-key')
       const encryptionKeyBytes = deriveEncryptionKey(authPrivateKey, user.identityId)
       const network = keyNetwork()
       const encryptionKeyWif = privateKeyToWif(encryptionKeyBytes, network, true)
@@ -379,6 +396,15 @@ function KeyEntryAddEncryptionKeyModal({
     onClose()
   }, [onClose])
 
+  const successTitle = appConnect
+    ? (isEnterExistingPath ? 'Messaging unlocked' : 'Messaging is set up')
+    : (isEnterExistingPath ? 'Encryption Key Restored' : 'Encryption Key Added')
+  const successText = appConnect
+    ? 'You can now send and receive private messages on this device.'
+    : isEnterExistingPath
+      ? 'Your encryption key has been saved for this session and is ready to use.'
+      : 'Your encryption key has been added to your identity and is now ready to use.'
+
   // Render step content
   const renderStepContent = () => {
     switch (step) {
@@ -404,11 +430,13 @@ function KeyEntryAddEncryptionKeyModal({
           <>
             <ModalTitle>
               <KeyIcon className="h-6 w-6 text-yappr-500" />
-              Encryption Key Already Set Up
+              {appConnect ? 'Messaging is already set up' : 'Encryption Key Already Set Up'}
             </ModalTitle>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-              Your identity already has an encryption key registered on Dash Platform.
+              {appConnect
+                ? 'Your account already has a messaging key. Unlock it to use messaging on this device.'
+                : 'Your identity already has an encryption key registered on Dash Platform.'}
             </Dialog.Description>
 
             <div className="space-y-4 mb-6">
@@ -416,10 +444,11 @@ function KeyEntryAddEncryptionKeyModal({
                 <div className="flex gap-3">
                   <ShieldCheckIcon className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                   <div className="text-sm text-blue-700 dark:text-blue-300">
-                    <p className="font-medium">Key found on your identity</p>
+                    <p className="font-medium">{appConnect ? 'Messaging key found' : 'Key found on your identity'}</p>
                     <p className="mt-1">
-                      Enter your existing encryption key to restore access in this session.
-                      If your key was derived from your login key, it will be recovered automatically.
+                      {appConnect
+                        ? 'If you set up messaging with the key you signed in with, it unlocks automatically. Otherwise enter your messaging key.'
+                        : 'Enter your existing encryption key to restore access in this session. If your key was derived from your login key, it will be recovered automatically.'}
                     </p>
                   </div>
                 </div>
@@ -440,14 +469,17 @@ function KeyEntryAddEncryptionKeyModal({
                   </>
                 )}
               </Button>
-              <Button
-                onClick={() => setStep('intro')}
-                variant="outline"
-                className="w-full text-sm"
-                disabled={isValidatingExistingKey}
-              >
-                Create Replacement Key Instead
-              </Button>
+              {/* App Connect builds never replace the messaging key here: everything sent to it would be lost. */}
+              {!appConnect && (
+                <Button
+                  onClick={() => setStep('intro')}
+                  variant="outline"
+                  className="w-full text-sm"
+                  disabled={isValidatingExistingKey}
+                >
+                  Create Replacement Key Instead
+                </Button>
+              )}
               <Button onClick={handleClose} variant="outline" className="w-full" disabled={isValidatingExistingKey}>
                 Cancel
               </Button>
@@ -460,11 +492,13 @@ function KeyEntryAddEncryptionKeyModal({
           <>
             <ModalTitle>
               <KeyIcon className="h-6 w-6 text-yappr-500" />
-              Enter Your Encryption Key
+              {appConnect ? 'Enter your messaging key' : 'Enter Your Encryption Key'}
             </ModalTitle>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-              Your encryption key could not be automatically recovered. Enter it manually below.
+              {appConnect
+                ? 'Your messaging key couldn\'t be unlocked automatically. Enter it below.'
+                : 'Your encryption key could not be automatically recovered. Enter it manually below.'}
             </Dialog.Description>
 
             <div className="space-y-4 mb-6">
@@ -535,6 +569,18 @@ function KeyEntryAddEncryptionKeyModal({
         )
 
       case 'intro':
+        // App Connect builds: the messaging key is bound to the anchor and needs a MASTER signature (wallet or key).
+        if (appConnect && user) {
+          return (
+            <SetUpMessaging
+              identityId={user.identityId}
+              context={context}
+              onDone={handleMessagingReady}
+              onAlreadySetUp={() => setStep('existing-key')}
+              onCancel={handleClose}
+            />
+          )
+        }
         return (
           <>
             <ModalTitle>
@@ -802,7 +848,7 @@ function KeyEntryAddEncryptionKeyModal({
           <>
             <ModalTitle>
               <CheckCircleIcon className="h-6 w-6 text-green-500" />
-              {isEnterExistingPath ? 'Encryption Key Restored' : 'Encryption Key Added'}
+              {successTitle}
             </ModalTitle>
 
             <div className="space-y-4 mb-6">
@@ -812,10 +858,7 @@ function KeyEntryAddEncryptionKeyModal({
                   <div className="text-sm text-green-700 dark:text-green-300">
                     <p className="font-medium">Success!</p>
                     <p>
-                      {isEnterExistingPath
-                        ? 'Your encryption key has been saved for this session and is ready to use.'
-                        : 'Your encryption key has been added to your identity and is now ready to use.'
-                      }
+                      {successText}
                     </p>
                   </div>
                 </div>

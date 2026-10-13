@@ -14,7 +14,7 @@ import { EmojiPicker } from '@/components/compose/emoji-picker'
 import { isEmojiOnly } from '@/lib/utils'
 import type { UserDetails } from '@/lib/utils/resolve-user-details'
 import type { InboxRow } from './conversation-list'
-import { MenuContent, MenuItem, memberCount } from './dm-ui'
+import { MenuContent, MenuItem, atName, memberCount } from './dm-ui'
 import { displayNameOf } from './use-dm-engine'
 
 export interface ThreadMessage {
@@ -33,6 +33,10 @@ export interface ThreadStatus {
   blockedReason: string | null
   /** A notice above the messages (unreadable group, removed, legacy-only). */
   banner: string | null
+  /** A 1:1 whose other person has not set up messaging: the composer is disabled and a status says why. */
+  unreachable?: boolean
+  /** The composer is disabled without a status (e.g. while checking whether the person can be messaged). */
+  composerOff?: boolean
 }
 
 interface ThreadViewProps {
@@ -56,6 +60,7 @@ export function ThreadView({ row, messages, details, status, isLoading, blocked,
   const bottom = useRef<HTMLDivElement | null>(null)
   const title = row.kind === 'group' ? row.name || 'Group' : displayNameOf(details, row.peerId)
   const lastId = messages.at(-1)?.id
+  const composerOff = isSending || !!status.unreachable || !!status.composerOff
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' })
@@ -132,7 +137,7 @@ export function ThreadView({ row, messages, details, status, isLoading, blocked,
           </div>
         ) : messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-500">
-            <p>No messages yet. Start the conversation!</p>
+            {!status.unreachable && <p>No messages yet. Start the conversation!</p>}
           </div>
         ) : (
           messages.map((message, index) => {
@@ -165,34 +170,41 @@ export function ThreadView({ row, messages, details, status, isLoading, blocked,
         {status.blockedReason ? (
           <p className="text-sm text-center text-gray-500 py-2">{status.blockedReason}</p>
         ) : (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              submit().catch(() => undefined)
-            }}
-            className="flex items-end gap-2"
-          >
-            <EmojiPicker onEmojiSelect={(emoji) => setDraft((prev) => prev + emoji)} onSelectionClose={() => input.current?.focus()} disabled={isSending} />
-            <Textarea
-              ref={input}
-              aria-label="Message"
-              placeholder="Type a message..."
-              value={draft}
-              rows={1}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  submit().catch(() => undefined)
-                }
+          <>
+            {status.unreachable && (
+              <p role="status" data-testid="dm-unreachable" className="text-sm text-center text-gray-500 pb-2">
+                {atName(details.get(row.peerId), 'This person')} hasn&apos;t set up messaging yet. You can message them once they do.
+              </p>
+            )}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                submit().catch(() => undefined)
               }}
-              disabled={isSending}
-              className="flex-1 min-w-0 min-h-[40px] max-h-40 resize-none text-base"
-            />
-            <Button type="submit" aria-label="Send message" size="sm" disabled={!draft.trim() || isSending} className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0">
-              {isSending ? <Spinner size="sm" className="border-white" /> : <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />}
-            </Button>
-          </form>
+              className="flex items-end gap-2"
+            >
+              <EmojiPicker onEmojiSelect={(emoji) => setDraft((prev) => prev + emoji)} onSelectionClose={() => input.current?.focus()} disabled={composerOff} />
+              <Textarea
+                ref={input}
+                aria-label="Message"
+                placeholder="Type a message..."
+                value={draft}
+                rows={1}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault()
+                    submit().catch(() => undefined)
+                  }
+                }}
+                disabled={composerOff}
+                className="flex-1 min-w-0 min-h-[40px] max-h-40 resize-none text-base"
+              />
+              <Button type="submit" aria-label="Send message" size="sm" disabled={!draft.trim() || composerOff} className="flex-shrink-0 h-9 w-9 sm:h-10 sm:w-10 p-0">
+                {isSending ? <Spinner size="sm" className="border-white" /> : <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />}
+              </Button>
+            </form>
+          </>
         )}
       </div>
     </div>

@@ -1,66 +1,11 @@
 /**
- * Key Derivation Module
- *
- * Derives encryption and transfer keys from the auth private key using HKDF.
- * This enables zero-friction key management for new users - their encryption
- * and transfer keys can be deterministically derived from their auth key.
- *
- * Algorithm:
- *   derivedKey = HKDF-SHA256(
- *     ikm: authPrivateKey (32 bytes),
- *     salt: SHA256(identityId),
- *     info: "yappr/<purpose>/v1",
- *     length: 32 bytes
- *   )
+ * The check of a derived encryption key (derive-encryption-key.ts) against an
+ * identity's on-chain encryption key.
  */
 
-import { sha256 } from '@noble/hashes/sha2.js'
-import { hkdf } from '@noble/hashes/hkdf.js'
 import { getPublicKey } from './keys'
 import { bytesEqual, normalizeBytes } from '@/lib/bytes'
-
-// HKDF info string for encryption key derivation
-const INFO_ENCRYPTION_KEY = 'yappr/encryption-key/v1'
-
-// Key size (256 bits)
-const KEY_SIZE = 32
-
-/**
- * Convert string to UTF-8 bytes
- */
-function utf8Encode(str: string): Uint8Array {
-  return new TextEncoder().encode(str)
-}
-
-/**
- * Convert identity ID string to bytes for use as HKDF salt.
- * Uses SHA256(identityId) to ensure consistent 32-byte salt.
- */
-function identityIdToSalt(identityId: string): Uint8Array {
-  return sha256(utf8Encode(identityId))
-}
-
-/**
- * Derive encryption key from auth private key.
- *
- * The encryption key is used for private feed operations (purpose=1 on identity).
- *
- * @param authPrivateKey - The 32-byte auth private key
- * @param identityId - The user's identity ID
- * @returns The derived 32-byte encryption key
- */
-export function deriveEncryptionKey(
-  authPrivateKey: Uint8Array,
-  identityId: string
-): Uint8Array {
-  if (authPrivateKey.length !== KEY_SIZE) {
-    throw new Error(`Invalid auth key length: expected ${KEY_SIZE}, got ${authPrivateKey.length}`)
-  }
-
-  const salt = identityIdToSalt(identityId)
-  return hkdf(sha256, authPrivateKey, salt, utf8Encode(INFO_ENCRYPTION_KEY), KEY_SIZE)
-}
-
+import { rememberAnchorKey } from '@/lib/app-connect/anchor-key-mark'
 
 /**
  * Check if a derived encryption key matches the public key on an identity.
@@ -104,5 +49,8 @@ export async function validateDerivedKeyMatchesIdentity(
     return false
   }
 
-  return bytesEqual(derivedPubKey, onChainPubKeyBytes)
+  const matches = bytesEqual(derivedPubKey, onChainPubKeyBytes)
+  // The stored copy of this key may now stand in for the anchor key (secure-storage).
+  if (matches && isAppConnectBuild()) rememberAnchorKey(identityId, derivedPubKey)
+  return matches
 }

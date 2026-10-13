@@ -7,9 +7,9 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { MAX_GROUP_MEMBERS, type ConversationView } from '@/lib/services/dm-v5'
+import { MAX_GROUP_MEMBERS, NoEncryptionKeyError, type ConversationView } from '@/lib/services/dm-v5'
 import type { UserDetails } from '@/lib/utils/resolve-user-details'
-import { DmDialog, errorText } from './dm-ui'
+import { DmDialog, errorText, memberWithoutMessagingText } from './dm-ui'
 import { UserPicker } from './user-picker'
 import { displayNameOf } from './use-dm-engine'
 
@@ -49,13 +49,13 @@ export function GroupSettingsDialog({ open, onOpenChange, group, viewerId, detai
   const owner = group.isOwner
   const inactive = group.ended || group.removed
 
-  const run = async (label: string, task: () => Promise<void>, done: string) => {
+  const run = async (label: string, task: () => Promise<void>, done: string, describeError?: (error: unknown) => string | null) => {
     setBusy(label)
     try {
       await task()
       toast.success(done)
     } catch (error) {
-      toast.error(errorText(error, 'Something went wrong'))
+      toast.error(describeError?.(error) ?? errorText(error, 'Something went wrong'))
     } finally {
       setBusy(null)
     }
@@ -154,7 +154,9 @@ export function GroupSettingsDialog({ open, onOpenChange, group, viewerId, detai
                 disabled={busy !== null}
                 excludeIds={new Set(group.memberIds)}
                 onPick={(user) => {
-                  run('add', () => actions.add(user.id), `${user.displayName} added`)
+                  run('add', () => actions.add(user.id), `${user.displayName} added`, (error) =>
+                    error instanceof NoEncryptionKeyError ? memberWithoutMessagingText(user) : null
+                  )
                     .then(() => {
                       setAdding(false)
                       setQuery('')

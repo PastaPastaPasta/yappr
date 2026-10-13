@@ -89,7 +89,7 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
   }
   const epoch = currentEpoch(conv)
   const st = stream(conv, ctx.me.id, epoch)
-  if (!st) throw new SendError('This conversation cannot be written to yet: the other side has no encryption key.')
+  if (!st) throw new SendError("This person hasn't set up messaging yet.")
   await syncOwnStream(ctx, conv, st)
 
   const w = curWeek(ctx)

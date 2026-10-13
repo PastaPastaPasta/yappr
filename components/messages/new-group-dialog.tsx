@@ -6,8 +6,8 @@ import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
-import { MAX_GROUP_MEMBERS } from '@/lib/services/dm-v5'
-import { DmDialog, errorText } from './dm-ui'
+import { MAX_GROUP_MEMBERS, NoEncryptionKeyError } from '@/lib/services/dm-v5'
+import { DmDialog, errorText, memberWithoutMessagingText } from './dm-ui'
 import { UserPicker } from './user-picker'
 import type { UserSearchResult } from './use-user-search'
 
@@ -49,7 +49,11 @@ export function NewGroupDialog({ open, onOpenChange, viewerId, onCreate }: NewGr
       await onCreate(name.trim(), picked.map((p) => p.id))
       close()
     } catch (error) {
-      toast.error(errorText(error, 'Could not create the group'))
+      toast.error(
+        error instanceof NoEncryptionKeyError
+          ? memberWithoutMessagingText(picked.find((p) => p.id === error.identityId))
+          : errorText(error, 'Could not create the group')
+      )
     } finally {
       setBusy(false)
     }

@@ -1,3 +1,4 @@
+import bs58 from 'bs58'
 import { describe, expect, it } from 'vitest'
 import { bytesEqual } from '@/lib/bytes'
 import { deriveBaseKey, deriveGroupId, deriveGroupSecret } from '@/lib/dm/keys'
@@ -8,7 +9,7 @@ import { weekOf } from '@/lib/dm/kdf'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
 import type { IdentityId } from '@/lib/dm/types'
 import { currentEpoch, members, stream, timeline, type GroupConv } from './conversation'
-import { attachGroup, attachSaved, groupConv, type DmContext } from './context'
+import { NoEncryptionKeyError, attachGroup, attachSaved, groupConv, type DmContext } from './context'
 import { startedDirect } from './directs'
 import { addMember, createGroup, endGroup, leaveGroup, recoverOwnedGroups, removeMember, renameGroup, repairOwnedGroups, resendKeys } from './groups'
 import { applyGroups, markApplied } from './group-apply'
@@ -1378,5 +1379,19 @@ describe('review 4 regressions (728bd4e5)', () => {
     await pollStreams(tablet.ctx, g)
     await pollStreams(tablet.ctx, g)
     expect(groupTexts(g)).toEqual(['one', 'two'])
+  })
+})
+
+describe('members without a key', () => {
+  it('refuses to create a group or add a member who has not set up messaging, naming them', async () => {
+    const { ledger, alice } = world()
+    ledger.keys.delete(hexId(CAROL_ID))
+    const carol58 = bs58.encode(CAROL_ID)
+    await expect(createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])).rejects.toBeInstanceOf(NoEncryptionKeyError)
+    await expect(createGroup(alice.ctx, 'Team', [BOB_ID, CAROL_ID])).rejects.toMatchObject({ identityId: carol58 })
+    const { conv } = await createGroup(alice.ctx, 'Team', [BOB_ID])
+    const error = await addMember(alice.ctx, conv, CAROL_ID).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(NoEncryptionKeyError)
+    expect((error as NoEncryptionKeyError).identityId).toBe(carol58)
   })
 })

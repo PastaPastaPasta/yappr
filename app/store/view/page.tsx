@@ -23,6 +23,7 @@ import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { identityService } from '@/lib/services/identity-service'
+import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
@@ -33,6 +34,12 @@ import { parseStorePolicies } from '@/lib/utils/policies'
 import { saveStoreViewCache, loadStoreViewCache } from '@/lib/caches/store-view-cache'
 import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy, ItemRatingSummary } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
+
+/** Whether the owner has a key orders can be encrypted to. Throws on a failed read, which must never look like "not accepting orders". */
+async function sellerCanReceiveOrders(ownerId: string): Promise<boolean> {
+  const key = await resolveEncryptionPublicKey(ownerId, async () => (await identityService.getIdentity(ownerId))?.publicKeys ?? null)
+  return key !== null
+}
 
 function LoadingFallback() {
   return (
@@ -117,7 +124,7 @@ function StoreDetailContent() {
 
       // Re-check encryption key even on cache path (it may have changed)
       if (cached.store?.ownerId) {
-        identityService.hasEncryptionKey(cached.store.ownerId)
+        sellerCanReceiveOrders(cached.store.ownerId)
           .then(setSellerHasEncryptionKey)
           .catch(() => setSellerHasEncryptionKey(null))
       }
@@ -159,7 +166,7 @@ function StoreDetailContent() {
           setStorePolicies(parseStorePolicies(storeData.policies))
 
           // Check if seller has encryption key for orders
-          identityService.hasEncryptionKey(storeData.ownerId)
+          sellerCanReceiveOrders(storeData.ownerId)
             .then(setSellerHasEncryptionKey)
             .catch(() => setSellerHasEncryptionKey(null))
 
@@ -498,13 +505,13 @@ function StoreDetailContent() {
             </div>
           )}
 
-          {/* Encryption key warning */}
+          {/* The owner has not set up messaging, so orders cannot be sent to them */}
           {sellerHasEncryptionKey === false && (
-            <div className="mx-4 my-3 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/50">
+            <div role="status" className="mx-4 my-3 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/50">
               <ExclamationTriangleIcon className="h-6 w-6 flex-shrink-0 text-amber-600 dark:text-amber-400" />
               <div>
                 <p className="font-semibold text-amber-800 dark:text-amber-200">This store is not accepting orders</p>
-                <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">The store owner has not published an encryption key. Orders cannot be submitted until this is resolved.</p>
+                <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">{ownerUsername ? `@${ownerUsername}` : 'The store owner'} hasn&apos;t set up messaging yet, so orders can&apos;t be sent to them securely.</p>
               </div>
             </div>
           )}
