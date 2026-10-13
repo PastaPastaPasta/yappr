@@ -1,4 +1,4 @@
-import { composeHints, editorSpans, insertMention, mentionAt, tagMaxLength, tokenize } from './text';
+import { composeHints, editorSpans, insertMention, mentionAt, tagLimitProblem, tagMaxLength, tokenize } from './text';
 
 describe('tokenize', () => {
   it('finds links, tags, cashtags and mentions in order', () => {
@@ -87,5 +87,27 @@ describe('composeHints', () => {
   it('knows the longest tag each contract indexes (61 on dev, 63 elsewhere)', () => {
     expect(tagMaxLength(true)).toBe(61);
     expect(tagMaxLength(false)).toBe(63);
+  });
+});
+
+describe('tagLimitProblem', () => {
+  const tags = (n: number) => Array.from({ length: n }, (_, i) => `#tag${i}`).join(' ');
+
+  it('refuses more than the limit of distinct tags, as the engine indexes them (social v16)', () => {
+    expect(tagLimitProblem(tags(4), 61, 4)).toBeNull();
+    expect(tagLimitProblem(`${tags(4)} #TAG0 #tag1`, 61, 4)).toBeNull();
+    expect(tagLimitProblem(tags(5), 61, 4)).toBe('A post can have at most 4 tags. Remove 1 tag.');
+    expect(tagLimitProblem(`${tags(5)} $DASH`, 61, 4)).toBe('A post can have at most 4 tags. Remove 2 tags.');
+    // Two spellings past the ceiling are one indexed tag.
+    expect(tagLimitProblem(`${tags(3)} #${'a'.repeat(70)} #${'a'.repeat(61)}`, 61, 4)).toBeNull();
+  });
+
+  it('counts no tag inside a link', () => {
+    const text = 'gm #dash #news #btc #eth see https://docs.dash.org/en/stable/#install and https://x.com/search?q=$BTC';
+    expect(tagLimitProblem(text, 61, 4)).toBeNull();
+  });
+
+  it('refuses nothing without a limit (v9 to v15 index the first tag)', () => {
+    expect(tagLimitProblem(tags(9), 61, null)).toBeNull();
   });
 });

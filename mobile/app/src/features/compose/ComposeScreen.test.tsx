@@ -152,6 +152,38 @@ it('says who a post with several mentions notifies, and nothing about tags (#11)
   expect(screen.queryByText(/tag page|Tags can be/)).toBeNull();
 });
 
+it('disables Post when the post names more tags than v16 allows, and says so under that part', async () => {
+  fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, tagsPerPost: 4 } } });
+  await renderCompose();
+  type('#a #b #c #d');
+  expect(postButton()).toBeEnabled();
+  expect(screen.queryByTestId('compose-too-many-tags-0')).toBeNull();
+
+  type('#a #b #c #d #e');
+  expect(postButton()).toBeDisabled();
+  expect(byId('compose-too-many-tags-0')).toHaveTextContent('A post can have at most 4 tags. Remove 1 tag.');
+
+  // An empty first part is skipped: the second is published as the post, and its tags are judged.
+  type('');
+  fireEvent.press(byId('compose-add-part'));
+  type('#a #b #c #d #e', 1);
+  expect(postButton()).toBeDisabled();
+  expect(screen.queryByTestId('compose-too-many-tags-0')).toBeNull();
+  expect(byId('compose-too-many-tags-1')).toHaveTextContent('A post can have at most 4 tags. Remove 1 tag.');
+
+  // A later part is a reply, which carries no tags.
+  type('gm');
+  expect(postButton()).toBeEnabled();
+  expect(screen.queryByTestId('compose-too-many-tags-1')).toBeNull();
+});
+
+it('refuses no tags before v16 (no tagsPerPost)', async () => {
+  await renderCompose();
+  type('#a #b #c #d #e');
+  expect(postButton()).toBeEnabled();
+  expect(screen.queryByTestId('compose-too-many-tags-0')).toBeNull();
+});
+
 it('scrolls the end of a long paste, and the line saying why it is over, into view (D-L2i-001)', async () => {
   const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
   await renderCompose();
