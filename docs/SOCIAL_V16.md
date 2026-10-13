@@ -8,7 +8,7 @@ Social v16 is social v15 ([SOCIAL_V15.md](SOCIAL_V15.md)) with up to four tags p
 
 So `post.hashtag` becomes the typed array `post.tags`, and a like repeats the list and is counted under every tag of its post.
 
-This document was written with the PRs that add the contract, the client topology `v16` and the tooling. **v16 is not registered anywhere yet, and `.env.devnet` is NOT flipped by these changes:** `/devnet` keeps running v15 until the devnet runs 5.0.0-beta.6 and v16 is registered there (see [Registering it](#registering-it)). v16 needs Platform 5.0.0-beta.6, nodes and SDK alike; the repo's packages are at 5.0.0-beta.6.
+This document was written with the PRs that add the contract, the client topology `v16` and the tooling. **v16 is live on sakura since its 2026-10-13 beta.6 genesis, and `/devnet` runs it** (see [Registering it](#registering-it)). v16 needs Platform 5.0.0-beta.6, nodes and SDK alike; the repo's packages are at 5.0.0-beta.6.
 
 | # | Decision | What changes |
 | --- | --- | --- |
@@ -136,4 +136,4 @@ What only a live network can confirm: the `tg-*` checks of `prove-merged-counts.
 
 ## Registering it
 
-Sakura was wiped for 5.0.0-beta.6 on 2026-10-13, so v16 is registered as the `social` member of a fresh App Connect set (`scripts/app-connect-set.mjs`: v16 in v15's slot, no v15) at maker nonce 25, `4qctQYg3…`, and `.env.devnet` runs topology `v16`. The steps, ids, batteries (including the `tg-*` checks and `cn-e2`/`cn-b4`) and costs are in [SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md). On a chain whose group is already registered, v16 would instead be appended to the set and added by resuming the publisher's journal ([Adding a member to the registered set](APP_CONNECT_CONTRACTS.md#adding-a-member-to-the-registered-set)).
+Sakura was wiped for 5.0.0-beta.6 on 2026-10-13, so v16 is registered as the `social` member of a fresh App Connect set (`scripts/app-connect-set.mjs`: v16 in v15's slot, no v15) at maker nonce 25, `4qctQYg3…`, and `.env.devnet` runs topology `v16`. The ids and registration costs are in [SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md); the reseed and the batteries (`verify-v10` with `cn-e2`/`cn-b4`, `prove-merged-counts` with the `tg-*` phase, and a live `measure-social-fees`) follow the beta.5 runbook and are recorded there when they finish. On a chain whose group is already registered, v16 would instead be appended to the set and added by resuming the publisher's journal ([Adding a member to the registered set](APP_CONNECT_CONTRACTS.md#adding-a-member-to-the-registered-set)).

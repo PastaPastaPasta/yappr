@@ -9,7 +9,7 @@
  *   APP_ID      = generateId(maker, N)              the anchor contract, the App Connect app id
  *   GROUP_ID    = contractGroupId(maker, N)         registered by the anchor's own create
  *   GROUP_OWNER = maker
- *   member i    = generateId(maker, N + i)          i = 1 … 8, in APP_CONNECT_ENTRIES order
+ *   member i    = generateId(maker, N + i)          i = 1 … 7, in APP_CONNECT_ENTRIES order
  *
  * APP_ID and GROUP_ID depend on N alone. A member's id is only N + i when
  * nothing else spends a maker nonce in between; the publisher's journal

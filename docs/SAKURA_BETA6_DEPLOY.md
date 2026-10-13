@@ -29,7 +29,7 @@ The replayed maker started at identity nonce 0. It burned nonces **1–23** (23 
 | 33 | vault (no group) | `HQrUuCsUFFgs3PKNnToqn8SNXqLVQxRrfCE1ybvFoHo1` | 13.05e9 (783¢) |
 | 34 | key backup (no group) | `FFpJgHb7rpK9KEAj6uNWD3f1B6bnM3o6yLPCuUNGRb6m` | 13.06e9 (784¢) |
 
-The App Connect set cost 263.39e9 (15,803¢) and the legacy contracts 40.20e9 (2,412¢). The maker spent 303.73e9 (18,224¢) in all and kept 1,196.1e9 at nonce 34. Each create went through an unsigned and a signed dry run, was journaled, and was read back with proofs; the anchor went first (`--upto app`) and was checked before the rest. `verify-appconnect.mjs --only g1,g2,g3,a1` passes 32/0: owner = maker, no admins, exactly the eight pinned members, all at version 1, `APP_ID` and `GROUP_ID` from nonce 24, the anchor's encryption opt-in 2. The legacy contracts read back with no membership.
+The App Connect set cost 263.39e9 (15,803¢) and the legacy contracts 40.20e9 (2,412¢). With the burn and its DPNS name (0.08e9), the maker spent 303.73e9 (18,224¢) in all and kept 1,196.1e9 at nonce 34. Each create went through an unsigned and a signed dry run, was journaled, and was read back with proofs; the anchor went first (`--upto app`) and was checked before the rest. `verify-appconnect.mjs --only g1,g2,g3,a1` passes 32/0: owner = maker, no admins, exactly the eight pinned members, all at version 1, `APP_ID` and `GROUP_ID` from nonce 24, the anchor's encryption opt-in 2. The legacy contracts read back with no membership.
 
 Group `7iM9B6WDREEURDgMakuSP5sZRQy62dscFQpN1APPC9hF` = `contractGroupId(maker, 24)`. The App Connect set is the beta.5 one with social v16 in v15's slot (`scripts/app-connect-set.mjs`): a fresh genesis starts a new group, so the replaced v15 is not carried along.
 

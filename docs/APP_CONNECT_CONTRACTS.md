@@ -2,7 +2,7 @@
 
 App Connect logs a user in by having their wallet add keys to their identity that are scoped to Yappr. The main one is an AUTHENTICATION key bound to a **contract group**, so one key can sign for every Yappr contract and nothing else. This document covers the contract side: the anchor contract that registers the group, which contracts join it, how they are registered, and how the app decides whether to trust the group.
 
-**Status: sakura's Platform chain was wiped for 5.0.0-beta.6 on 2026-10-13, and the set is registered again on the new genesis with social v16 in v15's slot: the anchor at maker nonce 24 (`APP_ID` `BbWcUA8M…`) registers the group `7iM9B6WD…`, and the seven members join it at nonces 25-31 ([SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md), which records why no beta.5 id is reproduced). `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values, and `/devnet` signs in with App Connect (`NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`).** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md), social v16 in [SOCIAL_V16.md](SOCIAL_V16.md).
+**Status: sakura's Platform chain was wiped for 5.0.0-beta.6 on 2026-10-13, and the set is registered again on the new genesis with social v16 in v15's slot: the anchor at maker nonce 24 (`APP_ID` `BbWcUA8M…`) registers the group `7iM9B6WD…`, and the seven members joined it at nonces 25-31 ([SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md), which records why no beta.5 id is reproduced). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there (32/0). `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values, and `/devnet` signs in with App Connect (`NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`).** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md), social v16 in [SOCIAL_V16.md](SOCIAL_V16.md).
 
 Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
@@ -153,18 +153,18 @@ During the live run, one entry at a time:
   - Reads that keep failing, or that never catch up with H, stop the run without marking anything; a re-run re-broadcasts the same bytes.
 - After investigating, `--retry-refused` proves the refusal again in the same way, then prepares the member again at the maker's next nonce, under a new id. The group already exists, so it can still join. A refused anchor leaves nothing of the set on chain: start a fresh journal.
 
-**Dry-run output.** The header comes first. The `--plan` example below is sakura's maker at nonce 13, the next one after storefront v7:
+**Dry-run output.** The header comes first. The `--plan` example below is sakura's maker at nonce 24, after the burn of nonces 1-23 on the beta.6 genesis:
 
 ```text
-App Connect contract set on devnet: maker 9RPq2JuMsmrTUoxQLricaT245t4bYskCj4hXWcedCagH (environment), anchor nonce 13
-APP_ID=CWbSpGNiKGL1i3bmLSWiMQvv364FBCh8sgBqNb1Qo9N9
-GROUP_ID=3S3owNijnVrxE9FvgcHbCTG6iogKBwg69iwFhV7Pke8c
+App Connect contract set on devnet: maker 9RPq2JuMsmrTUoxQLricaT245t4bYskCj4hXWcedCagH (environment), anchor nonce 24
+APP_ID=BbWcUA8Msi7HSgC2hCJsCtDADs2FzQVabRuHvk1tnj4d
+GROUP_ID=7iM9B6WDREEURDgMakuSP5sZRQy62dscFQpN1APPC9hF
 GROUP_OWNER=9RPq2JuMsmrTUoxQLricaT245t4bYskCj4hXWcedCagH
 nonce  contract    id                                            source
-   13  app         CWbSpGNiKGL1i3bmLSWiMQvv364FBCh8sgBqNb1Qo9N9  yappr-app-contract.json d3acd888168f… (registers the group and joins it)
-   14  social      BVW1hBXxLSSTo7V5ZXUf6vhJ3Zkb2CgWoCQz3fHt9t9F  yappr-social-contract-v15.json 9b6c7eeda319…
+   24  app         BbWcUA8Msi7HSgC2hCJsCtDADs2FzQVabRuHvk1tnj4d  yappr-app-contract.json d3acd888168f… (registers the group and joins it)
+   25  social      4qctQYg3YNxp3kVojKxq47iABNbPFtRqSLxQvRz3cjeF  yappr-social-contract-v16.json 63dcfa91da1e…
    …
-   20  authVault   6u6Ztd6V64L1tn7YuCMzZntqAcv1rAFfmVWrXCN6xC3e  yappr-auth-vault-contract.json cecf0ccca95a…
+   31  authVault   9PoojBAXm6PNabkJEU65nd9dPcvpjpSfXK15bJVeFWAt  yappr-auth-vault-contract.json cecf0ccca95a…
 ```
 
 Then:
@@ -174,7 +174,7 @@ Then:
 
 `--dry-run` adds a first line with the protocol version and the maker's nonce and balance. A `--live` run prints its env lines from the journal, with the ids each create actually landed at.
 
-These are the ids nonce 13 produces, and the ids the sakura `--live` run of 2026-10-12 landed at.
+These are the ids nonce 24 produces, and the ids the sakura `--live` run of 2026-10-13 landed at.
 
 ### Adding a member to the registered set
 
@@ -198,8 +198,7 @@ NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal 
 | `NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER` | the maker |
 | `NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS` | comma-separated: the anchor and every member, in registration order |
 
-- They are listed, unset, in `.env.devnet` and `.env.testing`.
-- The cut-over PR fills them from the publisher's output, together with the member contracts' own variables and the topology.
+- `.env.devnet` sets them from the publisher's output, together with the member contracts' own variables and the topology; `.env.testing` lists them unset.
 - `lib/app-connect/config.ts` reads them. A member may be written `id:version`; a bare id pins version 1.
 
 ## Group trust model
