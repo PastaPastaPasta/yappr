@@ -38,7 +38,7 @@ const { appConnectSessions, useAppConnectStatus } = await import('@/lib/app-conn
 const { AppConnectKeyRingStore } = await import('@/lib/app-connect/key-ring-store')
 const { requestRecordsFor } = await import('@/lib/app-connect/pending-request')
 const { documentSigningRequest } = await import('@/lib/app-connect/signing-plan')
-const { resolveSigningKey, SigningUnavailableError } = await import('@/lib/auth/signing-keys')
+const { resolveSigningKey, SigningUnavailableError, RENEW_IN_WALLET_MESSAGE, NEEDS_WALLET_MESSAGE, SIGNED_OUT_MESSAGE } = await import('@/lib/auth/signing-keys')
 const { getEncryptionKey } = await import('@/lib/secure-storage')
 const { identityService } = await import('@/lib/services/identity-service')
 const { dpnsService } = await import('@/lib/services/dpns-service')
@@ -369,7 +369,7 @@ describe('App Connect sign-in', () => {
     // The wallet superseded the old keys as it answered: a check now finds them revoked, but the renewal stands.
     await refresh()
     expect(await session.current()).toMatchObject({ identityId: OWNER })
-    expect(useAppConnectStatus.getState().signedOutByWallet).toBe(false)
+    expect(emitted.some(e => e.event === 'session.appConnectStatus' && (e.payload as { signedOutByWallet: unknown }).signedOutByWallet !== null)).toBe(false)
     await session.appConnectPollNow({ requestHash: started.requestHash })
     const confirm = await waitForPhase('confirm')
     expect(confirm.candidates.map(c => c.identityId)).toEqual([OWNER])
@@ -381,6 +381,36 @@ describe('App Connect sign-in', () => {
     expect(useAppConnectStatus.getState().renewRequired).toBeNull()
     const keys = (chain.get(OWNER) ?? []).map(wasmKey) as never[]
     expect(await resolveSigningKey(OWNER, keys, documentSigningRequest(SOCIAL, 'post'))).toMatchObject({ identityKey: { keyId: 8 } })
+  })
+
+  it('signs out after all when a renewal the revoke waited for is abandoned', async () => {
+    const started = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
+    if (started.phase !== 'waiting') throw new Error('not waiting')
+    const keys = chain.get(OWNER) ?? []
+    // The wallet superseded the keys (another device's renewal, say), and a check finds them revoked.
+    chain.set(OWNER, keys.map(key => ({ ...key, disabledAt: key.purpose === KeyPurpose.AUTHENTICATION ? Date.now() : key.disabledAt })))
+    await refresh()
+    expect(await session.current()).toMatchObject({ identityId: OWNER })
+    await session.appConnectCancel()
+    await until(() => emitted.find(e => e.event === 'session.changed' && (e.payload as { reason: string }).reason === 'signed-out'), 'the sign-out')
+    expect(await session.appConnectStatus()).toMatchObject({ signedOutByWallet: OWNER })
+    await session.appConnectDismiss({ signedOut: true })
+
+    // Signed back in with a fresh grant for the tests that follow.
+    const again = await session.appConnectStart({ returnTo: RETURN_TO })
+    if (again.phase !== 'waiting') throw new Error('not waiting')
+    const granted = [randomKey(), randomKey(), slots[2]]
+    chain.set(OWNER, [...keys.map(key => ({ ...key, disabledAt: key.purpose === KeyPurpose.AUTHENTICATION ? Date.now() : key.disabledAt })).filter(key => key.id !== 7), ...grantKeys([12, 13, 7], granted, keys.find(key => key.id === 7))])
+    await walletAnswers(again.uri, OWNER, granted)
+    await session.appConnectPollNow()
+    await waitForPhase('confirm')
+    expect(await session.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in' })
+  })
+
+  it('reads a signing refusal from the message lib\'s write services pass on', () => {
+    expect(classify(new Error(RENEW_IN_WALLET_MESSAGE))).toMatchObject({ code: 'RENEW_REQUIRED' })
+    expect(classify(new Error(NEEDS_WALLET_MESSAGE))).toMatchObject({ code: 'NEEDS_WALLET' })
+    expect(classify(new Error(SIGNED_OUT_MESSAGE))).toMatchObject({ code: 'KEY_REVOKED' })
   })
 
   it('refuses a renewal answered by another account, an answer already taken, and a sign-in beside this one', async () => {
@@ -398,10 +428,16 @@ describe('App Connect sign-in', () => {
     await refresh()
     await until(() => emitted.find(e => e.event === 'session.changed' && (e.payload as { reason: string }).reason === 'signed-out'), 'the sign-out')
     expect(await session.current()).toBeNull()
-    expect(await session.appConnectStatus()).toMatchObject({ identityId: null, signedOutByWallet: true })
+    expect(await session.appConnectStatus()).toMatchObject({ identityId: null, signedOutByWallet: OWNER })
     expect(rings()).toEqual([])
+    // Reported once the sign-out is done, never before it.
+    const reports = emitted.filter(e => e.event === 'session.appConnectStatus').map(e => (e.payload as { signedOutByWallet: unknown }).signedOutByWallet)
+    const signedOutAt = emitted.findIndex(e => e.event === 'session.changed' && (e.payload as { reason: string }).reason === 'signed-out')
+    const reportedAt = emitted.findIndex(e => e.event === 'session.appConnectStatus' && (e.payload as { signedOutByWallet: unknown }).signedOutByWallet === OWNER)
+    expect(reports).toContain(OWNER)
+    expect(reportedAt).toBeGreaterThan(signedOutAt)
     await session.appConnectDismiss({ signedOut: true })
-    expect(useAppConnectStatus.getState().signedOutByWallet).toBe(false)
+    expect(await session.appConnectStatus()).toMatchObject({ signedOutByWallet: null })
   })
 
   it('refuses a renewal with nobody signed in through a wallet, and a request that cannot reach the app', async () => {

@@ -75,8 +75,8 @@ export interface AppConnectStatusDTO {
   health: AppConnectHealth | null
   /** A write was stopped for the allowance or the expiry: renewing in the wallet is what brings writes back. */
   renewRequired: RenewReason | null
-  /** The wallet revoked this device's keys, and the account was signed out. */
-  signedOutByWallet: boolean
+  /** The account the engine signed out because its wallet revoked this device's keys (after the sign-out), until dismissed. */
+  signedOutByWallet: string | null
 }
 
 /** One key a wallet granted Yappr for this account (Settings): what it may do, its allowance and expiry. */
@@ -227,11 +227,6 @@ export function foregroundBalanceRefresh(
  * controlled engine restart: `switchAccount`/`prepareAddAccount` rearrange
  * storage, then the host restarts the engine with the next account's secrets.
  */
-function currentAppConnectStatus(): AppConnectStatusDTO {
-  const { identityId, health, renewRequired, signedOutByWallet } = useAppConnectStatus.getState()
-  return { identityId, health, renewRequired, signedOutByWallet }
-}
-
 export function createSessionModule(options: SessionModuleOptions) {
   const storage = options.storage ?? localStorage
   // lib's App Connect key ring lives in the engine's storage (the device's secure storage), not IndexedDB.
@@ -387,24 +382,49 @@ export function createSessionModule(options: SessionModuleOptions) {
 
   const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state) })
 
+  /** The account a revoke signed out here: reported only once its sign-out is done, never for a revoke that changed nothing. */
+  let revokedSignOut: string | null = null
+  function currentAppConnectStatus(): AppConnectStatusDTO {
+    const { identityId, health, renewRequired } = useAppConnectStatus.getState()
+    return { identityId, health, renewRequired, signedOutByWallet: revokedSignOut }
+  }
+  const emitAppConnectStatus = () => options.emit('session.appConnectStatus', currentAppConnectStatus())
   // The App Connect session's standing (allowance, expiry, a revoke) reaches the host's prompts.
-  useAppConnectStatus.subscribe(() => options.emit('session.appConnectStatus', currentAppConnectStatus()))
+  useAppConnectStatus.subscribe(emitAppConnectStatus)
 
   // The wallet revoked or superseded this device's keys (lib found it on a refresh or a refused
   // write, and dropped the ring): sign the account out, as web does. A newer grant for the same
   // account stands, and a revoke that a sign-out or another sign-in overtook ends nothing.
-  appConnectSessions.onSignedOut(identityId => {
-    if (controller.getState().user?.identityId !== identityId) return
-    // A renewal supersedes the old keys the moment the wallet answers it: the renewal in progress
-    // is what replaces them, so it stands (writes fail meanwhile; abandoned, the next check signs out).
-    if (appConnectSessions.current(identityId) || appConnect.renewing() === identityId) {
-      useAppConnectStatus.getState().dismissSignedOut()
-      return
-    }
+  /** A revoke held back while that account's renewal runs: the sign-out it owes, unless the renewal lands. */
+  let deferredRevoke: string | null = null
+  function signOutRevoked(identityId: string): void {
     exclusive(async () => {
       if (registry.activeIdentityId() !== identityId || appConnectSessions.current(identityId)) return
       await signOutNow({ identityId })
+      revokedSignOut = identityId
+      emitAppConnectStatus()
     }).catch(error => logger.error('Signing out after the wallet revoked this device failed:', error))
+  }
+  /** The renewal a revoke waited for ended without a new grant (cancelled, or replaced by another flow): sign out now. */
+  function settleDeferredRevoke(): void {
+    const identityId = deferredRevoke
+    if (!identityId || appConnect.renewing() === identityId) return
+    deferredRevoke = null
+    if (!appConnectSessions.current(identityId)) signOutRevoked(identityId)
+  }
+
+  appConnectSessions.onSignedOut(identityId => {
+    // lib's own notice is web's; the host hears of a revoke from this module, once the sign-out is done.
+    useAppConnectStatus.getState().dismissSignedOut()
+    if (controller.getState().user?.identityId !== identityId) return
+    if (appConnectSessions.current(identityId)) return
+    // A renewal supersedes the old keys the moment the wallet answers it: the renewal in progress
+    // is what replaces them, so it stands (writes fail meanwhile). Abandoned, it signs out then.
+    if (appConnect.renewing() === identityId) {
+      deferredRevoke = identityId
+      return
+    }
+    signOutRevoked(identityId)
   })
 
   /**
@@ -423,8 +443,8 @@ export function createSessionModule(options: SessionModuleOptions) {
       const grant = appConnect.accept(identityId)
       if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
       await appConnectSessions.adopt(grant)
+      if (deferredRevoke === identityId) deferredRevoke = null
       useAppConnectStatus.getState().dismissRenewRequired()
-      useAppConnectStatus.getState().dismissSignedOut()
       // The renewal may have added keys: whatever reads the identity next must not see a cached copy.
       identityService.clearCache(identityId)
       await options.secureDurable?.()
@@ -458,7 +478,10 @@ export function createSessionModule(options: SessionModuleOptions) {
     } finally {
       hold?.release(succeeded)
     }
-    useAppConnectStatus.getState().dismissSignedOut()
+    if (revokedSignOut === identityId) {
+      revokedSignOut = null
+      emitAppConnectStatus()
+    }
     const session = await signedIn(identityId, 'app-connect')
     // Its other stored secrets were never loaded here: nothing more runs until the host restarts into it.
     if (parked) requireRestart()
@@ -622,7 +645,10 @@ export function createSessionModule(options: SessionModuleOptions) {
         // The wallet would register keys a sign-in here could never use: add the account first.
         throw new RpcError('Another account is signed in. Add the account (session.prepareAddAccount) and restart the engine first.', 'BAD_REQUEST')
       }
-      return appConnect.start({ identityHint, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
+      const started = appConnect.start({ identityHint, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
+      // A new flow replaces a renewal a revoke was waiting for.
+      settleDeferredRevoke()
+      return started
     },
 
     /** The App Connect flow in progress (`phase: 'idle'` when there is none). */
@@ -654,6 +680,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     /** Abandon the flow: its request and any verified answer are forgotten. */
     async appConnectCancel(): Promise<void> {
       appConnect.cancel()
+      settleDeferredRevoke()
     },
 
     /**
@@ -665,10 +692,15 @@ export function createSessionModule(options: SessionModuleOptions) {
       await restored()
       const identityId = input?.identityId
       if (typeof identityId !== 'string') throw new RpcError('identityId is required', 'BAD_REQUEST')
-      return exclusive(async () => {
-        assertUsable()
-        return acceptAppConnect(identityId)
-      })
+      try {
+        return await exclusive(async () => {
+          assertUsable()
+          return acceptAppConnect(identityId)
+        })
+      } finally {
+        // A renewal that did not land leaves the sign-out its revoke was owed.
+        settleDeferredRevoke()
+      }
     },
 
     /** The active App Connect session's standing (also sent as `session.appConnectStatus`). */
@@ -679,9 +711,11 @@ export function createSessionModule(options: SessionModuleOptions) {
 
     /** The host showed the prompt: forget the write that asked for a renewal, or the revoke notice. */
     async appConnectDismiss(opts: { renewRequired?: boolean; signedOut?: boolean } = {}): Promise<void> {
-      const status = useAppConnectStatus.getState()
-      if (opts?.renewRequired) status.dismissRenewRequired()
-      if (opts?.signedOut) status.dismissSignedOut()
+      if (opts?.renewRequired) useAppConnectStatus.getState().dismissRenewRequired()
+      if (opts?.signedOut && revokedSignOut !== null) {
+        revokedSignOut = null
+        emitAppConnectStatus()
+      }
     },
 
     /** The keys the account's wallets granted Yappr, read from chain (Settings). */

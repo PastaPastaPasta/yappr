@@ -19,7 +19,7 @@ import { getPublicKey } from '../crypto/keys'
 import { bytesEqual, requireBytes } from '@/lib/bytes'
 import { KeyPurpose, KeyType, resolveKeyPurpose } from '@/lib/crypto/identity-keys'
 import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup'
-import { messagingAnchorId } from '@/lib/app-connect/config'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 
 let wasmInitialized = false
 async function ensureWasmInitialized() {
@@ -301,7 +301,7 @@ function requireKeyLength(bytes: Uint8Array, expected: number, what: string): vo
 export async function buildUnsignedKeyRegistrationTransition(
   request: KeyRegistrationRequest
 ): Promise<UnsignedTransitionResult> {
-  if (messagingAnchorId() !== null) throw new Error('App Connect builds do not register sign-in keys from the app')
+  if (isAppConnectBuild()) throw new Error('App Connect builds do not register sign-in keys from the app')
   const { identityId, authPrivateKey, authPublicKey, encryptionPrivateKey, encryptionPublicKey } = request
   requireKeyLength(authPrivateKey, 32, 'auth private key')
   requireKeyLength(authPublicKey, 33, 'auth public key')

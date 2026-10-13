@@ -41,6 +41,7 @@ import {
 } from '@/lib/error-utils'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
+import { NEEDS_WALLET_MESSAGE, RENEW_IN_WALLET_MESSAGE, SIGNED_OUT_MESSAGE } from '@/lib/auth/signing-keys'
 import type { EngineErrorCode, EngineErrorData, WriteOp, WriteState } from './types'
 
 /**
@@ -95,10 +96,20 @@ function isRevokedKeyError(error: unknown, message: string): boolean {
  * `wallet` (no key in the ring covers it), `signed-out` (the ring is gone).
  */
 function signingUnavailable(error: unknown): string | undefined {
-  if (!(error instanceof Error) || error.name !== 'SigningUnavailableError') return undefined
-  const { reason } = error as Error & { reason?: unknown }
-  return typeof reason === 'string' ? reason : undefined
+  if (error instanceof Error && error.name === 'SigningUnavailableError') {
+    const { reason } = error as Error & { reason?: unknown }
+    if (typeof reason === 'string') return reason
+  }
+  // lib's write services pass a refusal on as its message only (`messageWithConsensusCode`).
+  const message = extractErrorMessage(error)
+  return SIGNING_MESSAGES.find(([text]) => message.includes(text))?.[1]
 }
+
+const SIGNING_MESSAGES: readonly (readonly [string, string])[] = [
+  [RENEW_IN_WALLET_MESSAGE, 'renew'],
+  [NEEDS_WALLET_MESSAGE, 'wallet'],
+  [SIGNED_OUT_MESSAGE, 'signed-out'],
+]
 
 /**
  * While signed in through a wallet: its key is out of allowance (20015, or
