@@ -32,9 +32,8 @@ import { RpcError } from '../protocol/envelope'
  *    kept in the secure area, so a request survives the app being killed.
  *    Nothing derived from the wallet's answer is ever persisted.
  *
- * The encryption key is `deriveLoginEncryptionKey`'s: on App Connect builds
- * the messaging key bound to the `yappr-app` anchor, which the registration
- * adds only when the identity has no anchor key yet.
+ * Legacy builds only: App Connect builds sign in through App Connect
+ * (`session.appConnect*`), and the session module refuses to start this.
  */
 
 const REQUEST_LIFETIME_MS = 10 * 60 * 1000

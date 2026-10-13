@@ -83,6 +83,8 @@ export interface AppConnectLoginDeps {
   /** Origin and base path for the wallet's return link. */
   origin: string
   basePath: string
+  /** Overrides the return link built from `origin` and `basePath` (the mobile app returns through its own). */
+  callbackUrl?: (requestHashHex: string) => string | undefined
   now?: () => number
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>
   verify?: (input: VerifyAppConnectCandidateInput) => Promise<AppConnectVerification>
@@ -251,7 +253,9 @@ export class AppConnectLogin {
       identityHint: record.identityHint,
     })
     const hash = appConnectRequestHash(request)
-    const callbackUrl = appConnectCallbackUrl(this.deps.origin, this.deps.basePath, bytesToHex(hash))
+    const callbackUrl = this.deps.callbackUrl
+      ? this.deps.callbackUrl(bytesToHex(hash))
+      : appConnectCallbackUrl(this.deps.origin, this.deps.basePath, bytesToHex(hash))
     this.active = { record, privateKey, request, hash, uri: buildAppConnectUri(request, this.deps.network, callbackUrl) }
     this.progress = new Map()
     this.discardVerified()

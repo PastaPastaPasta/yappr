@@ -19,7 +19,15 @@ import { getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { privateKeyToWif } from '@/lib/crypto/wif'
 import { appConnectPins } from './config'
 import { checkAppConnectTrust, type AppConnectTrust } from './group-trust'
-import { AppConnectKeyRingStore, exactGrant, indexedDbKeyRingBackend, isNewerGrant, isSameGrant, type SessionMatch } from './key-ring-store'
+import {
+  AppConnectKeyRingStore,
+  exactGrant,
+  indexedDbKeyRingBackend,
+  isNewerGrant,
+  isSameGrant,
+  type KeyRingBackend,
+  type SessionMatch,
+} from './key-ring-store'
 import { clearAppConnectEncryptionKey, setAppConnectEncryptionKey, setAppConnectSessionIdentity } from './memory-keys'
 import { appConnectPlatformPort } from './platform-port'
 import {
@@ -108,6 +116,15 @@ class AppConnectSessionManager {
   keyStore(): AppConnectKeyRingStore {
     this.store ??= new AppConnectKeyRingStore(indexedDbKeyRingBackend(scopedKey('yappr-app-connect')))
     return this.store
+  }
+
+  /**
+   * Where the key ring lives on a host without IndexedDB (the mobile engine
+   * keeps it in the device's secure storage). Set before anything reads the
+   * ring: the engine does it as it starts, ahead of the session restore.
+   */
+  useKeyRingBackend(backend: KeyRingBackend): void {
+    this.store = new AppConnectKeyRingStore(backend)
   }
 
   /** This browser's connection id for the configured network (hex). */

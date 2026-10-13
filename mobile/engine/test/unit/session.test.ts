@@ -482,18 +482,11 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     expect(await session.awaitKeyRegistration(request.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in', session: { identityId } })
   })
 
-  it('App Connect builds: keeps the anchor-bound messaging key, the one dm.unlock derives', async () => {
-    const anchor = randomId()
-    stubAppConnectBuild(anchor, randomId())
+  it('is not offered on App Connect builds, which sign in through App Connect', async () => {
+    stubAppConnectBuild(randomId(), randomId())
     try {
-      const loginKey = crypto.getRandomValues(new Uint8Array(32))
-      const identityId = walletIdentity(loginKey, true)
-      const request = await session.startKeyExchange()
-      await walletApproves(request.uri, identityId, loginKey)
-      expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in', session: { identityId } })
-      const authKey = auth.deriveYapprAuthKeyFromLogin(loginKey, auth.decodeYapprIdentityId(identityId))
-      const stored = JSON.parse(localStorage.getItem(`yappr_secure_ek_${identityId}`) ?? 'null')
-      expect(stored).toBe(privateKeyToWif(deriveEncryptionKey(authKey, identityId, anchor), 'testnet'))
+      await expect(session.startKeyExchange()).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
+      expect(await session.pendingKeyExchange()).toBeNull()
     } finally {
       vi.unstubAllEnvs()
     }

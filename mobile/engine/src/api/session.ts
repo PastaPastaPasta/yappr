@@ -14,9 +14,17 @@ import {
 } from '@/lib/secure-storage'
 import { stopDmEngine } from '@/lib/services/dm-v5'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { identityService } from '@/lib/services/identity-service'
 import { logger } from '@/lib/logger'
+import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
+import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
+import { appConnectSessions, useAppConnectStatus, type RenewReason } from '@/lib/app-connect/session-manager'
+import type { AppConnectHealth } from '@/lib/app-connect/session-health'
+import { walletKeyRows, type WalletKeyRow } from '@/lib/app-connect/wallet-keys'
 import { RpcError } from '../protocol/envelope'
 import { createAccountRegistry, type SignInMethod } from '../session/accounts'
+import { createAppConnectFlow, type AppConnectFlowDTO } from '../session/app-connect'
+import { engineKeyRingBackend } from '../session/app-connect-store'
 import { createKeyExchange, type KeyExchangeRequestDTO, type KeyExchangeStep } from '../session/key-exchange'
 import { assertWalletKeyEnabled, verifySignInKey } from '../session/keys'
 import type { AppLifecycleState } from '../shims/lifecycle'
@@ -25,6 +33,7 @@ import type { TicketStore } from '../writes/tickets'
 
 export type { KeyExchangeRequestDTO, KeyToRegister } from '../session/key-exchange'
 export type { SignInMethod } from '../session/accounts'
+export type { AppConnectCandidateDTO, AppConnectFlowDTO, AppConnectPhaseDTO, AppConnectReturn } from '../session/app-connect'
 
 export interface SessionDTO {
   identityId: string
@@ -55,11 +64,36 @@ export interface KeyCheckDTO {
 
 export type KeyExchangeResultDTO = KeyExchangeStep<SessionDTO>
 
-export type SessionChangeReason = 'restored' | 'signed-in' | 'switched' | 'signed-out' | 'key-invalid' | 'balance'
+/** `renewed`: a wallet renewed the active account's App Connect keys. */
+export type SessionChangeReason = 'restored' | 'signed-in' | 'switched' | 'signed-out' | 'key-invalid' | 'balance' | 'renewed'
+
+/** The active App Connect session's standing, for the renew prompts (web's `useAppConnectStatus`). */
+export interface AppConnectStatusDTO {
+  /** The account signed in through a wallet (App Connect), or null. */
+  identityId: string | null
+  /** `renew-soon`: under a fifth of the allowance or two weeks left; `renew-required`: writes have stopped. */
+  health: AppConnectHealth | null
+  /** A write was stopped for the allowance or the expiry: renewing in the wallet is what brings writes back. */
+  renewRequired: RenewReason | null
+  /** The wallet revoked this device's keys, and the account was signed out. */
+  signedOutByWallet: boolean
+}
+
+/** One key a wallet granted Yappr for this account (Settings): what it may do, its allowance and expiry. */
+export type WalletConnectionDTO = WalletKeyRow
+
+/** How accepting a wallet's answer ended. `reload`: the account was parked here, and the host restarts the engine into it. */
+export type AppConnectAcceptDTO =
+  | { status: 'signed-in'; session: SessionDTO; reload: boolean }
+  | { status: 'renewed'; session: SessionDTO }
 
 export interface SessionEvents {
   'session.changed': { session: SessionDTO | null; reason: SessionChangeReason }
   'session.keyRequired': { identityId: string | null; purpose: 'auth' | 'encryption' }
+  /** Every change of the App Connect sign-in or renewal in progress. */
+  'session.appConnect': AppConnectFlowDTO
+  /** Every change of the App Connect session's standing. */
+  'session.appConnectStatus': AppConnectStatusDTO
 }
 
 export interface SessionModuleOptions {
@@ -97,6 +131,8 @@ export interface SessionModuleOptions {
    * module adds to it; the controller and `dm.unlock` read it.
    */
   unhydrated?: Set<string>
+  /** Where the App Connect key ring is kept (default: the engine's `localStorage`). */
+  keyRingStorage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key' | 'length'>
 }
 
 /** AuthUser.balance (a number of credits) as the DTOs carry credits. */
@@ -193,8 +229,15 @@ export function foregroundBalanceRefresh(
  * controlled engine restart: `switchAccount`/`prepareAddAccount` rearrange
  * storage, then the host restarts the engine with the next account's secrets.
  */
+function currentAppConnectStatus(): AppConnectStatusDTO {
+  const { identityId, health, renewRequired, signedOutByWallet } = useAppConnectStatus.getState()
+  return { identityId, health, renewRequired, signedOutByWallet }
+}
+
 export function createSessionModule(options: SessionModuleOptions) {
   const storage = options.storage ?? localStorage
+  // lib's App Connect key ring lives in the engine's storage (the device's secure storage), not IndexedDB.
+  appConnectSessions.useKeyRingBackend(engineKeyRingBackend(options.keyRingStorage ?? localStorage))
   const controller = options.controller ?? createMobileAuthController()
   const registry = createAccountRegistry(storage)
   const stopDm = options.stopDm ?? (async () => stopDmEngine())
@@ -344,6 +387,93 @@ export function createSessionModule(options: SessionModuleOptions) {
     },
   })
 
+  const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state) })
+
+  // The App Connect session's standing (allowance, expiry, a revoke) reaches the host's prompts.
+  useAppConnectStatus.subscribe(() => options.emit('session.appConnectStatus', currentAppConnectStatus()))
+
+  // The wallet revoked or superseded this device's keys (lib found it on a refresh or a refused
+  // write, and dropped the ring): sign the account out, as web does. A newer grant for the same
+  // account stands, and a revoke that a sign-out or another sign-in overtook ends nothing.
+  appConnectSessions.onSignedOut(identityId => {
+    if (controller.getState().user?.identityId !== identityId) return
+    if (appConnectSessions.current(identityId)) {
+      useAppConnectStatus.getState().dismissSignedOut()
+      return
+    }
+    exclusive(async () => {
+      if (registry.activeIdentityId() !== identityId || appConnectSessions.current(identityId)) return
+      await signOutNow({ identityId })
+    }).catch(error => logger.error('Signing out after the wallet revoked this device failed:', error))
+  })
+
+  /**
+   * Signs in with the grant of a wallet's answer the user confirmed. A
+   * renewal of the active account only replaces its keys. An account parked
+   * on this device signs in afresh (its old keys are the ones the wallet just
+   * superseded), with its secure writes held until the sign-in has
+   * succeeded, so a failure cannot touch the secrets it keeps here; the host
+   * then restarts the engine into it to load them.
+   */
+  async function acceptAppConnect(identityId: string): Promise<AppConnectAcceptDTO> {
+    const renewing = appConnect.renewing()
+    if (renewing !== undefined && renewing !== identityId) throw new RpcError('The renewal came from another account', 'BAD_REQUEST')
+    const active = registry.activeIdentityId()
+    if (renewing !== undefined && active === identityId && controller.getState().user?.identityId === identityId) {
+      const grant = appConnect.accept(identityId)
+      if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
+      await appConnectSessions.adopt(grant)
+      useAppConnectStatus.getState().dismissRenewRequired()
+      // The renewal may have added keys: whatever reads the identity next must not see a cached copy.
+      identityService.clearCache(identityId)
+      await options.secureDurable?.()
+      const session = announce('renewed')
+      if (!session) throw new RpcError('Renewing did not keep the session', 'NOT_SIGNED_IN')
+      return { status: 'renewed', session }
+    }
+    // A renewal whose account was signed out meanwhile (the wallet disabled the old keys first) signs it back in.
+    assertSlotFree(identityId)
+    const parked = isParked(identityId)
+    const grant = appConnect.accept(identityId)
+    if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
+    const hold = parked ? options.holdSecure?.(key => key.endsWith(`_${identityId}`)) : undefined
+    let succeeded = false
+    try {
+      const ring = await appConnectSessions.adopt(grant)
+      try {
+        await controller.loginWithKeyRing(identityId, { skipUsernameCheck: true })
+        // A sign-out while the controller read the identity ended this session: undo the sign-in.
+        if (!appConnectSessions.current(identityId)) {
+          await controller.logout()
+          throw new RpcError('Signed out while the wallet was connecting', 'BAD_REQUEST')
+        }
+      } catch (error) {
+        await appConnectSessions.discard(ring)
+        throw error
+      }
+      succeeded = true
+    } finally {
+      hold?.release(succeeded)
+    }
+    useAppConnectStatus.getState().dismissSignedOut()
+    return { status: 'signed-in', session: await signedIn(identityId, 'app-connect'), reload: parked }
+  }
+
+  /** The keys the wallets granted the active account, with this device's marked (Settings). */
+  async function walletConnections(): Promise<WalletConnectionDTO[]> {
+    const identityId = registry.activeIdentityId()
+    const pins = appConnectPins()
+    if (!identityId || !pins || !isAppConnectBuild()) return []
+    const identity = await appConnectPlatformPort.getIdentityFresh(identityId)
+    const keys = identity?.publicKeys ?? []
+    const budgeted = keys.filter(key => key.totalBudget !== undefined && key.disabledAt === undefined).map(key => key.id)
+    const budgets = budgeted.length > 0
+      ? await appConnectPlatformPort.remainingBudgets(identityId, budgeted)
+      : new Map<number, bigint | undefined>()
+    const thisDevice = new Set(appConnectSessions.current(identityId)?.authKeys.map(key => key.keyId) ?? [])
+    return walletKeyRows(keys, budgets, pins.groupId, thisDevice)
+  }
+
   // lib asks for a key by opening web modals; the engine turns that into an event.
   const keyPrompts = [[useLoginModal, 'auth'], [useEncryptionKeyModal, 'encryption']] as const
   for (const [modal, purpose] of keyPrompts) {
@@ -390,6 +520,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     }
     options.tickets?.forgetIdentity(identityId)
     options.forgetDm?.(identityId)
+    if (appConnect.renewing() === identityId) appConnect.cancel()
     registry.remove(identityId, { live: isActive })
     await options.secureDurable?.()
     if (isActive) announce('signed-out')
@@ -451,6 +582,7 @@ export function createSessionModule(options: SessionModuleOptions) {
      */
     async startKeyExchange(opts: { reauth?: readonly string[] } = {}): Promise<KeyExchangeRequestDTO> {
       assertUsable()
+      if (isAppConnectBuild()) throw new RpcError('This network signs in with App Connect (session.appConnectStart)', 'NOT_SUPPORTED')
       await restored()
       const reauth = opts.reauth ?? []
       if (!Array.isArray(reauth) || !reauth.every(id => typeof id === 'string')) {
@@ -461,7 +593,93 @@ export function createSessionModule(options: SessionModuleOptions) {
 
     /** A wallet request that is still waiting (resume it after an app restart). */
     async pendingKeyExchange(): Promise<KeyExchangeRequestDTO | null> {
+      if (isAppConnectBuild()) return null
       return keyExchange.pending()
+    },
+
+    /**
+     * App Connect builds: start a wallet sign-in, or with `renew` a renewal
+     * of the active account's keys (only it may answer). Resumes the stored
+     * request of the same kind unless `fresh`. `returnTo`: the app's yap.pr
+     * prefix and scheme, for the wallet's return link. The flow reports every
+     * change as `session.appConnect`.
+     */
+    async appConnectStart(opts: { renew?: boolean; fresh?: boolean; returnTo: { webBasePath: string; scheme: string } }): Promise<AppConnectFlowDTO> {
+      assertUsable()
+      await restored()
+      let identityHint: string | undefined
+      if (opts?.renew) {
+        const active = registry.activeIdentityId()
+        if (!active || !appConnectSessions.current(active)) throw new RpcError('Only an account signed in with a wallet can renew', 'BAD_REQUEST')
+        identityHint = active
+      }
+      return appConnect.start({ identityHint, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
+    },
+
+    /** The App Connect flow in progress (`phase: 'idle'` when there is none). */
+    async appConnectState(): Promise<AppConnectFlowDTO> {
+      return appConnect.state()
+    },
+
+    /** Whether a sign-in request is still waiting for its wallet (resume it after the app was killed). */
+    async appConnectPending(): Promise<boolean> {
+      await restored()
+      return appConnect.pending()
+    },
+
+    /** Poll now: the app came back, or the wallet's return link named `requestHash` (hex). False when no flow takes it. */
+    async appConnectPollNow(opts: { requestHash?: string } = {}): Promise<boolean> {
+      return appConnect.pollNow(opts?.requestHash)
+    },
+
+    /** After a timeout: poll the same request while the wallet still accepts it, else make a fresh one. */
+    async appConnectCheckAgain(): Promise<void> {
+      await appConnect.checkAgain()
+    },
+
+    /** "That's not me": forget every answer and the request, and show a new code. */
+    async appConnectReject(): Promise<void> {
+      await appConnect.reject()
+    },
+
+    /** Abandon the flow: its request and any verified answer are forgotten. */
+    async appConnectCancel(): Promise<void> {
+      appConnect.cancel()
+    },
+
+    /**
+     * The user confirmed `identityId` ("Continue as @alice"): sign in with its
+     * verified grant, or renew the active account's keys with it.
+     */
+    async appConnectAccept(input: { identityId: string }): Promise<AppConnectAcceptDTO> {
+      assertUsable()
+      await restored()
+      const identityId = input?.identityId
+      if (typeof identityId !== 'string') throw new RpcError('identityId is required', 'BAD_REQUEST')
+      return exclusive(async () => {
+        assertUsable()
+        return acceptAppConnect(identityId)
+      })
+    },
+
+    /** The active App Connect session's standing (also sent as `session.appConnectStatus`). */
+    async appConnectStatus(): Promise<AppConnectStatusDTO> {
+      await restored()
+      return currentAppConnectStatus()
+    },
+
+    /** The host showed the prompt: forget the write that asked for a renewal, or the revoke notice. */
+    async appConnectDismiss(opts: { renewRequired?: boolean; signedOut?: boolean } = {}): Promise<void> {
+      const status = useAppConnectStatus.getState()
+      if (opts?.renewRequired) status.dismissRenewRequired()
+      if (opts?.signedOut) status.dismissSignedOut()
+    },
+
+    /** The keys the account's wallets granted Yappr, read from chain (Settings). */
+    async appConnectConnections(): Promise<WalletConnectionDTO[]> {
+      assertUsable()
+      await restored()
+      return walletConnections()
     },
 
     /** Wait up to `waitMs` (default 45 s, at most 120 s) for the wallet; `pending` means call again. */

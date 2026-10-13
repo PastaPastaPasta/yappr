@@ -16,6 +16,8 @@ export type EngineErrorCode =
   | 'KEY_EXCHANGE_TIMEOUT' | 'KEY_EXCHANGE_CANCELLED' | 'KEY_REGISTRATION_TIMEOUT'
   // a wallet sign-in whose derived auth key is disabled on the identity (PRD AUTH-14)
   | 'KEY_DISABLED'
+  // App Connect: the wallet's allowance or time for Yappr ran out (renew in the wallet), or the write needs the wallet itself
+  | 'RENEW_REQUIRED' | 'NEEDS_WALLET'
   // writes (classify(), from lib/error-utils.ts predicates)
   | 'MODERATION_BARRED' | 'MODERATION_NOT_SEATED' | 'TOO_LONG' | 'RULE_VIOLATION' | 'ALREADY_CLAIMED'
   | 'PARENT_TOO_YOUNG' | 'PARENT_UNCONFIRMED' | 'FEE_UNPAYABLE' | 'FEE_SHARE_MISMATCH' | 'EXPIRED' | 'CONTEST'

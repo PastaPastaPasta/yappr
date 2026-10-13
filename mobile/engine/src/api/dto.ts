@@ -230,6 +230,11 @@ export interface CapabilitiesDTO {
   yappLocked: boolean
   /** Messages: DM v5 (1:1 and groups, no read receipts) or legacy 1:1 with read receipts (`dmIsV5`). */
   dm: 'v5' | 'legacy'
+  /**
+   * Wallet sign-in: `app-connect` (protocol 14 networks, `session.appConnect*`, with the pinned anchor
+   * and group) or the legacy two-step key exchange (`session.*KeyExchange`).
+   */
+  walletSignIn: 'app-connect' | 'legacy'
 }
 
 export interface EngagementCountsDTO {

@@ -19,7 +19,6 @@ import { getPublicKey } from '../crypto/keys'
 import { bytesEqual, requireBytes } from '@/lib/bytes'
 import { KeyPurpose, KeyType, resolveKeyPurpose } from '@/lib/crypto/identity-keys'
 import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup'
-import { deriveEncryptionKey } from '@/lib/crypto/derive-encryption-key'
 import { messagingAnchorId } from '@/lib/app-connect/config'
 
 let wasmInitialized = false
@@ -284,49 +283,35 @@ function requireKeyLength(bytes: Uint8Array, expected: number, what: string): vo
 }
 
 /**
- * Build the unsigned IdentityUpdateTransition of a wallet sign-in's
- * first-login key registration (the `dash-st:` hand-off).
+ * Build the unsigned IdentityUpdateTransition of a legacy wallet sign-in's
+ * first-login key registration (the `dash-st:` hand-off): the auth key and
+ * the encryption key, both unbound.
  *
  * The auth key stays on the hash160 workaround (no ownership proof, which
- * would reveal the full key); the encryption key (`deriveLoginEncryptionKey`)
- * is a full secp256k1 key with an ownership proof, so encrypted features can
- * use the on-chain point directly.
+ * would reveal the full key); the encryption key is a full secp256k1 key with
+ * an ownership proof, so encrypted features can use the on-chain point
+ * directly.
  *
- * Legacy builds add both keys, unbound. App Connect builds bind the
- * encryption key `singleContract(anchor)`: it is the messaging key, and must
- * be the anchor key `dm.unlock` re-derives from the auth key. They add only
- * the keys the identity lacks: never a second anchor key, which would replace
- * the one peers encrypt to.
+ * App Connect builds never register keys this way: the wallet grants them
+ * (bound, with limits), and the messaging key comes with the grant or from
+ * "Set up messaging" (`buildUnsignedBoundEncryptionKeyTransition`). An
+ * unbound encryption key there would read and send messages no peer can
+ * match, so this refuses.
  */
 export async function buildUnsignedKeyRegistrationTransition(
   request: KeyRegistrationRequest
 ): Promise<UnsignedTransitionResult> {
+  if (messagingAnchorId() !== null) throw new Error('App Connect builds do not register sign-in keys from the app')
   const { identityId, authPrivateKey, authPublicKey, encryptionPrivateKey, encryptionPublicKey } = request
   requireKeyLength(authPrivateKey, 32, 'auth private key')
   requireKeyLength(authPublicKey, 33, 'auth public key')
   requireKeyLength(encryptionPrivateKey, 32, 'encryption private key')
   requireKeyLength(encryptionPublicKey, 33, 'encryption public key')
 
-  const auth: KeyToAdd = { purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_hash160', data: hash160(authPublicKey) }
-  const encryption: KeyToAdd = { purpose: 'encryption', securityLevel: 'medium', keyType: 'ecdsa_secp256k1', data: encryptionPublicKey, proofPrivateKey: encryptionPrivateKey }
-  const anchorId = messagingAnchorId()
-  if (!anchorId) return buildUnsignedAddKeysTransition(identityId, () => [auth, encryption])
-
-  const messagingKey = deriveEncryptionKey(authPrivateKey, identityId, anchorId)
-  const messagingPublicKey = getPublicKey(messagingKey)
-  messagingKey.fill(0)
-  if (!bytesEqual(encryptionPublicKey, messagingPublicKey)) {
-    throw new Error('The encryption key to register is not the messaging key this sign-in derives')
-  }
-  return buildUnsignedAddKeysTransition(identityId, (publicKeys) => {
-    const adding: KeyToAdd[] = []
-    if (!hasAuthKey(publicKeys, authPublicKey)) adding.push(auth)
-    // A disabled copy of this key would make Platform refuse the whole update, auth key included.
-    if (!hasBoundEncryptionKey(publicKeys, anchorId) && !holdsEncryptionKey(publicKeys, encryptionPublicKey)) {
-      adding.push({ ...encryption, boundToContract: anchorId })
-    }
-    return adding
-  })
+  return buildUnsignedAddKeysTransition(identityId, () => [
+    { purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_hash160', data: hash160(authPublicKey) },
+    { purpose: 'encryption', securityLevel: 'medium', keyType: 'ecdsa_secp256k1', data: encryptionPublicKey, proofPrivateKey: encryptionPrivateKey },
+  ])
 }
 
 /**
@@ -362,13 +347,8 @@ export async function buildUnsignedBoundEncryptionKeyTransition(request: {
 }
 
 /**
- * Whether a wallet sign-in can go ahead: the identity has the keys its
- * first-login registration adds (a fresh read).
- *
- * Legacy builds: the auth key and this encryption key. App Connect builds:
- * the auth key. Messaging is not a condition of signing in there: an
- * identity without an anchor key signs in and sets messaging up from
- * Messages, and one whose anchor key is another key unlocks with that key.
+ * Whether a legacy wallet sign-in can go ahead: the identity has the auth key
+ * and the encryption key its first-login registration adds (a fresh read).
  */
 export async function checkKeysRegistered(
   identityId: string,
@@ -381,7 +361,6 @@ export async function checkKeysRegistered(
     return false
   }
   const publicKeys = identity.publicKeys as unknown as RegisteredIdentityKey[]
-  if (!hasAuthKey(publicKeys, authPublicKey)) return false
-  return messagingAnchorId() !== null
-    || hasKey(publicKeys, [KeyPurpose.ENCRYPTION, 'encryption'], [KeyType.ECDSA_SECP256K1, 'ecdsa_secp256k1'], encryptionPublicKey)
+  return hasAuthKey(publicKeys, authPublicKey)
+    && hasKey(publicKeys, [KeyPurpose.ENCRYPTION, 'encryption'], [KeyType.ECDSA_SECP256K1, 'ecdsa_secp256k1'], encryptionPublicKey)
 }

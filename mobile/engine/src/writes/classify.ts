@@ -40,6 +40,7 @@ import {
   isWriteGateError,
 } from '@/lib/error-utils'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
+import { appConnectSessions } from '@/lib/app-connect/session-manager'
 import type { EngineErrorCode, EngineErrorData, WriteOp, WriteState } from './types'
 
 /**
@@ -84,8 +85,31 @@ function isInsufficientCreditsError(_error: unknown, message: string): boolean {
  * branch for them; the app shows the session-expired copy.
  */
 function isRevokedKeyError(error: unknown, message: string): boolean {
-  return hasConsensusCode(error, [20003, 20006, 20016]) ||
+  return signingUnavailable(error) === 'signed-out' || hasConsensusCode(error, [20003, 20006, 20016]) ||
     /\bPublicKeyIsDisabled|\bMissingPublicKeyError|\bPublicKeyExpired|identity key \d+ is disabled|public key \d+ doesn't exist|identity public key \d+ (is )?expired at/i.test(message)
+}
+
+/**
+ * Why lib's signer (`lib/auth/signing-keys.ts`) refused to sign before
+ * building anything: `renew` (the App Connect allowance or time ran out),
+ * `wallet` (no key in the ring covers it), `signed-out` (the ring is gone).
+ */
+function signingUnavailable(error: unknown): string | undefined {
+  if (!(error instanceof Error) || error.name !== 'SigningUnavailableError') return undefined
+  const { reason } = error as Error & { reason?: unknown }
+  return typeof reason === 'string' ? reason : undefined
+}
+
+/**
+ * An App Connect key is out of allowance (20015, or 40218 for this write) or
+ * time (20016, while signed in through a wallet), or lib's signer saw it
+ * coming: renewing in the wallet brings writes back (docs/APP_CONNECT_PROFILE.md
+ * "Errors"). An expired raw key is still `KEY_REVOKED`.
+ */
+function isRenewRequiredError(error: unknown): boolean {
+  return signingUnavailable(error) === 'renew' ||
+    hasConsensusCode(error, [20015, 40218]) ||
+    (hasConsensusCode(error, [20016]) && appConnectSessions.current() !== null)
 }
 
 type Outcome = EngineErrorData['outcome']
@@ -137,6 +161,8 @@ const RULES: readonly Rule[] = [
   ['INSUFFICIENT_YAPP', 'refused', false, isInsufficientTokenError],
   // Stage 2: their userMessage stays categorizeError's generic text, for parity with web.
   ['INSUFFICIENT_CREDITS', 'refused', false, isInsufficientCreditsError],
+  ['RENEW_REQUIRED', 'refused', false, isRenewRequiredError],
+  ['NEEDS_WALLET', 'local', false, error => signingUnavailable(error) === 'wallet'],
   ['KEY_REVOKED', 'refused', false, isRevokedKeyError],
   ['UNKNOWN', 'refused', true, exactly(LIB_REFUSED_MESSAGE)],
   ['DUPLICATE', 'refused', false, isDuplicateUniqueIndexError],

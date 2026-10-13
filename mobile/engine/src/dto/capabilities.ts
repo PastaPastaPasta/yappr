@@ -4,6 +4,7 @@ import {
   prefixRankingsAvailable, profilesAreReportable, reportShape, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
 } from '@/lib/contract-topology'
 import { dmIsV5 } from '@/lib/constants'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { reportFeeCredits } from '@/lib/reports'
 import { avatarSeedMaxLength, profileTextLimits } from '@/lib/profile/v10-profile'
 import { DICEBEAR_STYLES, DICEBEAR_STYLE_LABELS, DEFAULT_AVATAR_STYLE } from '@/lib/services/unified-profile-service'
@@ -48,6 +49,7 @@ export function platformInfo(): PlatformInfoDTO {
       dashpayProfile: dashpayProfileExtension() !== null,
       yappLocked: yappIsLocked(),
       dm: dmIsV5() ? 'v5' : 'legacy',
+      walletSignIn: isAppConnectBuild() ? 'app-connect' : 'legacy',
     },
     ipfsGateways: IPFS_GATEWAYS.map(({ domain, format }) => ({ domain, format })),
     avatarStyles: {
