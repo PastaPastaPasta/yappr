@@ -170,20 +170,23 @@ function session({ sdk, contractId, reconnect, settleMs }) {
   const docsOf = (page) => [...(page?.values?.() ?? [])].filter(Boolean);
   /**
    * Every page of a read, newest first; `truncated` when MAX_PAGES full pages
-   * left older documents unread, with `resumeUntil`, the oldest `$createdAt`
-   * read: a scan bounded at it (`--until`, inclusive) carries on past tombstones the
+   * left older documents unread, with the resume point: `resumeUntil`, the
+   * oldest `$createdAt` read, and `resumeAfter`, the last document read. A scan
+   * bounded at that time (`--until`, inclusive) that starts after that document
+   * (`--after`) carries on through documents sharing the time and past tombstones the
    * capped one kept re-reading.
    */
-  const queryAll = async (type, { where, orderBy }) => {
+  const queryAll = async (type, { where, orderBy }, after = null) => {
     const docs = [];
-    let startAfter;
+    let startAfter = after ?? undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
       const batch = docsOf(await retrying((s) => s.documents.query({ dataContractId: contractId, documentTypeName: type, where, orderBy, limit: PAGE, ...(startAfter ? { startAfter } : {}) })));
       docs.push(...batch);
       if (batch.length < PAGE) return { docs, truncated: false };
       startAfter = storedOf(batch.at(-1)).id;
     }
-    return { docs, truncated: true, resumeUntil: storedOf(docs.at(-1)).createdAt };
+    const last = storedOf(docs.at(-1));
+    return { docs, truncated: true, resumeUntil: last.createdAt, resumeAfter: last.id };
   };
   const get = async (type, id) => {
     const doc = await retrying((s) => s.documents.get(contractId, type, id));
@@ -252,7 +255,7 @@ async function tombstoneOne(io, { contractId, shapes, settleMs }, who, type, sto
  * those. A plan lists each document (`documents`). One identity's failure is
  * counted, never thrown, so the others are still cleaned.
  */
-export async function cleanTestContent({ sdk, contractId, contract, identities, since = null, until = null, live = false, refuse = [], reconnect, log = console.log, settleMs = 2500 }) {
+export async function cleanTestContent({ sdk, contractId, contract, identities, since = null, until = null, after = {}, live = false, refuse = [], reconnect, log = console.log, settleMs = 2500 }) {
   const shapes = socialShapes(contract);
   shapes.tombstone('post', {}); // throws on a cut whose authors delete for real (v10): nothing here applies
 
@@ -267,7 +270,7 @@ export async function cleanTestContent({ sdk, contractId, contract, identities, 
     const row = { id: who.id, label: who.label ?? who.id, posts: 0, replies: 0, errors: [] };
     summary.identities.push(row);
     try {
-      await cleanIdentity({ io, contractId, shapes, since, until, live, log, settleMs }, who, row);
+      await cleanIdentity({ io, contractId, shapes, since, until, after, live, log, settleMs }, who, row);
     } catch (e) {
       row.errors.push(describeErr(e).slice(0, 200));
       summary.incomplete += 1;
@@ -284,15 +287,15 @@ export async function cleanTestContent({ sdk, contractId, contract, identities, 
 }
 
 /** One identity's part of {@link cleanTestContent}, filling `row` as it goes. */
-async function cleanIdentity({ io, contractId, shapes, since, until, live, log, settleMs }, who, row) {
+async function cleanIdentity({ io, contractId, shapes, since, until, after, live, log, settleMs }, who, row) {
   const queries = ownerQueries(shapes, who.id, since, until);
   const targets = [];
   for (const type of ['post', 'reply']) {
-    const { docs, truncated, resumeUntil } = await io.queryAll(type, queries[type]);
+    const { docs, truncated, resumeUntil, resumeAfter } = await io.queryAll(type, queries[type], after[type] ?? null);
     if (truncated) {
       row.truncated = true;
-      if (resumeUntil !== null && (row.resumeUntil === undefined || resumeUntil > row.resumeUntil)) row.resumeUntil = resumeUntil;
-      log(`WARN  ${row.label}: more than ${MAX_PAGES * PAGE} ${type} documents; only the newest were read. Run again with --until ${resumeUntil} to clean the older ones`);
+      (row.resume ??= {})[type] = { until: resumeUntil, after: resumeAfter };
+      log(`WARN  ${row.label}: more than ${MAX_PAGES * PAGE} ${type} documents; only the newest were read. Run again for this identity alone with --until ${resumeUntil} --after ${type}:${resumeAfter} to clean the older ones`);
     }
     for (const stored of cleanupTargets(docs, { ownerId: who.id, since })) targets.push({ type, stored });
   }
@@ -333,8 +336,8 @@ async function cleanIdentity({ io, contractId, shapes, since, until, live, log, 
       row.errors.push(`${type} ${stored.id}: ${outcome.error.slice(0, 200)}`);
     }
   }
-  const after = await balance();
-  if (balanceBefore !== null && after !== null) row.spentCredits = balanceBefore - after;
+  const balanceAfter = await balance();
+  if (balanceBefore !== null && balanceAfter !== null) row.spentCredits = balanceBefore - balanceAfter;
   log(`${row.failed ? 'WARN ' : 'OK   '} ${row.label}: tombstoned ${row.tombstoned} of ${targets.length} (${row.posts} posts, ${row.replies} replies)${row.failed ? `; failed ${row.failed}: ${row.errors[0]}` : ''}`);
 }
 

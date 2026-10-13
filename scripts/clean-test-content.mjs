@@ -25,8 +25,10 @@
  * Every derived key is checked against the identity on chain before it signs.
  * Options:
  *   --since <ms|iso> only documents created at or after it (the CI step passes its job start)
- *   --until <ms|iso> only documents created at or before it: resumes a scan the page cap cut
- *                    short (the run prints the value to pass)
+ *   --until <ms|iso> only documents created at or before it
+ *   --after <type>:<id> start the owner scan of `post` or `reply` after that document (one
+ *                    identity only). With --until, resumes a scan the page cap cut short, through
+ *                    documents sharing its last time (the run prints both values to pass)
  *   --contract <id>  the social contract (default NEXT_PUBLIC_YAPPR_CONTRACT_ID)
  *   --contract-file <path>  the cut it was registered from (default the env's
  *                    contracts/yappr-social-contract-<NEXT_PUBLIC_CONTRACT_TOPOLOGY>.json)
@@ -45,14 +47,14 @@ import { describeErr } from './owner-keys.mjs';
 import { connectSdk, network } from './sdk-env.mjs';
 import { cleanTestContent, parseSince, refuseIdentities, surveyTimeline } from './test-content-cleanup.mjs';
 
-const USAGE = 'Usage: node scripts/clean-test-content.mjs --plan|--live [--bots <i[:id],…>] [--ci-pool [n]] [--since <ms|iso>] [--until <ms|iso>] [--contract <id>] [--contract-file <path>] [--survey <n>]';
+const USAGE = 'Usage: node scripts/clean-test-content.mjs --plan|--live [--bots <i[:id],…>] [--ci-pool [n]] [--since <ms|iso>] [--until <ms|iso>] [--after <post|reply>:<id>] [--contract <id>] [--contract-file <path>] [--survey <n>]';
 /** What 1M credits cost at $60/DASH (1 DASH = 10^11 credits), in US cents. */
 const CENTS_PER_MILLION_CREDITS = 0.06;
 const AUTH_HIGH_KEY_ID = KEY_ROLES.find((role) => role.purpose === 'AUTHENTICATION' && role.securityLevel === 'HIGH').keyIndex;
 
 /** The command line, parsed without reading the environment. Throws on anything it does not know. */
 export function parseArgs(argv) {
-  const args = { mode: null, bots: [], ciPool: null, since: null, until: null, contract: null, contractFile: null, survey: 60 };
+  const args = { mode: null, bots: [], ciPool: null, since: null, until: null, after: {}, contract: null, contractFile: null, survey: 60 };
   const value = (i, flag) => {
     if (argv[i] === undefined || argv[i].startsWith('--')) throw new Error(`${flag} takes a value`);
     return argv[i];
@@ -78,6 +80,12 @@ export function parseArgs(argv) {
         break;
       case '--since': args.since = parseSince(value(++i, flag)); break;
       case '--until': args.until = parseSince(value(++i, flag)); break;
+      case '--after': {
+        const [type, id, ...rest] = value(++i, flag).split(':');
+        if (!['post', 'reply'].includes(type) || !id || rest.length > 0) throw new Error('--after takes post:<documentId> or reply:<documentId>');
+        args.after[type] = id;
+        break;
+      }
       case '--contract': args.contract = value(++i, flag); break;
       case '--contract-file': args.contractFile = value(++i, flag); break;
       case '--survey': args.survey = Number(value(++i, flag)); break;
@@ -159,7 +167,8 @@ async function main(argv) {
     const survey = await surveyTimeline({ sdk, contractId, identities, others: maker ? { [maker]: 'maker' } : {}, limit: args.survey, reconnect });
     console.log(JSON.stringify({ newestTimelinePosts: survey }));
   }
-  const summary = await cleanTestContent({ sdk, contractId, contract, identities, since: args.since, until: args.until, live: args.mode === 'live', refuse: [maker], reconnect });
+  if (Object.keys(args.after).length > 0 && identities.length !== 1) throw new Error('--after resumes one identity\'s scan: name exactly one identity');
+  const summary = await cleanTestContent({ sdk, contractId, contract, identities, since: args.since, until: args.until, after: args.after, live: args.mode === 'live', refuse: [maker], reconnect });
   const cents = Number(summary.spentCredits) * CENTS_PER_MILLION_CREDITS / 1e6;
   console.log(JSON.stringify({ ...summary, spentCentsAt60UsdPerDash: Number(cents.toFixed(3)) }, (_k, v) => (typeof v === 'bigint' ? String(v) : v), 1));
   return summary.failed === 0 && summary.incomplete === 0 ? 0 : 1;

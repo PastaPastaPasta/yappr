@@ -131,6 +131,12 @@ describe('the cleanup CLI', () => {
     expect(() => parseArgs(['--plan', '--ci-pool', '--since', '1791904855116', '--until', '1791904855115'])).toThrow(/not be earlier than --since/)
   })
 
+  it('takes --after to continue a type\'s scan after a document, through a shared time', () => {
+    expect(parseArgs(['--plan', '--bots', '0', '--until', '1791904855115', '--after', 'reply:abc', '--after', 'post:def']).after).toEqual({ reply: 'abc', post: 'def' })
+    expect(() => parseArgs(['--plan', '--bots', '0', '--after', 'like:abc'])).toThrow(/post:<documentId> or reply/)
+    expect(() => parseArgs(['--plan', '--bots', '0', '--after', 'reply'])).toThrow(/post:<documentId> or reply/)
+  })
+
   it('reads bots as seed indexes, optionally naming the identity', () => {
     expect(parseArgs(['--plan', '--bots', '0,3:abc']).bots).toEqual([{ index: 0, id: null }, { index: 3, id: 'abc' }])
   })
