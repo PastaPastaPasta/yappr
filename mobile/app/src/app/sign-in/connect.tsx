@@ -230,7 +230,9 @@ export default function ConnectScreen() {
         </View>
       </StatusBlock>
     ) : (
-      <StatusBlock tone="waiting" title={copy.signin.waiting} body={copy.signin.waitingHint} testID="kx-waiting" />
+      <StatusBlock tone="waiting" title={copy.signin.waiting} body={copy.signin.waitingHint} testID="kx-waiting">
+        {rejected ? <Notice text={copy.connect.newCode} /> : null}
+      </StatusBlock>
     );
     footer = walletOpenFailed ? (
       <>

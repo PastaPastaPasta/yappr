@@ -313,4 +313,17 @@ describe('the wallet session prompts', () => {
     fireEvent.press(screen.getByTestId('wallet-signed-out-sign-in'));
     expect(reauthenticate).toHaveBeenCalledWith(alice.identityId);
   });
+
+  it('settles a revoke once, however many reports carry it', async () => {
+    render(<AppConnectNotices ready />);
+    await act(async () => {});
+    status({ signedOutByWallet: null });
+    status({ identityId: null, signedOutByWallet: alice.identityId });
+    status({ identityId: null, signedOutByWallet: alice.identityId });
+    expect(afterSignOut).toHaveBeenCalledTimes(1);
+    // Once dismissed, a later revoke of the same account (signed in again meanwhile) is a new one.
+    status({ signedOutByWallet: null });
+    status({ identityId: null, signedOutByWallet: alice.identityId });
+    expect(afterSignOut).toHaveBeenCalledTimes(2);
+  });
 });
