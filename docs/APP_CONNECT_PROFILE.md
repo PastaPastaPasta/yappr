@@ -158,18 +158,22 @@ The app does **not** rely on slot order: it classifies each key by finding it on
    | Lifetime | 30 / 90 / 365 days | 365 days |
 
    A contractGroup key always has a budget.
-6. **Auth key derivation.** One fresh key per granted auth binding, at the DIP-13 App Connect leaf with DIP-14 256-bit hardened indices:
+6. **Auth keys.** One fresh key per granted auth binding. **How the wallet derives them is not normative.** The app never re-derives an auth key: it takes each private key from the response, finds the matching public key on the identity on chain, and checks that key's bounds, level and limits against the request. A wallet may use any derivation it likes, for example the `deriveConnectKey` path from dashpay/platform#4844 as it stands. Two things are required:
+   - Each granted key is distinct from every other key on the identity, including the other keys in the same response.
+   - Each granted key is deterministic for a given (request, binding), so a retry of the same request (a crash before the update confirmed, a second tap) re-derives the same key and adds no new ones. The request is identified by `hash256(appEphPub)`, the binding by its position (`bindingIndex`, 0–3) in the request, so the key does not depend on what the user declined.
+
+   Keys may be ECDSA_SECP256K1 or ECDSA_HASH160.
+
+   Non-normative example, the dips#191 App Connect leaf extended with the binding index, with DIP-14 256-bit hardened indices:
 
    ```
    …/6'/0'/identityId'/hash256(appEphPub)'/bindingIndex'
    ```
-
-   `bindingIndex` is the binding's position in the request (0–3), so the leaf does not depend on what the user declined. Keys may be ECDSA_SECP256K1 or ECDSA_HASH160. (This extends the dips#191 leaf with the binding index.)
-7. **Encryption key.** One key per (identity, `appId`), shared by every device, derived at DIP-13 sub-feature `7'` from (identity, `appId`, rotation index). It is ECDSA_SECP256K1 (peers need the point), MEDIUM, bound `singleContract(appId)`.
+7. **Encryption key.** One key per (identity, `appId`), shared by every device, derived at DIP-13 sub-feature `7'` from (identity, `appId`, rotation index). Unlike auth keys, this derivation is normative: peers and other wallets must find the same key. Rotation 0 is exactly the existing sub-feature `7'` path over (identity, contract = `appId`, purpose) as built in rust-dashcore#1049 and dips#191. It is ECDSA_SECP256K1 (peers need the point), MEDIUM, bound `singleContract(appId)`.
    - If the identity's current key for `appId` (what `identities.contractKeys` returns) is one this wallet can derive, **re-send it** and register nothing.
    - If the identity has none, register rotation 0 and send it.
    - If it has one this wallet cannot derive (another wallet made it), **omit the slot**.
-   - **Never rotate silently.** A new rotation orphans everything peers encrypted to the old key; it is an explicit user action, not part of a login.
+   - **Never rotate silently.** Rotation (index 1, 2, …) is an explicit user action in the wallet, never part of a login or of any approval flow. A new rotation orphans everything peers encrypted to the old key.
 8. **One identity update.** A single MASTER-signed IdentityUpdate adds the new keys (and the encryption key if it was missing) and disables the auth keys of the previous grant for the same (identity, `appId`, `CONNECTION_ID`). Without a `CONNECTION_ID` nothing is disabled. Platform adds at most 6 keys per update, which this profile never exceeds (4 auth + 2 encryption).
 9. **Publish.** Wait until the update is confirmed. Then delete the previous response the wallet published for this identity and app, using an index-only delete carrying all three original values, and create the new response. Both may go in one batch, signed by the identity's own unbound HIGH key.
 10. **Callback.** Open `cb` as described above.

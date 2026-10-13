@@ -210,8 +210,9 @@ reports; `test/app-connect.test.ts` checks it.
 
 ### App Connect derivation
 
-The profile's leaves are BIP32 paths from the wallet seed. The pool holds no
-seed, so the responder keeps the same inputs and uses HKDF-SHA256 over the
+The profile's encryption leaf is a BIP32 path from the wallet seed; its auth-key
+path is only a non-normative example (the app finds granted keys on chain and
+never re-derives them). The pool holds no seed, so the responder keeps the same inputs and uses HKDF-SHA256 over the
 persona's AUTHENTICATION/CRITICAL key (keyId 1), like the legacy derivation
 below (`src/app-connect/derive.ts`):
 
