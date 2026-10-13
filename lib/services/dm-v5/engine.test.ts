@@ -372,6 +372,21 @@ describe('DmEngine unreachable 1:1s (the peer has not set up messaging)', () => 
     expect(alice.getSnapshot().conversations[0].unreachable).toBe(false)
   })
 
+  it('answers whether a peer can be messaged (for threads that hold only earlier messages)', async () => {
+    const ledger = new MemoryLedger()
+    const chain = new MemoryChain(ledger, ALICE_ID)
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV, new MapKv(), chain))
+    await expect(alice.canMessage(carol58)).resolves.toBe(false)
+    ledger.register(CAROL_ID, CAROL_PRIV)
+    await expect(alice.canMessage(carol58)).resolves.toBe(true)
+    const lookup = chain.encryptionKey.bind(chain)
+    chain.encryptionKey = async () => {
+      throw new Error('DAPI timeout')
+    }
+    await expect(alice.canMessage(bs58.encode(Uint8Array.from({ length: 32 }, () => 0xdd)))).resolves.toBeNull()
+    chain.encryptionKey = lookup
+  })
+
   it('does not call a failed lookup unreachable, nor forget a known missing key when a re-check fails', async () => {
     const ledger = new MemoryLedger()
     const chain = new MemoryChain(ledger, ALICE_ID)

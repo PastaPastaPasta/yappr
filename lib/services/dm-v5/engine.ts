@@ -21,7 +21,7 @@ import {
   type GroupConv,
   type HeldMessage,
 } from './conversation'
-import { attachSaved, createContext, isMe, isUnreachable, recheckUnreachable, type DmContext } from './context'
+import { attachSaved, createContext, isMe, isUnreachable, peerKey, recheckUnreachable, type DmContext } from './context'
 import { ensureStarted, openDirect } from './directs'
 import { applyGroups } from './group-apply'
 import { addMember, createGroup, endGroup, leaveGroup, removeMember, renameGroup, resendKeys } from './groups'
@@ -452,6 +452,19 @@ export class DmEngine {
   /** Save an explicit choice (block, delete, leave) now rather than on the coalescing timer (§5.5). */
   private saveNow(what: string): void {
     this.flush().catch((error) => logger.warn(`DM v5: saving ${what} failed:`, error))
+  }
+
+  /**
+   * Whether `peerId` can be messaged: true with an encryption key, false when
+   * the lookup found none (they haven't set up messaging), null when it failed.
+   * A "none" answer is looked up again, so a peer who set up since is found.
+   */
+  async canMessage(peerId: string): Promise<boolean | null> {
+    const peer = bs58.decode(peerId)
+    const cacheKey = hexId(peer)
+    if (this.ctx.peerKeys.get(cacheKey) === null) this.ctx.peerKeys.delete(cacheKey)
+    if (await peerKey(this.ctx, peer)) return true
+    return this.ctx.peerKeys.has(cacheKey) ? false : null
   }
 
   /** Open (without writing anything) a 1:1 with `peerId`. Returns its key. */
