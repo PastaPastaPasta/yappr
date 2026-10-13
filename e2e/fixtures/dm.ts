@@ -169,8 +169,10 @@ export async function openDevice(browser: Browser, bot: DmBot, label: string): P
   const page = await context.newPage()
   if (process.env.E2E_DM_DEBUG) {
     page.on('console', (message) => {
-      if (message.type() !== 'warning' && message.type() !== 'error') return
       const text = message.text().replace(/%c/g, '')
+      // The app's logger (tslog) prints every level with console.log and names the level in the text.
+      const severe = message.type() === 'warning' || message.type() === 'error' || /\b(WARN|ERROR|FATAL)\b/.test(text)
+      if (!severe) return
       if (/DM v5|Error creating|Error updating|Error deleting/i.test(text)) console.log(`[${label}] ${message.type()}: ${text.slice(0, 500)}`)
     })
   }
