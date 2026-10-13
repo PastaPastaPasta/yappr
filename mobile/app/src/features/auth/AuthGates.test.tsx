@@ -317,4 +317,19 @@ describe('a renewal the last launch was killed in (the wallet was open)', () => 
     await flush();
     expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
   });
+
+  it('holds a renewal whose lookup answers after the lock came up, and reopens it after unlock (SR-01)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    let answer: (pending: boolean) => void = () => undefined;
+    fakeEngine.method('session.appConnectPending').mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    mount('/');
+    await flush();
+    act(() => useLockState.setState({ locked: true }));
+    await act(async () => answer(true));
+    expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+    fakeEngine.method('session.appConnectPending').mockResolvedValue(true);
+    act(() => useLockState.setState({ locked: false }));
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect?renew=1'));
+  });
 });

@@ -190,9 +190,14 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
     engine.api.session
       .appConnectPending({ renew: true })
       .then((pending) => {
-        if (pending && !inSignIn(path.current) && !appConnectInProgress()) {
-          router.push(`/sign-in/connect?renew=1&mode=${lastAppConnectMode()}&resume=1`);
+        if (!pending || inSignIn(path.current) || appConnectInProgress()) return;
+        // The lock came up while the engine answered: try again once it opens (SR-01).
+        const lock = useLockState.getState();
+        if (lock.locked || lock.covered) {
+          checked.current = false;
+          return;
         }
+        router.push(`/sign-in/connect?renew=1&mode=${lastAppConnectMode()}&resume=1`);
       })
       .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending renewal failed: ${errorMessage(error)}`));
   }, [ready, engineUp, walletAccount]);
