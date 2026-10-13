@@ -22,6 +22,7 @@ import { NewGroupDialog } from './new-group-dialog'
 import { NewMessageDialog } from './new-message-dialog'
 import { ThreadView, type ThreadMessage, type ThreadStatus } from './thread-view'
 import { useDmEngine, useEngineSnapshot, useUserDetails } from './use-dm-engine'
+import { useMessagingReadiness } from './use-messaging-readiness'
 import { useLegacyConversations, useLegacyMessages } from './use-legacy-conversations'
 
 const legacyKey = (peerId: string) => `legacy:${peerId}`
@@ -137,22 +138,7 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
 
   // A thread holding only earlier (v3/v4) messages has no v5 conversation to say whether the
   // person can be messaged, so ask: the composer stays off until they have set up messaging.
-  // Per person: true/false once known; a lookup that fails keeps the last answer (none yet: the composer stays off).
-  const legacyOnlyPeer = selectedRow?.legacyOnly ? selectedRow.peerId : null
-  const [legacyReach, setLegacyReach] = useState<ReadonlyMap<string, boolean>>(new Map())
-  useEffect(() => {
-    if (!engine || !legacyOnlyPeer) return
-    let cancelled = false
-    engine.canMessage(legacyOnlyPeer)
-      .then((reachable) => {
-        if (cancelled || reachable === null) return
-        setLegacyReach((known) => new Map(known).set(legacyOnlyPeer, reachable))
-      })
-      .catch((error) => logger.warn('Could not check whether this person can be messaged:', error))
-    return () => {
-      cancelled = true
-    }
-  }, [engine, legacyOnlyPeer])
+  const legacyReachable = useMessagingReadiness(engine, selectedRow?.legacyOnly ? selectedRow.peerId : null)
 
   // Reading a thread moves its read position (coalesced into the next self-state save).
   const unreadInSelected = selectedView?.unread ?? 0
@@ -237,7 +223,7 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
     if (row.kind === 'direct' && blockedIds.has(row.peerId)) return { blockedReason: 'You blocked this person. Unblock them to send messages.', banner: null }
     if (!selectedView) {
       if (!row.legacyOnly) return { blockedReason: null, banner: null }
-      const reachable = legacyReach.get(row.peerId)
+      const reachable = legacyReachable
       if (reachable === false) return { blockedReason: null, banner: 'Earlier messages.', unreachable: true }
       // Until the check answers, nothing can be sent: it may well fail.
       return { blockedReason: null, banner: 'Earlier messages. Your next message starts a private conversation.', composerOff: reachable === undefined }

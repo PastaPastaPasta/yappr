@@ -3,11 +3,12 @@ import { Toaster } from 'react-hot-toast'
 import { PrivateFeedSettings } from '@/components/settings/private-feed-settings'
 import { snapshot } from './private-feed-mocks'
 import { VariantEditorFixture } from './variant-editor-fixture'
-import { ThreadStatusFixture } from './thread-status-fixture'
+import { LiveThreadStatusFixture, ThreadStatusFixture } from './thread-status-fixture'
 
 declare global {
   interface Window {
     privateFeedTestSnapshot: typeof snapshot
+    readinessChecks: number
   }
 }
 window.privateFeedTestSnapshot = snapshot
@@ -21,6 +22,10 @@ createRoot(root).render(
     <VariantEditorFixture legacy={fixture === 'variant-editor-legacy'} />
   ) : threadState === 'checking' || threadState === 'unreachable' || threadState === 'reachable' ? (
     <ThreadStatusFixture state={threadState} />
+  ) : threadState === 'live-failed-then-ok' ? (
+    <LiveThreadStatusFixture answers={[null, new Error('DAPI timeout'), true]} />
+  ) : threadState === 'live-not-set-up-then-ok' ? (
+    <LiveThreadStatusFixture answers={[false, null, true]} />
   ) : (
     <>
       <h1>Isolated private-feed regression fixture (mocked chain and vault)</h1>

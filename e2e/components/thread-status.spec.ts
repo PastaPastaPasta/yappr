@@ -23,3 +23,20 @@ test('someone who can be messaged: the composer is on', async ({ page }) => {
   await expect(composer(page)).toBeEnabled()
   await expect(notSetUp(page)).toHaveCount(0)
 })
+
+test('a check that fails is retried while the thread stays open, then the composer comes on', async ({ page }) => {
+  await page.goto('/?fixture=thread-live-failed-then-ok')
+  await expect(composer(page)).toBeDisabled()
+  await expect(notSetUp(page)).toHaveCount(0)
+  await expect(composer(page)).toBeEnabled()
+  expect(await page.evaluate(() => window.readinessChecks)).toBe(3)
+})
+
+test('"not set up" stays shown through a failed re-check, and clears once they set up', async ({ page }) => {
+  await page.goto('/?fixture=thread-live-not-set-up-then-ok')
+  await expect(notSetUp(page)).toBeVisible()
+  await expect(composer(page)).toBeDisabled()
+  await expect.poll(() => page.evaluate(() => window.readinessChecks)).toBeGreaterThanOrEqual(2)
+  await expect(composer(page)).toBeEnabled()
+  await expect(notSetUp(page)).toHaveCount(0)
+})
