@@ -2,7 +2,7 @@ import bs58 from 'bs58'
 import { describe, expect, it } from 'vitest'
 import { parseArgs } from '../scripts/clean-test-content.mjs'
 import { socialShapes } from '../scripts/social-shapes.mjs'
-import { cleanupTargets, isTransient, ownerQueries, parseSince, refuseIdentities, storedOf } from '../scripts/test-content-cleanup.mjs'
+import { cleanupTargets, isStaleWrite, isTransient, ownerQueries, parseSince, refuseIdentities, storedOf } from '../scripts/test-content-cleanup.mjs'
 import v10 from '../contracts/yappr-social-contract-v10.json'
 import v12 from '../contracts/yappr-social-contract-v12.json'
 import v15 from '../contracts/yappr-social-contract-v15.json'
@@ -137,5 +137,20 @@ describe('the cleanup CLI', () => {
     expect(isTransient('request timed out after 30000ms')).toBe(true)
     expect(isTransient('code=40128 immutable property changed')).toBe(false)
     expect(isTransient("transport error: grpc error: code: 'Client specified an invalid argument', message: \"where clause on non indexed property\"")).toBe(false)
+  })
+})
+
+describe('which refused writes a cleanup re-reads and re-broadcasts', () => {
+  it('retries a stale identity nonce (40204) and a stale revision (40106), even as a bare code', () => {
+    expect(isStaleWrite('{"code":40204}')).toBe(true)
+    expect(isStaleWrite('consensus error code: 40204')).toBe(true)
+    expect(isStaleWrite('{"code":40106}')).toBe(true)
+    expect(isStaleWrite('Identity X is trying to use identity contract nonce 7')).toBe(true)
+  })
+
+  it('does not retry another consensus refusal', () => {
+    // 40001 is DataContractIsReadonlyError: a re-broadcast is refused the same way.
+    expect(isStaleWrite('{"code":40001}')).toBe(false)
+    expect(isStaleWrite('{"code":40127}')).toBe(false)
   })
 })

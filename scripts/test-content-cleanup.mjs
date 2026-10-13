@@ -45,8 +45,8 @@ const TRANSIENT_ERROR = /quorum|no available addresses|transport|timed? ?out|dea
 const INSTANCE_DEAD = /no available addresses|invalid quorum|quorum not found/i;
 /** A consensus refusal (a 10xxx/40xxx code): a re-broadcast of the same document would be refused the same way… */
 const CONSENSUS_REFUSAL = /\bcode"?\s*[=:]\s*(10|4[01])\d{3}\b/;
-/** …unless the identity nonce or the revision went stale, which a re-read and a fresh broadcast cure. */
-const STALE_WRITE = /\bcode"?\s*[=:]\s*(40001|40106)\b|identity (contract )?nonce|invalid ?document ?revision/i;
+/** …unless the identity nonce (40204) or the revision (40106) went stale, which a re-read and a fresh broadcast cure. */
+const STALE_WRITE = /\bcode"?\s*[=:]\s*(40204|40106)\b|identity (contract )?nonce|invalid ?document ?revision/i;
 
 const PAGE = 100;
 const MAX_PAGES = 50;
@@ -59,6 +59,9 @@ const MIN_SINCE_MS = 1e12;
 
 /** A refused query arrives as a "transport error" too (gRPC invalid argument); retrying it only repeats the refusal. */
 const REFUSED_QUERY = /invalid argument|non indexed property/i;
+
+/** Whether a refused write only went stale (nonce or revision), so a re-read and a fresh broadcast can still land it. */
+export const isStaleWrite = (error) => STALE_WRITE.test(typeof error === 'string' ? error : describeErr(error));
 
 export const isTransient = (error) => {
   const text = typeof error === 'string' ? error : describeErr(error);
@@ -203,11 +206,11 @@ async function tombstoneOne(io, { contractId, shapes, settleMs }, who, type, sto
     for (let poll = 0; poll < CONFIRM_POLLS; poll++) {
       const now = await io.get(type, stored.id).catch(() => null);
       if (now?.data.deleted === true) return { ok: true };
-      if (error && CONSENSUS_REFUSAL.test(error) && !STALE_WRITE.test(error)) return { ok: false, error };
+      if (error && CONSENSUS_REFUSAL.test(error) && !isStaleWrite(error)) return { ok: false, error };
       await sleep(settleMs);
     }
     lastError = error ?? 'not a tombstone after the replace';
-    if (error && !isTransient(error) && !STALE_WRITE.test(error)) break;
+    if (error && !isTransient(error) && !isStaleWrite(error)) break;
     // A failed broadcast may leave the SDK's cached identity contract nonce behind; read it afresh.
     try {
       await io.state.sdk.wasm?.refreshIdentityNonce?.(new Identifier(who.id));
