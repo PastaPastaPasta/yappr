@@ -11,6 +11,7 @@ import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
 import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
 import { identityService } from '@/lib/services/identity-service'
+import { KeyRetiredError } from '@/lib/services/identity-update-builder'
 import { draftMessagingKey, MessagingAlreadySetUpError, messagingKeyHandOffUri } from '@/lib/services/messaging-key-service'
 import { findEncryptionKey, hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { base58ToBytes, getCurrentUserId } from '@/lib/services/sdk-helpers'
@@ -98,7 +99,8 @@ const libBlocks: AccountBlocks = { refresh: ownBlocks, subscribe: onOwnBlocks }
 export type DmUnlockResult =
   | { unlocked: true; status: DmStatusDTO }
   /**
-   * `no-key-on-identity`: the identity has no encryption key at all (legacy builds);
+   * `no-key-on-identity`: the identity has no encryption key this app can use or add (legacy builds; App
+   * Connect builds when this sign-in's messaging key was disabled): set one up on the web;
    * `needs-setup`: it has no messaging key yet (App Connect builds: `dm.setUpMessaging`);
    * `not-derivable`: enter it.
    */
@@ -764,6 +766,8 @@ export function createDmModule(options: DmModuleOptions) {
       try {
         return { unlocked: false, reason: 'approve-in-wallet', uri: await messagingKeyHandOffUri(draft) }
       } catch (error) {
+        // This sign-in's messaging key was disabled, and Platform never brings one back.
+        if (error instanceof KeyRetiredError) return { unlocked: false, reason: 'no-key-on-identity' }
         if (!(error instanceof MessagingAlreadySetUpError)) throw error
         // The anchor has a key already. One messages cannot use either (not this sign-in's, or of another
         // type) is never replaced: it must be entered.

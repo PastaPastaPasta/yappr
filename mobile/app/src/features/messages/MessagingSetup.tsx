@@ -1,4 +1,4 @@
-import type { DmSetupResult } from '@engine/api';
+import type { DmSetupResult, DmUnlockResult } from '@engine/api';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Linking, View } from 'react-native';
 
@@ -24,10 +24,16 @@ type Approval = { uri: string; qr: boolean };
  * by QR code on another. Then `dm.unlock` is checked every 5 s and on return
  * from the wallet until the key lands. While waiting, an answer other than
  * "unlocked" means "not yet": a node one block behind can still miss the
- * new key. Only setup's own answer can say the account has another key
- * (`onOtherKey`: paste it).
+ * new key. Only setup's own answer can end it otherwise (`onLocked`: the
+ * account has another key to paste, or must set messaging up on the web).
  */
-export function MessagingSetup({ onUnlocked, onOtherKey }: { onUnlocked: () => void; onOtherKey: () => void }) {
+export function MessagingSetup({
+  onUnlocked,
+  onLocked,
+}: {
+  onUnlocked: () => void;
+  onLocked: (reason: Extract<DmUnlockResult, { unlocked: false }>['reason']) => void;
+}) {
   const [approval, setApproval] = useState<Approval | null>(null);
   const [starting, setStarting] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -96,8 +102,8 @@ export function MessagingSetup({ onUnlocked, onOtherKey }: { onUnlocked: () => v
         else if (result.reason === 'approve-in-wallet') {
           setApproval({ uri: result.uri, qr });
           if (!qr) openWallet(result.uri);
-        } else if (result.reason === 'not-derivable') onOtherKey();
-        else setError(SETUP_FAILED);
+        } else if (result.reason === 'needs-setup') setError(SETUP_FAILED);
+        else onLocked(result.reason);
       })
       .catch((e: unknown) => setError(readErrorMessage(e) ?? SETUP_FAILED))
       .finally(() => setStarting(false));

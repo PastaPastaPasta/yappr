@@ -295,6 +295,15 @@ describe('Messages inbox (DM-01, DM-02)', () => {
       expect(screen.getByTestId('dm-setup-qr')).toBeTruthy();
     });
 
+    it('sends the account to yap.pr when this sign-in cannot set messaging up', async () => {
+      fakeEngine.method('dm.setUpMessaging').mockReset().mockResolvedValueOnce({ unlocked: false, reason: 'no-key-on-identity' });
+      await openSetup();
+      fireEvent.press(screen.getByTestId('dm-setup-wallet'));
+      await act(async () => {});
+      expect(screen.getByText('Open yap.pr')).toBeTruthy();
+      expect(openURL).not.toHaveBeenCalled();
+    });
+
     it('asks for the key when the account turns out to have another messaging key', async () => {
       fakeEngine.method('dm.setUpMessaging').mockReset().mockResolvedValueOnce({ unlocked: false, reason: 'not-derivable' });
       await openSetup();

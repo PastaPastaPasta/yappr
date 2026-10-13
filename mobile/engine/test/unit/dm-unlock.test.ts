@@ -32,7 +32,10 @@ vi.mock('@/lib/services/identity-update-builder', async (load) => {
     buildUnsignedBoundEncryptionKeyTransition: async (request: { identityId: string; contractId: string; encryptionPrivateKey: Uint8Array }) => {
       // A copy: the caller zeroes its key once the link is built.
       bound.requests.push({ ...request, encryptionPrivateKey: request.encryptionPrivateKey.slice() })
-      if (identity.publicKeys.some(key => (key as { contractBounds?: unknown }).contractBounds)) throw new actual.BoundKeyExistsError()
+      const keys = identity.publicKeys as { contractBounds?: unknown; disabledAt?: number; data: Uint8Array }[]
+      if (keys.some(key => key.contractBounds && !key.disabledAt)) throw new actual.BoundKeyExistsError()
+      const adding = getPublicKey(request.encryptionPrivateKey).join()
+      if (keys.some(key => key.data.join() === adding)) throw new actual.KeyRetiredError()
       return { transitionBytes: new Uint8Array([1, 2, 3]), keyId: 7, identityRevision: BigInt(2) }
     },
   }
@@ -162,6 +165,11 @@ describe('App Connect builds: the messaging key bound to the anchor', () => {
     identity.publicKeys = [boundKey(6, ALICE_PRIV)]
     expect(await unlocker().setUpMessaging()).toEqual({ unlocked: false, reason: 'not-derivable' })
     expect(storeEncryptionKey).not.toHaveBeenCalled()
+
+    // This sign-in's own key, disabled: Platform will not add it back, so messaging is set up on the web.
+    identity.publicKeys = [{ ...boundKey(6, anchorKey), disabledAt: 1 }]
+    expect(await unlocker().unlock()).toEqual({ unlocked: false, reason: 'needs-setup' })
+    expect(await unlocker().setUpMessaging()).toEqual({ unlocked: false, reason: 'no-key-on-identity' })
 
     // One messages cannot use (not secp256k1) is not replaced either.
     identity.publicKeys = [{ ...boundKey(6, anchorKey), type: 2 }]

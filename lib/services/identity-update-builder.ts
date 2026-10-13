@@ -113,6 +113,15 @@ function hasAuthKey(publicKeys: RegisteredIdentityKey[], authPublicKey: Uint8Arr
 }
 
 /**
+ * Whether the identity already holds `publicKey` as an encryption key,
+ * disabled ones included: Platform never adds a key twice, nor brings a
+ * disabled one back.
+ */
+function holdsEncryptionKey(publicKeys: RegisteredIdentityKey[], publicKey: Uint8Array): boolean {
+  return hasKey(publicKeys, [KeyPurpose.ENCRYPTION, 'encryption'], [KeyType.ECDSA_SECP256K1, 'ecdsa_secp256k1'], publicKey)
+}
+
+/**
  * Whether the identity has an enabled ENCRYPTION key (of any type) bound to
  * `contractId`. The newest such key is the contract's current one, so adding
  * another would replace it and orphan everything peers encrypted to it.
@@ -177,6 +186,13 @@ interface KeyToAdd {
 export class BoundKeyExistsError extends Error {
   constructor() {
     super('The identity already has an encryption key bound to this contract')
+  }
+}
+
+/** The identity already holds the key to add, disabled: Platform will not add it again. */
+export class KeyRetiredError extends Error {
+  constructor() {
+    super('The identity already holds this encryption key, disabled')
   }
 }
 
@@ -305,7 +321,10 @@ export async function buildUnsignedKeyRegistrationTransition(
   return buildUnsignedAddKeysTransition(identityId, (publicKeys) => {
     const adding: KeyToAdd[] = []
     if (!hasAuthKey(publicKeys, authPublicKey)) adding.push(auth)
-    if (!hasBoundEncryptionKey(publicKeys, anchorId)) adding.push({ ...encryption, boundToContract: anchorId })
+    // A disabled copy of this key would make Platform refuse the whole update, auth key included.
+    if (!hasBoundEncryptionKey(publicKeys, anchorId) && !holdsEncryptionKey(publicKeys, encryptionPublicKey)) {
+      adding.push({ ...encryption, boundToContract: anchorId })
+    }
     return adding
   })
 }
@@ -316,7 +335,8 @@ export async function buildUnsignedKeyRegistrationTransition(
  * messaging key, for a wallet to sign with the identity's MASTER key. Throws
  * `BoundKeyExistsError` when the identity already has one: the newest bound
  * key becomes the current one, so adding a second would orphan everything
- * peers encrypted to the first.
+ * peers encrypted to the first. `KeyRetiredError` when it holds this key
+ * disabled.
  */
 export async function buildUnsignedBoundEncryptionKeyTransition(request: {
   identityId: string
@@ -327,11 +347,13 @@ export async function buildUnsignedBoundEncryptionKeyTransition(request: {
   requireKeyLength(request.encryptionPrivateKey, 32, 'encryption private key')
   const { transitionBytes, keys: [{ keyId }], identityRevision } = await buildUnsignedAddKeysTransition(request.identityId, (publicKeys) => {
     if (hasBoundEncryptionKey(publicKeys, request.contractId)) throw new BoundKeyExistsError()
+    const publicKey = getPublicKey(request.encryptionPrivateKey)
+    if (holdsEncryptionKey(publicKeys, publicKey)) throw new KeyRetiredError()
     return [{
       purpose: 'encryption',
       securityLevel: 'medium',
       keyType: 'ecdsa_secp256k1',
-      data: getPublicKey(request.encryptionPrivateKey),
+      data: publicKey,
       proofPrivateKey: request.encryptionPrivateKey,
       boundToContract: request.contractId,
     }]

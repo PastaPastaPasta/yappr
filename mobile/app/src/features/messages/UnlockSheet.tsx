@@ -67,8 +67,9 @@ export function keyError(value: string): string {
 
 export function UnlockSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [saving, setSaving] = useState(false);
+  // Scrolls while open: the setup step's QR code can outgrow the screen. Closed, it holds nothing.
   return (
-    <Sheet open={open} onClose={onClose} dismissible={!saving} testID="dm-unlock-sheet">
+    <Sheet open={open} onClose={onClose} dismissible={!saving} scrollable={open} testID="dm-unlock-sheet">
       {/* Mounted per opening, so every opening starts with the automatic recovery. */}
       {open ? <UnlockBody onClose={onClose} saving={saving} setSaving={setSaving} /> : null}
     </Sheet>
@@ -145,7 +146,7 @@ function UnlockBody({
 
   // Stable, so MessagingSetup's checks keep their schedule across renders.
   const setUp = useCallback(() => unlocked(onClose), [onClose]);
-  const otherKey = useCallback(() => setPhase('manual'), []);
+  const locked = useCallback((reason: Parameters<typeof phaseFor>[0]) => setPhase(phaseFor(reason)), []);
 
   let title = 'Unlock your messages';
   if (phase === 'recovering') title = 'Unlocking your messages…';
@@ -161,11 +162,11 @@ function UnlockBody({
           <Spinner size="sm" />
         </View>
       ) : null}
-      {phase === 'setup' ? <MessagingSetup onUnlocked={setUp} onOtherKey={otherKey} /> : null}
+      {phase === 'setup' ? <MessagingSetup onUnlocked={setUp} onLocked={locked} /> : null}
       {phase === 'no-key' ? (
         <View className="gap-4 pb-2">
           <Text variant="body" tone="secondary">
-            This account has no encryption key yet. Add one on yap.pr, then come back to read and send messages here.
+            Set up messaging for this account on yap.pr, then come back to read and send messages here.
           </Text>
           <Button
             label="Open yap.pr"

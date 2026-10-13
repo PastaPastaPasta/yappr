@@ -216,6 +216,24 @@ describe('first-login key registration on App Connect builds', () => {
     ])
   })
 
+  it('never re-adds this sign-in\'s own messaging key once disabled: Platform would refuse the whole update', async () => {
+    const { buildUnsignedBoundEncryptionKeyTransition, KeyRetiredError } = await import('@/lib/services/identity-update-builder')
+    const identityId = randomId()
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const { anchorKey } = signInKeys(identityId, loginKey)
+    const retired = onChain({ keyId: 4, purpose: 'encryption', securityLevel: 'medium', keyType: 'ecdsa_secp256k1', data: auth.getYapprPublicKey(anchorKey), boundTo: ANCHOR })
+    retired.disabledAt = BigInt(1)
+    chain.keys = [master(), retired]
+
+    // The first login still adds the auth key, so the account can sign in.
+    const step = await signIn(identityId, loginKey)
+    if (step.status !== 'needs-registration') throw new Error(`expected a registration, got ${step.status}`)
+    expect(addedKeys(step.uri).map(key => key.purpose)).toEqual(['authentication'])
+    // Setting messaging up with that key is refused before any wallet sees it.
+    await expect(buildUnsignedBoundEncryptionKeyTransition({ identityId, encryptionPrivateKey: anchorKey, contractId: ANCHOR }))
+      .rejects.toBeInstanceOf(KeyRetiredError)
+  })
+
   it('signs in an identity that has the auth key, with or without an anchor key, adding nothing', async () => {
     const identityId = randomId()
     const loginKey = crypto.getRandomValues(new Uint8Array(32))
