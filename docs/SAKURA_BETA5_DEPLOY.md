@@ -66,8 +66,64 @@ System contracts (DPNS, DashPay, token history) kept their ids.
 
 ## Client
 
-`.env.devnet` points at the ids above and sets the topologies: `v15`, storefront `v8`, blog `v8`, pollr `v7`, DM `v5`. It sets `NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID` blank and the four `NEXT_PUBLIC_APP_CONNECT_*` values. `NEXT_PUBLIC_LOGIN_PROTOCOL` stays unset, so `/devnet` signs in with the legacy protocol (key exchange, password vault and key backup are registered for it) until web App Connect ships. `lib/contracts/bundled/devnet-sakura.json` was re-snapshotted with `--prune`.
+`.env.devnet` points at the ids above and sets the topologies: `v15`, storefront `v8`, blog `v8`, pollr `v7`, DM `v5`. It sets `NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID` blank and the four `NEXT_PUBLIC_APP_CONNECT_*` values. `NEXT_PUBLIC_LOGIN_PROTOCOL` stays unset, so `/devnet` signs in with the legacy protocol (key exchange, password vault and key backup are registered for it).
 
-## Data, election and batteries
+Web App Connect (#726, #727) has merged, and the live responder checklist passes on an app-connect build. The flip (#737) is on hold for one reason. App Connect builds accept only an ENCRYPTION key bound to the anchor, so raw-key users and every identity that never signed in through a wallet cannot be sent DMs or store orders. On the app-connect build, the devnet DM e2e fails for that reason (#742). `lib/contracts/bundled/devnet-sakura.json` was re-snapshotted with `--prune`.
 
-YAPP on v15 is non-transferable with `baseSupply` 0. Every YAPP comes from the 100-YAPP starter grant or a maker mint. The reseed (starter grants, profiles, mints, the 148 personas, the 800-post corpus and the non-social seeds), election E1 on social v15 and the battery results follow in a separate record update.
+## Data
+
+YAPP on v15 is non-transferable, with `baseSupply` 0, so every YAPP comes from the 100-YAPP starter grant or a maker mint. The reseed used the replayed personas.
+
+| Step | Result |
+| --- | --- |
+| Starter grants (maker, CI, personal, bots, DM bots) | 14/14 |
+| DashPay profile + `yapprProfile` for the special identities | 13/13 |
+| Maker mints | CI 4,000; personal 10,000; bots 0 and 1, 4,000 each; five seed authors, 400 each |
+| Personas (profiles + grant claims) | 148/148 |
+| 800-op social corpus | 800 done, 0 failed |
+| Multi-mention posts | 6 posts naming 2–8 personas each; `mentionedUserIds contains` reads them back |
+| Pollr v7 | 145 writes; tallies as planned |
+| Storefront v8 | 246 documents, all checks passed |
+| Blog v8 | 163 documents: 8 blogs, 42 posts, 40 follows, 73 comments |
+
+The storefront and blog seeders needed fixes for v8 (#733); the client was never affected. The DM seeder targets DM v4 only, which this chain does not register.
+
+On App Connect builds, the 7 seeded stores showed "not accepting orders" until each owner had an encryption key bound to the anchor. Each owner was given one by an identity update (key id 5).
+
+## Election E1 (social v15)
+
+- **Charter:** tess1999 (persona 5) filed `DNiAmQZumw97WHyfdT9x7NS3cSc3hcojUxUZ5uMJBh6b`.
+  - Reasons: SPM, ABU, REP.
+  - Moderators' share: 60. Split: 40/30/30.
+- **Join requests:** persona 0 (`AKVhxjxw…`) and battery bot 1 (`GZ8xSUWn…`).
+- **Applied** at 2026-10-12 22:55Z with the 0.5 DASH fund (contender `7jodGPJX2LAVoiy6MyDX4iSmexXiXjWDpopYWoeVzwZ4`).
+- **Seat:** about 2026-10-19 22:55Z if uncontested. Until then the maker moderates as the interim owner.
+
+## Batteries
+
+| battery | result |
+| --- | --- |
+| `verify-appconnect --only g1,g2,g3,a1` | 32 PASS |
+| `verify-v10` on v15 (full) | 339 PASS, 0 FAIL, 8 SKIP |
+| &nbsp;&nbsp;new beta.4/beta.5 cases | all PASS: y1a 40726 transfer, y1j/y1k burn, n1h–n1l mentions, x1tc2, r1q2–r1q3 `staysResolved` |
+| &nbsp;&nbsp;skips | structural ones, plus r2, which runs after E1 seats |
+| `verify-v10 --only k2 --poor 3` | 1/1 |
+| `verify-v10 --only x3,y1 --fresh-bot 3` | 18/18 |
+| `prove-merged-counts` (v15) | 164 PASS, 2 SKIP |
+| `verify-social-query-bundles` | all PASS; the DM v4 bundle SKIPs; enrichment takes 2 requests (#735) |
+| `verify-tips` | 6 PASS, 5 SKIP (YAPP tips; YAPP is not transferable) |
+| `verify-pollr` (v7) | 77/77, incl. the 40127 late vote (p9) and the 31-day boundary (p10) |
+| `verify-blog` (v8) | 101/101, incl. comments-off `where` (b20) and the tombstone (b24) |
+| `verify-storefront` (v8) | 154/154; s14c passed on a re-run after a stale-nonce flake; includes paused and closed stores (s21) |
+| `verify-dm-v5` | 106/106 |
+| `verify-appconnect --only k1 --keyholder 241` | 3/3 (the default keyholder, 242, is not in this chain's seed ledger) |
+
+`e2e/write/topology.spec.ts` against the live https://yap.pr/devnet: 22/22.
+
+## Costs
+
+| | credits | ¢ |
+| --- | ---: | ---: |
+| Maker: burn, DPNS, 11 contracts, mints, sponsored gas | 339.6e9 | 20,373 |
+| All other identities: DPNS, profiles, claims, seeds, batteries, E1 fund, App Connect tests | 295.4e9 | 17,722 |
+| **Total** | **~635e9** | **~38,100** |
