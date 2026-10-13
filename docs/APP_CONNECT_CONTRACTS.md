@@ -81,7 +81,7 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 
 - Signed sizes are the PV14 version 1 creates with the membership. A membership adds about 33 B to a create.
 - Every file passes rs-dpp's full validation at PV14 (5.0.0-beta.5 `b5val` for the four beta.5 re-cuts, 5.0.0-beta.4 `b4val` for the others), the two 5.0.0-beta.5 wasm full parses, meta-schema v3 at beta.5 and the node-rule audit. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
-- The `~` sizes of the beta.5 re-cuts are the publisher's estimates (`--plan`) less its 100 B signature allowance, plus a 65 B signature. `socialV16`'s is the same arithmetic on `validate-contract-offline.mjs`'s estimate from the 5.0.0-beta.5 wasm-sdk, plus the membership; it has not been through rs-dpp 5.0.0-beta.6 full validation or the beta.6 wasm parses yet.
+- The `~` sizes of the beta.5 re-cuts are the publisher's estimates (`--plan`) less its 100 B signature allowance, plus a 65 B signature. `socialV16`'s is the same arithmetic on `validate-contract-offline.mjs`'s estimate from the 5.0.0-beta.6 wasm-sdk, plus the membership; it passes the two 5.0.0-beta.6 wasm full parses and the node-rule audit, devnet and mainnet renderings alike.
 - None embeds another contract's id. The publisher refuses a `SOCIAL_CONTRACT_ID` placeholder, so the order inside the set only fixes the ids.
 - **Cost:** about 263e9 credits (2.6 DASH, ~15,800¢) by the beta.3 per-contract costs on sakura. The shorthand files are smaller, so expect a little less.
 

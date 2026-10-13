@@ -8,7 +8,7 @@ Social v16 is social v15 ([SOCIAL_V15.md](SOCIAL_V15.md)) with up to four tags p
 
 So `post.hashtag` becomes the typed array `post.tags`, and a like repeats the list and is counted under every tag of its post.
 
-This document was written with the PRs that add the contract, the client topology `v16` and the tooling. **v16 is not registered anywhere yet, and `.env.devnet` is NOT flipped by these changes:** `/devnet` keeps running v15 until the devnet runs 5.0.0-beta.6 and v16 is registered there (see [Registering it](#registering-it)). v16 needs Platform 5.0.0-beta.6, nodes and SDK alike. The repo's packages are at 5.0.0-beta.5 (beta.6 is not on npm yet), and their wasm-dpp2 refuses v16 (see [Validation](#validation)).
+This document was written with the PRs that add the contract, the client topology `v16` and the tooling. **v16 is not registered anywhere yet, and `.env.devnet` is NOT flipped by these changes:** `/devnet` keeps running v15 until the devnet runs 5.0.0-beta.6 and v16 is registered there (see [Registering it](#registering-it)). v16 needs Platform 5.0.0-beta.6, nodes and SDK alike; the repo's packages are at 5.0.0-beta.6.
 
 | # | Decision | What changes |
 | --- | --- | --- |
@@ -25,9 +25,9 @@ This document was written with the PRs that add the contract, the client topolog
 | --- | --- |
 | File | `contracts/yappr-social-contract-v16.json` |
 | sha256 | `63dcfa91da1e6fba0c9759101cca4c3d515c34f3ba0ac9594261f03cf2d428fa` |
-| Signed create | **~16,498 B** by `validate-contract-offline.mjs`'s estimate on the 5.0.0-beta.5 wasm-sdk (v15: ~16,457 B by the same estimate): 41 B more, 3,502 B under the 20,000 B budget. Mainnet's rendering (interim `notYetUsable`) is the same size. As an App Connect member, ~16,497 B with the membership and a 65 B signature. |
+| Signed create | **~16,498 B** by `validate-contract-offline.mjs`'s estimate on the 5.0.0-beta.6 wasm-sdk (v15: ~16,457 B by the same estimate): 41 B more, 3,502 B under the 20,000 B budget. Mainnet's rendering (interim `notYetUsable`) is the same size. As an App Connect member, ~16,497 B with the membership and a 65 B signature. |
 | Document types | 12, as v15 |
-| Parses | See [Validation](#validation). It has not yet been checked by rs-dpp 5.0.0-beta.6 full validation or the beta.6 wasm parses. |
+| Parses | Under full validation on the 5.0.0-beta.6 wasm-sdk, and under the node rules on the 5.0.0-beta.6 wasm-dpp2 (rs-dpp built with its `validation` feature), devnet and mainnet renderings alike. See [Validation](#validation). |
 
 ## The diff against v15
 
@@ -44,7 +44,7 @@ This document was written with the PRs that add the contract, the client topolog
 
 Tag reads change shape on v16, because an index over a typed array is read with the element operators, not `==`:
 
-- `==` on the array is refused. A read pins one tag with `['tags', 'contains', tag]`, which the node keys as an equality on one element (5.0.0-beta.5). `containsAny` exists too, but a ranked read refuses it.
+- `==` on the array is refused. A read pins one tag with `['tags', 'contains', tag]`, which the node keys as an equality on one element. `containsAny` exists too, but a ranked read refuses it.
 - **A tag page** (`tagAndTime`): `where: [['tags', 'contains', tag], ['$createdAt', '>', 0]]`, `orderBy: [['$createdAt', 'desc']]`. An array can be ordered by only under `containsAny`, so the order names `$createdAt` alone (v15 ordered by `hashtag` first).
 - **A tag's top posts**: `ranked({ groupBy: 'postId', where: [['tags', 'contains', tag]] })` on `byHashtagPost`, or with the 24h window on `byTrendHashtagPost`.
 - **Trending tags**: `ranked({ groupBy: 'tags' })` with no `where`. A like of a post tagged `[a, b]` counts once under `a` and once under `b`.
@@ -55,7 +55,7 @@ Tag reads change shape on v16, because an index over a typed array is read with 
 
 Set `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v16` together with `NEXT_PUBLIC_YAPPR_CONTRACT_ID` and `NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`, as on v15. The descriptor is v15's, with the like's tag field and the tombstone's kept list switched to `tags`. On every inline cut, a post's tags are a list in memory (`Post.tags`: `[]` untagged, `undefined` unknown):
 
-- `inlineTags()` (lib/contract-topology.ts) is `{ field: 'tags', max: 4, isArray: true }` on v16 and `{ field: 'hashtag', max: 1, isArray: false }` on v9 to v15. `tagFieldsFor` and `storedTags` translate between the list and the chain spelling at the boundary.
+- `inlineTags()` (lib/contract-topology.ts) is `{ field: 'tags', max: 4, isArray: true }` on v16 and `{ field: 'hashtag', max: 1, isArray: false }` on v9 to v15. `tagFieldsFor` and `inlinePostTags` (on `storedTags` in lib/post-helpers.ts) translate between the list and the chain spelling at the boundary.
 - A post's tags come from `indexedTags(content, max, 61)` (lib/post-helpers.ts): the hashtags in content order, then the cashtags, distinct, at most `max`. `tagLimitProblem` refuses a v16 post that names more than four.
 - A like and its unlike repeat the post's stored list unchanged.
 - The tag pages read `postsTaggedQuery` (post-service). The per-tag rankings pin `tagPin` and trending groups by `tagGroupBy` (ranked-likes).
@@ -74,7 +74,7 @@ The scripts read the cut off the contract file, never off its name, so one scrip
   - The self-test covers v16: four-tag posts and likes judged by rs-dpp's rules and serializer, and the checker refusing a repeated, empty, fifth or malformed tag.
 - **`scripts/validate-contract-offline.mjs`**:
   - The per-write fee table prices `hashtag` up to v15, and a one-tag and a four-tag post and like on v16 (each row skips the cuts without its field).
-  - A row the installed estimator cannot price prints "not priced" instead of stopping the run. The beta.5 estimator cannot price v16's tagged rows.
+  - A row the installed estimator cannot price prints "not priced" instead of stopping the run. The 5.0.0-beta.6 estimator prices every v16 row (the beta.5 one could not price a string list).
 - **`scripts/contract-probes.mjs`** (`--probes`):
   - Meta-schema: the vendored document meta-schema is now 5.0.0-beta.6's (`contains`/`containsAll` `where` conditions), pinned by sha256 `742f9913…`.
   - `auditNodeRules` models the beta.6 rules:
@@ -118,24 +118,22 @@ The scripts read the cut off the contract file, never off its name, so one scrip
 
 ## Validation
 
-Run with the repo's 5.0.0-beta.5 packages:
+Run with the repo's 5.0.0-beta.6 packages:
 
-- `validate-contract-offline.mjs contracts/yappr-social-contract-v16.json --strict-size`:
-  - The wasm-sdk parses v16 under full validation.
-  - wasm-dpp2 refuses it with `invalid contract structure: index "byHashtagPost" of document type "like" names the typed array "tags": an indexOnly type's indexes are uniqueness rules over each document's values, and an index of a typed array enters a document once per element` (10231). That is the beta.5 rule #5390 lifts, not a fault in the file.
-  - Past that parse, the steps (run separately) pass: the create size above, the node-rule audit and the beta.6 meta-schema, on the devnet and mainnet renderings alike.
-- `--probes`: every probe and `where` case behaves as recorded, the v16 `where` cases included, except the 7 v16 probes that need wasm-dpp2 to get past the like. Each of those stops at the same beta.5 refusal.
+- `validate-contract-offline.mjs contracts/yappr-social-contract-v16.json --strict-size`, with `--network devnet` (the default) and `--network mainnet`: v16 parses under full validation (wasm-sdk) and under the node rules (wasm-dpp2: meta-schema and index shapes), the node-rule audit and the beta.6 meta-schema are clean, and the create is ~16,498 B signed.
+- `--cost`: every v16 row prices. A first like of a post with four tags costs about 2.2 times a first like of a post with one tag (276.9M against 126.6M credits), because the like is entered under each tag; a post with four tags about 1.9 times a post with one (381.9M against 198.4M).
+- `--probes`: all 241 probes and `where` cases behave as recorded, the v16 ones included. Two v16 probes are refused one layer earlier than the book suggested: a like `tags` without `uniqueItems`, and a like array index nothing else keeps apart, are refused by the wasm-sdk's own parse, so the SDK never signs them.
 - `--constraints`: every case of every file passes, v16's included.
 - v15 still validates cleanly (`--strict-size`, devnet and mainnet).
 - Offline self-tests pass:
   - `social-shapes.mjs` on v10 to v16;
-  - `verify-v10.mjs` with `--contract-file` set to v10, v13, v14, v15 and v16 (the wasm-sdk serializes every v16 write);
+  - `verify-v10.mjs` with `--contract-file` set to v10, v13, v14, v15 and v16;
   - `seed/run-seeder.mjs`, with the configured topology and with `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v16`;
   - `seed/generate-corpus.mjs` and `seed-non-social.mjs --which pollr`;
   - `verify-appconnect.mjs` and `verify-tips.mjs`.
-- `prove-merged-counts.mjs --dry-run` and `measure-social-fees.mjs --dry-run` pass on v15. On v16 each stops at the beta.5 wasm-dpp2 refusal above.
+- `prove-merged-counts.mjs --dry-run` and `measure-social-fees.mjs --dry-run` pass on v15 and v16.
 
-To do once the 5.0.0-beta.6 packages are on npm: bump `@dashevo/evo-sdk`, `@dashevo/wasm-sdk` and `@dashevo/wasm-dpp2` in lockstep, then run `validate-contract-offline.mjs contracts/yappr-social-contract-v16.json --network mainnet --cost --strict-size`, `--probes` and `--constraints` again. Every v16 probe must then behave as recorded. Also check the file with rs-dpp 5.0.0-beta.6 full validation (`b6val`).
+What only a live network can confirm: the `tg-*` checks of `prove-merged-counts.mjs` (a fresh per-tag counter listed at 0, counts and rankings under both tags, the window keeping an unliked entry), and the exact refusals `cn-e2` and `cn-b4` expect on v16.
 
 ## Registering it
 

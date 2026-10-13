@@ -1230,10 +1230,10 @@ const PROBES = [
     for (const type of ['post', 'like']) types(s)[type].properties.tags.maxItems = 5;
   } },
   // An indexOnly type's array index is kept apart by byPost, not by itself, so its list must not repeat an element.
-  { label: 'social v16: like.tags without uniqueItems (an indexOnly type\'s array index needs it)', file: SOCIAL_V16, expect: 'dpp2', auditToo: true, node: '10231', why: /uniqueItems/i, mutate: (s) => { delete types(s).like.properties.tags.uniqueItems; } },
+  { label: 'social v16: like.tags without uniqueItems (an indexOnly type\'s array index needs it)', file: SOCIAL_V16, expect: 'wasm', node: '10231', why: /uniqueItems/i, mutate: (s) => { delete types(s).like.properties.tags.uniqueItems; } },
   // [tags, postAuthor] → $ownerId would refuse a second like of the same author's posts under one tag:
   // byPost's key (postId, $ownerId) is not inside its key without the array, so nothing keeps it apart.
-  { label: 'social v16: a like index [tags, postAuthor] → $ownerId that byPost does not keep apart', file: SOCIAL_V16, expect: 'dpp2', auditToo: true, node: '10231', why: /"probe"/, mutate: (s) => {
+  { label: 'social v16: a like index [tags, postAuthor] → $ownerId that byPost does not keep apart', file: SOCIAL_V16, expect: 'wasm', node: '10231', why: /"probe"/, mutate: (s) => {
     types(s).like.indices.push({ name: 'probe', properties: [{ tags: 'asc' }, { postAuthor: 'asc' }], terminal: '$ownerId' });
   } },
   // A typed array pairs only with a typed array (#5388); a post quoting a post binds nothing to the
