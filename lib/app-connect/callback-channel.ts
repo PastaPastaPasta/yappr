@@ -76,3 +76,19 @@ export function appReturnLink(callback: ConnectCallback & { app: YapprAppScheme 
   const status = callback.status ? `&ac=${callback.status}` : ''
   return `${callback.app}://connect?r=${callback.requestHash}${status}`
 }
+
+/**
+ * The same hand-back as {@link parseConnectCallback} + {@link appReturnLink},
+ * as a dependency-free script the /connect page carries inline, so a wallet
+ * returning to a request the app made opens the app as the HTML is parsed,
+ * not seconds later once the page has hydrated. It reads only the query
+ * (any base path), honours only {@link YAPPR_APP_SCHEMES}, and passes on only
+ * the request hash and the status. The page's effect stays as the fallback.
+ */
+export const APP_RETURN_SCRIPT = `(function(){try{
+var p=new URLSearchParams(location.search),app=p.get('app'),schemes=${JSON.stringify(YAPPR_APP_SCHEMES)};
+if(!app||schemes.indexOf(app)<0)return;
+var r=(p.get('r')||'').toLowerCase();if(!/^[0-9a-f]{40}$/.test(r))return;
+var ac=p.get('ac');
+location.replace(app+'://connect?r='+r+(ac&&/^[a-z]{1,16}$/.test(ac)?'&ac='+ac:''));
+}catch(e){}})();`
