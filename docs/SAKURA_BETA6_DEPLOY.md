@@ -113,6 +113,6 @@ The maker kept 1,152.1e9 (69,128¢) at identity nonce 34, 77% of what the replay
 ## Open items
 
 - E1 seats about 2026-10-20 14:53Z; then `verify-v10 --only r2`.
-- The iOS and Android release candidates need a rebuild on the 5.0.0-beta.6 SDK with these ids and topology v16. The engine shares `lib/`, and the persona pools keep their identity ids.
+- The iOS and Android release candidates need a rebuild on the 5.0.0-beta.6 SDK with these ids and topology v16. The engine shares `lib/`, and the persona pools keep their identity ids. The rebuild picks up #749 (bcd7104f): the mobile app's first wallet sign-in registers the anchor messaging key, and the mobile "Set up messaging" never re-adds a disabled key.
 - `verify-appconnect --only k1` leaves persona 241's newest anchor key one nobody holds, so on App Connect builds messages to 241 cannot be read until a known key is added again.
 - `verify-v10`'s global-ranking cases (t2c, t2j, t2t, t2k) need scoping on a reseeded chain.
