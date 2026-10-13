@@ -1,8 +1,10 @@
 /**
  * Deterministic App Connect keys for a pool persona.
  *
- * A real wallet derives them from its seed at the profile's DIP-13 leaves
- * (docs/APP_CONNECT_PROFILE.md, wallet rules 6 and 7):
+ * A real wallet derives the encryption key from its seed at DIP-13 sub-feature
+ * 7' (normative), and derives auth keys however it likes
+ * (docs/APP_CONNECT_PROFILE.md, wallet rules 6 and 7). The profile's
+ * non-normative example for auth keys, which this responder mirrors in inputs:
  *
  *   auth:       …/6'/0'/identityId'/hash256(appEphPub)'/bindingIndex'
  *   encryption: sub-feature 7' at (identity, appId, rotation)
