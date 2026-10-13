@@ -1,5 +1,5 @@
-import { contentLimits, inlineMentions } from '@/lib/contract-topology'
-import { extractMentions } from '@/lib/post-helpers'
+import { HASHTAG_MAX_LENGTH, contentLimits, inlineMentions, inlineTags } from '@/lib/contract-topology'
+import { extractMentions, indexedTags } from '@/lib/post-helpers'
 
 /** Characters allowed in one post's content field (500; 1000 on v10). */
 export const CHARACTER_LIMIT = contentLimits().maxLength
@@ -78,4 +78,21 @@ export function mentionLimitHint(text: string): string | null {
 export function firstPostMentionHints({ body, encrypted, teaser }: { body: string; encrypted: boolean; teaser?: string }): { body: string | null; teaser: string | null } {
   if (!encrypted) return { body: mentionLimitHint(body), teaser: null }
   return { body: null, teaser: teaser ? mentionLimitHint(teaser) : null }
+}
+
+/**
+ * Why `text` cannot be a v16 post, or null: it names more distinct tags (the
+ * hashtags and cashtags, {@link indexedTags}) than a post holds. The
+ * contract's `post.tags` takes at most four, and a post names no tag it is
+ * not indexed under, so the composer refuses a fifth rather than leaving it
+ * plain text. Null before v16 (v9–v15 index one tag and leave the rest
+ * plain text, as before; v2 indexes every tag).
+ */
+export function tagLimitProblem(text: string): string | null {
+  const tags = inlineTags()
+  if (!tags?.isArray) return null
+  const named = indexedTags(text, Number.MAX_SAFE_INTEGER, HASHTAG_MAX_LENGTH).length
+  if (named <= tags.max) return null
+  const over = named - tags.max
+  return `A post can have at most ${tags.max} tags. Remove ${over} ${over === 1 ? 'tag' : 'tags'}.`
 }

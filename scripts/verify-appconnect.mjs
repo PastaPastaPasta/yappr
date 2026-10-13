@@ -244,6 +244,10 @@ function selfTestAppConnect() {
     ...APP_CONNECT_ENTRIES.map((e) => [`${e.file} matches its pinned sha256`, fileSha256(e.file) === e.sha256]),
     ['the anchor is registered first', anchorEntry.name === 'app' && anchorEntry.file === 'yappr-app-contract.json'],
     ['each contract is registered once', new Set(files).size === files.length],
+    ['each contract variable names one member (a replaced member has none)', (() => {
+      const keys = APP_CONNECT_ENTRIES.map((e) => e.envKey).filter(Boolean);
+      return new Set(keys).size === keys.length;
+    })()],
     ['no retired contract joins the group', RETIRED_ON_PV14.every((file) => !files.includes(file))],
     ['the anchor opts encryption keys in as MultipleReferenceToLatest (2)', anchor.config?.requiresIdentityEncryptionBoundedKey === REFERENCE_TO_LATEST],
     ['the anchor asks for no decryption key', anchor.config?.requiresIdentityDecryptionBoundedKey === null],

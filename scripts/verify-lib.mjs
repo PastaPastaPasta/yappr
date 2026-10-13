@@ -518,9 +518,16 @@ export function expectRejected(label, outcome, pattern) {
 }
 // ---- Topology-independent document shapes ----------------------------------
 
-export const likeData = ({ postId, hashtag, postAuthor }) => ({
+/**
+ * A post like. Its tag fields repeat the post's and are left out when not
+ * given (an untagged post's like carries none): `hashtag` up to social v15,
+ * the typed array `tags` on v16, the post's whole list in its order (pass
+ * social-shapes `tags(list)` spread in, which writes whichever the cut has).
+ */
+export const likeData = ({ postId, hashtag, tags, postAuthor }) => ({
   postId,
   ...(hashtag === undefined ? {} : { hashtag }),
+  ...(tags === undefined ? {} : { tags }),
   postAuthor,
 });
 /** `replyAuthor` is left out when not given: social v13 likes a reply by its id alone (social-shapes `likeReply`). */

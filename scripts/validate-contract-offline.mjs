@@ -229,11 +229,15 @@ const CENTS_PER_CREDIT = 60 * 100 / 1e11;
  * `rootOwnerId` among them) are always priced. Every other
  * optional field is absent. A typed array's length is its element count; the
  * estimator prices each element at the middle of its bound (256 characters
- * for a media URL), so the media rows overstate an ipfs:// link.
+ * for a media URL, 30 for a v16 tag), so the media rows overstate an ipfs://
+ * link. The tagged rows price `hashtag` (8 characters) up to v15 and the
+ * `tags` list on v16, one row per spelling: each skips the cuts without it.
  */
 const SOCIAL_WRITES = [
   ['post, 140 characters', 'post', { content: 140, 'live?': 0 }],
   ['post, 140 characters, tagged', 'post', { content: 140, hashtag: 8, 'live?': 0 }],
+  ['post, 140 characters, one tag', 'post', { content: 140, tags: 1, 'live?': 0 }],
+  ['post, 140 characters, four tags', 'post', { content: 140, tags: 4, 'live?': 0 }],
   ['post, one image', 'post', { content: 140, 'live?': 0, mediaUrls: 1, mediaDigests: 40, mediaKinds: 1 }],
   ['post, four images', 'post', { content: 140, 'live?': 0, mediaUrls: 4, mediaDigests: 160, mediaKinds: 4 }],
   ['private post (300 B ciphertext)', 'post', { encryptedContent: 300, keyGeneration: 0, nonce: 0, 'live?': 0 }],
@@ -244,6 +248,8 @@ const SOCIAL_WRITES = [
   ['reply, one image', 'reply', { content: 140, mediaUrls: 1, mediaDigests: 40, mediaKinds: 1 }],
   ['like', 'like', {}],
   ['like, tagged post', 'like', { hashtag: 8 }],
+  ['like, post with one tag', 'like', { tags: 1 }],
+  ['like, post with four tags (entered under each)', 'like', { tags: 4 }],
   ['reply like', 'likeReply', {}],
   ['report a post', 'report', { postId: 0 }],
   ['report a reply', 'report', { replyId: 0 }],
@@ -272,7 +278,14 @@ function printWriteCosts(contract, source, platformVersion) {
     if (present.some(([name, , optional]) => !optional && !declared.includes(name))) continue;
     const fields = Object.fromEntries(declared.filter((p) => !schema.required?.includes(p)).map((p) => [p, { present: false }]));
     for (const [name, length] of present) if (declared.includes(name)) fields[name] = length > 0 ? { present: true, length } : { present: true };
-    const cost = documentCreateCost(contract, type, { fields }, platformVersion);
+    let cost;
+    try {
+      cost = documentCreateCost(contract, type, { fields }, platformVersion);
+    } catch (e) {
+      // The 5.0.0-beta.5 estimator cannot key an indexed typed array of an indexOnly type (v16's like and post `tags`).
+      rows.push([label, null, String(e?.message ?? e).slice(0, 100)]);
+      continue;
+    }
     const actionFee = cost.contractCharges.filter((c) => c.kind === 'actionFee').reduce((n, c) => n + c.charged.owner + c.charged.moderators, 0);
     const networkFee = (scenario) => Number(cost.totalCredits[scenario]) - actionFee;
     rows.push([label, networkFee('newValues'), networkFee('knownValues'), actionFee]);
@@ -281,6 +294,7 @@ function printWriteCosts(contract, source, platformVersion) {
   const credits = (n) => `${(n / 1e6).toFixed(1)}M (${(n * CENTS_PER_CREDIT).toFixed(2)}¢)`;
   console.log('\nnetwork fee per write (documentCreateCost: storage + estimated processing; first with its index values / later; ¢ at $60/DASH) + the action fee:');
   for (const [label, first, later, actionFee] of rows) {
+    if (first === null) { console.log(`    ${label.padEnd(52)} (not priced: ${later})`); continue; }
     console.log(`    ${label.padEnd(52)} ${credits(first).padStart(17)} / ${credits(later).padStart(17)}${actionFee ? `   + ${credits(actionFee)} action fee` : ''}`);
   }
 }

@@ -60,6 +60,7 @@ the executor cannot deadlock.
 {"type":"post","ref":"p001","author":0,"content":"gm #dash","hashtag":"dash"}
 {"type":"post","ref":"p002","author":1,"content":"look","hashtag":"","mediaUrl":"ipfs://bafy…","sensitive":true}
 {"type":"quote","ref":"p003","author":2,"content":"this → {{link:p001}}","quotedRef":"p001","hashtag":""}
+{"type":"post","ref":"p004","author":2,"content":"$DASH at the #market, #gm","hashtag":"market","tags":["market","gm","dash_cashtag"]}
 {"type":"reply","ref":"r001","author":1,"rootRef":"p001","parentRef":"p001","content":"same"}
 {"type":"reply","ref":"r002","author":0,"rootRef":"p001","parentRef":"r001","content":"nested"}
 {"type":"like","author":2,"targetRef":"p001"}
@@ -69,12 +70,12 @@ the executor cannot deadlock.
 {"type":"bookmark","author":1,"targetRef":"p003"}
 ```
 
-| type | fields | maps to (social contract; see the topology note below for `hashtag`) |
+| type | fields | maps to (social contract; see the topology note below for `hashtag` and `tags`) |
 |---|---|---|
-| `post` | `ref`, `author`, `content`, `hashtag`, `mediaUrl?`, `sensitive?` | `post` — no `language` (v10); a `mediaUrl` brings its `mediaHash` + `mediaFingerprint` (v13: one-item `mediaUrls` / `mediaDigests` / `mediaKinds`, see `mediaUrl` below); v13 adds `live: true` |
-| `quote` | `ref`, `author`, `content`, `quotedRef`, `hashtag`, `mediaUrl?` | `post` with `quotedPostId` + `quotedPostOwnerId` resolved from the ref map |
+| `post` | `ref`, `author`, `content`, `hashtag`, `tags?`, `mediaUrl?`, `sensitive?` | `post` — no `language` (v10); a `mediaUrl` brings its `mediaHash` + `mediaFingerprint` (v13: one-item `mediaUrls` / `mediaDigests` / `mediaKinds`, see `mediaUrl` below); v13 adds `live: true`; v16 writes the tag list as `tags` (see `tags` below) |
+| `quote` | `ref`, `author`, `content`, `quotedRef`, `hashtag`, `tags?`, `mediaUrl?` | `post` with `quotedPostId` + `quotedPostOwnerId` resolved from the ref map |
 | `reply` | `ref`, `author`, `rootRef`, `parentRef`, `content`, `mediaUrl?` | `reply` — `rootPostId` from `rootRef`; `parentOwnerId` = owner of `parentRef`; `replyToReplyId` set iff `parentRef` is a reply; media as for `post`; v13 adds `rootOwnerId` = owner of `rootRef` (so a top-level reply's two owners are the same, `parentIsRoot`); v14 writes neither owner (`rootPostId` and `replyToReplyId` only: the notification windows derive both) |
-| `like` | `author`, `targetRef` (post) | indexOnly `like` `{postId, hashtag?, postAuthor}` — `hashtag`/`postAuthor` **copied from the target post's recorded values** (`where`: a mismatch is consensus error 40127; an untagged target means like.`hashtag` is **omitted**, exactly like the post's). One transition: the like feeds today's trending tags itself (v10 has no `beat`) |
+| `like` | `author`, `targetRef` (post) | indexOnly `like` `{postId, hashtag?, postAuthor}` — `hashtag`/`postAuthor` **copied from the target post's recorded values** (`where`: a mismatch is consensus error 40127; an untagged target means like.`hashtag` is **omitted**, exactly like the post's). v16: `{postId, tags?, postAuthor}`, `tags` the post's recorded list repeated exactly (same elements, same order), omitted for an untagged post; the like is entered once under each tag. One transition: the like feeds today's trending tags itself (v10 has no `beat`) |
 | `likeReply` | `author`, `targetRef` (reply) | indexOnly `likeReply` `{replyId, replyAuthor}`; v13 `{replyId}` (no author counter) |
 | `repost` | `author`, `targetRef` (post or reply) | `post` with no content, `quotedPostId` (or `quotedReplyId` for a reply target) + `quotedPostOwnerId` — v10 has no repost type; it is written like a quote and pays the post's token cost and action fee |
 | `follow` | `author`, `target` (persona idx) | `follow` `{followingId}` |
@@ -91,6 +92,25 @@ the executor cannot deadlock.
   `byHashtagPost` and `byTrendHashtagPost` indexes are `skipIfAbsent`, so absence
   writes no entry; on v12 `byHashtagPost` is a counter of `byPost`, one per
   tagged post, and an untagged post has none). Tags match `^[a-z0-9_]{1,61}$`, enforced at parse time.
+  On v16 (`contracts/yappr-social-contract-v16.json`) the post and the like
+  carry the typed array `tags` instead; an op without `tags` writes
+  `tags: [hashtag]` (or omits it when untagged), so `hashtag` is still the one
+  tag the cuts before v16 index.
+- `tags`: optional on `post`/`quote`: every tag the content names, in the web
+  client's order (its hashtags in content order, then its cashtags, `$DASH`
+  as `dash_cashtag`; lowercase, distinct). 1 to 4 tags, each matching
+  `^[a-z0-9_]{1,61}$`; `[]` is invalid (an untagged op omits `tags`). On every
+  cut the content may name at most 4 distinct tags (the web client refuses a
+  post naming more), and `tags`, when present, must be exactly the tags it
+  names, in that order; a `{{link:REF}}` names none. Both are enforced at
+  parse time against v16's `post.tags`, whatever cut is configured, and a
+  malformed list is rejected, never rewritten. Only v16 writes the list: its
+  post carries `tags`, every like of it repeats the list exactly (`where`;
+  any other list, order or absence is 40127), and the like counts under each
+  tag (`byHashtagPost`, `byTrendHashtagPost`). The cuts before v16 ignore
+  `tags` and write `hashtag`. A generator emits `tags` only where the list
+  differs from `[hashtag]` (or `[]` when untagged), so a corpus whose posts
+  each name just their hashtag reads the same with or without v16.
 - `content`: may contain `{{link:REF}}` placeholders, where `REF` must be an
   **earlier post/quote ref**; the executor replaces each with
   `https://yap.pr/devnet/post/?id=<realPostId>`. The validator budgets 44
@@ -115,13 +135,14 @@ the executor cannot deadlock.
 
 ### Ref map
 
-The executor materializes each `ref` into `{kind, id, ownerId, hashtag}`
-(base58 document id, base58 owner identity id, the post's hashtag) and
-checkpoints the map in `.seed-progress.local.json`, so likes created on a
-resumed run still carry the exact `where` values of the original
-post. A ref's `hashtag` recorded as `''` and one missing the key entirely are
-equivalent ("untagged") and replay to identical documents: both omit the
-property.
+The executor materializes each `ref` into `{kind, id, ownerId, hashtag,
+tags?}` (base58 document id, base58 owner identity id, the post's hashtag,
+and on v16 the tag list the post was written with) and checkpoints the map in
+`.seed-progress.local.json`, so likes created on a resumed run still carry the
+exact `where` values of the original post. A ref's `hashtag` recorded as `''`
+and one missing the key entirely are equivalent ("untagged") and replay to
+identical documents: both omit the property. A record without `tags` (one
+journaled on a one-tag cut) replays as `[hashtag]`.
 
 ### Token costs (why the generator's op mix matters)
 

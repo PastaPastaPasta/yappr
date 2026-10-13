@@ -5,12 +5,13 @@ import { BaseDocumentService, QueryOptions, DocumentResult, postTimelineClauses,
 import { Post, PostQueryOptions, Reply } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { isPublishedBlogPost } from '@/lib/blog/content-utils';
-import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
+import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, inlineMentions, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
-import { extractMentions, firstIndexedTag } from '@/lib/post-helpers';
+import { extractMentions, indexedTags } from '@/lib/post-helpers';
+import { tagLimitProblem } from '@/lib/compose/limits';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
@@ -52,6 +53,21 @@ function batchDedupeKey(targets: readonly KindedTarget[]): string {
     .map(({ key, ids }) => `${key}#${RequestDeduplicator.createBatchKey(ids)}`)
     .sort()
     .join('||');
+}
+
+/**
+ * The `where` and `orderBy` walking the posts tagged `tag`, newest first, on
+ * `tagAndTime`: `hashtag ==` through v15; on v16 the `tags` element index,
+ * pinned with `contains` (an equality on one element, which takes a cursor)
+ * and ordered by `$createdAt` alone (a typed array is ordered by only under
+ * `containsAny`).
+ */
+export function postsTaggedQuery(tag: string): { where: DocumentWhereClause[]; orderBy: DocumentOrderByClause[] } {
+  const after: DocumentWhereClause = ['$createdAt', '>', 0];
+  if (inlineTags()?.isArray) {
+    return { where: [['tags', 'contains', tag], after], orderBy: [['$createdAt', 'desc']] };
+  }
+  return { where: [['hashtag', '==', tag], after], orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']] };
 }
 
 /**
@@ -290,15 +306,13 @@ class PostService extends BaseDocumentService<Post> {
       quotedReplyId,
       deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
       sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
-      // v9 only: the single indexed hashtag ('' = untagged in memory). The
-      // like path reads it for the consensus-checked agreement. The chain
-      // spells "untagged" as an ABSENT property — normalized back to the
-      // client's '' sentinel here, so downstream consumers (like path, caches)
-      // keep one convention: '' = known untagged, undefined = unknown (a v2
-      // document, which has no inline hashtag).
-      hashtag: typeof (data.hashtag ?? doc.hashtag) === 'string'
-        ? (data.hashtag ?? doc.hashtag) as string
-        : hashtagsAreInline() ? '' : undefined,
+      // Devnet cuts: the indexed tags ([] = untagged in memory). The like
+      // path reads them for the consensus-checked agreement. The chain spells
+      // "untagged" as an ABSENT property — normalized back to the client's []
+      // here, so downstream consumers (like path, caches) keep one
+      // convention: [] = known untagged, undefined = unknown (a v2 document,
+      // which has no inline tags).
+      tags: inlinePostTags(data, doc),
       ...embed,
       // Private feed fields
       encryptedContent,
@@ -499,18 +513,21 @@ class PostService extends BaseDocumentService<Post> {
     // provided. v10 has no `language` property at all (one global timeline).
     if (postsHaveLanguage()) data.language = options.language || 'en';
 
-    // The single indexed tag — first hashtag, or first cashtag when no hashtag
-    // exists, from the PUBLIC content only (`data.content` is already the
-    // teaser/placeholder for private posts, so encrypted text never leaks into
-    // the index); '' when untagged.
-    if (hashtagsAreInline()) {
-      const tag = firstIndexedTag((data.content as string | undefined) ?? '', HASHTAG_MAX_LENGTH);
-      // An untagged post OMITS the optional property — likes mirror the
-      // absence under the absence-aware propertyAgreement, and `skipIfAbsent`
-      // keeps untagged likes out of byHashtagPost entirely.
-      if (tag !== '') {
-        data.hashtag = tag;
-      }
+    // The indexed tags — the hashtags in content order, then the cashtags in
+    // content order, none inside a link — from the PUBLIC content only (`data.content` is already the
+    // teaser/placeholder for private posts, so encrypted text never leaks
+    // into the index). Through v15 that is the first one, the rest staying
+    // plain text; a v16 post holds at most four and names no tag it is not
+    // indexed under, so a fifth refuses the post (the composer refuses it
+    // first, `tagLimitProblem`). An untagged post OMITS the optional property
+    // — likes mirror the absence under the absence-aware agreement, and no
+    // tag index holds them.
+    const tagging = inlineTags();
+    if (tagging) {
+      const publicText = (data.content as string | undefined) ?? '';
+      const tooMany = tagLimitProblem(publicText);
+      if (tooMany) throw new Error(tooMany);
+      Object.assign(data, tagFieldsFor(indexedTags(publicText, tagging.max, HASHTAG_MAX_LENGTH)));
     }
 
     // v10: the indexed mentions, off the same PUBLIC content (a private post's
@@ -939,11 +956,7 @@ class PostService extends BaseDocumentService<Post> {
   async getPostsByHashtag(hashtag: string, options: { limit?: number } = {}): Promise<Post[]> {
     try {
       const result = await this.query({
-        where: [
-          ['hashtag', '==', hashtag],
-          ['$createdAt', '>', 0],
-        ],
-        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
+        ...postsTaggedQuery(hashtag),
         limit: options.limit ?? 50,
       });
       return result.documents;
@@ -966,11 +979,7 @@ class PostService extends BaseDocumentService<Post> {
       const { count } = await paginateCount(sdk, () => ({
         dataContractId: this.contractId,
         documentTypeName: this.documentType,
-        where: [
-          ['hashtag', '==', hashtag],
-          ['$createdAt', '>', 0],
-        ],
-        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
+        ...postsTaggedQuery(hashtag),
       }));
       return count;
     } catch (error) {

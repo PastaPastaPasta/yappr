@@ -18,7 +18,7 @@ import bs58 from 'bs58';
 import { ensureInitialized } from '@dashevo/evo-sdk';
 import {
   DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, NOT_QUERYABLE_BY_OWNER, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
-  buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
+  buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, hashtagProps, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
 export const utf8 = (text) => new TextEncoder().encode(text);
@@ -349,11 +349,13 @@ export function createRecorder({ writer, state, file }) {
 }
 
 /**
- * A social v10–v13 `post` (its only caller, pollr, refuses any other topology through `requireSeededTopology`):
- * `additionalProperties: false`, no `author`, no `language`, and `hashtag` omitted entirely rather than sent empty
- * when the post is untagged; v13 adds `live: true`.
+ * A social v10 to v16 `post` (its only caller, pollr, refuses any other topology through `requireSeededTopology`):
+ * `additionalProperties: false`, no `author`, no `language`, and the tag property omitted entirely rather than sent
+ * empty when the post is untagged; v13 adds `live: true`. The tags go through seed-lib's `hashtagProps`
+ * (`SOCIAL_SHAPES.tags`): one `hashtag` up to v15, the typed array `tags` on v16, holding the optional `tags` list
+ * when given, else `[hashtag]`. A one-tag cut ignores `tags`.
  */
-export const socialPost = ({ content, hashtag, ...rest }) => SOCIAL_SHAPES.post({ content, ...(hashtag ? { hashtag } : {}), ...rest });
+export const socialPost = ({ content, hashtag, tags, ...rest }) => SOCIAL_SHAPES.post({ content, ...hashtagProps(hashtag, tags), ...rest });
 
 /**
  * Tops each persona up to the YAPP its share of the plan will spend (its starter claim, then an owner mint: v10's YAPP

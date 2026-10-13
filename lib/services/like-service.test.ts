@@ -47,10 +47,10 @@ const likeRow = (): Row => ({ $id: id(10), $ownerId: VIEWER, $createdAt: LIKE_AT
 const beatRow = (docId: string, createdAt: number, owner = VIEWER): Row => ({ $id: docId, $ownerId: owner, $createdAt: createdAt, postId: POST, hashtag: 'dash' })
 const beatDeletes = () => mocks.deleteDocumentByValues.mock.calls.filter(([, docType]) => docType === 'beat')
 
-async function unlike(hashtag = 'dash', { topology = 'v9', kind = 'post' }: { topology?: string; kind?: 'post' | 'reply' } = {}): Promise<boolean> {
+async function unlike(tags: string | string[] = 'dash', { topology = 'v9', kind = 'post' }: { topology?: string; kind?: 'post' | 'reply' } = {}): Promise<boolean> {
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
   const { likeService } = await import('./like-service')
-  const work = likeService.unlikePost(POST, VIEWER, kind, { author: AUTHOR, hashtag })
+  const work = likeService.unlikePost(POST, VIEWER, kind, { author: AUTHOR, tags: typeof tags === 'string' ? (tags === '' ? [] : [tags]) : tags })
   await vi.runAllTimersAsync()
   return work
 }
@@ -464,6 +464,20 @@ describe('v11 unlike (outlivesDelete): content values only, no $createdAt', () =
     expect(Object.keys(data).sort()).toEqual(Object.keys(values).sort())
     expect(bs58.encode(data[field] as Uint8Array)).toBe(POST)
     expect(chain.rows[docType]).toEqual([])
+  })
+
+  it('repeats a v16 post\'s whole tag list, in order, and omits it for an untagged post', async () => {
+    for (const tags of [['news', 'dash'], []]) {
+      const values = { postId: POST, postAuthor: AUTHOR, ...(tags.length > 0 ? { tags } : {}) }
+      chain.rows = { like: [{ $id: id(10), $ownerId: VIEWER, ...values }] }
+      mocks.deleteDocumentByValues.mockClear()
+
+      await expect(unlike(tags, { topology: 'v16' })).resolves.toBe(true)
+
+      const data = deleteTupleOf('like')?.data as Record<string, unknown>
+      expect(Object.keys(data).sort()).toEqual(Object.keys(values).sort())
+      expect(data.tags).toEqual(tags.length > 0 ? tags : undefined)
+    }
   })
 
   it('is a no-op success when there is no like to remove', async () => {

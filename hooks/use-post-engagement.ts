@@ -104,9 +104,9 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     try {
       await settle()
       const { likeService } = await import('@/lib/services/like-service')
-      // On v9 the like repeats the target's author and hashtag under a
+      // On devnet cuts the like repeats the target's author and tags under a
       // consensus-checked agreement; passing them saves the service a fetch.
-      const targetInfo = { author: post.author.id, hashtag: post.hashtag }
+      const targetInfo = { author: post.author.id, tags: post.tags }
       const ok = wasLiked
         ? await likeService.unlikePost(post.id, viewerId, targetKind, targetInfo)
         : await likeService.likePost(post.id, viewerId, post.author.id, targetKind, targetInfo)
@@ -119,7 +119,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     } finally {
       setLikeLoading(false)
     }
-  }, [viewerId, likeLoading, liked, likes, settle, post.id, post.author.id, post.hashtag, targetKind])
+  }, [viewerId, likeLoading, liked, likes, settle, post.id, post.author.id, post.tags, targetKind])
 
   /**
    * v10: delete the viewer's quote or repost of the post. Callers confirm a

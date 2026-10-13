@@ -94,14 +94,15 @@ export interface Post {
    */
   sensitive?: boolean
   /**
-   * v9 only: the post's single indexed hashtag (lowercase, no '#'; `''` =
-   * known untagged, `undefined` = unknown). Likes must repeat it — consensus
-   * checks the agreement — so the like path reads it off this field rather
-   * than re-parsing content. The chain stores "untagged" as an absent
-   * property: the post transform and the write paths translate at the
-   * boundary (see `hashtagsAreInline()` in lib/contract-topology).
+   * Devnet cuts only: the tags the post is indexed under, in its stored order
+   * (lowercase, no '#'; `[]` = known untagged, `undefined` = unknown). One on
+   * v9–v15 (`post.hashtag`), up to four on v16 (`post.tags`). Likes must
+   * repeat them — consensus checks the agreement — so the like path reads
+   * them off this field rather than re-parsing content. The chain stores
+   * "untagged" as an absent property: the post transform and the write paths
+   * translate at the boundary (see `inlineTags()` in lib/contract-topology).
    */
-  hashtag?: string
+  tags?: string[]
   // Blog quote fields (present when this Post represents a quoted blog post)
   __isBlogPostQuote?: boolean
   title?: string

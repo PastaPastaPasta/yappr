@@ -467,6 +467,11 @@ export function keyNetwork(): KeyNetwork {
 // contract owner, and that starts with no supply; the byte arrays are written
 // as property type shorthands.
 //
+// `v16` — the 5.0.0-beta.6 cut, `contracts/yappr-social-contract-v16.json`
+// (docs/SOCIAL_V16.md). v15 with up to four hashtags per post: `post.hashtag`
+// becomes the typed array `post.tags`, and a like repeats the post's list
+// (`where { "tags": "tags" }`), so it is counted under every tag of the post.
+//
 // The intermediate cuts (v3–v8) are gone: none exists on any chain any more,
 // and the repo does not keep contracts, generators or batteries that cannot be
 // registered. Recover them from git history.
@@ -474,7 +479,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

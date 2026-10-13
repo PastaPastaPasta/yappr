@@ -179,6 +179,26 @@ it.each(['v9', 'v10'] as const)('reads each axis through the %s windows', async 
   expect(shape(mocks.ranked.mock.calls[5][0])).toEqual({ documentTypeName: 'like' });
 });
 
+it.each([
+  ['v15', ['hashtag', '==', 'dash'], 'hashtag'],
+  ['v16', ['tags', 'contains', 'dash'], 'tags'],
+] as const)('pins one tag and groups trending by the %s tag property', async (topology, pin, groupBy) => {
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology);
+  mocks.ranked.mockResolvedValue({ entries: [] });
+  const { topHashtagsByLikes, topLikedPosts } = await import('./ranked-likes');
+  await topLikedPosts({ hashtag: 'dash' });
+  await topLikedPosts({ hashtag: 'dash', window: 'today' });
+  await topHashtagsByLikes(12, 'all');
+  await topHashtagsByLikes(12, 'today');
+  const reads = mocks.ranked.mock.calls.map(([query]) => ({ groupBy: query.groupBy, where: query.where }));
+  expect(reads).toEqual([
+    { groupBy: 'postId', where: [pin] },
+    { groupBy: 'postId', where: [pin] },
+    { groupBy, where: undefined },
+    { groupBy, where: undefined },
+  ]);
+});
+
 it('reads nothing windowed on v2, which has no windows', async () => {
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v2');
   const { topHashtagsByLikes, topLikedPosts, topCreatorsByLikes } = await import('./ranked-likes');

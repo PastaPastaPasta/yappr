@@ -1,6 +1,6 @@
 import {
   canBookmark, canRepost, contentLimits, contractTakesReports, dashpayProfileExtension, deletesAreTombstones,
-  followRankingsAvailable, hasFlatThreads, hashtagsAreInline, likesAreIndexOnly, mediaItemLimit, postsHaveLanguage,
+  followRankingsAvailable, hasFlatThreads, hashtagsAreInline, inlineTags, likesAreIndexOnly, mediaItemLimit, postsHaveLanguage,
   prefixRankingsAvailable, profilesAreReportable, reportShape, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
 } from '@/lib/contract-topology'
 import { dmIsV5 } from '@/lib/constants'
@@ -22,6 +22,7 @@ export interface PlatformInfoDTO {
 export function platformInfo(): PlatformInfoDTO {
   const limits = contentLimits()
   const reportFee = reportFeeCredits()
+  const tags = inlineTags()
   return {
     capabilities: {
       rankings: likesAreIndexOnly(),
@@ -40,6 +41,7 @@ export function platformInfo(): PlatformInfoDTO {
       reportFeeCredits: reportFee === null ? null : Number(reportFee),
       mediaItems: mediaItemLimit(),
       hashtagsInline: hashtagsAreInline(),
+      tagsPerPost: tags?.isArray ? tags.max : null,
       postLanguage: postsHaveLanguage(),
       contentLimits: { chars: limits.maxLength, bytes: limits.maxBytes },
       profileLimits: { ...profileTextLimits() },

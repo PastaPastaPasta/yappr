@@ -375,7 +375,7 @@ export function ContractModerationSettings() {
         render={(removal) => (
           <>
             {removal.documentId} by {removal.moderatorId.slice(0, 8)}… on {new Date(removal.removedAt).toLocaleDateString()}
-            {removal.kept.hashtag ? ` · #${removal.kept.hashtag}` : ''}
+            {removal.kept.tags ? ` · ${removal.kept.tags.map((tag) => `#${tag}`).join(' ')}` : ''}
             {removal.kept.createdAt !== undefined ? ` · posted ${postedOnLabel(removal.kept.createdAt)}` : ''}
             {removal.reason ? ` — ${removal.reason}` : ''}{removal.restoredAt !== null ? ' (restored)' : ''}
           </>

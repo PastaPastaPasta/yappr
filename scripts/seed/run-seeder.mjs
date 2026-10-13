@@ -3,10 +3,13 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * The target is the v10, v11, v12, v13 or v14 social contract (`.env.devnet`; the run
+ * The target is the v10, v11, v12, v13, v14, v15 or v16 social contract (`.env.devnet`; the run
  * refuses any other NEXT_PUBLIC_CONTRACT_TOPOLOGY, see SEEDED_TOPOLOGIES). The
  * corpus `''` convention means "untagged", and an untagged post/quote/like
  * OMITS the hashtag property (writing `''` is `where` consensus error 40127).
+ * v16 indexes a post under a list of tags: a post/quote writes the op's `tags`
+ * (else `[hashtag]`) as the typed array `tags`, and a like repeats that list
+ * exactly, the same elements in the same order (`postTags`).
  * A post or reply with a `mediaUrl` carries the sha256 and dHash of the bytes at that URL
  * (media-hash.mjs), fetched once per URL before the run starts; on v13 that one
  * item is written as `mediaUrls` / `mediaDigests` / `mediaKinds` (an image), every
@@ -39,8 +42,8 @@
  *    acyclic and this cannot deadlock.
  *
  * Resumability: every executed line is appended to the JSON-lines checkpoint
- * `.seed-progress.local.json` together with the ref → {id, ownerId, hashtag}
- * map entries; a re-run folds the journal, skips completed lines, resolves
+ * `.seed-progress.local.json` together with the ref → {id, ownerId, hashtag,
+ * tags?} map entries; a re-run folds the journal, skips completed lines, resolves
  * refs from the checkpoint, and retries failures. Nothing is ever duplicated:
  * documents are built with per-attempt-stable entropy, so even a retry of a
  * broadcast that DID land reads back as the same document.
@@ -101,6 +104,7 @@ import {
   describeErr,
   CONTENT_MAX,
   CONTENT_MAX_BYTES,
+  CORPUS_TAGS_MAX,
   codePointLength,
   expandedContentLength,
   utf8Length,
@@ -120,6 +124,8 @@ import {
   feeAgreementFor,
   randomEntropy,
   readback,
+  refRecordOf,
+  refTagFields,
   requireSeededTopology,
   sleep,
   socialContractId,
@@ -214,7 +220,7 @@ function deferred() {
 /**
  * The scheduling engine, network-free and executor-injected so the self-test
  * can drive it. `executor(op, refs)` performs one op and returns the ref
- * record to publish ({kind, id, ownerId, hashtag}) or null for ops that
+ * record to publish ({kind, id, ownerId, hashtag, tags?}) or null for ops that
  * define no ref; it throws on permanent failure.
  *
  * Returns aggregate results; appends every executed line through `journal`.
@@ -350,7 +356,9 @@ async function entryExists(handle, contractId, docType, keyField, keyValue, owne
  * existenceKey}. Pure (exported for the self-test): the acceptance query for
  * indexOnly types is described by `existenceKey` and bound to the network in
  * buildExecutor. An untagged post/quote/like OMITS the hashtag property (the
- * corpus '' convention and an absent checkpoint hashtag are equivalent).
+ * corpus '' convention and an absent checkpoint hashtag are equivalent). On v16
+ * a post/quote writes the op's tag list as `tags` (`postTags`: its `tags`, else
+ * `[hashtag]`) and its ref record keeps that list, which a like copies.
  * `mediaFor(url)` answers the `{ mediaHash, mediaFingerprint }` of a URL,
  * computed before the run (`resolveCorpusMedia`); `SOCIAL_SHAPES` writes them in
  * the configured cut's media fields.
@@ -380,12 +388,12 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
         tokenCost: TOKEN_COST.post,
         data: SOCIAL_SHAPES.post({
           content: finalContent ?? '',
-          ...hashtagProps(op.hashtag),
+          ...hashtagProps(op.hashtag, op.tags),
           ...media,
           ...(op.sensitive !== undefined ? { sensitive: op.sensitive } : {}),
           ...(quoted ? { quotedPostId: bytes(quoted.id), quotedPostOwnerId: bytes(quoted.ownerId) } : {}),
         }),
-        refRecord: (id) => ({ kind: 'post', id, ownerId: actor.ownerId, hashtag: op.hashtag ?? '' }),
+        refRecord: (id) => ({ kind: 'post', id, ownerId: actor.ownerId, ...refTagFields(op) }),
       };
     }
     case 'reply': {
@@ -415,8 +423,9 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
         indexOnly: true,
         // where: hashtag and postAuthor MUST mirror the post — including
         // hashtag ABSENCE (both-absent = agreement; '' on a like of an
-        // untagged post is consensus error 40127). `postAuthor` binds to
-        // `post.$ownerId`. The same tuple is what a delete-by-values carries.
+        // untagged post is consensus error 40127). On v16 `tags` repeats the
+        // post's recorded list element for element, in order. `postAuthor`
+        // binds to `post.$ownerId`. The same tuple is what a delete-by-values carries.
         // The like itself feeds the rolling trending windows (byTrendPost, byTrendHashtagPost).
         data: likeValueTuple(target),
         existenceKey: { keyField: 'postId', keyValue: target.id },
@@ -894,7 +903,7 @@ async function selfTest() {
     executionLog.push(op.line);
     if (op.ref) {
       const kind = op.type === 'reply' ? 'reply' : 'post';
-      return { kind, id: `id-${op.ref}`, ownerId: `owner-${op.author}`, hashtag: op.hashtag ?? '' };
+      return { kind, id: `id-${op.ref}`, ownerId: `owner-${op.author}`, ...refTagFields(op) };
     }
     return null;
   };
@@ -921,7 +930,7 @@ async function selfTest() {
   for (const record of journal) {
     if (record.status === 'done') {
       progress2.completed.set(record.line, record);
-      if (record.ref) progress2.refs.set(record.ref, { kind: record.kind, id: record.id, ownerId: record.ownerId, hashtag: record.hashtag });
+      if (record.ref) progress2.refs.set(record.ref, refRecordOf(record));
     }
   }
   let reexecuted = 0;
@@ -969,14 +978,18 @@ async function selfTest() {
   // ---- Document shapes: hashtag ABSENCE, no attested author, no language, media hashes ----
   const owner = bs58.encode(new Uint8Array(32).fill(1));
   const targetId = bs58.encode(new Uint8Array(32).fill(2));
-  const planCtx = (refHashtag) => ({
+  const planCtx = (refHashtag, refTags) => ({
     actors: new Map([[0, { ownerId: owner }], [1, { ownerId: owner }]]),
-    resolveRef: () => ({ kind: 'post', id: targetId, ownerId: owner, hashtag: refHashtag }),
+    resolveRef: () => ({ kind: 'post', id: targetId, ownerId: owner, hashtag: refHashtag, ...(refTags ? { tags: refTags } : {}) }),
   });
   const postOp = { type: 'post', ref: 'p1', author: 0, content: 'x', hashtag: '', line: 1 };
   const quoteOp = { type: 'quote', ref: 'p2', author: 0, content: 'q', quotedRef: 'p1', hashtag: '', line: 2 };
   const likeOp = { type: 'like', author: 1, targetRef: 'p1', line: 3 };
   const replyOp = { type: 'reply', author: 1, rootRef: 'p1', parentRef: 'p1', content: 'r', line: 4 };
+  /** A post naming two tags, with the list a corpus carries for it (v16 writes it whole, a one-tag cut its hashtag). */
+  const listOp = { ...postOp, ref: 'pT', content: 'gm #dash #gm', hashtag: 'dash', tags: ['dash', 'gm'] };
+  /** The tag properties of a document, as JSON: `{}` when it carries none. */
+  const tagFields = (data) => JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key]) => key === 'hashtag' || key === 'tags')));
 
   const plannedPost = planOp(postOp, planCtx('')).data;
   const plannedReply = planOp(replyOp, planCtx('')).data;
@@ -1010,6 +1023,8 @@ async function selfTest() {
       ['reply', planOp(replyOp, byRef)], ['reply with media', { docType: 'reply', data: replyWithMedia }], ['nested reply', planOp(nestedOp, byRef)],
       ['like', planOp(likeOp, byRef)], ['likeReply', planOp(likeReplyOp, byRef)], ['repost', planOp(repostOfPost, byRef)],
       ['follow', planOp({ type: 'follow', author: 0, target: 1, line: 9 }, byRef)], ['bookmark', planOp({ type: 'bookmark', author: 1, targetRef: 'p1', line: 10 }, byRef)],
+      ['post with a tag list', planOp(listOp, byRef)],
+      ['like of a post with a tag list', planOp(likeOp, { ...byRef, resolveRef: () => ({ kind: 'post', id: targetId, ownerId: owner, ...refTagFields(listOp) }) })],
     ];
     const problems = plans.flatMap(([label, plan]) => SOCIAL_SHAPES.check(plan.docType, plan.data).map((problem) => `${label}: ${problem}`));
     check(`every planned write is a valid create of the configured cut ${JSON.stringify(SOCIAL_SHAPES.cut)}`, problems.length === 0, problems.join('; '));
@@ -1065,8 +1080,10 @@ async function selfTest() {
     const plan = (content) => { try { planOp({ ...postOp, content }, planCtx('')); return true; } catch { return false; } };
     return plan('x'.repeat(1000)) && !plan('x'.repeat(1001)) && !plan('€'.repeat(667)) && plan('😀'.repeat(500));
   })());
-  check('untagged post OMITS hashtag', !('hashtag' in plannedPost));
-  check('tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('')).data.hashtag === 'dash');
+  const v16 = SOCIAL_SHAPES.cut.tagArray;
+  check(`untagged post OMITS ${SOCIAL_SHAPES.tagField}`, tagFields(plannedPost) === '{}');
+  check(`tagged post writes its hashtag${v16 ? ' as a one-element tags list (v16)' : ''}`,
+    tagFields(planOp({ ...postOp, hashtag: 'dash' }, planCtx('')).data) === (v16 ? '{"tags":["dash"]}' : '{"hashtag":"dash"}'));
   const repostOp = { type: 'repost', author: 1, targetRef: 'p1', line: 5 };
   const plannedRepost = planOp(repostOp, planCtx('dash'));
   const liveKey = SOCIAL_SHAPES.cut.liveMarker ? ['live'] : [];
@@ -1090,20 +1107,67 @@ async function selfTest() {
       !(await duplicate(holding({ ...ours, $ownerId: bs58.decode(targetId) }), repostOp, plannedRepost)) &&
       !(await duplicate(holding(ours), quoteOp, planOp(quoteOp, planCtx('')))));
   const plannedQuote = planOp(quoteOp, planCtx('')).data;
-  check('untagged quote OMITS hashtag (quote fields intact)', !('hashtag' in plannedQuote) && plannedQuote.quotedPostId instanceof Uint8Array);
+  check(`untagged quote OMITS ${SOCIAL_SHAPES.tagField} (quote fields intact)`, tagFields(plannedQuote) === '{}' && plannedQuote.quotedPostId instanceof Uint8Array);
   const plannedLike = planOp(likeOp, planCtx(''));
   check(
-    'like of an untagged post OMITS like.hashtag',
-    !('hashtag' in plannedLike.data) && plannedLike.data.postAuthor instanceof Uint8Array && plannedLike.existenceKey.keyValue === targetId
+    `like of an untagged post OMITS like.${SOCIAL_SHAPES.tagField}`,
+    tagFields(plannedLike.data) === '{}' && plannedLike.data.postAuthor instanceof Uint8Array && plannedLike.existenceKey.keyValue === targetId
   );
-  check('like of a tagged post copies the hashtag', planOp(likeOp, planCtx('dash')).data.hashtag === 'dash');
+  check('like of a tagged post copies the hashtag', tagFields(planOp(likeOp, planCtx('dash')).data) === tagFields(SOCIAL_SHAPES.tags(['dash'])));
   // The delete-by-values tuple is the same value tuple — it must reproduce the absence.
   const deleteTupleAbsent = likeValueTuple({ id: targetId, ownerId: owner }); // ref with no hashtag key at all
   const deleteTupleEmpty = likeValueTuple({ id: targetId, ownerId: owner, hashtag: '' });
   check(
-    'like delete tuple OMITS hashtag, for \'\' and absent refs alike',
-    !('hashtag' in deleteTupleAbsent) && JSON.stringify(Object.keys(deleteTupleAbsent)) === JSON.stringify(Object.keys(deleteTupleEmpty))
+    `like delete tuple OMITS ${SOCIAL_SHAPES.tagField}, for \'\' and absent refs alike`,
+    tagFields(deleteTupleAbsent) === '{}' && JSON.stringify(Object.keys(deleteTupleAbsent)) === JSON.stringify(Object.keys(deleteTupleEmpty))
   );
+
+  // Tag lists (v16): a post writes the op's list, its ref record keeps the list written, and a
+  // like repeats it element for element, in order. A one-tag cut writes the hashtag and records no list.
+  {
+    const listPlan = planOp(listOp, planCtx(''));
+    check(`a post op with a tag list writes ${v16 ? 'the whole list as tags (v16)' : 'only its hashtag (a one-tag cut ignores tags)'}`,
+      tagFields(listPlan.data) === (v16 ? '{"tags":["dash","gm"]}' : '{"hashtag":"dash"}'), tagFields(listPlan.data));
+    const listRecord = listPlan.refRecord(targetId);
+    check(`its ref record keeps the hashtag${v16 ? ' and the list written' : ' and no tags key (the journal reads as before v16)'}`,
+      listRecord.hashtag === 'dash' && (v16 ? JSON.stringify(listRecord.tags) === '["dash","gm"]' : !('tags' in listRecord)), JSON.stringify(listRecord));
+    const taggedRecord = planOp({ ...postOp, hashtag: 'dash' }, planCtx('')).refRecord(targetId);
+    const untaggedRecord = planOp({ ...postOp, tags: [] }, planCtx('')).refRecord(targetId);
+    check(`a tagged post's record ${v16 ? 'lists its one tag' : 'carries no tags key'}; an untagged one's ('' and [] alike) records hashtag '' and no list`,
+      (v16 ? JSON.stringify(taggedRecord.tags) === '["dash"]' : !('tags' in taggedRecord)) && untaggedRecord.hashtag === '' && !('tags' in untaggedRecord)
+        && tagFields(planOp({ ...postOp, tags: [] }, planCtx('')).data) === '{}');
+    const listLike = planOp(likeOp, { ...planCtx(''), resolveRef: () => listRecord });
+    check('a like of it copies the post\'s tag fields exactly, in order', tagFields(listLike.data) === tagFields(listPlan.data), tagFields(listLike.data));
+    check('the like\'s delete-by-values tuple is its create tuple', JSON.stringify(likeValueTuple(listRecord)) === JSON.stringify(listLike.data));
+    check(`a like repeats the recorded list in its own order, never re-sorted${v16 ? '' : ' (a one-tag cut: the hashtag)'}`,
+      tagFields(planOp(likeOp, planCtx('gm', ['gm', 'dash'])).data) === (v16 ? '{"tags":["gm","dash"]}' : '{"hashtag":"gm"}'));
+    check(`a like of a four-tag post ${v16 ? 'carries all four' : 'carries the hashtag alone'}`,
+      tagFields(planOp(likeOp, planCtx('a', ['a', 'b', 'c', 'd_cashtag'])).data) === (v16 ? '{"tags":["a","b","c","d_cashtag"]}' : '{"hashtag":"a"}'));
+  }
+
+  // Corpus tag lists: optional on a post or quote, exactly the tags the content names in
+  // order, 1 to CORPUS_TAGS_MAX, on every cut; a content naming more is refused outright.
+  {
+    const tagLine = (fields) => JSON.stringify({ type: 'post', ref: 'pT', author: 0, content: 'gm #dash #gm', hashtag: 'dash', ...fields });
+    const first = '{"type":"post","ref":"p1","author":0,"content":"x","hashtag":""}\n';
+    check('parse: a tags list equal to the content\'s tags, in order, is accepted',
+      JSON.stringify(parseCorpus(tagLine({ tags: ['dash', 'gm'] }), personas).ops[0].tags) === '["dash","gm"]');
+    check('parse: a quote may carry one, cashtags after the hashtags, a link naming none',
+      parseCorpus(first + JSON.stringify({ type: 'quote', ref: 'p2', author: 1, content: '$DASH to #mars {{link:p1}}', quotedRef: 'p1', hashtag: 'mars', tags: ['mars', 'dash_cashtag'] }), personas).ops.length === 2);
+    check(`parse: ${CORPUS_TAGS_MAX} tags accepted, a tag named twice counted once`,
+      parseCorpus(tagLine({ content: '#a #B #b #c $d', hashtag: 'a', tags: ['a', 'b', 'c', 'd_cashtag'] }), personas).ops.length === 1);
+    check('parse: no tags list is fine (the post is indexed under [hashtag])', parseCorpus(tagLine({}), personas).ops[0].tags === undefined);
+    check('parse: an empty or non-list tags rejected', rejects(tagLine({ tags: [] }), 'tags must be a list') && rejects(tagLine({ tags: 'dash' }), 'tags must be a list'));
+    check('parse: tags in another order than the content rejected', rejects(tagLine({ tags: ['gm', 'dash'] }), 'in order'));
+    check('parse: tags missing a tag the content names rejected', rejects(tagLine({ tags: ['dash'] }), 'in order'));
+    check('parse: a tag named twice in tags rejected', rejects(tagLine({ content: 'gm #dash', tags: ['dash', 'dash'] }), 'twice'));
+    check('parse: a malformed or over-long tag rejected, never rewritten',
+      rejects(tagLine({ tags: ['DASH', 'gm'] }), 'must match') && rejects(tagLine({ content: `#${'a'.repeat(62)}`, hashtag: '', tags: ['a'.repeat(62)] }), 'must match'));
+    check(`parse: content naming ${CORPUS_TAGS_MAX + 1} distinct tags rejected, with or without a tags list`,
+      rejects(tagLine({ content: '#a #b #c #d $e', hashtag: 'a' }), `at most ${CORPUS_TAGS_MAX}`)
+        && rejects(tagLine({ content: '#a #b #c #d $e', hashtag: 'a', tags: ['a', 'b', 'c', 'd', 'e_cashtag'] }), `at most ${CORPUS_TAGS_MAX}`)
+        && rejects(first + JSON.stringify({ type: 'quote', ref: 'p2', author: 1, content: '#a #b #c #d #e', quotedRef: 'p1', hashtag: '' }), `at most ${CORPUS_TAGS_MAX}`));
+  }
 
   // Parse-time tag length: the contract's maxLength is 61
   const longTag = (n) => `{"type":"post","ref":"pL","author":0,"content":"x","hashtag":"${'a'.repeat(n)}"}`;
@@ -1124,8 +1188,20 @@ async function selfTest() {
     "journal: absent-hashtag ref replays identically to a '' ref (both omit the property)",
     folded.refs.size === 2 &&
       JSON.stringify(Object.keys(likeFromRef('pA'))) === JSON.stringify(Object.keys(likeFromRef('pB'))) &&
-      !('hashtag' in likeFromRef('pA'))
+      tagFields(likeFromRef('pA')) === '{}'
   );
+  // A record journaled before v16 (no `tags` key) replays as `[hashtag]`, exactly as the same post's
+  // v16 record does; a v16 record's list survives the fold; a planned post's record round-trips.
+  appendProgress({ line: 3, status: 'done', type: 'post', ref: 'pC', kind: 'post', id: targetId, ownerId: owner, hashtag: 'dash' }, tmpJournal);
+  appendProgress({ line: 4, status: 'done', type: 'post', ref: 'pD', kind: 'post', id: targetId, ownerId: owner, hashtag: 'dash', tags: ['dash'] }, tmpJournal);
+  appendProgress({ line: 5, status: 'done', type: 'post', ref: 'pE', author: 0, ...planOp(listOp, planCtx('')).refRecord(targetId) }, tmpJournal);
+  const refolded = loadProgress(tmpJournal);
+  const likeFrom = (ref) => likeValueTuple(refolded.refs.get(ref));
+  check('journal: a record without tags replays identically to the same post\'s record with them, as [hashtag]',
+    JSON.stringify(likeFrom('pC')) === JSON.stringify(likeFrom('pD')) && tagFields(likeFrom('pC')) === tagFields(SOCIAL_SHAPES.tags(['dash'])));
+  check(`journal: a planned post's record folds back to the list it wrote${v16 ? '' : ' (its hashtag, on a one-tag cut)'}`,
+    tagFields(likeFrom('pE')) === tagFields(planOp(listOp, planCtx('')).data)
+      && JSON.stringify(refolded.refs.get('pE')) === JSON.stringify(refRecordOf(planOp(listOp, planCtx('')).refRecord(targetId))), JSON.stringify(refolded.refs.get('pE')));
 
   // ---- What a create CARRIES: the action fee agreement and YAPP vs credits ----
   const postFee = actionFeeFor('post');
@@ -1313,7 +1389,7 @@ try {
   const journal = (record) => {
     appendProgress({ ...record, contractId });
     if (record.status === 'done' && record.ref) {
-      progress.refs.set(record.ref, { kind: record.kind, id: record.id, ownerId: record.ownerId, hashtag: record.hashtag ?? '' });
+      progress.refs.set(record.ref, refRecordOf(record));
     }
   };
 

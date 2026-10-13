@@ -51,7 +51,7 @@ import { useEditorReveal } from './editor-reveal';
 import { FALLBACK_LIMITS, hasVisibleContent, isOverContentLimit } from './limits';
 import { MentionSuggestions, useDebounced } from './MentionSuggestions';
 import { discardPending, pendingDraft, publishPost, viewerAuthor } from './pending-posts';
-import { insertMention, mentionAt, tagMaxLength } from './text';
+import { insertMention, mentionAt, tagLimitProblem, tagMaxLength } from './text';
 
 /** `compose-modal.tsx` `canAddThread`: a thread holds at most 10 posts. */
 const MAX_PARTS = 10;
@@ -269,7 +269,13 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const mediaTooLong = Array.from(mediaUrl.trim()).length > MAX_MEDIA_URL;
   const mediaValid = mediaUrl.trim() === '' || (HOSTED_URL.test(mediaUrl.trim()) && !mediaTooLong);
   const targetReady = context.mode === 'post' || (targetPost !== null && !targetGone);
-  const canPost = open.some((p) => hasVisibleContent(p.text)) && !overLimit && !offline && mediaValid && targetReady;
+  // Social v16: a post names at most four tags. Only the part published as the post carries any (lib
+  // `plannedRootPost`): the first open part with visible text, unless this replies or the thread's
+  // first part already posted (the rest are then replies).
+  const rootIndex = context.mode === 'reply' || parts[0]?.postedId ? -1 : parts.findIndex((p) => !p.postedId && hasVisibleContent(p.text));
+  const tagProblem = rootIndex >= 0 ? tagLimitProblem(parts[rootIndex].text, tagMax, capabilities?.tagsPerPost ?? null) : null;
+  const canPost =
+    open.some((p) => hasVisibleContent(p.text)) && !overLimit && tagProblem === null && !offline && mediaValid && targetReady;
   const postLabel = context.mode === 'reply' ? 'Reply' : contentful.length > 1 ? `Post all (${contentful.length})` : 'Post';
   const canAddPart = context.mode === 'post' && parts.length < MAX_PARTS;
 
@@ -520,6 +526,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
               limits={limits}
               tagMax={tagMax}
               inlineHints={inlineHints}
+              tagProblem={index === rootIndex ? tagProblem : null}
               joined={index < parts.length - 1}
               removable={parts.length > 1 && !part.postedId}
               autoFocus={index === firstOpen}

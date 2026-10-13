@@ -249,6 +249,12 @@ describe('the v11 tombstone (design M)', () => {
     expect(updateDocument).not.toHaveBeenCalled()
   })
 
+  it('keeps v16\'s frozen tag list, in order, and clears every content field', async () => {
+    get.mockResolvedValue(storedFullV11Post({ hashtag: undefined, tags: ['news', 'dash'], mentionedUserId: undefined, mentionedUserIds: [quotedOwnerId], live: true }))
+    await expect(tombstone('v16')).resolves.toBe(true)
+    expect(attempt(0)).toEqual({ deleted: true, tags: ['news', 'dash'] })
+  })
+
   it('clears v15\'s mentions array with every other content field', async () => {
     get.mockResolvedValue(storedFullV11Post({ mentionedUserId: undefined, mentionedUserIds: [quotedOwnerId, ownerId], live: true }))
     await expect(tombstone('v15')).resolves.toBe(true)

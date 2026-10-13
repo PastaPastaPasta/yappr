@@ -11,11 +11,11 @@ This is the complete screen inventory for the social part of Yappr, compared wit
 | Feed — Top | 2 + hidden Recent 2 | 2 | Recent is disabled, including its poll, while Top is selected. |
 | Feed — Following | `2 + F + E` | `2 + ceil(F/11) + E` | Followed-owner repost pages are sibling-bundled and reposter identities are batched; dense owners retain ordinary pagination. |
 | Explore — Top | 2 | 2 | Existing ranked selection and composite hydration are retained. |
-| Explore — hashtags/trending | 1 | 1 | Ranked hashtag query is already one request. |
+| Explore — hashtags/trending | 1 | 1 | Ranked hashtag query is already one request. Social v16 groups it by the `tags` list, where a like counts under each tag of its post; still one request. |
 | Explore — creators | 3 | 3 | Ranked creators plus profile/name batches; no compatible creator-count composite is available. |
 | Explore — blogs | `2 + B` | `2 + ceil(B/11)` | Recent/search blog pages are sibling-bundled; card follow counts are not loaded when not displayed. |
 | Search — users/hashtags/blogs | `2 + B` | `2 + ceil(B/11)` | DPNS prefix/profile resolution is batched and blog pages are bundled. |
-| Hashtag — inline index | `1 + E` | `1 + E` | The direct hashtag page is already one selected-page query. |
+| Hashtag — inline index | `1 + E` | `1 + E` | The direct hashtag page is already one selected-page query. Social v16 pins one tag of `post.tags` with `contains` on the same `tagAndTime` index, ordered by `$createdAt` alone; still one query. |
 | Hashtag — legacy topology | `1 + N + E` | `1 + ceil(N/100) + E` | Referenced posts use bounded `$id in` pages. |
 | Mentions | `1 + N + E + 1` | `1 + ceil(N/100) + E + 1` | Mention targets use bounded ID pages; ownership validation remains a separate proof. |
 | Bookmarks | `1 + N + E` | `1 + ceil(N/100) + E` | Bookmark targets use bounded ID pages. |

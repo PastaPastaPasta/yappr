@@ -40,7 +40,7 @@ import {
 } from '@dashevo/evo-sdk';
 import { REPO_ROOT, readEnvFile, privateKeyToWif } from '../derive-identities.mjs';
 import { describeErr } from '../owner-keys.mjs';
-import { actionFeeOf, socialShapes } from '../social-shapes.mjs';
+import { actionFeeOf, indexedTags, socialShapes } from '../social-shapes.mjs';
 import { buildSdk, insightUrl, keyNetwork, network } from '../sdk-env.mjs';
 
 export { describeErr, REPO_ROOT, readEnvFile, insightUrl, keyNetwork, network };
@@ -65,10 +65,12 @@ export const YAPP_TOKEN_POSITION = 0;
  * no `replyAuthor`, media are arrays; `SOCIAL_SHAPES` builds them off the configured file. v14
  * (docs/SOCIAL_V14.md) is v13 whose replies store no owner (`{ rootPostId, replyToReplyId? }`: the
  * notification windows derive the root and parent owners). v15 (docs/SOCIAL_V15.md) writes what v14
- * writes; only its YAPP differs (not transferable, costs burn). All take their profiles from DashPay
- * plus `yapprProfile`.
+ * writes; only its YAPP differs (not transferable, costs burn). v16 (docs/SOCIAL_V16.md) is v15 whose
+ * post carries up to four tags in the typed array `tags` (one `hashtag` before) and whose like repeats
+ * the post's list exactly (`SOCIAL_SHAPES.tags`). All take their profiles from DashPay plus
+ * `yapprProfile`.
  */
-export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15'];
+export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16'];
 /** The social contract the seeder writes (the configured topology's file), read once: every limit and cost below comes from it. */
 const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT,
   `contracts/yappr-social-contract-${SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY')) ? envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') : 'v10'}.json`), 'utf8'));
@@ -138,7 +140,7 @@ export function profileContractId() {
   return id;
 }
 
-// ---- Document shapes (social v10/v11/v12/v13/v14/v15) -------------------------
+// ---- Document shapes (social v10/v11/v12/v13/v14/v15/v16) ---------------------
 //
 // The seeder writes to the devnet social contract, v10
 // (contracts/yappr-social-contract-v10.json), v11 or v12 (-v11.json, -v12.json,
@@ -146,13 +148,20 @@ export function profileContractId() {
 // `likeReply.replyAuthor`, media arrays, all through `SOCIAL_SHAPES`) or v14
 // (-v14.json: v13 with no stored reply owner, `parentOwnerId` and `rootOwnerId`
 // dropped by `SOCIAL_SHAPES.reply`) or v15 (-v15.json: v14's shapes, a
-// non-transferable YAPP); nothing else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
+// non-transferable YAPP) or v16 (-v16.json: v15 whose post names its tags in
+// the typed array `tags`); nothing else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
 // that is an ABSENT property: an untagged post OMITS `hashtag`, and a like of
 // it OMITS `like.hashtag` too — a `where` entry treats both-absent as
 // agreement, while sending `''` is consensus mismatch 40127. The like's
 // delete-by-values tuple must reproduce the same absence (it is the same value
 // tuple). There is no `beat` companion any more: the like itself carries
 // the rolling hashtag window (`like.byTrendHashtagPost`, skipped when untagged).
+// On v16 a post is indexed under 1 to 4 tags, the typed array `tags` (its
+// `minItems` is 1, so an untagged post still OMITS it and `[]` is refused), and
+// a like repeats its post's list exactly, the same elements in the same order
+// (`where { "tags": "tags" }`); the like is entered once under each tag. A
+// corpus post may name that list in `tags`; without one the post is indexed
+// under `[hashtag]` (`postTags`). v10 to v15 index one tag and ignore `tags`.
 // There is no `language` either. A post or reply naming `mediaUrl` must carry
 // `mediaHash` (sha256 of the bytes) and `mediaFingerprint` (8-byte dHash)
 // beside it (`mediaFieldsFor`); on v13 the same item is a one-entry
@@ -160,8 +169,70 @@ export function profileContractId() {
 // and their token costs are `optional` with the contract owner offering the
 // gas — see `actionFeeFor` / `paymentInfo` below.
 
-/** `post.hashtag` / `like.hashtag` maxLength (the ranked key-size ceiling). */
-export const HASHTAG_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.hashtag.maxLength;
+/**
+ * The longest tag (the ranked key-size ceiling): `post.hashtag` / `like.hashtag`
+ * maxLength up to v15, each `post.tags` / `like.tags` element's on v16.
+ */
+export const HASHTAG_MAX = (SOCIAL_DOCUMENT_SCHEMAS.post.properties.tags?.items ?? SOCIAL_DOCUMENT_SCHEMAS.post.properties.hashtag).maxLength;
+
+/**
+ * The tag list a corpus op may carry, held to v16's `post.tags` whatever cut is
+ * configured: a corpus is cut-independent, so its bounds come off the one cut
+ * that indexes several tags per post, not off the configured one.
+ */
+const CORPUS_TAG_SCHEMA = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts/yappr-social-contract-v16.json'), 'utf8')).documentSchemas.post.properties.tags;
+/** How many tags a corpus post or quote may name (v16's `post.tags.maxItems`, 4); the web client refuses a post naming more. */
+export const CORPUS_TAGS_MAX = CORPUS_TAG_SCHEMA.maxItems;
+const CORPUS_TAG_PATTERN = new RegExp(CORPUS_TAG_SCHEMA.items.pattern);
+const CORPUS_TAG_MAX_LENGTH = CORPUS_TAG_SCHEMA.items.maxLength;
+
+/**
+ * Every tag a corpus `content` names, in the order the web client indexes them
+ * (`indexedTags`: the hashtags in content order, then the cashtags, lowercase,
+ * distinct), with no cap. Each `{{link:REF}}` reads as the link it expands to;
+ * the post id it ends in names no tag.
+ */
+export const corpusContentTags = (content) => indexedTags(substituteLinks(content, () => ''), Infinity, CORPUS_TAG_MAX_LENGTH);
+
+/**
+ * The tags a post is indexed under on the configured cut, in order, for a
+ * corpus post/quote op or a post's ref record: its `tags` list on a cut that
+ * indexes several (v16) when it carries a non-empty one, else `[hashtag]` when
+ * `hashtag` is a non-empty string, else `[]`. A one-tag cut (v10 to v15) only
+ * ever writes `[hashtag]` and ignores `tags`. `''` and an absent `hashtag` are
+ * equivalent ("untagged"), and so are `[]` and an absent `tags`.
+ */
+export function postTags({ hashtag, tags } = {}) {
+  if (SOCIAL_SHAPES.cut.tagArray && Array.isArray(tags) && tags.length > 0) return [...tags];
+  return typeof hashtag === 'string' && hashtag !== '' ? [hashtag] : [];
+}
+
+/**
+ * The tag fields a post ref record carries: `hashtag` as the corpus gave it
+ * (`''` = untagged) and, on a cut that indexes several tags, the `tags` list
+ * the post was written with. A like copies that list, so the record keeps what
+ * was WRITTEN rather than re-deriving it. A one-tag cut records no `tags`, so
+ * its journal reads as it did before v16.
+ */
+export function refTagFields(op) {
+  const written = postTags(op);
+  return { hashtag: op.hashtag ?? '', ...(SOCIAL_SHAPES.cut.tagArray && written.length > 0 ? { tags: written } : {}) };
+}
+
+/**
+ * A ref record as the checkpoint folds it: `{ kind, id, ownerId, hashtag,
+ * tags? }`. A record journaled before v16 carries no `tags` key and replays
+ * exactly as before (`postTags` falls back to its `hashtag`).
+ */
+export function refRecordOf(record) {
+  return {
+    kind: record.kind,
+    id: record.id,
+    ownerId: record.ownerId,
+    hashtag: record.hashtag ?? '',
+    ...(Array.isArray(record.tags) && record.tags.length > 0 ? { tags: [...record.tags] } : {}),
+  };
+}
 
 /**
  * Refuses to seed a contract of another shape: every write below is a v10
@@ -176,25 +247,27 @@ export function requireSeededTopology() {
 }
 
 /**
- * The `hashtag` property (or its absence) for a post/quote/like document.
- * `''` and absent inputs are equivalent ("untagged") so a checkpoint ref
- * recorded either way replays to an identical document.
+ * The configured cut's tag property (or its absence) for a post/quote/like
+ * document (`SOCIAL_SHAPES.tags` of {@link postTags}): `hashtag` up to v15, the
+ * whole list as `tags` on v16. `''` and absent inputs are equivalent
+ * ("untagged") so a checkpoint ref recorded either way replays to an identical
+ * document.
  */
-export function hashtagProps(hashtag) {
-  const tag = hashtag ?? '';
-  return tag === '' ? {} : { hashtag: tag };
+export function hashtagProps(hashtag, tags) {
+  return SOCIAL_SHAPES.tags(postTags({ hashtag, tags }));
 }
 
 /**
  * The like doc's data value tuple for a target post ref record. Used for the
  * create AND for delete-by-values (indexOnly deletes carry the whole value
  * tuple) — both must mirror the post's `where` values exactly, including
- * hashtag ABSENCE. `postAuthor` binds to the post's `$ownerId`.
+ * hashtag ABSENCE and, on v16, the post's whole tag list in its order.
+ * `postAuthor` binds to the post's `$ownerId`.
  */
 export function likeValueTuple(target) {
   return {
     postId: bs58.decode(target.id),
-    ...hashtagProps(target.hashtag),
+    ...hashtagProps(target.hashtag, target.tags),
     postAuthor: bs58.decode(target.ownerId),
   };
 }
@@ -479,6 +552,12 @@ export function substituteLinks(content, resolve) {
  * Hashtags are held to the contract's maxLength ({@link HASHTAG_MAX}) — an
  * over-long tag is a generator bug and is rejected, never rewritten.
  *
+ * Tags: a post's or quote's content names at most {@link CORPUS_TAGS_MAX}
+ * distinct tags (hashtags then cashtags, the web client's rule; the client
+ * refuses a post naming more), and its optional `tags` list is exactly those,
+ * in that order. Both hold on every cut, against v16's `post.tags`, since a
+ * corpus is cut-independent; a malformed list is rejected, never rewritten.
+ *
  * Returns `{ ops, stats }`; each op carries its 1-based `line`.
  */
 export function parseCorpus(text, personas) {
@@ -540,6 +619,23 @@ export function parseCorpus(text, personas) {
       }
     };
 
+    // The content names at most CORPUS_TAGS_MAX distinct tags, and `tags` (optional)
+    // is exactly the ones it names, in order: a v16 like must repeat the list.
+    const checkTags = (content, tags) => {
+      if (typeof content !== 'string') return undefined; // checkContent reports it
+      const named = corpusContentTags(content);
+      if (named.length > CORPUS_TAGS_MAX) {
+        fail(line, `content names ${named.length} distinct tags (${named.join(', ')}); a post is indexed under at most ${CORPUS_TAGS_MAX}`);
+      }
+      if (tags === undefined) return undefined;
+      if (!Array.isArray(tags) || tags.length === 0 || tags.length > CORPUS_TAGS_MAX) return fail(line, `tags must be a list of 1 to ${CORPUS_TAGS_MAX} tags`);
+      const malformed = tags.filter((tag) => typeof tag !== 'string' || tag.length > CORPUS_TAG_MAX_LENGTH || !CORPUS_TAG_PATTERN.test(tag));
+      if (malformed.length > 0) return fail(line, `tags ${JSON.stringify(malformed)} must match ${CORPUS_TAG_SCHEMA.items.pattern} (maxLength ${CORPUS_TAG_MAX_LENGTH})`);
+      if (new Set(tags).size !== tags.length) return fail(line, `tags ${JSON.stringify(tags)} name a tag twice`);
+      if (JSON.stringify(tags) !== JSON.stringify(named)) fail(line, `tags ${JSON.stringify(tags)} must be the tags the content names, in order: ${JSON.stringify(named)}`);
+      return undefined;
+    };
+
     const defineRef = (ref, kind) => {
       if (typeof ref !== 'string' || !ref) return fail(line, 'ref is required');
       if (refs.has(ref)) return fail(line, `duplicate ref "${ref}"`);
@@ -561,6 +657,7 @@ export function parseCorpus(text, personas) {
         if (typeof op.hashtag !== 'string' || !hashtagPattern.test(op.hashtag)) {
           fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,${hashtagMax}}$ ('' = untagged; maxLength ${hashtagMax})`);
         }
+        checkTags(op.content, op.tags);
         if (op.sensitive !== undefined && typeof op.sensitive !== 'boolean') fail(line, 'sensitive must be a boolean');
         break;
       case 'quote':
@@ -572,6 +669,7 @@ export function parseCorpus(text, personas) {
         if (typeof op.hashtag !== 'string' || !hashtagPattern.test(op.hashtag)) {
           fail(line, `hashtag "${op.hashtag}" must match ^$|^[a-z0-9_]{1,${hashtagMax}}$`);
         }
+        checkTags(op.content, op.tags);
         break;
       case 'reply':
         requireEarlierRef(op.rootRef, ['post'], 'rootRef');
@@ -666,11 +764,16 @@ export function paysInCredits(idx, fraction) {
 // mean "untagged" and MUST replay identically: the fold normalizes to '' here,
 // and the doc builders (`hashtagProps`) map '' to property absence. Never
 // treat the journal's hashtag as always-a-meaningful-string.
+//
+// On v16 a post's record also carries `tags`, the list the post was written
+// with (`…,"hashtag":"dash","tags":["dash","gm"],…`), which its likes repeat.
+// A record without the key (journaled on a one-tag cut, or before v16) means
+// `[hashtag]` (or nothing when untagged), exactly what such a post wrote.
 
 export function loadProgress(file = PROGRESS_FILE) {
   const completed = new Map(); // line -> record
   const failed = new Map();
-  const refs = new Map(); // ref -> {kind, id, ownerId, hashtag}
+  const refs = new Map(); // ref -> {kind, id, ownerId, hashtag, tags?}
   if (!existsSync(file)) return { completed, failed, refs };
   for (const raw of readFileSync(file, 'utf8').split('\n')) {
     const trimmed = raw.trim();
@@ -684,7 +787,7 @@ export function loadProgress(file = PROGRESS_FILE) {
     if (record.status === 'done') {
       completed.set(record.line, record);
       failed.delete(record.line);
-      if (record.ref) refs.set(record.ref, { kind: record.kind, id: record.id, ownerId: record.ownerId, hashtag: record.hashtag ?? '' });
+      if (record.ref) refs.set(record.ref, refRecordOf(record));
     } else if (record.status === 'failed') {
       if (!completed.has(record.line)) failed.set(record.line, record);
     }

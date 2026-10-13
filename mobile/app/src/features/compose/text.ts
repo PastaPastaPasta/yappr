@@ -56,6 +56,25 @@ export function isTagTooLong(token: Token, maxLength: number): boolean {
   return (token.kind === 'hashtag' || token.kind === 'cashtag') && tagLength(token) > maxLength;
 }
 
+/**
+ * Why `text` cannot be a post for its tags, or null: it names more distinct
+ * tags than `perPost` (social v16: 4; null where no such limit applies).
+ * Counted as the engine writes them (lib `indexedTags`): a hashtag lowercased
+ * and cut to `tagMax`, a cashtag as `<symbol>_cashtag` within `tagMax`, and
+ * no tag inside a link. The message is web's (`tagLimitProblem`).
+ */
+export function tagLimitProblem(text: string, tagMax: number, perPost: number | null): string | null {
+  if (perPost === null) return null;
+  const tags = new Set<string>();
+  for (const token of tokenize(text)) {
+    if (token.kind === 'hashtag') tags.add(token.value.slice(1, 1 + tagMax).toLowerCase());
+    else if (token.kind === 'cashtag') tags.add(`${token.value.slice(1, 1 + tagMax - '_cashtag'.length).toLowerCase()}_cashtag`);
+  }
+  if (tags.size <= perPost) return null;
+  const over = tags.size - perPost;
+  return `A post can have at most ${perPost} tags. Remove ${over} ${over === 1 ? 'tag' : 'tags'}.`;
+}
+
 export type SpanStyle = 'plain' | 'link';
 
 export interface Span {

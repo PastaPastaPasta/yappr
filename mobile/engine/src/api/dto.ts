@@ -214,6 +214,12 @@ export interface CapabilitiesDTO {
   /** The most media items a post or reply carries: 1, or 4 on v13 (publish still attaches one). */
   mediaItems: number
   hashtagsInline: boolean
+  /**
+   * The most distinct tags (hashtags and cashtags, none inside a link) a post may name: 4 on social
+   * v16, where a fifth refuses the post (`tagLimitProblem`, `validateDraft`). Null where a post indexes
+   * its first tag and leaves the rest plain text (v9 to v15), or every tag (v2).
+   */
+  tagsPerPost: number | null
   /** Posts carry a language and For You filters by it (`postsHaveLanguage`). */
   postLanguage: boolean
   /** `post.content`: code points, and UTF-8 bytes where declared (v10). */

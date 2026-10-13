@@ -628,8 +628,10 @@ describe('removal records that keep fields (v11 deleteKeepsFields)', () => {
     documentId: 'D1', documentOwnerId: 'O1', moderatorId: 'M1', reason: { text: 'spam' }, removedAt: BigInt(10), documentHash: '00', keptFields,
   })
 
-  it('carries a post\'s hashtag and $createdAt', () => {
-    expect(toRemoval(entry({ hashtag: 'dash', $createdAt: 1759100000000 })).kept).toEqual({ hashtag: 'dash', createdAt: 1759100000000 })
+  it('carries a post\'s tags and $createdAt', () => {
+    expect(toRemoval(entry({ hashtag: 'dash', $createdAt: 1759100000000 })).kept).toEqual({ tags: ['dash'], createdAt: 1759100000000 })
+    // v16 keeps the post's whole list.
+    expect(toRemoval(entry({ tags: ['news', 'dash'], $createdAt: 1759100000000 })).kept).toEqual({ tags: ['news', 'dash'], createdAt: 1759100000000 })
   })
 
   it('carries a reply\'s rootPostId and a bigint $createdAt', () => {
@@ -647,6 +649,7 @@ describe('removal records that keep fields (v11 deleteKeepsFields)', () => {
     expect(toKeptFields(undefined)).toEqual({})
     expect(toKeptFields({ hashtag: '', $createdAt: 'soon', rootPostId: null, extra: 1 })).toEqual({})
     expect(toKeptFields({ hashtag: 7, $createdAt: -1 })).toEqual({})
+    expect(toKeptFields({ tags: ['dash', 7] })).toEqual({})
   })
 })
 

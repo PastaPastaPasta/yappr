@@ -6,7 +6,7 @@ import type { EncryptionOptions, EncryptionSource } from '@/lib/services/post-se
 import type { PostEmbed } from '@/lib/poll-embed'
 import type { MediaItemInput } from '@/lib/media/media-fields'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
-import { hasVisibleContent } from '@/lib/compose/limits'
+import { hasVisibleContent, tagLimitProblem } from '@/lib/compose/limits'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
@@ -54,6 +54,38 @@ export function planPosts(threadPosts: ThreadPost[], imageUrl: string | undefine
     predecessorPostedId = undefined
   }
   return plan
+}
+
+/**
+ * The part of `plan` that `publishThread` creates as a post rather than a
+ * reply: its first part, unless the composer replies to something, or that
+ * part follows one an earlier attempt posted (it then replies to it). Only
+ * that part carries tags. It need not be the draft's first slot: `planPosts`
+ * skips a slot without visible content, so a thread whose first slot is
+ * empty roots at its second.
+ */
+export function plannedRootPost(plan: readonly PostToCreate[], replying: boolean): PostToCreate | null {
+  const first = plan[0]
+  return first && !replying && !first.predecessorPostedId ? first : null
+}
+
+/**
+ * Why the thread `threadPosts` cannot be posted for its tags, or null
+ * ({@link tagLimitProblem}: more than four on v16), judged on the part it
+ * creates as a post ({@link plannedRootPost}). That part's public text is
+ * what is indexed: its body, or its teaser when the post is encrypted (an
+ * encrypted post without a teaser names no tag). `threadPostId` is the part
+ * to show the problem under.
+ */
+export function threadTagProblem(
+  threadPosts: ThreadPost[],
+  { replying, encrypted, teaser }: { replying: boolean; encrypted: boolean; teaser: boolean }
+): { threadPostId: string; body: string | null; teaser: string | null } | null {
+  const root = plannedRootPost(planPosts(threadPosts, undefined, false), replying)
+  if (!root) return null
+  const body = encrypted ? null : tagLimitProblem(root.content)
+  const teaserProblem = encrypted && teaser && root.teaser ? tagLimitProblem(root.teaser) : null
+  return body === null && teaserProblem === null ? null : { threadPostId: root.threadPostId, body, teaser: teaserProblem }
 }
 
 export interface PublishInput {

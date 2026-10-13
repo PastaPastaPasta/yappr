@@ -2,7 +2,7 @@ import { Post } from '@/lib/types';
 import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
 import { extractPostEmbedFields } from '@/lib/poll-embed';
 import { mediaFromDocument } from '@/lib/media/media-fields';
-import { hashtagsAreInline, privateFeedKeyFields } from '@/lib/contract-topology';
+import { inlinePostTags, privateFeedKeyFields } from '@/lib/contract-topology';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
@@ -101,7 +101,6 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
   // repost is shown as that author's post, so block filtering reads it.
   const rawQuotedPostOwnerId = data.quotedPostOwnerId || doc.quotedPostOwnerId;
   const quotedPostOwnerId = rawQuotedPostOwnerId ? identifierToBase58(rawQuotedPostOwnerId) || undefined : undefined;
-  const rawHashtag = data.hashtag ?? doc.hashtag;
 
   const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
   const rawNonce = data.nonce || doc.nonce;
@@ -156,12 +155,10 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     quotedPostOwnerId,
     deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
     sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
-    // v9 omits the untagged property on chain; normalize that absence to the
-    // client's known-untagged sentinel so index-only likes can reuse the
-    // agreement-bound value without refetching the target post.
-    hashtag: typeof rawHashtag === 'string'
-      ? rawHashtag
-      : hashtagsAreInline() ? '' : undefined,
+    // Devnet cuts omit the untagged property on chain; normalize that absence
+    // to the client's known-untagged `[]` so index-only likes can reuse the
+    // agreement-bound list without refetching the target post.
+    tags: inlinePostTags(data, doc),
     ...extractPostEmbedFields(data, doc),
     encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined,
     keyGeneration,

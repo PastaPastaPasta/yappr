@@ -28,6 +28,8 @@ export interface ComposePartProps {
   tagMax: number;
   /** Dev contracts notify only the first mention: say who will be (PRD COMP-06). */
   inlineHints: boolean;
+  /** Social v16: why this part, the one published as the post, names too many tags (Post is off). */
+  tagProblem?: string | null;
   /** The thread line continues below the avatar. */
   joined: boolean;
   removable: boolean;
@@ -55,6 +57,7 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
     limits,
     tagMax,
     inlineHints,
+    tagProblem = null,
     joined,
     removable,
     autoFocus,
@@ -155,6 +158,11 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
         {tooLong ? (
           <Text variant="caption" tone="error" className="mt-1" testID={`compose-too-long-${index}`}>
             Your post is too long.
+          </Text>
+        ) : null}
+        {tagProblem ? (
+          <Text variant="caption" tone="error" className="mt-1" testID={`compose-too-many-tags-${index}`}>
+            {tagProblem}
           </Text>
         ) : null}
         {inlineHints && hints.notified ? (

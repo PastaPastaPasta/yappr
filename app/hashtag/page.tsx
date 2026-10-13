@@ -74,18 +74,17 @@ function HashtagPageContent() {
 
       setIsLoading(true)
       try {
-        const { postService } = await import('@/lib/services/post-service')
+        const { postService, postsTaggedQuery } = await import('@/lib/services/post-service')
 
         let fetchedPosts: Post[]
         let preloaded: import('@/hooks/use-progressive-enrichment').PreloadedEnrichment | undefined
         if (hashtagsAreInline()) {
-          // v9: posts carry their single hashtag inline — one `tagAndTime`
+          // Devnet cuts: posts carry their tags inline — one `tagAndTime`
           // query IS the tag page (newest first), with no postHashtag
-          // indirection and no ownership cross-check (the tag is a property of
-          // the post itself).
+          // indirection and no ownership cross-check (the tags are a property
+          // of the post itself).
           const page = await postService.queryForDisplay({
-            where: [['hashtag', '==', tag], ['$createdAt', '>', 0]],
-            orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']], limit: PAGE_SIZE,
+            ...postsTaggedQuery(tag), limit: PAGE_SIZE,
           })
           if (cancelled) return
           fetchedPosts = page.documents
@@ -159,10 +158,9 @@ function HashtagPageContent() {
     pendingPageGeneration.current = generation
     setIsLoadingMore(true)
     try {
-      const { postService } = await import('@/lib/services/post-service')
+      const { postService, postsTaggedQuery } = await import('@/lib/services/post-service')
       const result = await postService.queryForDisplay({
-        where: [['hashtag', '==', tag], ['$createdAt', '>', 0]],
-        orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']],
+        ...postsTaggedQuery(tag),
         limit: PAGE_SIZE, startAfter: lastPostId,
       })
       const page = result.documents

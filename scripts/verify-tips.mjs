@@ -330,6 +330,7 @@ function selfTestTipNotes() {
     ['v10 YAPP is locked: credit tips', yappIsLocked(social('v10')) === true],
     ['v14 YAPP pays token costs but is still never sent: credit tips', yappIsLocked(social('v14')) === true],
     ['v15 YAPP is not transferable: credit tips', yappIsLocked(social('v15')) === true],
+    ['v16 keeps v15\'s YAPP: credit tips', yappIsLocked(social('v16')) === true],
     ['a non-transferable YAPP is locked whatever its other rules: credit tips', yappIsLocked({ tokens: { 0: { transferable: false } } }) === true],
   ]);
 }

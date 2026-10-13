@@ -103,3 +103,25 @@ describe('mentionLimitHint', () => {
     for (const topology of ['v2', 'v9', 'v10', 'v14']) expect(await hintOn(topology, people(9)), topology).toBeNull()
   })
 })
+
+describe('tagLimitProblem', () => {
+  const tags = (n: number) => Array.from({ length: n }, (_, i) => `#tag${i}`).join(' ')
+  async function limitsOn(topology: string) {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+    return import('./limits')
+  }
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('refuses a v16 post naming more than 4 distinct tags, cashtags included', async () => {
+    const { tagLimitProblem } = await limitsOn('v16')
+    expect(tagLimitProblem(tags(4))).toBeNull()
+    expect(tagLimitProblem(`${tags(4)} #TAG0 #tag1`)).toBeNull()
+    expect(tagLimitProblem(tags(5))).toBe('A post can have at most 4 tags. Remove 1 tag.')
+    expect(tagLimitProblem(`${tags(5)} $DASH`)).toBe('A post can have at most 4 tags. Remove 2 tags.')
+  })
+
+  it('refuses nothing before v16, as before', async () => {
+    for (const topology of ['v2', 'v9', 'v15']) expect((await limitsOn(topology)).tagLimitProblem(tags(5)), topology).toBeNull()
+  })
+})

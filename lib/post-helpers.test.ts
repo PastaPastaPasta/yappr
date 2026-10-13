@@ -6,10 +6,9 @@ import {
   extractCashtags,
   extractHashtags,
   extractMentions,
-  firstHashtag,
-  firstIndexedTag,
   getTagDisplayText,
   hashtagDisplayToStorage,
+  indexedTags,
   isCashtagStorage,
   normalizeDpnsUsername,
 } from './post-helpers'
@@ -20,18 +19,18 @@ describe('hashtags', () => {
   })
 
   it('returns the first tag in storage form', () => {
-    expect(firstHashtag('hello #Second #first', 61)).toBe('second')
-    expect(firstHashtag('no tags here', 61)).toBe('')
+    expect(indexedTags('hello #Second #first', 1, 61)).toEqual(['second'])
+    expect(indexedTags('no tags here', 1, 61)).toEqual([])
   })
 
   it('truncates the first tag to the contract ceiling', () => {
     const long = 'a'.repeat(70)
-    expect(firstHashtag(`#${long}`, 61)).toBe('a'.repeat(61))
+    expect(indexedTags(`#${long}`, 1, 61)).toEqual(['a'.repeat(61)])
   })
 
   it('links an over-long tag to the page it was indexed under (QA D-21)', () => {
     const content = `#${'B'.repeat(62)}`
-    expect(hashtagDisplayToStorage(`#${'B'.repeat(62)}`, 61)).toBe(firstHashtag(content, 61))
+    expect([hashtagDisplayToStorage(`#${'B'.repeat(62)}`, 61)]).toEqual(indexedTags(content, 1, 61))
     expect(hashtagDisplayToStorage('#Dash')).toBe('dash')
     expect(hashtagDisplayToStorage('#Dash', 61)).toBe('dash')
   })
@@ -58,29 +57,51 @@ describe('cashtags', () => {
   })
 })
 
-describe('single inline tag', () => {
+describe('single inline tag (v9 to v15)', () => {
   it('indexes the first cashtag when no hashtag exists', () => {
-    expect(firstIndexedTag('buy $DASH before $BTC', 61)).toBe('dash_cashtag')
-    expect(firstIndexedTag('$1bad then $DaSh_2', 61)).toBe('dash_2_cashtag')
-    expect(firstIndexedTag('no tags or $123 here', 61)).toBe('')
+    expect(indexedTags('buy $DASH before $BTC', 1, 61)).toEqual(['dash_cashtag'])
+    expect(indexedTags('$1bad then $DaSh_2', 1, 61)).toEqual(['dash_2_cashtag'])
+    expect(indexedTags('no tags or $123 here', 1, 61)).toEqual([])
   })
 
   it('preserves the first hashtag precedence regardless of cashtag position', () => {
-    expect(firstIndexedTag('$DASH then #Second #first', 61)).toBe('second')
-    expect(firstIndexedTag('#First $DASH #second', 61)).toBe('first')
-    expect(firstIndexedTag(`#${'a'.repeat(70)} $DASH`, 61)).toBe('a'.repeat(61))
+    expect(indexedTags('$DASH then #Second #first', 1, 61)).toEqual(['second'])
+    expect(indexedTags('#First $DASH #second', 1, 61)).toEqual(['first'])
+    expect(indexedTags(`#${'a'.repeat(70)} $DASH`, 1, 61)).toEqual(['a'.repeat(61)])
   })
 
   it.each([61, 63])('fits cashtag storage and links within the %i-character ceiling', (maxLength) => {
     const symbol = 'A'.repeat(63)
     const expected = 'a'.repeat(maxLength - '_cashtag'.length) + '_cashtag'
-    expect(firstIndexedTag(`$${symbol}`, maxLength)).toBe(expected)
+    expect(indexedTags(`$${symbol}`, 1, maxLength)).toEqual([expected])
     expect(cashtagDisplayToStorage(symbol, maxLength)).toBe(expected)
     expect(expected).toHaveLength(maxLength)
   })
 
   it('retains legacy cashtag conversion when no inline ceiling is passed', () => {
     expect(cashtagDisplayToStorage('A'.repeat(63))).toBe('a'.repeat(63) + '_cashtag')
+  })
+})
+
+describe('tag list (v16)', () => {
+  it('indexes the hashtags in order, then the cashtags, distinct, up to the maximum', () => {
+    expect(indexedTags('$DASH #News then #dash and #news, $btc', 4, 61)).toEqual(['news', 'dash', 'dash_cashtag', 'btc_cashtag'])
+    expect(indexedTags('#a #b #c #d #e $DASH', 4, 61)).toEqual(['a', 'b', 'c', 'd'])
+    expect(indexedTags('#a $DASH', 4, 61)).toEqual(['a', 'dash_cashtag'])
+    expect(indexedTags('nothing to index, $1bad', 4, 61)).toEqual([])
+  })
+
+  it('counts no tag inside a link, as the post renders it (a fragment, a query)', () => {
+    const text = 'gm #dash #news #btc #eth see https://docs.dash.org/en/stable/#install and https://x.com/search?q=$BTC'
+    expect(indexedTags(text, Number.MAX_SAFE_INTEGER, 61)).toEqual(['dash', 'news', 'btc', 'eth'])
+    expect(indexedTags('www.example.com/#a ipfs://cid/#b $ETH', 4, 61)).toEqual(['eth_cashtag'])
+    expect(extractHashtags('#a https://x.org/#b #c')).toEqual(['a', 'c'])
+    expect(extractCashtags('$DASH https://x.org/?q=$BTC')).toEqual(['dash_cashtag'])
+  })
+
+  it('truncates each tag to the ceiling and counts a truncated duplicate once', () => {
+    const long = 'a'.repeat(70)
+    expect(indexedTags(`#${long} #${'a'.repeat(61)} #b`, 4, 61)).toEqual(['a'.repeat(61), 'b'])
   })
 })
 
