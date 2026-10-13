@@ -47,10 +47,10 @@ vi.stubGlobal('localStorage', {
 })
 vi.stubGlobal('window', {})
 
-import { CREATE_NOT_RECORDED_ERROR, isIdentityNonceConflictError } from '@/lib/error-utils'
+import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, isIdentityNonceConflictError } from '@/lib/error-utils'
 import { SdkDmChain } from './dm-v5/sdk-chain'
 import { classifyWriteFailure } from './dm-v5/write-failure'
-import { loadReservation, stillPending } from './identity-nonce'
+import { loadReservation, reserveNonce, stillPending } from './identity-nonce'
 import { stateTransitionService } from './state-transition-service'
 
 const OWNER = 'owner'
@@ -265,5 +265,36 @@ describe('createDocument beforeBroadcast (DM v5 counts a send at its broadcast)'
     // The next create signs the same nonce: nothing of the refused one is pending.
     const next = await stateTransitionService.createDocument(CONTRACT, 'post', me, { text: 'next' })
     expect(next).toMatchObject({ success: true, confirmed: true, transactionHash: 'doc-101' })
+  })
+})
+
+describe('DM v5 writes after a replace whose answer was lost (devnet "Resend keys")', () => {
+  const ME = new Uint8Array(32).fill(9)
+  const me = bs58.encode(ME)
+  const roster = { documentType: 'dmGroupDoc', documentId: 'roster', revision: 6 }
+  const grant = () => new SdkDmChain(ME, CONTRACT).createMessage(new Uint8Array([1]), new Uint8Array([2]))
+
+  beforeEach(() => {
+    // What `withSdkSignedWrite` keeps for the owner's roster replace while it waits for the answer
+    // (Platform at 100 when it was signed). The page moved on before the answer came: never released.
+    reserveNonce(me, CONTRACT, null, n(100), roster)
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
+    sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+  })
+
+  it('sends the grant once Platform shows the replace landed', async () => {
+    sdk.documents.get.mockResolvedValue({ $revision: 6 })
+
+    expect(await grant()).toMatchObject({ ok: true, id: 'doc-102', confirmed: true })
+    expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(1)
+    expect(stillPending(n(102), loadReservation(me, CONTRACT))).toEqual([])
+  })
+
+  it('keeps holding writes back while the replace is not shown landed, as it may still execute', async () => {
+    sdk.documents.get.mockResolvedValue({ $revision: 5 })
+
+    expect(await grant()).toMatchObject({ ok: false, error: PENDING_WRITE_ERROR })
+    expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
   })
 })

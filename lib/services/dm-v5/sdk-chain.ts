@@ -23,6 +23,7 @@ import { hasPrivateKey } from '@/lib/secure-storage'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { getEvoSdk } from '../evo-sdk-service'
 import { stateTransitionService, type StateTransitionResult } from '../state-transition-service'
+import { settleSupersededReplaces } from '../identity-nonce'
 import { identityService } from '../identity-service'
 import { followService } from '../follow-service'
 import { bytesToBase64QueryOperand, documentToPlainObject, type DocumentWhereClause, type DocumentOrderByClause } from '../sdk-helpers'
@@ -238,11 +239,33 @@ export class SdkDmChain implements DmChain {
   }
 
   /**
+   * Before every write: release an SDK-signed replace of mine (a roster or
+   * self-state save) whose answer was lost but which Platform shows landed.
+   * A page closed or reloaded while one waited for its answer leaves it
+   * pending in this browser for 15 minutes, and every DM write in between is
+   * refused unsent (PENDING_WRITE_ERROR): "Resend keys" right after the
+   * owner's client removed a member who left, or any send after a reload
+   * that cut a save short. One that cannot be shown landed keeps holding
+   * writes back, as it must. With nothing pending this is one localStorage
+   * read under the write lock. The mobile engine does the same per write
+   * (mobile/engine/README.md, "Lost replace answers").
+   */
+  private async settlePending(): Promise<void> {
+    try {
+      const released = await settleSupersededReplaces(this.me, this.contractId)
+      if (released > 0) logger.warn(`DM v5: released ${released} replace(s) whose answer was lost; they had held DM writes back`)
+    } catch (error) {
+      logger.debug('DM v5: could not settle pending replaces:', error)
+    }
+  }
+
+  /**
    * `beforeBroadcast` runs inside `createDocument`, just before its broadcast
    * (after the write lock, the identity and nonce reads and the build), and
    * its refusal is rethrown as is: nothing was sent.
    */
   private async create(type: string, data: Record<string, unknown>, options: BroadcastOptions = {}): Promise<WriteOutcome> {
+    await this.settlePending()
     const { beforeBroadcast } = options
     if (!beforeBroadcast) return this.afterWrite(fromResult(await stateTransitionService.createDocument(this.contractId, type, this.me, data)))
     const refused: { error?: unknown } = {}
@@ -265,6 +288,7 @@ export class SdkDmChain implements DmChain {
   }
 
   async deleteMessage(id: string): Promise<WriteOutcome> {
+    await this.settlePending()
     return this.afterWrite(fromResult(await stateTransitionService.deleteDocument(this.contractId, 'dmMessage', id, this.me)))
   }
 
@@ -277,6 +301,7 @@ export class SdkDmChain implements DmChain {
   }
 
   async replaceGroupDoc(doc: { id: string; revision: number }, handle: Uint8Array, blob: Uint8Array): Promise<WriteOutcome> {
+    await this.settlePending()
     const result = await stateTransitionService.updateDocument(this.contractId, 'dmGroupDoc', doc.id, this.me, { handle, blob }, doc.revision)
     return this.afterWrite(fromReplace(result, doc.id))
   }
@@ -286,6 +311,7 @@ export class SdkDmChain implements DmChain {
   }
 
   async replaceSelfState(doc: { id: string; revision: number }, fields: SelfStateFields): Promise<WriteOutcome> {
+    await this.settlePending()
     const result = await stateTransitionService.updateDocument(this.contractId, 'dmSelfState', doc.id, this.me, selfStateData(fields), doc.revision)
     return this.afterWrite(fromReplace(result, doc.id))
   }

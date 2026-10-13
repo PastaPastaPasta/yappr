@@ -169,8 +169,10 @@ export async function openDevice(browser: Browser, bot: DmBot, label: string): P
   const page = await context.newPage()
   if (process.env.E2E_DM_DEBUG) {
     page.on('console', (message) => {
-      if (message.type() !== 'warning' && message.type() !== 'error') return
       const text = message.text().replace(/%c/g, '')
+      // The app's logger (tslog) prints every level with console.log and names the level in the text.
+      const severe = message.type() === 'warning' || message.type() === 'error' || /\b(WARN|ERROR|FATAL)\b/.test(text)
+      if (!severe) return
       if (/DM v5|Error creating|Error updating|Error deleting/i.test(text)) console.log(`[${label}] ${message.type()}: ${text.slice(0, 500)}`)
     })
   }
@@ -227,6 +229,28 @@ export async function send(page: Page, text: string, timeout = 180_000): Promise
     throw new Error(`${error.message}\nerror toast: ${toast || '(none seen)'}`)
   })
   void watch
+}
+
+/**
+ * Wait for the app's success toast `text` after an action (group settings: rename, add, remove,
+ * resend keys, leave, end). A failed action shows a three-second error toast instead and puts the
+ * dialog back, so a plain visibility wait times out with nothing to go on: every toast seen while
+ * waiting is collected and added to the failure.
+ */
+export async function expectToast(page: Page, text: string | RegExp, timeout = 180_000): Promise<void> {
+  const matches = (toast: string) => (typeof text === 'string' ? toast.includes(text) : text.test(toast))
+  const seen = new Set<string>()
+  // The open dialog marks everything outside it aria-hidden (Radix hideOthers), the toaster included.
+  const toasts = page.getByRole('status', { includeHidden: true }).filter({ hasText: /\S/ })
+  await expect
+    .poll(async () => {
+      for (const toast of await toasts.allInnerTexts().catch(() => [] as string[])) seen.add(toast.trim())
+      return Array.from(seen).some(matches)
+    }, { timeout, intervals: [250] })
+    .toBe(true)
+    .catch((error: Error) => {
+      throw new Error(`${error.message}\nwaited for toast: ${String(text)}\ntoasts seen: ${Array.from(seen).join(' | ') || '(none)'}`)
+    })
 }
 
 /** Open a conversation's options menu and pick an item. */
