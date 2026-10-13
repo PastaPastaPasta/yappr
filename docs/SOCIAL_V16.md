@@ -92,8 +92,7 @@ The scripts read the cut off the contract file, never off its name, so one scrip
   - `where` cases: the exact list agrees, and both lists left out agree. Refused (40127): a reordered list, a subset, a superset, a tagged like of an untagged post, and an untagged like of a tagged post.
 - **`scripts/property-constraint-cases.mjs`** (`--constraints`): v16 declares v15's rules. The hashtag cases become one-tag lists. New cases: four tags with text, four tags alone (`notEmpty`), and a tombstone keeping four tags.
 - **App Connect** ([APP_CONNECT_CONTRACTS.md](APP_CONNECT_CONTRACTS.md)):
-  - `scripts/app-connect-set.mjs` appends `socialV16` (sha256 `63dcfa91…`, `NEXT_PUBLIC_YAPPR_CONTRACT_ID`).
-  - Social v15 keeps its entry with no env variable: group membership is append-only.
+  - `scripts/app-connect-set.mjs` registers v16 as the `social` member (sha256 `63dcfa91…`, `NEXT_PUBLIC_YAPPR_CONTRACT_ID`): sakura's beta.6 genesis starts a new set, so v15 is not carried along.
   - The publisher needs Drive 5.0.0-beta.6.
   - The `verify-appconnect.mjs --self-test` also checks that no two members share an env variable.
 - **Batteries and measurements**: `verify-v10.mjs` (with `verify-lib.mjs`), `prove-merged-counts.mjs` and `measure-social-fees.mjs` write and read tags through the shapes above, so they run on v16 and on every earlier cut. Each file's header lists its v16 cases.
@@ -137,24 +136,4 @@ What only a live network can confirm: the `tg-*` checks of `prove-merged-counts.
 
 ## Registering it
 
-Not in these changes: nothing is registered, and `.env.devnet` is unchanged. Prerequisites:
-
-- the devnet runs 5.0.0-beta.6 (confirm every node with `ops/status.mjs`);
-- the packages are bumped to 5.0.0-beta.6 and the validation above is green.
-
-1. **Register v16 into the App Connect group** with `scripts/register-app-connect-contracts.mjs`, from the merged file, pinned to the sha256 above.
-   - Start with `--plan`, which builds and decodes every create offline.
-   - On a fresh network, run `--dry-run`, then `--signed-dry-run`, then `--live --journal <file>`. That registers the whole set, v16 included.
-   - On sakura the anchor and the other members are already registered, and the dry-run modes refuse a set whose anchor nonce is spent. There `socialV16` is added by resuming the sakura journal with `--live`. It takes the maker's next identity nonce, not the planned one (see [Adding a member to the registered set](APP_CONNECT_CONTRACTS.md#adding-a-member-to-the-registered-set)).
-   - Then `verify-appconnect.mjs --only g1,g2,g3,a1` with the nine-member list.
-2. **Mint YAPP to the battery bots.** Nobody starts with a balance (`baseSupply: 0`), so run `register-social-v3-draft.mjs --bot <index> --owner <id> --fund-only <v16 id> --fund <ids>`.
-3. **Run the batteries:**
-   - `verify-v10.mjs --contract <v16 id> --contract-file contracts/yappr-social-contract-v16.json`
-   - `prove-merged-counts.mjs --contract-file contracts/yappr-social-contract-v16.json`
-   - `verify-tips.mjs`
-   - optionally `measure-social-fees.mjs` for the per-tag fees.
-4. **Re-snapshot** `lib/contracts/bundled/devnet-sakura.json` (`NETWORK=devnet node scripts/snapshot-contracts.mjs`).
-5. **Flip `.env.devnet`:**
-   - `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v16` and the new `NEXT_PUBLIC_YAPPR_CONTRACT_ID`;
-   - `NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS` with v16 appended (v15 stays: every group member is pinned).
-6. **Re-seed if wanted.** The seeder writes v16 once the topology says so.
+Sakura was wiped for 5.0.0-beta.6 on 2026-10-13, so v16 is registered as the `social` member of a fresh App Connect set (`scripts/app-connect-set.mjs`: v16 in v15's slot, no v15) at maker nonce 25, `4qctQYg3…`, and `.env.devnet` runs topology `v16`. The steps, ids, batteries (including the `tg-*` checks and `cn-e2`/`cn-b4`) and costs are in [SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md). On a chain whose group is already registered, v16 would instead be appended to the set and added by resuming the publisher's journal ([Adding a member to the registered set](APP_CONNECT_CONTRACTS.md#adding-a-member-to-the-registered-set)).
