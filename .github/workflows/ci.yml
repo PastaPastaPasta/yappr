@@ -232,7 +232,7 @@ jobs:
             test-results/
           retention-days: 7
 
-  # The devnet interaction topology (v11, on sakura) only exists on the devnet
+  # The devnet interaction topology (social v16, on sakura) only exists on the devnet
   # contracts, so the specs that assert it can only run there. Every step is continue-on-error for
   # the same reason deploy.yml's devnet build is: the devnet is disposable and
   # resets without notice, its nodes are a hand-maintained three-machine pool, and
@@ -253,6 +253,10 @@ jobs:
       group: devnet-e2e-shared-bots
       cancel-in-progress: false
     steps:
+      # The cleanup at the end tombstones what the pool posted from here on.
+      - name: Record the job start
+        run: echo "JOB_STARTED_MS=$(date +%s%3N)" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -363,3 +367,25 @@ jobs:
             test-results-sdk-recovery/
           retention-days: 7
           if-no-files-found: ignore
+
+      # The write specs post and reply on the public devnet timeline. Tombstone
+      # (each identity's own delete) whatever the CI pool wrote since the job
+      # started, after every spec step, whether they passed or not. A step
+      # rather than a Playwright globalTeardown: one pass after all three
+      # playwright invocations (a teardown would run after each, and the
+      # testnet runs share the config), and it still runs when a spec step
+      # crashed or hit its timeout. It comes after the upload so a slow cleanup
+      # cannot cost the report. A failure (a transient DAPI fault) warns
+      # instead of failing; what it left stays live until the same command is
+      # run by hand without --since.
+      - name: Tombstone the run's public posts and replies
+        if: always() && env.HAS_SEED == 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          E2E_DEVNET_SEED_PHRASE: ${{ secrets.E2E_DEVNET_SEED_PHRASE }}
+          E2E_ENV_FILE: .env.devnet
+          NETWORK: devnet
+        run: |
+          node scripts/clean-test-content.mjs --live --ci-pool --since "$JOB_STARTED_MS" \
+            || echo "::warning::Devnet test-content cleanup did not finish; run NETWORK=devnet node scripts/clean-test-content.mjs --live --ci-pool by hand"

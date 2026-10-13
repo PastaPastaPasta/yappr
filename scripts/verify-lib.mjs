@@ -35,6 +35,8 @@ const DRY_RUN_ID = '11111111111111111111111111111111';
 const YAPP_TOKEN_POSITION = 0;
 /** Below this the run cannot finish, so it aborts instead of failing cases. */
 const MIN_YAPP_BALANCE = 150n;
+/** How far before its start a run's cleanup reaches back: the chain stamps `$createdAt`, not this machine's clock. */
+const CLEANUP_CLOCK_SLACK_MS = 120_000;
 // ---- Devnet SDK -------------------------------------------------------------
 
 /** The devnet SDK the batteries run on: sdk-env's config (env, then `.env.devnet`). */
@@ -587,7 +589,7 @@ async function requireYapp(sdk, contractId, bots) {
  * Parses the flags every battery shares. `cases` is the ordered Map of case
  * key → handler, so `--only` can reject an unknown key before connecting.
  */
-function parseBatteryArgs(argv, { cases, contractEnvVar }) {
+function parseBatteryArgs(argv, { cases, contractEnvVar, cleansUp }) {
   const args = {
     contract: process.env[contractEnvVar]?.trim() || null,
     botIndex: 0,
@@ -596,6 +598,7 @@ function parseBatteryArgs(argv, { cases, contractEnvVar }) {
     owner2Id: null,
     only: null,
     dryRun: false,
+    keepContent: false,
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -607,6 +610,10 @@ function parseBatteryArgs(argv, { cases, contractEnvVar }) {
       case '--only': args.only = argv[++i]; break;
       case '--dry-run':
       case '--self-test': args.dryRun = true; break;
+      case '--keep-content':
+        if (!cleansUp) throw new Error('--keep-content: this battery leaves no public content to keep');
+        args.keepContent = true;
+        break;
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }
   }
@@ -674,6 +681,12 @@ function dryRun(args, { cases, shapes, replaceShapes = [] }) {
  * `makeContext({ sdk, contractId, botA, botB })` returns the per-run context
  * the cases share; `summarize(ctx)` prints whatever the battery wants echoed
  * before the verdict.
+ *
+ * `cleanup(ctx, { since, reconnect })`, when given, runs once every selected
+ * case has (also after one aborted): it takes the run's public content off the
+ * timeline, `since` being the run's start less the chain-clock slack.
+ * `--keep-content` skips it (to inspect what a run wrote). A cleanup that
+ * fails prints a WARNING; it never changes the verdict.
  */
 export async function runBattery({
   name,
@@ -684,10 +697,11 @@ export async function runBattery({
   replaceShapes,
   makeContext,
   summarize = () => {},
+  cleanup = null,
 }) {
   let args;
   try {
-    args = parseBatteryArgs(process.argv.slice(2), { cases, contractEnvVar });
+    args = parseBatteryArgs(process.argv.slice(2), { cases, contractEnvVar, cleansUp: cleanup !== null });
   } catch (e) {
     console.error(e.message);
     console.error(usage);
@@ -715,11 +729,25 @@ export async function runBattery({
 
     const ctx = makeContext({ sdk, contractId: args.contract, botA, botB });
 
-    for (const key of selectedCases(args, cases)) {
-      try {
-        await cases.get(key)(ctx);
-      } catch (e) {
-        check(`${key} completed`, false, `aborted: ${describeErr(e).slice(0, 220)}`);
+    const runStart = Date.now();
+    try {
+      for (const key of selectedCases(args, cases)) {
+        try {
+          await cases.get(key)(ctx);
+        } catch (e) {
+          check(`${key} completed`, false, `aborted: ${describeErr(e).slice(0, 220)}`);
+        }
+      }
+    } finally {
+      if (cleanup && args.keepContent) {
+        console.log('\n--keep-content: the run\'s public content stays (scripts/clean-test-content.mjs takes it down later)');
+      } else if (cleanup) {
+        console.log('\n--- cleanup: tombstoning the run\'s public posts and replies (skip with --keep-content) ---');
+        try {
+          await cleanup(ctx, { since: runStart - CLEANUP_CLOCK_SLACK_MS, reconnect: reconnectSdk });
+        } catch (e) {
+          console.log(`WARNING  cleanup did not finish: ${describeErr(e).slice(0, 220)}; run scripts/clean-test-content.mjs --live by hand`);
+        }
       }
     }
 
