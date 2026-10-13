@@ -2,7 +2,7 @@
 
 App Connect logs a user in by having their wallet add keys to their identity that are scoped to Yappr. The main one is an AUTHENTICATION key bound to a **contract group**, so one key can sign for every Yappr contract and nothing else. This document covers the contract side: the anchor contract that registers the group, which contracts join it, how they are registered, and how the app decides whether to trust the group.
 
-**Status: registered on sakura (5.0.0-beta.5) on 2026-10-12, exactly as planned below: the anchor `CWbSpGNi…` at maker nonce 13 registered the group `3S3owNij…`, and the seven members joined it at nonces 14-20 ([SAKURA_BETA5_DEPLOY.md](SAKURA_BETA5_DEPLOY.md)). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there. `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values. The web client reads them (`lib/app-connect/config.ts`) only on builds with `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`, which no committed env file sets yet, so /devnet still signs in with the legacy protocol.** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md).
+**Status: registered on sakura (5.0.0-beta.5) on 2026-10-12, exactly as planned below: the anchor `CWbSpGNi…` at maker nonce 13 registered the group `3S3owNij…`, and the seven members joined it at nonces 14-20 ([SAKURA_BETA5_DEPLOY.md](SAKURA_BETA5_DEPLOY.md)). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there. `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values. The web client reads them (`lib/app-connect/config.ts`) only on builds with `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`, which no committed env file sets yet, so /devnet still signs in with the legacy protocol.** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md). Social v16 ([SOCIAL_V16.md](SOCIAL_V16.md)) is appended to the set as `socialV16` and is not registered yet: it needs 5.0.0-beta.6 nodes (see [Adding a member to the registered set](#adding-a-member-to-the-registered-set)).
 
 Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
@@ -70,17 +70,18 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 | Nonce | Entry | File | sha256 | Signed create | Env |
 | ---: | --- | --- | --- | ---: | --- |
 | N | `app` (registers the group) | `yappr-app-contract.json` | `d3acd888…` | 707 B | `NEXT_PUBLIC_APP_CONNECT_APP_ID` |
-| N+1 | `social` (v15) | `yappr-social-contract-v15.json` | `9b6c7eed…` | ~16,456 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
+| N+1 | `social` (v15) | `yappr-social-contract-v15.json` | `9b6c7eed…` | ~16,456 B | none: replaced by `socialV16`, still a member |
 | N+2 | `blocks` | `yappr-blocks-contract.json` | `ba0ef67a…` | 1,258 B | `NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID` |
 | N+3 | `dmV5` | `yappr-dm-contract-v5.json` | `4fe2b3f4…` | 3,557 B | `NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID` |
 | N+4 | `blog` (v8) | `yappr-blog-contract.json` | `79c8a462…` | ~6,657 B | `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` |
 | N+5 | `pollr` (v7) | `pollr-contract.json` | `4b660df8…` | ~3,704 B | `NEXT_PUBLIC_POLLR_CONTRACT_ID` |
 | N+6 | `storefront` (v8) | `yappr-storefront-contract.json` | `8f0feeeb…` | ~16,314 B | `NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID` |
 | N+7 | `authVault` | `yappr-auth-vault-contract.json` | `cecf0ccc…` | 2,029 B | `NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID` |
+| N+8 | `socialV16` (v16) | `yappr-social-contract-v16.json` | `63dcfa91…` | ~16,497 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
 
 - Signed sizes are the PV14 version 1 creates with the membership. A membership adds about 33 B to a create.
 - Every file passes rs-dpp's full validation at PV14 (5.0.0-beta.5 `b5val` for the four beta.5 re-cuts, 5.0.0-beta.4 `b4val` for the others), the two 5.0.0-beta.5 wasm full parses, meta-schema v3 at beta.5 and the node-rule audit. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
-- The `~` sizes of the beta.5 re-cuts are the publisher's estimates (`--plan`) less its 100 B signature allowance, plus a 65 B signature.
+- The `~` sizes of the beta.5 re-cuts are the publisher's estimates (`--plan`) less its 100 B signature allowance, plus a 65 B signature. `socialV16`'s is the same arithmetic on `validate-contract-offline.mjs`'s estimate from the 5.0.0-beta.5 wasm-sdk, plus the membership; it has not been through rs-dpp 5.0.0-beta.6 full validation or the beta.6 wasm parses yet.
 - None embeds another contract's id. The publisher refuses a `SOCIAL_CONTRACT_ID` placeholder, so the order inside the set only fixes the ids.
 - **Cost:** about 263e9 credits (2.6 DASH, ~15,800¢) by the beta.3 per-contract costs on sakura. The shorthand files are smaller, so expect a little less.
 
@@ -102,7 +103,7 @@ In the group, each would also widen what every group-bound key can sign, permane
 ## Registering the set
 
 Prerequisites:
-- Every node of the target network runs 5.0.0-beta.5 (social v15's format-1 token is undecodable on beta.3, and the beta.5 SDK cannot read beta.3 nodes). Beta.3 nodes report protocol version 14 too, so the publisher reads the Drive version from the status API and refuses to run in any connected mode (`--dry-run`, `--signed-dry-run`, `--live`) unless it is 5.0.0-beta.5 or newer. The status answers for the one node that responded, so confirm the rest with `ops/status.mjs` first.
+- Every node of the target network runs 5.0.0-beta.6 (social v16's typed-array `where` and indexOnly element indexes are refused before it; social v15's format-1 token is undecodable on beta.3, and the beta.5 SDK cannot read beta.3 nodes). Beta.3 to beta.5 nodes report protocol version 14 too, so the publisher reads the Drive version from the status API and refuses to run in any connected mode (`--dry-run`, `--signed-dry-run`, `--live`) unless it is 5.0.0-beta.6 or newer. The publisher itself needs the 5.0.0-beta.6 SDK: even `--plan` decodes every create with wasm-dpp2, and the beta.5 one refuses v16 (10231). The status answers for the one node that responded, so confirm the rest with `ops/status.mjs` first.
 - The maker holds the cost above.
 - From the anchor's nonce to the last member's, the maker signs nothing else that takes an **identity** nonce: no other contract create or update, identity update, or credit transfer. Token mints and document writes use identity-contract nonces and do not interfere. The anchor must take the planned nonce, since it fixes APP_ID and GROUP_ID. A member that finds a later nonce still registers, under a different id than the plan printed; the run says so, and its final env lines carry the real ids.
 
@@ -175,6 +176,25 @@ Then:
 `--dry-run` adds a first line with the protocol version and the maker's nonce and balance. A `--live` run prints its env lines from the journal, with the ids each create actually landed at.
 
 These are the ids nonce 13 produces, and the ids the sakura `--live` run of 2026-10-12 landed at.
+
+### Adding a member to the registered set
+
+`APP_CONNECT_ENTRIES` only ever grows at the end. A member a later cut replaces keeps its entry, because its membership can never be removed and the app must pin every member of the group; its `envKey` becomes null, so the env lines name only the replacement's id while `NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS` keeps both. Social v15 is such a member since `socialV16` was appended.
+
+On sakura the eight entries up to `authVault` are registered and verified in the publisher's journal. `--dry-run` and `--signed-dry-run` plan a fresh set from the anchor nonce, so they refuse once the maker is past it; the append runs as a resumed live run with the same journal:
+
+```sh
+# Offline: the whole set built and decoded, socialV16 at its planned nonce (needs the beta.6 SDK)
+NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --start-nonce 13
+
+# Resumes the sakura journal: the eight verified entries are skipped, socialV16 is signed at the maker's next
+# identity nonce, journaled, broadcast and read back with proofs
+NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal <ops-dir>/appconnect-sakura.json
+```
+
+- The planned nonce N+8 (21 on sakura) is already spent: 21 to 23 went to the legacy contracts (see "Retired on PV14"). The run prints a NOTE and registers `socialV16` at the maker's next nonce under a different id than the plan's; its final env lines carry the real one. Before it signs, it checks that none of the nonces spent beyond the journal produced a member of the group.
+- Afterwards `verify-appconnect.mjs --only g1,g2,g3,a1` must pass with the nine-member list (the anchor, social v15, the other six, social v16).
+- On a fresh network the set as listed registers social v15 and v16 both. Leaving v15 out of a group that never held it is a decision for that cut-over; the pinned list and the group must stay equal either way.
 
 ## Env
 

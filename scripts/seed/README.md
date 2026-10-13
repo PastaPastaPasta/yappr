@@ -131,19 +131,24 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
   resumed run never moves an author between funding models. Every
   post/reply create is also a hand-built batch carrying the contract's action
   fee agreement (`sdk.documents.create` cannot express one; 40132 without).
-- The seeder writes v10/v11/v12/v13/v14 documents only (v11 and v12 keep every create
+- The seeder writes v10/v11/v12/v13/v14/v15/v16 documents only (v11 and v12 keep every create
   shape it writes: v12 changes only how the like author and hashtag indexes
   store, as counters, and who may tombstone; v13 adds `live: true` to posts and
   `rootOwnerId` to replies, drops `likeReply.replyAuthor` and writes media as
   one-item arrays; v14 writes v13's shapes but a reply stores no owner, neither
   `parentOwnerId` nor `rootOwnerId`, since its notification windows derive both;
+  v15 writes v14's shapes; v16 writes a post's tags as the typed array `tags`,
+  the op's `tags` list or else `[hashtag]`, and a like repeats that list
+  exactly, same elements in the same order;
   all built by `SOCIAL_SHAPES` off the configured file), and
   refuses to run unless `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env / `.env.devnet`) is
-  `v10`, `v11`, `v12`, `v13` or `v14`. The corpus
+  `v10`, `v11`, `v12`, `v13`, `v14`, `v15` or `v16`. The corpus
   `"hashtag": ""` convention means "untagged", and the seeder **omits the
-  hashtag property** on untagged posts and on their likes (a `where` entry's
+  hashtag property** (v16: `tags`) on untagged posts and on their likes (a `where` entry's
   both-absent; `''` is consensus error 40127). Tags longer than 61 characters
-  are rejected at parse time. A like is one transition (no `beat`), a post
+  are rejected at parse time, and so is a post whose content names more than
+  4 distinct tags or whose `tags` list is not exactly the tags its content
+  names, in order (CORPUS_FORMAT.md). A like is one transition (no `beat`), a post
   carries no `language`, and every `mediaUrl` is fetched once before the run
   so its post or reply can carry `mediaHash`/`mediaFingerprint` (v13: one
   `mediaDigests` item, sha256 then dHash).
@@ -152,7 +157,7 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
 - `--max-ops N` executes at most N new ops then stops cleanly (useful as a
   smoke slice of the pilot); resume with the same command.
 - Checkpoint: `.seed-progress.local.json` (append-only JSON lines: one record
-  per executed corpus line + the ref → `{id, ownerId, hashtag}` map). Re-runs
+  per executed corpus line + the ref → `{id, ownerId, hashtag, tags?}` map). Re-runs
   skip completed lines and retry failures; nothing is ever duplicated —
   documents get stable ids per op, so a retry of a broadcast that DID land
   converges on the same document. Records are keyed by corpus line and carry

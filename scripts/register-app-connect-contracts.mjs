@@ -394,8 +394,12 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
   return verified;
 }
 
-/** The oldest Drive that may take this set: beta.3 nodes report PV14 too but cannot decode it. */
-const MIN_DRIVE_VERSION = '5.0.0-beta.5';
+/**
+ * The oldest Drive that may take this set: beta.3 nodes report PV14 too but
+ * cannot decode it, and social v16 (the `socialV16` entry) needs 5.0.0-beta.6's
+ * typed-array `where` and indexOnly element indexes.
+ */
+const MIN_DRIVE_VERSION = '5.0.0-beta.6';
 
 /**
  * Orders two Drive versions (`major.minor.patch[-beta.N]`): negative when `a`
@@ -418,8 +422,8 @@ function compareDriveVersions(a, b) {
 
 /**
  * Refuses to go on unless the node that answers runs Drive >= {@link MIN_DRIVE_VERSION}.
- * The protocol-version check above cannot tell beta.3 from beta.5 (both are PV14),
- * and the set is registered with beta.5-only grammar. The status API names the
+ * The protocol-version check above cannot tell beta.3 from beta.6 (all are PV14),
+ * and the set is registered with beta.6-only grammar. The status API names the
  * Drive of the one node that answered, so this cannot prove every node has
  * upgraded: confirm that with `ops/status.mjs` first.
  */

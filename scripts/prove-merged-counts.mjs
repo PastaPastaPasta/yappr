@@ -152,6 +152,32 @@
  * reports it as one FAIL line, judges the fixtures by the shape checker and
  * exits 1.
  *
+ * ## Social v16 (`--contract-file contracts/yappr-social-contract-v16.json`)
+ *
+ * v16 (docs/SOCIAL_V16.md) is v15 whose post names up to four tags in the
+ * typed array `tags` (one `hashtag` up to v15), and whose like repeats its
+ * post's list exactly (`postId.refersTo.where { "tags": "tags" }`: the same
+ * elements in the same order; an untagged post and its likes leave it out).
+ * The indexes keep their names and key `tags`: post tagAndTime, like
+ * byHashtagPost (preallocated counters) and byTrendHashtagPost enter a
+ * document once per tag, so a read pins one tag with `contains` (`==` on the
+ * list is refused). Every v14 and v15 phase runs, its tag writes and reads
+ * built by scripts/social-shapes.mjs (`tags`, `tagPin`, `tagRanking`,
+ * `tagLikesWhere`, `storedTags`): a one-tag post writes `tags: [t]`, its likes
+ * the same list, and a removal record keeps `tags`. Then:
+ *   tg-*   tag lists: B's Tl, under two tags new to the run, stores the list
+ *          in order (tg-0) and has a counter at 0 under each tag from its
+ *          creation (tg-1); C's one like counts 1 under each tag, at the tag
+ *          and the post level, and once on byPost (tg-2); Tl ranks 1 under
+ *          each tag all time and in the oldest open window (tg-3, tg-4); the
+ *          trending tags list both (tg-5 all time, tg-6 the window); the unlike
+ *          by values, carrying the list as created, takes the counts back
+ *          under both (tg-7, tg-8) while the windows keep the entry (tg-9)
+ * The installed 5.0.0-beta.5 wasm-sdk parses v16, but its wasm-dpp2 refuses
+ * like's indexOnly typed-array indexes until 5.0.0-beta.6: `--dry-run`
+ * reports it as one FAIL line, judges the fixtures by the shape checker and
+ * exits 1.
+ *
  * Then seat a team on the throwaway contract (the ops election tooling: a
  * charter by the leader, join requests, the apply; the windows are
  * PROOF_ELECTION_WINDOW s) and run the second phase:
@@ -175,6 +201,8 @@
  *        --team-proof <contractId> --reason-doc <reasonId> --bot 0 --bot 1 --bot 2 --identity-id <D> --key-wif-file <file>
  *   node scripts/prove-merged-counts.mjs --contract-file contracts/yappr-social-contract-v12.json \
  *        --bot 0 --bot 1 --bot 2 --bot 3            # v12: as v11, plus cn-* and rw-*
+ *   node scripts/prove-merged-counts.mjs --contract-file contracts/yappr-social-contract-v16.json \
+ *        --bot 0 --bot 1 --bot 2 --bot 3            # v16: as v15, plus tg-*
  *   node scripts/prove-merged-counts.mjs --contract-file contracts/yappr-social-contract-v12.json \
  *        --team-proof <contractId> --reason-doc <reasonId> --bot 0 --bot 1 --bot 2 --bot 3 [--added-member 4]
  *
@@ -352,6 +380,8 @@ function check(label, ok, detail = '') {
   if (!ok) failures += 1;
 }
 const same = (actual, expected) => JSON.stringify(actual) === JSON.stringify(expected);
+/** A post's tags as a label names them: `hashtag "a"` up to v15, `tags ["a"]` on v16 (`shapes` is the cut's). */
+const tagsNamed = (shapes, list) => (shapes.cut.tagArray ? `tags ${JSON.stringify(list)}` : `hashtag "${list[0]}"`);
 /**
  * Grouped counts as sets: the node returns groups in key-byte order, and a
  * group with no documents is absent rather than 0.
@@ -503,6 +533,18 @@ async function main() {
   const replyCounters = shapes.cut.replyAuthor;
   /** v14: a reply stores no owner; rootOwnerRecent / parentOwnerRecent derive it (`rootPostId.$ownerId`, `replyToReplyId.$ownerId`). */
   const derivedReplyOwners = !shapes.cut.storedReplyOwners;
+  /** v16: a post and its like name their tags in the typed array `tags`; a read pins one tag with `contains` (`shapes.tagPin`). */
+  const tagLists = shapes.cut.tagArray;
+  /** How a label names the pin on one tag. */
+  const PIN = tagLists ? '`tags contains`' : '`hashtag ==`';
+  /**
+   * The `(where, groupBy)` a phase's `ranked` takes for a like ranking on the tag indexes
+   * (`shapes.tagRanking`): a tag's posts under its pin, or with no tag the tags themselves.
+   */
+  const tagRankingArgs = (tag) => {
+    const { where = null, groupBy } = shapes.tagRanking(tag);
+    return [where, groupBy];
+  };
 
   // Offline: both parsers accept the throwaway contract, and every fixture document builds.
   // A cut newer than the installed SDK (v14 needs 5.0.0-beta.3: countPresent, a derived skip
@@ -518,16 +560,18 @@ async function main() {
   }
   const indexes = Object.fromEntries(Object.entries(source.documentSchemas).map(([type, schema]) => [type, schema.indices.map((index) => index.name)]));
   if (parsed) console.log(`throwaway contract parses (wasm-sdk + wasm-dpp2): ${JSON.stringify(indexes)}`);
-  console.log(`phases: ${v11 ? 'ol (timeless likes), M (design M), kf/tm-0' : 'dc (like design C)'}${counters ? `, cn (v12 counters${replyCounters ? '' : ', post counters only'})` : ''}${retracts ? ', rw (v12 retractedWhen)' : ''}${shapes.cut.liveMarker ? ', lv (v13 live marker)' : ''}${derivedReplyOwners ? ', n1 on the derived reply windows (v14)' : ''}`);
+  console.log(`phases: ${v11 ? 'ol (timeless likes), M (design M), kf/tm-0' : 'dc (like design C)'}${counters ? `, cn (v12 counters${replyCounters ? '' : ', post counters only'})` : ''}${retracts ? ', rw (v12 retractedWhen)' : ''}${shapes.cut.liveMarker ? ', lv (v13 live marker)' : ''}${derivedReplyOwners ? ', n1 on the derived reply windows (v14)' : ''}${tagLists ? ', tg (v16 tag lists)' : ''}`);
   if (args.dryRun) {
     const [x, y, z] = [randomIdBytes(), randomIdBytes(), randomIdBytes()];
     // Every fixture shape, v12-written and fitted to the cut: it must build, serialize, and pass the cut's rules.
+    // Tags go through `shapes.tags`: `hashtag` up to v15, a `tags` list on v16 (tg-* adds a two-tag post and its like).
     const fixtures = [
-      ['post', { content: 'x' }], ['post', { content: 'x', hashtag: 'olproof' }], ['post', { quotedPostId: x, quotedPostOwnerId: y }],
+      ['post', { content: 'x' }], ['post', { content: 'x', ...shapes.tags(['olproof']) }], ['post', { quotedPostId: x, quotedPostOwnerId: y }],
       ['post', { content: 'hello @b', ...shapes.mentions([y]) }], ['reply', { rootPostId: x, parentOwnerId: y, content: 'x' }],
       ['reply', { rootPostId: x, rootOwnerId: y, replyToReplyId: z, parentOwnerId: z, content: 'nested' }],
       ['like', { postId: x, postAuthor: y }], ['likeReply', { replyId: x, replyAuthor: y }], ['follow', { followingId: x }],
-      ...(source.documentSchemas.post.properties.deleted ? [['post', { deleted: true, hashtag: 'rwproof' }], ['reply', { deleted: true, rootPostId: x, parentOwnerId: y }]] : []),
+      ...(source.documentSchemas.post.properties.deleted ? [['post', { deleted: true, ...shapes.tags(['rwproof']) }], ['reply', { deleted: true, rootPostId: x, parentOwnerId: y }]] : []),
+      ...(tagLists ? [['post', { content: 'x', ...shapes.tags(['tgaproof', 'tgbproof']) }], ['like', { postId: x, postAuthor: y, ...shapes.tags(['tgaproof', 'tgbproof']) }]] : []),
     ];
     for (const [docType, written] of fixtures) {
       const data = shapes.fit(docType, written);
@@ -1100,7 +1144,7 @@ async function main() {
     const grid = (name) => source.documentSchemas.like.indices.find((index) => index.name === name).timeRange;
     const oldestOf = (name) => ({ timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range: grid(name).range, step: grid(name).step } }] });
     const trendPosts = () => ranked(null, 'postId', oldestOf('byTrendPost'));
-    const trendTags = () => ranked(null, 'hashtag', oldestOf('byTrendHashtagPost'));
+    const trendTags = () => ranked(...tagRankingArgs(), oldestOf('byTrendHashtagPost'));
     const tagValue = (e) => (typeof e.groupValue === 'string' ? e.groupValue : Buffer.from(e.groupValue).toString('utf8'));
     const tagPairs = (r) => r.entries.map((e) => [tagValue(e), Number(e.value)]);
     const likeCount = async (docType, field, target) => total(await count(docType, [[field, '==', target]]));
@@ -1113,13 +1157,14 @@ async function main() {
     const reported = (label) => (e) => console.log(`     (${label} reported: ${describeErr(e).slice(0, 140)})`);
     // Expiry is measured from a like's own time: write the ones that will expire first. C's
     // like of T3 is unliked at once; C's tagged like of Th is unliked later (h3), and B likes
-    // Th more than one tag-window step after C, so B's entry outlives C's (x1).
+    // Th more than one tag-window step after C, so B's entry outlives C's (x1). On v16 Th's
+    // one tag is a one-element `tags` list, and each like of Th carries that same list.
     const tag = 'olproof';
-    const Th = await mustCreate('Th (A, #olproof)', A, 'post', { content: 'tagged target', hashtag: tag });
+    const Th = await mustCreate('Th (A, #olproof)', A, 'post', { content: 'tagged target', ...shapes.tags([tag]) });
     const expiringAt = Date.now();
     await likeWrite(C, 'like', { postId: id(T3), postAuthor: id(A.ownerId) });
     const taggedAt = Date.now();
-    await likeWrite(C, 'like', { postId: id(Th), postAuthor: id(A.ownerId), hashtag: tag });
+    await likeWrite(C, 'like', { postId: id(Th), postAuthor: id(A.ownerId), ...shapes.tags([tag]) });
     await sleep(SETTLE_MS);
     await unlike(C, 'like', { postId: id(T3), postAuthor: id(A.ownerId) }).catch(reported('C\'s unlike of T3'));
     await sleep(SETTLE_MS);
@@ -1208,11 +1253,11 @@ async function main() {
     // B's tagged like, in a later tag-window step than C's, then the unlikes.
     const stepAfter = taggedAt + (2 * grid('byTrendHashtagPost').step + 5) * 1000 - Date.now();
     if (stepAfter > 0) { console.log(`     waiting ${Math.ceil(stepAfter / 1000)} s so B's tagged like lands two tag-window steps after C's`); await sleep(stepAfter); }
-    await likeWrite(B, 'like', { postId: id(Th), postAuthor: id(A.ownerId), hashtag: tag });
+    await likeWrite(B, 'like', { postId: id(Th), postAuthor: id(A.ownerId), ...shapes.tags([tag]) });
     await sleep(SETTLE_MS);
     await attempt('ol-t2', trendTags, (r) => check(`ol-t2 trending tags in the oldest open byTrendHashtagPost window: ${tag} 2`, same(tagPairs(r), [[tag, 2]]), JSON.stringify(tagPairs(r))));
-    await attempt('ol-t3', () => ranked([['hashtag', '==', tag]], 'postId', oldestOf('byTrendHashtagPost')), (r) => check('ol-t3 the tag\'s top posts in its window: Th 2', same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
-    await attempt('ol-t4', () => ranked([['hashtag', '==', tag]], 'postId'), (r) => check('ol-t4 hashtag Top all-time (byHashtagPost ranked `hashtag ==` groupBy postId): Th 2', same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
+    await attempt('ol-t3', () => ranked(...tagRankingArgs(tag), oldestOf('byTrendHashtagPost')), (r) => check('ol-t3 the tag\'s top posts in its window: Th 2', same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
+    await attempt('ol-t4', () => ranked(...tagRankingArgs(tag)), (r) => check(`ol-t4 hashtag Top all-time (byHashtagPost ranked ${PIN} groupBy postId): Th 2`, same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
 
     // (h) unlikes WITHOUT $createdAt. h0 first offers the time anyway: the SDK drops it on a
     // type whose rows commit to none, so it is reported, never failed.
@@ -1237,9 +1282,9 @@ async function main() {
       return Promise.all([likeCount('likeReply', 'replyId', r1), heartOf('likeReply', 'replyId', r1, A.ownerId)]);
     }, ([n, heart]) => check('ol-h2 A unlikes reply r1 with no $createdAt (likeReply requires none): count 0, heart off', n === 0 && heart === 0, `count ${n}, heart ${heart}`));
     await attempt('ol-h3', async () => {
-      await unlike(C, 'like', { postId: id(Th), postAuthor: id(A.ownerId), hashtag: tag }).catch(reported('unlike'));
+      await unlike(C, 'like', { postId: id(Th), postAuthor: id(A.ownerId), ...shapes.tags([tag]) }).catch(reported('unlike'));
       await sleep(SETTLE_MS);
-      const [n, top, window] = await Promise.all([likeCount('like', 'postId', Th), ranked([['hashtag', '==', tag]], 'postId'), trendTags()]);
+      const [n, top, window] = await Promise.all([likeCount('like', 'postId', Th), ranked(...tagRankingArgs(tag)), trendTags()]);
       return { n, top: rankedPairs(top), window: tagPairs(window) };
     }, ({ n, top, window }) => check(`ol-h3 C unlikes the tagged Th: count 1, hashtag Top all-time Th 1, the 24h tag window still ${tag} 2`, n === 1 && same(top, [[Th, 1]]) && same(window, [[tag, 2]]), `count ${n}, top ${JSON.stringify(top)}, window ${JSON.stringify(window)}`));
     await attempt('ol-h4', async () => {
@@ -1265,7 +1310,7 @@ async function main() {
       return value;
     };
     await attempt('ol-x1', () => pollUntil(leavesOldestAt(taggedAt, 'byTrendHashtagPost'), leavesOldestAt(taggedAt, 'byTrendHashtagPost') + EXPIRY_GRACE_MS,
-      async () => ({ tags: tagPairs(await trendTags()), posts: rankedPairs(await ranked([['hashtag', '==', tag]], 'postId', oldestOf('byTrendHashtagPost'))) }),
+      async () => ({ tags: tagPairs(await trendTags()), posts: rankedPairs(await ranked(...tagRankingArgs(tag), oldestOf('byTrendHashtagPost'))) }),
       ({ tags }) => !same(tags, [[tag, 2]])), ({ tags, posts }) => check(`ol-x1 once its window passed, C's unliked tag entry has expired while B's later live like stays: ${tag} 1, Th 1 in the oldest open window`,
       same(tags, [[tag, 1]]) && same(posts, [[Th, 1]]), `${JSON.stringify(tags)} posts ${JSON.stringify(posts)}`));
     await attempt('ol-x2', () => pollUntil(leavesOldestAt(expiringAt, 'byTrendPost'), leavesOldestAt(expiringAt, 'byTrendPost') + EXPIRY_GRACE_MS,
@@ -1278,20 +1323,20 @@ async function main() {
   // ---- kf / tm-0: v11 moderation before a team is seated (the interim owner A moderates) ----
   async function proveRemovalRecordsAndWindow() {
     console.log('\n--- kf. removal records keep fields; tm-0. the delete window before a team is seated ---');
-    const S1 = await mustCreate('S1 (D, #settle: the team deletes it once settled)', D, 'post', { content: 'settle one', hashtag: 'settle' });
-    const S2 = await mustCreate('S2 (D, #settle: spare)', D, 'post', { content: 'settle two', hashtag: 'settle' });
+    const S1 = await mustCreate('S1 (D, #settle: the team deletes it once settled)', D, 'post', { content: 'settle one', ...shapes.tags(['settle']) });
+    const S2 = await mustCreate('S2 (D, #settle: spare)', D, 'post', { content: 'settle two', ...shapes.tags(['settle']) });
     const SR = await mustCreate('SR (D, a thread root)', D, 'post', { content: 'thread root' });
     const S3 = await mustCreate('S3 (D replies to its SR: the team deletes it once settled)', D, 'reply', { content: 'settle reply', rootPostId: id(SR), parentOwnerId: id(D.ownerId) });
     const settledFrom = Date.now();
-    const Pk = await mustCreate('Pk (D, #kept)', D, 'post', { content: 'kept fields', hashtag: 'kept' });
+    const Pk = await mustCreate('Pk (D, #kept)', D, 'post', { content: 'kept fields', ...shapes.tags(['kept']) });
     const Rk = await mustCreate('Rk (D replies to SR)', D, 'reply', { content: 'kept reply', rootPostId: id(SR), parentOwnerId: id(D.ownerId) });
     const created = async (docType, docId) => createdAtOf(await sdk.documents.get(contractId, docType, docId));
     const [pkAt, rkAt] = await Promise.all([created('post', Pk), created('reply', Rk)]);
     const moderatorA = { identity: await sdk.identities.fetch(A.ownerId), signer: A.signer };
     await attempt('kf-1', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: Pk, reason: { text: 'kf-1 proof' } }), (record) => {
       const kept = record?.keptFields ?? {};
-      check('kf-1 the interim owner removes D\'s post Pk within the window: the record keeps hashtag "kept" and its $createdAt',
-        kept.hashtag === 'kept' && Number(kept.$createdAt) === pkAt && Object.keys(kept).length === 2, JSON.stringify(kept, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+      check(`kf-1 the interim owner removes D's post Pk within the window: the record keeps ${tagsNamed(shapes, ['kept'])} and its $createdAt`,
+        same(shapes.storedTags(kept), ['kept']) && Number(kept.$createdAt) === pkAt && Object.keys(kept).length === 2, JSON.stringify(kept, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
     }, { idempotent: false });
     await attempt('kf-2', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'reply', documentId: Rk, reason: { text: 'kf-2 proof' } }), (record) => {
       const kept = record?.keptFields ?? {};
@@ -1299,7 +1344,7 @@ async function main() {
     }, { idempotent: false });
     await attempt('kf-3', () => sdk.contracts.documentRemovals({ contractId, documentTypeName: 'post', documentIds: [Pk] }), (page) => {
       const kept = page.removals[0]?.keptFields ?? {};
-      check('kf-3 documentRemovals by id returns the kept fields too (hashtag, $createdAt), and the post is gone', page.removals.length === 1 && kept.hashtag === 'kept' && Number(kept.$createdAt) === pkAt, JSON.stringify(kept, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+      check(`kf-3 documentRemovals by id returns the kept fields too (${shapes.tagField}, $createdAt), and the post is gone`, page.removals.length === 1 && same(shapes.storedTags(kept), ['kept']) && Number(kept.$createdAt) === pkAt, JSON.stringify(kept, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
     });
     const settledAt = settledFrom + (PROOF_DELETE_WITHIN + 20) * 1000;
     if (settledAt > Date.now()) { console.log(`     waiting ${Math.ceil((settledAt - Date.now()) / 1000)} s for S1-S3 to settle (deleteWithin ${PROOF_DELETE_WITHIN} s)`); await sleep(settledAt - Date.now()); }
@@ -1313,7 +1358,8 @@ async function main() {
   // byAuthorPost [postAuthor, postId] and byHashtagPost [hashtag, postId] keep one SumItem per
   // post holding its byPost entries, ranked at both levels; byAuthorReply [replyAuthor, replyId]
   // the same off byReply, unranked. All three are preallocated: a counter exists, at 0, from
-  // the post's (reply's) creation.
+  // the post's (reply's) creation. v16 keys byHashtagPost [tags, postId], one counter per tag of
+  // the post; C2 and C4 carry one tag, so every figure is v12's (tg-* proves the several-tag case).
   async function proveCounters() {
     console.log('\n--- cn. v12 counters: per post, author and hashtag; rankings; grouped per-post counts; zero groups; unlike; refused range totals; reply counters ---');
     const tag = 'cnproof';
@@ -1332,9 +1378,9 @@ async function main() {
     const replyLike = (target) => ({ replyId: id(target), replyAuthor: id(D.ownerId) });
 
     const C1 = await mustCreate('C1 (D, untagged)', D, 'post', { content: 'counter one' });
-    const C2 = await mustCreate('C2 (D, #cnproof)', D, 'post', { content: 'counter two', hashtag: tag });
+    const C2 = await mustCreate('C2 (D, #cnproof)', D, 'post', { content: 'counter two', ...shapes.tags([tag]) });
     const C3 = await mustCreate('C3 (D, never liked)', D, 'post', { content: 'counter three' });
-    const C4 = await mustCreate('C4 (D, #cnproof)', D, 'post', { content: 'counter four', hashtag: tag });
+    const C4 = await mustCreate('C4 (D, #cnproof)', D, 'post', { content: 'counter four', ...shapes.tags([tag]) });
     const R1 = await mustCreate('R1 (D replies to C1)', D, 'reply', { content: 'counter reply one', rootPostId: id(C1), parentOwnerId: id(D.ownerId) });
     const R2 = await mustCreate('R2 (D replies to C1, never liked)', D, 'reply', { content: 'counter reply two', rootPostId: id(C1), parentOwnerId: id(D.ownerId) });
     await sleep(SETTLE_MS);
@@ -1342,7 +1388,7 @@ async function main() {
     // none; the range walks can: they list a preallocated counter's zero group.
     // v13 keeps no reply author counter: its reply totals and walks are left out (cn-f counts byReply instead).
     const replyTotal = replyCounters ? [count('likeReply', [['replyAuthor', '==', D.ownerId]])] : [];
-    await attempt('cn-0', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]]), count('like', [['hashtag', '==', tag]]), ...replyTotal]),
+    await attempt('cn-0', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]]), count('like', shapes.tagLikesWhere(tag)), ...replyTotal]),
       (all) => check(`cn-0 before any like, D's totals read 0 (or answer empty): author, C1, #cnproof${replyCounters ? ', D\'s replies' : ''}`, all.every((m) => total(m) === 0), JSON.stringify(all.map(counts))));
     const replyWalk = () => (replyCounters ? count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '>', MIN_ID]], ['replyId']) : null);
     await attempt('cn-0r', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]], ['postId']), replyWalk()]),
@@ -1350,8 +1396,8 @@ async function main() {
 
     // C1: A, B, C. C2 (#cnproof): A, B. C3: none. C4 (#cnproof): C. R1: A, B. → D 6, #cnproof 3, D's replies 2.
     for (const who of [A, B, C]) await likeWrite(who, 'like', postLike(C1));
-    for (const who of [A, B]) await likeWrite(who, 'like', postLike(C2, { hashtag: tag }));
-    await likeWrite(C, 'like', postLike(C4, { hashtag: tag }));
+    for (const who of [A, B]) await likeWrite(who, 'like', postLike(C2, shapes.tags([tag])));
+    await likeWrite(C, 'like', postLike(C4, shapes.tags([tag])));
     for (const who of [A, B]) await likeWrite(who, 'likeReply', replyLike(R1));
     await sleep(SETTLE_MS);
 
@@ -1360,10 +1406,10 @@ async function main() {
       ([source, counter]) => check('cn-a1 one post: byPost `postId ==` 3, the byAuthorPost counter (`postAuthor ==`, `postId ==`) 3', total(source) === 3 && total(counter) === 3, `byPost ${total(source)} counter ${total(counter)}`));
     await attempt('cn-a2', () => count('like', [['postAuthor', '==', D.ownerId]]),
       (m) => check('cn-a2 one author (`postAuthor ==`, the shallowest ranked level): count(*) 6', total(m) === 6, `count ${total(m)}`));
-    await attempt('cn-a3', () => Promise.all([count('like', [['hashtag', '==', tag]]), count('like', [['hashtag', '==', tag], ['postId', '==', C2]])]),
-      ([counted, post]) => check(`cn-a3 one hashtag (byHashtagPost \`hashtag ==\`): count(*) 3; #${tag} C2 alone 2`, total(counted) === 3 && total(post) === 2, `count ${total(counted)} C2 ${total(post)}`));
+    await attempt('cn-a3', () => Promise.all([count('like', shapes.tagLikesWhere(tag)), count('like', shapes.tagLikesWhere(tag, C2))]),
+      ([counted, post]) => check(`cn-a3 one hashtag (byHashtagPost ${PIN}): count(*) 3; #${tag} C2 alone 2`, total(counted) === 3 && total(post) === 2, `count ${total(counted)} C2 ${total(post)}`));
     // sum(byPost), named by the source index, reads the same sums (one attempt each: a refusal of one form loses no other).
-    for (const [label, where, expected] of [['cn-a1s at C1\'s counter', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]], 3], ['cn-a2s at D', [['postAuthor', '==', D.ownerId]], 6], [`cn-a3s at #${tag}`, [['hashtag', '==', tag]], 3]]) {
+    for (const [label, where, expected] of [['cn-a1s at C1\'s counter', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]], 3], ['cn-a2s at D', [['postAuthor', '==', D.ownerId]], 6], [`cn-a3s at #${tag}`, shapes.tagLikesWhere(tag), 3]]) {
       await attempt(label, () => sum('like', where, 'byPost'), (m) => check(`${label}: sum(byPost) ${expected}, as count(*)`, total(m) === expected, `sum ${total(m)}`));
     }
 
@@ -1375,7 +1421,7 @@ async function main() {
       (m) => check('cn-b2 `postAuthor ==`, a range on postId, groupBy postId: every one of D\'s posts with its likes, C3 at 0', exactly(m, perPost), JSON.stringify(counts(m))));
     await attempt('cn-b3', () => sum('like', [['postAuthor', '==', D.ownerId], ['postId', 'in', [C1, C2, C3, C4]]], 'byPost', ['postId']),
       (m) => check('cn-b3 the same as a grouped sum(byPost): C1 3, C2 2, C3 0, C4 1', sameCounts(counts(m), perPost), JSON.stringify(counts(m))));
-    await attempt('cn-b4', () => count('like', [['hashtag', '==', tag], ['postId', '>', MIN_ID]], ['postId']),
+    await attempt('cn-b4', () => count('like', [shapes.tagPin(tag), ['postId', '>', MIN_ID]], ['postId']),
       (m) => check(`cn-b4 #${tag}'s posts over a range, groupBy postId: C2 2, C4 1`, exactly(m, { [C2]: 2, [C4]: 1 }), JSON.stringify(counts(m))));
 
     // (c) a range TOTAL through a ranked level is refused (grovedb proves totals only through
@@ -1387,17 +1433,19 @@ async function main() {
     await attempt('cn-d1', () => ranked(null, 'postAuthor'), (r) => check('cn-d1 top creators (ranked count(*) GROUP BY postAuthor, read off the sum ranking): D 6 first, then A 4', same(nonZero(r).slice(0, 2), [[D.ownerId, 6], [A.ownerId, 4]]), JSON.stringify(nonZero(r))));
     // rankedCountable on a counter declares the sum ranking (index-only.md), so a ranked sum(byPost) reads the same one.
     await attempt('cn-d1s', () => ranked(null, 'postAuthor', { type: 'sum', property: 'byPost' }), (r) => check('cn-d1s the same ranked by sum(byPost): D 6, then A 4', same(nonZero(r).slice(0, 2), [[D.ownerId, 6], [A.ownerId, 4]]), JSON.stringify(nonZero(r))));
-    await attempt('cn-d2', () => ranked(null, 'hashtag'), (r) => {
+    await attempt('cn-d2', () => ranked(...tagRankingArgs()), (r) => {
       const got = tagEntries(r);
       const ordered = got.every(([, value], i) => i === 0 || got[i - 1][1] >= value);
-      check(`cn-d2 trending hashtags all time (ranked GROUP BY hashtag on byHashtagPost): ${tag} 3 first, ordered`, ordered && same(got[0], [tag, 3]), JSON.stringify(got));
+      check(`cn-d2 trending hashtags all time (ranked GROUP BY ${shapes.tagField} on byHashtagPost): ${tag} 3 first, ordered`, ordered && same(got[0], [tag, 3]), JSON.stringify(got));
     });
     await attempt('cn-d3', () => ranked([['postAuthor', '==', D.ownerId]], 'postId'), (r) => check('cn-d3 D\'s top posts (`postAuthor ==` GROUP BY postId): C1 3, C2 2, C4 1, and C3 listed at 0 after them', same(nonZero(r), [[C1, 3], [C2, 2], [C4, 1]]) && entriesOf(r).some(([k, v]) => k === C3 && v === 0), JSON.stringify(entriesOf(r))));
-    await attempt('cn-d4', () => ranked([['hashtag', '==', tag]], 'postId'), (r) => check(`cn-d4 #${tag}'s top posts (\`hashtag ==\` GROUP BY postId): C2 2, C4 1`, same(nonZero(r), [[C2, 2], [C4, 1]]), JSON.stringify(entriesOf(r))));
+    await attempt('cn-d4', () => ranked(...tagRankingArgs(tag)), (r) => check(`cn-d4 #${tag}'s top posts (${PIN} GROUP BY postId): C2 2, C4 1`, same(nonZero(r), [[C2, 2], [C4, 1]]), JSON.stringify(entriesOf(r))));
 
     // (e) the counters hold no documents: likers are read per target on byPost.
     await expectRefusal('cn-e1 a documents read through byAuthorPost (`postAuthor ==`, `postId in`) is refused', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', D.ownerId], ['postId', 'in', [C1]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })), NON_INDEXED);
-    await expectRefusal('cn-e2 a documents read through byHashtagPost (`hashtag ==`) is refused', () => sdk.documents.query(q('like', { where: [['hashtag', '==', tag]], orderBy: [['hashtag', 'asc'], ['postId', 'asc']], limit: 100 })), NON_INDEXED);
+    // v16 orders by postId alone: a typed array is ordered by only under `containsAny` (social-shapes taggedPosts).
+    const tagOrder = tagLists ? [['postId', 'asc']] : [[shapes.tagField, 'asc'], ['postId', 'asc']];
+    await expectRefusal(`cn-e2 a documents read through byHashtagPost (${PIN}) is refused`, () => sdk.documents.query(q('like', { where: [shapes.tagPin(tag)], orderBy: tagOrder, limit: 100 })), NON_INDEXED);
     await attempt('cn-e3', () => sdk.documents.query(q('like', { where: [['postId', '==', C1]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 })),
       (r) => check('cn-e3 C1\'s likers on byPost (`postId ==`, the app\'s per-target read once a counter moved): A, B, C', sameSet(docsOf(r).map((d) => toBase58((d.toObject?.() ?? d).$ownerId)), [A.ownerId, B.ownerId, C.ownerId]), `${docsOf(r).length} row(s)`));
 
@@ -1424,15 +1472,15 @@ async function main() {
       await sdk.documents.delete({ document, identityKey: who.identityKey, signer: who.signer }).catch((e) => console.log(`     (unlike reported: ${describeErr(e).slice(0, 140)})`));
     };
     await unlikeNow(C, 'like', postLike(C1));
-    await unlikeNow(C, 'like', postLike(C4, { hashtag: tag }));
+    await unlikeNow(C, 'like', postLike(C4, shapes.tags([tag])));
     await unlikeNow(A, 'likeReply', replyLike(R1));
     const C5 = await mustCreate('C5 (D, fresh after the unlikes)', D, 'post', { content: 'counter five' });
     await sleep(SETTLE_MS);
-    await attempt('cn-g1', () => Promise.all([count('like', [['postId', '==', C1]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]]), count('like', [['postAuthor', '==', D.ownerId]]), count('like', [['hashtag', '==', tag]])]),
+    await attempt('cn-g1', () => Promise.all([count('like', [['postId', '==', C1]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]]), count('like', [['postAuthor', '==', D.ownerId]]), count('like', shapes.tagLikesWhere(tag))]),
       ([source, counter, author, hashtag]) => check('cn-g1 C unlikes C1 and C4: byPost C1 2, its counter 2, D 4, #cnproof 2', total(source) === 2 && total(counter) === 2 && total(author) === 4 && total(hashtag) === 2, JSON.stringify([source, counter, author, hashtag].map(total))));
     await attempt('cn-g2', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]], ['postId']), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C5]])]),
       ([m, fresh]) => check('cn-g2 per post after the unlikes (range, groupBy postId): C1 2, C2 2, C3 0, C4 0 (drained, kept at zero), C5 0 (fresh: its counter exists from creation); C5\'s point count 0', exactly(m, { [C1]: 2, [C2]: 2, [C3]: 0, [C4]: 0, [C5]: 0 }) && total(fresh) === 0, `${JSON.stringify(counts(m))} C5 point ${total(fresh)}`));
-    await attempt('cn-g3', () => Promise.all([ranked(null, 'postAuthor'), ranked([['hashtag', '==', tag]], 'postId')]), ([creators, tagged]) => check('cn-g3 the rankings follow: D 4 among the creators; #cnproof top posts C2 2 alone above zero', nonZero(creators).some(([k, v]) => k === D.ownerId && v === 4) && same(nonZero(tagged), [[C2, 2]]), `creators ${JSON.stringify(nonZero(creators))} tag ${JSON.stringify(entriesOf(tagged))}`));
+    await attempt('cn-g3', () => Promise.all([ranked(null, 'postAuthor'), ranked(...tagRankingArgs(tag))]), ([creators, tagged]) => check('cn-g3 the rankings follow: D 4 among the creators; #cnproof top posts C2 2 alone above zero', nonZero(creators).some(([k, v]) => k === D.ownerId && v === 4) && same(nonZero(tagged), [[C2, 2]]), `creators ${JSON.stringify(nonZero(creators))} tag ${JSON.stringify(entriesOf(tagged))}`));
     if (replyCounters) {
       await attempt('cn-g4', () => Promise.all([count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
         ([reply, author]) => check('cn-g4 A unlikes R1: its counter 1, D\'s replies 1', total(reply) === 1 && total(author) === 1, JSON.stringify([total(reply), total(author)])));
@@ -1472,7 +1520,7 @@ async function main() {
     const BANNED = /\bcode"?\s*[=:]\s*41107\b|contractuserbanned|is banned/i;
     const SUSPENDED = /\bcode"?\s*[=:]\s*41108\b|contractusersuspended|is suspended/i;
     const fixtures = async (label) => {
-      const post = await mustCreate(`${label} post (D)`, D, 'post', { content: `${label} post`, hashtag: 'rwproof' });
+      const post = await mustCreate(`${label} post (D)`, D, 'post', { content: `${label} post`, ...shapes.tags(['rwproof']) });
       const reply = await mustCreate(`${label} reply (D)`, D, 'reply', { content: `${label} reply`, rootPostId: id(post), parentOwnerId: id(D.ownerId) });
       return { post, reply };
     };
@@ -1480,11 +1528,11 @@ async function main() {
     const suspended = await fixtures('rw suspended');
     const tombstoneOf = async (docType, docId) => { const stored = plain(await sdk.documents.get(contractId, docType, docId)); return stored.deleted === true && stored.content === undefined; };
     const underBar = async (prefix, { post, reply }, refusal, code) => {
-      refusedWith(`${prefix}1 D's edit of its post while barred is refused (${code})`, await replaceDoc(D, 'post', post, { content: 'edited', hashtag: 'rwproof' }), refusal);
-      refusedWith(`${prefix}2 a tombstone keeping the text passes the bar and is refused by ${BLANK_RULE} (10422)`, await replaceDoc(D, 'post', post, { deleted: true, content: 'kept', hashtag: 'rwproof' }), BLANK);
-      const tomb = await replaceDoc(D, 'post', post, { deleted: true, hashtag: 'rwproof' });
+      refusedWith(`${prefix}1 D's edit of its post while barred is refused (${code})`, await replaceDoc(D, 'post', post, { content: 'edited', ...shapes.tags(['rwproof']) }), refusal);
+      refusedWith(`${prefix}2 a tombstone keeping the text passes the bar and is refused by ${BLANK_RULE} (10422)`, await replaceDoc(D, 'post', post, { deleted: true, content: 'kept', ...shapes.tags(['rwproof']) }), BLANK);
+      const tomb = await replaceDoc(D, 'post', post, { deleted: true, ...shapes.tags(['rwproof']) });
       check(`${prefix}3 D's tombstone of its own post is ACCEPTED while barred`, tomb.ok && (await tombstoneOf('post', post)), tomb.error ?? '');
-      refusedWith(`${prefix}4 taking the tombstone back while barred is refused (${code})`, await replaceDoc(D, 'post', post, { content: 'back', hashtag: 'rwproof' }), refusal);
+      refusedWith(`${prefix}4 taking the tombstone back while barred is refused (${code})`, await replaceDoc(D, 'post', post, { content: 'back', ...shapes.tags(['rwproof']) }), refusal);
       refusedWith(`${prefix}5 D's edit of its reply while barred is refused (${code})`, await replaceDoc(D, 'reply', reply, { content: 'edited', rootPostId: id(post), parentOwnerId: id(D.ownerId) }), refusal);
       const replyTomb = await replaceDoc(D, 'reply', reply, { deleted: true, rootPostId: id(post), parentOwnerId: id(D.ownerId) });
       check(`${prefix}6 D's tombstone of its own reply is ACCEPTED while barred`, replyTomb.ok && (await tombstoneOf('reply', reply)), replyTomb.error ?? '');
@@ -1545,37 +1593,37 @@ async function main() {
 
     // (pa) preallocated: a fresh post sits in its trees with zero likes; the first like costs what a later one does.
     const createdBefore = await balanceOf(D);
-    const Pf = await mustCreate('Pf (D, #mproof, fresh)', D, 'post', { content: 'fresh post', hashtag: 'mproof' });
+    const Pf = await mustCreate('Pf (D, #mproof, fresh)', D, 'post', { content: 'fresh post', ...shapes.tags(['mproof']) });
     console.log(`INFO  M-pa0 a tagged post with its preallocated like trees cost D ${createdBefore - (await balanceOf(D))} credits`);
     await sleep(SETTLE_MS);
-    await attempt('M-pa1', () => Promise.all([rankedRaw([['postAuthor', '==', D.ownerId]], 'postId'), rankedRaw([['hashtag', '==', 'mproof']], 'postId'), count('like', [['postId', '==', Pf]])]), ([top, tag, n]) =>
+    await attempt('M-pa1', () => Promise.all([rankedRaw([['postAuthor', '==', D.ownerId]], 'postId'), rankedRaw(...tagRankingArgs('mproof')), count('like', [['postId', '==', Pf]])]), ([top, tag, n]) =>
       check('M-pa1 a fresh, unliked post is already in its preallocated trees: profile Top and hashtag Top list it at 0; its like count is 0', entriesOf(top).some(([k, v]) => k === Pf && v === 0) && entriesOf(tag).some(([k, v]) => k === Pf && v === 0) && total(n) === 0, `top ${JSON.stringify(entriesOf(top))} tag ${JSON.stringify(entriesOf(tag))} count ${JSON.stringify(countEntries(n))}`));
     await attempt('M-pa2', () => count('like', [['postId', 'in', [Pf]]], ['postId']), (m) => console.log(`INFO  M-pa2 grouped count of the fresh post (\`postId in\` + groupBy): ${JSON.stringify(countEntries(m))}`));
     const costOf = async (who, data) => { const before = await balanceOf(who); await likeWrite(who, 'like', data); await sleep(SETTLE_MS); return before - (await balanceOf(who)); };
-    const firstLike = await costOf(B, { postId: id(Pf), postAuthor: id(D.ownerId), hashtag: 'mproof' });
-    const secondLike = await costOf(C, { postId: id(Pf), postAuthor: id(D.ownerId), hashtag: 'mproof' });
+    const firstLike = await costOf(B, { postId: id(Pf), postAuthor: id(D.ownerId), ...shapes.tags(['mproof']) });
+    const secondLike = await costOf(C, { postId: id(Pf), postAuthor: id(D.ownerId), ...shapes.tags(['mproof']) });
     check(`M-pa3 the FIRST tagged like of a post costs about what the second does (the post paid the trees; only the trend windows, never preallocated, are new): ${firstLike} vs ${secondLike} credits`, firstLike > 0n && secondLike > 0n && Number(firstLike) <= Number(secondLike) * 1.3);
 
     // (tb) tombstones: the allowed and the refused cases, on D's post Pt and reply Rt.
-    const Pt = await mustCreate('Pt (D, #mproof, to tombstone)', D, 'post', { content: 'to tombstone', hashtag: 'mproof' });
+    const Pt = await mustCreate('Pt (D, #mproof, to tombstone)', D, 'post', { content: 'to tombstone', ...shapes.tags(['mproof']) });
     const Rt = await mustCreate('Rt (D replies to Pt)', D, 'reply', { content: 'reply to tombstone', rootPostId: id(Pt), parentOwnerId: id(D.ownerId) });
     const del = await sdk.documents.delete({ document: { id: Pt, ownerId: D.ownerId, dataContractId: contractId, documentTypeName: 'post' }, identityKey: D.identityKey, signer: D.signer }).then(() => null, (e) => describeErr(e));
     check('M-tb1 an author cannot delete its post (canBeDeleted false)', del !== null && (await sdk.documents.get(contractId, 'post', Pt)) !== null, (del ?? 'ACCEPTED').slice(0, 200));
-    refusedWith('M-tb2 an edit of the text without the flag is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'edited', hashtag: 'mproof' }), IMMUTABLE);
-    refusedWith(`M-tb3 a tombstone keeping the text is refused (10422 ${BLANK_RULE})`, await replaceDoc(D, 'post', Pt, { deleted: true, content: 'kept', hashtag: 'mproof' }), BLANK);
-    refusedWith('M-tb4 a tombstone changing the hashtag is refused (40128)', await replaceDoc(D, 'post', Pt, { deleted: true, hashtag: 'other' }), IMMUTABLE);
+    refusedWith('M-tb2 an edit of the text without the flag is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'edited', ...shapes.tags(['mproof']) }), IMMUTABLE);
+    refusedWith(`M-tb3 a tombstone keeping the text is refused (10422 ${BLANK_RULE})`, await replaceDoc(D, 'post', Pt, { deleted: true, content: 'kept', ...shapes.tags(['mproof']) }), BLANK);
+    refusedWith('M-tb4 a tombstone changing the hashtag is refused (40128)', await replaceDoc(D, 'post', Pt, { deleted: true, ...shapes.tags(['other']) }), IMMUTABLE);
     // Adding a field the post never had counts as a change too ("differs" covers a value the stored document lacked).
-    refusedWith('M-tb4b adding a mention the post never had, without the flag, is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', ...shapes.mentions([id(B.ownerId)]) }), IMMUTABLE);
-    refusedWith('M-tb4c marking it sensitive afterwards is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', sensitive: true }), IMMUTABLE);
+    refusedWith('M-tb4b adding a mention the post never had, without the flag, is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', ...shapes.tags(['mproof']), ...shapes.mentions([id(B.ownerId)]) }), IMMUTABLE);
+    refusedWith('M-tb4c marking it sensitive afterwards is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', ...shapes.tags(['mproof']), sensitive: true }), IMMUTABLE);
     const untagged = await mustCreate('Pu (D, untagged)', D, 'post', { content: 'untagged' });
-    refusedWith('M-tb4d adding a hashtag to an untagged post is refused (40128: frozen by name)', await replaceDoc(D, 'post', untagged, { content: 'untagged', hashtag: 'late' }), IMMUTABLE);
+    refusedWith('M-tb4d adding a hashtag to an untagged post is refused (40128: frozen by name)', await replaceDoc(D, 'post', untagged, { content: 'untagged', ...shapes.tags(['late']) }), IMMUTABLE);
     const tombBefore = await balanceOf(D);
-    const tombstoned = await replaceDoc(D, 'post', Pt, { deleted: true, hashtag: 'mproof' });
+    const tombstoned = await replaceDoc(D, 'post', Pt, { deleted: true, ...shapes.tags(['mproof']) });
     const tombCost = tombBefore - (await balanceOf(D));
     const tomb = plain(await sdk.documents.get(contractId, 'post', Pt));
-    check(`M-tb5 the tombstone lands (deleted, hashtag kept, no content; cost ${tombCost} credits)`, tombstoned.ok && tomb.deleted === true && tomb.hashtag === 'mproof' && tomb.content === undefined, `${tombstoned.error ?? ''} ${JSON.stringify({ deleted: tomb.deleted, hashtag: tomb.hashtag, content: tomb.content ?? null })}`);
-    refusedWith('M-tb6 a tombstone cannot be undone (40128: deleted frozen once set)', await replaceDoc(D, 'post', Pt, { content: 'back', hashtag: 'mproof' }), IMMUTABLE);
-    refusedWith('M-tb7 nor refilled while flagged (10422)', await replaceDoc(D, 'post', Pt, { deleted: true, content: 'back', hashtag: 'mproof' }), BLANK);
+    check(`M-tb5 the tombstone lands (deleted, ${shapes.tagField} kept, no content; cost ${tombCost} credits)`, tombstoned.ok && tomb.deleted === true && same(shapes.storedTags(tomb), ['mproof']) && tomb.content === undefined, `${tombstoned.error ?? ''} ${JSON.stringify({ deleted: tomb.deleted, [shapes.tagField]: tomb[shapes.tagField], content: tomb.content ?? null })}`);
+    refusedWith('M-tb6 a tombstone cannot be undone (40128: deleted frozen once set)', await replaceDoc(D, 'post', Pt, { content: 'back', ...shapes.tags(['mproof']) }), IMMUTABLE);
+    refusedWith('M-tb7 nor refilled while flagged (10422)', await replaceDoc(D, 'post', Pt, { deleted: true, content: 'back', ...shapes.tags(['mproof']) }), BLANK);
     await attempt('M-tb8', () => Promise.all([sdk.documents.get(contractId, 'reply', Rt), count('reply', [['rootPostId', '==', Pt]])]), ([reply, n]) => check('M-tb8 the reply under the tombstoned post stays, counted', reply !== null && total(n) === 1, JSON.stringify(countEntries(n))));
     refusedWith('M-tb9 a reply edit without the flag is refused (40128)', await replaceDoc(D, 'reply', Rt, { content: 'edited', rootPostId: id(Pt), parentOwnerId: id(D.ownerId) }), IMMUTABLE);
     refusedWith('M-tb10 a reply tombstone that drops its thread root is refused (40128: the linkage is frozen)', await replaceDoc(D, 'reply', Rt, { deleted: true, parentOwnerId: id(D.ownerId) }), /\bcode"?\s*[=:]\s*(40128|10101)\b|immutable|required/i);
@@ -1596,18 +1644,18 @@ async function main() {
     check('M-rp3 a second live repost is still refused (40105)', !third.ok && DUPLICATE_UNIQUE.test(third.error ?? ''), (third.error ?? 'ACCEPTED').slice(0, 160));
 
     // (mr) a moderator-removed post: its like, reply and quote stay valid and counted; the hashtag ranking keeps it.
-    const Pm = await mustCreate('Pm (D, #mremoved)', D, 'post', { content: 'to be removed', hashtag: 'mremoved' });
-    await likeWrite(B, 'like', { postId: id(Pm), postAuthor: id(D.ownerId), hashtag: 'mremoved' });
+    const Pm = await mustCreate('Pm (D, #mremoved)', D, 'post', { content: 'to be removed', ...shapes.tags(['mremoved']) });
+    await likeWrite(B, 'like', { postId: id(Pm), postAuthor: id(D.ownerId), ...shapes.tags(['mremoved']) });
     const Rm = await mustCreate('Rm (C replies to Pm)', C, 'reply', { content: 'reply to removed', rootPostId: id(Pm), parentOwnerId: id(D.ownerId) });
     const Qm = await mustCreate('Qm (C quotes Pm)', C, 'post', { content: 'quote of removed', quotedPostId: id(Pm), quotedPostOwnerId: id(D.ownerId) });
     await sleep(SETTLE_MS);
     const moderatorA = { identity: await sdk.identities.fetch(A.ownerId), signer: A.signer };
-    await attempt('M-mr1', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: Pm, reason: { text: 'M-mr proof' } }), (record) => check('M-mr1 the interim owner removes Pm; the record keeps its hashtag', record?.keptFields?.hashtag === 'mremoved', JSON.stringify(record?.keptFields ?? null, (k, v) => (typeof v === 'bigint' ? String(v) : v))), { idempotent: false });
+    await attempt('M-mr1', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: Pm, reason: { text: 'M-mr proof' } }), (record) => check(`M-mr1 the interim owner removes Pm; the record keeps its ${shapes.tagField}`, same(shapes.storedTags(record?.keptFields), ['mremoved']), JSON.stringify(record?.keptFields ?? null, (k, v) => (typeof v === 'bigint' ? String(v) : v))), { idempotent: false });
     await sleep(SETTLE_MS);
     await attempt('M-mr2', () => Promise.all([sdk.documents.get(contractId, 'post', Pm), count('like', [['postId', '==', Pm]]), sdk.documents.get(contractId, 'reply', Rm), count('reply', [['rootPostId', '==', Pm]]), sdk.documents.get(contractId, 'post', Qm), count('post', [['quotedPostId', '==', Pm]])]),
       ([post, likes, reply, replies, quote, quotes]) => check('M-mr2 Pm is gone, but its like (1), its reply (1) and its quote (1) stay, readable and counted', !post && total(likes) === 1 && reply !== null && total(replies) === 1 && quote !== null && total(quotes) === 1, `post ${post ? 'still fetches' : 'gone'}, likes ${total(likes)} replies ${total(replies)} quotes ${total(quotes)}`));
-    await attempt('M-mr3', () => rankedRaw([['hashtag', '==', 'mremoved']], 'postId'), (r) => check('M-mr3 the hashtag ranking (byHashtagPost, keyed by the kept hashtag) still lists the removed post at 1', entriesOf(r).some(([k, v]) => k === Pm && v === 1), JSON.stringify(entriesOf(r))));
-    await likeWrite(C, 'like', { postId: id(Pm), postAuthor: id(D.ownerId), hashtag: 'mremoved' });
+    await attempt('M-mr3', () => rankedRaw(...tagRankingArgs('mremoved')), (r) => check('M-mr3 the hashtag ranking (byHashtagPost, keyed by the kept hashtag) still lists the removed post at 1', entriesOf(r).some(([k, v]) => k === Pm && v === 1), JSON.stringify(entriesOf(r))));
+    await likeWrite(C, 'like', { postId: id(Pm), postAuthor: id(D.ownerId), ...shapes.tags(['mremoved']) });
     await sleep(SETTLE_MS);
     const lateReply = await create(C, 'reply', { content: 'late reply', rootPostId: id(Pm), parentOwnerId: id(D.ownerId) });
     const likesNow = total(await withReconnect(() => count('like', [['postId', '==', Pm]])));
@@ -1617,6 +1665,73 @@ async function main() {
     check('M-mr5 a quote of the removed post and a reply under it can still be tombstoned by their authors (the references resolve to the removal record)', qTomb.ok && rTomb.ok, `${qTomb.error ?? ''} ${rTomb.error ?? ''}`.slice(0, 200));
   }
   if (v11) await proveDesignM();
+
+  // ---- tg: v16 tag lists (a like entered once under each tag of its post) ----
+  // A like repeats its post's whole list (`where { "tags": "tags" }`) and is entered under each
+  // tag: byHashtagPost keeps a preallocated counter per (tag, post), created with the post, and
+  // byTrendHashtagPost a window entry per tag. Tl's two tags are new to this run and name no
+  // other post, so every figure is exact; written after design M, so no earlier count moves.
+  async function proveTagLists() {
+    console.log('\n--- tg. v16 tag lists: one like counted under each tag of its post; per-tag rankings and windows, trending tags, unlike ---');
+    const stamp = Date.now().toString(36);
+    const pair = [`tga${stamp}`, `tgb${stamp}`];
+    const Tl = await mustCreate('Tl (B, two tags new to this run)', B, 'post', { content: 'two tags', ...shapes.tags(pair) });
+    await sleep(SETTLE_MS);
+
+    const ranked = (where, groupBy, extra = {}) => sdk.documents.ranked(q('like', { ...(where ? { where } : {}), groupBy, aggregate: { type: 'count' }, direction: 'desc', limit: 100, ...extra }));
+    const entriesOf = (r) => r.entries.map((e) => [toBase58(e.groupValue), Number(e.value)]);
+    const tagEntries = (r) => r.entries.map((e) => [typeof e.groupValue === 'string' ? e.groupValue : Buffer.from(e.groupValue).toString('utf8'), Number(e.value)]);
+    const at = (entries, key) => entries.find(([k]) => k === key)?.[1] ?? null;
+    const aboveZero = (entries) => entries.filter(([, value]) => value !== 0);
+    const { range, step } = source.documentSchemas.like.indices.find((index) => index.name === 'byTrendHashtagPost').timeRange;
+    /** The oldest open byTrendHashtagPost window, as ol-t2 reads it. */
+    const oldest = { timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range, step } }] };
+    const eachTag = (read) => Promise.all(pair.map(read));
+    /** The likes under each tag, Tl's likes under each tag (`postId ==` too), and Tl's likes on byPost. */
+    const counted = async () => {
+      const [tags, posts, byPost] = await Promise.all([
+        eachTag((tag) => count('like', shapes.tagLikesWhere(tag))),
+        eachTag((tag) => count('like', shapes.tagLikesWhere(tag, Tl))),
+        count('like', [['postId', '==', Tl]]),
+      ]);
+      return { tags: tags.map(total), posts: posts.map(total), byPost: total(byPost) };
+    };
+    /** Each tag's posts by likes, all time (byHashtagPost) or with `oldest` in that window. */
+    const postsUnder = (extra) => eachTag(async (tag) => entriesOf(await ranked(...tagRankingArgs(tag), extra)));
+    /** The pair's likes among the trending tags (`groupBy` tags, no `where`), all time or in a window; null where a tag is not listed. */
+    const trending = async (extra) => {
+      const got = tagEntries(await ranked(...tagRankingArgs(), extra));
+      return pair.map((tag) => at(got, tag));
+    };
+
+    await attempt('tg-0', () => sdk.documents.get(contractId, 'post', Tl), (doc) => check('tg-0 Tl stores its two tags as one `tags` list, in the order written', same(shapes.storedTags(plain(doc)), pair), JSON.stringify(shapes.storedTags(plain(doc)))));
+    await attempt('tg-1', () => Promise.all([counted(), postsUnder()]), ([n, top]) => check('tg-1 before any like each tag counts 0, and each tag\'s all-time ranking already lists Tl at 0 (one preallocated counter per tag of the post, created with it)',
+      n.tags.every((value) => value === 0) && top.every((entries) => at(entries, Tl) === 0), `counts ${JSON.stringify(n)}, Tl ${JSON.stringify(top.map((entries) => at(entries, Tl)))}`));
+    // C's like names Tl's whole list in its order: the `where` agreement holds element for element.
+    const liked = { postId: id(Tl), postAuthor: id(B.ownerId), ...shapes.tags(pair) };
+    await likeWrite(C, 'like', liked);
+    await sleep(SETTLE_MS);
+    await attempt('tg-2', counted, (n) => check('tg-2 C\'s one like of Tl: 1 under each tag (`tags contains`), Tl 1 under each tag (`postId ==` too), and byPost counts it once',
+      same(n, { tags: [1, 1], posts: [1, 1], byPost: 1 }), JSON.stringify(n)));
+    await attempt('tg-3', () => postsUnder(), (top) => check('tg-3 each tag\'s top posts all time (byHashtagPost ranked `tags contains` groupBy postId): Tl 1 under both',
+      top.every((entries) => same(aboveZero(entries), [[Tl, 1]])), JSON.stringify(top.map(aboveZero))));
+    await attempt('tg-4', () => postsUnder(oldest), (top) => check('tg-4 each tag\'s top posts in the oldest open byTrendHashtagPost window: Tl 1 under both',
+      top.every((entries) => same(aboveZero(entries), [[Tl, 1]])), JSON.stringify(top.map(aboveZero))));
+    await attempt('tg-5', () => trending(), (got) => check('tg-5 trending tags all time (ranked groupBy tags, no where, on byHashtagPost): both of Tl\'s tags at 1', same(got, [1, 1]), JSON.stringify(got)));
+    await attempt('tg-6', () => trending(oldest), (got) => check('tg-6 trending tags in the oldest open byTrendHashtagPost window: both of Tl\'s tags at 1', same(got, [1, 1]), JSON.stringify(got)));
+
+    // The unlike by values carries the list exactly as the create did, and no $createdAt.
+    const { document } = buildDocument({ contractId, docType: 'like', ownerId: C.ownerId, data: shapes.fit('like', liked) });
+    await sdk.documents.delete({ document, identityKey: C.identityKey, signer: C.signer }).catch((e) => console.log(`     (unlike reported: ${describeErr(e).slice(0, 140)})`));
+    await sleep(SETTLE_MS);
+    await attempt('tg-7', counted, (n) => check('tg-7 C unlikes Tl by values (the list as created, no $createdAt): 0 under each tag, Tl 0 under each tag, byPost 0',
+      same(n, { tags: [0, 0], posts: [0, 0], byPost: 0 }), JSON.stringify(n)));
+    await attempt('tg-8', () => Promise.all([postsUnder(), trending()]), ([top, got]) => check('tg-8 the all-time rankings follow: Tl no longer above zero under either tag, nor either tag among the trending tags',
+      top.every((entries) => !at(entries, Tl)) && got.every((value) => !value), `Tl ${JSON.stringify(top.map((entries) => at(entries, Tl)))}, trending ${JSON.stringify(got)}`));
+    await attempt('tg-9', () => Promise.all([postsUnder(oldest), trending(oldest)]), ([top, got]) => check('tg-9 the oldest open window keeps the unliked entry (outlivesDelete): Tl 1 under each tag, both tags at 1 among the trending tags',
+      top.every((entries) => same(aboveZero(entries), [[Tl, 1]])) && same(got, [1, 1]), `posts ${JSON.stringify(top.map(aboveZero))}, trending ${JSON.stringify(got)}`));
+  }
+  if (tagLists) await proveTagLists();
 
   // ---- rm: reply mentions (written last, so no earlier count moves) ----
   console.log('\n--- rm. a reply names one mentioned identity ---');
@@ -1681,7 +1796,7 @@ async function proveTeam(sdk, args, actors, source) {
     return outcome.id;
   };
   const writtenAt = Date.now();
-  const state = { S1: await fixture('S1', 'post', { content: 'settle one', hashtag: 'settle' }), SR: await fixture('SR', 'post', { content: 'thread root' }) };
+  const state = { S1: await fixture('S1', 'post', { content: 'settle one', ...shapes.tags(['settle']) }), SR: await fixture('SR', 'post', { content: 'thread root' }) };
   state.S3 = await fixture('S3', 'reply', { content: 'settle reply', rootPostId: bs58.decode(state.SR), parentOwnerId: bs58.decode(D.ownerId) });
   const windowSeconds = source.documentSchemas.post.moderatorAbilities.deleteWithin;
   const settledAt = writtenAt + (windowSeconds + 30) * 1000;
@@ -1726,18 +1841,18 @@ async function proveTeam(sdk, args, actors, source) {
     result.status === 'closed' && closed?.approvalCount === 3 && active === null && sameSet(signers, [L.ownerId, M1.ownerId, M2.ownerId]) && !exists, `${result.status} ${bigintSafe(closed)} signers ${JSON.stringify(signers)} exists ${exists}`), { idempotent: false });
   await attempt('tm-8', () => sdk.contracts.documentRemovals({ contractId, documentTypeName: 'post', documentIds: [state.S1] }), (page) => {
     const entry = page.removals[0];
-    check('tm-8 S1\'s removal record: deleted by the approval that met the rule (the leader), with the proposal\'s reason, keeping hashtag "settle" and $createdAt',
-      entry?.moderatorId === L.ownerId && entry.reason?.reasonDocumentId === args.reasonDoc && entry.keptFields?.hashtag === 'settle' && Number(entry.keptFields?.$createdAt) === createdAtOf(S1doc), bigintSafe(entry));
+    check(`tm-8 S1's removal record: deleted by the approval that met the rule (the leader), with the proposal's reason, keeping ${tagsNamed(shapes, ['settle'])} and $createdAt`,
+      entry?.moderatorId === L.ownerId && entry.reason?.reasonDocumentId === args.reasonDoc && same(shapes.storedTags(entry.keptFields), ['settle']) && Number(entry.keptFields?.$createdAt) === createdAtOf(S1doc), bigintSafe(entry));
   });
   await expectCode('tm-9 a team deletion cannot be restored, not even by the leader', '41209', async () => sdk.contracts.moderatorRestoreDocument({ ...(await asModerator(L)), contractId, documentTypeName: 'post', document: S1doc }));
   await attempt('tm-10', countDeltas, (delta) => check('tm-10 moderationActionCounts: the deletion counts once for each of the three approvers (+1 each since this phase began)', delta[L.label] === 1 && delta[M1.label] === 1 && delta[M2.label] === 1, JSON.stringify(delta)));
 
   const F1 = await (async () => {
-    const { document } = buildDocument({ contractId, docType: 'post', ownerId: D.ownerId, data: shapes.fit('post', { content: 'fresh', hashtag: 'fresh' }), entropy: randomIdBytes() });
+    const { document } = buildDocument({ contractId, docType: 'post', ownerId: D.ownerId, data: shapes.fit('post', { content: 'fresh', ...shapes.tags(['fresh']) }), entropy: randomIdBytes() });
     return createdId(await sdk.documents.create({ document, identityKey: D.identityKey, signer: D.signer }));
   })();
   await expectCode('tm-11a a proposal for D\'s fresh F1 (inside the window) is refused: use a lone delete', '41206', async () => sdk.contracts.moderatorDeleteSettledDocument({ ...(await asModerator(L)), contractId, documentTypeName: 'post', documentId: F1, reason: reason('tm-11a') }));
-  await attempt('tm-11b', async () => sdk.contracts.moderatorDeleteDocument({ ...(await asModerator(M2)), contractId, documentTypeName: 'post', documentId: F1, reason: reason('tm-11b proof') }), (record) => check(`tm-11b inside the window ${M2.label} deletes F1 alone; the record keeps hashtag "fresh"`, record?.keptFields?.hashtag === 'fresh', bigintSafe(record?.keptFields)), { idempotent: false });
+  await attempt('tm-11b', async () => sdk.contracts.moderatorDeleteDocument({ ...(await asModerator(M2)), contractId, documentTypeName: 'post', documentId: F1, reason: reason('tm-11b proof') }), (record) => check(`tm-11b inside the window ${M2.label} deletes F1 alone; the record keeps ${tagsNamed(shapes, ['fresh'])}`, same(shapes.storedTags(record?.keptFields), ['fresh']), bigintSafe(record?.keptFields)), { idempotent: false });
 
   let replyAction = null;
   await attempt('tm-12', async () => {

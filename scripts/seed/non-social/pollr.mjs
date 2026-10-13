@@ -14,7 +14,10 @@
  */
 import bs58 from 'bs58';
 import { decodeIntGroupKey, reportSelfTest } from '../../battery-lib.mjs';
-import { PREFER_CONTRACT_OWNER, TOKEN_COST, asBase58, describeErr, feeAgreementFor, paymentInfo, readback, requireSeededTopology } from '../seed-lib.mjs';
+import { indexedTags } from '../../social-shapes.mjs';
+import {
+  HASHTAG_MAX, PREFER_CONTRACT_OWNER, SOCIAL_SHAPES, TOKEN_COST, asBase58, describeErr, feeAgreementFor, paymentInfo, readback, requireSeededTopology,
+} from '../seed-lib.mjs';
 import {
   actorsFor, bar, counts, createDocWriter, createRecorder, ensureTokens, entropySource, envValue, loadCheckpoint,
   network, phaseRunner, printTable, randInt, rngFrom, shuffled, socialPost, sum,
@@ -34,6 +37,8 @@ const PERSONAS = [230, 231, 232, 300, 301, 302, 303, 304, 305, 306, 307];
 // creators, and a `pattern` telling the vote generator what the result should
 // look like. `endsAt` is whole days from the run's UTC midnight (default
 // DEFAULT_OPEN_DAYS); `closesSoon` polls close `--close-in` after they are written.
+// Each caption names exactly one tag, its `hashtag`, so the embedding post is
+// indexed under `[hashtag]` on every cut (`socialPost`: `tags` on v16).
 const POLL_BANK = [
   { key: 'editor', creator: 301, pattern: 'landslide', hashtag: 'devtools',
     question: 'Which editor are you actually using day to day in 2026? Not the one in your bio — the one that is open right now.',
@@ -466,6 +471,14 @@ function selfTest(args) {
       close.every((p) => { const s = [...p.expected].sort((a, b) => b - a); return s[0] - s[1] <= 2; })],
     ['every "landslide" poll has a majority option',
       plan.filter((p) => p.pattern === 'landslide').every((p) => Math.max(...p.expected) / sum(p.expected) > 0.5)],
+    ["every caption names exactly its poll's tag (the web client's rule), so the post is indexed under [hashtag]",
+      plan.every((p) => JSON.stringify(indexedTags(p.caption, Infinity, HASHTAG_MAX)) === JSON.stringify([p.hashtag]))],
+    [`every embedding post is a valid post of the configured cut, its tag written as ${SOCIAL_SHAPES.tagField}`,
+      plan.every((p) => {
+        const data = socialPost({ content: p.caption, hashtag: p.hashtag, embedContractId: new Uint8Array(32).fill(1), embedDocType: 'poll', embedId: new Uint8Array(32).fill(2) });
+        return SOCIAL_SHAPES.check('post', data).length === 0 && JSON.stringify(SOCIAL_SHAPES.storedTags(data)) === JSON.stringify([p.hashtag])
+          && (SOCIAL_SHAPES.cut.tagArray ? !('hashtag' in data) : !('tags' in data));
+      })],
     ['the same seed plans exactly the same ballots', json(buildPlan({ seed: args.seed, nowMs: args.nowMs })) === json(plan)],
     ['a different seed plans differently', json(buildPlan({ seed: `${args.seed}x`, nowMs: args.nowMs })) !== json(plan)],
   ]);

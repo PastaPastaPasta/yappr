@@ -123,6 +123,38 @@
  *   - x1t's target names A; x1tb2 adding B is 40128, and x1tc2 a tombstone
  *     keeping the mentions is 10422 blankTombstone.
  *
+ * Its 5.0.0-beta.6 successor **v16** (`--contract-file
+ * contracts/yappr-social-contract-v16.json`, docs/SOCIAL_V16.md) keeps every
+ * v15 case; only the tags change (read off `post.tags`). A post is indexed
+ * under 1–4 distinct tags in the typed array `tags` (one `hashtag` up to v15),
+ * and its like repeats the list exactly, the same elements in the same order
+ * (`where { "tags": "tags" }`, platform#5388/#5390/#5394). Every tagged write
+ * is built by SOCIAL.tags, every tag read pins one tag with `tags contains`
+ * (`==` on the array is refused) and groups the trending tags by `tags`, and
+ * the tags read back through SOCIAL.storedTags:
+ *
+ *   - o1's fixture posts carry a one-element list; on a post tagged with the
+ *     run's two tags, a like carrying them in the other order (o1h), the first
+ *     alone (o1i) or a third beside them (o1j) is 40127, the exact list lands
+ *     (o1k);
+ *   - x1t's target carries both tags: changing one (x1td), reordering them
+ *     (x1td2), keeping the first alone (x1td3) or dropping the list (x1te) is
+ *     40128; the tombstone keeps the list (x1tf) and reads it back in its order
+ *     (x1tg); the removed post carries both, and the second tag's ranking still
+ *     lists it (x1tp2: the removal record keeps `tags`);
+ *   - t2: a like of a post tagged [a, b] (t2p) counts once under each tag in
+ *     the all-time ranking (t2q), the counts (t2r) and the 24h window (t2s),
+ *     and the trending tags list both (t2t); its unlike naming the list in the
+ *     other order (t2u) or the first tag alone (t2v) matches no entry (40101),
+ *     the exact list lands (t2w) and the all-time ranking drops it under both
+ *     (t2x);
+ *   - the self-test pins `tags` on post and like (1–4 distinct, the pattern, 61
+ *     characters, no `hashtag`), the post's list frozen whole, `tagAndTime`,
+ *     byHashtagPost and byTrendHashtagPost on `tags` with no skipIfAbsent, the
+ *     like agreement on `tags` and `$ownerId`, and the record keeping `tags`.
+ *     The live run needs a 5.0.0-beta.6 chain; the installed SDK parses the
+ *     file and serializes every write offline.
+ *
  * The rest of this header describes v10.
  *
  * Registration-day battery for **contract v10**
@@ -383,6 +415,13 @@ const YAPP_STATE = YAPP_PAUSED ? 'paused' : 'unpaused';
 const YAPP_TRANSFERABLE = V10.tokens['0'].transferable !== false;
 /** v15 (5.0.0-beta.5): a post or reply names up to eight mentions in the typed array `mentionedUserIds`. */
 const MENTION_ARRAY = SOCIAL.cut.mentionArray;
+/**
+ * v16 (5.0.0-beta.6): a post is indexed under up to four tags in the typed array `tags` (one
+ * `hashtag` up to v15), and its like repeats the list exactly (same elements, same order).
+ */
+const TAG_ARRAY = SOCIAL.cut.tagArray;
+/** What a check label calls the post's tag fields: `the hashtag` up to v15, `the tag list` on v16. */
+const TAG_NOUN = TAG_ARRAY ? 'the tag list' : 'the hashtag';
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
 // r2 (post-seat): a member of the SEATED team, and a `reason` document its proposal lists (41203).
 const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
@@ -446,6 +485,12 @@ const FIELD_NOT_CHANGEABLE = /\bcode"?\s*[=:]\s*41123\b|can not be changed by mo
 const FIELDS_INVALID = /\bcode"?\s*[=:]\s*10905\b|the fields a moderator's document change sets are invalid/i;
 /** A documents read through an index that keeps no documents (a v12 counter) is refused with this. */
 const NON_INDEXED = /where clause on non indexed property/i;
+/**
+ * DocumentNotFoundError (40101): a delete by values whose tuple matches no stored entry, as v16's
+ * unlike naming the like's tag list in another order (t2u, t2v). Its prose is "<id> document not
+ * found", an id first, so a 40120's "referenced … document not found" cannot pass for it.
+ */
+const DOCUMENT_NOT_FOUND = /\bcode"?\s*[=:]\s*40101\b|documentnotfounderror|[1-9A-HJ-NP-Za-km-z]{32,44} document not found/i;
 const TARGET_NOT_ALLOWED = /\bcode"?\s*[=:]\s*41102\b|contractmoderationtargetnotallowed/i;
 const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
 const TOKEN_PAUSED = /\bcode"?\s*[=:]\s*40711\b|token .{0,60} is paused/i;
@@ -519,14 +564,16 @@ async function mediaFields(url = 'ipfs://bafyv10batterymedia', count = 1) {
 }
 
 /**
- * Untagged means `hashtag` is ABSENT; every optional property is omitted unless
- * given. There is no `language`. `mentioned` lists the mentioned identities
- * (bytes): one `mentionedUserId` up to v14, `mentionedUserIds` on v15
- * (SOCIAL.mentions). v13 adds `live: true` (SOCIAL.post).
+ * Untagged means the tag fields are ABSENT; every optional property is omitted
+ * unless given. There is no `language`. `tags` lists the tags the post is
+ * indexed under, in order: one `hashtag` up to v15, the typed array `tags` on
+ * v16 (SOCIAL.tags). `mentioned` lists the mentioned identities (bytes): one
+ * `mentionedUserId` up to v14, `mentionedUserIds` on v15 (SOCIAL.mentions).
+ * v13 adds `live: true` (SOCIAL.post).
  */
-const postData = ({ content = 'v10 battery post', hashtag, sensitive, quotedPostId, quotedPostOwnerId, mentioned, media } = {}) => SOCIAL.post({
+const postData = ({ content = 'v10 battery post', tags, sensitive, quotedPostId, quotedPostOwnerId, mentioned, media } = {}) => SOCIAL.post({
   content,
-  ...(hashtag === undefined ? {} : { hashtag }),
+  ...SOCIAL.tags(tags),
   ...SOCIAL.mentions(mentioned),
   ...(sensitive === undefined ? {} : { sensitive }),
   ...(quotedPostId ? { quotedPostId } : {}),
@@ -845,7 +892,7 @@ async function caseM1DeleteRestore(ctx) {
     if (KEPT_POST_FIELDS.length > 0) {
       const kept = removal.keptFields ?? {};
       const createdAt = Number(before?.createdAt ?? before?.toJSON?.().$createdAt);
-      check('m1k (v11) the record keeps the untagged post\'s $createdAt and nothing it does not hold (no hashtag)', Number(kept.$createdAt) === createdAt && !('hashtag' in kept), describeValue(kept));
+      check(`m1k (v11) the record keeps the untagged post's $createdAt and nothing it does not hold (no ${SOCIAL.tagField})`, Number(kept.$createdAt) === createdAt && !(SOCIAL.tagField in kept), describeValue(kept));
     }
   } catch (e) {
     check('m1a the interim owner deletes B\'s post', false, describeErr(e).slice(0, 220));
@@ -922,9 +969,9 @@ async function ensureReply(ctx) {
 async function caseO1LikeOwnerAgreement(ctx) {
   const { botA, botB } = ctx;
   console.log('\n--- o1. like.postAuthor agrees with the post\'s $ownerId (40127) ---');
-  const tagged = await ensurePost(ctx, 'tagged', { hashtag: ctx.tag });
+  const tagged = await ensurePost(ctx, 'tagged', { tags: [ctx.tag] });
   const untagged = await ensurePost(ctx, 'untagged');
-  const spare = await ensurePost(ctx, 'spare', { hashtag: ctx.tag });
+  const spare = await ensurePost(ctx, 'spare', { tags: [ctx.tag] });
   if (!tagged || !untagged || !spare) { check('o1 fixture', false, 'fixture posts unavailable'); return; }
   const likeOn = (postId, data) => attemptCreateIndexOnly(ctx.sdk, botA, {
     contractId: ctx.contractId,
@@ -933,16 +980,36 @@ async function caseO1LikeOwnerAgreement(ctx) {
     accepted: () => entryExists(ctx.sdk, ctx.contractId, 'like', 'postId', postId, botA.ownerId),
   });
   const owner = bs58.decode(botB.ownerId);
+  // The run's tag as the cut writes it: `hashtag` up to v15, a one-element `tags` on v16.
+  const tag = SOCIAL.tags([ctx.tag]);
 
   // Every violation targets a post A has NOT yet liked: the 40105 uniqueness
   // probe fires before the agreement check and would mask the 40127.
-  expectRejected('o1a a like whose postAuthor is the LIKER is refused', await likeOn(tagged, { hashtag: ctx.tag, postAuthor: bs58.decode(botA.ownerId) }), PROPERTY_MISMATCH);
-  expectRejected('o1b a like whose postAuthor is an unrelated identity is refused', await likeOn(tagged, { hashtag: ctx.tag, postAuthor: randomIdBytes() }), PROPERTY_MISMATCH);
-  expectRejected('o1c the hashtag pair holds: a wrong tag is refused', await likeOn(tagged, { hashtag: `${ctx.tag}x`, postAuthor: owner }), PROPERTY_MISMATCH);
-  expectRejected('o1d absence is strict: a tagged like on an UNTAGGED post is refused', await likeOn(untagged, { hashtag: ctx.tag, postAuthor: owner }), PROPERTY_MISMATCH);
-  expectRejected('o1e and the other way: a hashtag-ABSENT like on a TAGGED post is refused', await likeOn(spare, { postAuthor: owner }), PROPERTY_MISMATCH);
-  expectAccepted('o1f a like naming the post owner\'s $ownerId (and its tag) is accepted', await likeOn(tagged, { hashtag: ctx.tag, postAuthor: owner }));
-  expectAccepted('o1g both-absent agrees: a hashtag-less like on an untagged post', await likeOn(untagged, { postAuthor: owner }));
+  expectRejected('o1a a like whose postAuthor is the LIKER is refused', await likeOn(tagged, { ...tag, postAuthor: bs58.decode(botA.ownerId) }), PROPERTY_MISMATCH);
+  expectRejected('o1b a like whose postAuthor is an unrelated identity is refused', await likeOn(tagged, { ...tag, postAuthor: randomIdBytes() }), PROPERTY_MISMATCH);
+  expectRejected(`o1c the ${SOCIAL.tagField} pair holds: a wrong tag is refused`, await likeOn(tagged, { ...SOCIAL.tags([`${ctx.tag}x`]), postAuthor: owner }), PROPERTY_MISMATCH);
+  expectRejected('o1d absence is strict: a tagged like on an UNTAGGED post is refused', await likeOn(untagged, { ...tag, postAuthor: owner }), PROPERTY_MISMATCH);
+  expectRejected(`o1e and the other way: a ${SOCIAL.tagField}-ABSENT like on a TAGGED post is refused`, await likeOn(spare, { postAuthor: owner }), PROPERTY_MISMATCH);
+  expectAccepted('o1f a like naming the post owner\'s $ownerId (and its tag) is accepted', await likeOn(tagged, { ...tag, postAuthor: owner }));
+  expectAccepted(`o1g both-absent agrees: a ${TAG_ARRAY ? 'tag-less' : 'hashtag-less'} like on an untagged post`, await likeOn(untagged, { postAuthor: owner }));
+  if (TAG_ARRAY) await caseO1TagList(ctx, { likeOn, owner });
+}
+
+/**
+ * v16's o1 tail: a like repeats its post's tag list exactly (`where { "tags": "tags" }` compares
+ * the lists element for element), so the post's two tags in the other order, one of them alone,
+ * or a third beside them are each 40127, and the exact list lands. The refusals come first: once
+ * A's like of the post lands, any other is the 40105 of byPost.
+ */
+async function caseO1TagList(ctx, { likeOn, owner }) {
+  const list = [ctx.tag, ctx.tag2];
+  const twoTags = await ensurePost(ctx, 'twoTags', { tags: list });
+  if (!twoTags) { check('o1h fixture', false, 'no two-tag post'); return; }
+  const likeWith = (tags) => likeOn(twoTags, { ...SOCIAL.tags(tags), postAuthor: owner });
+  expectRejected('o1h (v16) a like carrying the post\'s two tags in the other order is refused (40127: the same elements in the same order)', await likeWith([ctx.tag2, ctx.tag]), PROPERTY_MISMATCH);
+  expectRejected('o1i (v16) a like carrying the post\'s first tag alone is refused (40127: a subset is not the list; the one-tag shape a pre-v16 client writes)', await likeWith([ctx.tag]), PROPERTY_MISMATCH);
+  expectRejected('o1j (v16) a like carrying a third tag beside the post\'s two is refused (40127: nor is a superset)', await likeWith([...list, `${ctx.tag}x`]), PROPERTY_MISMATCH);
+  expectAccepted('o1k (v16) a like carrying exactly the post\'s list, in its order, lands', await likeWith(list));
 }
 
 async function caseO2LikeReplyOwnerAgreement(ctx) {
@@ -1031,7 +1098,7 @@ async function caseO4QuoteAndParentOwner(ctx) {
 async function caseX1RealDeletes(ctx) {
   const { sdk, contractId, botA, botB, moderator } = ctx;
   console.log('\n--- x1. real deletes: the post is gone, counts drop, nothing new may point at it (40120) ---');
-  const target = await createFeed(ctx, botB, 'post', postData({ content: `x1 target ${Date.now()}`, hashtag: ctx.tag }), 'x1 target');
+  const target = await createFeed(ctx, botB, 'post', postData({ content: `x1 target ${Date.now()}`, tags: [ctx.tag] }), 'x1 target');
   if (!target) { check('x1 fixture', false, 'no target post'); return; }
   const [targetBytes, owner] = [target, botB.ownerId].map((id) => bs58.decode(id));
   // One quote and one reply by A, so the counts have something to lose.
@@ -1041,7 +1108,7 @@ async function caseX1RealDeletes(ctx) {
   await settle();
 
   const stored = await fetchDocument(sdk, contractId, 'post', target);
-  const replaced = await attemptReplace(sdk, botB, { contractId, docType: 'post', id: target, revision: BigInt(stored?.revision ?? 1), data: postData({ content: 'x1 edited', hashtag: ctx.tag }) });
+  const replaced = await attemptReplace(sdk, botB, { contractId, docType: 'post', id: target, revision: BigInt(stored?.revision ?? 1), data: postData({ content: 'x1 edited', tags: [ctx.tag] }) });
   expectRejected('x1a a post cannot be replaced (documentsMutable false: no editing)', replaced, NOT_MUTABLE);
 
   const quoteBefore = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
@@ -1066,7 +1133,7 @@ async function caseX1RealDeletes(ctx) {
   await expectCreateRefused(ctx, 'x1j a bookmark of the deleted post is refused (40120)', botA, 'bookmark', { postId: targetBytes }, REFERENCE_NOT_FOUND);
   await expectCreateRefused(ctx, 'x1k a report of the deleted post is refused (40120)', botA, 'report', reportData({ postId: targetBytes, targetOwnerId: owner }), REFERENCE_NOT_FOUND);
   expectRejected('x1l a like of the deleted post is refused (40120)', await attemptCreateIndexOnly(sdk, botA, {
-    contractId, docType: 'like', data: likeData({ postId: targetBytes, hashtag: ctx.tag, postAuthor: owner }),
+    contractId, docType: 'like', data: likeData({ postId: targetBytes, ...SOCIAL.tags([ctx.tag]), postAuthor: owner }),
     accepted: () => entryExists(sdk, contractId, 'like', 'postId', target, botA.ownerId),
   }), REFERENCE_NOT_FOUND);
 
@@ -1088,7 +1155,10 @@ async function caseX1Tombstones(ctx) {
   const targetText = `x1t target ${Date.now()}`;
   // v15: the target names A, so its tombstone must clear a mention (x1tc2).
   const targetMentions = MENTION_ARRAY ? [bs58.decode(botA.ownerId)] : undefined;
-  const target = await createFeed(ctx, botB, 'post', postData({ content: targetText, hashtag: ctx.tag, mentioned: targetMentions }), 'x1t target');
+  // v16: the target is indexed under two tags, so its tombstone must keep the whole list (x1td2, x1td3).
+  const targetTags = TAG_ARRAY ? [ctx.tag, ctx.tag2] : [ctx.tag];
+  const kept = SOCIAL.tags(targetTags);
+  const target = await createFeed(ctx, botB, 'post', postData({ content: targetText, tags: targetTags, mentioned: targetMentions }), 'x1t target');
   if (!target) { check('x1t fixture', false, 'no target post'); return; }
   const [targetBytes, owner] = [target, botB.ownerId].map((id) => bs58.decode(id));
   // One quote or repost per author per target: B quotes its own post, A reposts it.
@@ -1102,32 +1172,39 @@ async function caseX1Tombstones(ctx) {
   const replace = (data) => attemptReplace(sdk, botB, { contractId, docType: 'post', id: target, revision, data });
 
   expectRejected('x1ta an author cannot delete its post (canBeDeleted false)', asOutcome(await deleteOwnDocument(ctx, botB, 'post', target)), NOT_DELETABLE);
-  expectRejected('x1tb an edit of the text without the tombstone flag is refused (40128)', await replace(postData({ content: 'x1t edited', hashtag: ctx.tag })), IMMUTABLE_CHANGED);
+  expectRejected('x1tb an edit of the text without the tombstone flag is refused (40128)', await replace(postData({ content: 'x1t edited', tags: targetTags })), IMMUTABLE_CHANGED);
   if (MENTION_ARRAY) {
-    expectRejected('x1tb2 (v15) adding B to the mentions is refused (40128: frozen while the post is live)', await replace(postData({ content: targetText, hashtag: ctx.tag, mentioned: [...targetMentions, bs58.decode(botB.ownerId)] })), IMMUTABLE_CHANGED);
+    expectRejected('x1tb2 (v15) adding B to the mentions is refused (40128: frozen while the post is live)', await replace(postData({ content: targetText, tags: targetTags, mentioned: [...targetMentions, bs58.decode(botB.ownerId)] })), IMMUTABLE_CHANGED);
   } else {
-    expectRejected('x1tb2 adding a mention the post never had is refused (40128: a value the stored post lacked counts as a change)', await replace(postData({ content: targetText, hashtag: ctx.tag, mentioned: [bs58.decode(botA.ownerId)] })), IMMUTABLE_CHANGED);
+    expectRejected('x1tb2 adding a mention the post never had is refused (40128: a value the stored post lacked counts as a change)', await replace(postData({ content: targetText, tags: targetTags, mentioned: [bs58.decode(botA.ownerId)] })), IMMUTABLE_CHANGED);
   }
-  expectRejected(`x1tc a tombstone that keeps the text is refused (10422 ${BLANK_TOMBSTONE})`, await replace({ deleted: true, content: 'still here', hashtag: ctx.tag }), constraintViolation(BLANK_TOMBSTONE));
+  expectRejected(`x1tc a tombstone that keeps the text is refused (10422 ${BLANK_TOMBSTONE})`, await replace({ deleted: true, content: 'still here', ...kept }), constraintViolation(BLANK_TOMBSTONE));
   if (MENTION_ARRAY) {
-    expectRejected(`x1tc2 (v15) a tombstone that keeps the mentions is refused (10422 ${BLANK_TOMBSTONE})`, await replace({ deleted: true, hashtag: ctx.tag, mentionedUserIds: targetMentions }), constraintViolation(BLANK_TOMBSTONE));
+    expectRejected(`x1tc2 (v15) a tombstone that keeps the mentions is refused (10422 ${BLANK_TOMBSTONE})`, await replace({ deleted: true, ...kept, mentionedUserIds: targetMentions }), constraintViolation(BLANK_TOMBSTONE));
   }
-  expectRejected('x1td a tombstone that changes the hashtag is refused (40128: frozen by name)', await replace({ deleted: true, hashtag: `${ctx.tag}x` }), IMMUTABLE_CHANGED);
-  expectRejected('x1te a tombstone that drops the hashtag is refused (40128)', await replace({ deleted: true }), IMMUTABLE_CHANGED);
+  expectRejected(`x1td a tombstone that changes ${TAG_NOUN} is refused (40128: frozen by name)`, await replace({ deleted: true, ...SOCIAL.tags([`${ctx.tag}x`, ...targetTags.slice(1)]) }), IMMUTABLE_CHANGED);
+  if (TAG_ARRAY) {
+    // `tags` is frozen whole: the list is compared as it was stored, element for element.
+    expectRejected('x1td2 (v16) a tombstone keeping the two tags in the other order is refused (40128)', await replace({ deleted: true, ...SOCIAL.tags([ctx.tag2, ctx.tag]) }), IMMUTABLE_CHANGED);
+    expectRejected('x1td3 (v16) a tombstone keeping the first tag alone is refused (40128: dropping one tag changes the list)', await replace({ deleted: true, ...SOCIAL.tags([ctx.tag]) }), IMMUTABLE_CHANGED);
+  }
+  expectRejected(`x1te a tombstone that drops ${TAG_NOUN} is refused (40128)`, await replace({ deleted: true }), IMMUTABLE_CHANGED);
   const quotesBefore = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
   const balanceBefore = await balanceOf(ctx, botB);
-  expectAccepted('x1tf B tombstones its post: `deleted`, the hashtag kept, every content field left out', await replace({ deleted: true, hashtag: ctx.tag }));
+  expectAccepted(`x1tf B tombstones its post: \`deleted\`, ${TAG_NOUN} kept, every content field left out`, await replace({ deleted: true, ...kept }));
   await settle();
   const balanceAfter = await balanceOf(ctx, botB);
   console.log(`INFO  x1t the tombstone replace cost B ${balanceBefore - balanceAfter} credits`);
   const tomb = (await fetchDocument(sdk, contractId, 'post', target))?.toJSON?.() ?? {};
-  check('x1tg it reads back as a tombstone: deleted, the hashtag, no content (and no mention)', tomb.deleted === true && tomb.hashtag === ctx.tag && tomb.content === undefined && tomb.mentionedUserIds === undefined, describeValue({ deleted: tomb.deleted, hashtag: tomb.hashtag, content: tomb.content, mentionedUserIds: tomb.mentionedUserIds }));
+  check(`x1tg it reads back as a tombstone: deleted, ${TAG_NOUN}${TAG_ARRAY ? ' in its order' : ''}, no content (and no mention)`,
+    tomb.deleted === true && JSON.stringify(SOCIAL.storedTags(tomb)) === JSON.stringify(targetTags) && tomb.content === undefined && tomb.mentionedUserIds === undefined,
+    describeValue({ deleted: tomb.deleted, [SOCIAL.tagField]: tomb[SOCIAL.tagField], content: tomb.content, mentionedUserIds: tomb.mentionedUserIds }));
   check('x1th the quotes and the reply of a tombstoned post stay, counted', (await countBy(sdk, contractId, 'post', 'quotedPostId', target)) === quotesBefore && (await countBy(sdk, contractId, 'reply', 'rootPostId', target)) === 1 && (await fetchDocument(sdk, contractId, 'reply', reply)) !== null, `quotes ${quotesBefore}`);
   const tombRevision = BigInt((await fetchDocument(sdk, contractId, 'post', target))?.revision ?? 2);
   const again = (data) => attemptReplace(sdk, botB, { contractId, docType: 'post', id: target, revision: tombRevision, data });
   // An undo is a live post again: on v13 it carries `live`, so the refusal is the frozen flag, not the live rule.
-  expectRejected('x1ti a tombstone cannot be undone (40128: deleted frozen once set)', await again(SOCIAL.post({ hashtag: ctx.tag, content: 'back' })), IMMUTABLE_CHANGED);
-  expectRejected(`x1tj nor refilled while flagged (10422 ${BLANK_TOMBSTONE})`, await again({ deleted: true, hashtag: ctx.tag, content: 'back' }), constraintViolation(BLANK_TOMBSTONE));
+  expectRejected('x1ti a tombstone cannot be undone (40128: deleted frozen once set)', await again(SOCIAL.post({ ...kept, content: 'back' })), IMMUTABLE_CHANGED);
+  expectRejected(`x1tj nor refilled while flagged (10422 ${BLANK_TOMBSTONE})`, await again({ deleted: true, ...kept, content: 'back' }), constraintViolation(BLANK_TOMBSTONE));
 
   // Undo and redo a repost: the tombstone clears the quote, which frees ownerAndQuotedPost.
   const repostsBefore = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
@@ -1141,19 +1218,26 @@ async function caseX1Tombstones(ctx) {
 
   // References outlive a moderator's removal: they resolve to the removal record.
   if (interimOnly(ctx, 'x1tn')) return;
-  const removed = await createFeed(ctx, botB, 'post', postData({ content: `x1t removed ${Date.now()}`, hashtag: ctx.tag }), 'x1t removed');
+  // v16: the removed post carries two tags, so the record keeps the whole list (x1tp2).
+  const removed = await createFeed(ctx, botB, 'post', postData({ content: `x1t removed ${Date.now()}`, tags: targetTags }), 'x1t removed');
   if (!removed) { check('x1tn fixture', false, 'no post to remove'); return; }
   const removedBytes = bs58.decode(removed);
-  const liked = await attemptCreateIndexOnly(sdk, botA, { contractId, docType: 'like', data: likeData({ postId: removedBytes, hashtag: ctx.tag, postAuthor: owner }), accepted: () => entryExists(sdk, contractId, 'like', 'postId', removed, botA.ownerId) });
+  const liked = await attemptCreateIndexOnly(sdk, botA, { contractId, docType: 'like', data: likeData({ postId: removedBytes, ...kept, postAuthor: owner }), accepted: () => entryExists(sdk, contractId, 'like', 'postId', removed, botA.ownerId) });
   const removedReply = await createFeed(ctx, botA, 'reply', replyData({ content: 'x1t reply to removed', rootPostId: removedBytes, parentOwnerId: owner }), 'x1t reply to removed');
   await settle();
   const removal = await errorOf(() => sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: 'post', documentId: removed, reason: { text: 'x1t removal' }, signer: moderator.signer }));
   await settle();
   check('x1tn the moderator removes the liked, replied post', liked.ok && removal === null && (await fetchDocument(sdk, contractId, 'post', removed)) === null, (removal ?? liked.error ?? '').slice(0, 200));
   check('x1to its like stays counted and its reply stays, under the removed root', (await countBy(sdk, contractId, 'like', 'postId', removed)) === 1 && removedReply !== null && (await fetchDocument(sdk, contractId, 'reply', removedReply)) !== null);
-  const ranked = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', ctx.tag]], direction: 'desc', limit: 100 }));
-  check('x1tp the hashtag ranking (byHashtagPost, kept by the record) still lists the removed post with its like', Number(ranked.entries.find((e) => e.groupValue === removed)?.value ?? -1) === 1, `groups ${ranked.entries.length}`);
-  const lateLike = await attemptCreateIndexOnly(sdk, botB, { contractId, docType: 'like', data: likeData({ postId: removedBytes, hashtag: ctx.tag, postAuthor: owner }), accepted: () => entryExists(sdk, contractId, 'like', 'postId', removed, botB.ownerId) });
+  const tagRanking = (tag) => readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', ...SOCIAL.tagRanking(tag), aggregate: { type: 'count' }, direction: 'desc', limit: 100 }));
+  const ranked = await tagRanking(ctx.tag);
+  check(`x1tp the ${TAG_ARRAY ? 'per-tag' : 'hashtag'} ranking (byHashtagPost, kept by the record) still lists the removed post with its like`, Number(ranked.entries.find((e) => e.groupValue === removed)?.value ?? -1) === 1, `groups ${ranked.entries.length}`);
+  if (TAG_ARRAY) {
+    const second = await tagRanking(ctx.tag2);
+    check('x1tp2 (v16) …and so does the second tag\'s ranking: the record keeps the whole list (deleteKeepsFields tags)', Number(second.entries.find((e) => e.groupValue === removed)?.value ?? -1) === 1, `groups ${second.entries.length}`);
+  }
+  // The like carries the post's exact list, so its refusal is the removal record's, never 40127.
+  const lateLike = await attemptCreateIndexOnly(sdk, botB, { contractId, docType: 'like', data: likeData({ postId: removedBytes, ...kept, postAuthor: owner }), accepted: () => entryExists(sdk, contractId, 'like', 'postId', removed, botB.ownerId) });
   const lateReply = await createFeedOutcome(ctx, botB, 'reply', replyData({ content: 'x1t late reply', rootPostId: removedBytes, parentOwnerId: owner }));
   check('x1tq after the removal a new like does not land and a new reply is refused (the reference resolves to a removal record)', !lateLike.ok && !lateReply.ok && (await countBy(sdk, contractId, 'like', 'postId', removed)) === 1, `like ${lateLike.ok ? 'ACCEPTED' : (lateLike.error ?? '').slice(0, 100)}; reply ${lateReply.ok ? 'ACCEPTED' : (lateReply.error ?? '').slice(0, 100)}`);
 }
@@ -1624,31 +1708,33 @@ async function caseT2TrendingOnLike(ctx) {
   const { sdk, contractId, botA, botB } = ctx;
   console.log('\n--- t2. rolling trending on like (no beat): byTrendHashtagPost counts tagged likes only, byTrendPost every like ---');
   const tag = `${ctx.tag}t`;
-  const tagged = await createFeed(ctx, botB, 'post', postData({ content: 't2 tagged', hashtag: tag }), 't2 tagged post');
+  const tagged = await createFeed(ctx, botB, 'post', postData({ content: 't2 tagged', tags: [tag] }), 't2 tagged post');
   const untagged = await createFeed(ctx, botB, 'post', postData({ content: 't2 untagged' }), 't2 untagged post');
   if (!tagged || !untagged) { check('t2 fixture', false, 'no fixture posts'); return; }
   const owner = bs58.decode(botB.ownerId);
-  const like = (postId, hashtag) => attemptCreateIndexOnly(sdk, botA, {
-    contractId, docType: 'like', data: likeData({ postId: bs58.decode(postId), ...(hashtag ? { hashtag } : {}), postAuthor: owner }),
+  // `tags` is the post's list as the cut writes it (SOCIAL.tags): none for the untagged post.
+  const like = (postId, tags) => attemptCreateIndexOnly(sdk, botA, {
+    contractId, docType: 'like', data: likeData({ postId: bs58.decode(postId), ...SOCIAL.tags(tags), postAuthor: owner }),
     accepted: () => entryExists(sdk, contractId, 'like', 'postId', postId, botA.ownerId),
   });
-  expectAccepted('t2a A likes the tagged post (one transition, no beat companion)', await like(tagged, tag));
+  expectAccepted('t2a A likes the tagged post (one transition, no beat companion)', await like(tagged, [tag]));
   expectAccepted('t2b A likes the untagged post', await like(untagged));
   await settle();
 
-  const tags = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'hashtag' });
+  const tags = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking());
   const entry = tags.entries.find((e) => e.groupValue === tag);
-  check('t2c the 24h trending tags (groupBy hashtag) carry the run\'s tag at 1', Number(entry?.value ?? -1) === 1, `value=${entry?.value} groups=${tags.entries.length}`);
-  check('t2d no untagged group appears (skipIfAbsent)', tags.entries.every((e) => typeof e.groupValue === 'string' && e.groupValue !== ''), describeValue(tags.entries.map((e) => e.groupValue)));
-  const perTag = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+  check(`t2c the 24h trending tags (groupBy ${SOCIAL.tagField}) carry the run's tag at 1`, Number(entry?.value ?? -1) === 1, `value=${entry?.value} groups=${tags.entries.length}`);
+  check(`t2d no untagged group appears (${TAG_ARRAY ? 'an empty list is never entered' : 'skipIfAbsent'})`, tags.entries.every((e) => typeof e.groupValue === 'string' && e.groupValue !== ''), describeValue(tags.entries.map((e) => e.groupValue)));
+  const perTag = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking(tag));
   check('t2e the tag\'s 24h top posts rank the tagged post at 1', Number(perTag.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1, `groups=${perTag.entries.length}`);
   const perTagUntagged = perTag.entries.some((e) => e.groupValue === untagged);
   check('t2f the untagged post is not in the tag\'s window', !perTagUntagged);
-  const allTime = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', tag]], limit: 10 }));
+  const allTime = await readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', ...SOCIAL.tagRanking(tag), aggregate: { type: 'count' }, limit: 10 }));
   const topPosts = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
   check('t2j the 3-day top posts (byTrendPost) count both the tagged and the untagged like',
     [tagged, untagged].every((id) => Number(topPosts.entries.find((e) => e.groupValue === id)?.value ?? -1) === 1), `groups=${topPosts.entries.length}`);
   check('t2g the all-time per-tag ranking (byHashtagPost) agrees', Number(allTime.entries.find((e) => e.groupValue === tagged)?.value ?? -1) === 1);
+  if (TAG_ARRAY) await tagListTrending(ctx, owner);
 
   if (TIMELESS_LIKES) { await timelessUnlike(ctx, { tagged, untagged, tag, owner, like }); return; }
   // A delete by values needs the like's $createdAt. An indexOnly document is
@@ -1657,11 +1743,11 @@ async function caseT2TrendingOnLike(ctx) {
   const stored = await likeTuple(ctx, 'like', botB.ownerId, tagged, botA.ownerId);
   if (!stored) { check('t2 unlike fixture', false, 'A\'s like was not found on byAuthorPostTime with its $createdAt'); return; }
   const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, id: stored.id,
-    createdAt: stored.createdAt, data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
+    createdAt: stored.createdAt, data: likeData({ postId: bs58.decode(tagged), ...SOCIAL.tags([tag]), postAuthor: owner }) });
   expectAccepted('t2h A unlikes the tagged post (delete by values)', await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await entryExists(sdk, contractId, 'like', 'postId', tagged, botA.ownerId)) }));
   await settle();
   try {
-    const after = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+    const after = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking(tag));
     check('t2i the tag\'s window no longer counts the post', Number(after.entries.find((e) => e.groupValue === tagged)?.value ?? 0) === 0, `groups=${after.entries.length}`);
     const afterTop = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
     check('t2k …nor does the 3-day window (byTrendPost), while the untagged like stays', Number(afterTop.entries.find((e) => e.groupValue === tagged)?.value ?? 0) === 0 && Number(afterTop.entries.find((e) => e.groupValue === untagged)?.value ?? -1) === 1, `groups=${afterTop.entries.length}`);
@@ -1679,20 +1765,62 @@ async function caseT2TrendingOnLike(ctx) {
  */
 async function timelessUnlike(ctx, { tagged, untagged, tag, owner, like }) {
   const { sdk, contractId, botA } = ctx;
-  const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, data: likeData({ postId: bs58.decode(tagged), hashtag: tag, postAuthor: owner }) });
+  const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, data: likeData({ postId: bs58.decode(tagged), ...SOCIAL.tags([tag]), postAuthor: owner }) });
   expectAccepted('t2h A unlikes the tagged post by values, with no $createdAt (v11)', await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await entryExists(sdk, contractId, 'like', 'postId', tagged, botA.ownerId)) }));
   await settle();
   const valueOf = (entries, id) => Number(entries.find((e) => e.groupValue === id)?.value ?? 0);
-  const allTime = () => readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', groupBy: 'postId', aggregate: { type: 'count' }, where: [['hashtag', '==', tag]], limit: 10 }));
-  const perTag = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+  const allTime = () => readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', ...SOCIAL.tagRanking(tag), aggregate: { type: 'count' }, limit: 10 }));
+  const perTag = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking(tag));
   check('t2i the tag\'s 24h window still counts the unliked post (outlivesDelete keeps the entry until the window passes)', valueOf(perTag.entries, tagged) === 1, `groups=${perTag.entries.length}`);
   const top = await rankedWindow(ctx, TOP_POSTS, { groupBy: 'postId' });
   check('t2k …and so does the 3-day window, beside the untagged like', valueOf(top.entries, tagged) === 1 && valueOf(top.entries, untagged) === 1, `groups=${top.entries.length}`);
   check('t2m the all-time per-tag ranking (byHashtagPost) drops it at once', valueOf((await allTime()).entries, tagged) === 0);
-  expectAccepted('t2n A likes it again while the kept entry stands', await like(tagged, tag));
+  expectAccepted('t2n A likes it again while the kept entry stands', await like(tagged, [tag]));
   await settle();
-  const again = await rankedWindow(ctx, TRENDING_TAGS, { groupBy: 'postId', where: [['hashtag', '==', tag]] });
+  const again = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking(tag));
   check('t2o the re-like writes over the kept entry: the window counts A once (1), the all-time ranking 1 again', valueOf(again.entries, tagged) === 1 && valueOf((await allTime()).entries, tagged) === 1, `window=${valueOf(again.entries, tagged)}`);
+}
+
+/**
+ * v16's t2 tail: a like of a post tagged [a, b] is entered once under each tag, in the all-time
+ * byHashtagPost counter and in the 24h byTrendHashtagPost window, so each tag's ranking and count
+ * hold it once and the trending tags list both. Its unlike names the list as the create wrote it:
+ * the same tags in the other order, or the first alone, match no stored entry (40101) and the
+ * like stays; the exact list lands. Both tags are run-unique, so every value is exact.
+ */
+async function tagListTrending(ctx, owner) {
+  const { sdk, contractId, botA, botB } = ctx;
+  const pair = [`${ctx.tag}p`, `${ctx.tag2}p`];
+  const post = await createFeed(ctx, botB, 'post', postData({ content: 't2 two tags', tags: pair }), 't2 two-tag post');
+  if (!post) { check('t2p fixture', false, 'no two-tag post'); return; }
+  const liked = () => entryExists(sdk, contractId, 'like', 'postId', post, botA.ownerId);
+  const data = (tags) => likeData({ postId: bs58.decode(post), ...SOCIAL.tags(tags), postAuthor: owner });
+  expectAccepted('t2p (v16) A likes B\'s post tagged [a, b], repeating its list', await attemptCreateIndexOnly(sdk, botA, { contractId, docType: 'like', data: data(pair), accepted: liked }));
+  await settle();
+  const valueOf = (entries, key) => Number(entries.find((e) => e.groupValue === key)?.value ?? 0);
+  const allTime = (tag) => readback(() => sdk.documents.ranked({ dataContractId: contractId, documentTypeName: 'like', ...SOCIAL.tagRanking(tag), aggregate: { type: 'count' }, limit: 10 }));
+  const [allA, allB] = await Promise.all(pair.map(allTime));
+  check('t2q (v16) the all-time per-tag ranking (byHashtagPost, `tags contains`) counts the like once under a and once under b',
+    valueOf(allA.entries, post) === 1 && valueOf(allB.entries, post) === 1, `a=${valueOf(allA.entries, post)} b=${valueOf(allB.entries, post)}`);
+  const counts = await Promise.all(pair.flatMap((tag) => [SOCIAL.tagLikesWhere(tag), SOCIAL.tagLikesWhere(tag, post)]).map((where) => countWhere(sdk, contractId, 'like', where)));
+  check('t2r (v16) …and so do the counts: every like under a and under b (`tags contains`), and the post\'s under each (`postId ==`), are 1', counts.every((n) => n === 1), `counts ${counts.join(',')}`);
+  const [windowA, windowB] = await Promise.all(pair.map((tag) => rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking(tag))));
+  check('t2s (v16) the 24h top posts of a and of b (byTrendHashtagPost) each rank the post at 1',
+    valueOf(windowA.entries, post) === 1 && valueOf(windowB.entries, post) === 1, `a=${valueOf(windowA.entries, post)} b=${valueOf(windowB.entries, post)}`);
+  const trending = await rankedWindow(ctx, TRENDING_TAGS, SOCIAL.tagRanking());
+  check('t2t (v16) the 24h trending tags (groupBy tags) list both a and b at 1', pair.every((tag) => valueOf(trending.entries, tag) === 1), `groups=${trending.entries.length}`);
+
+  const unlike = (tags) => {
+    const { document } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, data: data(tags) });
+    return attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await liked()) });
+  };
+  expectRejected('t2u (v16) an unlike naming the like\'s two tags in the other order is refused (40101: no entry holds that tuple), and the like stays', await unlike([...pair].reverse()), DOCUMENT_NOT_FOUND);
+  expectRejected('t2v (v16) one naming the first tag alone (the one-tag shape) is refused too (40101)', await unlike(pair.slice(0, 1)), DOCUMENT_NOT_FOUND);
+  expectAccepted('t2w (v16) the unlike naming the list exactly as the create did lands', await unlike(pair));
+  await settle();
+  const [dropA, dropB] = await Promise.all(pair.map(allTime));
+  check('t2x (v16) …and the all-time per-tag ranking drops it under a and under b at once', valueOf(dropA.entries, post) === 0 && valueOf(dropB.entries, post) === 0,
+    `a=${valueOf(dropA.entries, post)} b=${valueOf(dropB.entries, post)}`);
 }
 
 // ---- v10: one mention per post or reply, the notification windows ---------------------
@@ -2155,7 +2283,7 @@ async function caseA3AgreedFee(ctx) {
   console.log('\n--- a3. the agreed fee lands, the derived id matches, the moderators pot grows ---');
   const potBefore = (await moderatorsPot(ctx)).credits;
   const { agreement, knownPermille } = await feeAgreement(ctx, POST_ACTION_FEE);
-  const post = await manualCreate(ctx, botA, { docType: 'post', data: postData({ content: 'agreed fee', hashtag: ctx.tag }), agreement });
+  const post = await manualCreate(ctx, botA, { docType: 'post', data: postData({ content: 'agreed fee', tags: [ctx.tag] }), agreement });
   expectAccepted('a3a post with the declared agreement lands', post);
   if (!post.ok) return;
   check('a3b the nonce-committed v1 id derived locally is the id Platform stored', post.fromResult && post.resultId === post.derivedId, `derived=${post.derivedId} result=${post.resultId ?? '(no result: broadcast wait threw)'}`);
@@ -2327,7 +2455,7 @@ async function caseQ1RepostIsAQuote(ctx) {
   const replyQuotes = await countBy(sdk, contractId, 'post', 'quotedReplyId', reply);
   check('q1m the reply\'s quote count is exactly 1', replyQuotes === 1, `quotes=${replyQuotes}`);
 
-  await expectFeedRefused(ctx, 'q1n a post with only a hashtag and `sensitive` is refused (10422 notEmpty)', botA, 'post', SOCIAL.post({ hashtag: ctx.tag, sensitive: true }), constraintViolation('notEmpty'));
+  await expectFeedRefused(ctx, `q1n a post with only ${TAG_ARRAY ? 'a tag list' : 'a hashtag'} and \`sensitive\` is refused (10422 notEmpty)`, botA, 'post', SOCIAL.post({ ...SOCIAL.tags([ctx.tag]), sensitive: true }), constraintViolation('notEmpty'));
   expectAccepted('q1o a media-only post (no content) lands: media satisfies notEmpty', await createFeedOutcome(ctx, botA, 'post', SOCIAL.post(await mediaFields('ipfs://bafyv10batterymediaonly'))));
 }
 
@@ -2512,7 +2640,8 @@ function selfTestTimeless(schemas, { expect, index, shape, names }) {
   expect('likeReply requires no $createdAt (it indexes it nowhere)', !schemas.likeReply.required.includes('$createdAt'));
   expect('like / likeReply byPost / byReply [target] terminal $ownerId: the heart state (n2c, n2f)',
     shape('like', 'byPost') === 'postId' && index('like', 'byPost').terminal === '$ownerId' && shape('likeReply', 'byReply') === 'replyId' && index('likeReply', 'byReply').terminal === '$ownerId');
-  for (const [type, kept] of [['post', ['hashtag', '$createdAt']], ['reply', ['rootPostId', '$createdAt']]]) {
+  // v16 keeps the post's whole tag list (`tags`) where v11–v15 kept its `hashtag`.
+  for (const [type, kept] of [['post', [SOCIAL.tagField, '$createdAt']], ['reply', ['rootPostId', '$createdAt']]]) {
     expect(`${type}: one moderator deletes for a week, then the leader plus two members (deleteWithin 604800, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
       JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: 604_800, deleteSettled: { leader: true, approvals: 3 } }));
   }
@@ -2531,8 +2660,14 @@ function selfTestCounters({ expect, index, shape }) {
   };
   expect('v12 like byAuthorPost [postAuthor, postId] is a counter of byPost (no terminal, rangeCountable + rangeSummable, preallocated), ranked at [postAuthor, postId] (creators, profile Top, n2b)',
     counter('like', 'byAuthorPost', { source: 'byPost', properties: 'postAuthor,postId', rankedAt: ['postAuthor', 'postId'] }));
-  expect('v12 like byHashtagPost [hashtag, postId] is a counter of byPost, ranked at [hashtag, postId], skipped when untagged (t2g, t2m, x1tp)',
-    counter('like', 'byHashtagPost', { source: 'byPost', properties: 'hashtag,postId', rankedAt: ['hashtag', 'postId'] }) && index('like', 'byHashtagPost').skipIfAbsent === true);
+  if (TAG_ARRAY) {
+    // Platform refuses a skipIfAbsent whose only skip property is the typed array (10231); an empty list is never entered.
+    expect('v16 like byHashtagPost [tags, postId] is a counter of byPost, ranked at [tags, postId], one entry per tag and no skipIfAbsent (t2g, t2m, t2q, t2r, x1tp, x1tp2)',
+      counter('like', 'byHashtagPost', { source: 'byPost', properties: 'tags,postId', rankedAt: ['tags', 'postId'] }) && index('like', 'byHashtagPost').skipIfAbsent === undefined);
+  } else {
+    expect('v12 like byHashtagPost [hashtag, postId] is a counter of byPost, ranked at [hashtag, postId], skipped when untagged (t2g, t2m, x1tp)',
+      counter('like', 'byHashtagPost', { source: 'byPost', properties: 'hashtag,postId', rankedAt: ['hashtag', 'postId'] }) && index('like', 'byHashtagPost').skipIfAbsent === true);
+  }
   if (SOCIAL.cut.replyAuthor) {
     expect('v12 likeReply byAuthorReply [replyAuthor, replyId] is an unranked counter of byReply (n2e)',
       counter('likeReply', 'byAuthorReply', { source: 'byReply', properties: 'replyAuthor,replyId', rankedAt: undefined }) && index('likeReply', 'byAuthorReply').rankedCountable === undefined);
@@ -2545,6 +2680,32 @@ function selfTestCounters({ expect, index, shape }) {
     [['like', 'byPost'], ['likeReply', 'byReply']].every(([type, name]) => index(type, name).terminal === '$ownerId' && !index(type, name).skipIfAbsent && !index(type, name).outlivesDelete));
   expect('v12 post and reply declare retractedWhen { present: deleted }: a barred author\'s tombstone passes the bar (x4)',
     ['post', 'reply'].every((type) => JSON.stringify(V10.documentSchemas[type].retractedWhen) === JSON.stringify({ present: 'deleted' })));
+}
+
+/**
+ * v16's tag pins: `post.tags` and `like.tags` are the same optional typed array (1–4 distinct
+ * tags matching the tag pattern, 61 characters at most) and no `hashtag` is left; the post's list
+ * is frozen whole, live or tombstoned; and `tagAndTime` and the like's trend window key `tags`,
+ * one entry per element, with no skipIfAbsent (Platform refuses one whose only skip property is
+ * the typed array, 10231). byHashtagPost is pinned with the counters, the like agreement and the
+ * removal record's kept fields with the rest.
+ */
+function selfTestTagList(schemas, { expect, index, shape }) {
+  const isTagList = (schema) => schema?.type === 'array' && schema.minItems === 1 && schema.maxItems === 4 && schema.uniqueItems === true
+    && schema.items?.type === 'string' && schema.items.pattern === '^[a-z0-9_]{1,61}$' && schema.items.maxLength === 61;
+  for (const type of ['post', 'like']) {
+    expect(`v16: ${type}.tags is an optional list of 1–4 distinct tags (^[a-z0-9_]{1,61}$, 61 characters at most), and there is no ${type}.hashtag (o1, o1h–o1k, t2p)`,
+      isTagList(schemas[type].properties.tags) && !(schemas[type].required ?? []).includes('tags') && !schemas[type].properties.hashtag);
+  }
+  expect('v16: post.tags is frozen whole, live or tombstoned (immutable without a condition), and the tombstone rule leaves it alone (x1td–x1tg)',
+    schemas.post.immutable.includes('tags') && !JSON.stringify(schemas.post.propertyConstraints[BLANK_TOMBSTONE]).includes('"tags"'));
+  expect('v16: post tagAndTime [tags, $createdAt] is permanent (no window), one entry per tag, with no skipIfAbsent (an empty list is never entered)',
+    shape('post', 'tagAndTime') === 'tags,$createdAt' && index('post', 'tagAndTime').skipIfAbsent === undefined && index('post', 'tagAndTime').timeRange === undefined);
+  const trend = index('like', 'byTrendHashtagPost');
+  expect('v16: like byTrendHashtagPost [$createdAt, tags, postId] terminal $ownerId, 24h windows every 6h kept a week, outlives deletes, ranked at [tags, postId], no skipIfAbsent (t2c, t2s, t2t)',
+    shape('like', 'byTrendHashtagPost') === '$createdAt,tags,postId' && trend.terminal === '$ownerId' && trend.rangeCountable === true
+      && JSON.stringify(trend.timeRange) === JSON.stringify({ on: '$createdAt', range: 86_400, step: 21_600, ttl: 604_800 }) && trend.outlivesDelete === true
+      && JSON.stringify(trend.rankedCountable?.at) === JSON.stringify(['tags', 'postId']) && trend.skipIfAbsent === undefined);
 }
 
 function selfTest() {
@@ -2575,7 +2736,11 @@ function selfTest() {
   const blockers = schemaOf('blockFollow').properties.followedBlockers;
   expect('followedBlockers is a typed identity array with distinct, owner-excluded items (b1)', blockers.items?.refersTo?.type === 'identity' && blockers.items?.distinctFrom === '$ownerId' && blockers.uniqueItems === true);
   expect('the post action fee is 80M credits to the moderators (fixtures)', POST_ACTION_FEE?.moderators === 80_000_000n);
-  expect('like.postId agrees hashtag and postAuthor with the post (o1)', where('like', 'postId').hashtag === 'hashtag' && where('like', 'postId').$ownerId === 'postAuthor');
+  if (TAG_ARRAY) {
+    expect('v16: like.postId agrees the whole tag list and postAuthor with the post, and nothing else (o1, o1h–o1k)', JSON.stringify(where('like', 'postId')) === JSON.stringify({ tags: 'tags', $ownerId: 'postAuthor' }));
+  } else {
+    expect('like.postId agrees hashtag and postAuthor with the post (o1)', where('like', 'postId').hashtag === 'hashtag' && where('like', 'postId').$ownerId === 'postAuthor');
+  }
   if (SOCIAL.cut.replyAuthor) expect('likeReply.replyId agrees replyAuthor with the reply (o2)', where('likeReply', 'replyId').$ownerId === 'replyAuthor');
   expect('there is no repost type: a repost is a post (o3, q1)', !schemas.repost);
   expect('a quote or bare repost binds quotedPostOwnerId (o3, o4a, o4b)', where('post', 'quotedPostId').$ownerId === 'quotedPostOwnerId' && where('post', 'quotedReplyId').$ownerId === 'quotedPostOwnerId');
@@ -2730,11 +2895,12 @@ function selfTest() {
   expect('yapprProfile needs a DashPay profile (x3a)', JSON.stringify(schemas.yapprProfile.ownerRefersTo) === JSON.stringify({ type: 'deletableDocument', contractId: DASHPAY_CONTRACT_ID, documentType: 'profile', findBy: { $ownerId: '.' } }));
   expect('yapprProfile is one per owner, non-empty and moderator-deletable (x3d–x3f)', schemas.yapprProfile.indices.some((i) => i.unique && JSON.stringify(i.properties) === '[{"$ownerId":"asc"}]') && schemas.yapprProfile.minProperties === 1 && schemas.yapprProfile.moderatorAbilities?.delete === true && moderators.moderatedDocumentTypes.yapprProfile?.includes('deleteDocuments'));
   const window = (name) => schemas.like.indices.find((i) => i.name === name)?.timeRange;
-  expect('there is no beat; like carries the rolling windows: tags 24h/6h skipped when untagged, posts 72h/24h (t2)',
-    !schemas.beat && schemas.like.indices.some((i) => i.name === 'byTrendHashtagPost' && i.skipIfAbsent === true)
+  expect(`there is no beat; like carries the rolling windows: tags 24h/6h ${TAG_ARRAY ? 'entered once per tag (no skipIfAbsent)' : 'skipped when untagged'}, posts 72h/24h (t2)`,
+    !schemas.beat && schemas.like.indices.some((i) => i.name === 'byTrendHashtagPost' && (TAG_ARRAY ? i.skipIfAbsent === undefined : i.skipIfAbsent === true))
       && window('byTrendHashtagPost')?.range === 86_400 && window('byTrendHashtagPost')?.step === 21_600
       && window('byTrendPost')?.range === 259_200 && window('byTrendPost')?.step === 86_400
       && !schemas.like.indices.some((i) => /^byDay/.test(i.name)));
+  if (TAG_ARRAY) selfTestTagList(schemas, { expect, index, shape });
   expect('a report expires 90 days after it is filed', schemas.report.ttl === 7_776_000 && schemas.report.required.includes('$createdAt'));
   expect('reports are resolved through changeFields status/resolution and purged without a record (r1)', JSON.stringify(schemas.report.moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsRecord: false, changeFields: ['status', 'resolution'] }) && JSON.stringify(moderators.moderatedDocumentTypes.report) === '["deleteDocuments","changeDocumentFields"]');
   expect('reports index byStatus and byModerator (r1m, r1n)', ['byStatus', 'byModerator'].every((n) => schemas.report.indices.some((i) => i.name === n)));
@@ -2795,7 +2961,7 @@ const SHAPES = [
   ['privateFeedRekey', 'privateFeedRekey', rekeyData()],
   ['blockFollow (typed ids)', 'blockFollow', blockFollowData([someId(), someId()])],
   ['post (credits, agreed fee)', 'post', postData()],
-  ['post (tagged, quote + owner denorm)', 'post', postData({ hashtag: 'v10tag', quotedPostId: someId(), quotedPostOwnerId: someId() })],
+  ['post (tagged, quote + owner denorm)', 'post', postData({ tags: ['v10tag'], quotedPostId: someId(), quotedPostOwnerId: someId() })],
   ['post (media triple + sensitive)', 'post', postData({ media: SHAPE_MEDIA, sensitive: true })],
   ['post (1000 characters)', 'post', postData({ content: 'x'.repeat(1000) })],
   ['post (one mention)', 'post', postData({ content: 'hi', mentioned: [someId()] })],
@@ -2805,8 +2971,14 @@ const SHAPES = [
     ['post (eight mentions, n1)', 'post', postData({ content: 'hi all', mentioned: Array.from({ length: 8 }, someId) })],
     ['reply (two mentions, n1h4)', 'reply', replyData({ rootPostId: someId(), mentioned: [someId(), someId()] })],
   ] : []),
-  ['like (tagged)', 'like', likeData({ postId: someId(), hashtag: 'v10tag', postAuthor: someId() })],
+  ['like (tagged)', 'like', likeData({ postId: someId(), ...SOCIAL.tags(['v10tag']), postAuthor: someId() })],
   ['like (hashtag absent)', 'like', likeData({ postId: someId(), postAuthor: someId() })],
+  ...(TAG_ARRAY ? [
+    ['post (two tags, o1h–o1k, t2p, x1t)', 'post', postData({ content: 'two tags', tags: ['v16a', 'v16b'] })],
+    ['post (four tags)', 'post', postData({ content: 'four tags', tags: ['v16a', 'v16b', 'v16c', 'v16d'] })],
+    ['like (the two-tag post\'s list, o1k, t2p)', 'like', likeData({ postId: someId(), ...SOCIAL.tags(['v16a', 'v16b']), postAuthor: someId() })],
+    ['post tombstone (two tags kept, x1tf)', 'post', SOCIAL.post({ deleted: true, ...SOCIAL.tags(['v16a', 'v16b']) })],
+  ] : []),
   ['likeReply', 'likeReply', SOCIAL.likeReply({ replyId: someId(), replyAuthor: someId() })],
   ['post (bare repost: a quote, no content)', 'post', repostOf({ postId: someId(), ownerId: someId() })],
   ['post (bare repost of a reply)', 'post', repostOf({ replyId: someId(), ownerId: someId() })],
@@ -2893,12 +3065,14 @@ await runBattery({
     seated: null,
     /** Run-unique lowercase hashtag, so per-tag assertions stay exact across re-runs. */
     tag: `v10b${Date.now().toString(36)}`,
+    /** A second run-unique tag, for v16's two-tag posts (o1h–o1k, x1t, t2p). */
+    tag2: `v10c${Date.now().toString(36)}`,
     /** Fixture posts owned by B, keyed by role. */
     posts: {},
     replyId: null,
   }),
   summarize: (ctx) => {
     console.log(`seated charter: ${ctx.seated === null ? 'not read' : ctx.seated}`);
-    console.log(`run tag: #${ctx.tag}; fixture posts: ${JSON.stringify(ctx.posts)}`);
+    console.log(`run tag: #${ctx.tag}${TAG_ARRAY ? ` (second: #${ctx.tag2})` : ''}; fixture posts: ${JSON.stringify(ctx.posts)}`);
   },
 });

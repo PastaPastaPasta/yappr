@@ -188,6 +188,16 @@ emission order.
   `HASHTAG_UNIVERSE` (74 tags); lore posts get a keyword-matched Dash tag half
   the time; trend posts always carry the burst tag. Tags are appended as
   `#tag` to the content as well as set in `hashtag`.
+- Tag lists (v16): a post is indexed under every tag its content names (the
+  web client's rule: hashtags in content order, then cashtags), at most 4, and
+  a tag is never appended past that. After everything else is generated, 15%
+  of tagged posts and quotes (`SECOND_TAG_SHARE`) gain a second appended tag
+  from the author's archetype list (else a global one), drawn from a PRNG
+  stream of its own, so every other line is the one the seed always produced
+  and `hashtag` never changes. A post or quote whose content names anything
+  other than just its `hashtag` (a second tag, a `#50` in a bank line, a
+  cashtag) carries `tags`, exactly the tags it names in order; every other line
+  reads as it did before v16.
 - Trending bursts: `round(posts / 14000)` tags from `TREND_CANDIDATES`, each
   a 0.6%-of-virtual-time window where 60% of posts use that tag's lines
   (`TREND_LINES` + the `trends` bank). The summary reports each burst's actual
@@ -209,6 +219,8 @@ reply 175M, like 90M untagged / 130M tagged, likeReply 54M, follow 46M,
 bookmark 18M), like distribution (max, top10, median, zero share, top-1%
 share, posts ≥100 likes), hero stats (likes vs runner-up and ratio, replies,
 quotes, reposts, bookmarks, Alice/Bob/Carol mean likes vs everyone), follow
-distribution, thread stats, hashtag stats + burst windows, content stats
+distribution, thread stats, hashtag stats + burst windows + tag lists
+(`tagLists`: posts carrying `tags`, posts naming several tags, second tags
+appended), content stats
 (media/sensitive/links/lore/trend counts, bank source and files, line reuse),
 archetype census, the adaptive generic shares, and the λ calibration trace.

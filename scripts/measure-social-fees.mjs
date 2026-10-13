@@ -24,6 +24,10 @@
  *   report-post / report-profile      a liker reports the post, and a fresh identity's
  *                                     profile (`about: 1`); the 50M moderators action fee
  *                                     the published file charges is printed beside it
+ *   v16 only (a post's tags are the typed array `tags`):
+ *   post-tagged-4                     a post indexed under four tags
+ *   tagged-4-first / tagged-4-later   its likes, each carrying the four-tag list
+ *   unlike-tagged-4                   the refund of one
  *
  * Every write is built for the cut by scripts/social-shapes.mjs: on v13 posts
  * carry `live: true`, replies `rootOwnerId`, and a reply like is `{ replyId }`.
@@ -32,6 +36,12 @@
  * the installed 5.0.0-beta.2 SDK cannot parse v14 (countPresent,
  * deleteConstraints), which `--dry-run` reports as one FAIL line for the cut
  * (its write shapes still judged by the shape checker) and exits 1.
+ * On v16 a post names its tags in the typed array `tags` (one `hashtag` up to
+ * v15) and its like repeats the list, so the tagged rows write a one-element
+ * list, the four-tag rows a four-element one, and the estimator prices the
+ * array by its element count. The installed 5.0.0-beta.5 wasm-dpp2 refuses
+ * like's indexOnly typed-array indexes until 5.0.0-beta.6, which `--dry-run`
+ * reports the same way.
  *
  * Several cuts in one run (`--contract-file` repeated) are measured one after
  * the other by the same identities on the same network, then compared side by
@@ -162,6 +172,9 @@ function strippedActionFees(file) {
 }
 /** One media item of fixed bytes: the fee depends on the sizes, not the values. */
 const mediaItems = (n) => Array.from({ length: n }, (_, i) => ({ url: `ipfs://bafyfeemeasure${i}`, sha256: new Uint8Array(32).fill(i + 1), fingerprint: new Uint8Array(8).fill(i + 1) }));
+/** The tagged rows' one tag, and the v16 four-tag rows' list (the most `post.tags` holds), each tag about as long. */
+const TAG = 'feemeasure';
+const FOUR_TAGS = [TAG, 'feemeasure2', 'feemeasure3', 'feemeasure4'];
 
 /**
  * documentCreateCost (#5159) for each measured create on `contract`, keyed as the live
@@ -169,26 +182,46 @@ const mediaItems = (n) => Array.from({ length: n }, (_, i) => ({ url: `ipfs://ba
  */
 function estimatesFor(contract, source) {
   const pv = PlatformVersion.latest();
-  const { cut } = socialShapes(source);
+  const { cut, tagField } = socialShapes(source);
   const plainPost = { content: { length: 140 } };
   // v13: every post carries `live` and every reply `rootOwnerId`, so neither is priced as absent.
   // v14's reply declares no parentOwnerId, so the reply row below keeps only what the file has.
   const always = { post: cut.liveMarker ? ['live'] : [], reply: cut.rootOwner ? ['rootOwnerId'] : [] };
   const absent = (type, keep) => Object.fromEntries(Object.keys(source.documentSchemas[type].properties).filter((p) => !keep.includes(p) && !(always[type] ?? []).includes(p)).map((p) => [p, { present: false }]));
-  const estimate = (type, fields) => documentCreateCost(contract, type, { fields }, pv).totalCredits;
+  /**
+   * null for a shape the installed SDK cannot price, so a live run keeps its measurements:
+   * 5.0.0-beta.5 throws on v16's string `tags` in an index key ("we should never try encoding
+   * an array"), though it prices v15's identifier `mentionedUserIds`.
+   */
+  const unpriced = new Set();
+  const estimate = (type, fields) => {
+    try {
+      return documentCreateCost(contract, type, { fields }, pv).totalCredits;
+    } catch (e) {
+      unpriced.add(`${type}: ${describeErr(e).slice(0, 160)}`);
+      return null;
+    }
+  };
   /** `n` media items: n URLs (typed-array length), 40 n digest bytes, n kind bytes. */
   const media = (n) => ({ mediaUrls: { present: true, length: n }, mediaDigests: { present: true, length: 40 * n }, mediaKinds: { present: true, length: n } });
   const MEDIA = ['mediaUrls', 'mediaDigests', 'mediaKinds'];
-  return {
+  /**
+   * `n` tags on a post or its like: `hashtag` up to v15 (one, at the estimator's default
+   * length), the typed array `tags` on v16, whose length is its element count.
+   */
+  const tags = (n) => ({ [tagField]: cut.tagArray ? { present: true, length: n } : { present: true } });
+  const estimates = {
     'post': estimate('post', { ...absent('post', ['content']), ...plainPost }),
-    'post-tagged': estimate('post', { ...absent('post', ['content', 'hashtag']), ...plainPost, hashtag: { present: true } }),
+    'post-tagged': estimate('post', { ...absent('post', ['content', tagField]), ...plainPost, ...tags(1) }),
+    ...(cut.tagArray ? { 'post-tagged-4': estimate('post', { ...absent('post', ['content', tagField]), ...plainPost, ...tags(4) }) } : {}),
     'quote': estimate('post', { ...absent('post', ['content', 'quotedPostId', 'quotedPostOwnerId']), ...plainPost }),
     'repost': estimate('post', { ...absent('post', ['quotedPostId', 'quotedPostOwnerId']) }),
     'reply': estimate('reply', { ...absent('reply', ['content', 'rootPostId', 'parentOwnerId']), ...plainPost }),
-    'like-first': estimate('like', { hashtag: { present: false } }),
-    'like-later': estimate('like', { hashtag: { present: false } }),
-    'tagged-first': estimate('like', { hashtag: { present: true } }),
-    'tagged-later': estimate('like', { hashtag: { present: true } }),
+    'like-first': estimate('like', { [tagField]: { present: false } }),
+    'like-later': estimate('like', { [tagField]: { present: false } }),
+    'tagged-first': estimate('like', tags(1)),
+    'tagged-later': estimate('like', tags(1)),
+    ...(cut.tagArray ? { 'tagged-4-first': estimate('like', tags(4)), 'tagged-4-later': estimate('like', tags(4)) } : {}),
     'reply-like-first': estimate('likeReply', {}),
     'reply-like-later': estimate('likeReply', {}),
     ...(cut.mediaArrays ? {
@@ -200,6 +233,8 @@ function estimatesFor(contract, source) {
       'report-profile': estimate('report', absent('report', ['about', 'targetOwnerId', 'reason'])),
     } : {}),
   };
+  for (const reason of unpriced) console.log(`  (not priced by the installed SDK, ${reason})`);
+  return estimates;
 }
 
 /** Offline: each cut's throwaway copy parses under both parsers, with the estimator's figures. */
@@ -227,9 +262,10 @@ async function dryRun(args) {
     const shapes = socialShapes(source);
     const [x, y] = [randomIdBytes(), randomIdBytes()];
     const writes = [
-      ['post', { content: 'x' }], ['post', { content: 'x', hashtag: 'feemeasure' }], ['post', { content: 'x', quotedPostId: x, quotedPostOwnerId: y }],
+      ['post', { content: 'x' }], ['post', { content: 'x', ...shapes.tags([TAG]) }], ['post', { content: 'x', quotedPostId: x, quotedPostOwnerId: y }],
       ['post', { quotedPostId: x, quotedPostOwnerId: y }], ['reply', { content: 'x', rootPostId: x, parentOwnerId: y }],
-      ['like', { postId: x, postAuthor: y }], ['like', { postId: x, postAuthor: y, hashtag: 'feemeasure' }], ['likeReply', { replyId: x, replyAuthor: y }],
+      ['like', { postId: x, postAuthor: y }], ['like', { postId: x, postAuthor: y, ...shapes.tags([TAG]) }], ['likeReply', { replyId: x, replyAuthor: y }],
+      ...(shapes.cut.tagArray ? [['post', { content: 'x', ...shapes.tags(FOUR_TAGS) }], ['like', { postId: x, postAuthor: y, ...shapes.tags(FOUR_TAGS) }]] : []),
       ...(shapes.cut.mediaArrays ? [1, 4].map((n) => ['post', { content: 'x', ...shapes.media(mediaItems(n)) }]) : []),
       ...(shapes.cut.profileReports ? [['report', shapes.report({ postId: x, targetOwnerId: y, reason: 1 })], ['report', shapes.report({ about: 1, targetOwnerId: y, reason: 1 })]] : []),
     ];
@@ -244,7 +280,8 @@ async function dryRun(args) {
     if (!contract) continue;
     const stripped = strippedActionFees(file);
     for (const [key, estimate] of Object.entries(estimatesFor(contract, source))) {
-      console.log(`  ${key.padEnd(18)} estimate ${M(Number(estimate.newValues)).padStart(8)} / ${M(Number(estimate.knownValues))}${stripped[key] ? `   + ${M(stripped[key])} moderators action fee (the published file's)` : ''}`);
+      const priced = estimate ? `${M(Number(estimate.newValues)).padStart(8)} / ${M(Number(estimate.knownValues))}` : '(not priced)';
+      console.log(`  ${key.padEnd(18)} estimate ${priced}${stripped[key] ? `   + ${M(stripped[key])} moderators action fee (the published file's)` : ''}`);
     }
   }
   const { devnetName, addresses } = devnetConfig();
@@ -406,8 +443,11 @@ async function measureCut(cut, { P, likers }) {
     console.log(`\n--- run ${run + 1} ---`);
     const post = await costOf(P, () => create(P, 'post', { content: text(run) }));
     record('post', post);
-    const tagged = await costOf(P, () => create(P, 'post', { content: text(run), hashtag: 'feemeasure' }));
+    const tagged = await costOf(P, () => create(P, 'post', { content: text(run), ...shapes.tags([TAG]) }));
     record('post-tagged', tagged);
+    // v16: the same post indexed under four tags (a like then repeats all four).
+    const tagged4 = shapes.cut.tagArray ? await costOf(P, () => create(P, 'post', { content: text(run), ...shapes.tags(FOUR_TAGS) })) : null;
+    record('post-tagged-4', tagged4);
     if (!post || !tagged) continue;
     const reply = await costOf(P, () => create(P, 'reply', { content: text(run), rootPostId: id(post.id), parentOwnerId: id(P.ownerId) }));
     record('reply', reply);
@@ -416,15 +456,17 @@ async function measureCut(cut, { P, likers }) {
     record('quote', await costOf(likers[run % 3], () => create(likers[run % 3], 'post', { content: text(run), quotedPostId: id(quoteTarget.id), quotedPostOwnerId: id(P.ownerId) })));
     record('repost', await costOf(likers[(run + 1) % 3], () => create(likers[(run + 1) % 3], 'post', { quotedPostId: id(quoteTarget.id), quotedPostOwnerId: id(P.ownerId) })));
     const postLike = { postId: id(post.id), postAuthor: id(P.ownerId) };
-    const taggedLike = { postId: id(tagged.id), postAuthor: id(P.ownerId), hashtag: 'feemeasure' };
+    const taggedLike = { postId: id(tagged.id), postAuthor: id(P.ownerId), ...shapes.tags([TAG]) };
+    const tagged4Like = tagged4 ? { postId: id(tagged4.id), postAuthor: id(P.ownerId), ...shapes.tags(FOUR_TAGS) } : null;
     const replyLike = { replyId: id(reply.id), replyAuthor: id(P.ownerId) };
-    for (const [prefix, docType, data] of [['like', 'like', postLike], ['tagged', 'like', taggedLike], ['reply-like', 'likeReply', replyLike]]) {
+    for (const [prefix, docType, data] of [['like', 'like', postLike], ['tagged', 'like', taggedLike], ...(tagged4Like ? [['tagged-4', 'like', tagged4Like]] : []), ['reply-like', 'likeReply', replyLike]]) {
       record(`${prefix}-first`, await costOf(likers[0], () => like(likers[0], docType, data)));
       record(`${prefix}-later`, await costOf(likers[1], () => like(likers[1], docType, data)));
       record(`${prefix}-later`, await costOf(likers[2], () => like(likers[2], docType, data)));
     }
     record('unlike', await costOf(likers[2], () => unlike(likers[2], 'like', postLike)));
     record('unlike-tagged', await costOf(likers[2], () => unlike(likers[2], 'like', taggedLike)));
+    if (tagged4Like) record('unlike-tagged-4', await costOf(likers[2], () => unlike(likers[2], 'like', tagged4Like)));
     record('reply-unlike', await costOf(likers[2], () => unlike(likers[2], 'likeReply', replyLike)));
     if (tombstones) record('tombstone', await costOf(P, () => tombstone(P, quoteTarget.id, { deleted: true })));
     if (shapes.cut.mediaArrays) {

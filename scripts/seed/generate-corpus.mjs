@@ -36,7 +36,10 @@ import {
   LAST_NAMES, LINK_LINES, TREND_CANDIDATES, TREND_LINES,
 } from './corpus-archetypes.mjs';
 import { loadBanks } from './author-banks.mjs';
-import { CONTENT_MAX, DASHPAY_PROFILE_LIMITS, HASHTAG_MAX, TOKEN_COST, codePointLength, expandedContentLength, loadPersonas, parseCorpus, validateHandle } from './seed-lib.mjs';
+import {
+  CONTENT_MAX, CONTENT_MAX_BYTES, CORPUS_TAGS_MAX, DASHPAY_PROFILE_LIMITS, HASHTAG_MAX, TOKEN_COST, codePointLength, corpusContentTags,
+  expandedContentBytes, expandedContentLength, loadPersonas, parseCorpus, validateHandle,
+} from './seed-lib.mjs';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -48,6 +51,15 @@ const flag = (name, def) => {
   const v = argv[i + 1];
   return v === undefined || v.startsWith('--') ? true : v;
 };
+
+/**
+ * Share of tagged posts and quotes that gain a SECOND appended tag, so a corpus
+ * carries multi-tag posts for v16 (`tags`). Drawn from its own PRNG stream
+ * (`TAG_STREAM_SALT`), after everything else is generated: every other draw,
+ * and so every other line, is the same with it as without it.
+ */
+export const SECOND_TAG_SHARE = 0.15;
+const TAG_STREAM_SALT = 0x7a65d1c3;
 
 export const DEFAULT_MIX = {
   quoteShare: 0.10, // share of --posts that are quotes
@@ -474,7 +486,7 @@ function makeDecks(rng) {
 // ---------------------------------------------------------------------------
 export function generate(opts) {
   const {
-    users, posts: postTarget, ops: opsTarget, seed, mix = DEFAULT_MIX, banksDir, loadedBanks = null,
+    users, posts: postTarget, ops: opsTarget, seed, mix = DEFAULT_MIX, banksDir, loadedBanks = null, secondTagShare = SECOND_TAG_SHARE,
   } = opts;
   const rng = makeRng(seed);
   const deal = makeDecks(rng);
@@ -551,6 +563,7 @@ export function generate(opts) {
   // quote, and an author may quote or repost a target once in all (40105).
   const postRefs = []; // {ref, author, t, hashtag, likers:Set, quotedBy:Set, bookmarkers:Set, likes}
   const postByRef = new Map();
+  const postOpByRef = new Map(); // ref -> the emitted post/quote op (its content gains a tag below)
   const likeCount = new Map(); // ref -> n
   const replyLikeCount = new Map();
   const replyCountByRoot = new Map();
@@ -596,6 +609,9 @@ export function generate(opts) {
     const c = archetypeTagChoices[archetype];
     return c.tags[rng.weighted(c.weights)];
   };
+  // The web client refuses a post naming more than CORPUS_TAGS_MAX distinct tags
+  // (hashtags plus cashtags), so a tag is only appended while the content stays within it.
+  const withinTagLimit = (text) => corpusContentTags(text).length <= CORPUS_TAGS_MAX;
 
   // --- trending bursts ------------------------------------------------------
   const burstCount = Math.max(1, Math.min(8, Math.round(postTarget / 14000)));
@@ -719,7 +735,7 @@ export function generate(opts) {
     }
     if (hashtag) {
       const withTag = `${text} #${hashtag}`;
-      if (expandedContentLength(withTag) <= CONTENT_MAX && !contents.has(withTag)) { contents.delete(text); text = withTag; contents.add(text); } else hashtag = '';
+      if (expandedContentLength(withTag) <= CONTENT_MAX && !contents.has(withTag) && withinTagLimit(withTag)) { contents.delete(text); text = withTag; contents.add(text); } else hashtag = '';
     }
     if (expandedContentLength(text) > CONTENT_MAX) {
       contents.delete(text);
@@ -759,7 +775,7 @@ export function generate(opts) {
     if (rng.chance(0.2)) {
       hashtag = quoted.hashtag && rng.chance(0.5) ? quoted.hashtag : pickTag(p.archetype);
       const withTag = `${text} #${hashtag}`;
-      if (!contents.has(withTag) && expandedContentLength(withTag) <= CONTENT_MAX) { contents.delete(text); text = withTag; contents.add(text); } else hashtag = '';
+      if (!contents.has(withTag) && expandedContentLength(withTag) <= CONTENT_MAX && withinTagLimit(withTag)) { contents.delete(text); text = withTag; contents.add(text); } else hashtag = '';
     }
     return { text, hashtag };
   }
@@ -811,6 +827,7 @@ export function generate(opts) {
     if (mediaUrl) o.mediaUrl = mediaUrl;
     if (sensitive) o.sensitive = true;
     emit(t, o);
+    postOpByRef.set(ref, o);
     counts[quotedRef ? 'quote' : 'post'] += 1;
     perAuthorYapp[author] += TOKEN_COST.post;
     if (quotedRef) postByRef.get(quotedRef).quotedBy.add(author);
@@ -1216,6 +1233,45 @@ export function generate(opts) {
     }
   }
 
+  // --- tag lists (v16) ----------------------------------------------------------
+  // A post or quote is indexed under every tag its content names (the web
+  // client's rule: hashtags in content order, then cashtags, distinct), at most
+  // CORPUS_TAGS_MAX. A share of tagged posts first gains a second tag, drawn from
+  // a stream of its own so nothing above moves. `tags` is then written only where
+  // that list differs from the one-tag reading (`[hashtag]`, or none when
+  // untagged): a corpus whose posts each name just their hashtag reads exactly as
+  // it did before v16, and `hashtag` itself never changes.
+  const tagRng = makeRng((seed ^ TAG_STREAM_SALT) >>> 0);
+  let secondTags = 0;
+  for (const rec of postRefs) {
+    if (!rec.hashtag || !tagRng.chance(secondTagShare)) continue;
+    const o = postOpByRef.get(rec.ref);
+    const named = corpusContentTags(o.content);
+    const c = archetypeTagChoices[personas[rec.author].archetype];
+    let extra = c.tags[tagRng.weighted(c.weights)];
+    if (named.includes(extra)) extra = tagRng.pick(globalTags);
+    if (named.includes(extra)) continue;
+    const withTag = `${o.content} #${extra}`;
+    if (expandedContentLength(withTag) > CONTENT_MAX || expandedContentBytes(withTag) > CONTENT_MAX_BYTES || contents.has(withTag) || !withinTagLimit(withTag)) continue;
+    contents.delete(o.content);
+    o.content = withTag;
+    contents.add(withTag);
+    secondTags += 1;
+  }
+  let listedPosts = 0;
+  let multiTagPosts = 0;
+  for (const rec of postRefs) {
+    const o = postOpByRef.get(rec.ref);
+    const named = corpusContentTags(o.content);
+    // Generator bugs, refused here rather than as a parse failure on the written corpus.
+    if (named.length > CORPUS_TAGS_MAX) throw new Error(`${o.ref} names ${named.length} tags (${named.join(', ')}), over ${CORPUS_TAGS_MAX}`);
+    if (o.hashtag && !named.includes(o.hashtag)) throw new Error(`${o.ref} is tagged ${o.hashtag} but its content does not name it`);
+    if (named.length > 1) multiTagPosts += 1;
+    if (JSON.stringify(named) === JSON.stringify(o.hashtag ? [o.hashtag] : [])) continue;
+    o.tags = named;
+    listedPosts += 1;
+  }
+
   // --- order + stats -----------------------------------------------------------
   ops.sort((a, b) => (a.t - b.t) || (a.s - b.s));
   // Actual line windows of the trending bursts (virtual time ≠ line index,
@@ -1274,7 +1330,11 @@ export function generate(opts) {
     hero: { ref: heroRef, likes: heroLikeCount, runnerUp: runnerUpVal, ratio: Number((heroLikeCount / Math.max(1, runnerUpVal)).toFixed(2)), replies: replyCountByRoot.get(heroRef) ?? 0, reposts: postByRef.get(heroRef).reposts, bookmarks: postByRef.get(heroRef).bookmarkers.size, quotes: ops.filter((x) => x.o.type === 'quote' && x.o.quotedRef === heroRef).length, bobMeanLikes: meanLikesOf(1), carolMeanLikes: meanLikesOf(2), aliceMeanLikes: meanLikesOf(0), allMeanLikes: Number((likesTotal / likeValues.length).toFixed(2)) },
     follows: { total: counts.follow, maxFollowers: followerSorted[0], top10Followers: followerSorted.slice(0, 10), medianFollowers: followerSorted[Math.floor(followerSorted.length / 2)], zeroFollowers: followerSorted.filter((v) => v === 0).length, bob: followerCount[1], carol: followerCount[2], alice: followerCount[0] },
     replies: { total: counts.reply, meanPerPost: Number((counts.reply / Math.max(1, counts.post + counts.quote)).toFixed(2)), maxThread: replyPerRoot[0] ?? 0, top10Threads: replyPerRoot.slice(0, 10), postsWithReplies: replyCountByRoot.size, threads10Plus: replyPerRoot.filter((v) => v >= 10).length },
-    hashtags: { taggedShare: Number((tagged / Math.max(1, counts.post + counts.quote)).toFixed(3)), distinct: tagCounts.size, top: topTags, bursts: bursts.map((b) => ({ tag: b.tag, ...burstLines.get(b.tag) })) },
+    hashtags: {
+      taggedShare: Number((tagged / Math.max(1, counts.post + counts.quote)).toFixed(3)), distinct: tagCounts.size, top: topTags, bursts: bursts.map((b) => ({ tag: b.tag, ...burstLines.get(b.tag) })),
+      // v16: posts carrying a `tags` list, posts naming more than one tag, and second tags appended.
+      tagLists: { listed: listedPosts, multiTag: multiTagPosts, secondTags },
+    },
     content: {
       mediaShare: Number((mediaPosts / Math.max(1, counts.post + counts.quote)).toFixed(3)), sensitive: sensitivePosts, linkPosts, lorePosts, trendPosts,
       distinctContents: contents.size, duplicateRescues: dupRescues,
@@ -1299,7 +1359,7 @@ export function generate(opts) {
 // ---------------------------------------------------------------------------
 // Output + validation
 // ---------------------------------------------------------------------------
-const KEY_ORDER = ['type', 'ref', 'author', 'rootRef', 'parentRef', 'quotedRef', 'targetRef', 'target', 'content', 'hashtag', 'mediaUrl', 'sensitive'];
+const KEY_ORDER = ['type', 'ref', 'author', 'rootRef', 'parentRef', 'quotedRef', 'targetRef', 'target', 'content', 'hashtag', 'tags', 'mediaUrl', 'sensitive'];
 function lineOf(o) {
   const ordered = {};
   for (const k of KEY_ORDER) if (o[k] !== undefined) ordered[k] = o[k];
@@ -1367,6 +1427,20 @@ export function validateOutputs({ personasFile, corpusFile }, summary) {
   check('follows mostly early (≥70% in first 5%)', earlyFollows >= 0.7, earlyFollows.toFixed(2));
   const tagged = ops.filter((o) => (o.type === 'post' || o.type === 'quote') && o.hashtag).length / postCount;
   check('tagged share 0.25–0.50', tagged >= 0.25 && tagged <= 0.5, tagged.toFixed(3));
+  // Every post's tags are the ones its content names, in the client's order and within the limit:
+  // `tags` when present, else exactly the one-tag reading.
+  const postOps = ops.filter((o) => o.type === 'post' || o.type === 'quote');
+  const tagListWrong = postOps.filter((o) => {
+    const named = corpusContentTags(o.content);
+    if (named.length > CORPUS_TAGS_MAX) return true;
+    if (o.tags === undefined) return JSON.stringify(named) !== JSON.stringify(o.hashtag ? [o.hashtag] : []);
+    const distinct = new Set(o.tags).size === o.tags.length;
+    return !distinct || o.tags.length < 1 || o.tags.length > CORPUS_TAGS_MAX || o.tags.some((tag) => !/^[a-z0-9_]+$/.test(tag) || tag.length > HASHTAG_MAX)
+      || JSON.stringify(o.tags) !== JSON.stringify(named) || JSON.stringify(o.tags) === JSON.stringify(o.hashtag ? [o.hashtag] : []);
+  });
+  check(`every post names at most ${CORPUS_TAGS_MAX} tags, and its tags list (when it differs from [hashtag]) is exactly those, in order`,
+    tagListWrong.length === 0, tagListWrong.slice(0, 3).map((o) => `${o.ref} ${JSON.stringify(o.tags)}`).join('; '));
+  check('a tags list keeps the hashtag', postOps.every((o) => o.tags === undefined || !o.hashtag || o.tags.includes(o.hashtag)));
   const media = ops.filter((o) => (o.type === 'post' || o.type === 'quote') && o.mediaUrl).length / postCount;
   check('media share 0.04–0.14', media >= 0.04 && media <= 0.14, media.toFixed(3));
   const nested = ops.filter((o) => o.type === 'reply' && o.parentRef.startsWith('r')).length;
@@ -1407,6 +1481,21 @@ async function main() {
     // determinism: regenerate and compare
     const again = generate({ users: 80, posts: 1500, ops: 12000, seed: 7, mix: DEFAULT_MIX, banksDir, loadedBanks, log });
     checks.push({ name: 'deterministic for a fixed seed', ok: JSON.stringify(again.ops) === JSON.stringify(result.ops) && JSON.stringify(again.personas) === JSON.stringify(result.personas), detail: '' });
+    // The second-tag stream runs after everything else: without it every line is the same, but
+    // for the posts it tagged, which differ only by one ` #tag` at the end (and their `tags`).
+    const plain = generate({ users: 80, posts: 1500, ops: 12000, seed: 7, mix: DEFAULT_MIX, banksDir, loadedBanks, log, secondTagShare: 0 });
+    const withoutList = ({ tags, ...o }) => o;
+    let secondTagged = 0;
+    const onlyTheirContent = plain.ops.length === result.ops.length && plain.ops.every((p, i) => {
+      const o = result.ops[i];
+      if (JSON.stringify(withoutList(p)) === JSON.stringify(withoutList(o))) return true;
+      secondTagged += 1;
+      return (o.type === 'post' || o.type === 'quote') && o.content.startsWith(p.content) && /^ #[a-z0-9_]+$/.test(o.content.slice(p.content.length))
+        && JSON.stringify(withoutList({ ...o, content: p.content })) === JSON.stringify(withoutList(p)) && o.tags?.length === (p.tags?.length ?? (p.hashtag ? 1 : 0)) + 1;
+    });
+    checks.push({ name: 'a second tag changes only its post\'s content and tags: hashtag and every other line unchanged', ok: onlyTheirContent && secondTagged === result.summary.hashtags.tagLists.secondTags, detail: `${secondTagged} posts` });
+    const multiTag = result.ops.filter((o) => o.tags?.length >= 2).length;
+    checks.push({ name: 'multi-tag posts present, a modest share', ok: multiTag > 0 && multiTag / (result.summary.counts.post + result.summary.counts.quote) < 0.15, detail: `${multiTag}` });
     let failed = 0;
     for (const c of checks) {
       if (!c.ok) failed += 1;

@@ -92,8 +92,10 @@ const SIGNATURE_ALLOWANCE = 100;
 // ---- JSON meta-schema --------------------------------------------------------
 
 /**
- * rs-dpp's document meta-schema v3 at v5.0.0-beta.5 (beta.5 added the
- * `referenced` propertyConstraints operand, the `$old.` prefix and `$revision`
+ * rs-dpp's document meta-schema v3 at v5.0.0-beta.6 (beta.6 added the
+ * `contains` and `containsAll` conditions of a refersTo `where` on a typed
+ * array, and describes an equality of two typed arrays as one of lists;
+ * beta.5 added the `referenced` propertyConstraints operand, the `$old.` prefix and `$revision`
  * in propertyConstraints rules, the `referenceWhereCondition` forms of a
  * refersTo `where`, the `$ownerId` param of a sys.hash `findBy`, and `constraints`
  * (`minimumAgeBlocks`, `chooseFirst`) beside `findBy`; beta.4 added the
@@ -117,7 +119,7 @@ const SIGNATURE_ALLOWANCE = 100;
  * never reach it: the node expands them first, and so does `metaSchemaProblems`.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
-const META_SCHEMA_SHA256 = 'd8676bfd0b7a0fe9de0c2b781e61c01f3104a34dd410fcc32c8374d412c6697e';
+const META_SCHEMA_SHA256 = '742f99130f75940a3ba2962f243713fb745be0689093cd48d496f5026afc0d15';
 
 let metaValidator;
 /**
@@ -130,7 +132,7 @@ function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
   const text = readFileSync(META_SCHEMA_PATH);
   const digest = createHash('sha256').update(text).digest('hex');
-  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.5 meta-schema (sha256 ${digest})`);
+  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.6 meta-schema (sha256 ${digest})`);
   try {
     const require = createRequire(import.meta.url);
     const Ajv2020 = require('ajv/dist/2020').default;
@@ -375,6 +377,52 @@ function typedArrayIndexProblems(name, schema, index, property, definition) {
   return problems;
 }
 
+/** An index's whole key: its properties, then its terminal (a property name or a list of them). */
+const indexKey = (index) => [...indexPropertyNames(index), ...[index.terminal ?? []].flat()];
+
+/**
+ * Whether a `where` equality of a `permanentDocument` or `moderatedDocument`
+ * reference of `schema` makes its typed array `property` equal to a typed
+ * array of the referenced document (`"tags": "tags"`), which fixes every
+ * element of the list to the referenced document's.
+ */
+function arrayFixedByWhere(schemas, schema, property) {
+  return Object.values(schema.properties ?? {}).some((definition) => {
+    const ref = definition.refersTo;
+    if (!ref || ref.contractId || !['permanentDocument', 'moderatedDocument'].includes(ref.type)) return false;
+    return Object.entries(ref.where ?? {}).some(([referenced, referring]) => referring === property && isTypedArray(propertyAt(schemas[ref.documentType] ?? {}, referenced)));
+  });
+}
+
+/**
+ * 5.0.0-beta.6 (#5390, #5394; book contract-keywords/index-only.md "Typed
+ * arrays" and "Counting per element"): on an indexOnly type an index naming a
+ * typed array is no uniqueness rule of its own, so the array declares
+ * `uniqueItems`; unless the index keeps counters (`summableOffCountIndex`),
+ * another index that keeps one entry per document (no `$createdAt`, no skip,
+ * not outliving deletes, entries, no typed array) has its whole key inside
+ * this one's key without the array; it is `preallocated` or a counter only
+ * when a `where` equality makes the array equal to a typed array of the
+ * referenced document; and no counter counts it as its source. 5.0.0-beta.5
+ * refuses every typed-array index on an indexOnly type (10231).
+ */
+function indexOnlyTypedArrayProblems(schemas, name, schema, index, property) {
+  const at = `${name}.${index.name}`;
+  const problems = [];
+  if (schema.properties[property].uniqueItems !== true) problems.push(`${at}: the typed array "${property}" of an indexOnly type's index must declare uniqueItems (10231)`);
+  const key = new Set(indexKey(index).filter((p) => p !== property));
+  const keepsEveryDocument = (other) => other !== index && !indexPropertyNames(other).includes('$createdAt') && !other.skipIfAbsent
+    && !other.outlivesDelete && !other.summableOffCountIndex && !typedArrayOf(schema, other);
+  if (!index.summableOffCountIndex && !(schema.indices ?? []).some((other) => keepsEveryDocument(other) && indexKey(other).every((p) => key.has(p)))) {
+    problems.push(`${at}: no index keeping one entry per document has its whole key inside this index's key without "${property}" (10231)`);
+  }
+  if ((index.preallocated || index.summableOffCountIndex) && !arrayFixedByWhere(schemas, schema, property)) {
+    problems.push(`${at}: preallocated or a summableOffCountIndex over "${property}" needs a where equality making it a typed array of the referenced document (10231)`);
+  }
+  if ((schema.indices ?? []).some((other) => other.summableOffCountIndex === index.name)) problems.push(`${at}: a summableOffCountIndex index counts this typed-array index as its source (10231)`);
+  return problems;
+}
+
 /** One document's index entries on a type with an indexed typed array: each index 1, times its array's maxItems (windows not modelled). */
 function typedArrayEntryBudget(name, schema) {
   const arrays = (schema.indices ?? []).map((index) => typedArrayOf(schema, index));
@@ -387,7 +435,8 @@ function typedArrayEntryBudget(name, schema) {
  * The index shape rules (V10-DESIGN §0, ported from index-audit.py): every
  * property exists or is a system property other than `$id`; none is an
  * object or a plain array (10206), and a typed array only as 5.0.0-beta.5
- * allows (`typedArrayIndexProblems`); indexed strings are at most 63
+ * allows (`typedArrayIndexProblems`), on an indexOnly type as 5.0.0-beta.6
+ * allows (`indexOnlyTypedArrayProblems`); indexed strings are at most 63
  * characters and byte arrays at most 255 bytes (10205); at most 10 indexes
  * with distinct names. wasm-dpp2 refuses the same shapes (5.0.0-beta.4's
  * refuses every typed-array index, 10206); the wasm-sdk parse accepts them.
@@ -411,6 +460,7 @@ function auditIndexShapes(schemas) {
         if (!definition) { problems.push(`${name}.${index.name}: "${property}" is not a property of the type (10209)`); continue; }
         if (isTypedArray(definition)) {
           problems.push(...typedArrayIndexProblems(name, schema, index, property, definition));
+          if (schema.indexOnly === true) problems.push(...indexOnlyTypedArrayProblems(schemas, name, schema, index, property));
         } else if (definition.type === 'object' || (definition.type === 'array' && definition.byteArray !== true)) {
           problems.push(`${name}.${index.name}: "${property}" is an ${definition.type} and cannot be indexed (10206)`);
         } else if (definition.type === 'string' && !(definition.maxLength <= MAX_INDEXED_STRING_LENGTH)) {
@@ -503,7 +553,9 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
       const target = schemas[ref.documentType];
       if (!target) { problems.push(`${name}.${path}: refersTo unknown document type "${ref.documentType}"`); continue; }
       // 40126, judged against the whole contract at registration: both sides of a
-      // `where` entry must exist and hold the same type of value.
+      // `where` entry must exist and hold the same type of value. 5.0.0-beta.6
+      // (#5388): a typed array pairs only with a typed array of the same element
+      // kind (never floats), and the two are equal as lists.
       for (const [referenced, referring] of Object.entries(ref.where ?? {})) {
         if (typeof referring !== 'string') {
           problems.push(...whereConditionProblems(`${name}.${path}`, referenced, referring, { schema, target, targetName: ref.documentType }));
@@ -513,8 +565,15 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
         const mine = referring.startsWith('$') ? { system: referring } : propertyAt(schema, referring);
         if (!theirs) problems.push(`${name}.${path}: where names "${referenced}", which "${ref.documentType}" does not have (40126)`);
         if (!mine) problems.push(`${name}.${path}: where reads "${referring}", which "${name}" does not have (40126)`);
-        if (theirs?.type && mine?.type && (theirs.type !== mine.type || (theirs.byteArray === true) !== (mine.byteArray === true))) {
-          problems.push(`${name}.${path}: where compares "${referenced}" (${theirs.type}) with "${referring}" (${mine.type}) (40126)`);
+        if (!theirs?.type || !mine?.type) continue;
+        if (isTypedArray(theirs) !== isTypedArray(mine)) {
+          problems.push(`${name}.${path}: where pairs "${referenced}" (${valueKind(theirs)}) with "${referring}" (${valueKind(mine)}); a typed array pairs only with a typed array (40126)`);
+        } else if (isTypedArray(theirs)) {
+          if (valueKind(theirs) !== valueKind(mine) || theirs.items.type === 'number') {
+            problems.push(`${name}.${path}: where compares the lists "${referenced}" (${valueKind(theirs)}) and "${referring}" (${valueKind(mine)}), whose elements must share one kind that is not a float (40126)`);
+          }
+        } else if (theirs.type !== mine.type || (theirs.byteArray === true) !== (mine.byteArray === true)) {
+          problems.push(`${name}.${path}: where compares "${referenced}" (${valueKind(theirs)}) with "${referring}" (${valueKind(mine)}) (40126)`);
         }
       }
       const mismatch = referenceKindMismatch(ref.type, target, config);
@@ -523,6 +582,14 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
   }
   problems.push(...auditNonTransferableTokens(source));
   return problems;
+}
+
+/** A value's kind for the `where` rules: a typed array is `list of <element kind>`, a byte array `bytes`. */
+function valueKind(definition) {
+  if (definition?.system) return 'identifier';
+  if (isTypedArray(definition)) return `list of ${valueKind(definition.items)}`;
+  if (definition?.byteArray === true) return definition.contentMediaType === 'application/x.dash.dpp.identifier' ? 'identifier' : 'bytes';
+  return definition?.type ?? 'unknown';
 }
 
 const SYSTEM_TIMES = /^\$(created|updated|transferred)At(BlockHeight|CoreBlockHeight)?$/;
@@ -553,8 +620,24 @@ function whereConditionProblems(at, referenced, condition, { schema, target, tar
   const value = condition[kind];
   const theirs = referenced.startsWith('$') ? { type: 'identifier' } : propertyAt(target, referenced);
   if (!theirs) return [`${at}: where names "${referenced}", which "${targetName}" does not have (40126)`];
-  if (theirs.type === 'object' || (theirs.type === 'array' && theirs.byteArray !== true)) return [`${at}: where condition on "${referenced}", which holds no single value (40126)`];
   const refuse = (why) => problems.push(`${at}: where ${referenced} ${JSON.stringify(condition)}: ${why} (40126)`);
+  // 5.0.0-beta.6 (#5388): `contains` (a referring value or the writer it must hold) and
+  // `containsAll` (a referring typed array whose every element it must hold), of a typed array.
+  if (kind === 'contains' || kind === 'containsAll') {
+    if (!isTypedArray(theirs)) return [`${at}: where ${referenced} ${kind}: "${referenced}" is not a typed array (40126)`];
+    const elements = valueKind(theirs.items);
+    if (theirs.items.type === 'number') refuse('its elements are floats');
+    if (kind === 'contains' && value === '$ownerId') {
+      if (elements !== 'identifier') refuse('"$ownerId" is held only among identifier elements');
+    } else {
+      const mine = typeof value === 'string' ? propertyAt(schema, value) : undefined;
+      const wanted = kind === 'contains' ? elements : `list of ${elements}`;
+      if (!mine) refuse(`the declaring type has no "${value}"`);
+      else if (valueKind(mine) !== wanted) refuse(`"${value}" (${valueKind(mine)}) is not a ${wanted}`);
+    }
+    return problems;
+  }
+  if (theirs.type === 'object' || (theirs.type === 'array' && theirs.byteArray !== true)) return [`${at}: where condition on "${referenced}", which holds no single value (40126)`];
   const requireFit = (literal) => {
     if (!literalFits(literal, theirs)) refuse(`${JSON.stringify(literal)} is not a value "${referenced}" can hold`);
   };
@@ -617,6 +700,7 @@ const SOCIAL_V12 = 'contracts/yappr-social-contract-v12.json';
 const SOCIAL_V13 = 'contracts/yappr-social-contract-v13.json';
 const SOCIAL_V14 = 'contracts/yappr-social-contract-v14.json';
 const SOCIAL_V15 = 'contracts/yappr-social-contract-v15.json';
+const SOCIAL_V16 = 'contracts/yappr-social-contract-v16.json';
 const BLOCKS = 'contracts/yappr-blocks-contract.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
@@ -1117,6 +1201,47 @@ const PROBES = [
     types(s).post.indices.push({ name: 'probe', properties: [{ mentionedUserIds: 'asc' }, { probeTags: 'asc' }] });
   } },
   { label: 'social v15: a resolved report stays resolved (staysResolved reads $old.status)', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s) => JSON.stringify(types(s).report.propertyConstraints.staysResolved) === '{"ifThen":[{"present":"$old.status"},{"present":"status"}]}' },
+
+  // Social v16 (5.0.0-beta.6, docs/SOCIAL_V16.md): v15 with up to four tags per post in the typed
+  // array `tags`, which a like repeats as a list (#5388), so the like enters byHashtagPost and
+  // byTrendHashtagPost once per tag (#5390) and byHashtagPost stays a preallocated counter of byPost
+  // (#5394). Recorded from the beta.6 book and tests: the 5.0.0-beta.5 wasm-dpp2 refuses every
+  // typed-array index of an indexOnly type (10231), so on the beta.5 packages every v16 probe that
+  // gets past the wasm-sdk parse stops at `dpp2` on that rule instead.
+  { label: 'control: social v16 as committed (devnet: interim contractOwner)', file: SOCIAL_V16, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
+  { label: 'control: social v16 as mainnet registers it (interim notYetUsable)', file: SOCIAL_V16, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
+  { label: 'social v16: post and like carry 1 to 4 distinct tags, the like bound to the post\'s list, every tag index keyed per element without skipIfAbsent, the list frozen and kept by a removal', file: SOCIAL_V16, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const { post, like } = types(s);
+    const list = '{"type":"array","minItems":1,"maxItems":4,"uniqueItems":true,"items":{"type":"string","pattern":"^[a-z0-9_]{1,61}$","maxLength":61}';
+    const keys = (index) => JSON.stringify(index.properties.map((p) => Object.keys(p)[0]));
+    const tagIndexes = [namedIndex(s, 'post', 'tagAndTime'), namedIndex(s, 'like', 'byHashtagPost'), namedIndex(s, 'like', 'byTrendHashtagPost')];
+    return JSON.stringify(post.properties.tags).startsWith(list) && JSON.stringify(like.properties.tags).startsWith(list)
+      && !post.properties.hashtag && !like.properties.hashtag
+      && JSON.stringify(like.properties.postId.refersTo.where) === '{"tags":"tags","$ownerId":"postAuthor"}'
+      && keys(tagIndexes[0]) === '["tags","$createdAt"]' && keys(tagIndexes[1]) === '["tags","postId"]' && keys(tagIndexes[2]) === '["$createdAt","tags","postId"]'
+      && tagIndexes.every((index) => index.skipIfAbsent === undefined)
+      && tagIndexes[1].summableOffCountIndex === 'byPost' && tagIndexes[1].preallocated === true
+      && post.immutable.includes('tags') && post.moderatorAbilities.deleteKeepsFields.includes('tags');
+  } },
+  { label: 'social v16: tagAndTime skipping on the tags array alone', file: SOCIAL_V16, expect: 'wasm', node: '10231', why: /skip/i, mutate: (s) => { namedIndex(s, 'post', 'tagAndTime').skipIfAbsent = true; } },
+  { label: 'social v16: like.byHashtagPost skipping on the tags array alone', file: SOCIAL_V16, expect: 'wasm', node: '10231', why: /skip/i, mutate: (s) => { namedIndex(s, 'like', 'byHashtagPost').skipIfAbsent = true; } },
+  // The post's list must fit the like's, so both are raised; the 24h window then enters a like 5 times per window.
+  { label: 'social v16: 5 tags under the 24h byTrendHashtagPost window (4 max under a window)', file: SOCIAL_V16, expect: 'dpp2', auditToo: true, node: '10205', why: /maxItems|under a window/i, mutate: (s) => {
+    for (const type of ['post', 'like']) types(s)[type].properties.tags.maxItems = 5;
+  } },
+  // An indexOnly type's array index is kept apart by byPost, not by itself, so its list must not repeat an element.
+  { label: 'social v16: like.tags without uniqueItems (an indexOnly type\'s array index needs it)', file: SOCIAL_V16, expect: 'dpp2', auditToo: true, node: '10231', why: /uniqueItems/i, mutate: (s) => { delete types(s).like.properties.tags.uniqueItems; } },
+  // [tags, postAuthor] → $ownerId would refuse a second like of the same author's posts under one tag:
+  // byPost's key (postId, $ownerId) is not inside its key without the array, so nothing keeps it apart.
+  { label: 'social v16: a like index [tags, postAuthor] → $ownerId that byPost does not keep apart', file: SOCIAL_V16, expect: 'dpp2', auditToo: true, node: '10231', why: /"probe"/, mutate: (s) => {
+    types(s).like.indices.push({ name: 'probe', properties: [{ tags: 'asc' }, { postAuthor: 'asc' }], terminal: '$ownerId' });
+  } },
+  // A typed array pairs only with a typed array (#5388); a post quoting a post binds nothing to the
+  // quoted post's tags, so the pairing is isolated from the like's preallocated trees.
+  { label: 'social v16: a where pairing the tags list with a scalar (post.quotedPostId where { tags: "embedDocType" })', file: SOCIAL_V16, expect: 'audit', node: '40126', why: /typed array pairs only with a typed array/, mutate: (s) => {
+    types(s).post.properties.quotedPostId.refersTo.where.tags = 'embedDocType';
+  } },
+  { label: 'social v16: preallocated byHashtagPost when the removal record does not keep the tags', file: SOCIAL_V16, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields = ['$createdAt']; } },
 ];
 
 /**
@@ -1164,18 +1289,43 @@ const WHERE_CASES = [
   ['blog v8: a comment on a post with comments on', BLOG, 'blogComment', 'blogPostId', {}, { commentsEnabled: true }, null],
   ['blog v8: a comment on a post that leaves commentsEnabled out', BLOG, 'blogComment', 'blogPostId', {}, {}, null],
   ['blog v8: a comment on a post with comments off', BLOG, 'blogComment', 'blogPostId', {}, { commentsEnabled: false }, '40127'],
+  // Social v16: a like repeats its post's tags as a list (5.0.0-beta.6, #5388), the same elements in
+  // the same order; a list left out is the empty one.
+  ['v16: a like carrying its post\'s two tags', SOCIAL_V16, 'like', 'postId', { tags: ['dash', 'news'], postAuthor: 'alice' }, { $ownerId: 'alice', tags: ['dash', 'news'] }, null],
+  ['v16: a like carrying its post\'s tags reordered', SOCIAL_V16, 'like', 'postId', { tags: ['news', 'dash'], postAuthor: 'alice' }, { $ownerId: 'alice', tags: ['dash', 'news'] }, '40127'],
+  ['v16: a like carrying one of its post\'s two tags', SOCIAL_V16, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice' }, { $ownerId: 'alice', tags: ['dash', 'news'] }, '40127'],
+  ['v16: a like adding a tag its post does not have', SOCIAL_V16, 'like', 'postId', { tags: ['dash', 'news', 'gm'], postAuthor: 'alice' }, { $ownerId: 'alice', tags: ['dash', 'news'] }, '40127'],
+  ['v16: an untagged like of an untagged post (both lists left out)', SOCIAL_V16, 'like', 'postId', { postAuthor: 'alice' }, { $ownerId: 'alice' }, null],
+  ['v16: a tagged like of an untagged post', SOCIAL_V16, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice' }, { $ownerId: 'alice' }, '40127'],
+  ['v16: an untagged like of a tagged post', SOCIAL_V16, 'like', 'postId', { postAuthor: 'alice' }, { $ownerId: 'alice', tags: ['dash'] }, '40127'],
 ];
 
 /**
+ * Two `where` values as consensus compares them: single values by value; two
+ * typed arrays as lists (5.0.0-beta.6, #5388), the same elements in the same
+ * order, a list left out being the empty one.
+ */
+function sameWhereValue(a, b) {
+  if (!Array.isArray(a) && !Array.isArray(b)) return a === b;
+  const [x, y] = [a ?? [], b ?? []];
+  return Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((element, i) => element === y[i]);
+}
+
+/**
  * Whether one `where` entry holds, as consensus judges it (book refers-to.md
- * "Conditions"). An equality agrees when both sides are absent and fails when
- * one is; a `const` or `in` fails on an absent referenced side; a `notEqual`
- * is the negated equality; an ordering holds only when both sides have a value.
+ * "Conditions" and "Typed arrays"). An equality agrees when both sides are
+ * absent and fails when one is, and two lists agree element for element in
+ * order; a `const` or `in` fails on an absent referenced side; a `notEqual` is
+ * the negated equality; an ordering holds only when both sides have a value; a
+ * `contains` holds when the list holds the value (never one left out), a
+ * `containsAll` when it holds every element of the referring list.
  */
 function whereEntryHolds(theirs, condition, referring) {
   const side = (bound) => (bound && typeof bound === 'object' ? bound.const : referring[bound]);
-  if (typeof condition === 'string') return theirs === referring[condition];
+  if (typeof condition === 'string') return sameWhereValue(theirs, referring[condition]);
   const [[kind, bound]] = Object.entries(condition);
+  if (kind === 'contains') return referring[bound] !== undefined && (theirs ?? []).includes(referring[bound]);
+  if (kind === 'containsAll') return (referring[bound] ?? []).every((element) => (theirs ?? []).includes(element));
   if (kind === 'const') return theirs !== undefined && theirs === bound;
   if (kind === 'in') return theirs !== undefined && bound.includes(theirs);
   if (kind === 'notEqual') return theirs !== side(bound);

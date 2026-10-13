@@ -473,6 +473,25 @@ CONSTRAINT_CASES['yappr-social-contract-v15.json'] = [
   ['report: a moderator removes the status of a resolved report', 'report', baseReport(), 'staysResolved', { replace: true, stored: { ...baseReport(), status: 3 } }],
 ];
 
+// Social v16 (docs/SOCIAL_V16.md) indexes a post under up to four tags in the typed array `tags`
+// (one `hashtag` up to v15), which a like repeats (`where { "tags": "tags" }`, judged by
+// `--probes`). It declares v15's rules under the same names: a tombstone keeps its list
+// (blankTombstone does not count it), and tags alone do not make a post (notEmpty).
+DECLARED_RULES['yappr-social-contract-v16.json'] = DECLARED_RULES['yappr-social-contract-v15.json'];
+/** A v15 case as v16 writes it: the post's one `hashtag` becomes a one-tag `tags` list. */
+const withTagList = (entry) => {
+  const [label, docType, data, ...rest] = entry;
+  if (data.hashtag === undefined) return entry;
+  return [label.replace(/hashtag/g, 'tag list'), docType, { ...drop(data, 'hashtag'), tags: [data.hashtag] }, ...rest];
+};
+const fourTags = () => ['dash', 'news', 'gm', 'dash_cashtag'];
+CONSTRAINT_CASES['yappr-social-contract-v16.json'] = [
+  ...CONSTRAINT_CASES['yappr-social-contract-v15.json'].map(withTagList),
+  ['post: four tags with text', 'post', { ...v13Post(), tags: fourTags() }, null],
+  ['post: notEmpty with only four tags and the sensitive flag', 'post', { live: true, tags: fourTags(), sensitive: true }, 'notEmpty'],
+  ['post: a blank tombstone keeping its four tags', 'post', { deleted: true, tags: fourTags() }, null],
+];
+
 /**
  * The `deleteConstraints` rules a contract declares (5.0.0-beta.3), keyed like
  * {@link DECLARED_RULES}: rules the STORED document must meet for its owner to
@@ -483,6 +502,7 @@ export const DECLARED_DELETE_RULES = {
   // S6: a report can be withdrawn only while no moderator has resolved it (`status` absent).
   'yappr-social-contract-v14.json': { report: ['pending'] },
   'yappr-social-contract-v15.json': { report: ['pending'] },
+  'yappr-social-contract-v16.json': { report: ['pending'] },
 };
 
 /**
@@ -499,6 +519,7 @@ export const DELETE_CASES = {
   ],
 };
 DELETE_CASES['yappr-social-contract-v15.json'] = DELETE_CASES['yappr-social-contract-v14.json'];
+DELETE_CASES['yappr-social-contract-v16.json'] = DELETE_CASES['yappr-social-contract-v14.json'];
 
 /**
  * The 40147 refusal of an owner's delete breaking the `deleteConstraints` rule

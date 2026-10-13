@@ -1,7 +1,8 @@
 /**
- * The devnet interaction topologies (v9, the moutai cut; v10, the bonsia cut),
- * exercised against a real chain. Which one runs is read from the env file the
- * build was compiled from, so flipping `.env.devnet` needs no spec edit.
+ * The devnet interaction topologies (v9, the moutai cut; v10, the bonsia cut;
+ * and every cut after them), exercised against a real chain. Which one runs is
+ * read from the env file the build was compiled from, so flipping
+ * `.env.devnet` needs no spec edit.
  *
  * Everything here is a claim the contract's shape makes that the client has to
  * honour, and that a unit test could not check because it depends on consensus:
@@ -10,9 +11,11 @@
  * (and on v9 `repost.postId`) are `refersTo`-checked against `post`, so those
  * controls must not exist on a reply card at all; a quote of a reply goes in
  * `quotedReplyId`; on v10 there is no repost doctype, so a repost of a post OR a
- * reply is a content-less quote post, one per author and target; and "delete"
+ * reply is a content-less quote post, one per author and target; "delete"
  * leaves a tombstone on v9 (`post`/`reply` are permanent) but really removes
- * the document on v10.
+ * the document on v10; and a post is indexed under its one inline `hashtag`
+ * through v15, but under each tag of its `tags` list (up to four) on v16,
+ * a list its like must repeat in full.
  *
  * This runs against the devnet (`.env.devnet`) and self-skips anywhere else,
  * since on v2 every assertion below is either meaningless or actively wrong.
@@ -38,7 +41,7 @@ import { expectedSocialContractId, expectedTopology } from '../fixtures/contract
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
 import { CONTRACT_TOPOLOGIES } from '../../lib/constants'
-import { deletesAreTombstones, tombstonesAreHidden, repostsAreQuotes, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
+import { deletesAreTombstones, tombstonesAreHidden, repostsAreQuotes, inlineTags, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -94,9 +97,11 @@ const WRONG_TOPOLOGY_REASON = `the compiled topology ${SPEC_TOPOLOGY} is not a d
  * removal (v10), whether a repost is a `repost` document (v9) or a bare quote
  * post (v10), and each ranked axis's recent window (v9 a daily "Today" on
  * every axis; v10 "3 days" on `like.byTrendPost`, "24h" on
- * `like.byTrendHashtagPost`, and no creator window). The descriptor resolves
- * the topology from the env on first use, so it is read once here with the
- * spec's topology set and the env restored after. Null off a devnet cut.
+ * `like.byTrendHashtagPost`, and no creator window), and how a post names its
+ * tags (one `hashtag` through v15, a `tags` list on v16). The descriptor
+ * resolves the topology from the env on first use, so it is read once here
+ * with the spec's topology set and the env restored after. Null off a devnet
+ * cut.
  */
 function topologyFacts(topology: string) {
   if (!DEVNET_TOPOLOGIES.includes(topology)) return null
@@ -108,7 +113,7 @@ function topologyFacts(topology: string) {
       hashtags: windowedRankingFor('hashtags'),
       creators: windowedRankingFor('creators'),
     }
-    return { deletesAreTombstones: deletesAreTombstones(), tombstonesAreHidden: tombstonesAreHidden(), repostsAreQuotes: repostsAreQuotes(), windows }
+    return { deletesAreTombstones: deletesAreTombstones(), tombstonesAreHidden: tombstonesAreHidden(), repostsAreQuotes: repostsAreQuotes(), windows, tags: inlineTags() }
   } finally {
     if (saved === undefined) delete process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
     else process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY = saved
@@ -136,6 +141,33 @@ function windowLabel(axis: RankingAxis): string {
   if (!window) throw new Error(`${SPEC_TOPOLOGY} has no ${axis} window`)
   return window.label
 }
+
+/**
+ * How a post names its tags: one inline `hashtag` through v15, or on v16 a
+ * `tags` list of up to `max`, which `post.tagAndTime` and the like tag indexes
+ * enter once per element and which a like must repeat in full (same tags, same
+ * order; 40127 otherwise).
+ */
+const INLINE_TAGS = FACTS?.tags ?? null
+/** v16: a post holds a list of tags, so a run's tagged target names two. */
+const TAGS_ARE_LISTS = INLINE_TAGS?.isArray === true
+/** The post and like property holding the tags, for test titles. */
+const TAG_FIELD = INLINE_TAGS?.field ?? 'hashtag'
+
+/**
+ * The run-unique tags a tagged target is composed with, each capped at the
+ * ranked-key ceiling of 61. One on a one-tag cut, where a second `#` in the
+ * content would stay plain text and index nothing; two where a post holds a
+ * list, so every per-tag check runs under both. The first is the same on
+ * every cut.
+ */
+function runTagsFor(prefix: string, runTag: string): string[] {
+  const base = `${prefix}${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`
+  return TAGS_ARE_LISTS ? [base.slice(0, 61), `${base.slice(0, 59)}_2`] : [base.slice(0, 61)]
+}
+
+/** The content spelling of {@link runTagsFor}'s tags, in the order the post is indexed under them. */
+const asHashtags = (tags: readonly string[]) => tags.map((tag) => `#${tag}`).join(' ')
 
 /**
  * A post's like button in a LOADED state: `pressed` for the viewer and exactly
@@ -484,28 +516,36 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
  * Inline hashtags, indexOnly post likes and the proved rankings.
  *
  * What each step proves on-chain:
- * - a tagged post carries its `hashtag` (maxLength 61) and lists on the tag
- *   page via `post.tagAndTime` — no postHashtag documents exist to serve it;
+ * - a tagged post carries its tags inline and lists on each tag's page via
+ *   `post.tagAndTime`; no postHashtag documents exist to serve it. Through
+ *   v15 that is one `hashtag` (maxLength 61); on v16 it is the `tags` list
+ *   (up to four, each at most 61), which the index enters once per element,
+ *   so the run's target names two tags and must list on both pages;
  * - an UNTAGGED post omits the property entirely — consensus would reject a
- *   `''` sentinel outright (`minLength: 1`), so the post existing at all is
- *   the assertion;
+ *   `''` sentinel outright (`minLength: 1`), and on v16 an empty list
+ *   (`minItems: 1`), so the post existing at all is the assertion;
  * - a like is an indexOnly create whose agreement-bound values matched (40127
- *   rejects otherwise), read back through the liked-state index after reload
- *   (v9 `byLiker`, v10 `byPost` with `$ownerId` as its terminal); the rendered
- *   count comes from the countable `byPost` axis, and the profile feed's
- *   pressed state from the batched `in`-membership query;
+ *   rejects otherwise; on v16 the like repeats the post's whole list, same
+ *   tags in the same order), read back through the liked-state index after
+ *   reload (v9 `byLiker`, v10 `byPost` with `$ownerId` as its terminal); the
+ *   rendered count comes from the countable `byPost` axis, and the profile
+ *   feed's pressed state from the batched `in`-membership query;
  * - a like of the untagged post MIRRORS the absence: the absence-aware
  *   propertyAgreement only accepts both-absent (a client still writing `''`
- *   would get 40127), and `skipIfAbsent` keeps the like out of byHashtagPost
- *   entirely; the persisted toggle after reload is the liked-state readback;
+ *   would get 40127), and no tag index holds the like: `skipIfAbsent` keeps
+ *   it out of byHashtagPost through v15, and on v16 an absent list is simply
+ *   never entered; the persisted toggle after reload is the liked-state
+ *   readback;
  * - unlike of the untagged post is a delete-by-values whose tuple reproduces
  *   the same absence (a tuple carrying `''` would name a different — absent —
  *   document and fail); re-like proves the entries really left the trees;
  * - the tagged like/unlike pair covers the value-carrying twin of the same
- *   agreement;
+ *   agreement (on v16 the value is the post's list);
  * - trending is now a PROVED prefix ranked page (groupBy at `hashtag` on
- *   `byHashtagPost {at: hashtag}`) counting likes per tag — so the liked tag
- *   must appear WITH its count;
+ *   `byHashtagPost {at: hashtag}`; on v16 at `tags`, where a like of a post
+ *   with several tags counts once under EACH) counting likes per tag, so the
+ *   liked tag must appear WITH its count, and on v16 the liked post must rank
+ *   under every one of its tags;
  * - the Creators tab renders the proved leaderboard (groupBy at `postAuthor`
  *   on `byAuthorPost {at: [postAuthor, postId]}`, v10 `byAuthorPostTime`) and must list the bot, who
  *   just received a like;
@@ -518,7 +558,8 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
-  let hashtag = ''
+  /** The tagged target's tags ({@link runTagsFor}): one on a one-tag cut, two on v16. */
+  let hashtags: string[] = []
   let taggedPostId = ''
   let untaggedPostId = ''
   /** A second pool identity whose like lifts the tagged target to 2 for the profile Top (null on a one-identity pool). */
@@ -593,27 +634,62 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     )
   }
 
-  test('a tagged post is created and listed on its tag page', async ({ page, bot }) => {
-    test.setTimeout(420_000)
+  test('the composer refuses a draft naming more tags than a post holds', async ({ page }) => {
+    // List cut only: a post is indexed under every tag it names, at most
+    // `maxItems` of them, so the composer refuses one more rather than leave it
+    // plain text (a one-tag cut indexes the first and keeps the rest as text).
+    // Nothing is broadcast: the drafts are typed, never submitted.
+    test.skip(!TAGS_ARE_LISTS, 'a post is indexed under one tag on this topology; the rest stay plain text')
+    test.setTimeout(120_000)
 
-    runTag = uniqueTag(bot.index)
-    // Run-unique tag, capped at the ranked-key ceiling of 61.
-    hashtag = `tag${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
+    const max = INLINE_TAGS?.max ?? 0
+    const tags = [...Array(max + 1).keys()].map((index) => `limit${index}`)
 
-    taggedPostId = await composePost(page, bot.identityId, `${runTag} tagged target #${hashtag}`)
+    await page.goto(appUrl('/feed/'))
+    await page.getByTestId('open-compose-btn').click()
+    const composeDialog = page.getByRole('dialog', { name: 'Create a new post' })
+    await expect(composeDialog).toBeVisible()
+    const textarea = composeDialog.getByTestId('compose-textarea').first()
+    const submit = composeDialog.getByTestId('compose-submit-btn')
+    const refusal = composeDialog.getByText(`A post can have at most ${max} tags. Remove 1 tag.`, { exact: true })
 
-    // Inline hashtag: the tag page lists the post straight off post.tagAndTime.
-    await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) =>
-      p.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
-    )
+    await textarea.fill(`over the tag limit ${asHashtags(tags)}`)
+    await expect(refusal).toBeVisible()
+    await expect(submit).toBeDisabled()
+
+    // One tag fewer is a post the contract holds: the refusal goes and posting
+    // opens, so the count alone was the reason.
+    await textarea.fill(`at the tag limit ${asHashtags(tags.slice(0, max))}`)
+    await expect(refusal).toBeHidden()
+    await expect(submit).toBeEnabled()
   })
 
-  test('an untagged post is created with the hashtag property absent', async ({ page, bot }) => {
+  test(TAGS_ARE_LISTS ? 'a post tagged twice is created and listed on both tag pages' : 'a tagged post is created and listed on its tag page', async ({ page, bot }) => {
+    test.setTimeout(TAGS_ARE_LISTS ? 540_000 : 420_000)
+
+    runTag = uniqueTag(bot.index)
+    // Run-unique tags, capped at the ranked-key ceiling of 61: one, or two
+    // where a post holds a list.
+    hashtags = runTagsFor('tag', runTag)
+
+    taggedPostId = await composePost(page, bot.identityId, `${runTag} tagged target ${asHashtags(hashtags)}`)
+
+    // Inline tags: each tag page lists the post straight off post.tagAndTime
+    // (on v16 an element index, holding the post once under each of its tags).
+    for (const hashtag of hashtags) {
+      await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) =>
+        p.locator('[data-testid^="post-card-"]').filter({ hasText: runTag })
+      )
+    }
+  })
+
+  test(`an untagged post is created with the ${TAG_FIELD} property absent`, async ({ page, bot }) => {
     test.setTimeout(420_000)
 
-    // No '#' anywhere: the client must OMIT `hashtag`, and consensus would
-    // reject '' against `minLength: 1` — so the post landing and rendering at
-    // all proves the omission happened.
+    // No '#' (or '$') anywhere: the client must OMIT the tag property, and
+    // consensus would reject '' against `minLength: 1` (on v16 an empty list
+    // against `minItems: 1`), so the post landing and rendering at all proves
+    // the omission happened.
     untaggedPostId = await composePost(page, bot.identityId, `${runTag} untagged target`)
   })
 
@@ -639,8 +715,10 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
   test('liking the UNTAGGED post mirrors the absence and persists', async ({ page }) => {
     test.setTimeout(300_000)
 
-    // The create must omit like.hashtag — both-absent is the only agreeing
-    // combination — and skipIfAbsent keeps it out of byHashtagPost entirely.
+    // The create must omit the like's tag property (like.hashtag, on v16
+    // like.tags): both-absent is the only agreeing combination. No tag index
+    // holds the like: skipIfAbsent keeps it out of byHashtagPost through v15,
+    // and on v16 an absent list is simply never entered.
     await likeAndVerify(page, untaggedPostId)
   })
 
@@ -656,29 +734,38 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
   test('unliking the TAGGED post still round-trips with the value present', async ({ page }) => {
     test.setTimeout(420_000)
 
+    // On v16 the value is the post's whole list: the delete tuple repeats both
+    // tags in the stored order, as the create did, or it names another like.
     await unlikeAndRelike(page, taggedPostId)
   })
 
-  test('trending is the PROVED ranking (like counts) and the tag ranks on its pinned surface', async ({ page }) => {
-    test.setTimeout(180_000)
+  test(TAGS_ARE_LISTS
+    ? 'trending is the PROVED ranking (like counts) and each tag ranks on its pinned surface'
+    : 'trending is the PROVED ranking (like counts) and the tag ranks on its pinned surface', async ({ page }) => {
+    test.setTimeout(TAGS_ARE_LISTS ? 300_000 : 180_000)
 
     // Trending is a proved prefix ranked page on byHashtagPost {at: hashtag}
-    // counting likes per tag — ALL-TIME, top-K. On a populated network a
-    // run-unique tag holding one like can never crack the widget (seeded tags
-    // carry dozens of likes), so the widget assertion is structural: tags with
-    // like-count rows.
+    // (v16 at `tags`) counting likes per tag: ALL-TIME, top-K. On a populated
+    // network a run-unique tag holding one like can never crack the widget
+    // (seeded tags carry dozens of likes), so the widget assertion is
+    // structural: tags with like-count rows.
     await reloadUntilVisible(page, appUrl('/explore/'), (p) =>
       p.getByText(/\d+ likes?$/).first()
     )
 
-    // The run tag's own proved ranking is asserted where the pin guarantees
-    // inclusion regardless of other tags: the tag page's Top toggle (terminal
+    // The run tags' own proved ranking is asserted where the pin guarantees
+    // inclusion regardless of other tags: each tag page's Top toggle (terminal
     // level of the same multi-at index, tag pinned) must rank the liked post.
-    await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) =>
-      p.getByTestId('hashtag-sort-top')
-    )
-    await page.getByTestId('hashtag-sort-top').click()
-    await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeVisible({ timeout: 30_000 })
+    // The ranking lists only posts with a like under the pinned tag, so on v16,
+    // where the one like counts under EACH tag of its post, the post ranking on
+    // both pages is the per-tag count.
+    for (const hashtag of hashtags) {
+      await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) =>
+        p.getByTestId('hashtag-sort-top')
+      )
+      await page.getByTestId('hashtag-sort-top').click()
+      await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeVisible({ timeout: 30_000 })
+    }
   })
 
   test('the Creators tab renders the proved leaderboard', async ({ page }) => {
@@ -747,7 +834,9 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
 // Today | All time switch on a daily grid. v10: no beat; the like itself carries
 // the rolling windows, top posts on `like.byTrendPost` ("3 days") and trending
 // tags on `like.byTrendHashtagPost` ("24h"), and creators have no window, so
-// the profile Top has no switch. The assertions pin the run's own writes on the
+// the profile Top has no switch. v16: the like enters `like.byTrendHashtagPost`
+// once per tag of its post, so the run's target names two tags and the tag
+// window must rank it under each. The assertions pin the run's own writes on the
 // recent window. Tag/author pins guarantee inclusion for the run's own writes;
 // global top-K assertions allow seeded posts and tags to outrank the CI bot.
 test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () => {
@@ -756,7 +845,8 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
   test.skip(!hasSeedPhrase, NO_SEED_REASON)
 
   let runTag = ''
-  let hashtag = ''
+  /** The target's tags ({@link runTagsFor}): one on a one-tag cut, two on v16. */
+  let hashtags: string[] = []
   let taggedPostId = ''
   /** A second pool identity whose like lifts the run's target to 2 (null on a one-identity pool). */
   let secondLiker: BotIdentity | null = null
@@ -764,7 +854,7 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
   test.beforeAll(async ({ browser, bot }) => {
     test.setTimeout(420_000)
     runTag = uniqueTag(bot.index)
-    hashtag = `win${runTag.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 61)
+    hashtags = runTagsFor('win', runTag)
 
     const context = await browser.newContext()
     try {
@@ -774,7 +864,7 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
       await page.getByTestId('open-compose-btn').click()
       const composeDialog = page.getByRole('dialog', { name: 'Create a new post' })
       await expect(composeDialog).toBeVisible()
-      await composeDialog.getByTestId('compose-textarea').first().fill(`${runTag} windowed ranking target #${hashtag}`)
+      await composeDialog.getByTestId('compose-textarea').first().fill(`${runTag} windowed ranking target ${asHashtags(hashtags)}`)
       await composeDialog.getByTestId('compose-submit-btn').click()
       await expect(composeDialog).toBeHidden({ timeout: COMPOSE_TIMEOUT })
       const card = await reloadUntilVisible(page, appUrl(`/user?id=${bot.identityId}`), (p) =>
@@ -812,15 +902,18 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
     await takeBackSecondLike(browser, secondLiker, taggedPostId, 'windowed rankings')
   })
 
-  test(`the tag page's Top → recent window lists the liked post (${windowIndex('hashtags')}, tag + window pinned)`, async ({ page }) => {
-    test.setTimeout(180_000)
-    await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) => p.getByTestId('hashtag-sort-top'))
-    await page.getByTestId('hashtag-sort-top').click()
-    const today = page.getByTestId('hashtag-top-today')
-    await expect(today, 'the windowed-ranking toggle must render on the tag page').toBeVisible({ timeout: 30_000 })
-    await expect(today).toHaveText(windowLabel('hashtags'))
-    await today.click()
-    await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeVisible({ timeout: 60_000 })
+  test(`${TAGS_ARE_LISTS ? 'each' : 'the'} tag page's Top → recent window lists the liked post (${windowIndex('hashtags')}, tag + window pinned)`, async ({ page }) => {
+    test.setTimeout(TAGS_ARE_LISTS ? 300_000 : 180_000)
+    // On v16 the one like sits in the window under each tag of its post.
+    for (const hashtag of hashtags) {
+      await reloadUntilVisible(page, appUrl(`/hashtag?tag=${hashtag}`), (p) => p.getByTestId('hashtag-sort-top'))
+      await page.getByTestId('hashtag-sort-top').click()
+      const today = page.getByTestId('hashtag-top-today')
+      await expect(today, 'the windowed-ranking toggle must render on the tag page').toBeVisible({ timeout: 30_000 })
+      await expect(today).toHaveText(windowLabel('hashtags'))
+      await today.click()
+      await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeVisible({ timeout: 60_000 })
+    }
   })
 
   test(WINDOWS?.creators
@@ -850,7 +943,7 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
     ).toBeVisible({ timeout: 60_000 })
   })
 
-  test(`Explore's trending → recent window renders the proved ranking (${windowIndex('hashtags')} at hashtag)`, async ({ page }) => {
+  test(`Explore's trending → recent window renders the proved ranking (${windowIndex('hashtags')} at ${TAG_FIELD})`, async ({ page }) => {
     test.setTimeout(180_000)
     await openReadyExplore(page)
     const today = page.getByTestId('explore-trending-today')
@@ -859,8 +952,9 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
     await today.click()
     await expect(today).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByText('Loading trending hashtags...', { exact: true })).toBeHidden({ timeout: 60_000 })
-    // Seeded tags can outrank this run's one-like tag in the global top-12.
-    // The pinned tag test above proves the run's exact window membership.
+    // Seeded tags can outrank this run's one-like tags in the global top-12.
+    // The pinned tag test above proves the run's exact window membership,
+    // under each tag on v16.
     await expect(page.getByText(/\d+ likes?$/).first()).toBeVisible({ timeout: 60_000 })
   })
 

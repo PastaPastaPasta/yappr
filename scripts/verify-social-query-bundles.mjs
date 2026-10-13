@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v15)> node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v16)> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
@@ -34,6 +34,8 @@
  * environment's topology) picks the like reads and the notification grids.
  * There is no postMention: a post or reply names at most one mentionedUserId
  * (v15: up to eight in mentionedUserIds, read with `contains`, 5.0.0-beta.5).
+ * v16 changes none of these reads: its `tags` list is read by the tag pages
+ * and the rankings, which no bundle here covers.
  * A feed page's enrichment is the client's shape: one composite of the page,
  * its counts and (posts) the viewer's bookmarks, and the viewer's hearts read
  * beside it. Hearts sit on byPost / byReply, the like count's own index, and a
@@ -47,7 +49,7 @@ import { socialShapes } from './social-shapes.mjs';
 
 const social = process.env.V10_CONTRACT_ID;
 if (!social) {
-  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10 to v15 cut (there is no default).');
+  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10 to v16 cut (there is no default).');
   process.exit(1);
 }
 /** A contract id from the environment or `.env.devnet`; the devnet's own, never a baked-in chain's. */
@@ -125,7 +127,7 @@ await verify('profiles and DPNS including profile-less identity', [
   { dataContractId: profile, documentTypeName: 'profile', where: [['$ownerId', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['$ownerId', 'asc']], limit: owners.length + 1 },
   { dataContractId: dpns, documentTypeName: 'domain', where: [['records.identity', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['records.identity', 'asc']], limit: 100 },
 ]);
-/** The social contract under test as published (v10 to v15): its declarations pick the reads below. */
+/** The social contract under test as published (v10 to v16): its declarations pick the reads below. */
 const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
 /**
  * v13: author post pages read `post.ownerAndTime` with `live == true` first (SOCIAL.ownerPosts).

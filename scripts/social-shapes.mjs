@@ -1,7 +1,7 @@
 /**
  * The social documents the Node scripts write, built for the cut a contract
- * file declares (docs/SOCIAL_V10.md to docs/SOCIAL_V15.md). Every switch reads
- * the schemas, never the file's name, so one builder serves v10 to v15 and a
+ * file declares (docs/SOCIAL_V10.md to docs/SOCIAL_V16.md). Every switch reads
+ * the schemas, never the file's name, so one builder serves v10 to v16 and a
  * v10–v12 document comes out exactly as the scripts wrote it before v13:
  *
  *   - `live` (v13): every post that is not a tombstone carries `live: true`, a
@@ -25,7 +25,12 @@
  *   - mentions (v15): a post or reply names 1–8 distinct identities in the
  *     typed array `mentionedUserIds` (one `mentionedUserId` up to v14), and
  *     `mentionedUserAndTime` enters it once per element, read with the
- *     5.0.0-beta.5 `contains` operator.
+ *     5.0.0-beta.5 `contains` operator;
+ *   - tags (v16): a post is indexed under 1–4 distinct tags in the typed array
+ *     `tags` (one `hashtag` up to v15), and a like repeats the post's list
+ *     exactly (`where { "tags": "tags" }`, same elements in the same order,
+ *     5.0.0-beta.6). `tagAndTime` and the like tag indexes enter a document
+ *     once per tag, so a read pins one tag with `contains`, never `==`.
  *
  * Pure: no network, no SDK. `node scripts/social-shapes.mjs --self-test`
  * builds every write against each social cut and judges it with the pure
@@ -49,6 +54,27 @@ const IDENTIFIER_MEDIA_TYPE = 'application/x.dash.dpp.identifier';
 /** Drops undefined and null values, so an optional field the caller left out stays ABSENT on chain. */
 const defined = (fields) => Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined && value !== null));
 const sameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((byte, i) => byte === b[i]);
+
+/** The suffix a cashtag is stored with (`$DASH` is `dash_cashtag`), as lib/post-helpers.ts writes it. */
+const CASHTAG_SUFFIX = '_cashtag';
+
+/**
+ * The tags `content` is indexed under, in storage form, by the web client's
+ * rule (`indexedTags` in lib/post-helpers.ts): the hashtags in content order,
+ * then the cashtags, lowercase, distinct, at most `max` of them, each cut to
+ * `maxLength` characters (a cashtag's ceiling includes its suffix). With
+ * `max` 1 that is the one-tag cuts' rule: the first hashtag, else the first
+ * cashtag. `[]` when the content names no tag.
+ */
+export function indexedTags(content, max, maxLength) {
+  const tags = [];
+  const add = (tag) => {
+    if (tag !== '' && tags.length < max && !tags.includes(tag)) tags.push(tag);
+  };
+  for (const match of content.matchAll(new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`, 'g'))) add(match[1].toLowerCase());
+  for (const match of content.matchAll(/\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g)) add(match[1].slice(0, maxLength - CASHTAG_SUFFIX.length).toLowerCase() + CASHTAG_SUFFIX);
+  return tags;
+}
 
 /**
  * The action fee `docType`'s create charges under `schemas`, or null when it
@@ -99,7 +125,15 @@ export function socialShapes(contract) {
     profileReports: declares('report', 'about'),
     blocksInSocial: schemas.block !== undefined,
     mentionArray: declares('post', 'mentionedUserIds'),
+    tagArray: declares('post', 'tags'),
   });
+
+  /** The post and like property naming a post's tags: `hashtag` up to v15, the typed array `tags` on v16. */
+  const tagField = cut.tagArray ? 'tags' : 'hashtag';
+  /** How many tags one post is indexed under: 1, or `post.tags.maxItems` (4) on v16. */
+  const tagMax = cut.tagArray ? schemas.post.properties.tags.maxItems : 1;
+  /** The longest tag the pattern accepts (61, the ranked key-size ceiling): an element's on v16. */
+  const tagMaxLength = (cut.tagArray ? schemas.post.properties.tags.items : schemas.post.properties.hashtag).maxLength;
 
   /** A post create or replace: `live: true` unless it is a tombstone (`deleted` present). */
   const post = (data) => (cut.liveMarker && data.deleted === undefined && data.live === undefined ? { ...data, live: true } : data);
@@ -193,6 +227,78 @@ export function socialShapes(contract) {
     : { where: [['mentionedUserId', '==', mentioned], ['$createdAt', '>', since]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', direction]] });
 
   /**
+   * The tag fields of a post indexed under `list` (storage form, in order), or
+   * of a like repeating its post's: nothing for an untagged post, `hashtag`
+   * for one tag up to v15, the whole list as `tags` (at most `maxItems`, 4) on
+   * v16. A like passes its post's list unchanged, so the `where` agreement
+   * holds element for element. Throws past the cut's limit; a refusal probe
+   * writes the property itself.
+   */
+  const tags = (list = []) => {
+    if (list.length === 0) return {};
+    if (!cut.tagArray) {
+      if (list.length !== 1) throw new Error(`this cut indexes one tag (hashtag), not ${list.length}`);
+      return { hashtag: list[0] };
+    }
+    if (list.length > tagMax) throw new Error(`a post is indexed under at most ${tagMax} tags, not ${list.length}`);
+    return { tags: [...list] };
+  };
+
+  /**
+   * A stored post's (or like's, or removal record's) tags read back off either
+   * spelling: `[hashtag]` or `tags`, `[]` when the document carries none.
+   */
+  const storedTags = (data) => {
+    const value = data?.[tagField];
+    if (value === undefined || value === null || value === '') return [];
+    return Array.isArray(value) ? [...value] : [value];
+  };
+
+  /**
+   * The tags `content` is indexed under on this cut ({@link indexedTags}): the
+   * first one up to v15, which leaves the rest plain text; on v16 every tag it
+   * names, and a content naming more than `maxItems` (4) distinct tags throws,
+   * as the web client refuses such a post (`tagLimitProblem` in
+   * lib/compose/limits.ts) rather than index part of it.
+   */
+  const contentTags = (content) => {
+    if (!cut.tagArray) return indexedTags(content ?? '', 1, tagMaxLength);
+    const named = indexedTags(content ?? '', Number.MAX_SAFE_INTEGER, tagMaxLength);
+    if (named.length > tagMax) throw new Error(`a post can have at most ${tagMax} tags; the content names ${named.length}`);
+    return named;
+  };
+
+  /**
+   * The `where` clause pinning one tag on `post.tagAndTime` or the like tag
+   * indexes (`byHashtagPost`, `byTrendHashtagPost`): `hashtag ==` up to v15;
+   * on v16 `tags contains`, which the node keys as an equality on one element
+   * of the list (5.0.0-beta.5). `==` on the array is refused.
+   */
+  const tagPin = (tag) => (cut.tagArray ? ['tags', 'contains', tag] : ['hashtag', '==', tag]);
+
+  /**
+   * The `where` and `orderBy` walking the posts tagged `tag` after `since` on
+   * `post.tagAndTime`, in `direction`: `hashtag ==` up to v15; on v16 one
+   * element of `tags` with `contains`, ordered by `$createdAt` alone, since a
+   * typed array is ordered by only under `containsAny`.
+   */
+  const taggedPosts = (tag, since = 0, direction = 'desc') => (cut.tagArray
+    ? { where: [tagPin(tag), ['$createdAt', '>', since]], orderBy: [['$createdAt', direction]] }
+    : { where: [tagPin(tag), ['$createdAt', '>', since]], orderBy: [['hashtag', 'asc'], ['$createdAt', direction]] });
+
+  /**
+   * The `groupBy` and `where` of a like ranking (`documents.ranked`) on the tag
+   * indexes: with a tag, its posts by likes (`groupBy: 'postId'` under the
+   * pin); without one, the tags by likes (`groupBy` the tag property, no
+   * `where`). On v16 a like of a post tagged [a, b] counts under each tag,
+   * and `containsAny` is refused in a ranked read.
+   */
+  const tagRanking = (tag) => (tag === undefined ? { groupBy: tagField } : { groupBy: 'postId', where: [tagPin(tag)] });
+
+  /** The `where` of a like count under one tag: every like under it, or with `postId` (base58) one post's. */
+  const tagLikesWhere = (tag, postId) => (postId === undefined ? [tagPin(tag)] : [tagPin(tag), ['postId', '==', postId]]);
+
+  /**
    * A report: exactly one of `postId`, `replyId` or (v13) `about: 1` for the
    * profile of `targetOwnerId`. `box` (v13) is the moderators' key box of a
    * private post or reply. reason 8 needs a `note`.
@@ -255,6 +361,19 @@ export function socialShapes(contract) {
           if (property.uniqueItems && new Set(list.map((element) => bs58.encode(element))).size !== list.length) problems.push(`${docType}.${key} repeats an identifier`);
         }
       }
+      // A typed array of strings with a pattern (v16's `tags`): the list, its bounds and every element.
+      if (data[key] !== undefined && property.type === 'array' && property.items?.type === 'string' && property.items.pattern) {
+        const list = data[key];
+        const pattern = new RegExp(property.items.pattern);
+        if (!Array.isArray(list) || list.some((element) => typeof element !== 'string')) {
+          problems.push(`${docType}.${key} is not a list of strings`);
+        } else {
+          if (list.length < (property.minItems ?? 0) || list.length > (property.maxItems ?? Infinity)) problems.push(`${docType}.${key} holds ${list.length} items, outside ${property.minItems ?? 0}–${property.maxItems}`);
+          if (property.uniqueItems && new Set(list).size !== list.length) problems.push(`${docType}.${key} repeats an item`);
+          const bad = list.filter((element) => !pattern.test(element) || element.length > (property.items.maxLength ?? Infinity));
+          if (bad.length > 0) problems.push(`${docType}.${key} holds ${JSON.stringify(bad)}, outside ${property.items.pattern}`);
+        }
+      }
     }
     if (docType === 'post' && cut.liveMarker) {
       if (data.deleted !== undefined && data.live !== undefined) problems.push('a post tombstone carries live');
@@ -284,6 +403,7 @@ export function socialShapes(contract) {
 
   return Object.freeze({
     schemas, cut, post, reply, likeReply, media, mentions, mentionsOf, report, fit,
+    tagField, tagMax, tags, storedTags, contentTags, tagPin, taggedPosts, tagRanking, tagLikesWhere,
     ownerPostsWhere, ownerPostsOrderBy, ownerPosts, contractFor, check,
     actionFee: (docType) => actionFeeOf(schemas, docType),
   });
@@ -295,7 +415,7 @@ export const BLOCK_TYPES = ['block', 'blockFilter', 'blockFollow'];
 // ---- Self-test ------------------------------------------------------------------
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15'];
+const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16'];
 
 /** The cut flags each social cut declares. */
 function expectedCut(version) {
@@ -309,6 +429,7 @@ function expectedCut(version) {
     profileReports: from('v13'),
     blocksInSocial: !from('v13'),
     mentionArray: from('v15'),
+    tagArray: from('v16'),
   };
 }
 const readContract = (file) => JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
@@ -326,7 +447,7 @@ function writesFor(shapes) {
   const { cut } = shapes;
   const writes = [
     ['post', 'post', shapes.post({ content: 'self-test post' }), null],
-    ['post (tagged, mention)', 'post', shapes.post({ content: 'tagged', hashtag: 'selftest', ...shapes.mentions([replier]) }), null],
+    ['post (tagged, mention)', 'post', shapes.post({ content: 'tagged', ...shapes.tags(['selftest']), ...shapes.mentions([replier]) }), null],
     ['reply (mention)', 'reply', shapes.reply({ content: 'hi', rootPostId: root, parentOwnerId: author, ...shapes.mentions([liker]) }), null],
     ['post (one media item)', 'post', shapes.post({ content: 'media', ...shapes.media([item(1)]) }), null],
     ['post (media only)', 'post', shapes.post(shapes.media([item(2)])), null],
@@ -337,6 +458,7 @@ function writesFor(shapes) {
     ['reply (nested)', 'reply', shapes.reply({ content: 'nested', rootPostId: root, rootOwnerId: author, replyToReplyId: parentReply, parentOwnerId: replier }), null],
     ['reply (one media item)', 'reply', shapes.reply({ content: 'reply media', rootPostId: root, parentOwnerId: author, ...shapes.media([item(3)]) }), null],
     ['like', 'like', { postId: root, postAuthor: author }, null],
+    ['like (a tagged post\'s tag)', 'like', { postId: root, ...shapes.tags(['selftest']), postAuthor: author }, null],
     ['likeReply', 'likeReply', shapes.likeReply({ replyId: parentReply, replyAuthor: replier }), null],
     ['report (post)', 'report', shapes.report({ postId: root, targetOwnerId: author }), null],
     ['report (reply, something else + note)', 'report', shapes.report({ replyId: parentReply, targetOwnerId: replier, reason: 8, note: 'why' }), null],
@@ -346,7 +468,7 @@ function writesFor(shapes) {
   ];
   if (shapes.schemas.post.properties.deleted) {
     writes.push(
-      ['post tombstone (hashtag kept)', 'post', shapes.post({ deleted: true, hashtag: 'selftest' }), null],
+      ['post tombstone (tags kept)', 'post', shapes.post({ deleted: true, ...shapes.tags(['selftest']) }), null],
       ['reply tombstone (linkage kept)', 'reply', shapes.reply({ deleted: true, rootPostId: root, parentOwnerId: author }), null],
     );
   }
@@ -372,6 +494,15 @@ function writesFor(shapes) {
       ['reply (two mentions)', 'reply', shapes.reply({ content: 'hi both', rootPostId: root, replyToReplyId: parentReply, ...shapes.mentions([author, liker]) }), null],
     );
   }
+  if (cut.tagArray) {
+    const content = 'gm #dash $DASH #news #gm';
+    const four = shapes.contentTags(content);
+    writes.push(
+      ['post (four tags, from its content)', 'post', shapes.post({ content, ...shapes.tags(four) }), null],
+      ['like (the four-tag post\'s list)', 'like', { postId: root, ...shapes.tags(four), postAuthor: author }, null],
+      ['post tombstone (four tags kept)', 'post', shapes.post({ deleted: true, ...shapes.tags(four) }), null],
+    );
+  }
   if (cut.rootOwner) {
     writes.push(['reply (forged: top-level parent other than the root owner)', 'reply', shapes.reply({ content: 'forged', rootPostId: root, rootOwnerId: author, parentOwnerId: liker }), 'parentIsRoot']);
   }
@@ -391,8 +522,8 @@ function builderExpectations(shapes, version) {
   const { cut } = shapes;
   const id = new Uint8Array(32).fill(6);
   const throws = (fn) => { try { fn(); return false; } catch { return true; } };
-  // v14 keeps every v13 shape but its replies; v15 keeps every v14 shape.
-  const v14 = version === 'v14' || version === 'v15';
+  // v14 keeps every v13 shape but its replies; v15 keeps every v14 shape, v16 every v15 one but the tags.
+  const v14 = ['v14', 'v15', 'v16'].includes(version);
   const fromV13 = version === 'v13' || v14;
   const item = { url: 'ipfs://bafy', sha256: new Uint8Array(32), fingerprint: new Uint8Array(8) };
   return [
@@ -427,6 +558,37 @@ function builderExpectations(shapes, version) {
         === JSON.stringify(cut.mentionArray
           ? { where: [['mentionedUserIds', 'contains', 'B'], ['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']] }
           : { where: [['mentionedUserId', '==', 'B'], ['$createdAt', '>', 5]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']] })],
+    ['no tag writes nothing', JSON.stringify(shapes.tags([])) === '{}'],
+    ['one tag is hashtag up to v15, a one-element tags list on v16',
+      JSON.stringify(shapes.tags(['a'])) === (cut.tagArray ? '{"tags":["a"]}' : '{"hashtag":"a"}')],
+    ['two tags throw up to v15 only', throws(() => shapes.tags(['a', 'b'])) === !cut.tagArray],
+    ['five tags always throw', throws(() => shapes.tags(['a', 'b', 'c', 'd', 'e']))],
+    ['the tag property and limit are hashtag and 1 up to v15, tags and 4 on v16',
+      shapes.tagField === (cut.tagArray ? 'tags' : 'hashtag') && shapes.tagMax === (cut.tagArray ? 4 : 1)],
+    ['a stored post\'s tags read back off either spelling, [] when untagged',
+      JSON.stringify(shapes.storedTags(shapes.tags(['a']))) === '["a"]' && JSON.stringify(shapes.storedTags({})) === '[]'
+        && JSON.stringify(shapes.storedTags({ [shapes.tagField]: cut.tagArray ? ['a', 'b'] : 'a' })) === (cut.tagArray ? '["a","b"]' : '["a"]')],
+    ['the content rule takes the hashtags in order, then the cashtags, distinct: the first up to v15, all four on v16',
+      JSON.stringify(shapes.contentTags('gm #B $dash #a #b #c')) === (cut.tagArray ? '["b","a","c","dash_cashtag"]' : '["b"]')
+        && JSON.stringify(shapes.contentTags('just $DASH and $btc')) === (cut.tagArray ? '["dash_cashtag","btc_cashtag"]' : '["dash_cashtag"]')
+        && JSON.stringify(shapes.contentTags('no tags here')) === '[]'],
+    ['a content naming five tags throws on v16 (the client refuses it), indexes its first tag before',
+      cut.tagArray ? throws(() => shapes.contentTags('#a #b #c #d $e')) : JSON.stringify(shapes.contentTags('#a #b #c #d $e')) === '["a"]'],
+    ['the checker calls a repeated, empty, fifth or malformed tag wrong on v16',
+      !cut.tagArray || [['a', 'a'], [], ['a', 'b', 'c', 'd', 'e'], ['UPPER'], ['x'.repeat(62)]]
+        .every((list) => shapes.check('post', shapes.post({ content: 'x', tags: list })).some((problem) => problem.startsWith('post.tags')))],
+    ['the tag pin is contains on v16, == before', JSON.stringify(shapes.tagPin('t')) === (cut.tagArray ? '["tags","contains","t"]' : '["hashtag","==","t"]')],
+    ['the tagged-post read orders by $createdAt alone on v16, by the tag first before',
+      JSON.stringify(shapes.taggedPosts('t', 5))
+        === JSON.stringify(cut.tagArray
+          ? { where: [['tags', 'contains', 't'], ['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']] }
+          : { where: [['hashtag', '==', 't'], ['$createdAt', '>', 5]], orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']] })],
+    ['a tag ranking groups its posts under the pin, the trending tags by the tag property with no where',
+      JSON.stringify(shapes.tagRanking('t')) === JSON.stringify({ groupBy: 'postId', where: [shapes.tagPin('t')] })
+        && JSON.stringify(shapes.tagRanking()) === JSON.stringify({ groupBy: shapes.tagField })],
+    ['a tag count pins the tag, and the post with postId ==',
+      JSON.stringify(shapes.tagLikesWhere('t', 'P')) === JSON.stringify([shapes.tagPin('t'), ['postId', '==', 'P']])
+        && JSON.stringify(shapes.tagLikesWhere('t')) === JSON.stringify([shapes.tagPin('t')])],
   ];
 }
 
