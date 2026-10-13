@@ -281,17 +281,30 @@ const STATUS = /^[a-z]{1,16}$/;
 /**
  * The wallet's return link, as yap.pr's `/connect` page hands it to the app
  * (`<scheme>://connect?r=…&ac=…`) or, with universal links, the page itself
- * (`https://yap.pr<prefix>/connect/?r=…`). Null for any other link. Nothing
- * in it is trusted: it only says "check now".
+ * (`https://yap.pr<prefix>/connect/?r=…`), or either one in path form
+ * (`/connect?r=…`, `<prefix>/connect/?r=…`). Null for any other link.
+ * Nothing in it is trusted: it only says "check now".
  */
 export function parseAppConnectReturn(url: string): { requestHash: string; status: string | null } | null {
-  const match = /^([a-z][a-z0-9+.-]*):(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?/i.exec(url.trim());
-  if (!match) return null;
-  const [, scheme, host = '', path, query = ''] = match;
-  const route = `${host}${path}`.replace(/\/+$/, '');
-  const ours =
-    (scheme.toLowerCase() === config.scheme && (route === 'connect' || route === '/connect')) ||
-    (scheme.toLowerCase() === 'https' && host.toLowerCase() === 'yap.pr' && path.replace(/\/+$/, '') === `${config.webBasePath}/connect`);
+  const trimmed = url.trim();
+  const pathForm = /^(\/[^?#]*)(?:\?([^#]*))?/.exec(trimmed);
+  const match = pathForm ? null : /^([a-z][a-z0-9+.-]*):(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?/i.exec(trimmed);
+  let ours: boolean;
+  let query: string;
+  if (pathForm) {
+    const route = pathForm[1].replace(/\/+$/, '');
+    ours = route === '/connect' || route === `${config.webBasePath}/connect`;
+    query = pathForm[2] ?? '';
+  } else if (match) {
+    const [, scheme, host = '', path] = match;
+    const route = `${host}${path}`.replace(/\/+$/, '');
+    ours =
+      (scheme.toLowerCase() === config.scheme && (route === 'connect' || route === '/connect')) ||
+      (scheme.toLowerCase() === 'https' && host.toLowerCase() === 'yap.pr' && path.replace(/\/+$/, '') === `${config.webBasePath}/connect`);
+    query = match[4] ?? '';
+  } else {
+    return null;
+  }
   if (!ours) return null;
   const params = new Map<string, string>();
   for (const part of query.split('&')) {

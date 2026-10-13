@@ -240,12 +240,17 @@ describe("the wallet's return link", () => {
     expect(parseAppConnectReturn(`yappr-dev://connect?r=${HASH}&ac=ok`)).toEqual({ requestHash: HASH, status: 'ok' });
     expect(parseAppConnectReturn(`yappr-dev:///connect?r=${HASH.toUpperCase()}`)).toEqual({ requestHash: HASH, status: null });
     expect(parseAppConnectReturn(`https://yap.pr/devnet/connect/?r=${HASH}&app=yappr-dev&ac=declined`)).toEqual({ requestHash: HASH, status: 'declined' });
+    // The path forms a router may hand over in place of the full URL.
+    expect(parseAppConnectReturn(`/connect?r=${HASH}&ac=ok`)).toEqual({ requestHash: HASH, status: 'ok' });
+    expect(parseAppConnectReturn(`/devnet/connect/?r=${HASH}&app=yappr-dev`)).toEqual({ requestHash: HASH, status: null });
     for (const url of [
       `yappr-beta://connect?r=${HASH}`,
       `https://yap.pr/connect/?r=${HASH}`,
       `https://evil.example/devnet/connect/?r=${HASH}`,
       `yappr-dev://post?id=${HASH}`,
       'yappr-dev://connect?r=nothex',
+      `/post?id=${HASH}`,
+      `/testing/connect/?r=${HASH}`,
     ]) {
       expect(parseAppConnectReturn(url)).toBeNull();
     }
