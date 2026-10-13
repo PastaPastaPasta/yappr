@@ -24,8 +24,12 @@ const { createEngineStorage, installEngineStorage, isSecureStorageKey } = await 
 const engineStorage = createEngineStorage()
 installEngineStorage(engineStorage)
 Object.assign(globalThis, { window: globalThis })
+/** Secure deletes as the host is asked for them. */
+const secureDeletes: string[] = []
 engineStorage.onBatch(batch => {
-  if (batch.area === 'secure') queueMicrotask(() => engineStorage.ack(batch.seq))
+  if (batch.area !== 'secure') return
+  for (const op of batch.ops) if (op[0] === 'del') secureDeletes.push(op[1])
+  queueMicrotask(() => engineStorage.ack(batch.seq))
 })
 
 const auth = await import('platform-auth')
@@ -464,5 +468,22 @@ describe('App Connect sign-in', () => {
     await session.signOut()
     expect(appConnectSessions.current(OWNER)).toBeNull()
     expect(rings()).toEqual([])
+  })
+
+  it('drops a parked account\'s wallet grant when its key signs it in, so the next boot cannot restore the grant', async () => {
+    const parkedKey = randomKey()
+    const parkedId = bs58.encode(crypto.getRandomValues(new Uint8Array(32)))
+    chain.set(parkedId, [chainKey(2, parkedKey, { purpose: KeyPurpose.AUTHENTICATION, securityLevel: KeySecurityLevel.HIGH })])
+    const byHash = vi.spyOn(identityService, 'getIdentityIdByPublicKeyHash').mockResolvedValue(parkedId)
+    try {
+      // Its ring sits in its own bucket on the device, not in this engine.
+      expect(rings()).not.toContain(`yappr_secure_ac_ring_testnet_${parkedId}`)
+      await session.signInWithKey({ key: bytesToHex(parkedKey) })
+      await engineStorage.secureDurable()
+      expect(secureDeletes).toContain(`yappr_secure_ac_ring_testnet_${parkedId}`)
+      await session.signOut()
+    } finally {
+      byHash.mockRestore()
+    }
   })
 })

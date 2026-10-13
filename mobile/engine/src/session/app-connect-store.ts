@@ -81,6 +81,15 @@ function ringIdentity(value: unknown): string {
   return identityId
 }
 
+/**
+ * Forgets `identityId`'s ring on `network` even when this engine never held
+ * it (a parked account's is not hydrated): the storage shim forwards the
+ * removal, and the host deletes it from that account's bucket.
+ */
+export function forgetEngineRing(storage: Pick<Storage, 'removeItem'>, network: string, identityId: string): void {
+  storage.removeItem(ringPrefix(network) + identityId)
+}
+
 export function engineKeyRingBackend(storage: Storage): KeyRingBackend {
   let deviceKey: Promise<CryptoKey> | null = null
 

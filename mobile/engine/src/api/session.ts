@@ -24,7 +24,7 @@ import { walletKeyRows, type WalletKeyRow } from '@/lib/app-connect/wallet-keys'
 import { RpcError } from '../protocol/envelope'
 import { createAccountRegistry, type SignInMethod } from '../session/accounts'
 import { createAppConnectFlow, type AppConnectFlowDTO, type AppConnectReturn } from '../session/app-connect'
-import { engineKeyRingBackend } from '../session/app-connect-store'
+import { engineKeyRingBackend, forgetEngineRing } from '../session/app-connect-store'
 import { createKeyExchange, type KeyExchangeRequestDTO, type KeyExchangeStep } from '../session/key-exchange'
 import { assertWalletKeyEnabled, verifySignInKey } from '../session/keys'
 import type { AppLifecycleState } from '../shims/lifecycle'
@@ -599,6 +599,9 @@ export function createSessionModule(options: SessionModuleOptions) {
           if (parked) unhydrated.delete(identityId)
           throw error
         }
+        // The key replaces any wallet grant this account had here: a parked account's ring is not
+        // hydrated (so lib could not drop it), and the next boot would restore it ahead of the key.
+        if (isAppConnectBuild()) forgetEngineRing(localStorage, appConnectSessions.network(), identityId)
       }, 'key')
     },
 
