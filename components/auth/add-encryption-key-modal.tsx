@@ -576,6 +576,7 @@ function KeyEntryAddEncryptionKeyModal({
               identityId={user.identityId}
               context={context}
               onDone={handleMessagingReady}
+              onAlreadySetUp={() => setStep('existing-key')}
               onCancel={handleClose}
             />
           )

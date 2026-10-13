@@ -11,7 +11,7 @@ import { appConnectEncryptionKey, hasAppConnectSession } from '@/lib/app-connect
 import { rememberedAnchorKey } from '@/lib/app-connect/anchor-key-mark'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { getPublicKey } from '@/lib/crypto/keys'
-import { bytesToHex } from '@/lib/bytes'
+import { bytesToHex, hexToBytes } from '@/lib/bytes'
 import { sha256 } from '@noble/hashes/sha2.js'
 
 const browserSecretStore = createBrowserSecretStore({
@@ -106,6 +106,16 @@ export function clearPrivateKey(identityId: string): boolean {
  * hash of the stored WIF, so no private key is kept here.
  */
 const storedPublicKeys = new Map<string, { fingerprint: string; publicKeyHex: string }>()
+
+/**
+ * The public key of the encryption key stored in this browser for
+ * `identityId`, whether or not it may be used (public data: for confirming it
+ * against the anchor key).
+ */
+export function storedEncryptionPublicKey(identityId: string): Uint8Array | null {
+  const hex = storedEncryptionPublicKeyHex(identityId)
+  return hex ? hexToBytes(hex) : null
+}
 
 function storedEncryptionPublicKeyHex(identityId: string): string | null {
   const wif = browserSecretStore.getEncryptionKey(identityId)

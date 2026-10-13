@@ -337,7 +337,14 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
         if (appConnectSessions.current(identityId)) await appConnectSessions.logout(identityId)
         else appConnectSessions.cancelAdoptions(identityId)
       },
-      storeEncryptionKey,
+      storeEncryptionKey: (identityId, encryptionKey) => {
+        storeEncryptionKey(identityId, encryptionKey)
+        // App Connect builds: a stored key (say, restored from a password vault) counts once it matches the anchor key.
+        if (!isAppConnectBuild()) return
+        import('@/lib/services/messaging-key-service')
+          .then(({ confirmStoredEncryptionKey }) => confirmStoredEncryptionKey(identityId))
+          .catch((error) => logger.warn('Could not check the stored messaging key:', error))
+      },
       getEncryptionKey,
       hasEncryptionKey,
       clearEncryptionKey: async (identityId) => {

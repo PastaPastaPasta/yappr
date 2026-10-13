@@ -13,10 +13,11 @@ import {
   addMessagingKeyWithLoginKey,
   addMessagingKeyWithMasterKey,
   adoptMessagingKey,
+  anchorKeyState,
   draftMessagingKey,
-  isCurrentMessagingKey,
   loginKeyIsMaster,
   messagingKeyHandOffUri,
+  MessagingAlreadySetUpError,
   type MessagingKeyDraft,
 } from '@/lib/services/messaging-key-service'
 import { KeyExchangeQR } from './key-exchange-qr'
@@ -48,7 +49,7 @@ type Phase =
  * Refusals that happen before anything is broadcast (identityService.addEncryptionKey's checks), so
  * there is nothing to wait for. Any other failure may be a broadcast whose answer was lost.
  */
-const REFUSED_BEFORE_BROADCAST = /require a MASTER key|does not match any key|already has an encryption key|invalid (private )?key|checksum|not found/i
+const REFUSED_BEFORE_BROADCAST = /require a MASTER key|does not match any key|already set up|invalid (private )?key|checksum|not found/i
 
 /** Consumer-grade wording for a failed MASTER-signed update. */
 function masterKeyFailure(error: unknown): string {
@@ -66,16 +67,20 @@ function masterKeyFailure(error: unknown): string {
  * MASTER key it signs here; otherwise the wallet approves a `dash-st:`
  * hand-off, or the user enters their master key. `onDone` gets the identity
  * and the adopted key's WIF once Platform shows it as the current key.
+ * `onAlreadySetUp` runs instead when the account has another messaging key
+ * (made elsewhere, or by another device meanwhile): it is never replaced here.
  */
 export function SetUpMessaging({
   identityId,
   context,
   onDone,
+  onAlreadySetUp,
   onCancel,
 }: {
   identityId: string
   context: MessagingSetupContext
   onDone: (identityId: string, encryptionKeyWif: string) => void
+  onAlreadySetUp: () => void
   onCancel: () => void
 }) {
   const masterKeyInputId = useId()
@@ -92,6 +97,8 @@ export function SetUpMessaging({
   const aliveRef = useRef(true)
   const onDoneRef = useRef(onDone)
   onDoneRef.current = onDone
+  const onAlreadySetUpRef = useRef(onAlreadySetUp)
+  onAlreadySetUpRef.current = onAlreadySetUp
 
   useEffect(() => {
     aliveRef.current = true
@@ -105,6 +112,12 @@ export function SetUpMessaging({
     if (finishedRef.current || !aliveRef.current) return
     finishedRef.current = true
     onDoneRef.current(ready.identityId, adoptMessagingKey(ready))
+  }, [])
+
+  const alreadySetUp = useCallback(() => {
+    if (finishedRef.current || !aliveRef.current) return
+    finishedRef.current = true
+    onAlreadySetUpRef.current()
   }, [])
 
   // Draft the key for this identity, and finish at once when it is already the current key
@@ -121,11 +134,12 @@ export function SetUpMessaging({
       return
     }
     setDraft(next)
-    Promise.all([isCurrentMessagingKey(next), loginKeyIsMaster(identityId)])
-      .then(([current, master]) => {
+    Promise.all([anchorKeyState(next), loginKeyIsMaster(identityId)])
+      .then(([state, master]) => {
         if (cancelled) return
         setLoginIsMaster(master)
-        if (current) finish(next)
+        if (state === 'this-key') finish(next)
+        else if (state === 'other-key') alreadySetUp()
         else setPhase({ kind: 'choose' })
       })
       .catch((error) => {
@@ -135,7 +149,7 @@ export function SetUpMessaging({
     return () => {
       cancelled = true
     }
-  }, [identityId, finish, loadAttempt])
+  }, [identityId, finish, alreadySetUp, loadAttempt])
 
   // The wallet hand-off: build the request, then watch for the key to become current.
   const walletActive = phase.kind === 'wallet' && !phase.expired
@@ -149,8 +163,13 @@ export function SetUpMessaging({
         if (!cancelled) setPhase({ kind: 'wallet', uri, expired: false })
       })
       .catch((error) => {
+        if (cancelled) return
+        if (error instanceof MessagingAlreadySetUpError) {
+          alreadySetUp()
+          return
+        }
         logger.warn('Messaging setup: could not build the wallet request:', error)
-        if (!cancelled) setPhase({ kind: 'failed', message: 'Couldn\'t prepare the request for your wallet. Try again in a moment.' })
+        setPhase({ kind: 'failed', message: 'Couldn\'t prepare the request for your wallet. Try again in a moment.' })
       })
     const timer = setInterval(() => {
       if (Date.now() - started > HAND_OFF_BUDGET_MS) {
@@ -160,9 +179,12 @@ export function SetUpMessaging({
       }
       if (checking) return
       checking = true
-      isCurrentMessagingKey(draft)
-        .then((current) => {
-          if (current && !cancelled) finish(draft)
+      anchorKeyState(draft)
+        .then((state) => {
+          if (cancelled) return
+          if (state === 'this-key') finish(draft)
+          // Another device set up messaging meanwhile: approving this request would replace its key.
+          else if (state === 'other-key') alreadySetUp()
         })
         .catch((error) => logger.debug('Messaging setup: check failed, will retry:', error))
         .finally(() => {
@@ -173,7 +195,7 @@ export function SetUpMessaging({
       cancelled = true
       clearInterval(timer)
     }
-  }, [walletActive, draft, handOffAttempt, finish])
+  }, [walletActive, draft, handOffAttempt, finish, alreadySetUp])
 
   /** A MASTER-signed update (`add`), then wait for Platform to show the key as current. */
   const signWithMaster = useCallback(async (ready: MessagingKeyDraft, add: () => Promise<void>, fromMasterKeyForm: boolean) => {
@@ -190,8 +212,13 @@ export function SetUpMessaging({
     const attempts = refused ? 1 : CONFIRM_ATTEMPTS
     for (let attempt = 0; attempt < attempts && aliveRef.current; attempt++) {
       if (attempt > 0) await sleep(CONFIRM_DELAY_MS)
-      if (await isCurrentMessagingKey(ready).catch(() => false)) {
+      const state = await anchorKeyState(ready).catch(() => null)
+      if (state === 'this-key') {
         finish(ready)
+        return
+      }
+      if (state === 'other-key') {
+        alreadySetUp()
         return
       }
     }
@@ -205,7 +232,7 @@ export function SetUpMessaging({
     } else {
       setPhase({ kind: 'failed', message: 'Your change was sent but hasn\'t shown up yet. Try again in a minute.' })
     }
-  }, [finish])
+  }, [finish, alreadySetUp])
 
   const signWithLoginKey = () => {
     if (!draft) return

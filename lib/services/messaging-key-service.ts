@@ -23,7 +23,7 @@ import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { deriveEncryptionKey } from '@/lib/crypto/derive-encryption-key'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
-import { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
+import { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType, storedEncryptionPublicKey } from '@/lib/secure-storage'
 import { identityService } from './identity-service'
 
 export interface MessagingKeyDraft {
@@ -54,19 +54,35 @@ export async function loginKeyIsMaster(identityId: string): Promise<boolean> {
   return (await identityService.validateKeySecurityLevel(loginKey, identityId)).isValid
 }
 
-/**
- * Whether the draft is the anchor's current key (a fresh read; throws when it
- * fails, so a network error never reads as "not set up").
- */
-export async function isCurrentMessagingKey(draft: MessagingKeyDraft): Promise<boolean> {
-  const current = await resolveEncryptionPublicKey(draft.identityId, async () => null)
-  return current !== null && bytesEqual(current, draft.publicKey)
+/** The identity already has a messaging key that is not this draft: setup must not replace it (recover it instead). */
+export class MessagingAlreadySetUpError extends Error {
+  constructor() {
+    super('Messaging is already set up on this account.')
+  }
 }
 
-/** Add the draft key, signing the IdentityUpdate with a MASTER key the user holds. */
-export async function addMessagingKeyWithMasterKey(draft: MessagingKeyDraft, masterKeyWif: string): Promise<void> {
+/** The anchor's current key compared with the draft: this key, another key, or none. */
+export type AnchorKeyState = 'this-key' | 'other-key' | 'none'
+
+/**
+ * Where the draft stands against the anchor's current key (a fresh read;
+ * throws when it fails, so a network error never reads as "not set up").
+ */
+export async function anchorKeyState(draft: MessagingKeyDraft): Promise<AnchorKeyState> {
+  const current = await resolveEncryptionPublicKey(draft.identityId, async () => null)
+  if (current === null) return 'none'
+  return bytesEqual(current, draft.publicKey) ? 'this-key' : 'other-key'
+}
+
+/** Add the draft key, signing the IdentityUpdate with a MASTER key the user holds (WIF or hex). */
+export async function addMessagingKeyWithMasterKey(draft: MessagingKeyDraft, masterKey: string): Promise<void> {
+  const parsed = parsePrivateKey(masterKey)
+  // The identity service matches and signs WIF only.
+  const masterKeyWif = parsed.format === 'hex' ? privateKeyToWif(parsed.privateKey, keyNetwork(), true) : masterKey
   const result = await identityService.addEncryptionKey(draft.identityId, draft.privateKey, masterKeyWif)
-  if (!result.success) throw new Error(result.error || 'Couldn\'t set up messaging.')
+  if (result.success) return
+  if (/already has an encryption key/i.test(result.error ?? '')) throw new MessagingAlreadySetUpError()
+  throw new Error(result.error || 'Couldn\'t set up messaging.')
 }
 
 /** Add the draft key, signing with the session's login key, which `loginKeyIsMaster` found to be the MASTER key. */
@@ -78,16 +94,37 @@ export async function addMessagingKeyWithLoginKey(draft: MessagingKeyDraft): Pro
 
 /** A `dash-st:` link carrying the unsigned IdentityUpdate that adds the draft key, for the wallet to sign. */
 export async function messagingKeyHandOffUri(draft: MessagingKeyDraft): Promise<string> {
-  const [{ buildUnsignedBoundEncryptionKeyTransition }, { buildYapprStateTransitionUri }] = await Promise.all([
+  const [{ buildUnsignedBoundEncryptionKeyTransition, BoundKeyExistsError }, { buildYapprStateTransitionUri }] = await Promise.all([
     import('./identity-update-builder'),
     import('platform-auth'),
   ])
-  const { transitionBytes } = await buildUnsignedBoundEncryptionKeyTransition({
-    identityId: draft.identityId,
-    encryptionPrivateKey: draft.privateKey,
-    contractId: draft.anchorId,
-  })
-  return buildYapprStateTransitionUri(transitionBytes, getConfiguredNetwork())
+  try {
+    const { transitionBytes } = await buildUnsignedBoundEncryptionKeyTransition({
+      identityId: draft.identityId,
+      encryptionPrivateKey: draft.privateKey,
+      contractId: draft.anchorId,
+    })
+    return buildYapprStateTransitionUri(transitionBytes, getConfiguredNetwork())
+  } catch (error) {
+    throw error instanceof BoundKeyExistsError ? new MessagingAlreadySetUpError() : error
+  }
+}
+
+/**
+ * App Connect builds: confirm this browser's stored encryption key for
+ * `identityId` (whatever put it there, e.g. a password vault) by comparing it
+ * with the anchor's current key, read fresh. On a match the stored key may
+ * stand in for the anchor key from now on (anchor-key-mark). Returns whether
+ * it was confirmed; a key that does not match stays unused.
+ */
+export async function confirmStoredEncryptionKey(identityId: string): Promise<boolean> {
+  if (!messagingAnchorId()) return false
+  const stored = storedEncryptionPublicKey(identityId)
+  if (!stored) return false
+  const current = await resolveEncryptionPublicKey(identityId, async () => null)
+  if (!current || !bytesEqual(current, stored)) return false
+  rememberAnchorKey(identityId, stored)
+  return true
 }
 
 /**

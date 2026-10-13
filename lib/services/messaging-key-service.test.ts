@@ -64,18 +64,18 @@ describe('messaging key setup', () => {
     expect(() => s.draftMessagingKey(IDENTITY)).toThrow(/isn't available/)
   })
 
-  it('is current only when Platform names this key', async () => {
+  it('compares the draft with the anchor\'s current key', async () => {
     const s = await load()
     s.storePrivateKey(IDENTITY, LOGIN_WIF)
     const draft = s.draftMessagingKey(IDENTITY)
     mocks.currentKey.mockResolvedValueOnce(null)
-    await expect(s.isCurrentMessagingKey(draft)).resolves.toBe(false)
+    await expect(s.anchorKeyState(draft)).resolves.toBe('none')
     mocks.currentKey.mockResolvedValueOnce(getPublicKey(sha256(new TextEncoder().encode('a wallet-made key'))))
-    await expect(s.isCurrentMessagingKey(draft)).resolves.toBe(false)
+    await expect(s.anchorKeyState(draft)).resolves.toBe('other-key')
     mocks.currentKey.mockResolvedValueOnce(getPublicKey(EXPECTED))
-    await expect(s.isCurrentMessagingKey(draft)).resolves.toBe(true)
+    await expect(s.anchorKeyState(draft)).resolves.toBe('this-key')
     mocks.currentKey.mockRejectedValueOnce(new Error('DAPI down'))
-    await expect(s.isCurrentMessagingKey(draft)).rejects.toThrow('DAPI down')
+    await expect(s.anchorKeyState(draft)).rejects.toThrow('DAPI down')
   })
 
   it('adopts the key as the session encryption key', async () => {
@@ -97,6 +97,34 @@ describe('messaging key setup', () => {
     mocks.addEncryptionKey.mockResolvedValueOnce({ success: false, error: 'Identity modifications require a MASTER key. You provided a HIGH key.' })
     await expect(s.addMessagingKeyWithMasterKey(draft, LOGIN_WIF)).rejects.toThrow(/MASTER/)
     expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF)
+    mocks.addEncryptionKey.mockResolvedValueOnce({ success: false, error: 'Identity already has an encryption key' })
+    await expect(s.addMessagingKeyWithMasterKey(draft, LOGIN_WIF)).rejects.toBeInstanceOf(s.MessagingAlreadySetUpError)
+  })
+
+  it('accepts a hex master key, signing with its WIF', async () => {
+    const s = await load()
+    s.storePrivateKey(IDENTITY, LOGIN_WIF)
+    const draft = s.draftMessagingKey(IDENTITY)
+    mocks.addEncryptionKey.mockResolvedValueOnce({ success: true, keyId: 5 })
+    await s.addMessagingKeyWithMasterKey(draft, Buffer.from(LOGIN_KEY).toString('hex'))
+    expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF)
+  })
+
+  it('confirms a stored key that is the anchor key, even one not derived from the login key', async () => {
+    const s = await load()
+    s.storePrivateKey(IDENTITY, LOGIN_WIF)
+    // As a password vault restores it: stored without any check.
+    const vaultKey = sha256(new TextEncoder().encode('a key the user entered once'))
+    s.storeEncryptionKey(IDENTITY, privateKeyToWif(vaultKey, 'testnet', true))
+    expect(s.hasEncryptionKey(IDENTITY)).toBe(false)
+
+    mocks.currentKey.mockResolvedValueOnce(getPublicKey(EXPECTED))
+    await expect(s.confirmStoredEncryptionKey(IDENTITY)).resolves.toBe(false)
+    expect(s.hasEncryptionKey(IDENTITY)).toBe(false)
+
+    mocks.currentKey.mockResolvedValueOnce(getPublicKey(vaultKey))
+    await expect(s.confirmStoredEncryptionKey(IDENTITY)).resolves.toBe(true)
+    expect(s.getEncryptionKeyBytes(IDENTITY)).toEqual(vaultKey)
   })
 
   it('knows whether the login key is the MASTER key', async () => {

@@ -87,6 +87,17 @@ function KeyEntryEncryptionKeyModal() {
         return
       }
 
+      // App Connect builds: a key already stored here (say, from a password vault) may be the anchor key.
+      if (isAppConnectBuild()) {
+        const { confirmStoredEncryptionKey } = await import('@/lib/services/messaging-key-service')
+        if (await confirmStoredEncryptionKey(user.identityId)) {
+          if (!isModalActiveRef.current) return
+          close()
+          onSuccess?.()
+          return
+        }
+      }
+
       // Get auth key from secure storage
       const { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
       const authKeyWif = getPrivateKey(user.identityId)

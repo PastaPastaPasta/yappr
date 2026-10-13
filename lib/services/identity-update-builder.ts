@@ -16,7 +16,8 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { hash160 } from '../crypto/hash'
 import { getPublicKey } from '../crypto/keys'
 import { requireBytes } from '@/lib/bytes'
-import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys'
+import { KeyPurpose, KeyType, resolveKeyPurpose } from '@/lib/crypto/identity-keys'
+import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup'
 
 let wasmInitialized = false
 async function ensureWasmInitialized() {
@@ -139,15 +140,26 @@ interface KeyToAdd {
   boundToContract?: string
 }
 
+/** The identity already has an enabled encryption key bound to the contract: adding another would replace it. */
+export class BoundKeyExistsError extends Error {
+  constructor() {
+    super('The identity already has an encryption key bound to this contract')
+  }
+}
+
+type IdentityKeySnapshot = { purpose?: unknown; purposeNumber?: number; disabledAt?: unknown; contractBounds?: unknown }
+
 /**
  * Build an unsigned IdentityUpdateTransition adding `keys` (ids assigned in
  * order after the identity's highest). Each key with a `proofPrivateKey`
  * signs the transition's signable bytes to prove ownership; the transition
- * itself is NOT signed: the wallet signs it with a MASTER key.
+ * itself is NOT signed: the wallet signs it with a MASTER key. `refuse` sees
+ * the same identity snapshot the transition is built from and may throw.
  */
 async function buildUnsignedAddKeysTransition(
   identityId: string,
   keys: KeyToAdd[],
+  refuse?: (publicKeys: IdentityKeySnapshot[]) => void,
 ): Promise<{ transitionBytes: Uint8Array; keyIds: number[]; identityRevision: bigint }> {
   const sdk = await getEvoSdk()
   const wasm = await ensureWasmInitialized()
@@ -157,6 +169,7 @@ async function buildUnsignedAddKeysTransition(
   if (!identity) {
     throw new Error(`Identity not found: ${identityId}`)
   }
+  refuse?.(identity.publicKeys as unknown as IdentityKeySnapshot[])
   const newRevision = BigInt(identity.toJSON().revision || 0) + BigInt(1)
   const maxKeyId = identity.publicKeys.reduce((max: number, key: { keyId: number }) => Math.max(max, key.keyId), 0)
   const keyIds = keys.map((key, index) => maxKeyId + 1 + index)
@@ -254,7 +267,10 @@ export async function buildUnsignedKeyRegistrationTransition(
 /**
  * Build an unsigned IdentityUpdateTransition that adds one ENCRYPTION/MEDIUM
  * ECDSA_SECP256K1 key bound `singleContract(contractId)`: the App Connect
- * messaging key, for a wallet to sign with the identity's MASTER key.
+ * messaging key, for a wallet to sign with the identity's MASTER key. Throws
+ * `BoundKeyExistsError` when the identity already has one: the newest bound
+ * key becomes the current one, so adding a second would orphan everything
+ * peers encrypted to the first.
  */
 export async function buildUnsignedBoundEncryptionKeyTransition(request: {
   identityId: string
@@ -270,7 +286,12 @@ export async function buildUnsignedBoundEncryptionKeyTransition(request: {
     data: getPublicKey(request.encryptionPrivateKey),
     proofPrivateKey: request.encryptionPrivateKey,
     boundToContract: request.contractId,
-  }])
+  }], (publicKeys) => {
+    const bound = publicKeys.some((key) => resolveKeyPurpose(key.purposeNumber ?? key.purpose) === KeyPurpose.ENCRYPTION
+      && !key.disabledAt
+      && isBoundToContract(key.contractBounds, request.contractId))
+    if (bound) throw new BoundKeyExistsError()
+  })
   return { transitionBytes, keyId, identityRevision }
 }
 
