@@ -182,7 +182,7 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
     path.current = pathname;
   }, [pathname]);
   const engineUp = state === 'ready' || state === 'degraded';
-  const walletAccount = status === 'signed-in' && session?.method === 'app-connect';
+  const walletAccount = status === 'signed-in' && session?.method === 'app-connect' ? session.identityId : null;
   useEffect(() => {
     if (!ready || !engineUp || !walletAccount || checked.current) return;
     checked.current = true;
@@ -190,6 +190,12 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
     engine.api.session
       .appConnectPending({ renew: true })
       .then((pending) => {
+        // The account signed out or changed while the engine answered: the answer was about the one before.
+        const now = useSessionStore.getState();
+        if (now.status !== 'signed-in' || now.session?.method !== 'app-connect' || now.session.identityId !== walletAccount) {
+          checked.current = false;
+          return;
+        }
         if (!pending || inSignIn(path.current) || appConnectInProgress()) return;
         // The lock came up while the engine answered: try again once it opens (SR-01).
         const lock = useLockState.getState();

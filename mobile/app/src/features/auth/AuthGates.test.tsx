@@ -332,4 +332,15 @@ describe('a renewal the last launch was killed in (the wallet was open)', () => 
     await flush();
     expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect?renew=1'));
   });
+
+  it('drops an answer about an account that signed out or changed while the engine answered', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    let answer: (pending: boolean) => void = () => undefined;
+    fakeEngine.method('session.appConnectPending').mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    mount('/');
+    await flush();
+    act(() => useSessionStore.setState({ status: 'signed-in', session: { ...wallet, identityId: 'bob' }, accounts: [] }));
+    await act(async () => answer(true));
+    expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+  });
 });
