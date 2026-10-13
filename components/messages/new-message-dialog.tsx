@@ -4,7 +4,8 @@ import { useId, useState } from 'react'
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { DmDialog, errorText } from './dm-ui'
+import { NoEncryptionKeyError } from '@/lib/services/dm-v5'
+import { DmDialog, errorText, noMessagingText } from './dm-ui'
 import { UserPicker } from './user-picker'
 import { resolveUserInput } from './use-user-search'
 
@@ -39,7 +40,7 @@ export function NewMessageDialog({ open, onOpenChange, viewerId, onStart }: NewM
       await onStart(user)
       close()
     } catch (error) {
-      toast.error(errorText(error, 'Failed to start conversation'))
+      toast.error(error instanceof NoEncryptionKeyError ? noMessagingText(user) : errorText(error, 'Failed to start conversation'))
     } finally {
       setBusy(false)
     }

@@ -110,7 +110,7 @@ export function PrivateFeedFollowRequests() {
       }
 
       if (!publicKey) {
-        toast.error('This user needs to set up an encryption key before you can approve their request')
+        toast.error(`${request.username ? `@${request.username}` : 'This person'} hasn't set up messaging yet. You can approve them once they do.`)
         setProcessingId(null)
         return
       }

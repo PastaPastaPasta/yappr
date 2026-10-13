@@ -2,6 +2,8 @@ import bs58 from 'bs58'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bytesEqual, bytesToHex } from '@/lib/bytes'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
+import { weekOf } from '@/lib/dm/kdf'
+import { attachDirect } from './context'
 import { BACKGROUND_POLL_MS, DmEngine } from './engine'
 import type { KeyValueStore } from './types'
 import { MapKv, MemoryChain, MemoryLedger, makeContext, manualScheduler } from './test-chain'
@@ -344,6 +346,52 @@ describe('DmEngine self-state edits across a reload (§5.5)', () => {
     kv.set('dm', JSON.stringify({ blocks: { zz: alice, '': alice, [bytesToHex(ALICE_ID)]: alice } }))
     const bob = await started(engine(ledger, BOB_ID, BOB_PRIV, kv))
     expect(bob.getSnapshot().blocked).toEqual([alice58])
+  })
+})
+
+describe('DmEngine unreachable 1:1s (the peer has not set up messaging)', () => {
+  const entry = (ledger: MemoryLedger, peer: Uint8Array) => ({ peer, since: weekOf(ledger.time), readAt: ledger.time, hiddenAt: 0 })
+
+  it('flags a 1:1 whose peer has no key, and clears it when the conversation is reopened after the peer sets one up', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    const conv = await attachDirect(alice.ctx, entry(ledger, CAROL_ID))
+    expect(conv.convKey).toBeNull()
+    expect(alice.getSnapshot().conversations.map((c) => [c.peerId, c.unreachable])).toEqual([[carol58, true]])
+
+    // Still no key: reopening re-checks once and stays unreachable.
+    await alice.openConversation(conv.key)
+    expect(alice.getSnapshot().conversations[0].unreachable).toBe(true)
+    expect(conv.convKey).toBeNull()
+
+    // The peer sets up messaging; reopening picks it up without a reload.
+    ledger.register(CAROL_ID, CAROL_PRIV)
+    await alice.openConversation(null)
+    await alice.openConversation(conv.key)
+    expect(conv.convKey).not.toBeNull()
+    expect(alice.getSnapshot().conversations[0].unreachable).toBe(false)
+  })
+
+  it('does not call a failed lookup unreachable, nor forget a known missing key when a re-check fails', async () => {
+    const ledger = new MemoryLedger()
+    const chain = new MemoryChain(ledger, ALICE_ID)
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV, new MapKv(), chain))
+    const lookup = chain.encryptionKey.bind(chain)
+    let down = true
+    chain.encryptionKey = async (id) => {
+      if (down) throw new Error('DAPI timeout')
+      return lookup(id)
+    }
+    const conv = await attachDirect(alice.ctx, entry(ledger, CAROL_ID))
+    expect(alice.getSnapshot().conversations.map((c) => c.unreachable)).toEqual([false])
+
+    down = false
+    await alice.tick() // retries the failed lookup: the peer has no key
+    expect(alice.getSnapshot().conversations.map((c) => c.unreachable)).toEqual([true])
+
+    down = true
+    await alice.openConversation(conv.key) // the re-check fails: still known to have no key
+    expect(alice.getSnapshot().conversations[0].unreachable).toBe(true)
   })
 })
 

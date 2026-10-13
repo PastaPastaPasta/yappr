@@ -2,6 +2,7 @@ import { parsePrivateKey } from './wif'
 import { getPublicKey } from './keys'
 import { KeyPurpose as KeyPurposeEnum, KeyType } from './identity-keys'
 import { bytesEqual, normalizeBytes } from '@/lib/bytes'
+import { rememberAnchorKey } from '@/lib/app-connect/anchor-key-mark'
 
 type KeyPurpose = (typeof KeyPurposeEnum)[keyof typeof KeyPurposeEnum]
 
@@ -146,6 +147,8 @@ export async function validateKey(
     if (onChainPubKeyBytes) {
       const matches = bytesEqual(derivedPubKey, onChainPubKeyBytes)
       if (matches) {
+        // The stored copy of this key may now stand in for the anchor key (secure-storage).
+        if (anchorKey) rememberAnchorKey(identityId, derivedPubKey)
         // Key is valid - found a match
         return {
           isValid: true,

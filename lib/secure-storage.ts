@@ -8,7 +8,11 @@ import { isLikelyWif, parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { scopedKey } from '@/lib/storage-scope'
 import { keyNetwork } from '@/lib/constants'
 import { appConnectEncryptionKey, hasAppConnectSession } from '@/lib/app-connect/memory-keys'
+import { rememberedAnchorKey } from '@/lib/app-connect/anchor-key-mark'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
+import { getPublicKey } from '@/lib/crypto/keys'
+import { bytesToHex } from '@/lib/bytes'
+import { sha256 } from '@noble/hashes/sha2.js'
 
 const browserSecretStore = createBrowserSecretStore({
   prefix: scopedKey('yappr_secure_'),
@@ -97,16 +101,43 @@ export function clearPrivateKey(identityId: string): boolean {
 }
 
 /**
+ * The public key of each identity's stored encryption key, so the anchor check
+ * below costs one point multiplication per stored key. Keyed by identity and a
+ * hash of the stored WIF, so no private key is kept here.
+ */
+const storedPublicKeys = new Map<string, { fingerprint: string; publicKeyHex: string }>()
+
+function storedEncryptionPublicKeyHex(identityId: string): string | null {
+  const wif = browserSecretStore.getEncryptionKey(identityId)
+  if (!wif) return null
+  const fingerprint = bytesToHex(sha256(new TextEncoder().encode(wif)))
+  const cached = storedPublicKeys.get(identityId)
+  if (cached?.fingerprint === fingerprint) return cached.publicKeyHex
+  let publicKeyHex: string
+  try {
+    publicKeyHex = bytesToHex(getPublicKey(parsePrivateKey(wif).privateKey))
+  } catch {
+    return null
+  }
+  storedPublicKeys.set(identityId, { fingerprint, publicKeyHex })
+  return publicKeyHex
+}
+
+/**
  * Whether a key stored in this browser may stand in for `identityId`'s
  * encryption key. On App Connect builds a wallet sign-in holds no raw login
  * key, and its only valid encryption key is the current anchor key from the
  * wallet (in memory, or nothing); a key left over from an earlier sign-in
- * must not be used in its place.
+ * must not be used in its place. A raw-key sign-in's stored key counts only
+ * once this browser has confirmed it is the anchor key (anchor-key-mark.ts):
+ * any other key would read and send messages no peer can match.
  */
 function storedEncryptionKeyAllowed(identityId: string): boolean {
   if (!isAppConnectBuild()) return true
   // Decided by how this tab signed in, not by whatever an earlier sign-in left in storage.
-  return !hasAppConnectSession(identityId) && getPrivateKey(identityId) !== null
+  if (hasAppConnectSession(identityId) || getPrivateKey(identityId) === null) return false
+  const confirmed = rememberedAnchorKey(identityId)
+  return confirmed !== null && storedEncryptionPublicKeyHex(identityId) === confirmed
 }
 
 /**

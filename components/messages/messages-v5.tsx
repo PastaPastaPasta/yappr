@@ -7,14 +7,16 @@ import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { logger } from '@/lib/logger'
 import { base58ToBytes } from '@/lib/services/sdk-helpers'
-import type { ConversationView } from '@/lib/services/dm-v5'
+import { NoEncryptionKeyError, type ConversationView } from '@/lib/services/dm-v5'
 import type { Conversation } from '@/lib/types'
+import { resolveUserDetailsBatch } from '@/lib/utils/resolve-user-details'
 import { ConversationList, type InboxRow } from './conversation-list'
 import { DmNotices } from './dm-notices'
 import { DmSettingsDialog } from './dm-settings-dialog'
-import { errorText } from './dm-ui'
+import { errorText, noMessagingText } from './dm-ui'
 import { GroupSettingsDialog, type GroupActions } from './group-settings-dialog'
 import { NewGroupDialog } from './new-group-dialog'
 import { NewMessageDialog } from './new-message-dialog'
@@ -23,6 +25,13 @@ import { useDmEngine, useEngineSnapshot, useUserDetails } from './use-dm-engine'
 import { useLegacyConversations, useLegacyMessages } from './use-legacy-conversations'
 
 const legacyKey = (peerId: string) => `legacy:${peerId}`
+
+/** The toast for a failed start of a 1:1 with `peerId`; a person without messaging is named when their username resolves. */
+async function startFailureText(error: unknown, peerId: string): Promise<string> {
+  if (!(error instanceof NoEncryptionKeyError)) return errorText(error, 'Failed to start conversation')
+  const details = await resolveUserDetailsBatch([peerId]).catch(() => null)
+  return noMessagingText(details?.get(peerId))
+}
 
 function notice(view: ConversationView): string | null {
   if (view.removed) return 'You are no longer in this group'
@@ -154,20 +163,27 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
       toast.error("You can't message yourself")
       return
     }
-    startDirect(pendingStart).catch((error) => toast.error(errorText(error, 'Failed to start conversation')))
+    startDirect(pendingStart).catch((error) => startFailureText(error, pendingStart).then((text) => toast.error(text)))
   }, [pendingStart, engine, snapshot?.ready, identityId, startDirect])
 
   // Not preventDefault: on the "+" menu item that keeps the menu open (and the page inert) over the new thread.
   const openNewMessage = () => setDialog('message')
 
   if (!engine) {
+    const appConnect = isAppConnectBuild()
     return (
       <div className="flex flex-1 items-center justify-center p-8">
         <div className="text-center max-w-sm">
           <LockClosedIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold mb-2">Unlock your messages</h2>
-          <p className="text-gray-500 mb-6">Messages are encrypted with your encryption key. Enter it on this device to read and send them.</p>
-          <Button onClick={() => useEncryptionKeyModal.getState().open('read_messages', retry)}>Enter encryption key</Button>
+          <h2 className="text-xl font-semibold mb-2">{appConnect ? 'Set up messaging' : 'Unlock your messages'}</h2>
+          <p className="text-gray-500 mb-6">
+            {appConnect
+              ? 'Messages are end-to-end encrypted. Set up messaging on this device to read and send them.'
+              : 'Messages are encrypted with your encryption key. Enter it on this device to read and send them.'}
+          </p>
+          <Button onClick={() => useEncryptionKeyModal.getState().open('read_messages', retry)}>
+            {appConnect ? 'Set up messaging' : 'Enter encryption key'}
+          </Button>
         </div>
       </div>
     )
@@ -204,7 +220,7 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
     if (selectedView.removed) return { blockedReason: 'You are no longer a member of this group.', banner: null }
     if (selectedView.ended) return { blockedReason: 'This group has ended.', banner: null }
     if (selectedView.unreadable) return { blockedReason: 'You cannot read this group yet.', banner: 'Ask the owner to resend your keys: they can do it from the group settings.' }
-    return { blockedReason: null, banner: null }
+    return { blockedReason: null, banner: null, unreachable: selectedView.unreachable }
   }
 
   const groupActions = (key: string): GroupActions => ({

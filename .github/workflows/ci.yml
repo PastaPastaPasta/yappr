@@ -335,7 +335,8 @@ jobs:
       # DM v5 against the real chain with several identities (pool slots 1-5 of the
       # same seed, listed in .env.devnet). Only the 1:1 and group files run here
       # (about 15 min together); the history (120-message bulk write) and
-      # lost-state recovery files are local-only, see docs/TESTING.md.
+      # lost-state recovery files are local-only, see docs/TESTING.md. The messaging
+      # setup file runs only on an App Connect build and skips itself otherwise.
       - name: Run the devnet DM v5 specs
         if: env.HAS_SEED == 'true'
         continue-on-error: true
@@ -347,7 +348,7 @@ jobs:
           # Print each device's DM v5 warnings and write errors (e2e/fixtures/dm.ts): with traces
           # off they are the only record of why a write in the app failed.
           E2E_DM_DEBUG: '1'
-        run: npx playwright test --project=write --trace=off dm-v5-direct dm-v5-groups
+        run: npx playwright test --project=write --trace=off dm-v5-direct dm-v5-groups messaging-setup
 
       - name: Upload Playwright report
         if: always()

@@ -69,7 +69,7 @@ type CheckoutReadinessState = {
   buyerEncryptionPrivateKey: Uint8Array | null
 }
 
-function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): string | null {
+function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null, ownerUsername?: string | null): string | null {
   if (!blocker) return null
 
   const messages: Record<CheckoutReadinessBlocker, string> = {
@@ -78,7 +78,7 @@ function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): 
     'store-check-failed': 'Could not confirm this store is open. Please try again.',
     'no-payment-methods': 'This store has not configured any payment methods.',
     'missing-buyer-key': 'Add your encryption key to continue to payment.',
-    'missing-seller-key': 'This store has not published an active encryption key.',
+    'missing-seller-key': `${ownerUsername ? `@${ownerUsername}` : "This store's owner"} hasn't set up messaging yet, so this store can't take orders.`,
     'invalid-seller-key': "This store's encryption key is invalid. Contact the store owner.",
     'service-error': 'Could not verify store encryption key. Please try again later.'
   }
@@ -204,12 +204,13 @@ function CheckoutPage() {
   const validateCheckoutReadiness = useCallback(async (storeToValidate: Store | null): Promise<CheckoutReadinessState> => {
     function blocked(
       blocker: CheckoutReadinessBlocker,
-      buyerEncryptionPrivateKey: Uint8Array | null = null
+      buyerEncryptionPrivateKey: Uint8Array | null = null,
+      ownerUsername: string | null = null
     ): CheckoutReadinessState {
       return {
         isReady: false,
         blocker,
-        blockerMessage: getCheckoutReadinessMessage(blocker),
+        blockerMessage: getCheckoutReadinessMessage(blocker, ownerUsername),
         sellerEncryptionPublicKey: null,
         buyerEncryptionPrivateKey
       }
@@ -268,7 +269,9 @@ function CheckoutPage() {
         async () => (await identityService.getIdentity(storeToValidate.ownerId))?.publicKeys ?? null
       )
       if (!sellerEncryptionPublicKey) {
-        const state = blocked('missing-seller-key', buyerPrivateKey)
+        const { dpnsService } = await import('@/lib/services/dpns-service')
+        const ownerUsername = await dpnsService.resolveUsername(storeToValidate.ownerId).catch(() => null)
+        const state = blocked('missing-seller-key', buyerPrivateKey, ownerUsername)
         setCheckoutReadiness(state)
         return state
       }

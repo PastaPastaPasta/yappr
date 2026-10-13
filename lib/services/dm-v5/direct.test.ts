@@ -58,7 +58,7 @@ describe('1:1 first contact and messaging', () => {
   it('refuses to start a chat with someone who has no encryption key', async () => {
     const ledger = new MemoryLedger()
     const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
-    await expect(openDirect(alice.ctx, CAROL_ID)).rejects.toThrow(/encryption key/)
+    await expect(openDirect(alice.ctx, CAROL_ID)).rejects.toThrow(NoEncryptionKeyError)
   })
 
   it('reports a failed key lookup as retryable, not as a missing encryption key (review 5 #2)', async () => {
@@ -72,7 +72,7 @@ describe('1:1 first contact and messaging', () => {
       return lookup(id)
     }
     await expect(openDirect(alice.ctx, BOB_ID)).rejects.toThrow(PeerKeyLookupError)
-    await expect(openDirect(alice.ctx, BOB_ID)).rejects.not.toThrow(/no encryption key/)
+    await expect(openDirect(alice.ctx, BOB_ID)).rejects.not.toThrow(NoEncryptionKeyError)
     await expect(sendInvite(alice.ctx, BOB_ID)).rejects.toThrow(PeerKeyLookupError)
     down = false
     await expect(openDirect(alice.ctx, BOB_ID)).resolves.toBeTruthy()

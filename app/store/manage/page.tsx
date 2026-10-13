@@ -39,12 +39,14 @@ import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { storefrontIsV2 } from '@/lib/constants'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { identityService } from '@/lib/services/identity-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 
 function StoreManagePage() {
+  const appConnect = isAppConnectBuild()
   const router = useRouter()
   const searchParams = useSearchParams()
   const storeId = searchParams.get('id')
@@ -446,9 +448,11 @@ function StoreManagePage() {
                   <div className="flex items-start gap-3">
                     <ExclamationTriangleIcon className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-red-800 dark:text-red-200">Encryption Key Required</p>
+                      <p className="font-semibold text-red-800 dark:text-red-200">{appConnect ? 'Set up messaging to take orders' : 'Encryption Key Required'}</p>
                       <p className="text-sm text-red-700 dark:text-red-300 mt-1">
-                        Buyers cannot place orders until you add an encryption key to your identity. This key is needed to securely receive shipping addresses and order details.
+                        {appConnect
+                          ? 'Buyers send their shipping details privately. Set up messaging so they can place orders.'
+                          : 'Buyers cannot place orders until you add an encryption key to your identity. This key is needed to securely receive shipping addresses and order details.'}
                       </p>
                     </div>
                   </div>
@@ -458,7 +462,7 @@ function StoreManagePage() {
                     className="mt-3 w-full bg-red-600 hover:bg-red-700 text-white"
                   >
                     <KeyIcon className="h-4 w-4 mr-2" />
-                    Set Up Encryption Key
+                    {appConnect ? 'Set up messaging' : 'Set Up Encryption Key'}
                   </Button>
                 </div>
               )}

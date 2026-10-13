@@ -21,7 +21,7 @@ import {
   type GroupConv,
   type HeldMessage,
 } from './conversation'
-import { attachSaved, createContext, isMe, type DmContext } from './context'
+import { attachSaved, createContext, isMe, isUnreachable, recheckUnreachable, type DmContext } from './context'
 import { ensureStarted, openDirect } from './directs'
 import { applyGroups } from './group-apply'
 import { addMember, createGroup, endGroup, leaveGroup, removeMember, renameGroup, resendKeys } from './groups'
@@ -77,6 +77,8 @@ export interface ConversationView {
   blocked: boolean
   /** Opened in the UI but nothing sent yet. */
   draft: boolean
+  /** A 1:1 whose peer was looked up and has no encryption key (hasn't set up messaging): nothing can be sent until they do. */
+  unreachable: boolean
 }
 
 export interface EngineSnapshot {
@@ -363,6 +365,7 @@ export class DmEngine {
       ended: conv.kind === 'group' && conv.ended,
       blocked,
       draft: conv.kind === 'direct' && conv.draft,
+      unreachable: conv.kind === 'direct' && isUnreachable(ctx, conv),
     }
   }
 
@@ -411,6 +414,7 @@ export class DmEngine {
     conv.deepProbe = true
     await this.run(async () => {
       if (conv.kind === 'group') await applyGroups(this.ctx, [conv])
+      else await recheckUnreachable(this.ctx, conv)
       await pollStreams(this.ctx, conv)
       await runDeferred(this.ctx, conv)
     })

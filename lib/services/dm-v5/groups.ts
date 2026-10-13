@@ -26,7 +26,7 @@ import {
 import type { Epoch, GroupConversation, IdentityId, KeyringMember, RosterContent } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
 import { isMember, markStale, newGroupConv, type GroupConv } from './conversation'
-import { attachGroup, curWeek, groupConv, isMe, peerKey, type Backoff, type DmContext } from './context'
+import { attachGroup, curWeek, groupConv, isMe, peerKey, requirePeerKey, type Backoff, type DmContext } from './context'
 import { ensureStarted, openDirect, startedDirect } from './directs'
 import { applyGroups, markApplied, switchEpoch } from './group-apply'
 import { sendContent } from './sender'
@@ -80,9 +80,7 @@ function checkName(name: string): string {
 async function publicKeysOf(ctx: DmContext, ids: IdentityId[]): Promise<KeyringMember[]> {
   const out: KeyringMember[] = []
   for (const id of ids) {
-    const publicKey = await peerKey(ctx, id)
-    if (!publicKey) throw new GroupError('A member has no encryption key, so they cannot be added to groups.')
-    out.push({ id, publicKey })
+    out.push({ id, publicKey: await requirePeerKey(ctx, id) })
   }
   return out
 }

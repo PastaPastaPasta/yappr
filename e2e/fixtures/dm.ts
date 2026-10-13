@@ -6,7 +6,10 @@
  *
  * - **Devices**: a browser context per (identity, device), logged in by seeding
  *   the session, the AUTHENTICATION/HIGH key and the ENCRYPTION key (seed key
- *   index 4, the one registered on every pool identity). Several devices of
+ *   index 4, the one registered on every pool identity; on App Connect builds
+ *   the anchor-bound key, derived from the HIGH key as the app's "Set up
+ *   messaging" derives it, which the sakura ops gave every pool identity).
+ *   Several devices of
  *   one identity are several contexts with separate storage, exactly like two
  *   browsers.
  * - **Node actors**: the same identities signing documents straight from Node,
@@ -22,9 +25,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import bs58 from 'bs58'
 import { expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
-import { bytesEqual, bytesToHex } from '../../lib/bytes'
+import { bytesEqual, bytesToHex, normalizeBytes } from '../../lib/bytes'
 import { getPublicKey } from '../../lib/crypto/keys'
-import { wifToPrivateKey } from '../../lib/crypto/wif'
+import { privateKeyToWif, wifToPrivateKey } from '../../lib/crypto/wif'
+import { deriveEncryptionKey } from '../../lib/crypto/derive-encryption-key'
 import { keyringHandle, keyringNonce, openRoster, rosterHandle } from '../../lib/dm/group'
 import { bucketLevels, createInvite, isInviteForMe } from '../../lib/dm/invite'
 import { deriveDirectKeys, deriveEpochKey, deriveGroupId, deriveGroupSecret, deriveSelfRoot, deriveStateKey } from '../../lib/dm/keys'
@@ -60,6 +64,8 @@ const PROFILE_IS_V10 = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15'].includes(envVa
 const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7'
 const SOCIAL_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_CONTRACT_ID')
 export const DM_V5_BUILD = envValue('NEXT_PUBLIC_DM_TOPOLOGY') === 'v5' && DM_V5_CONTRACT_ID !== ''
+/** On App Connect builds only the key bound to this anchor counts as an identity's encryption key; '' on legacy builds. */
+export const APP_CONNECT_ANCHOR_ID = envValue('NEXT_PUBLIC_LOGIN_PROTOCOL') === 'app-connect' ? envValue('NEXT_PUBLIC_APP_CONNECT_APP_ID') : ''
 export const NOT_V5_REASON = 'the env file does not set NEXT_PUBLIC_DM_TOPOLOGY=v5 with a DM v5 contract id'
 
 /**
@@ -91,7 +97,7 @@ export interface DmBot {
   hex: string
   /** AUTHENTICATION/HIGH (key 2): the browser's signing key. */
   authWif: string
-  /** ENCRYPTION (key 4): the DM v5 key. */
+  /** The DM v5 key: ENCRYPTION key 4, or on App Connect builds the anchor-bound key. */
   encWif: string
   encPriv: Uint8Array
   encPub: Uint8Array
@@ -116,7 +122,9 @@ export async function dmBot(index: number): Promise<DmBot> {
   const auth = keys.find((k) => k.keyIndex === 2)
   const enc = keys.find((k) => k.keyIndex === 4)
   if (!auth || !enc) throw new Error(`Derivation produced no auth/encryption key for slot ${index}`)
-  const encPriv = wifToPrivateKey(enc.wif).privateKey
+  const encPriv = APP_CONNECT_ANCHOR_ID
+    ? deriveEncryptionKey(wifToPrivateKey(auth.wif).privateKey, identityId, APP_CONNECT_ANCHOR_ID)
+    : wifToPrivateKey(enc.wif).privateKey
   const id = bs58.decode(identityId)
   const bot: DmBot = {
     index,
@@ -124,7 +132,7 @@ export async function dmBot(index: number): Promise<DmBot> {
     id,
     hex: bytesToHex(id),
     authWif: auth.wif,
-    encWif: enc.wif,
+    encWif: APP_CONNECT_ANCHOR_ID ? privateKeyToWif(encPriv, 'testnet', true) : enc.wif,
     encPriv,
     encPub: getPublicKey(encPriv),
     authPub: Uint8Array.from(auth.publicKey),
@@ -149,23 +157,27 @@ export interface Device {
  * A logged-in browser for `bot`: its own context (its own localStorage), so
  * two devices of one identity share nothing but the chain.
  */
-export async function openDevice(browser: Browser, bot: DmBot, label: string): Promise<Device> {
+export async function openDevice(
+  browser: Browser,
+  bot: DmBot,
+  label: string,
+  { messaging = true }: { messaging?: boolean } = {}
+): Promise<Device> {
   await ensureProfile(bot)
+  if (messaging && APP_CONNECT_ANCHOR_ID) await requireAnchorKey(bot)
   const context = await browser.newContext()
   await seedContext(context, { index: bot.index, identityId: bot.identityId, wif: bot.authWif })
-  await context.addInitScript(
-    ({ key, wif, grantKey, identityId }) => {
-      window.localStorage.setItem(key, JSON.stringify(wif))
-      // DMs need no YAPP: keep the starter-grant prompt (a modal) out of the way.
-      window.localStorage.setItem(grantKey, JSON.stringify([identityId]))
-    },
-    {
-      key: scopedKey(`yappr_secure_ek_${bot.identityId}`),
-      wif: bot.encWif,
-      grantKey: scopedKey('yappr_starter_grant_settled'),
-      identityId: bot.identityId,
-    }
-  )
+  // DMs need no YAPP: keep the starter-grant prompt (a modal) out of the way.
+  const entries: Array<[string, string]> = [[scopedKey('yappr_starter_grant_settled'), JSON.stringify([bot.identityId])]]
+  if (messaging) {
+    // The secure store JSON-encodes its values.
+    entries.push([scopedKey(`yappr_secure_ek_${bot.identityId}`), JSON.stringify(bot.encWif)])
+    // App Connect builds use a stored key only once it is confirmed as the anchor key (lib/app-connect/anchor-key-mark.ts).
+    if (APP_CONNECT_ANCHOR_ID) entries.push([scopedKey(`yappr_anchor_ek_${bot.identityId}`), bytesToHex(bot.encPub)])
+  }
+  await context.addInitScript((items) => {
+    for (const [key, value] of items) window.localStorage.setItem(key, value)
+  }, entries)
   const page = await context.newPage()
   if (process.env.E2E_DM_DEBUG) {
     page.on('console', (message) => {
@@ -292,6 +304,9 @@ type Sdk = {
     delete(a: Record<string, unknown>): Promise<unknown>
   }
   stateTransitions: { broadcastStateTransition(st: unknown): Promise<unknown> }
+  identities: {
+    contractKeys(q: { identityIds: string[]; contractId: string; purposes: number[] }): Promise<Array<{ keys: Array<{ data: unknown }> }>>
+  }
   wasm: { getIdentityContractNonce(owner: string, contract: string): Promise<bigint | undefined> }
 }
 
@@ -411,6 +426,24 @@ export async function createDoc(bot: DmBot, contractId: string, docType: string,
 }
 
 const profiles = new Map<number, Promise<void>>()
+
+/**
+ * App Connect builds: the bot's current anchor key must be the one this
+ * fixture derives, or no peer can reach it. The sakura ops script
+ * (add-anchor-messaging-keys) registers it; fail loudly instead of timing out.
+ */
+async function requireAnchorKey(bot: DmBot): Promise<void> {
+  if (!(await anchorKeysOf(bot)).some((data) => bytesEqual(data, bot.encPub))) {
+    throw new Error(`Pool slot ${bot.index} has no anchor messaging key matching its login key; run the sakura add-anchor-messaging-keys ops script`)
+  }
+}
+
+/** The public keys `contractKeys` returns for `bot` and the anchor (App Connect builds). */
+export async function anchorKeysOf(bot: DmBot): Promise<Uint8Array[]> {
+  const sdk = await nodeSdk()
+  const entries = await sdk.identities.contractKeys({ identityIds: [bot.identityId], contractId: APP_CONNECT_ANCHOR_ID, purposes: [1] })
+  return (entries[0]?.keys ?? []).map((key) => normalizeBytes(key.data)).filter((data): data is Uint8Array => data !== null)
+}
 
 /**
  * Gives every DM actor a profile, created once per pool slot from Node and
@@ -547,7 +580,15 @@ export async function selfStateOf(bot: DmBot): Promise<{ id: string; revision: n
   const [doc] = await queryDocs(DM_V5_CONTRACT_ID, 'dmSelfState', { where: [['$ownerId', '==', bot.identityId]], limit: 1 })
   if (!doc) return null
   const field = (name: string) => (doc[name] === undefined || doc[name] === null ? null : asBytes(doc[name]))
-  const state = await decryptSelfState(deriveStateKey(deriveSelfRoot(bot.encPriv)), { blob: asBytes(doc.blob), blob2: field('blob2'), blob3: field('blob3') })
+  let state: SelfState
+  try {
+    state = await decryptSelfState(deriveStateKey(deriveSelfRoot(bot.encPriv)), { blob: asBytes(doc.blob), blob2: field('blob2'), blob3: field('blob3') })
+  } catch {
+    // Sealed under the bot's other key (a run on the other build: legacy key 4 vs the App Connect anchor
+    // key). The app rebuilds it on its first poll, as it does for any unreadable self-state; until then
+    // nothing in it is readable.
+    return null
+  }
   return { id: b58(doc.$id), revision: Number(doc.$revision ?? 1), state }
 }
 

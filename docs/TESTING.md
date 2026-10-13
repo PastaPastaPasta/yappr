@@ -77,6 +77,23 @@ E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet \
   npx playwright test --project=write --trace=off dm-v5
 ```
 
+On an App Connect build (`NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`) only an
+ENCRYPTION key bound to the `yappr-app` anchor counts, so the fixture switches
+each bot to its anchor key: the one the app's "Set up messaging" derives from
+the bot's AUTHENTICATION/HIGH key (`lib/crypto/derive-encryption-key.ts`). The
+sakura ops script `ops/add-anchor-messaging-keys.mjs` registered it on slots
+1-8; a slot without it fails at once instead of timing out. Slot 0 is kept
+without one on purpose: `e2e/write/messaging-setup.spec.ts` uses it for the
+"hasn't set up messaging yet" state and for the "Set up messaging" wallet
+request (decoded, never signed), and skips itself on legacy builds or when slot
+0 has a key. To run the DM files against an App Connect build:
+
+```bash
+NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect npm run build:devnet
+NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet \
+  npx playwright test --project=write --trace=off dm-v5 messaging-setup
+```
+
 The storefront v7 spec (`e2e/write/storefront-variants.spec.ts`) is local-only
 too. Its seller creates a store (once per identity) and a variant listing from
 Node, with the action fees the app agrees to (1,000M and 50M credits). Its

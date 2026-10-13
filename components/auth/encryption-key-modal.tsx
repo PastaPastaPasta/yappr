@@ -17,6 +17,7 @@ import { identityService } from '@/lib/services/identity-service'
 import toast from 'react-hot-toast'
 import { keyNetwork } from '@/lib/constants'
 import { WalletEncryptionKeyPrompt, useWalletSession } from './wallet-encryption-key-prompt'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 
 type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
 
@@ -49,6 +50,8 @@ function KeyEntryEncryptionKeyModal() {
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
   const [showLostKeyModal, setShowLostKeyModal] = useState(false)
   const [noKeyOnIdentity, setNoKeyOnIdentity] = useState(false)
+  /** Auto-recovery found no key on the identity and went straight to adding one. */
+  const [openedForSetup, setOpenedForSetup] = useState(false)
 
   // Auto-recovery state
   const [autoRecoveryStatus, setAutoRecoveryStatus] = useState<AutoRecoveryStatus>('idle')
@@ -79,6 +82,7 @@ function KeyEntryEncryptionKeyModal() {
         if (!isModalActiveRef.current) return
         setAutoRecoveryStatus('failed')
         setAutoRecoveryMessage('')
+        setOpenedForSetup(true)
         setShowAddKeyModal(true)
         return
       }
@@ -102,7 +106,8 @@ function KeyEntryEncryptionKeyModal() {
       // Attempt HKDF derivation from auth key
       if (!isModalActiveRef.current) return
       setAutoRecoveryMessage('Attempting key derivation...')
-      const { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } = await import('@/lib/crypto/key-derivation')
+      const { deriveEncryptionKey } = await import('@/lib/crypto/derive-encryption-key')
+      const { validateDerivedKeyMatchesIdentity } = await import('@/lib/crypto/key-derivation')
 
       const derivedKey = deriveEncryptionKey(authPrivateKey, user.identityId)
 
@@ -162,6 +167,7 @@ function KeyEntryEncryptionKeyModal() {
       setEncryptionKeyInput('')
       setError(null)
       setNoKeyOnIdentity(false)
+      setOpenedForSetup(false)
       setShowLostKeyModal(false)
       setAutoRecoveryStatus('idle')
       setAutoRecoveryMessage('')
@@ -243,7 +249,7 @@ function KeyEntryEncryptionKeyModal() {
     // After adding the key, we still need the user to enter it
     // (unless they just generated it, in which case it was stored)
     // Call onSuccess since the key was added and stored
-    toast.success('You can now use private feed features!')
+    toast.success(isAppConnectBuild() ? 'Messaging is set up' : 'You can now use private feed features!')
     close()
     if (onSuccess) {
       onSuccess()
@@ -421,7 +427,11 @@ function KeyEntryEncryptionKeyModal() {
       {/* Add Encryption Key Modal */}
       <AddEncryptionKeyModal
         isOpen={showAddKeyModal}
-        onClose={() => setShowAddKeyModal(false)}
+        onClose={() => {
+          setShowAddKeyModal(false)
+          // App Connect builds: someone who has no messaging key and declines setup has no key to enter either.
+          if (openedForSetup && isAppConnectBuild()) close()
+        }}
         onSuccess={handleAddKeySuccess}
       />
 

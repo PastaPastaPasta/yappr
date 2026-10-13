@@ -107,3 +107,12 @@ export function appConnectPins(): AppConnectPins | null {
     members: process.env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS,
   })
 }
+
+/**
+ * The contract an encryption key must be bound to on this build: the anchor
+ * on App Connect builds (null there when the pins are missing, which leaves
+ * messaging unavailable), null on legacy builds, where keys are unbound.
+ */
+export function messagingAnchorId(): string | null {
+  return isAppConnectBuild() ? appConnectPins()?.appId ?? null : null
+}
