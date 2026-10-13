@@ -137,15 +137,16 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
 
   // A thread holding only earlier (v3/v4) messages has no v5 conversation to say whether the
   // person can be messaged, so ask: the composer stays off until they have set up messaging.
+  // Per person: true/false once known; a lookup that fails keeps the last answer (none yet: the composer stays off).
   const legacyOnlyPeer = selectedRow?.legacyOnly ? selectedRow.peerId : null
-  const [unreachableLegacyPeer, setUnreachableLegacyPeer] = useState<string | null>(null)
+  const [legacyReach, setLegacyReach] = useState<ReadonlyMap<string, boolean>>(new Map())
   useEffect(() => {
-    setUnreachableLegacyPeer(null)
     if (!engine || !legacyOnlyPeer) return
     let cancelled = false
     engine.canMessage(legacyOnlyPeer)
       .then((reachable) => {
-        if (!cancelled && reachable === false) setUnreachableLegacyPeer(legacyOnlyPeer)
+        if (cancelled || reachable === null) return
+        setLegacyReach((known) => new Map(known).set(legacyOnlyPeer, reachable))
       })
       .catch((error) => logger.warn('Could not check whether this person can be messaged:', error))
     return () => {
@@ -236,8 +237,10 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
     if (row.kind === 'direct' && blockedIds.has(row.peerId)) return { blockedReason: 'You blocked this person. Unblock them to send messages.', banner: null }
     if (!selectedView) {
       if (!row.legacyOnly) return { blockedReason: null, banner: null }
-      if (unreachableLegacyPeer === row.peerId) return { blockedReason: null, banner: 'Earlier messages.', unreachable: true }
-      return { blockedReason: null, banner: 'Earlier messages. Your next message starts a private conversation.' }
+      const reachable = legacyReach.get(row.peerId)
+      if (reachable === false) return { blockedReason: null, banner: 'Earlier messages.', unreachable: true }
+      // Until the check answers, nothing can be sent: it may well fail.
+      return { blockedReason: null, banner: 'Earlier messages. Your next message starts a private conversation.', composerOff: reachable === undefined }
     }
     if (selectedView.removed) return { blockedReason: 'You are no longer a member of this group.', banner: null }
     if (selectedView.ended) return { blockedReason: 'This group has ended.', banner: null }

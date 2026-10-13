@@ -3,6 +3,7 @@ import { Toaster } from 'react-hot-toast'
 import { PrivateFeedSettings } from '@/components/settings/private-feed-settings'
 import { snapshot } from './private-feed-mocks'
 import { VariantEditorFixture } from './variant-editor-fixture'
+import { ThreadStatusFixture } from './thread-status-fixture'
 
 declare global {
   interface Window {
@@ -14,9 +15,12 @@ window.privateFeedTestSnapshot = snapshot
 const root = document.getElementById('root')
 if (!root) throw new Error('Component fixture root is missing')
 const fixture = new URLSearchParams(window.location.search).get('fixture')
+const threadState = fixture?.startsWith('thread-') ? fixture.slice('thread-'.length) : null
 createRoot(root).render(
   fixture === 'variant-editor' || fixture === 'variant-editor-legacy' ? (
     <VariantEditorFixture legacy={fixture === 'variant-editor-legacy'} />
+  ) : threadState === 'checking' || threadState === 'unreachable' || threadState === 'reachable' ? (
+    <ThreadStatusFixture state={threadState} />
   ) : (
     <>
       <h1>Isolated private-feed regression fixture (mocked chain and vault)</h1>

@@ -35,6 +35,8 @@ export interface ThreadStatus {
   banner: string | null
   /** A 1:1 whose other person has not set up messaging: the composer is disabled and a status says why. */
   unreachable?: boolean
+  /** The composer is disabled without a status (e.g. while checking whether the person can be messaged). */
+  composerOff?: boolean
 }
 
 interface ThreadViewProps {
@@ -58,7 +60,7 @@ export function ThreadView({ row, messages, details, status, isLoading, blocked,
   const bottom = useRef<HTMLDivElement | null>(null)
   const title = row.kind === 'group' ? row.name || 'Group' : displayNameOf(details, row.peerId)
   const lastId = messages.at(-1)?.id
-  const composerOff = isSending || !!status.unreachable
+  const composerOff = isSending || !!status.unreachable || !!status.composerOff
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' })
