@@ -1,129 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { clearSensitiveBytes, getYapprPublicKey, hash160 } from 'platform-auth'
-import { bytesToHex, hexToBytes } from '@/lib/bytes'
 import { logger } from '@/lib/logger'
-import { scopedKey } from '@/lib/storage-scope'
 import { appConnectPins } from '@/lib/app-connect/config'
-import { AppConnectLogin, parseStoredRequest, type AppConnectLoginState, type RequestRecordStore, type StoredAppConnectRequest } from '@/lib/app-connect/login-flow'
+import { AppConnectLogin, type AppConnectLoginState } from '@/lib/app-connect/login-flow'
+import { requestRecordsFor } from '@/lib/app-connect/pending-request'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
 import { APP_CONNECT_CHANNEL, isConnectCallbackMessage } from '@/lib/app-connect/callback-channel'
-
-/**
- * The pending request, so a reload or the wallet's return to /connect can
- * resume it (10 minutes at most). Its ephemeral key opens the wallet's answer,
- * so it is wrapped under the key ring's device key, never stored in plain.
- */
-const encoder = new TextEncoder()
-const decoder = new TextDecoder()
-
-/**
- * Record operations run one at a time, in the order they are called, across
- * every tab of this site: a save wraps the key (async crypto) before it
- * writes, and a clear reads the slot before it deletes it, so without this
- * an older request could land last, or one tab could delete a request
- * another tab saved between its read and its delete. Uses a Web Lock where
- * the browser has them, and an in-tab queue otherwise.
- */
-const RECORD_LOCK = scopedKey('yappr-app-connect-pending-request')
-let recordWrites: Promise<unknown> = Promise.resolve()
-function inOrder<T>(operation: () => Promise<T>): Promise<T> {
-  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
-  const locked = async (): Promise<T> => (locks ? await locks.request(RECORD_LOCK, operation) : await operation())
-  const run = recordWrites.then(locked, locked)
-  recordWrites = run.catch(() => undefined)
-  return run
-}
-
-/**
- * One slot per kind of request, so a sign-in and a renewal (which names its
- * identity) never overwrite each other's pending request.
- */
-function requestRecordsFor(identityHint: string | undefined): RequestRecordStore {
-  const secretName = `pending-request:${identityHint ?? 'login'}`
-  return {
-    async load() {
-      const network = appConnectSessions.network()
-      try {
-        // Read and (for a stale request) delete under the same lock, so a
-        // request another tab saves meanwhile is never the one deleted.
-        return await inOrder(async () => {
-          const bytes = await appConnectSessions.keyStore().loadSecret(network, secretName)
-          if (!bytes) return null
-          let record: StoredAppConnectRequest | null = null
-          try {
-            record = parseStoredRequest(JSON.parse(decoder.decode(bytes)), Date.now())
-          } catch {
-            // Unreadable: treated like a stale request below.
-          } finally {
-            bytes.fill(0)
-          }
-          // A stale or unreadable request is of no use to anyone: forget it.
-          if (!record) await appConnectSessions.keyStore().deleteSecret(network, secretName)
-          return record
-        })
-      } catch (error) {
-        logger.warn('App Connect: could not read the pending request:', error)
-        return null
-      }
-    },
-    async save(record) {
-      const bytes = encoder.encode(JSON.stringify(record))
-      try {
-        await inOrder(() => appConnectSessions.keyStore().saveSecret(appConnectSessions.network(), secretName, bytes))
-      } catch (error) {
-        // Without storage the request only lives in this tab.
-        logger.warn('App Connect: could not keep the pending request:', error)
-      } finally {
-        bytes.fill(0)
-      }
-    },
-    async clear(record) {
-      // Only if it is still ours: another tab may have stored a newer request in this slot.
-      await inOrder(async () => {
-        const network = appConnectSessions.network()
-        const bytes = await appConnectSessions.keyStore().loadSecret(network, secretName)
-        if (!bytes) return
-        let stored: unknown = null
-        try {
-          stored = JSON.parse(decoder.decode(bytes))
-        } catch {
-          // Unreadable: not a request anyone can resume, so it may go.
-        } finally {
-          bytes.fill(0)
-        }
-        const storedKey = (stored as { ephemeralPrivateKey?: unknown } | null)?.ephemeralPrivateKey
-        if (stored === null || storedKey === record.ephemeralPrivateKey) {
-          await appConnectSessions.keyStore().deleteSecret(network, secretName)
-        }
-      })
-    },
-  }
-}
-
-/**
- * Runs an App Connect sign-in while mounted: starts (or resumes) a request,
- * polls immediately when the window regains focus or the wallet returns to
- * /connect in another tab, and wipes everything on unmount. `identityHint`
- * makes it a renewal that only that identity may answer.
- */
-/**
- * Whether the request the wallet just returned for (its hash, hex) is the
- * pending renewal for `identityId`, so /connect can resume that renewal
- * rather than start a sign-in.
- */
-export async function isPendingRenewal(identityId: string, requestHash: string): Promise<boolean> {
-  const record = await requestRecordsFor(identityId).load()
-  if (!record) return false
-  const privateKey = hexToBytes(record.ephemeralPrivateKey)
-  try {
-    return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash
-  } finally {
-    clearSensitiveBytes(privateKey)
-  }
-}
 
 function createLogin(identityHint: string | undefined): AppConnectLogin | null {
   const pins = appConnectPins()
@@ -142,6 +26,12 @@ function createLogin(identityHint: string | undefined): AppConnectLogin | null {
   })
 }
 
+/**
+ * Runs an App Connect sign-in while mounted: starts (or resumes) a request,
+ * polls immediately when the window regains focus or the wallet returns to
+ * /connect in another tab, and wipes everything on unmount. `identityHint`
+ * makes it a renewal that only that identity may answer.
+ */
 export function useAppConnectLogin(identityHint?: string): { login: AppConnectLogin | null; state: AppConnectLoginState } {
   // One instance per mount: a disposed instance never restarts, so React's
   // dev double-mount and a changed hint each get a fresh one.

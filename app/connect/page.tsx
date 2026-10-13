@@ -7,7 +7,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useRenewModal } from '@/hooks/use-renew-modal'
-import { isPendingRenewal } from '@/hooks/use-app-connect-login'
+import { isPendingRenewal } from '@/lib/app-connect/pending-request'
 import {
   APP_CONNECT_CHANNEL,
   appReturnLink,

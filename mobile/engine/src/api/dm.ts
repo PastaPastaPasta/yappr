@@ -1,11 +1,12 @@
 import { onAnchorKeyRemembered } from '@/lib/app-connect/anchor-key-mark'
 import { messagingAnchorId } from '@/lib/app-connect/config'
+import { hasAppConnectSession } from '@/lib/app-connect/memory-keys'
 import { YAPPR_DM_V5_CONTRACT_ID, dmIsV5, keyNetwork } from '@/lib/constants'
 import { deriveEncryptionKey } from '@/lib/crypto/derive-encryption-key'
 import { validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
 import { validateEncryptionKey } from '@/lib/crypto/key-validation'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
-import { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
+import { getEncryptionKey, getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
 import { getDmEngine, MAX_GROUP_MEMBERS, stopDmEngine } from '@/lib/services/dm-v5'
 import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
@@ -102,9 +103,11 @@ export type DmUnlockResult =
    * `no-key-on-identity`: the identity has no encryption key this app can use or add (legacy builds; App
    * Connect builds when this sign-in's messaging key was disabled): set one up on the web;
    * `needs-setup`: it has no messaging key yet (App Connect builds: `dm.setUpMessaging`);
-   * `not-derivable`: enter it.
+   * `not-derivable`: enter it;
+   * `allow-in-wallet`: signed in with a wallet (App Connect), whose grant did not include the messaging key:
+   * renewing in the wallet with messaging allowed brings it (web's "Allow messaging in your wallet").
    */
-  | { unlocked: false; reason: 'no-key-on-identity' | 'needs-setup' | 'not-derivable' }
+  | { unlocked: false; reason: 'no-key-on-identity' | 'needs-setup' | 'not-derivable' | 'allow-in-wallet' }
 
 /** The result of `dm.setUpMessaging`: the wallet link to approve, or (set up already) what `dm.unlock` answers. */
 export type DmSetupResult = DmUnlockResult | { unlocked: false; reason: 'approve-in-wallet'; uri: string }
@@ -493,6 +496,16 @@ export function createDmModule(options: DmModuleOptions) {
     if (halted) throw new RpcError('Messages are stopped while the account changes', 'RESTART_REQUIRED')
   }
 
+  /**
+   * A wallet (App Connect) sign-in: its messaging key is the anchor key the
+   * wallet granted, held in memory from the key ring. Without it (the wallet
+   * left messaging out), renewing in the wallet with messaging allowed brings it.
+   */
+  async function walletMessaging(identityId: string): Promise<DmUnlockResult> {
+    if (!getEncryptionKey(identityId)) return { unlocked: false, reason: 'allow-in-wallet' }
+    return { unlocked: true, status: await backend.status(identityId) }
+  }
+
   function groupTicket(request: DmGroupAction): WriteTicket {
     const identityId = session()
     const groups = v5('Groups')
@@ -713,6 +726,8 @@ export function createDmModule(options: DmModuleOptions) {
      */
     async unlock(input: { key?: string } | null = {}): Promise<DmUnlockResult> {
       const identityId = session()
+      // A wallet sign-in's messaging key comes from the wallet's grant, never from a typed or derived key.
+      if (hasAppConnectSession(identityId)) return walletMessaging(identityId)
       const anchorId = messagingAnchorId()
       // A failed read is never "no key": lib's identity read throws on network failures (cached for the checks below).
       // App Connect builds read afresh, so a messaging key just set up counts at once.
@@ -761,6 +776,7 @@ export function createDmModule(options: DmModuleOptions) {
     async setUpMessaging(): Promise<DmSetupResult> {
       const identityId = session()
       if (!messagingAnchorId()) throw new RpcError('Setting up messaging is not available on this network', 'NOT_SUPPORTED')
+      if (hasAppConnectSession(identityId)) return walletMessaging(identityId)
       if (!getPrivateKey(identityId)) throw new RpcError('Sign in again to set up messaging.', 'NOT_SIGNED_IN')
       const draft = draftMessagingKey(identityId)
       try {
