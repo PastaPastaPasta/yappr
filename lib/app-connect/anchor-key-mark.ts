@@ -23,13 +23,13 @@ const listeners = new Set<(identityId: string) => void>()
 
 export function rememberAnchorKey(identityId: string, publicKey: Uint8Array): void {
   const hex = bytesToHex(publicKey)
-  if (readScoped(PREFIX + identityId) === hex) return
-  writeScoped(PREFIX + identityId, hex)
-  // A stored key that was unusable may be usable now: let whatever waits on it (the DM engine) start.
+  if (readScoped(PREFIX + identityId) !== hex) writeScoped(PREFIX + identityId, hex)
+  // Every confirmation, even of the same key: the stored copy may only just have come back (a sign-in
+  // after logout), and whatever waits on it (the DM engine) can start now. Starting twice is a no-op.
   for (const listener of Array.from(listeners)) listener(identityId)
 }
 
-/** Called with the identity whenever a newly confirmed anchor key is recorded. Returns the unsubscribe. */
+/** Called with the identity whenever an anchor key is confirmed. Returns the unsubscribe. */
 export function onAnchorKeyRemembered(listener: (identityId: string) => void): () => void {
   listeners.add(listener)
   return () => {

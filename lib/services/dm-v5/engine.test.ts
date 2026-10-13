@@ -387,6 +387,19 @@ describe('DmEngine unreachable 1:1s (the peer has not set up messaging)', () => 
     chain.encryptionKey = lookup
   })
 
+  it('a readiness check that finds a key leaves an attached keyless 1:1 to pick it up, not stuck half-ready', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    const conv = await attachDirect(alice.ctx, entry(ledger, CAROL_ID))
+    expect(conv.convKey).toBeNull()
+    ledger.register(CAROL_ID, CAROL_PRIV)
+    await expect(alice.canMessage(carol58)).resolves.toBe(true)
+    // The cache does not claim a key the conversation lacks: the next poll installs it.
+    expect(alice.getSnapshot().conversations[0].unreachable).toBe(false)
+    await alice.tick()
+    expect(conv.convKey).not.toBeNull()
+  })
+
   it('does not call a failed lookup unreachable, nor forget a known missing key when a re-check fails', async () => {
     const ledger = new MemoryLedger()
     const chain = new MemoryChain(ledger, ALICE_ID)

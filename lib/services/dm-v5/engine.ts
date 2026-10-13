@@ -21,7 +21,7 @@ import {
   type GroupConv,
   type HeldMessage,
 } from './conversation'
-import { attachSaved, createContext, isMe, isUnreachable, peerKey, recheckUnreachable, type DmContext } from './context'
+import { attachSaved, createContext, isMe, isUnreachable, recheckUnreachable, type DmContext } from './context'
 import { ensureStarted, openDirect } from './directs'
 import { applyGroups } from './group-apply'
 import { addMember, createGroup, endGroup, leaveGroup, removeMember, renameGroup, resendKeys } from './groups'
@@ -457,14 +457,23 @@ export class DmEngine {
   /**
    * Whether `peerId` can be messaged: true with an encryption key, false when
    * the lookup found none (they haven't set up messaging), null when it failed.
-   * A "none" answer is looked up again, so a peer who set up since is found.
+   * A fresh read that leaves the conversation-key cache to the serialized
+   * paths: a key found here only clears a cached "no key", so the next lookup
+   * (starting the chat, or the retry for an attached conversation) installs it.
    */
   async canMessage(peerId: string): Promise<boolean | null> {
     const peer = bs58.decode(peerId)
+    let key: Uint8Array | null
+    try {
+      key = await this.ctx.chain.encryptionKey(peer)
+    } catch (error) {
+      logger.debug('DM v5: encryption key lookup failed:', error)
+      return null
+    }
+    if (!key) return false
     const cacheKey = hexId(peer)
     if (this.ctx.peerKeys.get(cacheKey) === null) this.ctx.peerKeys.delete(cacheKey)
-    if (await peerKey(this.ctx, peer)) return true
-    return this.ctx.peerKeys.has(cacheKey) ? false : null
+    return true
   }
 
   /** Open (without writing anything) a 1:1 with `peerId`. Returns its key. */
