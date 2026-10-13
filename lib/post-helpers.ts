@@ -60,21 +60,52 @@ export function getTagDisplayText(tag: string): string {
   return '#' + tag
 }
 
+/** A link in post text: `http(s)://`, `ipfs://` or `www.`. The post renderer (`components/post/post-content.tsx`) links what it matches. */
+export const URL_PATTERN = /(https?:\/\/[^\s<>"']+|ipfs:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g
+
+type TagKind = 'hashtag' | 'cashtag'
+
 /**
- * Extract hashtags from post content
+ * The tag matches of `content` the post renders as tags, in order: each of
+ * `patterns`' matches (group 1 is the tag) less those overlapping a link
+ * that starts earlier, as the renderer drops an overlap. A link's fragment
+ * or query (`…/#install`, `?q=$BTC`) is part of the link, not a tag.
+ */
+function renderedTagMatches(content: string, patterns: Array<{ kind: TagKind; regex: RegExp }>): Array<{ kind: TagKind; tag: string }> {
+  const found: Array<{ kind: TagKind | 'url'; start: number; end: number; tag: string }> = []
+  for (const { kind, regex } of [{ kind: 'url' as const, regex: URL_PATTERN }, ...patterns]) {
+    for (const match of Array.from(content.matchAll(new RegExp(regex.source, 'g')))) {
+      const start = match.index ?? 0
+      found.push({ kind, start, end: start + match[0].length, tag: match[1] ?? match[0] })
+    }
+  }
+  found.sort((a, b) => a.start - b.start)
+  const kept: Array<{ kind: TagKind; tag: string }> = []
+  let lastEnd = 0
+  for (const match of found) {
+    if (match.start < lastEnd) continue
+    lastEnd = match.end
+    if (match.kind !== 'url') kept.push({ kind: match.kind, tag: match.tag })
+  }
+  return kept
+}
+
+/**
+ * Extract hashtags from post content (none inside a link)
  * Max 63 chars to match Dash Platform indexed property constraint
  */
 export function extractHashtags(content: string): string[] {
-  const regex = /#[a-zA-Z0-9_]{1,63}/g
-  const matches = content.match(regex) || []
-  return Array.from(new Set(matches.map(tag => tag.slice(1).toLowerCase()))) // Remove # prefix, lowercase, dedupe
+  const matches = renderedTagMatches(content, [{ kind: 'hashtag', regex: /#([a-zA-Z0-9_]{1,63})/g }])
+  return Array.from(new Set(matches.map(({ tag }) => tag.toLowerCase()))) // lowercase, dedupe
 }
 
 /**
  * The tags a post is indexed under, in storage form: the content's hashtags
  * in order, then its cashtags, distinct, at most `max` of them, each at most
- * `maxLength` characters (a longer one is truncated to its first `maxLength`). With `max` 1 that is the first hashtag, or the first cashtag when
- * there is none: the one-tag cuts' rule. `[]` when the content names no tag.
+ * `maxLength` characters (a longer one is truncated to its first `maxLength`).
+ * A tag inside a link is none, as the post renders it. With `max` 1 that is
+ * the first hashtag, or the first cashtag when there is none: the one-tag
+ * cuts' rule. `[]` when the content names no tag.
  *
  * `maxLength` is the contract's pattern ceiling (`HASHTAG_MAX_LENGTH` in
  * lib/contract-topology, 61: the ranked key-size limit). It is required so no
@@ -86,12 +117,12 @@ export function indexedTags(content: string, max: number, maxLength: number): st
   const add = (tag: string) => {
     if (tag !== '' && tags.length < max && !tags.includes(tag)) tags.push(tag)
   }
-  for (const match of Array.from(content.matchAll(new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`, 'g')))) {
-    add(match[1].toLowerCase())
-  }
-  for (const match of Array.from(content.matchAll(/\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g))) {
-    add(cashtagDisplayToStorage(match[1], maxLength))
-  }
+  const matches = renderedTagMatches(content, [
+    { kind: 'hashtag', regex: new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`, 'g') },
+    { kind: 'cashtag', regex: /\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g },
+  ])
+  for (const { tag } of matches.filter(({ kind }) => kind === 'hashtag')) add(tag.toLowerCase())
+  for (const { tag } of matches.filter(({ kind }) => kind === 'cashtag')) add(cashtagDisplayToStorage(tag, maxLength))
   return tags
 }
 
@@ -109,15 +140,14 @@ export function storedTags(value: unknown): string[] | undefined {
 }
 
 /**
- * Extract cashtags from post content (e.g., $DASH, $BTC)
+ * Extract cashtags from post content (e.g., $DASH, $BTC; none inside a link)
  * Returns tags in storage format (e.g., "dash_cashtag")
  */
 export function extractCashtags(content: string): string[] {
-  const regex = /\$[a-zA-Z][a-zA-Z0-9_]{0,62}/g
-  const matches = content.match(regex) || []
+  const matches = renderedTagMatches(content, [{ kind: 'cashtag', regex: /\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g }])
   return Array.from(new Set(
-    matches.map(tag => tag.slice(1).toLowerCase() + CASHTAG_SUFFIX)
-  )) // Remove $ prefix, lowercase, add suffix, dedupe
+    matches.map(({ tag }) => tag.toLowerCase() + CASHTAG_SUFFIX)
+  )) // lowercase, add suffix, dedupe
 }
 
 /**

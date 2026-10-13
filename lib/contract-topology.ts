@@ -990,8 +990,8 @@ export function hashtagsAreInline(): boolean {
 export interface InlineTags {
   /**
    * `hashtag` (v9–v15: one optional string) or `tags` (v16: an optional typed
-   * array of distinct tags, at least one, in the order the content names
-   * them).
+   * array of distinct tags, at least one: the content's hashtags in the order
+   * it names them, then its cashtags in that order).
    */
   readonly field: 'hashtag' | 'tags'
   /**

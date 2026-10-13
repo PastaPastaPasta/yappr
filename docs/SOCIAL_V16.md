@@ -56,7 +56,7 @@ Tag reads change shape on v16, because an index over a typed array is read with 
 Set `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v16` together with `NEXT_PUBLIC_YAPPR_CONTRACT_ID` and `NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`, as on v15. The descriptor is v15's, with the like's tag field and the tombstone's kept list switched to `tags`. On every inline cut, a post's tags are a list in memory (`Post.tags`: `[]` untagged, `undefined` unknown):
 
 - `inlineTags()` (lib/contract-topology.ts) is `{ field: 'tags', max: 4, isArray: true }` on v16 and `{ field: 'hashtag', max: 1, isArray: false }` on v9 to v15. `tagFieldsFor` and `inlinePostTags` (on `storedTags` in lib/post-helpers.ts) translate between the list and the chain spelling at the boundary.
-- A post's tags come from `indexedTags(content, max, 61)` (lib/post-helpers.ts): the hashtags in content order, then the cashtags, distinct, at most `max`. `tagLimitProblem` refuses a v16 post that names more than four.
+- A post's tags come from `indexedTags(content, max, 61)` (lib/post-helpers.ts): the hashtags in content order, then the cashtags, distinct, at most `max`, none inside a link (as the post renders it, a URL's `#fragment` or `?q=$BTC` is part of the link). `tagLimitProblem` refuses a v16 post that names more than four.
 - A like and its unlike repeat the post's stored list unchanged.
 - The tag pages read `postsTaggedQuery` (post-service). The per-tag rankings pin `tagPin` and trending groups by `tagGroupBy` (ranked-likes).
 

@@ -58,21 +58,37 @@ const sameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array &
 /** The suffix a cashtag is stored with (`$DASH` is `dash_cashtag`), as lib/post-helpers.ts writes it. */
 const CASHTAG_SUFFIX = '_cashtag';
 
+/** A link in post text, as lib/post-helpers.ts `URL_PATTERN` (the renderer's): a tag inside one is none. */
+const URL_PATTERN = /(https?:\/\/[^\s<>"']+|ipfs:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g;
+
 /**
  * The tags `content` is indexed under, in storage form, by the web client's
  * rule (`indexedTags` in lib/post-helpers.ts): the hashtags in content order,
  * then the cashtags, lowercase, distinct, at most `max` of them, each cut to
- * `maxLength` characters (a cashtag's ceiling includes its suffix). With
- * `max` 1 that is the one-tag cuts' rule: the first hashtag, else the first
- * cashtag. `[]` when the content names no tag.
+ * `maxLength` characters (a cashtag's ceiling includes its suffix), none
+ * inside a link (a match overlapping a link that starts earlier is dropped,
+ * as the renderer drops it). With `max` 1 that is the one-tag cuts' rule: the
+ * first hashtag, else the first cashtag. `[]` when the content names no tag.
  */
 export function indexedTags(content, max, maxLength) {
+  const found = [];
+  for (const [kind, regex] of [['url', URL_PATTERN], ['hashtag', new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`, 'g')], ['cashtag', /\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g]]) {
+    for (const match of content.matchAll(new RegExp(regex.source, 'g'))) found.push({ kind, start: match.index, end: match.index + match[0].length, tag: match[1] });
+  }
+  found.sort((a, b) => a.start - b.start);
+  const rendered = [];
+  let lastEnd = 0;
+  for (const match of found) {
+    if (match.start < lastEnd) continue;
+    lastEnd = match.end;
+    if (match.kind !== 'url') rendered.push(match);
+  }
   const tags = [];
   const add = (tag) => {
     if (tag !== '' && tags.length < max && !tags.includes(tag)) tags.push(tag);
   };
-  for (const match of content.matchAll(new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`, 'g'))) add(match[1].toLowerCase());
-  for (const match of content.matchAll(/\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g)) add(match[1].slice(0, maxLength - CASHTAG_SUFFIX.length).toLowerCase() + CASHTAG_SUFFIX);
+  for (const { tag } of rendered.filter(({ kind }) => kind === 'hashtag')) add(tag.toLowerCase());
+  for (const { tag } of rendered.filter(({ kind }) => kind === 'cashtag')) add(tag.slice(0, maxLength - CASHTAG_SUFFIX.length).toLowerCase() + CASHTAG_SUFFIX);
   return tags;
 }
 

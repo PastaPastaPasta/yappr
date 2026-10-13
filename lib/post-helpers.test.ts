@@ -91,6 +91,14 @@ describe('tag list (v16)', () => {
     expect(indexedTags('nothing to index, $1bad', 4, 61)).toEqual([])
   })
 
+  it('counts no tag inside a link, as the post renders it (a fragment, a query)', () => {
+    const text = 'gm #dash #news #btc #eth see https://docs.dash.org/en/stable/#install and https://x.com/search?q=$BTC'
+    expect(indexedTags(text, Number.MAX_SAFE_INTEGER, 61)).toEqual(['dash', 'news', 'btc', 'eth'])
+    expect(indexedTags('www.example.com/#a ipfs://cid/#b $ETH', 4, 61)).toEqual(['eth_cashtag'])
+    expect(extractHashtags('#a https://x.org/#b #c')).toEqual(['a', 'c'])
+    expect(extractCashtags('$DASH https://x.org/?q=$BTC')).toEqual(['dash_cashtag'])
+  })
+
   it('truncates each tag to the ceiling and counts a truncated duplicate once', () => {
     const long = 'a'.repeat(70)
     expect(indexedTags(`#${long} #${'a'.repeat(61)} #b`, 4, 61)).toEqual(['a'.repeat(61), 'b'])

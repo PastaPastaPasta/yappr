@@ -11,7 +11,7 @@ import { useLinkPreview } from '@/hooks/use-link-preview'
 import { extractFirstUrl, stripFirstUrlAndTrim, stripTrailingPunctuation } from '@/lib/link-preview/urls'
 import { useYapprPostReference } from '@/hooks/use-yappr-post-reference'
 import { useSettingsStore } from '@/lib/store'
-import { cashtagDisplayToStorage, hashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
+import { URL_PATTERN, cashtagDisplayToStorage, hashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
 import { HASHTAG_MAX_LENGTH, hashtagsAreInline } from '@/lib/contract-topology'
 import { MentionLink } from './mention-link'
 import { cn, isEmojiOnly } from '@/lib/utils'
@@ -101,7 +101,8 @@ export function PostContent({
     // Patterns for inline elements (hashtags, cashtags, mentions, urls)
     const inlinePatterns: Array<{ regex: RegExp; type: PartType }> = [
       // URLs: http://, https://, ipfs://, or www. prefixed
-      { regex: /(https?:\/\/[^\s<>\"\']+|ipfs:\/\/[^\s<>\"\']+|www\.[^\s<>\"\']+)/g, type: 'url' },
+      // (shared with the tag extraction, so a tag inside a link is never indexed)
+      { regex: URL_PATTERN, type: 'url' },
       // Hashtags: # followed by alphanumeric/underscore (1-63 chars)
       { regex: /#([a-zA-Z0-9_]{1,63})/g, type: 'hashtag' },
       // Cashtags: $ followed by letter then alphanumeric/underscore (1-63 chars total)

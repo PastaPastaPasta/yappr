@@ -513,8 +513,8 @@ class PostService extends BaseDocumentService<Post> {
     // provided. v10 has no `language` property at all (one global timeline).
     if (postsHaveLanguage()) data.language = options.language || 'en';
 
-    // The indexed tags — the hashtags, then the cashtags, in content order,
-    // from the PUBLIC content only (`data.content` is already the
+    // The indexed tags — the hashtags in content order, then the cashtags in
+    // content order, none inside a link — from the PUBLIC content only (`data.content` is already the
     // teaser/placeholder for private posts, so encrypted text never leaks
     // into the index). Through v15 that is the first one, the rest staying
     // plain text; a v16 post holds at most four and names no tag it is not
