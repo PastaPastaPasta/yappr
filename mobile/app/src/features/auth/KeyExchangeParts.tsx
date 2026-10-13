@@ -174,16 +174,16 @@ export function DevWalletUri({ uri }: { uri: string | null }) {
 }
 
 /** Poll again whenever the app comes back to the foreground (AUTH-03): the user may have just approved. */
-export function useForegroundRepoll(): void {
+export function useForegroundRepoll(onForeground: () => void = walletReturned): void {
   const lastState = useRef(AppState.currentState);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       const previous = lastState.current;
       lastState.current = state;
-      if (state === 'active' && previous !== 'active') walletReturned();
+      if (state === 'active' && previous !== 'active') onForeground();
     });
     return () => subscription.remove();
-  }, []);
+  }, [onForeground]);
 }
 
 /** The QR screens keep the display awake while shown (AUTH-04). */

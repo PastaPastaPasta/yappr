@@ -1,5 +1,4 @@
-import type { AppConnectFlowDTO, SessionDTO } from '@engine/api';
-import { Linking } from 'react-native';
+import type { AppConnectFlowDTO } from '@engine/api';
 import { create } from 'zustand';
 
 import { config } from '~/config';
@@ -12,6 +11,7 @@ import { syncStorage } from '~/state/storage';
 import { loadSignedInAgain } from './accounts';
 import { copy } from './copy';
 import { walletErrorText } from './errors';
+import { openLink } from './key-exchange';
 import { networkName } from './onboarding';
 
 /**
@@ -35,7 +35,7 @@ export type AppConnectStep =
   /** The engine's flow decides what shows (`flow`). */
   | { name: 'flow' }
   | { name: 'accepting' }
-  | { name: 'done'; session: SessionDTO }
+  | { name: 'done' }
   | { name: 'error'; title: string; message: string };
 
 interface AppConnectState {
@@ -72,15 +72,13 @@ const stale = (gen: number) => gen !== generation;
 const MODE_KEY = 'yappr.signin.connect-mode';
 export const lastAppConnectMode = (): AppConnectMode => (syncStorage.getItem(MODE_KEY) === 'qr' ? 'qr' : 'wallet');
 
+/** The `dash-key:` link of the flow's request, when it has one. */
+export const flowUri = (flow: AppConnectFlowDTO | null): string | null => (flow && 'uri' in flow ? flow.uri : null);
+
 /** Opens the wallet on this device with the current request (`dash-key:` link). */
 export function openWallet(): void {
-  const flow = get().flow;
-  const uri = flow && 'uri' in flow ? flow.uri : null;
-  if (!uri) return;
-  Linking.openURL(uri).catch((error: unknown) => {
-    appendLog('info', 'host', `No app opened the wallet link: ${errorMessage(error)}`);
-    set({ walletOpenFailed: true });
-  });
+  const uri = flowUri(get().flow);
+  if (uri) openLink(uri, () => set({ walletOpenFailed: true }));
 }
 
 /** Whether a sign-in or renewal is waiting on the wallet (its return link lands here). */
@@ -213,22 +211,17 @@ export async function acceptAccount(identityId: string): Promise<void> {
   set({ step: { name: 'accepting' } });
   try {
     const result = await engine.api.session.appConnectAccept({ identityId });
-    let { session } = result;
-    if (result.status === 'signed-in' && result.reload) session = await loadSignedInAgain(session);
+    if (result.status === 'signed-in' && result.reload) await loadSignedInAgain(result.session);
     if (stale(gen)) return;
-    set({ step: { name: 'done', session } });
+    set({ step: { name: 'done' } });
   } catch (error) {
     if (stale(gen)) return;
     appendLog('warn', 'host', `Wallet sign-in failed: ${errorMessage(error)}`);
-    set({
-      step: {
-        name: 'error',
-        title: renew ? copy.renew.failed : copy.signin.failed,
-        message: errorCode(error) === 'BAD_REQUEST' && /signed in/i.test(errorMessage(error))
-          ? walletErrorText(error, networkName)
-          : renew ? copy.renew.acceptFailed : copy.connect.acceptFailed,
-      },
-    });
+    // Refused because an account is signed in already: say so; anything else, start over.
+    const slotTaken = errorCode(error) === 'BAD_REQUEST' && /signed in/i.test(errorMessage(error));
+    let message: string = renew ? copy.renew.acceptFailed : copy.connect.acceptFailed;
+    if (slotTaken) message = walletErrorText(error, networkName);
+    set({ step: { name: 'error', title: renew ? copy.renew.failed : copy.signin.failed, message } });
   }
 }
 

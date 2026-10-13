@@ -14,8 +14,7 @@ import { useColors } from '~/ui/tokens';
 import { reauthenticate } from './accounts';
 import { startAppConnectStatusSync, useAppConnectStatus, useRevokedNotice } from './app-connect-status';
 import { copy } from './copy';
-
-const inSignIn = (pathname: string) => pathname === '/sign-in' || pathname.startsWith('/sign-in/');
+import { inSignIn } from './navigation';
 
 /**
  * The App Connect session's prompts (web's `AppConnectSessionNotices`),
@@ -51,7 +50,6 @@ export function AppConnectNotices({ ready }: { ready: boolean }) {
     engine.api.session.appConnectDismiss({ renewRequired: true }).catch(() => undefined);
     router.push(`/sign-in/renew?reason=${renewRequired}`);
   }, [walletSession, renewRequired, blocked]);
-
 
   return (
     <Dialog open={revoked !== null && ready} onClose={dismiss} testID="wallet-signed-out">

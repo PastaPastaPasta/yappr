@@ -1,5 +1,8 @@
 import { router, useNavigation } from 'expo-router';
 
+/** Whether `pathname` is one of the sign-in modal's screens. */
+export const inSignIn = (pathname: string) => pathname === '/sign-in' || pathname.startsWith('/sign-in/');
+
 /**
  * Closes the whole sign-in modal from any of its screens, back to wherever
  * the user was (PD-7). The screens sit in the sign-in stack, whose parent is

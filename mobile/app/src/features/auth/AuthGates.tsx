@@ -21,11 +21,11 @@ import { AppConnectNotices } from './AppConnectNotices';
 import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
+import { inSignIn } from './navigation';
 import { setWelcomed, useOnboarding } from './onboarding';
 import { useHasAcceptedTerms } from './terms';
 import { TopOverlay } from './TopOverlay';
 
-const inSignIn = (pathname: string) => pathname === '/sign-in' || pathname.startsWith('/sign-in/');
 
 /**
  * First launch, and the first launch after the last account signed out:

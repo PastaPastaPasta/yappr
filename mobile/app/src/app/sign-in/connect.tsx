@@ -1,7 +1,7 @@
 import type { AppConnectCandidateDTO } from '@engine/api';
 import { Stack, useLocalSearchParams, useNavigation, useRoute } from 'expo-router';
 import { useEffect, useRef, type ReactNode } from 'react';
-import { AppState, View } from 'react-native';
+import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -10,6 +10,7 @@ import {
   acceptAccount,
   cancelAppConnect,
   checkAgain,
+  flowUri,
   notMe,
   openWallet,
   pollNow,
@@ -19,7 +20,15 @@ import {
   useAppConnect,
 } from '~/features/auth/app-connect';
 import { copy } from '~/features/auth/copy';
-import { CopyLinkButton, DevWalletUri, KeepAwake, QrCard, StatusBlock, WaitingLine } from '~/features/auth/KeyExchangeParts';
+import {
+  CopyLinkButton,
+  DevWalletUri,
+  KeepAwake,
+  QrCard,
+  StatusBlock,
+  useForegroundRepoll,
+  WaitingLine,
+} from '~/features/auth/KeyExchangeParts';
 import { links, openInApp } from '~/features/auth/onboarding';
 import { useCloseSignIn } from '~/features/auth/navigation';
 import { HeaderClose, SignInBody } from '~/features/auth/SignInChrome';
@@ -62,19 +71,6 @@ function AccountCard({ candidate, testID }: { candidate: AppConnectCandidateDTO;
   );
 }
 
-/** Poll at once whenever the app comes back to the foreground: the user may have just approved. */
-function useForegroundPoll(): void {
-  const last = useRef(AppState.currentState);
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      const previous = last.current;
-      last.current = state;
-      if (state === 'active' && previous !== 'active') pollNow();
-    });
-    return () => subscription.remove();
-  }, []);
-}
-
 /**
  * Wallet sign-in on App Connect builds (UX_SPEC §4.3/§4.4 states; web's App
  * Connect panel): the request opens the wallet on this device (`mode=wallet`)
@@ -91,7 +87,8 @@ export default function ConnectScreen() {
   const navigation = useNavigation();
   const { key } = useRoute();
   const first = navigation.getState()?.routes[0]?.key === key;
-  useForegroundPoll();
+  // Back in the foreground the user may have just approved: check at once.
+  useForegroundRepoll(pollNow);
 
   useEffect(() => {
     startAppConnect(params.mode === 'qr' ? 'qr' : 'wallet', { renew, resume: params.resume === '1' }).catch(() => undefined);
@@ -136,7 +133,8 @@ export default function ConnectScreen() {
 
   let body: ReactNode;
   let footer: ReactNode = null;
-  const uri = flow && 'uri' in flow ? flow.uri : null;
+  const uri = flowUri(flow);
+  const tryAgain = <Button label={copy.signin.tryAgain} size="block" onPress={startOver} testID="kx-try-again" />;
 
   if (step.name === 'idle' || step.name === 'starting' || (step.name === 'flow' && flow?.phase === 'checking')) {
     body = <StatusBlock tone="busy" title={copy.signin.starting} />;
@@ -146,13 +144,11 @@ export default function ConnectScreen() {
     body = <StatusBlock tone="done" title={renew ? copy.renew.renewed : copy.signin.signedIn} testID="kx-signed-in" />;
   } else if (step.name === 'error') {
     body = <StatusBlock tone="error" title={step.title} body={step.message} testID="kx-error" />;
-    footer = <Button label={copy.signin.tryAgain} size="block" onPress={startOver} testID="kx-try-again" />;
+    footer = tryAgain;
   } else if (flow?.phase === 'unavailable') {
     const text = copy.connect.unavailable[flow.reason];
     body = <StatusBlock tone="error" title={text.title} body={text.body} testID="ac-unavailable" />;
-    if (flow.reason === 'offline' || flow.reason === 'storage') {
-      footer = <Button label={copy.signin.tryAgain} size="block" onPress={startOver} testID="kx-try-again" />;
-    }
+    if (flow.reason === 'offline' || flow.reason === 'storage') footer = tryAgain;
   } else if (flow?.phase === 'too-many') {
     body = <StatusBlock tone="waiting" title={copy.connect.tooManyTitle} body={copy.connect.tooManyBody} testID="ac-too-many" />;
     footer = <Button label={copy.connect.startAgain} size="block" onPress={startOver} testID="ac-start-again" />;
