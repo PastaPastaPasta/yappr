@@ -68,7 +68,7 @@ import { CENTS_PER_MILLION_CREDITS, createBattery, personaActor } from './batter
 import { CRITICAL_AUTH_KEY_ID, KEY_ROLES, REPO_ROOT, deriveIdentityKeys, loadIdentityIds, loadMnemonic, readEnvFile } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
 import { connectSdk, network } from './sdk-env.mjs';
-import { createSdkHandle, ledgerEntry, loadLedger } from './seed/seed-lib.mjs';
+import { asBase58, createSdkHandle, ledgerEntry, loadLedger } from './seed/seed-lib.mjs';
 import { SURFACES, SURFACE_CONTRACT_ENV, cleanBlog, cleanPollr, cleanStorefront, printReport } from './surface-cleanup.mjs';
 import { cleanTestContent, parseSince, refuseIdentities, surveyTimeline } from './test-content-cleanup.mjs';
 
@@ -217,7 +217,14 @@ async function cleanFeatures(args, maker) {
   const handle = createSdkHandle({ contractIds: Object.values(contracts) });
   await handle.connect();
   const owners = await personasOf(args, handle);
-  refuseIdentities(owners.map(({ ownerId, label }) => ({ id: ownerId, label })), [maker]);
+  // Never the maker, nor the owner of a contract being cleaned (its moderator removals and own content are not test content).
+  const contractOwners = [];
+  for (const [surface, id] of Object.entries(contracts)) {
+    const contract = await handle.sdk.contracts.fetch(id);
+    if (!contract) throw new Error(`--surface ${surface}: no contract ${id} on this network`);
+    contractOwners.push(asBase58(contract.ownerId));
+  }
+  refuseIdentities(owners.map(({ ownerId, label }) => ({ id: ownerId, label })), [maker, ...contractOwners]);
   console.log(JSON.stringify({ network: network(), mode: args.mode, since: new Date(args.since).toISOString(), contracts, owners: owners.map(({ ownerId, label }) => ({ label, id: ownerId })) }));
   let ok = true;
   for (const surface of features) {
