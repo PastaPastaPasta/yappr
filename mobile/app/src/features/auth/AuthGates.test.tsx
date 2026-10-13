@@ -290,3 +290,31 @@ describe('an "Add account" the last launch was killed in (NEW-R-vi-001)', () => 
     expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
   });
 });
+
+describe('a renewal the last launch was killed in (the wallet was open)', () => {
+  const wallet = { ...alice, method: 'app-connect' as const };
+  beforeEach(() => {
+    act(() => acceptTerms('devnet-test', 'alice'));
+    fakeEngine.setStatus({ state: 'ready', epoch: 1, info: { capabilities: { walletSignIn: 'app-connect' } as never } });
+  });
+
+  it('reopens it for an account signed in with a wallet', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    fakeEngine.method('session.appConnectPending').mockResolvedValue(true);
+    mount('/');
+    await flush();
+    expect(fakeEngine.method('session.appConnectPending')).toHaveBeenCalledWith({ renew: true });
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?renew=1&mode=(wallet|qr)&resume=1$/));
+  });
+
+  it('asks nothing for an account signed in with a key, and opens nothing without a waiting renewal', async () => {
+    fakeEngine.method('session.appConnectPending').mockResolvedValue(false);
+    mount('/');
+    await flush();
+    expect(fakeEngine.method('session.appConnectPending')).not.toHaveBeenCalled();
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    mount('/');
+    await flush();
+    expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+  });
+});

@@ -19,6 +19,7 @@ import {
   switchToQr,
   useAppConnect,
 } from '~/features/auth/app-connect';
+import { useAccounts } from '~/features/auth/accounts';
 import { copy } from '~/features/auth/copy';
 import {
   CopyLinkButton,
@@ -91,7 +92,9 @@ export default function ConnectScreen() {
   useForegroundRepoll(pollNow);
 
   useEffect(() => {
-    startAppConnect(params.mode === 'qr' ? 'qr' : 'wallet', { renew, resume: params.resume === '1' }).catch(() => undefined);
+    // Signing an account in again ("Sign in again"): only that account may answer.
+    const reauth = renew ? null : useAccounts.getState().reauth;
+    startAppConnect(params.mode === 'qr' ? 'qr' : 'wallet', { renew, reauth, resume: params.resume === '1' }).catch(() => undefined);
     // Leaving the screen any way but by finishing abandons the request.
     return () => {
       if (useAppConnect.getState().step.name !== 'done') cancelAppConnect();
@@ -128,7 +131,7 @@ export default function ConnectScreen() {
     close();
   };
   const startOver = () => {
-    startAppConnect(mode, { renew, fresh: true }).catch(() => undefined);
+    startAppConnect(mode, { renew, reauth: useAppConnect.getState().reauth, fresh: true }).catch(() => undefined);
   };
 
   let body: ReactNode;

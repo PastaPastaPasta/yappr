@@ -80,6 +80,8 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
   let login: AppConnectLogin | null = null
   /** The identity a renewal is for; undefined for a sign-in. */
   let renewFor: string | undefined
+  /** The only identity that may answer (a renewal's, or the account signed in again), if any. */
+  let hint: string | undefined
   let flow = 0
   let state: AppConnectFlowDTO = { flow, renew: false, phase: 'idle' }
   /** The login state last seen, so a confirm whose names resolve late is dropped once superseded. */
@@ -125,6 +127,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     login = null
     latest = null
     renewFor = undefined
+    hint = undefined
   }
 
   /** Ends the flow: the host hears it is idle. */
@@ -139,12 +142,16 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     /** The identity the running flow renews, if it is a renewal. */
     renewing: (): string | undefined => renewFor,
 
+    /** The only identity the running flow accepts, if it names one. */
+    hint: (): string | undefined => hint,
+
     /**
-     * Starts a sign-in (or, with `identityHint`, a renewal only that identity
-     * may answer), resuming the stored request of the same kind unless
-     * `fresh`. Resolves once the request is ready (or unavailable).
+     * Starts a sign-in, resuming the stored request of the same kind unless
+     * `fresh`. With `identityHint` only that identity may answer: a renewal
+     * (`renew`), or an account signed in again. Resolves once the request is
+     * ready (or unavailable).
      */
-    async start(input: { identityHint?: string; fresh?: boolean; returnTo: unknown }): Promise<AppConnectFlowDTO> {
+    async start(input: { identityHint?: string; renew?: boolean; fresh?: boolean; returnTo: unknown }): Promise<AppConnectFlowDTO> {
       if (!isAppConnectBuild()) throw new RpcError('This network signs in with the wallet key exchange', 'NOT_SUPPORTED')
       const returnTo = checkReturn(input.returnTo)
       stop()
@@ -152,10 +159,11 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       const pins = appConnectPins()
       // An App Connect build without its pinned anchor and group (web: "not-configured").
       if (!pins) {
-        set({ flow: id, renew: input.identityHint !== undefined, phase: 'unavailable', reason: 'not-configured' })
+        set({ flow: id, renew: input.renew === true, phase: 'unavailable', reason: 'not-configured' })
         return state
       }
-      renewFor = input.identityHint
+      hint = input.identityHint
+      renewFor = input.renew ? input.identityHint : undefined
       const instance = new AppConnectLogin({
         pins,
         network: appConnectSessions.network(),
@@ -207,10 +215,14 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       return grant
     },
 
-    /** Whether a sign-in request is still stored and answerable (the app was killed while the wallet was open). */
-    async pending(): Promise<boolean> {
+    /**
+     * Whether a request is still stored and answerable (the app was killed
+     * while the wallet was open): a sign-in's, or with `identityHint` the
+     * request only that identity may answer (a renewal's).
+     */
+    async pending(identityHint?: string): Promise<boolean> {
       if (!isAppConnectBuild() || !appConnectPins()) return false
-      return (await requestRecordsFor(undefined).load()) !== null
+      return (await requestRecordsFor(identityHint).load()) !== null
     },
   }
 }

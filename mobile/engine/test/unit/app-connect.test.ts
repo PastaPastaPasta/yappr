@@ -354,6 +354,8 @@ describe('App Connect sign-in', () => {
     const started = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
     if (started.phase !== 'waiting') throw new Error(`expected waiting, got ${started.phase}`)
     expect(started.renew).toBe(true)
+    // Kept for the app to resume, should it be killed while the wallet answers.
+    expect(await session.appConnectPending({ renew: true })).toBe(true)
     const { request } = auth.parseAppConnectUri(started.uri)
     expect(bs58.encode(request.identityHint ?? new Uint8Array())).toBe(OWNER)
     // This device's connection id: the wallet supersedes this device's grant, no other.
@@ -485,5 +487,16 @@ describe('App Connect sign-in', () => {
     } finally {
       byHash.mockRestore()
     }
+  })
+
+  it('signs an account in again only as that account', async () => {
+    await expect(session.appConnectStart({ reauth: 'not-an-id', returnTo: RETURN_TO })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    const started = await session.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    if (started.phase !== 'waiting') throw new Error('not waiting')
+    expect(started.renew).toBe(false)
+    const { request } = auth.parseAppConnectUri(started.uri)
+    expect(bs58.encode(request.identityHint ?? new Uint8Array())).toBe(OWNER)
+    await expect(session.appConnectAccept({ identityId: MAKER })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await session.appConnectCancel()
   })
 })

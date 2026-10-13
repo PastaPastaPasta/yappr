@@ -41,6 +41,8 @@ export type AppConnectStep =
 interface AppConnectState {
   mode: AppConnectMode;
   renew: boolean;
+  /** Signing this account in again ("Sign in again"): only it may answer. */
+  reauth: string | null;
   step: AppConnectStep;
   flow: AppConnectFlowDTO | null;
   /** No app on this device opened the wallet link. */
@@ -52,6 +54,7 @@ interface AppConnectState {
 const initial: AppConnectState = {
   mode: 'wallet',
   renew: false,
+  reauth: null,
   step: { name: 'idle' },
   flow: null,
   walletOpenFailed: false,
@@ -129,8 +132,8 @@ function listen(): void {
     flowEpoch = epoch;
     // The engine restarted under a waiting request: pick the stored request up again.
     if (get().step.name === 'flow') {
-      const { mode, renew } = get();
-      startAppConnect(mode, { renew, resume: true }).catch(() => undefined);
+      const { mode, renew, reauth } = get();
+      startAppConnect(mode, { renew, reauth, resume: true }).catch(() => undefined);
     }
   });
 }
@@ -155,19 +158,25 @@ function receive(flow: AppConnectFlowDTO): void {
  */
 export async function startAppConnect(
   mode: AppConnectMode,
-  { renew = false, resume = false, fresh = false }: { renew?: boolean; resume?: boolean; fresh?: boolean } = {},
+  {
+    renew = false,
+    reauth = null,
+    resume = false,
+    fresh = false,
+  }: { renew?: boolean; reauth?: string | null; resume?: boolean; fresh?: boolean } = {},
 ): Promise<void> {
   listen();
   followEpoch(engineSupervisor.getStatus().epoch);
   const gen = next();
-  if (!renew) syncStorage.setItem(MODE_KEY, mode);
+  syncStorage.setItem(MODE_KEY, mode);
   openOnReady = !resume;
   floor = lastFlow;
-  set({ ...initial, mode, renew, rejected: get().rejected && fresh, step: { name: 'starting' } });
+  set({ ...initial, mode, renew, reauth: renew ? null : reauth, rejected: get().rejected && fresh, step: { name: 'starting' } });
   try {
     flowEpoch = engineSupervisor.getStatus().epoch;
     const flow = await engine.api.session.appConnectStart({
       renew,
+      ...(reauth && !renew ? { reauth } : {}),
       fresh,
       returnTo: { webBasePath: config.webBasePath, scheme: config.scheme },
     });
@@ -184,7 +193,7 @@ export async function startAppConnect(
 
 /** Shows the request as a QR code instead (the wallet is on another device), keeping the same request. */
 export function switchToQr(): void {
-  if (!get().renew) syncStorage.setItem(MODE_KEY, 'qr');
+  syncStorage.setItem(MODE_KEY, 'qr');
   set({ mode: 'qr', walletOpenFailed: false });
 }
 

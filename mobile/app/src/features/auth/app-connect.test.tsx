@@ -11,7 +11,7 @@ import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 
-import { afterSignOut, loadSignedInAgain, reauthenticate } from './accounts';
+import { afterSignOut, loadSignedInAgain, reauthenticate, useAccounts } from './accounts';
 import { parseAppConnectReturn, takeAppConnectReturnLink, useAppConnect } from './app-connect';
 import { useRevokedNotice } from './app-connect-status';
 import { AppConnectNotices } from './AppConnectNotices';
@@ -191,6 +191,16 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(fakeEngine.method('session.appConnectStart')).toHaveBeenLastCalledWith(expect.objectContaining({ fresh: false }));
     act(() => fakeEngine.emit('session.appConnect', flow({ phase: 'confirm', uri: URI, requestHash: HASH, flow: 1, candidates: [{ identityId: alice.identityId, username: 'alice' }] })));
     expect(useAppConnect.getState().flow).toMatchObject({ phase: 'confirm', flow: 1 });
+  });
+
+  it('signs an account in again only as that account', async () => {
+    useAccounts.setState({ reauth: alice.identityId });
+    try {
+      await open({ mode: 'qr' });
+      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledWith(expect.objectContaining({ renew: false, reauth: alice.identityId }));
+    } finally {
+      useAccounts.setState({ reauth: null });
+    }
   });
 
   it('never renews for an account that is not the one signed in', async () => {

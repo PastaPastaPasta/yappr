@@ -1,4 +1,4 @@
-import { PlatformAuthController, type AuthUser } from 'platform-auth'
+import { PlatformAuthController, decodeYapprIdentityId, type AuthUser } from 'platform-auth'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
@@ -131,6 +131,15 @@ export interface SessionModuleOptions {
    * module adds to it; the controller and `dm.unlock` read it.
    */
   unhydrated?: Set<string>
+}
+
+/** A Platform identity id: 32 bytes in base58. */
+function isIdentityId(value: string): boolean {
+  try {
+    return decodeYapprIdentityId(value).length === 32
+  } catch {
+    return false
+  }
 }
 
 /** AuthUser.balance (a number of credits) as the DTOs carry credits. */
@@ -424,7 +433,14 @@ export function createSessionModule(options: SessionModuleOptions) {
       deferredRevoke = identityId
       return
     }
-    signOutRevoked(identityId)
+    // The app was killed while the wallet answered a renewal: the host resumes that renewal at launch.
+    appConnect.pending(identityId)
+      .catch(() => false)
+      .then(waiting => {
+        if (waiting) deferredRevoke = identityId
+        else signOutRevoked(identityId)
+      })
+      .catch(error => logger.error('Handling a revoke failed:', error))
   })
 
   /**
@@ -437,7 +453,10 @@ export function createSessionModule(options: SessionModuleOptions) {
    */
   async function acceptAppConnect(identityId: string): Promise<AppConnectAcceptDTO> {
     const renewing = appConnect.renewing()
-    if (renewing !== undefined && renewing !== identityId) throw new RpcError('The renewal came from another account', 'BAD_REQUEST')
+    const hint = appConnect.hint()
+    if (hint !== undefined && hint !== identityId) {
+      throw new RpcError(renewing ? 'The renewal came from another account' : 'The answer came from another account', 'BAD_REQUEST')
+    }
     const active = registry.activeIdentityId()
     if (renewing !== undefined && active === identityId && controller.getState().user?.identityId === identityId) {
       const grant = appConnect.accept(identityId)
@@ -636,19 +655,26 @@ export function createSessionModule(options: SessionModuleOptions) {
      * prefix and scheme, for the wallet's return link. The flow reports every
      * change as `session.appConnect`.
      */
-    async appConnectStart(opts: { renew?: boolean; fresh?: boolean; returnTo: AppConnectReturn }): Promise<AppConnectFlowDTO> {
+    async appConnectStart(opts: { renew?: boolean; reauth?: string; fresh?: boolean; returnTo: AppConnectReturn }): Promise<AppConnectFlowDTO> {
       assertUsable()
       await restored()
       const active = registry.activeIdentityId()
       let identityHint: string | undefined
       if (opts?.renew) {
-        if (!active || !appConnectSessions.current(active)) throw new RpcError('Only an account signed in with a wallet can renew', 'BAD_REQUEST')
+        // A renewal a revoke is waiting for (resumed after the app was killed) may go on without a ring.
+        if (!active || (!appConnectSessions.current(active) && deferredRevoke !== active)) {
+          throw new RpcError('Only an account signed in with a wallet can renew', 'BAD_REQUEST')
+        }
         identityHint = active
       } else if (active) {
         // The wallet would register keys a sign-in here could never use: add the account first.
         throw new RpcError('Another account is signed in. Add the account (session.prepareAddAccount) and restart the engine first.', 'BAD_REQUEST')
+      } else if (opts?.reauth !== undefined) {
+        // Signing an account in again ("Sign in again"): only that account may answer.
+        if (typeof opts.reauth !== 'string' || !isIdentityId(opts.reauth)) throw new RpcError('reauth must be an identity id', 'BAD_REQUEST')
+        identityHint = opts.reauth
       }
-      const started = appConnect.start({ identityHint, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
+      const started = appConnect.start({ identityHint, renew: opts?.renew === true, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
       // A new flow replaces a renewal a revoke was waiting for.
       settleDeferredRevoke()
       return started
@@ -659,10 +685,15 @@ export function createSessionModule(options: SessionModuleOptions) {
       return appConnect.state()
     },
 
-    /** Whether a sign-in request is still waiting for its wallet (resume it after the app was killed). */
-    async appConnectPending(): Promise<boolean> {
+    /**
+     * Whether a request is still waiting for its wallet (resume it after the
+     * app was killed): a sign-in's, or with `renew` the active account's renewal.
+     */
+    async appConnectPending(opts: { renew?: boolean } = {}): Promise<boolean> {
       await restored()
-      return appConnect.pending()
+      if (!opts?.renew) return appConnect.pending()
+      const active = registry.activeIdentityId()
+      return active !== null && appConnect.pending(active)
     },
 
     /** Poll now: the app came back, or the wallet's return link named `requestHash` (hex). False when no flow takes it. */

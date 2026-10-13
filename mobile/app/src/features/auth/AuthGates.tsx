@@ -167,6 +167,38 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
 }
 
 /**
+ * A renewal the app was killed in the middle of (the wallet was open): once
+ * per launch, with the account signed in through a wallet, back to the
+ * renewal so the wallet's answer is picked up. The wallet supersedes the old
+ * keys as it answers, and the engine holds the sign-out that would cause
+ * back while this renewal is still waiting.
+ */
+function useResumeRenewal(ready: boolean, pathname: string): void {
+  const { status, session } = useSession();
+  const { state } = useEngineStatus();
+  const checked = useRef(false);
+  const path = useRef(pathname);
+  useEffect(() => {
+    path.current = pathname;
+  }, [pathname]);
+  const engineUp = state === 'ready' || state === 'degraded';
+  const walletAccount = status === 'signed-in' && session?.method === 'app-connect';
+  useEffect(() => {
+    if (!ready || !engineUp || !walletAccount || checked.current) return;
+    checked.current = true;
+    if (getCapabilities()?.walletSignIn !== 'app-connect') return;
+    engine.api.session
+      .appConnectPending({ renew: true })
+      .then((pending) => {
+        if (pending && !inSignIn(path.current) && !appConnectInProgress()) {
+          router.push(`/sign-in/connect?renew=1&mode=${lastAppConnectMode()}&resume=1`);
+        }
+      })
+      .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending renewal failed: ${errorMessage(error)}`));
+  }, [ready, engineUp, walletAccount]);
+}
+
+/**
  * "Sign in again" (AUTH-14): the data layer's write controls and toasts open
  * this flow; it ends once that account is signed in again.
  */
@@ -218,6 +250,7 @@ export function AuthGates() {
   useTermsGate(ready, pathname);
   useSignInExit(pathname);
   useResumeWalletSignIn(ready, pathname);
+  useResumeRenewal(ready, pathname);
   useInboundLinkEffects(ready);
   useReauthFlow();
   return (
