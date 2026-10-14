@@ -11,6 +11,7 @@ import { yappIsLocked } from '@/lib/contract-topology'
 import { extractErrorMessage, isAlreadyExistsError, isNonFatalWaitError, isOutcomeUnknownError, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { tokenService } from './token-service'
 import { tipHistoryService, type SentTipMatch } from './tip-history-service'
+import { nonceSequence } from '@/lib/document-id'
 
 export interface TipResult {
   success: boolean;
@@ -126,7 +127,7 @@ class TipService {
     // Set once the transfer is handed to the SDK: an error before that sent nothing.
     let sent = false;
     let confirmedBalance: number | null = null;
-    // The sender's identity nonce before the send, which a credit transfer consumes.
+    // The sequence of the sender's identity nonce before the send, which a credit transfer advances.
     let nonceBefore: bigint | null = null;
     try {
       // Check sender balance. If the balance fetch itself fails, don't treat
@@ -187,7 +188,7 @@ class TipService {
       // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
       // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
       try {
-        nonceBefore = (await sdk.identities.nonce(senderId)) ?? null;
+        nonceBefore = nonceSequence(await sdk.identities.nonce(senderId));
       } catch (error) {
         logger.warn('Could not read the identity nonce before a tip; an unconfirmed tip will stay unconfirmed:', extractErrorMessage(error));
       }
@@ -259,8 +260,8 @@ class TipService {
 
   /**
    * Whether the chain shows a credit tip of `amountCredits` gone out: the
-   * sender's identity nonce moved past `nonceBefore` (a credit transfer
-   * consumes it, document writes do not) and the proved balance fell by at
+   * sequence of the sender's identity nonce moved past `nonceBefore` (a
+   * credit transfer advances it, document writes do not) and the proved balance fell by at
    * least the amount from `balanceBefore`. A credit transfer leaves no
    * document to read back, so these are the witnesses. False (never a verdict
    * that it failed) when they do not show within a few reads.
@@ -270,9 +271,9 @@ class TipService {
       if (check > 0) await new Promise((resolve) => setTimeout(resolve, CREDIT_TIP_CHECK_MS));
       try {
         const sdk = await getEvoSdk();
-        const nonce = await sdk.identities.nonce(senderId);
+        const nonce = nonceSequence(await sdk.identities.nonce(senderId));
         const balance = await sdk.identities.balance(senderId);
-        if (typeof nonce === 'bigint' && nonce > nonceBefore && typeof balance === 'bigint' && balance <= BigInt(balanceBefore) - BigInt(amountCredits)) return true;
+        if (nonce > nonceBefore && typeof balance === 'bigint' && balance <= BigInt(balanceBefore) - BigInt(amountCredits)) return true;
       } catch (error) {
         logger.warn('Credit tip check: balance read failed:', extractErrorMessage(error));
       }

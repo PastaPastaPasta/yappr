@@ -214,6 +214,18 @@ describe('a credit tip whose result proof could not be verified', () => {
     expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
   })
 
+  it('compares nonce sequences, so a gap that fills while the tip settles does not hide it', async () => {
+    // Before: sequence 7 with nonce 6 still missing (bit 40); after: sequence 8, gap filled. The raw value drops.
+    sdk.identities.nonce.mockResolvedValueOnce((n(1) << n(40)) | n(7)).mockResolvedValue(n(8))
+    sdk.identities.balance
+      .mockResolvedValueOnce(n(1_000_000_000))
+      .mockResolvedValue(n(1_000_000_000 - AMOUNT - 1_000))
+
+    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
+
+    expect(result).toMatchObject({ success: true })
+  })
+
   it('does not take a balance drop for the tip while the nonce has not moved (another spend)', async () => {
     sdk.identities.nonce.mockResolvedValue(n(7))
     sdk.identities.balance
