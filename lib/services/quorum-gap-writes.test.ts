@@ -56,6 +56,8 @@ vi.stubGlobal('window', {})
 import { UNCONFIRMED_WRITE_MESSAGE, categorizeError } from '@/lib/error-utils'
 import { stateTransitionService } from './state-transition-service'
 import { tipService } from './tip-service'
+import { tokenService } from './token-service'
+import { tipHistoryService } from './tip-history-service'
 
 const OWNER = 'owner'
 const CONTRACT = 'not-the-social-contract'
@@ -176,5 +178,19 @@ describe('a credit tip whose result proof could not be verified', () => {
 
     expect(result.success).toBe(false)
     expect(result.errorCode).not.toBe('UNCONFIRMED')
+  })
+})
+
+describe('a YAPP tip sent without a verdict', () => {
+  it('stays unconfirmed and is never matched against history, which an identical earlier tip would satisfy', async () => {
+    const transfer = vi.fn(async () => ({ success: false, error: 'may have gone through', errorCode: 'UNCONFIRMED' as const }))
+    Object.assign(tokenService, { transfer })
+    const awaitSentTip = vi.spyOn(tipHistoryService, 'awaitSentTip').mockResolvedValue({} as Awaited<ReturnType<typeof tipHistoryService.awaitSentTip>>)
+
+    const result = await tipService.sendYappTipLocal('sender', 'recipient', BigInt(10), { kind: 'post', id: '11111111111111111111111111111111' }, undefined, 'wif')
+
+    expect(transfer).toHaveBeenCalledTimes(1)
+    expect(awaitSentTip).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
   })
 })

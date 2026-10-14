@@ -289,12 +289,17 @@ class TipService {
       criticalKeyWif
     );
     if (!result.success) {
-      // A failed CONFIRMATION is not a failed transfer: DAPI 504s on
-      // `wait_for_state_transition_result` for transitions that landed, and
-      // "already in mempool/chain" means the broadcast went through before. Ask
+      // Sent, and no verdict came back (a timeout, a proof that could not be
+      // checked, a transport failure): never a failure to retry, and never
+      // confirmed from history on its own, which cannot tell this transfer from
+      // an identical earlier one. The user checks ("Check again").
+      if (result.errorCode === 'UNCONFIRMED') {
+        return { success: false, error: result.error, errorCode: 'UNCONFIRMED' };
+      }
+      // "Already in mempool/chain" means the broadcast went through before. Ask
       // the chain instead of guessing — reporting failure here would put a
       // "Try Again" button in front of a tip that already went out.
-      if (result.errorCode === 'UNCONFIRMED' || (result.errorCode === 'NETWORK_ERROR' && this.looksUnconfirmed(result.error))) {
+      if (result.errorCode === 'NETWORK_ERROR' && this.looksUnconfirmed(result.error)) {
         return this.confirmYappTip(senderId, this.tipMatch(recipientId, amount, target, message, sentAt));
       }
       return {
