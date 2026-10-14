@@ -509,6 +509,33 @@ describe('App Connect sign-in', () => {
     session = fresh
   })
 
+  it('forgets the stored request a start cancelled during its checks would have resumed', async () => {
+    const createdAt = vectors.inputs.createdAt as number
+    vi.useFakeTimers({ toFake: ['Date'], now: createdAt + 60_000 })
+    try {
+      const fresh = boot()
+      session = fresh
+      await fresh.restore()
+      await requestRecordsFor(undefined).save({
+        ephemeralPrivateKey: vectors.inputs.appEphemeralPrivateKey as string,
+        createdAt,
+        connectionId: vectors.inputs.connectionId as string,
+      })
+      // The start holds at its first check until released.
+      const hold: { release?: () => void } = {}
+      const status = { protocolVersion: 14, blockTimeMs: Date.now() }
+      vi.mocked(appConnectPlatformPort.chainStatus).mockImplementationOnce(() => new Promise(resolve => { hold.release = () => resolve(status) }))
+      const starting = fresh.appConnectStart({ returnTo: RETURN_TO })
+      await until(() => hold.release, 'the chain check')
+      await fresh.appConnectCancel()
+      hold.release?.()
+      expect(await starting).toMatchObject({ phase: 'idle' })
+      expect(await fresh.appConnectPending()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('forgets the stored request a start cancelled during the restore would have resumed', async () => {
     const createdAt = vectors.inputs.createdAt as number
     vi.useFakeTimers({ toFake: ['Date'], now: createdAt + 60_000 })

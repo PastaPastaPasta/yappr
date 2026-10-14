@@ -701,7 +701,10 @@ export function createSessionModule(options: SessionModuleOptions) {
       const started = appConnect.start({ identityHint, renew: opts?.renew === true, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
       // A new flow replaces a renewal a revoke was waiting for.
       settleDeferredRevoke()
-      return started
+      const flow = await started
+      // Cancelled during the start's own checks, before it took up the stored request (and nothing started since).
+      if (cancelledStart > start && appConnectStarts === cancelledStart) await appConnect.forget(identityHint)
+      return flow
     },
 
     /** The App Connect flow in progress (`phase: 'idle'` when there is none). */
