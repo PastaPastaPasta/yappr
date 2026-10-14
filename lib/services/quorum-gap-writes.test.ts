@@ -53,6 +53,7 @@ vi.stubGlobal('localStorage', {
 })
 vi.stubGlobal('window', {})
 
+import { UNCONFIRMED_WRITE_MESSAGE, categorizeError } from '@/lib/error-utils'
 import { stateTransitionService } from './state-transition-service'
 import { tipService } from './tip-service'
 
@@ -118,34 +119,17 @@ describe('createDocument whose result proof could not be verified', () => {
 })
 
 describe('updateDocument whose result proof could not be verified', () => {
-  it('reports success, sending it once, when the chain shows the new revision', async () => {
+  it('never sends it again, and never reads success off a revision another device may have written', async () => {
     sdk.documents.replace.mockRejectedValue(qku())
+    // Revision 3 is on chain, but it may be another device's replace, not this one.
     sdk.documents.get.mockResolvedValue(stored(3))
 
     const result = await stateTransitionService.updateDocument(CONTRACT, 'profile', 'doc', OWNER, { bio: 'new' }, 2)
 
     expect(sdk.documents.replace).toHaveBeenCalledTimes(1)
-    expect(result).toMatchObject({ success: true, document: { $revision: 3, bio: 'new' } })
-  })
-
-  it('reports the failure when the chain still shows the old revision, without sending again', async () => {
-    sdk.documents.replace.mockRejectedValue(qku())
-    sdk.documents.get.mockResolvedValue(stored(2))
-
-    const result = await stateTransitionService.updateDocument(CONTRACT, 'profile', 'doc', OWNER, { bio: 'new' }, 2)
-
-    expect(sdk.documents.replace).toHaveBeenCalledTimes(1)
     expect(result.success).toBe(false)
-  })
-
-  it('does not read a readback that failed on the gap as the old revision or as landed', async () => {
-    sdk.documents.replace.mockRejectedValue(qku())
-    sdk.documents.get.mockRejectedValue(qku())
-
-    const result = await stateTransitionService.updateDocument(CONTRACT, 'profile', 'doc', OWNER, { bio: 'new' }, 2)
-
-    expect(result.success).toBe(false)
-    expect(sdk.documents.replace).toHaveBeenCalledTimes(1)
+    // The caller shows "may have gone through, check" rather than an invitation to retry.
+    expect(categorizeError(new Error(result.error))).toBe(UNCONFIRMED_WRITE_MESSAGE)
   })
 })
 
@@ -154,7 +138,7 @@ describe('deleteDocument whose result proof could not be verified', () => {
     sdk.documents.delete.mockRejectedValue(qku())
     sdk.documents.get.mockResolvedValue(undefined)
 
-    const result = await stateTransitionService.deleteDocument(CONTRACT, 'bookmark', 'doc', OWNER)
+    const result = await elapsing(() => stateTransitionService.deleteDocument(CONTRACT, 'bookmark', 'doc', OWNER))
 
     expect(sdk.documents.delete).toHaveBeenCalledTimes(1)
     expect(result).toEqual({ success: true, transactionHash: 'doc' })
@@ -164,7 +148,7 @@ describe('deleteDocument whose result proof could not be verified', () => {
     sdk.documents.delete.mockRejectedValue(qku())
     sdk.documents.get.mockRejectedValue(qku())
 
-    const result = await stateTransitionService.deleteDocument(CONTRACT, 'bookmark', 'doc', OWNER)
+    const result = await elapsing(() => stateTransitionService.deleteDocument(CONTRACT, 'bookmark', 'doc', OWNER))
 
     expect(result.success).toBe(false)
     expect(sdk.documents.delete).toHaveBeenCalledTimes(1)
@@ -186,17 +170,38 @@ describe('a credit tip whose result proof could not be verified', () => {
   const SENDER = 'sender'
   const RECIPIENT = 'recipient'
   const AMOUNT = 200_000_000
+  const START = 1_000_000_000
+
+  /** Whether the transfer has been sent: the chain shows the `after` state from then on. */
+  let sent = false
+
+  /** Proved balances per identity, [before the send, after it]. */
+  function balances(sender: [number, number], recipient: [number, number]) {
+    sdk.identities.balance.mockImplementation(async (id: string) => {
+      const [before, after] = id === SENDER ? sender : recipient
+      return n(sent ? after : before)
+    })
+  }
+
+  /** The sender's raw identity nonce, [before the send, after it]. */
+  function nonces(before: bigint, after: bigint) {
+    sdk.identities.nonce.mockImplementation(async () => (sent ? after : before))
+  }
+
+  /** The transfer fails with `error` once it has gone out. */
+  function transferFails(error: unknown) {
+    sdk.identities.creditTransfer.mockImplementation(async () => { sent = true; throw error })
+  }
 
   beforeEach(() => {
+    sent = false
     sdk.identities.fetch.mockResolvedValue({ publicKeys: [{ keyId: 3 }] })
-    sdk.identities.creditTransfer.mockRejectedValue(qku())
+    transferFails(qku())
   })
 
-  it("confirms it from the sender's nonce and balance, sending it once", async () => {
-    sdk.identities.nonce.mockResolvedValueOnce(n(7)).mockResolvedValue(n(8))
-    sdk.identities.balance
-      .mockResolvedValueOnce(n(1_000_000_000))
-      .mockResolvedValue(n(1_000_000_000 - AMOUNT - 1_000))
+  it("confirms it when the sender's nonce moved and the amount left the sender and reached the recipient, sending it once", async () => {
+    nonces(n(7), n(8))
+    balances([START, START - AMOUNT - 1_000], [5, 5 + AMOUNT])
 
     const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
 
@@ -204,9 +209,19 @@ describe('a credit tip whose result proof could not be verified', () => {
     expect(result).toMatchObject({ success: true })
   })
 
-  it('reports it unconfirmed, never as a bad key or a failure to retry, when the balance does not show it', async () => {
-    sdk.identities.nonce.mockResolvedValueOnce(n(7)).mockResolvedValue(n(8))
-    sdk.identities.balance.mockResolvedValue(n(1_000_000_000))
+  it('compares nonce sequences, so a gap that fills while the tip settles does not hide it', async () => {
+    // Before: sequence 7 with nonce 6 still missing (bit 40); after: sequence 8, gap filled. The raw value drops.
+    nonces((n(1) << n(40)) | n(7), n(8))
+    balances([START, START - AMOUNT - 1_000], [5, 5 + AMOUNT])
+
+    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
+
+    expect(result).toMatchObject({ success: true })
+  })
+
+  it('reports it unconfirmed, never as a bad key or a failure to retry, when the chain does not show it', async () => {
+    nonces(n(7), n(7))
+    balances([START, START], [5, 5])
 
     const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
 
@@ -214,26 +229,24 @@ describe('a credit tip whose result proof could not be verified', () => {
     expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
   })
 
-  it('compares nonce sequences, so a gap that fills while the tip settles does not hide it', async () => {
-    // Before: sequence 7 with nonce 6 still missing (bit 40); after: sequence 8, gap filled. The raw value drops.
-    sdk.identities.nonce.mockResolvedValueOnce((n(1) << n(40)) | n(7)).mockResolvedValue(n(8))
-    sdk.identities.balance
-      .mockResolvedValueOnce(n(1_000_000_000))
-      .mockResolvedValue(n(1_000_000_000 - AMOUNT - 1_000))
+  it('does not take another spend of the same size, to someone else, for this tip', async () => {
+    // The nonce moved and the sender paid, but the recipient received nothing.
+    nonces(n(7), n(8))
+    balances([START, START - AMOUNT - 1_000], [5, 5])
 
     const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
 
-    expect(result).toMatchObject({ success: true })
+    expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
   })
 
-  it('does not take a balance drop for the tip while the nonce has not moved (another spend)', async () => {
-    sdk.identities.nonce.mockResolvedValue(n(7))
-    sdk.identities.balance
-      .mockResolvedValueOnce(n(1_000_000_000))
-      .mockResolvedValue(n(1_000_000_000 - AMOUNT - 1_000))
+  it('never confirms from chain state after a nonce refusal, which another device can have caused', async () => {
+    transferFails(new Error('Identity sender is trying to set an invalid identity nonce. error is nonce already present at tip'))
+    nonces(n(7), n(8))
+    balances([START, START - AMOUNT - 1_000], [5, 5 + AMOUNT])
 
     const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
 
+    expect(sdk.identities.creditTransfer).toHaveBeenCalledTimes(1)
     expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
   })
 })

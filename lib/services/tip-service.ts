@@ -8,7 +8,7 @@ import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-s
 import { CREDITS_PER_DASH, keyNetwork, MIN_YAPP_TIP } from '@/lib/constants'
 import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
 import { yappIsLocked } from '@/lib/contract-topology'
-import { extractErrorMessage, isAlreadyExistsError, isNonFatalWaitError, isOutcomeUnknownError, sentWriteOutcomeUnknown } from '@/lib/error-utils'
+import { extractErrorMessage, isAlreadyExistsError, isIdentityNonceConflictError, isNonFatalWaitError, isOutcomeUnknownError, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { tokenService } from './token-service'
 import { tipHistoryService, type SentTipMatch } from './tip-history-service'
 import { nonceSequence } from '@/lib/document-id'
@@ -40,6 +40,13 @@ export interface TipResult {
 
 /** A credit tip that was sent but not confirmed: only the sender's balance can show it landed. */
 const CREDIT_TIP_UNCONFIRMED = "Your tip was sent but we couldn't confirm it landed. Check your balance before sending another — it may still be settling."
+
+/** What a credit tip changes on chain (see TipService.creditTipWitness). */
+interface CreditTipWitness {
+  nonce: bigint
+  sender: bigint
+  recipient: bigint
+}
 
 /**
  * Proved balance reads, 3 s apart, that look for a sent credit tip. Each read
@@ -127,8 +134,8 @@ class TipService {
     // Set once the transfer is handed to the SDK: an error before that sent nothing.
     let sent = false;
     let confirmedBalance: number | null = null;
-    // The sequence of the sender's identity nonce before the send, which a credit transfer advances.
-    let nonceBefore: bigint | null = null;
+    // The chain before the send, to recognise this tip by if its outcome is unknown.
+    let before: CreditTipWitness | null = null;
     try {
       // Check sender balance. If the balance fetch itself fails, don't treat
       // that as "0 credits" — skip the pre-check and let the transfer be the
@@ -187,11 +194,7 @@ class TipService {
       logger.debug('Calling sdk.identities.creditTransfer...');
       // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
       // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
-      try {
-        nonceBefore = nonceSequence(await sdk.identities.nonce(senderId));
-      } catch (error) {
-        logger.warn('Could not read the identity nonce before a tip; an unconfirmed tip will stay unconfirmed:', extractErrorMessage(error));
-      }
+      before = await this.creditTipWitness(senderId, recipientId);
 
       sent = true;
       const result = await sdk.identities.creditTransfer({
@@ -224,7 +227,9 @@ class TipService {
       // key). Only the sender's balance can show it, so ask it.
       if (sent && sentWriteOutcomeUnknown(error)) {
         identityService.clearCache(senderId);
-        if (confirmedBalance !== null && nonceBefore !== null && await this.creditTipLanded(senderId, nonceBefore, confirmedBalance, amountCredits)) {
+        // A nonce refusal can mean another device's transfer took this nonce:
+        // the sender's state would then show THAT spend, so it proves nothing here.
+        if (before && !isIdentityNonceConflictError(error) && await this.creditTipLanded(senderId, recipientId, before, amountCredits)) {
           return { success: true, transactionHash: 'confirmed' };
         }
         return { success: false, error: CREDIT_TIP_UNCONFIRMED, errorCode: 'UNCONFIRMED' };
@@ -259,24 +264,41 @@ class TipService {
   }
 
   /**
-   * Whether the chain shows a credit tip of `amountCredits` gone out: the
-   * sequence of the sender's identity nonce moved past `nonceBefore` (a
-   * credit transfer advances it, document writes do not) and the proved balance fell by at
-   * least the amount from `balanceBefore`. A credit transfer leaves no
-   * document to read back, so these are the witnesses. False (never a verdict
-   * that it failed) when they do not show within a few reads.
+   * The proved state a credit tip changes: the sequence of the sender's
+   * identity nonce (a credit transfer advances it, document writes do not)
+   * and both balances. Null when any read fails: the tip can then never be
+   * confirmed, only reported unconfirmed.
    */
-  private async creditTipLanded(senderId: string, nonceBefore: bigint, balanceBefore: number, amountCredits: number): Promise<boolean> {
+  private async creditTipWitness(senderId: string, recipientId: string): Promise<CreditTipWitness | null> {
+    try {
+      const sdk = await getEvoSdk();
+      const [nonce, sender, recipient] = await Promise.all([
+        sdk.identities.nonce(senderId),
+        sdk.identities.balance(senderId),
+        sdk.identities.balance(recipientId),
+      ]);
+      if (typeof sender !== 'bigint' || typeof recipient !== 'bigint') return null;
+      return { nonce: nonceSequence(nonce), sender, recipient };
+    } catch (error) {
+      logger.warn('Credit tip: could not read the chain state to confirm it by:', extractErrorMessage(error));
+      return null;
+    }
+  }
+
+  /**
+   * Whether the chain shows THIS credit tip landed: since `before`, the
+   * sender's nonce moved on, the sender's balance fell by at least the amount
+   * and the recipient's rose by at least it. A credit transfer leaves no
+   * document to read back, so these are the witnesses; aggregate sender
+   * state alone could be another spend. False (never a verdict that it
+   * failed) when they do not all show within a few reads.
+   */
+  private async creditTipLanded(senderId: string, recipientId: string, before: CreditTipWitness, amountCredits: number): Promise<boolean> {
+    const amount = BigInt(amountCredits);
     for (let check = 0; check < CREDIT_TIP_CHECKS; check++) {
       if (check > 0) await new Promise((resolve) => setTimeout(resolve, CREDIT_TIP_CHECK_MS));
-      try {
-        const sdk = await getEvoSdk();
-        const nonce = nonceSequence(await sdk.identities.nonce(senderId));
-        const balance = await sdk.identities.balance(senderId);
-        if (nonce > nonceBefore && typeof balance === 'bigint' && balance <= BigInt(balanceBefore) - BigInt(amountCredits)) return true;
-      } catch (error) {
-        logger.warn('Credit tip check: balance read failed:', extractErrorMessage(error));
-      }
+      const now = await this.creditTipWitness(senderId, recipientId);
+      if (now && now.nonce > before.nonce && now.sender <= before.sender - amount && now.recipient >= before.recipient + amount) return true;
     }
     return false;
   }

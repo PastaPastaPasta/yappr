@@ -48,7 +48,7 @@ const ST_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** Hard cap on cached entries as a safety net */
 const ST_CACHE_MAX_ENTRIES = 50;
 
-/** Reads, 2 s apart, of a replace or delete whose outcome is unknown. */
+/** Reads, 2 s apart, of a delete whose outcome is unknown. */
 const READBACK_ATTEMPTS = 3;
 const READBACK_INTERVAL_MS = 2_000;
 
@@ -290,24 +290,17 @@ class StateTransitionService {
   }
 
   /**
-   * After a replace or delete whose outcome is unknown, whether the chain
-   * already shows its effect: the document at `revision` or later (a replace),
-   * or gone (a delete, `revision` null). Read a few times, since a node a
-   * block behind still shows the old state. Only an answered read counts: a
-   * read that fails (or a "not found" error) proves nothing either way.
+   * After a delete whose outcome is unknown, whether the document is gone,
+   * which is what the caller asked for whoever removed it. Read a few times,
+   * since a node a block behind still shows it. Only an answered read counts:
+   * a read that fails (or a "not found" error) proves nothing either way.
    */
-  private async showsLanded(contractId: string, documentType: string, documentId: string, revision: number | null): Promise<boolean> {
+  private async showsDeleted(contractId: string, documentType: string, documentId: string): Promise<boolean> {
     for (let attempt = 0; attempt < READBACK_ATTEMPTS; attempt++) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, READBACK_INTERVAL_MS));
       try {
         const sdk = await getEvoSdk();
-        const doc = await sdk.documents.get(contractId, documentType, documentId);
-        if (revision === null) {
-          if (!doc) return true;
-          continue;
-        }
-        const current = Number(doc ? documentToPlainObject(doc).$revision : NaN);
-        if (Number.isFinite(current) && current >= revision) return true;
+        if (!(await sdk.documents.get(contractId, documentType, documentId))) return true;
       } catch (error) {
         logger.warn(`Could not read back ${documentType} ${documentId}:`, extractErrorMessage(error));
       }
@@ -970,19 +963,12 @@ class StateTransitionService {
       };
     } catch (error) {
       // Sent, but no verdict came back (a timeout, a result proof that could
-      // not be checked, a transport failure): it may have landed. The chain
-      // decides before this reports a failure the caller would act on.
-      if (sent && sentWriteOutcomeUnknown(error) && await this.showsLanded(contractId, documentType, documentId, newRevision)) {
-        logger.warn(`Replace of ${documentType} ${documentId} reported "${extractErrorMessage(error)}" but the chain shows revision ${newRevision}`);
-        reportSigningSuccess(ownerId);
-        // Releases its pending entry once the nonce proves it can no longer execute.
-        await settleSupersededReplaces(ownerId, contractId).catch(() => 0);
-        return {
-          success: true,
-          transactionHash: documentId,
-          document: { $id: documentId, $ownerId: ownerId, $type: documentType, $revision: newRevision, ...documentData },
-        };
-      }
+      // not be checked, a transport failure): it may have landed. It stays a
+      // failure, never a success read off the revision alone, which another
+      // device's replace can have reached; its message tells the user to check
+      // (categorizeError). Its pending entry is released once the chain proves
+      // it can no longer execute.
+      if (sent && sentWriteOutcomeUnknown(error)) await settleSupersededReplaces(ownerId, contractId).catch(() => 0);
       logger.error('Error updating document:', error);
       return this.refused(ownerId, key, error);
     }
@@ -1036,8 +1022,9 @@ class StateTransitionService {
         transactionHash: documentId
       };
     } catch (error) {
-      // As in updateDocument: an unknown outcome is settled by the chain first.
-      if (sent && sentWriteOutcomeUnknown(error) && await this.showsLanded(contractId, documentType, documentId, null)) {
+      // Sent, but no verdict came back: the chain decides before this reports a
+      // failure the caller would act on. Gone is what was asked for.
+      if (sent && sentWriteOutcomeUnknown(error) && await this.showsDeleted(contractId, documentType, documentId)) {
         logger.warn(`Delete of ${documentType} ${documentId} reported "${extractErrorMessage(error)}" but the document is gone`);
         reportSigningSuccess(ownerId);
         return { success: true, transactionHash: documentId };
