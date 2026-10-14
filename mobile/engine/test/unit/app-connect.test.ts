@@ -508,4 +508,25 @@ describe('App Connect sign-in', () => {
     expect(await fresh.appConnectPending()).toBe(false)
     session = fresh
   })
+
+  it('forgets the stored request a start cancelled during the restore would have resumed', async () => {
+    const createdAt = vectors.inputs.createdAt as number
+    vi.useFakeTimers({ toFake: ['Date'], now: createdAt + 60_000 })
+    try {
+      const fresh = boot()
+      session = fresh
+      await requestRecordsFor(undefined).save({
+        ephemeralPrivateKey: vectors.inputs.appEphemeralPrivateKey as string,
+        createdAt,
+        connectionId: vectors.inputs.connectionId as string,
+      })
+      expect(await fresh.appConnectPending()).toBe(true)
+      const starting = fresh.appConnectStart({ returnTo: RETURN_TO })
+      await fresh.appConnectCancel()
+      expect(await starting).toMatchObject({ phase: 'idle' })
+      expect(await fresh.appConnectPending()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

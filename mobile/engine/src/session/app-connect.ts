@@ -215,6 +215,14 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       return grant
     },
 
+    /** Forgets the stored request of this kind (see `pending`) without a running flow. */
+    async forget(identityHint?: string): Promise<void> {
+      if (!isAppConnectBuild() || !appConnectPins()) return
+      const records = requestRecordsFor(identityHint)
+      const record = await records.load()
+      if (record) await records.clear(record)
+    },
+
     /**
      * Whether a request is still stored and answerable (the app was killed
      * while the wallet was open): a sign-in's, or with `identityHint` the

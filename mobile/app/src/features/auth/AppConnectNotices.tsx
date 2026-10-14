@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 import { ArrowRightStartOnRectangleIcon } from 'react-native-heroicons/outline';
 
-import { useSession } from '~/data/session';
+import { useSession, useSessionStore } from '~/data/session';
 import { engine } from '~/engine';
 import { Button } from '~/ui/Button';
 import { Dialog } from '~/ui/Dialog';
@@ -40,8 +40,14 @@ export function AppConnectNotices({ ready }: { ready: boolean }) {
   useEffect(() => {
     if (!walletSession || health !== 'renew-soon' || blocked || soonShown.current) return;
     soonShown.current = true;
-    toast(copy.renew.soon, { action: { label: copy.renew.soonAction, onPress: () => router.push('/sign-in/renew') } });
-  }, [walletSession, health, blocked]);
+    const account = identityId;
+    // The toast may outlive the account it warned about (a switch): it renews only that one.
+    const renew = () => {
+      const now = useSessionStore.getState().session;
+      if (now?.method === 'app-connect' && now.identityId === account) router.push('/sign-in/renew');
+    };
+    toast(copy.renew.soon, { action: { label: copy.renew.soonAction, onPress: renew } });
+  }, [walletSession, health, blocked, identityId]);
 
   // A write stopped for the allowance or the expiry: the prompt opens once per stop. It is handled
   // here as it opens, and re-armed only once the engine has forgotten the stop (closing the prompt

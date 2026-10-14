@@ -10,6 +10,7 @@ import ConnectScreen from '~/app/sign-in/connect';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
+import { useToastStore } from '~/ui/toast';
 
 import { afterSignOut, loadSignedInAgain, reauthenticate, useAccounts } from './accounts';
 import { parseAppConnectReturn, takeAppConnectReturnLink, useAppConnect } from './app-connect';
@@ -324,6 +325,20 @@ describe('the wallet session prompts', () => {
     render(<AppConnectNotices ready />);
     await act(async () => {});
     expect(router.push).toHaveBeenCalledWith('/sign-in/renew?reason=expired');
+  });
+
+  it('renews from the low-allowance toast only the account it warned about', async () => {
+    render(<AppConnectNotices ready />);
+    await act(async () => {});
+    status({ health: 'renew-soon' });
+    const action = useToastStore.getState().current?.action;
+    expect(action).toBeTruthy();
+    act(() => useSessionStore.setState({ status: 'signed-in', session: { ...alice, identityId: 'bob' }, accounts: [] }));
+    action?.onPress();
+    expect(router.push).not.toHaveBeenCalledWith('/sign-in/renew');
+    act(() => useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [] }));
+    action?.onPress();
+    expect(router.push).toHaveBeenCalledWith('/sign-in/renew');
   });
 
   it('shows no wallet prompt to an account signed in with a key', async () => {

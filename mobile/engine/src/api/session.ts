@@ -392,6 +392,8 @@ export function createSessionModule(options: SessionModuleOptions) {
   const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state) })
   /** Bumped by every App Connect start and cancel, so a start still waiting for the restore can tell it was overtaken. */
   let appConnectStarts = 0
+  /** The generation the last cancel took. */
+  let cancelledStart = -1
 
   /** The account a revoke signed out here: reported only once its sign-out is done, never for a revoke that changed nothing. */
   let revokedSignOut: string | null = null
@@ -674,7 +676,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       // A cancel (or a newer start) while this waits for the restore wins: it makes no request.
       const start = ++appConnectStarts
       await restored()
-      if (start !== appConnectStarts) return appConnect.state()
+      const overtaken = start !== appConnectStarts
       const active = registry.activeIdentityId()
       let identityHint: string | undefined
       if (opts?.renew) {
@@ -690,6 +692,11 @@ export function createSessionModule(options: SessionModuleOptions) {
         // Signing an account in again ("Sign in again"): only that account may answer.
         if (typeof opts.reauth !== 'string' || !isIdentityId(opts.reauth)) throw new RpcError('reauth must be an identity id', 'BAD_REQUEST')
         identityHint = opts.reauth
+      }
+      if (overtaken) {
+        // Cancelled, and nothing started since: the stored request this would have resumed is abandoned too.
+        if (appConnectStarts === cancelledStart) await appConnect.forget(identityHint)
+        return appConnect.state()
       }
       const started = appConnect.start({ identityHint, renew: opts?.renew === true, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
       // A new flow replaces a renewal a revoke was waiting for.
@@ -730,7 +737,7 @@ export function createSessionModule(options: SessionModuleOptions) {
 
     /** Abandon the flow: its request and any verified answer are forgotten. */
     async appConnectCancel(): Promise<void> {
-      appConnectStarts++
+      cancelledStart = ++appConnectStarts
       appConnect.cancel()
       settleDeferredRevoke()
     },
