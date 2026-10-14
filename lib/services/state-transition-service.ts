@@ -10,7 +10,7 @@ import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT
 import { tokenCostFor, yappIsPausedForGood, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, FEE_MULTIPLIER_TOLERANCE_PERCENT, actionFeeAgreementOptions, declaredActionFeeFor, tokenPaymentOptions } from '../transition-agreements';
-import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, extractErrorMessage, messageWithConsensusCode, isConsensusRefusal, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isIdentityNonceConflictError, isNonceSpentRefusal } from '../error-utils';
+import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, extractErrorMessage, messageWithConsensusCode, isConsensusRefusal, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isIdentityNonceConflictError, isNonceSpentRefusal, isNotFoundAnswer, isOutcomeUnknownError, sentWriteOutcomeUnknown } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
 import { identityService } from './identity-service';
@@ -19,7 +19,7 @@ import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 import { documentIdForCreate, identityContractNonceConsumed } from '@/lib/document-id';
 import { buildSignedCreateTransition } from '@/lib/manual-batch';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { allocateNonce, loadReservation, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce';
+import { allocateNonce, loadReservation, releaseNonce, reserveNonce, settleSupersededReplaces, withSdkSignedWrite, type PendingTransition } from './identity-nonce';
 import {
   DocumentActionFeeAgreement,
   StateTransition,
@@ -277,13 +277,29 @@ class StateTransitionService {
       }
       return null;
     } catch (err) {
-      // If the error indicates the document was not found, return null.
-      // Otherwise, let network/transport errors propagate.
-      const msg = extractErrorMessage(err).toLowerCase();
-      if (msg.includes('not found') || msg.includes('404') || msg.includes('no document')) {
-        return null;
-      }
+      // A "not found" answer is absence. A read that failed (a transport
+      // error, or a proof whose quorum key the SDK lacks: "Quorum not found in
+      // cache") proves nothing and propagates.
+      if (isNotFoundAnswer(err)) return null;
       throw err;
+    }
+  }
+
+  /**
+   * After a replace or delete whose outcome is unknown, whether the chain
+   * already shows its effect: the document at `revision` or later (a replace),
+   * or gone (a delete, `revision` null). False when it does not, or when the
+   * read fails: that proves nothing either way.
+   */
+  private async showsLanded(contractId: string, documentType: string, documentId: string, revision: number | null): Promise<boolean> {
+    try {
+      const doc = await this.checkDocumentExists(contractId, documentType, documentId);
+      if (revision === null) return doc === null;
+      const current = Number(doc?.$revision ?? NaN);
+      return Number.isFinite(current) && current >= revision;
+    } catch (error) {
+      logger.warn(`Could not read back ${documentType} ${documentId}:`, extractErrorMessage(error));
+      return false;
     }
   }
 
@@ -887,6 +903,9 @@ class StateTransitionService {
     reservationScope?: string
   ): Promise<StateTransitionResult> {
     let key: SigningKey | null = null;
+    // Set once the SDK is asked to sign and send: an error before that sent nothing.
+    let sent = false;
+    const newRevision = revision + 1;
     try {
       this.assertUnpricedAction(contractId, documentType, 'replace');
       const sdk = await getEvoSdk();
@@ -899,7 +918,6 @@ class StateTransitionService {
       }
       key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'replace');
 
-      const newRevision = revision + 1;
       const document = await documentBuilderService.buildDocumentForReplace(
         contractId,
         documentType,
@@ -912,7 +930,10 @@ class StateTransitionService {
 
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
-      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.replace({ document, identityKey: signingKey, signer }), {
+      await withSdkSignedWrite(ownerId, contractId, () => {
+        sent = true;
+        return sdk.documents.replace({ document, identityKey: signingKey, signer });
+      }, {
         documentType,
         documentId,
         revision: newRevision,
@@ -932,6 +953,20 @@ class StateTransitionService {
         }
       };
     } catch (error) {
+      // Sent, but no verdict came back (a timeout, a result proof that could
+      // not be checked, a transport failure): it may have landed. The chain
+      // decides before this reports a failure the caller would act on.
+      if (sent && sentWriteOutcomeUnknown(error) && await this.showsLanded(contractId, documentType, documentId, newRevision)) {
+        logger.warn(`Replace of ${documentType} ${documentId} reported "${extractErrorMessage(error)}" but the chain shows revision ${newRevision}`);
+        reportSigningSuccess(ownerId);
+        // Releases its pending entry once the nonce proves it can no longer execute.
+        await settleSupersededReplaces(ownerId, contractId).catch(() => 0);
+        return {
+          success: true,
+          transactionHash: documentId,
+          document: { $id: documentId, $ownerId: ownerId, $type: documentType, $revision: newRevision, ...documentData },
+        };
+      }
       logger.error('Error updating document:', error);
       return this.refused(ownerId, key, error);
     }
@@ -949,6 +984,8 @@ class StateTransitionService {
     precondition?: () => Promise<boolean>
   ): Promise<StateTransitionResult> {
     let key: SigningKey | null = null;
+    // Set once the SDK is asked to sign and send: an error before that sent nothing.
+    let sent = false;
     try {
       this.assertUnpricedAction(contractId, documentType, 'delete');
       const sdk = await getEvoSdk();
@@ -971,7 +1008,10 @@ class StateTransitionService {
 
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
-      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer }), undefined, undefined, precondition);
+      await withSdkSignedWrite(ownerId, contractId, () => {
+        sent = true;
+        return sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
+      }, undefined, undefined, precondition);
       logger.debug('Document deletion submitted successfully');
       reportSigningSuccess(ownerId);
 
@@ -980,6 +1020,12 @@ class StateTransitionService {
         transactionHash: documentId
       };
     } catch (error) {
+      // As in updateDocument: an unknown outcome is settled by the chain first.
+      if (sent && sentWriteOutcomeUnknown(error) && await this.showsLanded(contractId, documentType, documentId, null)) {
+        logger.warn(`Delete of ${documentType} ${documentId} reported "${extractErrorMessage(error)}" but the document is gone`);
+        reportSigningSuccess(ownerId);
+        return { success: true, transactionHash: documentId };
+      }
       logger.error('Error deleting document:', error);
       return this.refused(ownerId, key, error);
     }
@@ -1046,17 +1092,22 @@ class StateTransitionService {
 
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
+      let sent = false;
       try {
         // From evo-sdk 4.2.0-beta.7 (platform#5136) this resolves once the
         // proof shows the entry gone: an indexOnly delete waits for the
         // affected state instead of throwing the strict wait's snapshot error.
-        await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document, identityKey: signingKey, signer }));
+        await withSdkSignedWrite(ownerId, contractId, () => {
+          sent = true;
+          return sdk.documents.delete({ document, identityKey: signingKey, signer });
+        });
         logger.debug(`indexOnly delete ${documentId} confirmed`);
         reportSigningSuccess(ownerId);
       } catch (waitErr) {
-        if (!isTimeoutError(waitErr) && !isNonFatalWaitError(waitErr) && !isAlreadyExistsError(waitErr)) {
-          throw waitErr;
-        }
+        // Before the send nothing went out; after it, a timeout or an answer that
+        // could not be verified (a quorum rotation) may still have landed.
+        const maybeLanded = isOutcomeUnknownError(waitErr) || isNonFatalWaitError(waitErr) || isAlreadyExistsError(waitErr);
+        if (!sent || !maybeLanded) throw waitErr;
         logger.warn(`Delete-by-values wait unresolved for ${documentId} — assuming success:`, extractErrorMessage(waitErr));
         reportSigningSuccess(ownerId);
         return { success: true, transactionHash: documentId, confirmed: false };

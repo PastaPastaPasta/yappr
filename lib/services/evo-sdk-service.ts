@@ -8,6 +8,7 @@ import type { AppNetwork } from '../constants';
 import { SDK_FACADES } from './sdk-facades';
 import { installDapiPathShim } from './dapi-path-shim';
 import { observeSdkFailures } from './sdk-failure-observer';
+import { installReadRetry } from './sdk-read-retry';
 
 export interface EvoSdkConfig {
   network: AppNetwork;
@@ -185,6 +186,9 @@ class EvoSdkService {
       // Installed after the preload so a preload failure cannot ask for a
       // rebuild that is itself waiting on this initialization.
       this._observeFailures(this.sdk);
+      // Outermost, so every attempt is observed: reads ride out a quorum
+      // rotation, repeated on whichever instance is current by then.
+      installReadRetry(this.sdk, () => this.getSdk());
       this.connectionLost = false;
       this._isInitialized = true;
       logger.debug('EvoSdkService: SDK initialized successfully');

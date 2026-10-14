@@ -29,7 +29,7 @@ import {
   isConsensusRefusal,
   isPropertyAgreementError,
   isReferenceNotFoundError,
-  isTimeoutError,
+  isOutcomeUnknownError,
 } from '@/lib/error-utils';
 import {
   POLL_MAX_OPTIONS,
@@ -586,7 +586,7 @@ class PollrVoteService {
     const refusal = (error: unknown): WriteOutcome => {
       if (isConsensusRefusal(error) || neverSent(error)) settleRecord();
       markIfDuplicate(error);
-      return isTimeoutError(error)
+      return isOutcomeUnknownError(error)
         ? { status: 'unconfirmed', error: extractErrorMessage(error) }
         : { status: 'refused', error };
     };

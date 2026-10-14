@@ -3,40 +3,11 @@
  */
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import { authorDeletesLeaveHoles, yappIsLocked, yappIsPausedForGood } from '@/lib/contract-topology'
+import { MAX_ERROR_DEPTH, extractErrorMessage } from '@/lib/error-message'
+import { isQuorumGapError, isQuorumKeyUnavailableError } from '@/lib/quorum-gap'
 
-const MAX_ERROR_DEPTH = 5
-
-/**
- * Extracts a human-readable error message from various error formats.
- * Handles strings, Error instances, and nested error objects.
- * Uses depth counter to prevent infinite recursion on circular references.
- */
-export function extractErrorMessage(error: unknown, depth: number = 0): string {
-  if (!error) return 'Unknown error'
-  if (typeof error === 'string') return error
-  if (error instanceof Error) return error.message
-
-  // Guard against circular references or deeply nested errors
-  if (depth >= MAX_ERROR_DEPTH) {
-    return 'Unknown error (max depth reached)'
-  }
-
-  // Handle nested error objects
-  const err = error as Record<string, unknown>
-  if (err.message && typeof err.message === 'string') return err.message
-  if (err.error) return extractErrorMessage(err.error, depth + 1)
-  if (err.cause) return extractErrorMessage(err.cause, depth + 1)
-
-  // Try to stringify, but avoid [object Object]
-  try {
-    const str = JSON.stringify(error)
-    if (str && str !== '{}') return str.slice(0, 200)
-  } catch {
-    // Ignore stringify errors (including circular reference errors)
-  }
-
-  return 'Unknown error'
-}
+export { extractErrorMessage } from '@/lib/error-message'
+export { isQuorumGapError, isQuorumKeyUnavailableError } from '@/lib/quorum-gap'
 
 /**
  * The consensus error code an SDK error carries as a number, or null.
@@ -116,9 +87,60 @@ export function isUnverifiedOutcomeError(error: unknown): boolean {
   } catch {
     name = undefined
   }
-  if (name === 'Proof') return true
-  return /quorum not found|invalid quorum|quorum source unavailable|context provider error|proof verification|invalid proved response|no available addresses/i.test(extractErrorMessage(error))
+  if (name === 'Proof' || name === 'InvalidProvedResponse' || isQuorumGapError(error)) return true
+  return /context provider error|proof verification|invalid proved response|no available addresses/i.test(extractErrorMessage(error))
 }
+
+/**
+ * A write's outcome is unknown: its confirmation timed out, or the answer
+ * could not be verified ({@link isUnverifiedOutcomeError}). It may have
+ * landed, so it is neither a failure to report nor one to retry blindly: read
+ * the chain first. Callers decide whether the error came after the write was
+ * sent; before that, nothing went out.
+ */
+export function isOutcomeUnknownError(error: unknown): boolean {
+  return isTimeoutError(error) || isUnverifiedOutcomeError(error)
+}
+
+/**
+ * Whether an error from a write the SDK was already asked to send leaves its
+ * outcome unknown: anything but Platform's verdict on it. A transport failure
+ * may come after the broadcast went out, and a nonce refusal may be this very
+ * transition having executed before an SDK re-broadcast of it. The SDK's own
+ * protocol validation (`name` 'Protocol', "Protocol error: …", such as a
+ * starter grant already claimed) refuses before anything is broadcast, so it
+ * is a verdict too. For writes that move money, where a second send is the
+ * worst outcome, and for readbacks before a failure is reported.
+ */
+export function sentWriteOutcomeUnknown(error: unknown): boolean {
+  if (isIdentityNonceConflictError(error)) return true
+  if (isConsensusRefusal(error)) return false
+  let name: unknown
+  try {
+    name = (error as { name?: unknown } | null)?.name
+  } catch {
+    name = undefined
+  }
+  return name !== 'Protocol' && !/\bprotocol error:/i.test(extractErrorMessage(error))
+}
+
+/**
+ * A lookup answered that the thing is not there ("not found", 404, "no
+ * document"). A read that failed is not an answer: "Quorum not found in
+ * cache" and every other unverified answer also say "not found", and reading
+ * them as absence would report a landed write missing.
+ */
+export function isNotFoundAnswer(error: unknown): boolean {
+  if (isUnverifiedOutcomeError(error)) return false
+  const msg = extractErrorMessage(error).toLowerCase()
+  return msg.includes('not found') || msg.includes('404') || msg.includes('no document')
+}
+
+/**
+ * What a write whose outcome is unknown tells the user: it may have gone
+ * through, so they check before sending it again.
+ */
+export const UNCONFIRMED_WRITE_MESSAGE = 'Dash Platform couldn\'t confirm this yet. It may have gone through, so check before trying again.'
 
 /**
  * The DAPI gateway refused the request for volume (gRPC RESOURCE_EXHAUSTED,
@@ -1397,6 +1419,13 @@ export function categorizeError(error: unknown, action = 'create post'): string 
   }
 
   const errorMessage = extractErrorMessage(error)
+
+  // A proof the SDK had no quorum key to check (a rotation in progress): when
+  // it is a write's result, the write may well have landed. Not the quorum
+  // SERVICE being unreachable, which is the outage copy below.
+  if (isQuorumKeyUnavailableError(error)) {
+    return UNCONFIRMED_WRITE_MESSAGE
+  }
 
   if (
     errorMessage.includes('no available addresses') ||

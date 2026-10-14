@@ -8,7 +8,7 @@ import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-s
 import { CREDITS_PER_DASH, keyNetwork, MIN_YAPP_TIP } from '@/lib/constants'
 import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
 import { yappIsLocked } from '@/lib/contract-topology'
-import { isAlreadyExistsError, isNonFatalWaitError, isTimeoutError } from '@/lib/error-utils'
+import { extractErrorMessage, isAlreadyExistsError, isNonFatalWaitError, isOutcomeUnknownError, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { tokenService } from './token-service'
 import { tipHistoryService, type SentTipMatch } from './tip-history-service'
 
@@ -28,13 +28,24 @@ export interface TipResult {
     | 'ALREADY_CLAIMED'
     | 'NEEDS_CRITICAL_KEY'
     /**
-     * The transfer was broadcast, the confirmation wait failed, and no matching
-     * transfer document turned up within the confirmation window. The tip may
+     * The transfer was broadcast, the confirmation wait failed (a timeout, or
+     * a result proof that could not be checked during a quorum rotation), and
+     * the chain did not show it within the confirmation window. The tip may
      * still land — the UI must offer "check again", never a blind retry, or the
      * user sends their money twice.
      */
     | 'UNCONFIRMED';
 }
+
+/** A credit tip that was sent but not confirmed: only the sender's balance can show it landed. */
+const CREDIT_TIP_UNCONFIRMED = "Your tip was sent but we couldn't confirm it landed. Check your balance before sending another — it may still be settling."
+
+/**
+ * Proved balance reads, 3 s apart, that look for a sent credit tip. Each read
+ * itself rides out a quorum rotation (`lib/services/sdk-read-retry.ts`).
+ */
+const CREDIT_TIP_CHECKS = 3
+const CREDIT_TIP_CHECK_MS = 3_000
 
 /** How far behind this clock the chain's block time may sit for a just-sent tip to still match. */
 const SENT_TIP_SKEW_MARGIN_MS = 60_000;
@@ -112,12 +123,15 @@ class TipService {
       return { success: false, error: 'Transfer key is required', errorCode: 'INVALID_KEY' };
     }
 
+    // Set once the transfer is handed to the SDK: an error before that sent nothing.
+    let sent = false;
+    let confirmedBalance: number | null = null;
     try {
       // Check sender balance. If the balance fetch itself fails, don't treat
       // that as "0 credits" — skip the pre-check and let the transfer be the
       // authority (the chain rejects underfunded transfers anyway).
-      let confirmedBalance: number | null = null;
       try {
+        identityService.clearCache(senderId);
         confirmedBalance = (await identityService.getBalance(senderId)).confirmed;
       } catch (error) {
         logger.warn('Could not fetch balance before tip; proceeding without pre-check:', error);
@@ -170,6 +184,7 @@ class TipService {
       logger.debug('Calling sdk.identities.creditTransfer...');
       // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
       // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
+      sent = true;
       const result = await sdk.identities.creditTransfer({
         identity,
         recipientId,
@@ -191,20 +206,19 @@ class TipService {
 
     } catch (error) {
       logger.error('Tip transfer error:', error);
-      // Handle both standard Error and WasmSdkError (which has .message but isn't instanceof Error)
-      const errorMessage = (error instanceof Error ? error.message : null) ||
-        ((error as { message?: string })?.message) ||
-        (typeof error === 'string' ? error : 'Unknown error');
+      const errorMessage = extractErrorMessage(error);
 
-      // Handle known DAPI timeout issue (like in state-transition-service)
-      if (errorMessage.includes('504') || errorMessage.includes('timeout') || errorMessage.includes('wait_for_state_transition_result')) {
-        // Assume success - clear cache and return optimistic result
+      // Sent, and no verdict came back: a DAPI 504 or timeout on the wait, a
+      // result proof that could not be checked (a quorum rotation), a transport
+      // failure. It may well have landed, and nothing here may invite a second
+      // send (or call it a key problem: "quorum key unavailable" mentions a
+      // key). Only the sender's balance can show it, so ask it.
+      if (sent && sentWriteOutcomeUnknown(error)) {
         identityService.clearCache(senderId);
-
-        return {
-          success: true,
-          transactionHash: 'pending-confirmation',
-        };
+        if (confirmedBalance !== null && await this.creditTipLanded(senderId, confirmedBalance, amountCredits)) {
+          return { success: true, transactionHash: 'confirmed' };
+        }
+        return { success: false, error: CREDIT_TIP_UNCONFIRMED, errorCode: 'UNCONFIRMED' };
       }
 
       // Check for invalid key errors - match various SDK error patterns
@@ -233,6 +247,26 @@ class TipService {
         errorCode: 'NETWORK_ERROR'
       };
     }
+  }
+
+  /**
+   * Whether the sender's proved balance shows a credit tip of `amountCredits`
+   * gone out since it stood at `balanceBefore`. A credit transfer leaves no
+   * document to read back, so the balance is the only witness. False (never
+   * a verdict that it failed) when it does not show within a few reads.
+   */
+  private async creditTipLanded(senderId: string, balanceBefore: number, amountCredits: number): Promise<boolean> {
+    for (let check = 0; check < CREDIT_TIP_CHECKS; check++) {
+      if (check > 0) await new Promise((resolve) => setTimeout(resolve, CREDIT_TIP_CHECK_MS));
+      try {
+        const sdk = await getEvoSdk();
+        const balance = await sdk.identities.balance(senderId);
+        if (typeof balance === 'bigint' && balance <= BigInt(balanceBefore) - BigInt(amountCredits)) return true;
+      } catch (error) {
+        logger.warn('Credit tip check: balance read failed:', extractErrorMessage(error));
+      }
+    }
+    return false;
   }
 
   /**
@@ -285,7 +319,7 @@ class TipService {
       // "already in mempool/chain" means the broadcast went through before. Ask
       // the chain instead of guessing — reporting failure here would put a
       // "Try Again" button in front of a tip that already went out.
-      if (result.errorCode === 'NETWORK_ERROR' && this.looksUnconfirmed(result.error)) {
+      if (result.errorCode === 'UNCONFIRMED' || (result.errorCode === 'NETWORK_ERROR' && this.looksUnconfirmed(result.error))) {
         return this.confirmYappTip(senderId, this.tipMatch(recipientId, amount, target, message, sentAt));
       }
       return {
@@ -347,7 +381,7 @@ class TipService {
   private looksUnconfirmed(error?: string): boolean {
     if (!error) return false;
     return (
-      isTimeoutError(error) ||
+      isOutcomeUnknownError(error) ||
       isNonFatalWaitError(error) ||
       isAlreadyExistsError(error) ||
       /504|gateway|wait_for_state_transition_result/i.test(error)

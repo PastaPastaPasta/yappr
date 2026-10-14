@@ -30,6 +30,7 @@ import {
   isOncePerIdentityAlreadyClaimedError,
   isPropertyAgreementError,
   isPropertyMaxBytesError,
+  isQuorumKeyUnavailableError,
   isRateLimitedError,
   isReferenceNotFoundError,
   isReferenceRequirementError,
@@ -180,6 +181,9 @@ const RULES: readonly Rule[] = [
   ['DUPLICATE', 'unknown', false, isAlreadyExistsError],
   ['RATE_LIMITED', 'not-sent', true, isRateLimitedError],
   ['TIMEOUT', 'unknown', false, isTimeoutError],
+  // A proof the SDK had no quorum key to check (a rotation in progress): when it is the write's
+  // result, the write may have landed. Before NETWORK, whose isConnectionError also matches it.
+  ['TIMEOUT', 'unknown', false, isQuorumKeyUnavailableError],
   // Substring rules: a refusal that carries a consensus code is Platform's verdict, whatever its prose says.
   // 'transport error' / 'Failed to fetch' / 'Load failed': wasm-sdk's gRPC-web call failing in fetch()
   // (Chromium's and WebKit's TypeError text), with or without the "no available addresses" wrapper.
