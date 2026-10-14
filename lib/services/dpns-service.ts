@@ -572,8 +572,13 @@ class DpnsService {
     }
   }
 
-  /** Whether DPNS shows `label` registered to `identityId`; false when it does not, or the read fails. */
+  /**
+   * Whether DPNS shows `label` registered to `identityId`, read from the
+   * chain (never the name cache, which may predate this registration); false
+   * when it does not, or the read fails.
+   */
   private async nameIsOwnedBy(label: string, identityId: string): Promise<boolean> {
+    this.clearCache(label.toLowerCase().replace(/\.dash$/, ''));
     try {
       return (await this.findIdentityByName(label)) === identityId;
     } catch (readError) {
