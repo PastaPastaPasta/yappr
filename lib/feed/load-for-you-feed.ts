@@ -21,6 +21,14 @@ function withLoadingAuthor(post: Post): Post {
 
 const PAGE_SIZE = 20;
 
+/**
+ * The timeline read after a page that held only tombstones: the platform's
+ * largest page. The global `timeline [$createdAt]` index lists tombstones, and
+ * a run of them (a devnet's CI cleanup leaves hundreds) would otherwise cost a
+ * round trip per 20. A tombstone is a few fields, so the wider read is cheap.
+ */
+const TOMBSTONE_RUN_READ = 100;
+
 interface FeedPage {
   posts: Post[];
   cursor: string | null;
@@ -28,10 +36,25 @@ interface FeedPage {
   preloaded?: PreloadedEnrichment;
 }
 
+/**
+ * The leading slice of a timeline read that holds at most `PAGE_SIZE` live
+ * posts: the whole read, or up to and including its `PAGE_SIZE`th live post,
+ * so a wide read never returns more than a page and its cursor resumes right
+ * after what was shown.
+ */
+function takePage(raw: Post[]): Post[] {
+  let live = 0;
+  for (let i = 0; i < raw.length; i++) {
+    if (!raw[i].deleted && ++live === PAGE_SIZE) return raw.slice(0, i + 1);
+  }
+  return raw;
+}
+
 async function fetchFeedPage(options: {
   startAfter?: string;
   language?: string;
   currentUserId?: string;
+  readLimit?: number;
 }): Promise<FeedPage> {
   const compositeOptions = {
     language: options.language || 'en',
@@ -53,28 +76,34 @@ async function fetchFeedPage(options: {
     return { posts: page.posts, cursor, hasMore: page.hasMore, preloaded: page.preloaded };
   }
 
+  const readLimit = options.readLimit ?? PAGE_SIZE;
   const raw = (await postService.getTimeline({
-    limit: PAGE_SIZE,
+    limit: readLimit,
     startAfter: options.startAfter,
     language: options.language,
   })).documents;
-  const cursor = raw.length ? raw[raw.length - 1].id : null;
-  const hasMore = raw.length === PAGE_SIZE;
-  if (composite && raw.length) {
+  const taken = takePage(raw);
+  const cursor = taken.length ? taken[taken.length - 1].id : null;
+  const hasMore = taken.length < raw.length || raw.length === readLimit;
+  // Only live posts are enriched: a tombstone renders nothing, and a page of
+  // them needs no composite request at all.
+  const live = taken.filter(post => !post.deleted);
+  if (composite) {
+    if (!live.length) return { posts: [], cursor, hasMore };
     const page = await loadCompositeFeedPage({
       ...compositeOptions,
-      documentIds: raw.map(post => post.id),
+      documentIds: live.map(post => post.id),
     });
     return { posts: page.posts, cursor, hasMore, preloaded: page.preloaded };
   }
 
-  const posts = raw.filter(post => !post.deleted).map(withLoadingAuthor);
-  return { posts, cursor, hasMore };
+  return { posts: live.map(withLoadingAuthor), cursor, hasMore };
 }
 
 /**
  * A page whose every document is a tombstone must not read as the end of the
- * feed, so this many further pages are tried before an empty page is returned.
+ * feed, so this many further reads (each of `TOMBSTONE_RUN_READ` documents)
+ * are tried before an empty page is returned.
  */
 const MAX_EMPTY_PAGES = 5;
 
@@ -96,7 +125,7 @@ export async function loadForYouFeed(options: {
 
   for (let skipped = 0; page.posts.length === 0 && page.hasMore && page.cursor && skipped < MAX_EMPTY_PAGES; skipped++) {
     logger.debug(`Feed: Page after ${page.cursor} held only tombstones, loading the next one`);
-    page = await fetchFeedPage({ ...pageOptions, startAfter: page.cursor });
+    page = await fetchFeedPage({ ...pageOptions, startAfter: page.cursor, readLimit: TOMBSTONE_RUN_READ });
   }
 
   logger.debug(`Feed: Page has ${page.posts.length} posts`);
