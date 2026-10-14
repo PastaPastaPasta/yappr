@@ -11,7 +11,7 @@ import bs58 from 'bs58'
 import { Document, DocumentCreateTransition, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk'
 import type { DocumentObject } from '@dashevo/evo-sdk'
 import { bytesToHex } from './bytes'
-import { allocateIdentityContractNonce, documentIdForCreate, identityContractNonceConsumed, nextIdentityContractNonce, nonceSequence } from './document-id'
+import { allocateIdentityContractNonce, documentIdForCreate, identityContractNonceConsumed, nextIdentityContractNonce } from './document-id'
 
 const CONTRACT = new Uint8Array(32).fill(1)
 const OWNER = new Uint8Array(32).fill(2)
@@ -81,15 +81,6 @@ describe('nextIdentityContractNonce', () => {
     expect(nextIdentityContractNonce(BigInt(41))).toBe(BigInt(42))
     const withBitset = (BigInt(0xabcdef) << BigInt(40)) | BigInt(41)
     expect(nextIdentityContractNonce(withBitset)).toBe(BigInt(42))
-  })
-})
-
-describe('nonceSequence', () => {
-  it('drops the missing-nonce bits, so a filled gap never reads as going backwards', () => {
-    const withGap = (BigInt(1) << BigInt(40)) | BigInt(7)
-    expect(nonceSequence(withGap)).toBe(BigInt(7))
-    expect(nonceSequence(BigInt(8)) > nonceSequence(withGap)).toBe(true)
-    expect(nonceSequence(undefined)).toBe(BigInt(0))
   })
 })
 

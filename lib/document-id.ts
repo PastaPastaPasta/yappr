@@ -33,15 +33,6 @@ import { Document } from '@dashevo/evo-sdk'
 const NONCE_SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1)
 
 /**
- * The sequence number of a raw DIP-30 nonce (identity or identity contract):
- * the lower 40 bits. The missing-nonce bits above can clear as a gap fills,
- * which lowers the raw value while the sequence moves on, so compare these.
- */
-export function nonceSequence(raw: bigint | undefined | null): bigint {
-  return (raw ?? BigInt(0)) & NONCE_SEQUENCE_MASK
-}
-
-/**
  * The nonce the next transition against a contract must carry, from the value
  * `identities.contractNonce` returned (`undefined` when the identity has never
  * written to the contract).

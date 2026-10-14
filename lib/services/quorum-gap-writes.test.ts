@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
-  identities: { fetch: vi.fn(), contractNonce: vi.fn(), contractNonceWithProof: vi.fn(), nonce: vi.fn(), balance: vi.fn(), creditTransfer: vi.fn() },
+  identities: { fetch: vi.fn(), contractNonce: vi.fn(), contractNonceWithProof: vi.fn(), balance: vi.fn(), creditTransfer: vi.fn() },
   documents: { get: vi.fn(), getWithProof: vi.fn(), replace: vi.fn(), delete: vi.fn() },
   stateTransitions: { broadcastStateTransition: vi.fn(), waitForResponse: vi.fn(), waitForAffectedState: vi.fn() },
   wasm: { refreshIdentityNonce: vi.fn(async () => undefined) },
@@ -170,92 +170,32 @@ describe('a credit tip whose result proof could not be verified', () => {
   const SENDER = 'sender'
   const RECIPIENT = 'recipient'
   const AMOUNT = 200_000_000
-  const START = 1_000_000_000
-
-  /** Whether the transfer has been sent: the chain shows the `after` state from then on. */
-  let sent = false
-
-  /** Proved balances per identity, [before the send, after it]. */
-  function balances(sender: [number, number], recipient: [number, number]) {
-    sdk.identities.balance.mockImplementation(async (id: string) => {
-      const [before, after] = id === SENDER ? sender : recipient
-      return n(sent ? after : before)
-    })
-  }
-
-  /** The sender's raw identity nonce, [before the send, after it]. */
-  function nonces(before: bigint, after: bigint) {
-    sdk.identities.nonce.mockImplementation(async () => (sent ? after : before))
-  }
-
-  /** The transfer fails with `error` once it has gone out. */
-  function transferFails(error: unknown) {
-    sdk.identities.creditTransfer.mockImplementation(async () => { sent = true; throw error })
-  }
 
   beforeEach(() => {
-    sent = false
     sdk.identities.fetch.mockResolvedValue({ publicKeys: [{ keyId: 3 }] })
-    transferFails(qku())
+    sdk.identities.balance.mockResolvedValue(n(1_000_000_000))
   })
 
-  it("confirms it when the sender's nonce moved and the amount left the sender and reached the recipient, sending it once", async () => {
-    nonces(n(7), n(8))
-    balances([START, START - AMOUNT - 1_000], [5, 5 + AMOUNT])
+  it.each([
+    ['an unverifiable result proof', qku()],
+    ['a timed-out wait', new Error('waitForResponse timed out after 10s')],
+    ['a transport failure', new Error('transport error: TypeError: Failed to fetch')],
+    ['a nonce refusal', new Error('Identity sender is trying to set an invalid identity nonce. error is nonce already present at tip')],
+  ])('reports it unconfirmed after %s, sending it once and never as a bad key or a failure to retry', async (_label, error) => {
+    sdk.identities.creditTransfer.mockRejectedValue(error)
 
-    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
-
-    expect(sdk.identities.creditTransfer).toHaveBeenCalledTimes(1)
-    expect(result).toMatchObject({ success: true })
-  })
-
-  it('compares nonce sequences, so a gap that fills while the tip settles does not hide it', async () => {
-    // Before: sequence 7 with nonce 6 still missing (bit 40); after: sequence 8, gap filled. The raw value drops.
-    nonces((n(1) << n(40)) | n(7), n(8))
-    balances([START, START - AMOUNT - 1_000], [5, 5 + AMOUNT])
-
-    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
-
-    expect(result).toMatchObject({ success: true })
-  })
-
-  it('reports it unconfirmed, never as a bad key or a failure to retry, when the chain does not show it', async () => {
-    nonces(n(7), n(7))
-    balances([START, START], [5, 5])
-
-    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
+    const result = await tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif')
 
     expect(sdk.identities.creditTransfer).toHaveBeenCalledTimes(1)
     expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
   })
 
-  it('does not confirm when the chain shows more than this tip (two transitions, or another receipt)', async () => {
-    nonces(n(7), n(9))
-    balances([START, START - 2 * AMOUNT - 2_000], [5, 5 + 2 * AMOUNT])
+  it('still reports a refusal as a failure', async () => {
+    sdk.identities.creditTransfer.mockRejectedValue(new Error('state transition broadcast error: Identity sender has insufficient balance (code=40500)'))
 
-    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
+    const result = await tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif')
 
-    expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
-  })
-
-  it('does not take another spend of the same size, to someone else, for this tip', async () => {
-    // The nonce moved and the sender paid, but the recipient received nothing.
-    nonces(n(7), n(8))
-    balances([START, START - AMOUNT - 1_000], [5, 5])
-
-    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
-
-    expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
-  })
-
-  it('never confirms from chain state after a nonce refusal, which another device can have caused', async () => {
-    transferFails(new Error('Identity sender is trying to set an invalid identity nonce. error is nonce already present at tip'))
-    nonces(n(7), n(8))
-    balances([START, START - AMOUNT - 1_000], [5, 5 + AMOUNT])
-
-    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
-
-    expect(sdk.identities.creditTransfer).toHaveBeenCalledTimes(1)
-    expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+    expect(result.success).toBe(false)
+    expect(result.errorCode).not.toBe('UNCONFIRMED')
   })
 })
