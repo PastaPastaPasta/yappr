@@ -4,10 +4,10 @@
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import { authorDeletesLeaveHoles, yappIsLocked, yappIsPausedForGood } from '@/lib/contract-topology'
 import { MAX_ERROR_DEPTH, extractErrorMessage } from '@/lib/error-message'
-import { isQuorumGapError, isQuorumKeyUnavailableError } from '@/lib/quorum-gap'
+import { isQuorumKeyUnavailableError } from '@/lib/quorum-gap'
 
 export { extractErrorMessage } from '@/lib/error-message'
-export { isQuorumGapError, isQuorumKeyUnavailableError } from '@/lib/quorum-gap'
+export { isQuorumKeyUnavailableError } from '@/lib/quorum-gap'
 
 /**
  * The consensus error code an SDK error carries as a number, or null.
@@ -87,9 +87,21 @@ export function isUnverifiedOutcomeError(error: unknown): boolean {
   } catch {
     name = undefined
   }
-  if (name === 'Proof' || name === 'InvalidProvedResponse' || isQuorumGapError(error)) return true
-  return /context provider error|proof verification|invalid proved response|no available addresses/i.test(extractErrorMessage(error))
+  if (typeof name === 'string' && UNVERIFIED_KINDS.has(name)) return true
+  return /quorum key unavailable|quorum not found|invalid quorum|quorum source unavailable|context provider error|proof verification|invalid proved response|no available addresses/i.test(extractErrorMessage(error))
 }
+
+/** wasm-sdk `WasmSdkError` kinds (`name`) of an answer whose proof did not check. */
+const UNVERIFIED_KINDS: ReadonlySet<string> = new Set(['Proof', 'InvalidProvedResponse', 'DriveProofError', 'ExecutionNotProved'])
+
+/**
+ * wasm-sdk kinds the SDK raises while it builds or signs a write, before it
+ * broadcasts anything: a verdict that nothing was sent.
+ */
+const NOT_SENT_KINDS: ReadonlySet<string> = new Set([
+  'Protocol', 'InvalidArgument', 'SerializationError', 'Config', 'InvalidCreditTransfer', 'NonceOverflow',
+  'IdentityNonceNotFound', 'MissingDependency', 'NotImplemented',
+])
 
 /**
  * A write's outcome is unknown: its confirmation timed out, or the answer
@@ -106,10 +118,10 @@ export function isOutcomeUnknownError(error: unknown): boolean {
  * Whether an error from a write the SDK was already asked to send leaves its
  * outcome unknown: anything but Platform's verdict on it. A transport failure
  * may come after the broadcast went out, and a nonce refusal may be this very
- * transition having executed before an SDK re-broadcast of it. The SDK's own
- * protocol validation (`name` 'Protocol', "Protocol error: …", such as a
- * starter grant already claimed) refuses before anything is broadcast, so it
- * is a verdict too. For writes that move money, where a second send is the
+ * transition having executed before an SDK re-broadcast of it. What the SDK
+ * raises before it broadcasts (`NOT_SENT_KINDS`: its own protocol validation,
+ * "Protocol error: …", such as a starter grant already claimed; a bad
+ * argument; a nonce it could not get) is a verdict too. For writes that move money, where a second send is the
  * worst outcome, and for readbacks before a failure is reported.
  */
 export function sentWriteOutcomeUnknown(error: unknown): boolean {
@@ -121,7 +133,8 @@ export function sentWriteOutcomeUnknown(error: unknown): boolean {
   } catch {
     name = undefined
   }
-  return name !== 'Protocol' && !/\bprotocol error:/i.test(extractErrorMessage(error))
+  if (typeof name === 'string' && NOT_SENT_KINDS.has(name)) return false
+  return !/\bprotocol error:/i.test(extractErrorMessage(error))
 }
 
 /**

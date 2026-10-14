@@ -1,5 +1,5 @@
 import type { EvoSDK } from '@dashevo/evo-sdk'
-import { isQuorumGapError } from '@/lib/quorum-gap'
+import { isQuorumKeyUnavailableError } from '@/lib/quorum-gap'
 import { logger } from '@/lib/logger'
 import { SDK_FACADES, type SdkFacade } from './sdk-facades'
 
@@ -8,7 +8,7 @@ import { SDK_FACADES, type SdkFacade } from './sdk-facades'
  *
  * For ~15–20 s around every quorum rotation the trusted quorum source lags the
  * chain, and every proof signed by the new quorum fails with wasm-sdk's
- * retryable `QuorumKeyUnavailable` (`isQuorumGapError`). The
+ * retryable `QuorumKeyUnavailable` (`isQuorumKeyUnavailableError`). The
  * SDK's own retries do not cover it; the same instance recovers by itself. So
  * a read that hits it is run again here, with backoff, for about half a
  * minute, and the user never sees the gap.
@@ -25,8 +25,13 @@ export interface ReadRetryPolicy {
   maxDelayMs: number
 }
 
-/** Covers the ~17 s gap seen on sakura and stays inside the mobile host's 30 s read deadline. */
-export const QUORUM_GAP_RETRY: ReadRetryPolicy = { budgetMs: 25_000, initialDelayMs: 1_000, maxDelayMs: 4_000 }
+/**
+ * Covers the ~17 s gap seen on sakura. The last attempt starts by 20 s, which
+ * leaves it room inside the mobile host's 30 s read deadline. An unreachable
+ * quorum SERVICE ("quorum source unavailable") is an outage, not a gap, and is
+ * not retried.
+ */
+export const QUORUM_GAP_RETRY: ReadRetryPolicy = { budgetMs: 20_000, initialDelayMs: 1_000, maxDelayMs: 4_000 }
 
 export interface RetryClock {
   now(): number
@@ -55,7 +60,7 @@ export async function retryThroughQuorumGap<T>(
     try {
       return await attempt(n)
     } catch (error) {
-      if (!isQuorumGapError(error) || clock.now() - started + delay > policy.budgetMs) throw error
+      if (!isQuorumKeyUnavailableError(error) || clock.now() - started + delay > policy.budgetMs) throw error
       if (n === 0) logger.info(`${label}: the proof's quorum key is not available yet (quorum rotation); retrying the read`)
       await clock.sleep(delay)
       delay = Math.min(delay * 2, policy.maxDelayMs)

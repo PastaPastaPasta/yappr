@@ -11,7 +11,6 @@ import {
   sentWriteOutcomeUnknown,
   isNotFoundAnswer,
   isOutcomeUnknownError,
-  isQuorumGapError,
   isQuorumKeyUnavailableError,
   brokenPropertyRule,
   CREATE_NOT_RECORDED_ERROR,
@@ -1008,12 +1007,10 @@ describe('beta.6 QuorumKeyUnavailable (a quorum rotation)', () => {
     expect(isQuorumKeyUnavailableError(new Error('invalid quorum: Quorum not found in cache for hash: 00ab'))).toBe(true)
   })
 
-  it('takes an unreachable quorum service for a gap a read waits out, not for a missing key', () => {
-    expect(isQuorumGapError(SOURCE_DOWN)).toBe(true)
+  it('does not take an unreachable quorum service, an exhausted pool or an absence for a missing key', () => {
     expect(isQuorumKeyUnavailableError(SOURCE_DOWN)).toBe(false)
-    expect(isQuorumGapError(QKU)).toBe(true)
-    expect(isQuorumGapError(new Error('no available addresses to retry'))).toBe(false)
-    expect(isQuorumGapError(new Error('Document D1 not found'))).toBe(false)
+    expect(isQuorumKeyUnavailableError(new Error('no available addresses to retry'))).toBe(false)
+    expect(isQuorumKeyUnavailableError(new Error('Document D1 not found'))).toBe(false)
   })
 
   it('leaves a write it answered with an unknown outcome, never a verdict', () => {
@@ -1021,6 +1018,7 @@ describe('beta.6 QuorumKeyUnavailable (a quorum rotation)', () => {
     expect(isOutcomeUnknownError(QKU)).toBe(true)
     expect(isOutcomeUnknownError(EXHAUSTED)).toBe(true)
     expect(isOutcomeUnknownError(new Error('waitForResponse timed out'))).toBe(true)
+    expect(isOutcomeUnknownError({ code: -1, name: 'ExecutionNotProved', message: 'execution not proved' })).toBe(true)
     expect(isConsensusRefusal(QKU)).toBe(false)
     expect(isOutcomeUnknownError(new Error('Document D1 has invalid revision Some(2) (code=40106)'))).toBe(false)
   })
@@ -1041,6 +1039,8 @@ describe('beta.6 QuorumKeyUnavailable (a quorum rotation)', () => {
     expect(sentWriteOutcomeUnknown({ code: 40700, name: 'Protocol', message: 'not enough token balance' })).toBe(false)
     expect(sentWriteOutcomeUnknown(new Error('state transition broadcast error: Identity X has insufficient balance'))).toBe(false)
     expect(sentWriteOutcomeUnknown({ code: -1, name: 'Protocol', message: "Failed to claim tokens: Protocol error: identity 'C' already claimed" })).toBe(false)
+    expect(sentWriteOutcomeUnknown({ code: -1, name: 'InvalidArgument', message: 'amount must be positive' })).toBe(false)
+    expect(sentWriteOutcomeUnknown({ code: -1, name: 'IdentityNonceNotFound', message: 'nonce not found for identity' })).toBe(false)
   })
 
   it('tells the user a write may have gone through, rather than inviting a retry', () => {

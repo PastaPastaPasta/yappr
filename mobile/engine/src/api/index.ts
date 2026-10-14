@@ -10,7 +10,6 @@ import { createProfileWrites, profiles } from './profiles'
 import { createSafetyModule } from './safety'
 import { createMobileAuthController, createSessionModule, foregroundBalanceRefresh, type SessionEvents } from './session'
 import { settings } from './settings'
-import { retryReadsOnStaleQuorum } from './stale-quorum'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
 
@@ -48,11 +47,12 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
         await dm.hooks.lifecycle(state)
       },
     }),
-    // The read halves only: a stale quorum cache costs a read one retry, never a write (stale-quorum.ts).
-    feed: retryReadsOnStaleQuorum(feed),
-    posts: { ...retryReadsOnStaleQuorum(posts), ...createPostWrites(tickets, emit) },
-    engage: { ...retryReadsOnStaleQuorum(engage), ...createEngageWrites(tickets) },
-    profiles: { ...retryReadsOnStaleQuorum(profiles), ...createProfileWrites(tickets) },
+    // A read whose proof names a quorum the SDK has no key for yet is retried inside lib's SDK wrapper
+    // (lib/services/sdk-read-retry.ts); writes never are.
+    feed,
+    posts: { ...posts, ...createPostWrites(tickets, emit) },
+    engage: { ...engage, ...createEngageWrites(tickets) },
+    profiles: { ...profiles, ...createProfileWrites(tickets) },
     session: createSessionModule({
       emit: sessionEmit,
       controller,
@@ -67,10 +67,10 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     dm: dm.api,
     settings,
     writes: createWritesModule(tickets),
-    graph: { ...retryReadsOnStaleQuorum(graph), ...createGraphWrites(tickets) },
-    explore: retryReadsOnStaleQuorum(explore),
+    graph: { ...graph, ...createGraphWrites(tickets) },
+    explore,
     safety: createSafetyModule(tickets),
-    notifications: retryReadsOnStaleQuorum(notifications.api),
+    notifications: notifications.api,
   }
 }
 

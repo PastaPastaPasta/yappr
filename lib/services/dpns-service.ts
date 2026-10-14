@@ -20,6 +20,7 @@ import {
   isContestFundError,
   isContestedDocumentsNotYetAllowedError,
   isContestNotJoinableError,
+  isOutcomeUnknownError,
   sentWriteOutcomeUnknown,
 } from '@/lib/error-utils';
 
@@ -81,6 +82,10 @@ export function describeDpnsRegistrationError(error: unknown): string {
   }
   // Drive: "Insufficient identity <id> balance <b> required <r>". A contested
   // name needs its contest fund on top of the fees.
+  // Sent, and no verdict came back: a second try would pay a second preorder.
+  if (isOutcomeUnknownError(error)) {
+    return 'The network couldn\'t confirm this registration yet. It may have gone through, so check your names before trying again.';
+  }
   if (/insufficient identity .* balance/i.test(message)) {
     return 'Your identity does not have enough credits for this registration. A contested name also pays a contest fund into its vote, priced by the network before you sign. Top up and try again.';
   }

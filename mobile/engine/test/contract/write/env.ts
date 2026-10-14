@@ -36,9 +36,9 @@ export async function pollSettled<T extends { state: string }>(get: (id: string)
 /**
  * The SDK's quorum keys are fetched once, when it is built, and sakura forms
  * a quorum every ~4 minutes, so a proof signed by one newer than the SDK
- * fails "Quorum not found in cache" until lib rebuilds the SDK. The engine's
- * read modules retry that once themselves (src/api/stale-quorum.ts); session
- * calls do not. Only that failure is retried (3 times, 5 s apart); anything
+ * fails "Quorum not found in cache" until lib rebuilds the SDK. lib's SDK
+ * wrapper retries facade reads through the gap (lib/services/sdk-read-retry.ts);
+ * these direct calls retry here. Only that failure is retried (3 times, 5 s apart); anything
  * else throws.
  */
 export async function retryQuorum<T>(call: () => Promise<T>): Promise<T> {

@@ -126,6 +126,8 @@ class TipService {
     // Set once the transfer is handed to the SDK: an error before that sent nothing.
     let sent = false;
     let confirmedBalance: number | null = null;
+    // The sender's identity nonce before the send, which a credit transfer consumes.
+    let nonceBefore: bigint | null = null;
     try {
       // Check sender balance. If the balance fetch itself fails, don't treat
       // that as "0 credits" — skip the pre-check and let the transfer be the
@@ -184,6 +186,12 @@ class TipService {
       logger.debug('Calling sdk.identities.creditTransfer...');
       // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
       // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
+      try {
+        nonceBefore = (await sdk.identities.nonce(senderId)) ?? null;
+      } catch (error) {
+        logger.warn('Could not read the identity nonce before a tip; an unconfirmed tip will stay unconfirmed:', extractErrorMessage(error));
+      }
+
       sent = true;
       const result = await sdk.identities.creditTransfer({
         identity,
@@ -215,7 +223,7 @@ class TipService {
       // key). Only the sender's balance can show it, so ask it.
       if (sent && sentWriteOutcomeUnknown(error)) {
         identityService.clearCache(senderId);
-        if (confirmedBalance !== null && await this.creditTipLanded(senderId, confirmedBalance, amountCredits)) {
+        if (confirmedBalance !== null && nonceBefore !== null && await this.creditTipLanded(senderId, nonceBefore, confirmedBalance, amountCredits)) {
           return { success: true, transactionHash: 'confirmed' };
         }
         return { success: false, error: CREDIT_TIP_UNCONFIRMED, errorCode: 'UNCONFIRMED' };
@@ -250,18 +258,21 @@ class TipService {
   }
 
   /**
-   * Whether the sender's proved balance shows a credit tip of `amountCredits`
-   * gone out since it stood at `balanceBefore`. A credit transfer leaves no
-   * document to read back, so the balance is the only witness. False (never
-   * a verdict that it failed) when it does not show within a few reads.
+   * Whether the chain shows a credit tip of `amountCredits` gone out: the
+   * sender's identity nonce moved past `nonceBefore` (a credit transfer
+   * consumes it, document writes do not) and the proved balance fell by at
+   * least the amount from `balanceBefore`. A credit transfer leaves no
+   * document to read back, so these are the witnesses. False (never a verdict
+   * that it failed) when they do not show within a few reads.
    */
-  private async creditTipLanded(senderId: string, balanceBefore: number, amountCredits: number): Promise<boolean> {
+  private async creditTipLanded(senderId: string, nonceBefore: bigint, balanceBefore: number, amountCredits: number): Promise<boolean> {
     for (let check = 0; check < CREDIT_TIP_CHECKS; check++) {
       if (check > 0) await new Promise((resolve) => setTimeout(resolve, CREDIT_TIP_CHECK_MS));
       try {
         const sdk = await getEvoSdk();
+        const nonce = await sdk.identities.nonce(senderId);
         const balance = await sdk.identities.balance(senderId);
-        if (typeof balance === 'bigint' && balance <= BigInt(balanceBefore) - BigInt(amountCredits)) return true;
+        if (typeof nonce === 'bigint' && nonce > nonceBefore && typeof balance === 'bigint' && balance <= BigInt(balanceBefore) - BigInt(amountCredits)) return true;
       } catch (error) {
         logger.warn('Credit tip check: balance read failed:', extractErrorMessage(error));
       }

@@ -57,6 +57,9 @@ const CONNECTION_ERROR_MARKERS = [
  */
 const QUORUM_SOURCE_UNAVAILABLE = 'quorum source unavailable';
 
+/** wasm-sdk 5.0.0-beta.6's `QuorumKeyUnavailable`; see isConnectionError(). */
+const QUORUM_KEY_UNAVAILABLE = 'quorum key unavailable';
+
 /** The message of a rejection, whether or not it is an Error. */
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -518,6 +521,11 @@ class EvoSdkService {
   isConnectionError(error: unknown): boolean {
     const message = errorMessage(error).toLowerCase();
     if (message.includes(QUORUM_SOURCE_UNAVAILABLE)) return false;
+    // beta.6's QuorumKeyUnavailable during a rotation: the instance fetches the
+    // key itself once the quorum source catches up (~17 s), and reads ride the
+    // gap out (sdk-read-retry.ts). A rebuild would only stall every caller. An
+    // address pool it exhausted still says "no available addresses" and rebuilds.
+    if (message.includes(QUORUM_KEY_UNAVAILABLE) && !message.includes('no available addresses')) return false;
     return CONNECTION_ERROR_MARKERS.some(marker => message.includes(marker));
   }
 

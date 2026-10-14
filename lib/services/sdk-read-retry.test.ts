@@ -30,8 +30,8 @@ describe('retryThroughQuorumGap', () => {
     const clock = fakeClock()
     const attempt = vi.fn()
       .mockRejectedValueOnce(quorumKeyUnavailable())
-      .mockRejectedValueOnce(quorumKeyUnavailable())
-      .mockRejectedValueOnce(new Error('Context provider error: quorum source unavailable: timeout'))
+      .mockRejectedValueOnce(new Error(`no available addresses to retry, last error: ${quorumKeyUnavailable().message}`))
+      .mockRejectedValueOnce(new Error('invalid quorum: Quorum not found in cache for hash: 00ab'))
       .mockResolvedValueOnce('profile')
 
     await expect(retryThroughQuorumGap(attempt, 'documents.get', QUORUM_GAP_RETRY, clock)).resolves.toBe('profile')
@@ -42,20 +42,22 @@ describe('retryThroughQuorumGap', () => {
   it('gives up once the next attempt would start past the budget, with the last quorum error', async () => {
     const clock = fakeClock()
     const last = quorumKeyUnavailable()
-    const attempt = vi.fn(async (n: number) => { throw n < 7 ? quorumKeyUnavailable() : last })
+    const attempt = vi.fn(async (n: number) => { throw n < 6 ? quorumKeyUnavailable() : last })
 
     await expect(retryThroughQuorumGap(attempt, 'identities.fetch', QUORUM_GAP_RETRY, clock)).rejects.toBe(last)
-    // 1 + 2 + 4 + 4 + 4 + 4 + 4 = 23 s; a further 4 s would start past 25 s.
-    expect(clock.slept).toEqual([1_000, 2_000, 4_000, 4_000, 4_000, 4_000, 4_000])
-    expect(attempt).toHaveBeenCalledTimes(8)
+    // 1 + 2 + 4 + 4 + 4 + 4 = 19 s; a further 4 s would start past 20 s.
+    expect(clock.slept).toEqual([1_000, 2_000, 4_000, 4_000, 4_000, 4_000])
+    expect(attempt).toHaveBeenCalledTimes(7)
   })
 
-  it('does not repeat any other failure', async () => {
+  it.each([
+    ['an exhausted address pool', new Error('no available addresses to retry')],
+    ['an unreachable quorum service (an outage, not a rotation)', new Error('Context provider error: quorum source unavailable: timeout')],
+  ])('does not repeat %s', async (_label, failure) => {
     const clock = fakeClock()
-    const refusal = new Error('no available addresses to retry')
-    const attempt = vi.fn().mockRejectedValue(refusal)
+    const attempt = vi.fn().mockRejectedValue(failure)
 
-    await expect(retryThroughQuorumGap(attempt, 'documents.query', QUORUM_GAP_RETRY, clock)).rejects.toBe(refusal)
+    await expect(retryThroughQuorumGap(attempt, 'documents.query', QUORUM_GAP_RETRY, clock)).rejects.toBe(failure)
     expect(attempt).toHaveBeenCalledTimes(1)
     expect(clock.slept).toEqual([])
   })

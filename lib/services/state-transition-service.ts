@@ -48,6 +48,10 @@ const ST_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** Hard cap on cached entries as a safety net */
 const ST_CACHE_MAX_ENTRIES = 50;
 
+/** Reads, 2 s apart, of a replace or delete whose outcome is unknown. */
+const READBACK_ATTEMPTS = 3;
+const READBACK_INTERVAL_MS = 2_000;
+
 interface CachedSTEntry {
   /** Base64-encoded ST bytes */
   data: string;
@@ -288,19 +292,27 @@ class StateTransitionService {
   /**
    * After a replace or delete whose outcome is unknown, whether the chain
    * already shows its effect: the document at `revision` or later (a replace),
-   * or gone (a delete, `revision` null). False when it does not, or when the
-   * read fails: that proves nothing either way.
+   * or gone (a delete, `revision` null). Read a few times, since a node a
+   * block behind still shows the old state. Only an answered read counts: a
+   * read that fails (or a "not found" error) proves nothing either way.
    */
   private async showsLanded(contractId: string, documentType: string, documentId: string, revision: number | null): Promise<boolean> {
-    try {
-      const doc = await this.checkDocumentExists(contractId, documentType, documentId);
-      if (revision === null) return doc === null;
-      const current = Number(doc?.$revision ?? NaN);
-      return Number.isFinite(current) && current >= revision;
-    } catch (error) {
-      logger.warn(`Could not read back ${documentType} ${documentId}:`, extractErrorMessage(error));
-      return false;
+    for (let attempt = 0; attempt < READBACK_ATTEMPTS; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, READBACK_INTERVAL_MS));
+      try {
+        const sdk = await getEvoSdk();
+        const doc = await sdk.documents.get(contractId, documentType, documentId);
+        if (revision === null) {
+          if (!doc) return true;
+          continue;
+        }
+        const current = Number(doc ? documentToPlainObject(doc).$revision : NaN);
+        if (Number.isFinite(current) && current >= revision) return true;
+      } catch (error) {
+        logger.warn(`Could not read back ${documentType} ${documentId}:`, extractErrorMessage(error));
+      }
     }
+    return false;
   }
 
   /**
@@ -692,6 +704,10 @@ class StateTransitionService {
               clearPendingSTBytes(documentId);
               return { success: true, transactionHash: documentId, document: doc, confirmed: true };
             }
+          }
+          // No verdict on the replayed bytes: they may yet land, so never build another create.
+          if (sentWriteOutcomeUnknown(rebroadcastErr)) {
+            return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
           }
           // Genuine failure on rebroadcast — clear cache and fall through to create fresh.
           // A 40134 here is about the multiplier the CACHED bytes agreed to, and the

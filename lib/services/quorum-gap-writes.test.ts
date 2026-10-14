@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
-  identities: { fetch: vi.fn(), contractNonce: vi.fn(), contractNonceWithProof: vi.fn(), balance: vi.fn(), creditTransfer: vi.fn() },
+  identities: { fetch: vi.fn(), contractNonce: vi.fn(), contractNonceWithProof: vi.fn(), nonce: vi.fn(), balance: vi.fn(), creditTransfer: vi.fn() },
   documents: { get: vi.fn(), getWithProof: vi.fn(), replace: vi.fn(), delete: vi.fn() },
   stateTransitions: { broadcastStateTransition: vi.fn(), waitForResponse: vi.fn(), waitForAffectedState: vi.fn() },
   wasm: { refreshIdentityNonce: vi.fn(async () => undefined) },
@@ -192,7 +192,8 @@ describe('a credit tip whose result proof could not be verified', () => {
     sdk.identities.creditTransfer.mockRejectedValue(qku())
   })
 
-  it("confirms it from the sender's balance, sending it once", async () => {
+  it("confirms it from the sender's nonce and balance, sending it once", async () => {
+    sdk.identities.nonce.mockResolvedValueOnce(n(7)).mockResolvedValue(n(8))
     sdk.identities.balance
       .mockResolvedValueOnce(n(1_000_000_000))
       .mockResolvedValue(n(1_000_000_000 - AMOUNT - 1_000))
@@ -204,11 +205,23 @@ describe('a credit tip whose result proof could not be verified', () => {
   })
 
   it('reports it unconfirmed, never as a bad key or a failure to retry, when the balance does not show it', async () => {
+    sdk.identities.nonce.mockResolvedValueOnce(n(7)).mockResolvedValue(n(8))
     sdk.identities.balance.mockResolvedValue(n(1_000_000_000))
 
     const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
 
     expect(sdk.identities.creditTransfer).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+  })
+
+  it('does not take a balance drop for the tip while the nonce has not moved (another spend)', async () => {
+    sdk.identities.nonce.mockResolvedValue(n(7))
+    sdk.identities.balance
+      .mockResolvedValueOnce(n(1_000_000_000))
+      .mockResolvedValue(n(1_000_000_000 - AMOUNT - 1_000))
+
+    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
+
     expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
   })
 })
