@@ -205,7 +205,11 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
         }
         router.push(`/sign-in/connect?renew=1&mode=${lastAppConnectMode()}&resume=1`);
       })
-      .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending renewal failed: ${errorMessage(error)}`));
+      .catch((error: unknown) => {
+        // Look again once the engine is back (a restart cut the lookup short).
+        checked.current = false;
+        appendLog('warn', 'host', `Reading a pending renewal failed: ${errorMessage(error)}`);
+      });
   }, [ready, engineUp, walletAccount]);
 }
 
