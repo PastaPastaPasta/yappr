@@ -21,5 +21,8 @@ import { extractErrorMessage } from '@/lib/error-message'
  * sakura.
  */
 export function isQuorumKeyUnavailableError(error: unknown): boolean {
-  return /quorum key unavailable|quorum not found|invalid quorum/i.test(extractErrorMessage(error))
+  const message = extractErrorMessage(error)
+  // "invalid quorum: Quorum source unavailable" is the quorum SERVICE down: an outage, not a rotation.
+  if (/quorum source unavailable/i.test(message)) return false
+  return /quorum key unavailable|quorum not found|invalid quorum/i.test(message)
 }

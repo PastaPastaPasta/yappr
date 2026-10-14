@@ -286,19 +286,23 @@ class TipService {
   }
 
   /**
-   * Whether the chain shows THIS credit tip landed: since `before`, the
-   * sender's nonce moved on, the sender's balance fell by at least the amount
-   * and the recipient's rose by at least it. A credit transfer leaves no
-   * document to read back, so these are the witnesses; aggregate sender
-   * state alone could be another spend. False (never a verdict that it
-   * failed) when they do not all show within a few reads.
+   * Whether the chain shows THIS credit tip landed: since `before`, exactly
+   * one identity-nonce transition by the sender, the sender's balance fell by
+   * at least the amount (the transfer plus its fee) and the recipient's rose
+   * by exactly the amount. A credit transfer leaves no document to read back,
+   * so these are the witnesses; any other spend or receipt in the window
+   * breaks the exact match and leaves it unconfirmed. The one case they
+   * cannot tell apart, an identical tip from another device taking the same
+   * nonce, means ours can never execute and the recipient was paid exactly
+   * once. False (never a verdict that it failed) when they do not all show
+   * within a few reads.
    */
   private async creditTipLanded(senderId: string, recipientId: string, before: CreditTipWitness, amountCredits: number): Promise<boolean> {
     const amount = BigInt(amountCredits);
     for (let check = 0; check < CREDIT_TIP_CHECKS; check++) {
       if (check > 0) await new Promise((resolve) => setTimeout(resolve, CREDIT_TIP_CHECK_MS));
       const now = await this.creditTipWitness(senderId, recipientId);
-      if (now && now.nonce > before.nonce && now.sender <= before.sender - amount && now.recipient >= before.recipient + amount) return true;
+      if (now && now.nonce === before.nonce + BigInt(1) && now.sender <= before.sender - amount && now.recipient === before.recipient + amount) return true;
     }
     return false;
   }

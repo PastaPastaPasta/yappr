@@ -229,6 +229,15 @@ describe('a credit tip whose result proof could not be verified', () => {
     expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
   })
 
+  it('does not confirm when the chain shows more than this tip (two transitions, or another receipt)', async () => {
+    nonces(n(7), n(9))
+    balances([START, START - 2 * AMOUNT - 2_000], [5, 5 + 2 * AMOUNT])
+
+    const result = await elapsing(() => tipService.sendTip(SENDER, RECIPIENT, AMOUNT, 'transfer-wif'))
+
+    expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+  })
+
   it('does not take another spend of the same size, to someone else, for this tip', async () => {
     // The nonce moved and the sender paid, but the recipient received nothing.
     nonces(n(7), n(8))

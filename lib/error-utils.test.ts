@@ -1009,6 +1009,7 @@ describe('beta.6 QuorumKeyUnavailable (a quorum rotation)', () => {
 
   it('does not take an unreachable quorum service, an exhausted pool or an absence for a missing key', () => {
     expect(isQuorumKeyUnavailableError(SOURCE_DOWN)).toBe(false)
+    expect(isQuorumKeyUnavailableError(new Error('invalid quorum: Quorum source unavailable'))).toBe(false)
     expect(isQuorumKeyUnavailableError(new Error('no available addresses to retry'))).toBe(false)
     expect(isQuorumKeyUnavailableError(new Error('Document D1 not found'))).toBe(false)
   })
