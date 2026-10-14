@@ -157,6 +157,18 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(screen.getByText(/Someone else may have scanned your code/)).toBeTruthy();
   });
 
+  it('takes the rejected accounts away at once, while the new request is still being made', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: 'alice' }] }));
+    fakeEngine.method('session.appConnectReject').mockReturnValue(new Promise(() => undefined));
+    await act(async () => fireEvent.press(screen.getByTestId('ac-not-me')));
+    expect(screen.queryByTestId('ac-continue')).toBeNull();
+    await act(async () => {
+      const { acceptAccount } = jest.requireActual<typeof import('./app-connect')>('./app-connect');
+      await acceptAccount(alice.identityId);
+    });
+    expect(fakeEngine.method('session.appConnectAccept')).not.toHaveBeenCalled();
+  });
+
   it('signs in once however often "Continue" is tapped', async () => {
     await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: 'alice' }] }));
     let answer: (value: unknown) => void = () => undefined;
@@ -183,6 +195,21 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(useAppConnect.getState().step.name).toBe('starting');
     act(() => fakeEngine.emit('session.appConnect', flow({ phase: 'waiting', uri: URI, requestHash: HASH, flow: testFlow + 6 })));
     expect(useAppConnect.getState().flow).toMatchObject({ flow: testFlow + 6, phase: 'waiting' });
+  });
+
+  it('picks the request up on a new engine when the engine restarted while it was being made', async () => {
+    mockParams = { mode: 'wallet' };
+    fakeEngine.method('session.appConnectStart').mockRejectedValueOnce(Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' }));
+    render(<ConnectScreen />);
+    await act(async () => {});
+    expect(useAppConnect.getState().step.name).toBe('starting');
+    // (Another request than earlier tests', which the wallet has seen.)
+    fakeEngine.method('session.appConnectStart').mockResolvedValue(flow({ phase: 'waiting', uri: URI, requestHash: 'cd'.repeat(20), flow: 1 }));
+    await act(async () => fakeEngine.setStatus({ state: 'ready', epoch: 3 + testFlow }));
+    expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(2);
+    expect(useAppConnect.getState().flow).toMatchObject({ phase: 'waiting', flow: 1 });
+    // That start never got as far as the wallet: this one opens it.
+    expect(Linking.openURL).toHaveBeenCalledWith(URI);
   });
 
   it('follows a restarted engine, whose flows are numbered from the start again', async () => {

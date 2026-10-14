@@ -130,10 +130,12 @@ function listen(): void {
     followEpoch(epoch);
     if (flowEpoch === -1 || epoch === flowEpoch) return;
     flowEpoch = epoch;
-    // The engine restarted under a waiting request: pick the stored request up again.
-    if (get().step.name === 'flow') {
-      const { mode, renew, reauth } = get();
-      startAppConnect(mode, { renew, reauth, resume: true }).catch(() => undefined);
+    // The engine restarted under a waiting request, or while it made one: pick the stored request up again.
+    const { step, mode, renew, reauth } = get();
+    if (step.name === 'flow' || step.name === 'starting') {
+      // A start cut short has not opened the wallet yet.
+      const resume = step.name === 'flow' || !openOnReady;
+      startAppConnect(mode, { renew, reauth, resume }).catch(() => undefined);
     }
   });
 }
@@ -186,6 +188,8 @@ export async function startAppConnect(
     if (!current || flow.flow >= current.flow) receive(flow);
   } catch (error) {
     if (stale(gen)) return;
+    // The engine restarted under the start: the new engine picks the request up (listen()).
+    if (errorCode(error) === 'ENGINE_RESTARTED') return;
     appendLog('warn', 'host', `Starting the wallet sign-in failed: ${errorMessage(error)}`);
     set({ step: { name: 'error', title: copy.signin.createFailedTitle, message: copy.signin.createFailedBody } });
   }
@@ -215,7 +219,9 @@ export async function checkAgain(): Promise<void> {
 
 /** "That's not me": the engine forgets every answer and makes a new request. */
 export async function notMe(): Promise<void> {
-  set({ rejected: true });
+  // The rejected accounts can no longer be picked while the new request is made.
+  const { flow } = get();
+  set({ rejected: true, ...(flow ? { flow: { flow: flow.flow, renew: flow.renew, phase: 'checking' as const } } : {}) });
   openOnReady = false;
   await engine.api.session.appConnectReject().catch((error: unknown) => {
     appendLog('warn', 'host', `Starting over failed: ${errorMessage(error)}`);
@@ -229,7 +235,7 @@ export async function notMe(): Promise<void> {
  */
 export async function acceptAccount(identityId: string): Promise<void> {
   // One answer, once: a second tap (or another account in the chooser) would only fail after the first signed in.
-  if (get().step.name === 'accepting') return;
+  if (get().step.name === 'accepting' || get().flow?.phase !== 'confirm') return;
   const gen = next();
   const { renew } = get();
   set({ step: { name: 'accepting' } });
