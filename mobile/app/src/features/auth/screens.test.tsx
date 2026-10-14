@@ -1,4 +1,4 @@
-import type { SessionDTO } from '@engine/api';
+import type { CapabilitiesDTO, SessionDTO } from '@engine/api';
 import { act, fireEvent, render as rtlRender, screen } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { router } from 'expo-router';
@@ -188,6 +188,10 @@ describe('private key sign-in (AUTH-08)', () => {
 });
 
 describe('sign-in methods (AUTH-03, AUTH-05)', () => {
+  const walletSignIn = (kind: 'legacy' | 'app-connect') =>
+    act(() => fakeEngine.setStatus({ info: { capabilities: { walletSignIn: kind } as CapabilitiesDTO } }));
+  beforeEach(() => walletSignIn('legacy'));
+
   it('explains a missing wallet and keeps the QR route', async () => {
     jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(false);
     render(<SignInScreen />);
@@ -230,8 +234,28 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
     fireEvent.press(screen.getByTestId('sign-in-other-ways'));
     fireEvent.press(screen.getByTestId('sign-in-private-key'));
     expect(router.push).toHaveBeenCalledWith('/sign-in/key');
-    // App Connect is flagged off in 1.0 (AUTH-13).
-    expect(screen.queryByTestId('sign-in-app-connect')).toBeNull();
+  });
+
+  it('signs in with App Connect where the network runs it, on this device or another', async () => {
+    jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true);
+    walletSignIn('app-connect');
+    render(<SignInScreen />);
+    await act(async () => {});
+
+    fireEvent.press(screen.getByTestId('sign-in-open-wallet'));
+    expect(router.push).toHaveBeenCalledWith('/sign-in/connect?mode=wallet');
+    fireEvent.press(screen.getByTestId('sign-in-other-device'));
+    expect(router.push).toHaveBeenCalledWith('/sign-in/connect?mode=qr');
+    expect(router.push).not.toHaveBeenCalledWith('/sign-in/wallet');
+  });
+
+  it('waits for the engine to say which wallet sign-in this network uses', async () => {
+    jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true);
+    act(() => fakeEngine.setStatus({ info: undefined }));
+    render(<SignInScreen />);
+    await act(async () => {});
+    fireEvent.press(screen.getByTestId('sign-in-other-device'));
+    expect(router.push).not.toHaveBeenCalled();
   });
 });
 

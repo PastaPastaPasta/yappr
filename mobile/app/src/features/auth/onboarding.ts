@@ -7,12 +7,6 @@ import { engineNetworkKey } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { syncStorage } from '~/state/storage';
 
-/**
- * App Connect (PRD AUTH-13) stays off in every 1.0 build: with the flag off
- * no App Connect UI appears anywhere.
- */
-export const FEATURE_APP_CONNECT = false;
-
 interface Onboarding {
   /** This install has been past the Welcome screen (PRD AUTH-01): either choice counts. */
   welcomed: boolean;

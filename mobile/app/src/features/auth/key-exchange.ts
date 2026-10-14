@@ -90,7 +90,8 @@ let generation = 0;
 const next = () => ++generation;
 const stale = (gen: number) => gen !== generation;
 
-function openLink(uri: string, onFail: () => void): void {
+/** Opens a wallet link; `onFail` when no app on this device takes it. */
+export function openLink(uri: string, onFail: () => void): void {
   Linking.openURL(uri).catch((error: unknown) => {
     appendLog('info', 'host', `No app opened the wallet link: ${errorMessage(error)}`);
     onFail();

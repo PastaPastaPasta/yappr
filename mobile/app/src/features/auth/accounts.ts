@@ -403,27 +403,37 @@ export async function signOutAccount(identityId: string): Promise<boolean> {
       toast.error(copy.signout.failed);
       return false;
     }
-    clearSessionExpired(identityId);
-    const remaining = await refreshAccounts().catch(() => useSessionStore.getState().accounts);
-    const others = remaining.filter((a) => a.identityId !== identityId);
-    if (others.length === 0) setWelcomed(false);
     toast(copy.signout.done);
-    const next = active ? others[0] : undefined;
-    if (next) {
-      // Outside this transition: the switch shows its own.
-      queueMicrotask(() => {
-        switchAccount(next).catch(() => undefined);
-      });
-    } else if (active) {
-      // This engine booted with the account's keys in its page (and RN holds that page's source):
-      // only a fresh engine drops them (ENGINE.md §11.1). A switch above restarts anyway. Like a switch,
-      // the restart then reads again, once, what the screens behind failed to read for the signed-out
-      // reader (a read cut short by the restart and replayed on the booting engine; one suspect for
-      // D-L2i-004, which device QA could not reproduce).
-      restartEngine('Signed out').catch((error: unknown) =>
-        appendLog('warn', 'host', `Restarting after sign-out failed: ${errorMessage(error)}`),
-      );
-    }
+    await afterSignOut(identityId, active);
     return true;
   });
+}
+
+/**
+ * What follows an account's sign-out on this device, however it happened (the
+ * user, or a wallet that revoked this device's keys): the next account on the
+ * device takes over, or (none left) Welcome comes back on the next launch and
+ * the engine restarts without the account's keys.
+ */
+export async function afterSignOut(identityId: string, active: boolean): Promise<void> {
+  clearSessionExpired(identityId);
+  const remaining = await refreshAccounts().catch(() => useSessionStore.getState().accounts);
+  const others = remaining.filter((a) => a.identityId !== identityId);
+  if (others.length === 0) setWelcomed(false);
+  const next = active ? others[0] : undefined;
+  if (next) {
+    // Outside this transition: the switch shows its own.
+    queueMicrotask(() => {
+      switchAccount(next).catch(() => undefined);
+    });
+  } else if (active) {
+    // This engine booted with the account's keys in its page (and RN holds that page's source):
+    // only a fresh engine drops them (ENGINE.md §11.1). A switch above restarts anyway. Like a switch,
+    // the restart then reads again, once, what the screens behind failed to read for the signed-out
+    // reader (a read cut short by the restart and replayed on the booting engine; one suspect for
+    // D-L2i-004, which device QA could not reproduce).
+    restartEngine('Signed out').catch((error: unknown) =>
+      appendLog('warn', 'host', `Restarting after sign-out failed: ${errorMessage(error)}`),
+    );
+  }
 }

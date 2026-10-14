@@ -290,3 +290,70 @@ describe('an "Add account" the last launch was killed in (NEW-R-vi-001)', () => 
     expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
   });
 });
+
+describe('a renewal the last launch was killed in (the wallet was open)', () => {
+  const wallet = { ...alice, method: 'app-connect' as const };
+  beforeEach(() => {
+    act(() => acceptTerms('devnet-test', 'alice'));
+    fakeEngine.setStatus({ state: 'ready', epoch: 1, info: { capabilities: { walletSignIn: 'app-connect' } as never } });
+  });
+
+  it('reopens it for an account signed in with a wallet', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    fakeEngine.method('session.appConnectPending').mockResolvedValue(true);
+    mount('/');
+    await flush();
+    expect(fakeEngine.method('session.appConnectPending')).toHaveBeenCalledWith({ renew: true });
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?renew=1&mode=(wallet|qr)&resume=1$/));
+  });
+
+  it('asks nothing for an account signed in with a key, and opens nothing without a waiting renewal', async () => {
+    fakeEngine.method('session.appConnectPending').mockResolvedValue(false);
+    mount('/');
+    await flush();
+    expect(fakeEngine.method('session.appConnectPending')).not.toHaveBeenCalled();
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    mount('/');
+    await flush();
+    expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+  });
+
+  it('holds a renewal whose lookup answers after the lock came up, and reopens it after unlock (SR-01)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    let answer: (pending: boolean) => void = () => undefined;
+    fakeEngine.method('session.appConnectPending').mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    mount('/');
+    await flush();
+    act(() => useLockState.setState({ locked: true }));
+    await act(async () => answer(true));
+    expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+    fakeEngine.method('session.appConnectPending').mockResolvedValue(true);
+    act(() => useLockState.setState({ locked: false }));
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect?renew=1'));
+  });
+
+  it('looks again once the engine is back when a restart cut the lookup short', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    fakeEngine.method('session.appConnectPending').mockRejectedValueOnce(Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' }));
+    mount('/');
+    await flush();
+    expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+    fakeEngine.method('session.appConnectPending').mockResolvedValue(true);
+    act(() => fakeEngine.setStatus({ state: 'starting', epoch: 1 }));
+    act(() => fakeEngine.setStatus({ state: 'ready', epoch: 2, info: { capabilities: { walletSignIn: 'app-connect' } as never } }));
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect?renew=1'));
+  });
+
+  it('drops an answer about an account that signed out or changed while the engine answered', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    let answer: (pending: boolean) => void = () => undefined;
+    fakeEngine.method('session.appConnectPending').mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    mount('/');
+    await flush();
+    act(() => useSessionStore.setState({ status: 'signed-in', session: { ...wallet, identityId: 'bob' }, accounts: [] }));
+    await act(async () => answer(true));
+    expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+  });
+});

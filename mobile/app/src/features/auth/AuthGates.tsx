@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 
 import { useEngineEvent } from '~/data/events';
-import { lastIdentity, useSession, useSessionStore } from '~/data/session';
+import { getCapabilities, lastIdentity, useSession, useSessionStore } from '~/data/session';
 import { setReauthHandler } from '~/data/session-expiry';
 import { engine, engineNetworkKey } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
@@ -16,14 +16,16 @@ import { tw } from '~/ui/tokens';
 
 import { AccountSwitcherSheet } from './AccountSwitcher';
 import { reauthenticate, recoverInterruptedAdd, returnFromAddAccount, startReauthTracking, useAccounts } from './accounts';
+import { appConnectInProgress, cancelAppConnect, lastAppConnectMode, useAppConnect } from './app-connect';
+import { AppConnectNotices } from './AppConnectNotices';
 import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
+import { inSignIn } from './navigation';
 import { setWelcomed, useOnboarding } from './onboarding';
 import { useHasAcceptedTerms } from './terms';
 import { TopOverlay } from './TopOverlay';
 
-const inSignIn = (pathname: string) => pathname === '/sign-in' || pathname.startsWith('/sign-in/');
 
 /**
  * First launch, and the first launch after the last account signed out:
@@ -83,6 +85,7 @@ function useSignInExit(pathname: string): void {
     const inside = inSignIn(pathname);
     if (wasInSignIn.current && !inside && pathname !== '/terms-gate') {
       if (useKeyExchange.getState().phase.name !== 'idle') cancelKeyExchange();
+      if (useAppConnect.getState().step.name !== 'idle') cancelAppConnect();
       returnFromAddAccount();
     }
     wasInSignIn.current = inside;
@@ -124,13 +127,18 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
       return;
     }
     checked.current = true;
-    const signingIn = () => inSignIn(path.current) || useKeyExchange.getState().phase.name !== 'idle';
+    const signingIn = () =>
+      inSignIn(path.current) || useKeyExchange.getState().phase.name !== 'idle' || appConnectInProgress();
     if (signingIn()) {
       recover(true);
       return;
     }
-    engine.api.session
-      .pendingKeyExchange()
+    // App Connect builds keep their pending request apart from the legacy key exchange's.
+    const appConnect = getCapabilities()?.walletSignIn === 'app-connect';
+    const pendingRequest = appConnect
+      ? engine.api.session.appConnectPending()
+      : engine.api.session.pendingKeyExchange().then((request) => request !== null);
+    pendingRequest
       .then((pending) => {
         if (signingIn()) {
           recover(true);
@@ -148,13 +156,61 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
           return;
         }
         recover(true);
-        router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
+        if (appConnect) router.push(`/sign-in/connect?mode=${lastAppConnectMode()}&resume=1`);
+        else router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => {
         appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);
         recover(false);
       });
   }, [ready, engineUp, status]);
+}
+
+/**
+ * A renewal the app was killed in the middle of (the wallet was open): once
+ * per launch, with the account signed in through a wallet, back to the
+ * renewal so the wallet's answer is picked up. The wallet supersedes the old
+ * keys as it answers, and the engine holds the sign-out that would cause
+ * back while this renewal is still waiting.
+ */
+function useResumeRenewal(ready: boolean, pathname: string): void {
+  const { status, session } = useSession();
+  const { state } = useEngineStatus();
+  const checked = useRef(false);
+  const path = useRef(pathname);
+  useEffect(() => {
+    path.current = pathname;
+  }, [pathname]);
+  const engineUp = state === 'ready' || state === 'degraded';
+  const walletAccount = status === 'signed-in' && session?.method === 'app-connect' ? session.identityId : null;
+  useEffect(() => {
+    if (!ready || !engineUp || !walletAccount || checked.current) return;
+    checked.current = true;
+    if (getCapabilities()?.walletSignIn !== 'app-connect') return;
+    engine.api.session
+      .appConnectPending({ renew: true })
+      .then((pending) => {
+        // The account signed out or changed while the engine answered: the answer was about the one before.
+        const now = useSessionStore.getState();
+        if (now.status !== 'signed-in' || now.session?.method !== 'app-connect' || now.session.identityId !== walletAccount) {
+          checked.current = false;
+          return;
+        }
+        if (!pending || inSignIn(path.current) || appConnectInProgress()) return;
+        // The lock came up while the engine answered: try again once it opens (SR-01).
+        const lock = useLockState.getState();
+        if (lock.locked || lock.covered) {
+          checked.current = false;
+          return;
+        }
+        router.push(`/sign-in/connect?renew=1&mode=${lastAppConnectMode()}&resume=1`);
+      })
+      .catch((error: unknown) => {
+        // Look again once the engine is back (a restart cut the lookup short).
+        checked.current = false;
+        appendLog('warn', 'host', `Reading a pending renewal failed: ${errorMessage(error)}`);
+      });
+  }, [ready, engineUp, walletAccount]);
 }
 
 /**
@@ -195,7 +251,8 @@ function AccountTransitionOverlay() {
 /**
  * The app-wide onboarding and auth gates, mounted once by the root layout:
  * Welcome on first launch, the terms gate, the wallet sign-in resume, the
- * account switcher and its progress, and the app lock.
+ * account switcher and its progress, the wallet session's prompts, and the
+ * app lock.
  */
 export function AuthGates() {
   // Nothing opens while the app lock is up: on iOS a modal presented over the lock screen draws
@@ -208,11 +265,13 @@ export function AuthGates() {
   useTermsGate(ready, pathname);
   useSignInExit(pathname);
   useResumeWalletSignIn(ready, pathname);
+  useResumeRenewal(ready, pathname);
   useInboundLinkEffects(ready);
   useReauthFlow();
   return (
     <>
       <AccountSwitcherSheet />
+      <AppConnectNotices ready={ready} />
       <AccountTransitionOverlay />
       <AppLockOverlay />
     </>

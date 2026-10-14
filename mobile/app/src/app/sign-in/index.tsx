@@ -1,18 +1,17 @@
 import { router, Stack } from 'expo-router';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { Linking, Pressable, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
-import { ChevronDownIcon, ChevronRightIcon, KeyIcon, LinkIcon } from 'react-native-heroicons/outline';
+import { ChevronDownIcon, ChevronRightIcon, KeyIcon } from 'react-native-heroicons/outline';
 
-import { useSessionStore } from '~/data/session';
+import { useCapabilities, useSessionStore } from '~/data/session';
 import { accountName, useReauthTarget } from '~/features/auth/accounts';
 import { copy } from '~/features/auth/copy';
-import { FEATURE_APP_CONNECT, links, openInApp } from '~/features/auth/onboarding';
+import { links, openInApp } from '~/features/auth/onboarding';
 import { useCloseSignIn } from '~/features/auth/navigation';
 import { HeaderClose, SignInBody } from '~/features/auth/SignInChrome';
 import { Wordmark } from '~/features/auth/Wordmark';
 import { cn } from '~/lib-allowlist';
-import { Tag } from '~/ui/Badge';
 import { Button } from '~/ui/Button';
 import { Text } from '~/ui/Text';
 import { motion, tw, useColors, type IconComponent } from '~/ui/tokens';
@@ -45,15 +44,11 @@ function MethodRow({
   label,
   icon: Icon,
   onPress,
-  disabled,
-  trailing,
   testID,
 }: {
   label: string;
   icon: IconComponent;
-  onPress?: () => void;
-  disabled?: boolean;
-  trailing?: ReactNode;
+  onPress: () => void;
   testID?: string;
 }) {
   const c = useColors();
@@ -61,22 +56,25 @@ function MethodRow({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled: !!disabled }}
-      disabled={disabled}
       onPress={onPress}
       testID={testID}
-      className={cn('min-h-12 flex-row items-center gap-3 px-4 py-3', tw.pressed, disabled && 'opacity-60')}
+      className={cn('min-h-12 flex-row items-center gap-3 px-4 py-3', tw.pressed)}
     >
       <Icon size={20} color={c.textSecondary} />
       <Text variant="body" className="flex-1">
         {label}
       </Text>
-      {trailing ?? <ChevronRightIcon size={18} color={c.textSecondary} />}
+      <ChevronRightIcon size={18} color={c.textSecondary} />
     </Pressable>
   );
 }
 
-/** UX_SPEC §4.2: wallet first; a private key and (flagged off) App Connect under "Other ways". */
+/**
+ * UX_SPEC §4.2: wallet first, a private key under "Other ways". The wallet
+ * sign-in is App Connect on networks that run it (devnet), the legacy key
+ * exchange elsewhere; until the engine says which (a first launch), the
+ * wallet buttons wait.
+ */
 export default function SignInScreen() {
   const c = useColors();
   const close = useCloseSignIn();
@@ -85,6 +83,9 @@ export default function SignInScreen() {
   const reauth = useReauthTarget();
   const reauthAccount = useSessionStore((s) => s.accounts.find((a) => a.identityId === reauth));
   const reauthName = reauth ? accountName(reauthAccount ?? { identityId: reauth, username: null }) : null;
+  const walletSignIn = useCapabilities()?.walletSignIn ?? null;
+  const sameDevice = walletSignIn === 'app-connect' ? '/sign-in/connect?mode=wallet' : '/sign-in/wallet';
+  const otherDevice = walletSignIn === 'app-connect' ? '/sign-in/connect?mode=qr' : '/sign-in/qr';
 
   const toggleOther = () => {
     setShowOther((open) => !open);
@@ -134,17 +135,18 @@ export default function SignInScreen() {
             <Button
               label={copy.signin.openWallet}
               size="block"
-              loading={walletInstalled === null}
+              loading={walletInstalled === null || walletSignIn === null}
               testID="sign-in-open-wallet"
-              onPress={() => router.push('/sign-in/wallet')}
+              onPress={() => router.push(sameDevice)}
             />
           )}
           <Button
             label={copy.signin.otherDevice}
             variant="outline"
             size="block"
+            loading={walletSignIn === null}
             testID="sign-in-other-device"
-            onPress={() => router.push('/sign-in/qr')}
+            onPress={() => router.push(otherDevice)}
           />
         </View>
 
@@ -171,15 +173,6 @@ export default function SignInScreen() {
                 testID="sign-in-private-key"
                 onPress={() => router.push('/sign-in/key')}
               />
-              {FEATURE_APP_CONNECT ? (
-                <MethodRow
-                  label={copy.signin.appConnect}
-                  icon={LinkIcon}
-                  disabled
-                  trailing={<Tag label={copy.signin.comingSoon} />}
-                  testID="sign-in-app-connect"
-                />
-              ) : null}
             </Animated.View>
           ) : null}
         </View>

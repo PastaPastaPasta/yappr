@@ -1,10 +1,12 @@
-# Key exchange with a wallet on another device (PRD AUTH-04, AUTH-06; ADR E5.4,
+# Wallet sign-in with a wallet on another device (PRD AUTH-04, AUTH-06; ADR E5.4,
 # E8), answered by the test-wallet responder (mobile/tools) as PERSONA: the QR
 # bridge (BRIDGE_URL; release builds show the link only as a QR code) reads the
-# dash-key: link off the screen and hands it to the responder; a first login
-# also answers the dash-st: key registration. From a cleared install, through
-# the terms gate, the account switcher, then signed out again. Devnet (sakura)
-# only: the responder refuses any other network.
+# dash-key: link off the screen and hands it to the responder. On App Connect
+# builds (devnet) that is a v2 request: the responder grants the keys and the app
+# asks "Is this you?" (ac-continue). On legacy builds a first login also answers
+# the dash-st: key registration. From a cleared install, through the terms gate,
+# the account switcher, then signed out again. Devnet (sakura) only: the
+# responder refuses any other network.
 appId: ${APP_ID}
 tags:
   - full
@@ -33,8 +35,9 @@ tags:
       KX: dash-key
 - extendedWaitUntil:
     visible:
-      id: "terms-agree|kx-register-qr|home-header|kx-signed-in|kx-check-again"
-    timeout: 180000
+      id: "terms-agree|kx-register-qr|home-header|kx-signed-in|kx-check-again|ac-continue"
+    # Legacy: one poll run is 2 minutes; App Connect: the request's 10 minutes.
+    timeout: 660000
 # One poll run lasts two minutes, then the screen offers "Check again" (AUTH-07).
 # While sakura's quorum cache lags, the responder can take longer than that to
 # publish its answer: "Check again" polls the same request, which finds it.
@@ -48,8 +51,17 @@ tags:
           id: kx-check-again
       - extendedWaitUntil:
           visible:
-            id: "terms-agree|kx-register-qr|home-header|kx-signed-in"
+            id: "terms-agree|kx-register-qr|home-header|kx-signed-in|ac-continue"
           timeout: 180000
+# App Connect: the answer is verified on chain, then the app asks whose it is.
+- runFlow:
+    when:
+      visible:
+        id: ac-continue
+    commands:
+      - takeScreenshot: sign-in-confirm
+      - tapOn:
+          id: ac-continue
 # A first login on this app contract registers the derived keys (dash-st:).
 - runFlow:
     when:

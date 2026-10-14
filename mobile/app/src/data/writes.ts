@@ -335,6 +335,8 @@ const FAILURE_COPY: Partial<Record<EngineErrorData['code'], string>> = {
   STALE: 'Update Yappr and try again.',
   BUILD_DEFECT: 'Something went wrong. Nothing was charged. Please report this.',
   MEDIA_UNREADABLE: "That image link didn't work. Edit the post to fix or remove it.",
+  RENEW_REQUIRED: 'Renew Yappr in your Dash wallet to keep posting.',
+  NEEDS_WALLET: "This can't be done from the app. Use your Dash wallet for it.",
 };
 
 /** A failed write's message: the mobile copy for its code, else the write's own sentence (`fallback`). */

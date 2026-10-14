@@ -1,12 +1,14 @@
 import type { DmUnlockResult } from '@engine/api';
 import { BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { useCallback, useEffect, useState } from 'react';
+import { router } from 'expo-router';
 import { Keyboard, View } from 'react-native';
 
 import { config } from '~/config';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { copy as authCopy } from '~/features/auth/copy';
 import { openExternal } from '~/features/post/post-navigation';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
@@ -21,7 +23,7 @@ import { tw, useColors } from '~/ui/tokens';
 import { readErrorMessage, refreshDm } from './dm-data';
 import { MessagingSetup } from './MessagingSetup';
 
-type Phase = 'recovering' | 'manual' | 'no-key' | 'setup';
+type Phase = 'recovering' | 'manual' | 'no-key' | 'setup' | 'wallet';
 
 /** Where an unlock that did not unlock goes next. */
 function phaseFor(reason: Extract<DmUnlockResult, { unlocked: false }>['reason']): Phase {
@@ -30,6 +32,8 @@ function phaseFor(reason: Extract<DmUnlockResult, { unlocked: false }>['reason']
       return 'setup';
     case 'no-key-on-identity':
       return 'no-key';
+    case 'allow-in-wallet':
+      return 'wallet';
     default:
       return 'manual';
   }
@@ -151,6 +155,7 @@ function UnlockBody({
   let title = 'Unlock your messages';
   if (phase === 'recovering') title = 'Unlocking your messages…';
   else if (phase === 'setup') title = 'Set up messaging';
+  else if (phase === 'wallet') title = authCopy.renew.allowMessagingTitle;
 
   return (
     <View className="gap-2">
@@ -163,6 +168,22 @@ function UnlockBody({
         </View>
       ) : null}
       {phase === 'setup' ? <MessagingSetup onUnlocked={setUp} onLocked={locked} /> : null}
+      {phase === 'wallet' ? (
+        <View className="gap-4 pb-2" testID="dm-unlock-wallet">
+          <Text variant="body" tone="secondary">
+            {authCopy.renew.allowMessagingBody}
+          </Text>
+          <Button
+            label={authCopy.wallet.renew}
+            size="block"
+            onPress={() => {
+              onClose();
+              router.push('/sign-in/renew');
+            }}
+            testID="dm-unlock-renew"
+          />
+        </View>
+      ) : null}
       {phase === 'no-key' ? (
         <View className="gap-4 pb-2">
           <Text variant="body" tone="secondary">

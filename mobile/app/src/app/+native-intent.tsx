@@ -1,5 +1,6 @@
 import type { NativeIntent } from 'expo-router';
 
+import { takeAppConnectReturnLink } from '~/features/auth/app-connect';
 import { takeWalletReturnLink } from '~/features/auth/key-exchange';
 import { FALLBACK_ROUTE } from '~/navigation/deep-links';
 import { routeInboundLink } from '~/navigation/inbound-links';
@@ -9,6 +10,9 @@ export const redirectSystemPath: NativeIntent['redirectSystemPath'] = ({ path, i
   try {
     // A wallet handing the user back mid sign-in: stay on the waiting screen (S1).
     if (takeWalletReturnLink(path, initial)) return null;
+    // The App Connect wallet handing the user back (through yap.pr's /connect): check at once, stay put.
+    // At a launch the resume of the stored request reopens the sign-in (AuthGates).
+    if (takeAppConnectReturnLink(path)) return initial ? FALLBACK_ROUTE : null;
     return routeInboundLink(path, initial);
   } catch {
     // Throwing here crashes the app; a bad link just goes home.
