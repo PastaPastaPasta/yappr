@@ -72,18 +72,6 @@ const qku = () => ({
 /** A stored document as `documents.get` returns it (`toObject`, read by documentToPlainObject). */
 const stored = (revision: number) => ({ toObject: () => ({ $id: 'doc', $revision: revision }) })
 
-/** Run `work` with fake timers, letting every poll and backoff elapse. */
-async function elapsing<T>(work: () => Promise<T>): Promise<T> {
-  vi.useFakeTimers()
-  try {
-    const pending = work()
-    await vi.runAllTimersAsync()
-    return await pending
-  } finally {
-    vi.useRealTimers()
-  }
-}
-
 beforeEach(() => {
   storage.clear()
   vi.clearAllMocks()
@@ -134,27 +122,19 @@ describe('updateDocument whose result proof could not be verified', () => {
 })
 
 describe('deleteDocument whose result proof could not be verified', () => {
-  it('reports success when the document is gone', async () => {
+  it('stays a failure that says it may have gone through, even when a read shows it absent, and is not sent again', async () => {
     sdk.documents.delete.mockRejectedValue(qku())
+    // A node behind the document's creation answers "absent" too: no confirmation from it.
     sdk.documents.get.mockResolvedValue(undefined)
 
-    const result = await elapsing(() => stateTransitionService.deleteDocument(CONTRACT, 'bookmark', 'doc', OWNER))
+    const result = await stateTransitionService.deleteDocument(CONTRACT, 'bookmark', 'doc', OWNER)
 
     expect(sdk.documents.delete).toHaveBeenCalledTimes(1)
-    expect(result).toEqual({ success: true, transactionHash: 'doc' })
-  })
-
-  it('never takes "Quorum not found in cache" on the readback for the document being gone', async () => {
-    sdk.documents.delete.mockRejectedValue(qku())
-    sdk.documents.get.mockRejectedValue(qku())
-
-    const result = await elapsing(() => stateTransitionService.deleteDocument(CONTRACT, 'bookmark', 'doc', OWNER))
-
     expect(result.success).toBe(false)
-    expect(sdk.documents.delete).toHaveBeenCalledTimes(1)
+    expect(categorizeError(new Error(result.error))).toBe(UNCONFIRMED_WRITE_MESSAGE)
   })
 
-  it('reports a failure before anything was sent as a failure, without a readback', async () => {
+  it('reports a failure before anything was sent as a failure, sending nothing', async () => {
     // The identity read hit the gap: no key was chosen and nothing was built.
     sdk.identities.fetch.mockRejectedValue(qku())
 
@@ -162,7 +142,6 @@ describe('deleteDocument whose result proof could not be verified', () => {
 
     expect(result.success).toBe(false)
     expect(sdk.documents.delete).not.toHaveBeenCalled()
-    expect(sdk.documents.get).not.toHaveBeenCalled()
   })
 })
 

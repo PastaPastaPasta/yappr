@@ -48,10 +48,6 @@ const ST_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** Hard cap on cached entries as a safety net */
 const ST_CACHE_MAX_ENTRIES = 50;
 
-/** Reads, 2 s apart, of a delete whose outcome is unknown. */
-const READBACK_ATTEMPTS = 3;
-const READBACK_INTERVAL_MS = 2_000;
-
 interface CachedSTEntry {
   /** Base64-encoded ST bytes */
   data: string;
@@ -287,25 +283,6 @@ class StateTransitionService {
       if (isNotFoundAnswer(err)) return null;
       throw err;
     }
-  }
-
-  /**
-   * After a delete whose outcome is unknown, whether the document is gone,
-   * which is what the caller asked for whoever removed it. Read a few times,
-   * since a node a block behind still shows it. Only an answered read counts:
-   * a read that fails (or a "not found" error) proves nothing either way.
-   */
-  private async showsDeleted(contractId: string, documentType: string, documentId: string): Promise<boolean> {
-    for (let attempt = 0; attempt < READBACK_ATTEMPTS; attempt++) {
-      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, READBACK_INTERVAL_MS));
-      try {
-        const sdk = await getEvoSdk();
-        if (!(await sdk.documents.get(contractId, documentType, documentId))) return true;
-      } catch (error) {
-        logger.warn(`Could not read back ${documentType} ${documentId}:`, extractErrorMessage(error));
-      }
-    }
-    return false;
   }
 
   /**
@@ -1022,13 +999,10 @@ class StateTransitionService {
         transactionHash: documentId
       };
     } catch (error) {
-      // Sent, but no verdict came back: the chain decides before this reports a
-      // failure the caller would act on. Gone is what was asked for.
-      if (sent && sentWriteOutcomeUnknown(error) && await this.showsDeleted(contractId, documentType, documentId)) {
-        logger.warn(`Delete of ${documentType} ${documentId} reported "${extractErrorMessage(error)}" but the document is gone`);
-        reportSigningSuccess(ownerId);
-        return { success: true, transactionHash: documentId };
-      }
+      // As in updateDocument: sent with no verdict stays a failure whose message
+      // says it may have gone through. An absence read now cannot confirm it: a
+      // node behind the document's creation answers "absent" too.
+      if (sent && sentWriteOutcomeUnknown(error)) logger.warn(`Delete of ${documentType} ${documentId} sent without a verdict:`, extractErrorMessage(error));
       logger.error('Error deleting document:', error);
       return this.refused(ownerId, key, error);
     }
