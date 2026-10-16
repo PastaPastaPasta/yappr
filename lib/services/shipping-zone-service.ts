@@ -16,7 +16,10 @@ import type {
   ShippingTier,
   ShippingPricingConfig,
   SubtotalMultiplier,
-  ShippingAddress
+  ShippingAddress,
+  ShippingLine,
+  ShippingQuote,
+  Shipment
 } from '../../types';
 import { gramsToUnit } from '../utils/weight';
 
@@ -438,23 +441,70 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
   }
 
   /**
-   * Calculate shipping cost for an order
+   * A cart's shipping to `address` (docs/STOREFRONT_V9.md). Each line ships
+   * under the store's zones its item names (ids that are not among `zones`,
+   * the store's, are ignored), or under every zone when it names none; an item
+   * whose named zones are all gone ships nowhere. Each line takes the first
+   * matching zone in priority order, as a whole cart did before v9, and the
+   * lines a zone takes are priced together as one shipment. With no item
+   * naming zones this is exactly the one-zone price of the whole cart.
    */
-  async calculateShipping(
-    storeId: string,
-    address: ShippingAddress,
-    params: { totalWeight?: number; subtotal?: number }
-  ): Promise<{ zone: ShippingZone | null; cost: number }> {
-    const zones = await this.getByStore(storeId);
-    const zone = this.findMatchingZone(zones, address);
-
-    if (!zone) {
-      return { zone: null, cost: 0 };
+  quoteShipping(zones: ShippingZone[], lines: readonly ShippingLine[], address: ShippingAddress): ShippingQuote {
+    const groups = new Map<string, { zone: ShippingZone; lines: ShippingLine[] }>();
+    const unshippable: ShippingLine[] = [];
+    for (const line of lines) {
+      const named = line.zoneIds && line.zoneIds.length > 0 ? new Set(line.zoneIds) : null;
+      // Filtered from the store's own list, so equal priorities break the same way as for an unrestricted line.
+      const zone = this.findMatchingZone(named ? zones.filter((candidate) => named.has(candidate.id)) : zones, address);
+      if (!zone) {
+        unshippable.push(line);
+        continue;
+      }
+      const group = groups.get(zone.id) ?? { zone, lines: [] };
+      group.lines.push(line);
+      groups.set(zone.id, group);
     }
-
-    const cost = this.calculateRate(zone, params);
-    return { zone, cost };
+    const shipments: Shipment[] = [...groups.values()].map(({ zone, lines: carried }) => ({
+      zone,
+      lines: carried,
+      cost: this.calculateRate(zone, {
+        totalWeight: carried.reduce((sum, line) => sum + line.weight, 0),
+        subtotal: carried.reduce((sum, line) => sum + line.subtotal, 0)
+      })
+    }));
+    return { shipments, unshippable, cost: shipments.reduce((sum, shipment) => sum + shipment.cost, 0) };
   }
+}
+
+/** A region code as its English name ("CA" → "Canada"), or the code as entered when it is not one. */
+function countryName(code: string): string {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region', fallback: 'none' }).of(code.toUpperCase()) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+/** "A", "A and B", "A, B and C". */
+function listNames(names: readonly string[]): string {
+  return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** What checkout tells a buyer when nothing in the cart can ship to the address. */
+export const SHIPPING_UNAVAILABLE_MESSAGE = 'We cannot ship to this address. Please check your shipping address.';
+
+/**
+ * Why `quote` cannot be checked out to `country`, or null when every line
+ * ships. A line that may use any zone and still ships nowhere means the store
+ * does not ship there at all; otherwise only items limited to some zones miss
+ * the address, and the message names them so the buyer can remove them.
+ */
+export function shippingProblem(quote: ShippingQuote, country: string): string | null {
+  if (quote.unshippable.length === 0) return null;
+  if (quote.unshippable.some((line) => !line.zoneIds || line.zoneIds.length === 0)) return SHIPPING_UNAVAILABLE_MESSAGE;
+  const titles = [...new Set(quote.unshippable.map((line) => line.title))];
+  const one = titles.length === 1;
+  return `${listNames(titles)} ${one ? "doesn't" : "don't"} ship to ${countryName(country)}. Remove ${one ? 'it' : 'them'} from your cart to continue.`;
 }
 
 export const shippingZoneService = new ShippingZoneService();

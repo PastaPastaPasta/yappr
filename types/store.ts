@@ -149,6 +149,8 @@ export interface StoreItemDocument {
   /** v7: the typed table (lib/storefront/variant-codec.ts); v1–v6: a JSON string (lib/storefront/legacy-variants.ts). */
   variants?: unknown
   fulfillment?: ItemFulfillment // storefront v6
+  /** storefront v9: the store's shipping zones a shipped item ships under (32-byte ids); absent = every zone. */
+  shippingZoneIds?: unknown
 }
 
 // Parsed store item for UI display
@@ -186,6 +188,12 @@ export interface StoreItem {
    */
   unreadableImageUrls?: unknown
   fulfillment?: ItemFulfillment
+  /**
+   * storefront v9: the ids (base58) of the store's shipping zones this shipped
+   * item ships under; absent means every zone of the store. Ids that are no
+   * longer the store's zones are ignored (docs/STOREFRONT_V9.md).
+   */
+  shippingZoneIds?: string[]
   // Enriched fields
   storeName?: string
   storeLogoUrl?: string
@@ -252,6 +260,33 @@ export interface ShippingZone {
   tiers?: ShippingTier[] | ShippingPricingConfig  // Legacy array or new combined config
   currency?: string
   priority: number
+}
+
+/** One shipped cart line as checkout prices it (lib/services/shipping-zone-service.ts `quoteShipping`). */
+export interface ShippingLine {
+  itemId: string
+  title: string
+  /** The item's `shippingZoneIds`; absent or empty = every zone of the store. */
+  zoneIds?: readonly string[]
+  /** Grams, already multiplied by the quantity. */
+  weight: number
+  /** unitPrice × quantity, in the smallest currency unit. */
+  subtotal: number
+}
+
+/** The lines one zone carries, priced as one shipment. */
+export interface Shipment {
+  zone: ShippingZone
+  lines: ShippingLine[]
+  cost: number
+}
+
+/** A cart's shipping: one shipment per matched zone, and the lines that ship nowhere at the address. */
+export interface ShippingQuote {
+  shipments: Shipment[]
+  unshippable: ShippingLine[]
+  /** The sum of the shipments' costs. */
+  cost: number
 }
 
 // Cart item (stored in localStorage)

@@ -22,14 +22,15 @@ import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { storeService } from '@/lib/services/store-service'
+import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { getCurrencyStep, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import { itemDeliverableService, KitWriteUncertainError } from '@/lib/services/item-deliverable-service'
 import { DigitalKitEditor } from '@/components/digital'
-import { storefrontSupportsDigital, storefrontVariantsAreTyped } from '@/lib/constants'
+import { storefrontSupportsDigital, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '@/lib/constants'
 import { encodeKit, kitDeliveryFitError } from '@/lib/services/digital-delivery-plan'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
-import type { ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload } from '@/lib/types'
+import type { ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload, ShippingZone } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { LIST_LIMITS, ListLimitError } from '@/lib/typed-array-codecs'
 import { StaleRevisionError } from '@/lib/services/document-service'
@@ -37,6 +38,7 @@ import { itemImageLimit, itemStockCap, storefrontCreateFeeCredits } from '@/lib/
 import { clampImages, emptyVariants, variantProblems } from '@/lib/storefront/variant-codec'
 import { convertPrices, defaultCombinationPrice, parseCountInput, parsePriceInput, shiftImagesAfterRemoval, tidyNames } from '@/lib/storefront/variant-editor-model'
 import { VariantEditor } from '@/components/store/variant-editor'
+import { ItemShippingZones, type ItemZoneMode } from '@/components/store/item-shipping-zones'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
@@ -98,6 +100,13 @@ function AddItemPage() {
   /** The item being edited: the URL's, or the one this form just created. */
   const editingItemId = itemId || createdItemId
   const isDigital = supportsDigital && fulfillment === 'digital'
+
+  // Per-item shipping zones (storefront v9): which of the store's zones a shipped product ships under.
+  const supportsItemZones = storefrontSupportsItemZones()
+  const [storeZones, setStoreZones] = useState<ShippingZone[] | null>(null)
+  const [zonesLoadFailed, setZonesLoadFailed] = useState(false)
+  const [zoneMode, setZoneMode] = useState<ItemZoneMode>('all')
+  const [selectedZoneIds, setSelectedZoneIds] = useState<string[]>([])
 
   const [isLoading, setIsLoading] = useState(isEditMode || !!storeId)
   const [title, setTitle] = useState('')
@@ -199,6 +208,8 @@ function AddItemPage() {
         setImageUrls(item.imageUrls || [])
         setLoadedStoreId(item.storeId)
         setFulfillment(item.fulfillment === 'digital' ? 'digital' : 'shipped')
+        setZoneMode(item.shippingZoneIds ? 'only' : 'all')
+        setSelectedZoneIds(item.shippingZoneIds ?? [])
 
         // Convert price from smallest unit to display value
         if (item.basePrice !== undefined) {
@@ -225,6 +236,27 @@ function AddItemPage() {
 
     loadItem().catch((err) => logger.error('Failed to load item:', err))
   }, [sdkReady, isEditMode, itemId, setVariants])
+
+  // The store's zones, for the per-item choice. A stored id that is not one of
+  // them any more (a deleted zone) is dropped from the selection.
+  useEffect(() => {
+    if (!sdkReady || !supportsItemZones || !loadedStoreId) return
+    let cancelled = false
+    setStoreZones(null)
+    setZonesLoadFailed(false)
+    shippingZoneService.getByStore(loadedStoreId)
+      .then((zones) => {
+        if (cancelled) return
+        setStoreZones(zones)
+        setSelectedZoneIds((ids) => ids.filter((id) => zones.some((zone) => zone.id === id)))
+      })
+      .catch((err) => {
+        if (cancelled) return
+        logger.error('Failed to load shipping zones:', err)
+        setZonesLoadFailed(true)
+      })
+    return () => { cancelled = true }
+  }, [sdkReady, supportsItemZones, loadedStoreId])
 
   /** Read and decrypt the item's kit, or mark it locked when this device lacks the key. */
   const loadKit = useCallback(async (id: string, ownerId: string) => {
@@ -361,6 +393,16 @@ function AddItemPage() {
       return
     }
 
+    // The zones are written only once the store's are known (a failed read keeps
+    // the stored ones), and never for a digital product. None ticked is not
+    // "all": the seller must choose, or switch back to every zone.
+    const writesZones = supportsItemZones && !isDigital && storeZones !== null
+    const limitToZones = writesZones && storeZones.length > 0 && zoneMode === 'only'
+    if (limitToZones && selectedZoneIds.length === 0) {
+      setError("Choose at least one shipping zone, or let this product ship under all of the store's zones.")
+      return
+    }
+
     // With variants on, the table must be storable as it is; off, any stored table is removed.
     let savedVariants: ItemVariants | undefined
     if (hasVariants) {
@@ -391,7 +433,9 @@ function AddItemPage() {
           variants: savedVariants,
         }),
         // Only named on v6, which is the first cut that has the property.
-        ...(supportsDigital ? { fulfillment } : {})
+        ...(supportsDigital ? { fulfillment } : {}),
+        // v9: an empty list stores nothing, so the product ships under every zone.
+        ...(writesZones ? { shippingZoneIds: limitToZones ? selectedZoneIds : [] } : {})
       }
 
       // An EDIT must use the item's own store, never the URL's: v2 freezes
@@ -819,6 +863,20 @@ function AddItemPage() {
               </div>
             )}
             </>)}
+
+            {supportsItemZones && !isDigital && (
+              <ItemShippingZones
+                zones={storeZones}
+                loadFailed={zonesLoadFailed}
+                mode={zoneMode}
+                onModeChange={setZoneMode}
+                selected={selectedZoneIds}
+                onSelectedChange={setSelectedZoneIds}
+                manageHref={`/store/manage?id=${loadedStoreId ?? storeId ?? ''}`}
+                editing={Boolean(editingItemId || pendingItemId)}
+                disabled={isSubmitting}
+              />
+            )}
 
             {/* Digital delivery content */}
             {isDigital && user?.identityId && (

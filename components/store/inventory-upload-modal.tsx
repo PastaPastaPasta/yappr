@@ -22,6 +22,8 @@ import {
   type InventoryParseError
 } from '@/lib/upload/inventory-parser'
 import { storeItemService } from '@/lib/services/store-item-service'
+import { shippingZoneService } from '@/lib/services/shipping-zone-service'
+import { storefrontSupportsItemZones } from '@/lib/constants'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
 import { inventoryCsvTemplate, optionTypesSummary } from '@/lib/storefront/inventory-csv'
@@ -113,7 +115,14 @@ export function InventoryUploadModal({
 
     try {
       const content = await file.text()
-      const result = parseInventoryCSV(content, currency)
+      // v9: a Shipping Zones column names the store's zones (null: unreadable, which holds only a file with the column).
+      const zones = storefrontSupportsItemZones()
+        ? await shippingZoneService.getByStore(storeId).catch((zoneError: unknown) => {
+            logger.error('Failed to load shipping zones:', zoneError)
+            return null
+          })
+        : []
+      const result = parseInventoryCSV(content, currency, zones)
 
       setItems(result.items)
       setErrors(result.errors)
@@ -132,7 +141,7 @@ export function InventoryUploadModal({
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
-  }, [currency])
+  }, [currency, storeId])
 
   const handleUpload = useCallback(async () => {
     // Re-entry guard to prevent concurrent uploads

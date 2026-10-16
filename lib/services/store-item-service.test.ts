@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import bs58 from 'bs58';
 
 const { get, query, updateDocument } = vi.hoisted(() => ({ get: vi.fn(), query: vi.fn(), updateDocument: vi.fn() }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get, query } }) }));
@@ -384,5 +385,85 @@ describe('product edits (QA D-09, D-11, D-22)', () => {
     const result = await storeItemService.archiveItem('item', 'owner', storeId);
     expect(updateDocument.mock.calls[0][4]).toMatchObject({ status: 'deleted', title: raw.title, stockQuantity: 7 });
     expect(result.status).toBe('deleted');
+  });
+});
+
+describe('per-item shipping zones (storefront v9, docs/STOREFRONT_V9.md)', () => {
+  const zoneA = bs58.encode(new Uint8Array(32).fill(2));
+  const zoneB = bs58.encode(new Uint8Array(32).fill(3));
+  const zoneBytes = (ids: string[]) => ids.map((id) => bs58.decode(id));
+
+  async function at(topology: string) {
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
+    vi.resetModules();
+    const service = (await import('./store-item-service')).storeItemService;
+    const create = vi.spyOn(service, 'create').mockImplementation(async (owner, data) => ({ id: 'new', ownerId: owner, ...data }) as never);
+    return { service, create };
+  }
+  const restore = () => { vi.unstubAllEnvs(); vi.resetModules(); };
+
+  it('a v9 create writes the named zones as 32-byte ids, one of each', async () => {
+    try {
+      const { service, create } = await at('v9');
+      await service.createItem('owner', storeId, { title: 'Wallet', shippingZoneIds: [zoneA, zoneB, zoneA] });
+      expect(create.mock.calls[0][1].shippingZoneIds).toEqual(zoneBytes([zoneA, zoneB]));
+    } finally { restore(); }
+  });
+
+  it('an empty list, a digital item, and every cut before v9 write no zones', async () => {
+    try {
+      const v9 = await at('v9');
+      await v9.service.createItem('owner', storeId, { title: 'Wallet', shippingZoneIds: [] });
+      await v9.service.createItem('owner', storeId, { title: 'Ebook', fulfillment: 'digital', shippingZoneIds: [zoneA] });
+      for (const call of v9.create.mock.calls) expect(call[1]).not.toHaveProperty('shippingZoneIds');
+      const v8 = await at('v8');
+      await v8.service.createItem('owner', storeId, { title: 'Wallet', shippingZoneIds: [zoneA] });
+      expect(v8.create.mock.calls[0][1]).not.toHaveProperty('shippingZoneIds');
+      get.mockResolvedValue(raw);
+      await v8.service.updateItem('item', 'owner', storeId, { shippingZoneIds: [zoneA] });
+      expect(updateDocument.mock.calls[0][4]).not.toHaveProperty('shippingZoneIds');
+    } finally { restore(); }
+  });
+
+  it('refuses more than 16 zones before anything is signed', async () => {
+    try {
+      const { service, create } = await at('v9');
+      const many = Array.from({ length: 17 }, (_, index) => bs58.encode(new Uint8Array(32).fill(index + 10)));
+      await expect(service.createItem('owner', storeId, { title: 'Wallet', shippingZoneIds: many })).rejects.toThrow(/at most 16 shipping zones/);
+      expect(create).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
+
+  it('reads the stored ids back as base58, and a stock edit re-sends them as bytes', async () => {
+    try {
+      const { service } = await at('v9');
+      get.mockResolvedValue({ ...raw, shippingZoneIds: zoneBytes([zoneA, zoneB]) });
+      const item = defined(await service.getById('item'));
+      expect(item.shippingZoneIds).toEqual([zoneA, zoneB]);
+      await service.updateItem('item', 'owner', storeId, { stockQuantity: 3 });
+      expect(updateDocument.mock.calls[0][4].shippingZoneIds).toEqual(zoneBytes([zoneA, zoneB]));
+    } finally { restore(); }
+  });
+
+  it('a build below v9 editing an item on an updated contract keeps the zones it read', async () => {
+    try {
+      const { service } = await at('v8');
+      get.mockResolvedValue({ ...raw, shippingZoneIds: zoneBytes([zoneA]) });
+      await service.updateItem('item', 'owner', storeId, { status: 'paused' });
+      expect(updateDocument.mock.calls[0][4].shippingZoneIds).toEqual(zoneBytes([zoneA]));
+    } finally { restore(); }
+  });
+
+  it('an empty list clears the zones, and switching to digital drops them', async () => {
+    try {
+      const { service } = await at('v9');
+      get.mockResolvedValue({ ...raw, shippingZoneIds: zoneBytes([zoneA]) });
+      await service.updateItem('item', 'owner', storeId, { shippingZoneIds: [] });
+      expect(updateDocument.mock.calls[0][4]).not.toHaveProperty('shippingZoneIds');
+      service.clearCache();
+      await service.updateItem('item', 'owner', storeId, { fulfillment: 'digital' });
+      expect(updateDocument.mock.calls[1][4]).not.toHaveProperty('shippingZoneIds');
+      expect(updateDocument.mock.calls[1][4]).toMatchObject({ fulfillment: 'digital' });
+    } finally { restore(); }
   });
 });

@@ -68,6 +68,9 @@ export const combinationStockCap = (legacy: boolean): number => (legacy ? Number
 /** The most stock a product without options can hold: v6 caps `stockQuantity` at 4,294,967,295; v1–v5 at any safe integer. */
 export const itemStockCap = (): number => (storefrontIsV6() ? VARIANT_LIMITS.maxStock : Number.MAX_SAFE_INTEGER)
 
+/** Most of its store's shipping zones a v9 item can name (`storeItem.shippingZoneIds`, docs/STOREFRONT_V9.md). */
+export const ITEM_SHIPPING_ZONE_LIMIT = property('storeItem', 'shippingZoneIds').maxItems ?? 16
+
 /** v1–v3 keep `imageUrls` and `tags` as JSON strings, each capped as a whole. */
 export const LEGACY_STRING_LIST_CAPS = { imageUrls: 2100, tags: 500 } as const
 

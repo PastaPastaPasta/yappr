@@ -11,7 +11,8 @@
  * action fee instead of YAPP, and derives the buyer of a status update (no `buyerId`). v7 stores a listing's variants
  * as the typed table (docs/STOREFRONT_V7.md), so the toy store carries variant listings: the 7 colour × 2 pack-size
  * squishy toy whose v6 JSON outgrew 5,120 bytes, a 3 × 4 pop-it, and a 5-axis cube with 100 combinations. Before v7
- * the same tables are written as the v1–v6 JSON string.
+ * the same tables are written as the v1–v6 JSON string. v9 (docs/STOREFRONT_V9.md) lets an item name the store zones
+ * it ships under, so two listings are limited to some of their store's zones (`zones`), written as `shippingZoneIds`.
  */
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
@@ -31,7 +32,7 @@ import {
  * storefront v4 (4.2.0-beta.4) a typed list, v1-v3 a JSON string. Chosen by
  * NEXT_PUBLIC_STOREFRONT_TOPOLOGY, like the app.
  */
-const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'];
+const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'];
 const storefrontAtLeast = (topology) => topologyAtLeast(STOREFRONT_TOPOLOGIES, 'NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
 const listsTyped = () => storefrontAtLeast('v4');
 /** v5-v7 (QA D-25): an order copies its store's status into `storeStatus`; v8 checks it through the `storeId` reference instead. */
@@ -40,6 +41,8 @@ const ordersCarryStoreStatus = () => storefrontAtLeast('v5') && !storefrontAtLea
 const isV6 = () => storefrontAtLeast('v6');
 /** v7: `storeItem.variants` is the typed table, not a JSON string. */
 const variantsTyped = () => storefrontAtLeast('v7');
+/** v9: an item may name the store zones it ships under (`storeItem.shippingZoneIds`). */
+const itemZonesSupported = () => storefrontAtLeast('v9');
 const storedList = (values) => (listsTyped() ? [...new Set(values)] : JSON.stringify(values));
 const SCHEMAS = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', 'yappr-storefront-contract.json'), 'utf8')).documentSchemas;
 
@@ -88,7 +91,7 @@ const STORES = [
       { key: 'levis', title: 'Levi’s 501 Redline Selvedge, 1980s, W32', price: 19000, stock: 1, weight: 780, section: 'Denim', category: 'Jeans', tags: ['levis', '501', 'selvedge', 'redline'], description: 'Single-stitch, redline selvedge, care tag readable. Measures W32 L31 after a cold wash. Honest whiskering, no repairs, hem original.' },
       { key: 'silkscarf', title: 'Italian Silk Scarf, Hand-Rolled Hem, 1960s', price: 6500, stock: 1, weight: 90, section: 'Accessories', category: 'Scarves', tags: ['silk', 'italian', '1960s', 'hand-rolled'], description: '86 cm square, geometric print in ochre and teal, hand-rolled hem with no pulls. Unsigned. Presses flat with a cool iron and a cloth.' },
       { key: 'workjacket', title: 'French Chore Jacket, Faded Bleu de Travail', price: 12000, stock: 1, weight: 900, section: 'Outerwear', category: 'Jackets', tags: ['chore', 'french', 'workwear', 'indigo'], description: 'Moleskin cotton faded to that particular chalky blue you cannot fake. Three patch pockets, metal buttons. Chest 56 cm flat. Repaired left elbow, done well.' },
-      { key: 'knit', title: 'Aran Hand-Knit Fisherman Sweater, Undyed Wool', price: 14500, stock: 1, weight: 1100, section: 'Knitwear', category: 'Sweaters', tags: ['aran', 'wool', 'hand-knit', 'cream'], description: 'Honeycomb and cable panels, undyed bainin wool, knitted in Donegal. Chest 58 cm flat, sleeve 50 cm. Heavy — this is a coat replacement, not a layer.' },
+      { key: 'knit', title: 'Aran Hand-Knit Fisherman Sweater, Undyed Wool', zones: ['Benelux', 'European Union'], price: 14500, stock: 1, weight: 1100, section: 'Knitwear', category: 'Sweaters', tags: ['aran', 'wool', 'hand-knit', 'cream'], description: 'Honeycomb and cable panels, undyed bainin wool, knitted in Donegal. Chest 58 cm flat, sleeve 50 cm. Heavy — this is a coat replacement, not a layer.' },
       { key: 'loafers', title: 'Bass Weejun Penny Loafers, Made in USA, EU 43', price: 9500, stock: 1, weight: 950, section: 'Footwear', category: 'Shoes', tags: ['loafers', 'bass', 'leather', 'made-in-usa'], description: 'Brown leather, original leather sole with maybe half its life left, heels recently replaced. Uppers creased but sound. Marked US 10 D.' },
       { key: 'beret', title: 'Laulhère Wool Beret, Deadstock, Navy', price: 4800, stock: 3, weight: 140, section: 'Accessories', category: 'Hats', tags: ['beret', 'deadstock', 'wool', 'france'], description: 'Deadstock from a Basque maker, merino felt, leather sweatband, paper label still attached. 11.5 inch diameter. Three left from a shop clearance.' },
       { key: 'tote', title: 'Belgian Linen Market Tote, Repaired Handle', price: 3200, stock: 0, status: 'sold_out', weight: 420, section: 'Accessories', category: 'Bags', tags: ['linen', 'tote', 'repaired'], description: 'Heavy undyed linen from a Ghent market stall, one handle re-stitched by us in waxed thread. Sold — a second one may surface in autumn.' },
@@ -118,7 +121,7 @@ const STORES = [
     items: [
       { key: 'bifold', title: 'Four-Pocket Bifold, Horween Dublin', price: 12500, stock: 12, weight: 90, section: 'Small Goods', category: 'Wallets', tags: ['wallet', 'bifold', 'horween', 'hand-stitched'], description: 'Horween Dublin, edges burnished to glass, saddle-stitched in brown waxed linen. Four card pockets, one bill sleeve, no liner to bulk it out. Breaks in flat in about a month.' },
       { key: 'belt', title: 'Bridle Leather Belt, 1.5 inch, Solid Brass', price: 14500, stock: 8, weight: 300, section: 'Accessories', category: 'Belts', tags: ['belt', 'bridle', 'brass', 'made-to-order'], description: 'English bridle, 10 to 11 oz, solid cast brass buckle on Chicago screws so you can swap it. Cut to your measured waist — measure over the trousers you actually wear.' },
-      { key: 'totebag', title: 'Market Tote, 12 oz Canvas & Leather', price: 21000, stock: 5, weight: 1100, section: 'Bags', category: 'Totes', tags: ['tote', 'canvas', 'leather', 'bag'], description: 'Waxed 12 oz canvas body, bridle leather base and handles, brass feet. Swallows two grocery bags or a laptop and a jumper. The canvas will go soft and blotchy, which is correct.' },
+      { key: 'totebag', title: 'Market Tote, 12 oz Canvas & Leather', zones: ['US Domestic'], price: 21000, stock: 5, weight: 1100, section: 'Bags', category: 'Totes', tags: ['tote', 'canvas', 'leather', 'bag'], description: 'Waxed 12 oz canvas body, bridle leather base and handles, brass feet. Swallows two grocery bags or a laptop and a jumper. The canvas will go soft and blotchy, which is correct.' },
       { key: 'notebook', title: 'Refillable Notebook Cover, A5', price: 9500, stock: 0, status: 'sold_out', weight: 240, section: 'Small Goods', category: 'Covers', tags: ['notebook', 'a5', 'refillable'], description: 'Fits standard A5 softcovers, elastic spine, pen loop. The hide I was cutting these from ran out; the next side is ordered.' },
       { key: 'keyfob', title: 'Key Fob, Offcut Leather, Assorted', price: 2200, stock: 26, weight: 45, section: 'Small Goods', category: 'Keychains', tags: ['keychain', 'offcut', 'cheap', 'gift'], description: 'Made from whatever is left on the bench. Colour is a surprise; the brass hardware is not. A good way to find out whether you like the leather before spending real money.' },
       { key: 'valet', title: 'Desk Valet Tray, Stitched Corners', price: 7800, stock: 7, weight: 380, section: 'Home', category: 'Trays', tags: ['valet', 'tray', 'desk', 'corners'], description: '18 cm square tray, corners pulled up and stitched, sides stiffened with a second layer. Holds keys, a watch, and whatever else you empty out of your pockets.' },
@@ -422,7 +425,11 @@ const storeData = (store, paymentUris) => ({
   policies: store.policies, location: store.location, contactMethods: JSON.stringify(store.contact),
 });
 
-function itemData(store, item, storeIdBytes) {
+/**
+ * `zoneIdOf` maps one of the store's zone names to its document id. An item's
+ * `zones` (v9) are written as their ids; no seeded order sends one outside them.
+ */
+function itemData(store, item, storeIdBytes, zoneIdOf = () => undefined) {
   const rng = rngFrom(`sku/${store.key}/${item.key}`);
   const imageCount = item.images ?? 2 + Math.floor(rng() * 3);
   const imageUrls = Array.from({ length: imageCount }, (_, n) => photo(`${store.key}-${item.key}-${n}`, 800));
@@ -431,11 +438,19 @@ function itemData(store, item, storeIdBytes) {
     storeId: storeIdBytes, title: item.title, status: item.status ?? 'active', description: item.description,
     section: item.section, category: item.category, ...(item.subcategory ? { subcategory: item.subcategory } : {}),
     tags: storedList(item.tags), imageUrls: storedList(imageUrls), currency: store.currency, weight: item.weight,
+    ...zoneLimit(item, zoneIdOf),
   };
   if (!item.variants) return { ...common, basePrice: item.price, stockQuantity: item.stock, sku };
   // A variant item is priced and stocked per combination: no basePrice or stockQuantity (v7 onePrice/oneStock).
   const table = variantTable(item.variants);
   return { ...common, variants: variantsTyped() ? typedVariants(table) : legacyVariants(table, imageUrls) };
+}
+
+/** `{ shippingZoneIds }` for an item limited to some of its store's zones (v9), else nothing. */
+function zoneLimit(item, zoneIdOf) {
+  if (!itemZonesSupported() || !item.zones) return {};
+  const ids = item.zones.map(zoneIdOf).filter(Boolean);
+  return ids.length > 0 ? { shippingZoneIds: ids.map(id32) } : {};
 }
 
 const zoneData = (zone, store, storeIdBytes) => ({
@@ -628,17 +643,20 @@ async function run({ args, handle, battery, socialId, contractId }) {
     await phase('items and shipping zones', STORES, byStore, async (store) => {
       const actor = actors.get(store.persona);
       const storeIdBytes = id32(storeIds.get(store.key));
-      for (const item of store.items) {
-        const id = await createDoc(actor, 'storeItem', `item/${store.key}/${item.key}`, itemData(store, item, storeIdBytes));
-        if (id) itemIds.set(`${store.key}/${item.key}`, id);
-      }
+      // Zones first: a v9 item limited to some of them names their ids.
+      const zoneIds = new Map();
       for (const zone of store.zones) {
-        await createDoc(actor, 'shippingZone', `zone/${store.key}/${zone.name}`, zoneData(zone, store, storeIdBytes), {
+        const id = await createDoc(actor, 'shippingZone', `zone/${store.key}/${zone.name}`, zoneData(zone, store, storeIdBytes), {
           // `shippingZone` IS mutable, and a zone whose table row changed (a new
           // rate, or a countryPattern DROPPED so it becomes the catch-all) has to
           // be corrected in place or the store quotes the old price.
           reconcile: () => zoneData(zone, store, storeIdBytes),
         });
+        if (id) zoneIds.set(zone.name, id);
+      }
+      for (const item of store.items) {
+        const id = await createDoc(actor, 'storeItem', `item/${store.key}/${item.key}`, itemData(store, item, storeIdBytes, (name) => zoneIds.get(name)));
+        if (id) itemIds.set(`${store.key}/${item.key}`, id);
       }
       // The battery leaves `zone<runid>` fixtures on the stores it reused, all at
       // priority 1 with no country pattern — so they SHADOW the real zones in the
@@ -867,6 +885,18 @@ function selfTest() {
     }
   };
   const [v6Cube, v7Cube] = [cubeUnder('v6'), cubeUnder('v7')];
+  const zoneLimited = STORES.flatMap((store) => store.items.filter((item) => item.zones).map((item) => ({ store, item })));
+  /** The first limited item's stored `shippingZoneIds` under `topology`. */
+  const zonesUnder = (topology) => {
+    const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
+    process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = topology;
+    try {
+      const { store, item } = zoneLimited[0];
+      return itemData(store, item, new Uint8Array(32), (name) => fakeId(`zone/${store.key}/${name}`)).shippingZoneIds;
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY; else process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = saved;
+    }
+  };
   /** Whether an order carries `storeStatus` under `topology`. */
   const orderCopiesStatus = (topology) => {
     const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
@@ -924,6 +954,14 @@ function selfTest() {
     ['on v6 every variant order line\'s id reads back from its listing\'s stored JSON as that combination', legacyOrderIdsMatch()],
     ['every order has a shipping zone covering its destination (an unmatched zone BLOCKS checkout)',
       ORDERS.every((order) => findMatchingZone(storeOf(order).zones, BUYERS[order.buyer].country))],
+    [`v9: ${zoneLimited.length} items are limited to zones their store has, and no order line ships one outside them`, zoneLimited.length === 2
+      && zoneLimited.every(({ store, item }) => item.zones.every((name) => store.zones.some((zone) => zone.name === name)))
+      && ORDERS.every((order) => order.lines.every(([key]) => {
+        const item = storeOf(order).items.find((candidate) => candidate.key === key);
+        return !item.zones || findMatchingZone(storeOf(order).zones.filter((zone) => item.zones.includes(zone.name)), BUYERS[order.buyer].country);
+      }))],
+    ['v9 writes a limited item\'s zones as 32-byte ids; v8 writes none', zonesUnder('v9')?.length === zoneLimited[0].item.zones.length
+      && zonesUnder('v9').every((id) => id.length === 32) && zonesUnder('v8') === undefined],
     ['every order line names an item its store actually lists',
       ORDERS.every((order) => order.lines.every(([key]) => storeOf(order).items.some((item) => item.key === key)))],
     ['every item review reviews something the same order bought',

@@ -6,7 +6,7 @@ import { logger } from '@/lib/logger';
  * No on-chain storage - purely browser-based.
  */
 
-import type { Cart, CartItem, StoreItem } from '../../types';
+import type { Cart, CartItem, ShippingLine, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
 import { MAX_LINE_QUANTITY } from './digital-delivery-plan';
 import { combinationImageUrl, variantOptionPairs, type VariantOptionPairs } from '../storefront/variant-codec';
@@ -319,23 +319,24 @@ class CartService {
   }
 
   /**
-   * Get total weight (for shipping calculation): each line's variant weight,
-   * else its item's. Digital lines weigh nothing.
-   * Note: This requires fetching items from the service
+   * The lines of `items` that ship, as checkout prices them
+   * (`shippingZoneService.quoteShipping`): each line's weight (its variant's,
+   * else its item's, times the quantity), its subtotal and the zones its item
+   * is limited to. Digital lines are left out. A line whose item cannot be
+   * read weighs nothing and ships under every zone.
    */
-  async getTotalWeight(storeId?: string): Promise<number> {
-    const items = shippableItems(storeId ? this.getItemsForStore(storeId) : this.getItems());
-    let totalWeight = 0;
-
-    for (const cartItem of items) {
+  async getShippingLines(items: readonly CartItem[]): Promise<ShippingLine[]> {
+    return Promise.all(shippableItems(items).map(async (cartItem) => {
       const item = await storeItemService.get(cartItem.itemId);
       const weight = item ? storeItemService.getWeight(item, cartItem.variantId) : undefined;
-      if (weight) {
-        totalWeight += weight * cartItem.quantity;
-      }
-    }
-
-    return totalWeight;
+      return {
+        itemId: cartItem.itemId,
+        title: cartItem.title,
+        zoneIds: item?.shippingZoneIds,
+        weight: (weight ?? 0) * cartItem.quantity,
+        subtotal: cartItem.unitPrice * cartItem.quantity
+      };
+    }));
   }
 
   /**

@@ -2,7 +2,7 @@
  * Registration-day battery for the **storefront contract**
  * (`contracts/yappr-storefront-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run
  * live on a beta.1+ devnet. Actors are seed-ledger personas: a SELLER, a BUYER and
- * a STRANGER. The committed contract is storefront v8, which charges action fees
+ * a STRANGER. The committed contract is storefront v9, which charges action fees
  * (credits) instead of YAPP, so the actors need credits only.
  *
  *   NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> \
@@ -39,6 +39,11 @@
  * table missing a required list, a repeated option id or selector, a selector
  * longer than five bytes and the v6 JSON string (10101); s20 broadcasts every
  * refused rule case, the nine v7 rules included (10422); s18d allows 12 images.
+ * Storefront v9 (docs/STOREFRONT_V9.md) adds `storeItem.shippingZoneIds`, the
+ * store zones a shipped item ships under: s26 lands an item naming two and
+ * reads them back, and the JSON schema refuses 17 ids, a repeated id and an
+ * empty list (10101). s26 reads the deployed contract first and SKIPS on a
+ * cut without the property (a v8 contract not yet updated in place).
  *   node scripts/verify-storefront.mjs --self-test   # offline: contract declares what the cases assert
  *
  * The cases write on the published storefront contract, which the app lists.
@@ -55,10 +60,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import bs58 from 'bs58';
-import { DocumentActionFeeAgreement } from '@dashevo/evo-sdk';
+import { DocumentActionFeeAgreement, PlatformVersion } from '@dashevo/evo-sdk';
 import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
-  MODERATOR_FLAG, decodeIntGroupKey, id32, reportSelfTest, runBattery, settle,
+  MODERATOR_FLAG, decodeIntGroupKey, id32, normalizeId, reportSelfTest, runBattery, settle,
 } from './battery-lib.mjs';
 import { REPO_ROOT, actionFeeAgreementOptions, actionFeeFor, buildDocument, describeErr, feeAgreementFor, feeMultiplierPermille, randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
@@ -710,6 +715,39 @@ async function caseS25TypedVariants(ctx) {
   for (const [key, value] of Object.entries(fees)) console.log(`     fee ${key}: ${credits(value)}`);
 }
 
+/** Whether the deployed contract is storefront v9 or later: its storeItem declares `shippingZoneIds`. */
+async function contractHasItemZones({ battery, contractId }) {
+  const contract = await battery.readback(() => battery.sdk.contracts.fetch(contractId));
+  return Boolean(contract?.toJSON(PlatformVersion.current()).documentSchemas?.storeItem?.properties?.shippingZoneIds);
+}
+
+async function caseS26ItemZones(ctx) {
+  const { battery, seller, run } = ctx;
+  console.log('\n--- s26. v9 per-item shipping zones: storeItem.shippingZoneIds ---');
+  if (!(await contractHasItemZones(ctx))) {
+    console.log('SKIP  s26: the deployed contract is older than storefront v9 (storeItem declares no shippingZoneIds)');
+    return;
+  }
+  if (!(await ensureSellerStore(ctx))) { battery.check('s26 fixture', false, 'no seller store'); return; }
+  const storeId = id32(ctx.storeId);
+  const zoneIds = [];
+  for (const name of [`zoneA${run}`, `zoneB${run}`]) {
+    const zone = await battery.probeCreate(`s26 fixture: shipping zone ${name}`, null, seller, 'shippingZone', zoneData({ storeId, name }));
+    if (zone.ok) zoneIds.push(zone.id);
+  }
+  if (zoneIds.length < 2) { battery.check('s26 fixture', false, 'the two zones were not created'); return; }
+  const zoned = (title, shippingZoneIds) => ({ ...itemData({ storeId, title }), shippingZoneIds });
+  const item = await battery.probeCreate('s26a an item limited to two of its store\'s zones is accepted', null, seller, 'storeItem', zoned(`Zoned ${run}`, zoneIds.map(id32)));
+  if (item.ok) {
+    const back = ((await battery.fetchDocument('storeItem', item.id))?.toObject?.().shippingZoneIds ?? []).map(normalizeId);
+    battery.check('s26b both zone ids read back, in order', JSON.stringify(back) === JSON.stringify(zoneIds), JSON.stringify(back));
+  }
+  const refused = (label, ids) => battery.probeCreate(label, ARRAY_OUT_OF_BOUNDS, seller, 'storeItem', zoned(`Bad ${run} ${label.slice(0, 4)}`, ids));
+  await refused('s26c seventeen zone ids are refused (10101 maxItems 16)', Array.from({ length: 17 }, () => randomEntropy()));
+  await refused('s26d the same zone twice is refused (10101 uniqueItems)', [id32(zoneIds[0]), id32(zoneIds[0])]);
+  await refused('s26e an empty list is refused (10101 minItems 1: absent means every zone)', []);
+}
+
 const CASES = new Map([
   ['s1', caseS1Fixtures], ['s2', caseS2ItemRefs], ['s3', caseS3Orders], ['s4', caseS4Status],
   ['s5', caseS5StoreReviews], ['s6', caseS6ItemReviews], ['s7', caseS7Averages], ['s8', caseS8Rankings],
@@ -717,7 +755,7 @@ const CASES = new Map([
   ['s13', caseS13Immutable], ['s14', caseS14Ban], ['s15', caseS15ModeratorDelete],
   ['s17', caseS17Warn], ['s18', caseS18TypedArrays], ['s19', caseS19SelfOrder], ['s20', caseS20PropertyConstraints],
   ['s21', caseS21StoreMustBeOpen], ['s22', caseS22Digital], ['s23', caseS23Categories], ['s24', caseS24ModeratorDeletesItem],
-  ['s25', caseS25TypedVariants],
+  ['s25', caseS25TypedVariants], ['s26', caseS26ItemZones],
 ]);
 
 /** v6/v7 shape the cases rely on beyond the per-type rules selfTestModerated checks. */
@@ -731,7 +769,8 @@ function selfTestV6() {
   const derivedFeed = (docType, name) => indexProps(docType, name) === '[{"orderId.$ownerId":"asc"},{"$createdAt":"asc"}]';
   const variants = SCHEMAS.storeItem.properties.variants;
   const list = (name) => variants.properties?.[name];
-  return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v8)`, [
+  const zoneIds = CONTRACT.documentSchemas.storeItem.properties.shippingZoneIds;
+  return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v9)`, [
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (nothing costs YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['store, storeItem, storeReview and itemReview creates declare 1000M / 50M / 16M / 8M moderators fees (s5e, s12)', fee('store') === 1_000_000_000n && fee('storeItem') === 50_000_000n && fee('storeReview') === 16_000_000n && fee('itemReview') === 8_000_000n],
@@ -758,6 +797,8 @@ function selfTestV6() {
       && ['buyerItemReviews', 'itemRating'].every((name) => !indexNames('itemReview').includes(name))
       && ['ownerAndTime', 'statusAndTime', 'categoryAndTime'].every((name) => !indexNames('storeItem').includes(name))
       && !indexNames('orderStatusUpdate').includes('sellerStatusUpdates')],
+    ['v9 storeItem.shippingZoneIds: 1–16 unique identifiers, optional, with no reference (s26)', zoneIds?.type === 'array' && zoneIds.items?.type === 'identifier'
+      && zoneIds.minItems === 1 && zoneIds.maxItems === 16 && zoneIds.uniqueItems === true && zoneIds.refersTo === undefined && !SCHEMAS.storeItem.required.includes('shippingZoneIds')],
     ['item ratings ride storeItemRating [storeId, itemId] (s7e, s10c)', indexProps('itemReview', 'storeItemRating') === '[{"storeId":"asc"},{"itemId":"asc"}]' && index('itemReview', 'storeItemRating')?.rangeCountable === true],
   ]);
 }

@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { get, updateDocument } = vi.hoisted(() => ({ get: vi.fn(), updateDocument: vi.fn() }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get } }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }));
-import { shippingZoneService } from './shipping-zone-service';
+import { SHIPPING_UNAVAILABLE_MESSAGE, shippingProblem, shippingZoneService } from './shipping-zone-service';
+import type { ShippingAddress, ShippingLine, ShippingZone } from '../../types';
 
 const storeId = '11111111111111111111111111111111';
 const tiers = { weightRate: 100, weightUnit: 'kg', subtotalMultipliers: [{ upTo: null, percent: 100 }] };
@@ -43,5 +44,79 @@ describe('zone edits can clear optional fields (QA D-10)', () => {
     expect(replacement).not.toHaveProperty('flatRate');
     expect(replacement).not.toHaveProperty('tiers');
     expect(replacement).toMatchObject({ name: 'Worldwide', postalPatterns: raw.postalPatterns });
+  });
+});
+
+describe('per-item zones at checkout (storefront v9, docs/STOREFRONT_V9.md)', () => {
+  const zone = (id: string, overrides: Partial<ShippingZone> = {}): ShippingZone => ({
+    id, ownerId: 'owner', storeId, createdAt: new Date(0), name: id, rateType: 'flat', flatRate: 500, priority: 1, ...overrides,
+  });
+  // Domestic: $5 + $2/kg. Canada: flat $15. Worldwide: $3/kg, free over $100.
+  const domestic = zone('domestic', { countryPattern: 'US', rateType: 'weight_tiered', flatRate: 500, tiers: { weightRate: 200, weightUnit: 'kg' } });
+  const canada = zone('canada', { countryPattern: 'CA', flatRate: 1500, priority: 2 });
+  const worldwide = zone('worldwide', { rateType: 'weight_tiered', flatRate: 0, priority: 3, tiers: { weightRate: 300, weightUnit: 'kg', subtotalMultipliers: [{ upTo: 10000, percent: 100 }, { upTo: null, percent: 0 }] } });
+  const zones = [domestic, canada, worldwide];
+  const address = (country: string): ShippingAddress => ({ name: 'Bo', street: '1 Main', city: 'Town', postalCode: '12345', country });
+  const line = (itemId: string, overrides: Partial<ShippingLine> = {}): ShippingLine => ({ itemId, title: itemId, weight: 1000, subtotal: 4000, ...overrides });
+
+  /** What checkout charged before v9: one zone for the whole cart, matched once. */
+  const singleZoneCost = (lines: ShippingLine[], to: ShippingAddress) => {
+    const matched = shippingZoneService.findMatchingZone(zones, to);
+    return matched ? shippingZoneService.calculateRate(matched, {
+      totalWeight: lines.reduce((sum, item) => sum + item.weight, 0),
+      subtotal: lines.reduce((sum, item) => sum + item.subtotal, 0),
+    }) : null;
+  };
+
+  it('with no item naming zones, equals the one-zone price of the whole cart', () => {
+    const lines = [line('a'), line('b', { weight: 2500, subtotal: 7000 }), line('c', { weight: 0, subtotal: 100 })];
+    for (const country of ['US', 'CA', 'DE']) {
+      const quote = shippingZoneService.quoteShipping(zones, lines, address(country));
+      expect(quote.unshippable).toEqual([]);
+      expect(quote.shipments).toHaveLength(1);
+      expect(quote.cost).toBe(singleZoneCost(lines, address(country)));
+    }
+    // Worldwide is free over $100 for the cart as a whole.
+    expect(shippingZoneService.quoteShipping(zones, lines, address('DE')).cost).toBe(0);
+  });
+
+  it('prices each zone\'s lines as their own shipment', () => {
+    const lines = [line('anywhere', { weight: 2000, subtotal: 3000 }), line('worldwideOnly', { zoneIds: ['worldwide'], weight: 1000, subtotal: 2000 })];
+    const quote = shippingZoneService.quoteShipping(zones, lines, address('US'));
+    expect(quote.shipments.map((shipment) => [shipment.zone.id, shipment.lines.map((carried) => carried.itemId), shipment.cost])).toEqual([
+      ['domestic', ['anywhere'], 500 + 2 * 200],
+      ['worldwide', ['worldwideOnly'], 300],
+    ]);
+    expect(quote.cost).toBe(900 + 300);
+  });
+
+  it('a line limited to zones that miss the address ships nowhere', () => {
+    const quote = shippingZoneService.quoteShipping(zones, [line('a'), line('wallet', { title: 'Leather Wallet', zoneIds: ['domestic'] })], address('CA'));
+    expect(quote.unshippable.map((unshipped) => unshipped.itemId)).toEqual(['wallet']);
+    expect(quote.shipments.map((shipment) => shipment.zone.id)).toEqual(['canada']);
+    expect(quote.cost).toBe(1500);
+    expect(shippingProblem(quote, 'CA')).toBe("Leather Wallet doesn't ship to Canada. Remove it from your cart to continue.");
+  });
+
+  it('ignores ids that are not the store\'s zones, and an item whose zones are all gone ships nowhere', () => {
+    const foreign = line('mixed', { zoneIds: ['someone-elses-zone', 'canada'] });
+    const orphaned = line('orphan', { title: 'Old Belt', zoneIds: ['deleted-zone'] });
+    const quote = shippingZoneService.quoteShipping(zones, [foreign, orphaned], address('CA'));
+    expect(quote.shipments.map((shipment) => [shipment.zone.id, shipment.lines.map((carried) => carried.itemId)])).toEqual([['canada', ['mixed']]]);
+    expect(quote.unshippable).toEqual([orphaned]);
+    // Even worldwide-zone countries: the orphan names no zone the store still has.
+    expect(shippingZoneService.quoteShipping(zones, [orphaned], address('DE')).unshippable).toEqual([orphaned]);
+  });
+
+  it('keeps the generic message when the store ships nothing there, and names several items', () => {
+    const local = [zone('local', { countryPattern: 'US' })];
+    const nowhere = shippingZoneService.quoteShipping(local, [line('a'), line('b')], address('CA'));
+    expect(shippingProblem(nowhere, 'CA')).toBe(SHIPPING_UNAVAILABLE_MESSAGE);
+    const named = shippingZoneService.quoteShipping(zones, [line('a', { title: 'Wallet', zoneIds: ['domestic'] }), line('b', { title: 'Belt', zoneIds: ['domestic'] }), line('c', { title: 'Wallet', zoneIds: ['domestic'] })], address('QQ'));
+    expect(shippingProblem(named, 'QQ')).toBe("Wallet and Belt don't ship to QQ. Remove them from your cart to continue.");
+    expect(shippingProblem(shippingZoneService.quoteShipping(zones, [line('a')], address('US')), 'US')).toBeNull();
+    // An item that may use any zone and still misses: the store does not ship there, whatever else is limited.
+    const mixed = shippingZoneService.quoteShipping(local, [line('a'), line('b', { title: 'Belt', zoneIds: ['local'] })], address('CA'));
+    expect(shippingProblem(mixed, 'CA')).toBe(SHIPPING_UNAVAILABLE_MESSAGE);
   });
 });

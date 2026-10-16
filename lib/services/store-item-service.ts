@@ -9,10 +9,10 @@
 
 import { BaseDocumentService, StaleRevisionError } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontVariantsAreTyped } from '../constants';
-import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '../constants';
+import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeIdentifierList, decodeStringList, encodeIdentifierList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
-import { LEGACY_STRING_LIST_CAPS, itemImageLimit, itemSizeError, itemStockCap } from '../storefront/storefront-contract';
+import { ITEM_SHIPPING_ZONE_LIMIT, LEGACY_STRING_LIST_CAPS, itemImageLimit, itemSizeError, itemStockCap } from '../storefront/storefront-contract';
 import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabel, variantOptionPairs, variantProblems, type VariantOptionPairs } from '../storefront/variant-codec';
 import { decodeLegacyVariants, encodeLegacyVariants } from '../storefront/legacy-variants';
 import type {
@@ -43,6 +43,28 @@ const imageLimits = (): ListLimits => ({ ...LIST_LIMITS.storeImageUrls, maxItems
 const listOf = (stored: unknown): string[] | undefined => {
   const values = decodeStringList(stored);
   return values.length > 0 ? values : undefined;
+};
+
+/** A stored zone list as the app models it (base58); undefined when absent or empty. */
+const zoneIdsOf = (stored: unknown): string[] | undefined => {
+  const ids = decodeIdentifierList(stored);
+  return ids.length > 0 ? ids : undefined;
+};
+
+/**
+ * The shipping zones an item names, as v9 stores them: one 32-byte id each,
+ * one of each. Undefined (absent: every zone of the store) for none, and on
+ * every cut before v9, which refuses the property. More than the contract's
+ * 16 throws a {@link ListLimitError}.
+ */
+const storedZoneIds = (ids: readonly string[] | undefined): Uint8Array[] | undefined => {
+  if (!storefrontSupportsItemZones() || !ids) return undefined;
+  const unique = uniqueStrings(ids);
+  if (unique.length === 0) return undefined;
+  if (unique.length > ITEM_SHIPPING_ZONE_LIMIT) {
+    throw new ListLimitError(`A product can be limited to at most ${ITEM_SHIPPING_ZONE_LIMIT} shipping zones (this one names ${unique.length}). Choose fewer, or let it ship under all of the store's zones.`);
+  }
+  return encodeIdentifierList(unique);
 };
 
 /**
@@ -135,6 +157,10 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (typeof fields.storeId === 'string') fields.storeId = fields.storeId ? identifierStringToDocumentBytes(fields.storeId) : undefined;
     if (Array.isArray(fields.tags)) fields.tags = storedList(fields.tags as string[], TAG_LIMITS);
     if (Array.isArray(fields.imageUrls)) fields.imageUrls = storedList(fields.imageUrls as string[], imageLimits());
+    // Zones that were read go back as read, whatever cut this build targets: the
+    // contract has the property if a document carries it, so a below-v9 build
+    // editing a v9 item must not drop them. A digital item never ships, so it carries none.
+    fields.shippingZoneIds = doc.fulfillment === 'digital' || !doc.shippingZoneIds ? undefined : encodeIdentifierList(doc.shippingZoneIds);
     delete fields.unreadableVariants;
     delete fields.unreadableImageUrls;
     if (doc.variants) fields.variants = storedVariants(doc.variants, doc.imageUrls);
@@ -174,7 +200,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       sku: data.sku,
       variants,
       ...(data.variants !== undefined && data.variants !== null && !variants ? { unreadableVariants: data.variants, unreadableImageUrls: data.imageUrls } : {}),
-      fulfillment: data.fulfillment === 'digital' ? 'digital' : undefined
+      fulfillment: data.fulfillment === 'digital' ? 'digital' : undefined,
+      shippingZoneIds: zoneIdsOf(data.shippingZoneIds)
     };
   }
 
@@ -265,6 +292,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       sku?: string;
       variants?: ItemVariants;
       fulfillment?: ItemFulfillment;
+      /** v9: the store's zones it ships under; none (or undefined) = every zone. Ignored on a digital item and before v9. */
+      shippingZoneIds?: string[];
     }
   ): Promise<StoreItem> {
     const documentData: Record<string, unknown> = {
@@ -286,7 +315,10 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.sku) documentData.sku = data.sku;
     if (data.variants) documentData.variants = storedVariants(data.variants, data.imageUrls);
     // Absent means shipped, so a physical product writes exactly what v5 accepts.
+    // A digital item never ships, so it names no zones.
+    const shippingZoneIds = data.fulfillment === 'digital' ? undefined : storedZoneIds(data.shippingZoneIds);
     if (data.fulfillment === 'digital') documentData.fulfillment = 'digital';
+    if (shippingZoneIds) documentData.shippingZoneIds = shippingZoneIds;
 
     assertStorable(documentData, data.variants, data.imageUrls);
     return this.create(ownerId, documentData);
@@ -315,6 +347,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       sku: string;
       variants: ItemVariants;
       fulfillment: ItemFulfillment;
+      shippingZoneIds: string[];
     }>,
     /**
      * The revision the edit started from. Required to write `variants`: a
@@ -363,6 +396,10 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     const variants = 'variants' in data ? data.variants : existing.variants;
     if (writesTable) documentData.variants = variants && storedVariants(variants, imageUrls);
     if ('fulfillment' in data) documentData.fulfillment = data.fulfillment === 'digital' ? 'digital' : undefined;
+    // An empty list (or undefined) clears the field: the item ships under every zone again.
+    if ('shippingZoneIds' in data) documentData.shippingZoneIds = storedZoneIds(data.shippingZoneIds);
+    // A digital item never ships, so switching to digital drops its zones.
+    if (('fulfillment' in data ? data.fulfillment : existing.fulfillment) === 'digital') documentData.shippingZoneIds = undefined;
 
     // What update() will send: the stored fields, with these changes over them.
     // The table is judged only when this edit writes it (or moves its images):

@@ -8,7 +8,8 @@ import {
   ArrowLeftIcon,
   ShoppingCartIcon,
   BuildingStorefrontIcon,
-  CloudArrowDownIcon
+  CloudArrowDownIcon,
+  TruckIcon
 } from '@heroicons/react/24/outline'
 import { CheckIcon } from '@heroicons/react/24/solid'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
@@ -22,6 +23,8 @@ import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { cartService } from '@/lib/services/cart-service'
 import { storeStatsService } from '@/lib/services/store-stats-service'
+import { shippingZoneService } from '@/lib/services/shipping-zone-service'
+import { shipsToLabel } from '@/lib/storefront/item-zones'
 import { storefrontIsV2 } from '@/lib/constants'
 import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront-contract'
 import { combinationForSelection, combinationImageUrl, isInStock, selectableOptionIds } from '@/lib/storefront/variant-codec'
@@ -79,6 +82,8 @@ function ItemDetailContent() {
   const [cartError, setCartError] = useState<string | null>(null)
   const [cartItemCount, setCartItemCount] = useState(0)
   const addedToCartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // "Ships to: …" for a shipped item limited to some of its store's zones (storefront v9).
+  const [shipsTo, setShipsTo] = useState<string | null>(null)
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -138,6 +143,19 @@ function ItemDetailContent() {
 
     loadItem().catch((error) => logger.error(error))
   }, [sdkReady, itemId])
+
+  // Only an item that names zones needs the store's zone names; nothing is shown if they cannot be read.
+  useEffect(() => {
+    setShipsTo(null)
+    if (!item?.shippingZoneIds || item.fulfillment === 'digital') return
+    let cancelled = false
+    shippingZoneService.getByStore(item.storeId)
+      .then((zones) => {
+        if (!cancelled) setShipsTo(shipsToLabel(item, zones))
+      })
+      .catch((error) => logger.warn('Failed to load shipping zones:', error))
+    return () => { cancelled = true }
+  }, [item])
 
   const variants = item?.variants
 
@@ -309,6 +327,13 @@ function ItemDetailContent() {
                   <span className="font-medium">Digital product.</span> Nothing ships: the seller delivers it encrypted to you on Dash Platform, and it appears under My Orders → Library.
                 </span>
               </div>
+            )}
+
+            {shipsTo && (
+              <p className="flex items-center gap-2 text-sm text-gray-500">
+                <TruckIcon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                {shipsTo}
+              </p>
             )}
 
             {/* Category */}
