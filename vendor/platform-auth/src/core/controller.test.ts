@@ -244,6 +244,22 @@ describe('PlatformAuthController key-ring login', () => {
     expect(controller.getState().user).toBeNull()
   })
 
+  it('lets a logout called while a sign-in stores its key end that session, not be undone by it', async () => {
+    let releaseKey: () => void = () => undefined
+    const { controller, storedUser, storePrivateKey } = setup(async () => 'raw.dash')
+    storePrivateKey.mockImplementation(() => new Promise<undefined>((resolve) => { releaseKey = () => resolve(undefined) }))
+
+    const login = controller.loginWithAuthKey('raw-identity', 'private-key')
+    await vi.waitFor(() => expect(storePrivateKey).toHaveBeenCalled())
+    const logout = controller.logout()
+    releaseKey()
+    await login
+    await logout
+
+    expect(controller.getState().user).toBeNull()
+    expect(storedUser()).toBeUndefined()
+  })
+
   it('signs in when its keys are still current', async () => {
     const stillCurrent = vi.fn(() => true)
     const { controller, storedUser } = setup(async () => 'alice.dash')

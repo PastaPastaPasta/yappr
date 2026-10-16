@@ -93,6 +93,15 @@ export class PlatformAuthController {
   /** Bumped whenever a session is stored or ended, so a sign-in can tell it was overtaken. */
   private epoch = 0
 
+  /** The tail of the session commits and logouts, which run one at a time and never interleave. */
+  private lifecycle: Promise<unknown> = Promise.resolve()
+
+  private exclusive<T>(run: () => Promise<T>): Promise<T> {
+    const next = this.lifecycle.then(run, run)
+    this.lifecycle = next.catch(() => undefined)
+    return next
+  }
+
   public constructor(private readonly deps: PlatformAuthDependencies) {
     this.features = { ...DEFAULT_FEATURES, ...deps.features }
     this.logger = deps.logger ?? noopLogger
@@ -306,16 +315,18 @@ export class PlatformAuthController {
         publicKeys: identity.publicKeys,
       }
 
-      // Checked after the last read, right before the session is stored: an overtaken sign-in stores nothing.
-      if (this.epoch !== startedAt || (options.stillCurrent && !options.stillCurrent())) throw new SupersededSignInError()
-      this.epoch += 1
-      await this.persistSessionUser(user)
-      if (privateKey !== null) await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
-      await this.deps.clientIdentity?.setIdentity(identity.id)
-
-      this.patchState({
-        user,
-        error: null,
+      // The commit (session, key, publication) runs whole, never interleaved with a logout or
+      // another commit. Checked as it starts, after the last read: an overtaken sign-in stores nothing.
+      await this.exclusive(async () => {
+        if (this.epoch !== startedAt || (options.stillCurrent && !options.stillCurrent())) throw new SupersededSignInError()
+        this.epoch += 1
+        await this.persistSessionUser(user)
+        if (privateKey !== null) await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
+        await this.deps.clientIdentity?.setIdentity(identity.id)
+        this.patchState({
+          user,
+          error: null,
+        })
       })
 
       await this.emit({ type: 'login-succeeded', user })
@@ -406,7 +417,12 @@ export class PlatformAuthController {
     }
   }
 
-  public async logout(): Promise<PlatformAuthResult> {
+  /** Signs out whoever is signed in once any session commit under way has finished, so none outlives it. */
+  public logout(): Promise<PlatformAuthResult> {
+    return this.exclusive(() => this.logoutNow())
+  }
+
+  private async logoutNow(): Promise<PlatformAuthResult> {
     const identityId = this.state.user?.identityId
     this.epoch += 1
 

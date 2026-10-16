@@ -174,7 +174,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await applyIntent(result.intent)
       return result.intent
     } catch (error) {
-      await appConnectSessions.discard(session)
+      // The grant may be the very one a winning sign-in for this identity now uses
+      // (adopt hands back the newer stored grant): only another identity's session drops it.
+      if (controller.getState().user?.identityId !== session.identityId) await appConnectSessions.discard(session)
       throw error
     }
   }, [applyIntent, controller])
