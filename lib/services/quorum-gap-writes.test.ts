@@ -193,4 +193,16 @@ describe('a YAPP tip sent without a verdict', () => {
     expect(awaitSentTip).not.toHaveBeenCalled()
     expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
   })
+
+  it('reports a failure before the send as a failure, never matched against an earlier identical tip', async () => {
+    // A quorum gap on the nonce read under the write lock: nothing was sent.
+    const transfer = vi.fn(async () => ({ success: false, error: `Transfer failed: ${qku().message}`, errorCode: 'NETWORK_ERROR' as const }))
+    Object.assign(tokenService, { transfer })
+    const awaitSentTip = vi.spyOn(tipHistoryService, 'awaitSentTip').mockResolvedValue({} as Awaited<ReturnType<typeof tipHistoryService.awaitSentTip>>)
+
+    const result = await tipService.sendYappTipLocal('sender', 'recipient', BigInt(10), { kind: 'post', id: '11111111111111111111111111111111' }, undefined, 'wif')
+
+    expect(awaitSentTip).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ success: false, errorCode: 'NETWORK_ERROR' })
+  })
 })
