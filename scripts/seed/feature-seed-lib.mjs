@@ -17,7 +17,7 @@ import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
 import { ensureInitialized } from '@dashevo/evo-sdk';
 import {
-  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, NOT_QUERYABLE_BY_OWNER, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
+  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, NOT_QUERYABLE_BY_OWNER, QUORUM_GAP, QUORUM_GAP_SETTLE_MS, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
   buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, hashtagProps, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
@@ -149,6 +149,8 @@ export const phaseRunner = (limit) => (label, items, actorOf, task) => {
 
 const SETTLE_MS = 3_000;
 const SETTLE_POLLS = 3;
+/** A quorum gap hides a landed write from readback until it closes: wait that out before a retry. */
+const settlePollsFor = (error) => (error && QUORUM_GAP.test(describeErr(error)) ? Math.ceil(QUORUM_GAP_SETTLE_MS / SETTLE_MS) : SETTLE_POLLS);
 const MAX_ATTEMPTS = 4;
 
 /**
@@ -160,8 +162,8 @@ const MAX_ATTEMPTS = 4;
  */
 export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined, create = createDocument, wait = sleep }) {
   const stored = (docType, id, contract) => handle.sdk.documents.get(contract, docType, id);
-  const settles = async (landed) => {
-    for (let i = 0; i < SETTLE_POLLS; i++) {
+  const settles = async (landed, polls = SETTLE_POLLS) => {
+    for (let i = 0; i < polls; i++) {
       await wait(SETTLE_MS);
       try {
         if (await landed()) return true;
@@ -224,7 +226,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
         // A stale cached fee multiplier is the one consensus refusal a retry fixes; refused
         // outright, it never landed, so there is nothing to wait for.
         const staleMultiplier = FEE_MULTIPLIER_NOT_TOLERATED.test(text);
-        if (!staleMultiplier && await settles(landed)) return { id };
+        if (!staleMultiplier && await settles(landed, settlePollsFor(error))) return { id };
         if (staleMultiplier) forgetFeeMultiplier();
         const retryable = deadSdk || staleMultiplier || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
         if (!retryable && (/code=4\d{4}/.test(text) || /consensus/i.test(text))) throw error; // Platform said no
@@ -251,7 +253,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
         const text = describeErr(error);
         if (TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text)) await handle.reconnect(text).catch(() => {});
       }
-      if (await settles(landed)) return { id };
+      if (await settles(landed, settlePollsFor(lastError))) return { id };
     }
     throw lastError ?? new Error(`${docType} replace did not take effect`);
   }
@@ -441,6 +443,8 @@ export function parseFlags(argv, spec, defaults) {
   return args;
 }
 
+const QUORUM_KEY_GAP = 'Proof verification error: quorum key unavailable for quorum 107:1c64a92f: invalid quorum: Quorum not found in cache for hash: 1c64a92f';
+
 /**
  * Offline checks on the shared plumbing, run by every `--self-test`. These exist because a recorder method that lost
  * `this` when destructured reported "write failed" for documents that HAD landed, so their ids were never
@@ -541,6 +545,8 @@ export async function plumbingAssertions() {
       ['an index refusal is not transient, whatever byte count its truncated text carries',
         NOT_QUERYABLE_BY_OWNER.test(indexRefusal) && !RETRYABLE.test(indexRefusal) && !WAIT_MAYBE_LANDED.test(indexRefusal)],
       ['real 429/503/504 statuses still read as transient', RETRYABLE.test('HTTP 429 Too Many Requests') && RETRYABLE.test('status: 503') && WAIT_MAYBE_LANDED.test('504 Gateway Time-out')],
+      ['a beta.6 quorum key gap on a write is waited out by readback, not read as a refusal',
+        QUORUM_GAP.test(QUORUM_KEY_GAP) && TRANSPORT_COLLAPSE.test(QUORUM_KEY_GAP) && settlePollsFor(new Error(QUORUM_KEY_GAP)) > SETTLE_POLLS],
       ['a status code inside an id is not a status', !RETRYABLE.test('document 7Hx503abc not found') && !WAIT_MAYBE_LANDED.test('id 9k504Zq refused')],
       ['a value probe on a doctype with no owner index answers null after two queries, without throwing', refusedProbe === null && refusedQueries === 2],
       ['a scoped value probe queries the scope and only adopts the owner\'s document',

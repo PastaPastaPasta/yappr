@@ -6,8 +6,9 @@ import { ContractBounds, IdentityPublicKeyInCreation, PrivateKey } from '@dashev
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config';
 import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup';
 import { keyNetwork } from '@/lib/constants'
-import { requireBytes } from '@/lib/bytes'
+import { bytesEqual, requireBytes } from '@/lib/bytes'
 import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
+import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
 
 export interface IdentityPublicKey {
@@ -256,6 +257,19 @@ class IdentityService {
     }
   }
 
+  /** Whether the identity (read fresh) has key `keyId` with exactly `data`; false when not, or the read fails. */
+  private async hasPublicKey(identityId: string, keyId: number, data: Uint8Array): Promise<boolean> {
+    try {
+      const sdk = await getEvoSdk();
+      const identity = await sdk.identities.fetch(identityId);
+      const key = identity?.publicKeys.find((candidate) => candidate.keyId === keyId);
+      return key ? bytesEqual(requireBytes(key.data, 'identity key data'), data) : false;
+    } catch (error) {
+      logger.warn(`Could not read back key ${keyId} of ${identityId}:`, extractErrorMessage(error));
+      return false;
+    }
+  }
+
   /**
    * Validate that a private key has sufficient security level for identity updates
    * Identity modifications REQUIRE a MASTER (0) security level key    * CRITICAL keys are NOT sufficient for identity updates.
@@ -435,6 +449,13 @@ class IdentityService {
         });
         logger.debug('sdk.identities.update completed successfully');
       } catch (updateError) {
+        // No verdict (a timeout, or a result proof that could not be checked
+        // during a quorum rotation): the key may be on the identity already.
+        if (sentWriteOutcomeUnknown(updateError) && await this.hasPublicKey(identityId, newKeyId, publicKeyBytes)) {
+          logger.warn(`Adding key ${newKeyId} reported "${extractErrorMessage(updateError)}" but the identity has it`);
+          this.clearCache(identityId);
+          return { success: true, keyId: newKeyId };
+        }
         logger.error('sdk.identities.update failed:', updateError);
         if (updateError && typeof updateError === 'object') {
           const wasmErr = updateError as Record<string, unknown>;

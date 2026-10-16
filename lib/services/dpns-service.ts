@@ -20,6 +20,8 @@ import {
   isContestFundError,
   isContestedDocumentsNotYetAllowedError,
   isContestNotJoinableError,
+  isOutcomeUnknownError,
+  sentWriteOutcomeUnknown,
 } from '@/lib/error-utils';
 
 
@@ -80,6 +82,10 @@ export function describeDpnsRegistrationError(error: unknown): string {
   }
   // Drive: "Insufficient identity <id> balance <b> required <r>". A contested
   // name needs its contest fund on top of the fees.
+  // Sent, and no verdict came back: a second try would pay a second preorder.
+  if (isOutcomeUnknownError(error)) {
+    return 'The network couldn\'t confirm this registration yet. It may have gone through, so check your names before trying again.';
+  }
   if (/insufficient identity .* balance/i.test(message)) {
     return 'Your identity does not have enough credits for this registration. A contested name also pays a contest fund into its vote, priced by the network before you sign. Top up and try again.';
   }
@@ -469,6 +475,8 @@ class DpnsService {
     privateKeyWif: string,
     onPreorderSuccess?: () => void
   ): Promise<{ success: boolean }> {
+    // Set once the SDK is asked to register: an error before that sent nothing.
+    let sent = false;
     try {
       const sdk = await getEvoSdk();
 
@@ -537,6 +545,7 @@ class DpnsService {
       // name the SDK reads the fund to join just before it signs (beta.5), which
       // is the least that is accepted and what is charged.
       logger.debug(`Registering DPNS name: ${label}`);
+      sent = true;
       await sdk.dpns.registerName({
         label,
         identity,
@@ -550,8 +559,31 @@ class DpnsService {
 
       return { success: true };
     } catch (error) {
+      // Sent, and no verdict came back (a timeout, or a result proof that could
+      // not be checked during a quorum rotation): the name may be registered.
+      // Registering again would pay a second preorder, so ask DPNS first.
+      if (sent && sentWriteOutcomeUnknown(error) && await this.nameIsOwnedBy(label, identityId)) {
+        logger.warn(`DPNS: registering ${label} reported "${extractErrorMessage(error)}" but the name is registered to ${identityId}`);
+        this.clearCache(undefined, identityId);
+        return { success: true };
+      }
       logger.error('Error registering username:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Whether DPNS shows `label` registered to `identityId`, read from the
+   * chain (never the name cache, which may predate this registration); false
+   * when it does not, or the read fails.
+   */
+  private async nameIsOwnedBy(label: string, identityId: string): Promise<boolean> {
+    this.clearCache(label.toLowerCase().replace(/\.dash$/, ''));
+    try {
+      return (await this.findIdentityByName(label)) === identityId;
+    } catch (readError) {
+      logger.warn(`DPNS: could not read back ${label}:`, extractErrorMessage(readError));
+      return false;
     }
   }
 

@@ -40,7 +40,7 @@ function formatCreditsAsDash(credits: bigint): string {
   return `${whole.toString()}.${frac.toString().padStart(4, '0')} DASH`
 }
 
-type ModalState = 'input' | 'confirming' | 'needKey' | 'walletSign' | 'processing' | 'success' | 'error'
+type ModalState = 'input' | 'confirming' | 'needKey' | 'walletSign' | 'processing' | 'success' | 'unconfirmed' | 'error'
 
 const MODAL_TITLES: Record<ModalState, string> = {
   input: 'Buy YAPP',
@@ -49,6 +49,7 @@ const MODAL_TITLES: Record<ModalState, string> = {
   walletSign: 'Authorize Purchase',
   processing: 'Buy YAPP',
   success: 'YAPP Purchased!',
+  unconfirmed: 'Purchase Not Confirmed',
   error: 'Purchase Failed',
 }
 
@@ -174,7 +175,8 @@ export function BuyYappModal() {
       // Leaving the needKey flow — drop the entered key so a later retry can't
       // silently sign with it without the user re-confirming.
       setCriticalKeyWif('')
-      setState('error')
+      // Sent, but not confirmed: no "Try Again", which could buy twice.
+      setState(result.errorCode === 'UNCONFIRMED' ? 'unconfirmed' : 'error')
       setError(result.error || 'Purchase failed')
     }
   }
@@ -550,6 +552,18 @@ export function BuyYappModal() {
                           )}
                         </div>
                         <Button onClick={close} className="w-full">Done</Button>
+                      </div>
+                    )}
+
+                    {state === 'unconfirmed' && (
+                      <div className="py-4 text-center space-y-4">
+                        <ExclamationCircleIcon className="h-16 w-16 text-amber-500 mx-auto" />
+                        <div className="space-y-2">
+                          <p className="text-lg font-medium">Couldn&apos;t confirm your purchase</p>
+                          <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
+                          <p className="text-xs text-gray-500">Check your YAPP balance before buying again.</p>
+                        </div>
+                        <Button onClick={close} className="w-full">Close</Button>
                       </div>
                     )}
 

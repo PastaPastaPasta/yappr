@@ -518,6 +518,12 @@ export function TipModal() {
       } else {
         setState('success')
       }
+    } else if (result.errorCode === 'UNCONFIRMED') {
+      // Sent, but the chain has not shown it yet: never a retry screen, or a
+      // second press moves the credits twice.
+      usedTransferKeyRef.current = null
+      setError(result.error ?? null)
+      setState('unconfirmed')
     } else {
       usedTransferKeyRef.current = null
       setState('error')
@@ -1051,9 +1057,12 @@ export function TipModal() {
                       <Button onClick={close} variant="outline" className="flex-1">
                         Close
                       </Button>
-                      <Button onClick={() => checkTipLanded(() => setState('unconfirmed'))} className="flex-1">
-                        Check again
-                      </Button>
+                      {/* A credit tip leaves no record to look up: the balance is the user's check. */}
+                      {isYapp && (
+                        <Button onClick={() => checkTipLanded(() => setState('unconfirmed'))} className="flex-1">
+                          Check again
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}

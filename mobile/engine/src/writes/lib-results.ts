@@ -1,4 +1,4 @@
-import { extractErrorMessage } from '@/lib/error-utils'
+import { isNotFoundAnswer } from '@/lib/error-utils'
 import { getEvoSdk } from '@/lib/services/evo-sdk-service'
 import type { StateTransitionResult } from '@/lib/services/state-transition-service'
 import { LIB_REFUSED_MESSAGE } from './classify'
@@ -71,15 +71,15 @@ export function createdDocument(result: StateTransitionResult, contractId: strin
 /**
  * Prove a document present or absent with one proved `documents.get`. A
  * "not found" answer is absence; any other failure throws, because it proves
- * nothing (the same rule as lib's `checkDocumentExists`).
+ * nothing (the same rule as lib's `checkDocumentExists`). "Quorum not found in
+ * cache" is such a failure, not an absence (`isNotFoundAnswer`).
  */
 export async function documentExists(document: Pick<TicketDocument, 'contractId' | 'type' | 'id'>): Promise<boolean> {
   const sdk = await getEvoSdk()
   try {
     return Boolean(await sdk.documents.get(document.contractId, document.type, document.id))
   } catch (error) {
-    const message = extractErrorMessage(error).toLowerCase()
-    if (message.includes('not found') || message.includes('404') || message.includes('no document')) return false
+    if (isNotFoundAnswer(error)) return false
     throw error
   }
 }
