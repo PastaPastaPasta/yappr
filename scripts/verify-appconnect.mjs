@@ -10,8 +10,9 @@
  *       contract, and no document-type or token member
  *   g3  the anchor registered the group: APP_ID = generateId(owner, n) and
  *       GROUP_ID = contractGroupId(owner, n) for the same nonce n; every pinned member is
- *       owner-owned, lists the group among its memberships, and is still at version 1
- *       (an update could add a type every group key then signs for)
+ *       owner-owned, lists the group among its memberships, and is at the version the app
+ *       pins (`id:version`, a bare id pins 1): an update could add a type every group key
+ *       then signs for, so each one is pinned deliberately
  *   a1  the anchor as deployed: `requiresIdentityEncryptionBoundedKey` 2
  *       (MultipleReferenceToLatest), no decryption opt-in, and the committed `appInfo`
  *       (owner-only creation), schema for schema
@@ -75,6 +76,11 @@ const TEST_WALLET_KEY_VECTORS = [
 const anchorEntry = APP_CONNECT_ENTRIES[0];
 const anchorFile = () => JSON.parse(readFileSync(contractFilePath(anchorEntry.file), 'utf8'));
 const idList = (value) => (value ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+/** Pinned members as `id` or `id:version`, the way lib/app-connect/config.ts reads them: a bare id pins version 1. */
+const memberPins = (value) => new Map(idList(value).map((entry) => {
+  const [id, version = '1'] = entry.split(':');
+  return [id, Number(version)];
+}));
 
 /** Every page of one kind of member of the group. */
 async function allMembers(battery, groupId, kind) {
@@ -129,7 +135,8 @@ CASES.set('g3', async ({ battery, pinned }) => {
       `owner ${contract?.ownerId.toBase58() ?? 'absent'}, groups ${JSON.stringify(memberships.contract)}`);
     // A whole-contract membership covers every type the contract will ever have, so an update
     // widens what every group key signs for without changing the member list.
-    battery.check(`g3e ${id} is still at version 1 (no update has added a type to the group)`, contract?.version === 1, `version ${contract?.version}`);
+    const pinnedVersion = pinned.versions.get(id);
+    battery.check(`g3e ${id} is at its pinned version ${pinnedVersion} (no unpinned update has added a type to the group)`, Number(contract?.version) === pinnedVersion, `version ${contract?.version}`);
   }
 });
 
@@ -442,7 +449,8 @@ await runBattery({
   selfTest: selfTestAppConnect,
   setup: async ({ args, contractId }) => {
     await ensureInitialized();
-    const pinned = { appId: contractId, groupId: args.group, owner: args.owner, members: idList(args.members) };
+    const versions = memberPins(args.members);
+    const pinned = { appId: contractId, groupId: args.group, owner: args.owner, members: [...versions.keys()], versions };
     console.log(`group ${pinned.groupId}, owner ${pinned.owner}, ${pinned.members.length} pinned member(s)`);
     return { pinned };
   },
