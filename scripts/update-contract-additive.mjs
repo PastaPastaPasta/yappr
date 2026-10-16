@@ -59,6 +59,9 @@ function additiveChanges(deployed, wanted) {
   for (const type of wantedTypes) {
     const { properties: before = {}, ...restBefore } = deployed[type];
     const { properties: after = {}, ...restAfter } = wanted[type];
+    const required = (restAfter.required ?? []).map(String);
+    const newlyRequired = required.filter((name) => !(name in before) && name in after);
+    if (newlyRequired.length > 0) throw new Error(`${type}: a new property cannot be required (${newlyRequired})`);
     if (!same(restBefore, restAfter)) throw new Error(`${type}: changes more than its properties`);
     for (const [name, schema] of Object.entries(before)) {
       if (!(name in after)) throw new Error(`${type}.${name}: removed`);
@@ -66,16 +69,12 @@ function additiveChanges(deployed, wanted) {
     }
     const newNames = Object.keys(after).filter((name) => !(name in before));
     if (newNames.length === 0) continue;
-    const required = (restAfter.required ?? []).map(String);
     const top = Math.max(-1, ...Object.values(before).map((schema) => Number(schema.position)));
     const positions = newNames.map((name) => Number(after[name].position)).sort((a, b) => a - b);
     positions.forEach((position, index) => {
       if (position !== top + 1 + index) throw new Error(`${type}: new properties must take positions ${top + 1}…, got ${positions}`);
     });
-    for (const name of newNames) {
-      if (required.includes(name)) throw new Error(`${type}.${name}: a new property cannot be required`);
-      added.push({ type, name, schema: after[name] });
-    }
+    for (const name of newNames) added.push({ type, name, schema: after[name] });
   }
   return added;
 }
@@ -112,7 +111,17 @@ try {
   // The file rendered the way a create would carry it, so both sides are Platform's own rendering.
   const declared = contractSource(readFileSync(contractFilePath(entry.file), 'utf8'));
   const source = { ...declared, config: withInterim(declared.config, { network: network() }) };
-  const wanted = DataContract.fromJSON(registrationJson(source, { id: contractId, ownerId }), true, platformVersion).toJSON(platformVersion).documentSchemas;
+  const wantedJson = DataContract.fromJSON(registrationJson(source, { id: contractId, ownerId }), true, platformVersion).toJSON(platformVersion);
+  const wanted = wantedJson.documentSchemas;
+  // Only document types are updated here, so the file must agree with the chain on everything else
+  // (config, tokens, groups, keywords …), or a change there would silently not be applied.
+  // The chain's own bookkeeping (createdAt…, updatedAt…) and the version are not the file's to set.
+  const compared = (key) => key !== 'version' && key !== 'documentSchemas' && !/^(created|updated)At/.test(key);
+  const keys = [...new Set([...Object.keys(deployedJson), ...Object.keys(wantedJson)])]
+    .filter((key) => compared(key) && !same(deployedJson[key], wantedJson[key]));
+  if (keys.length > 0) {
+    throw new Error(`the file differs from the chain outside documentSchemas (${keys}); this script only adds properties`);
+  }
   if (sameSchemas(deployedJson.documentSchemas, wanted)) {
     console.log('the deployed document types already equal the file: nothing to do');
     process.exit(0);
@@ -131,13 +140,24 @@ try {
   if (owner.ownerId !== ownerId) throw new Error(`the devnet maker is ${owner.ownerId}, but ${contractId} is owned by ${ownerId}`);
   const { identityKey, signer } = await signerFor(handle.sdk, owner);
   console.log(`broadcasting the update as ${owner.label} …`);
-  await handle.sdk.contracts.update({ dataContract: updated, identityKey, signer });
+  try {
+    await handle.sdk.contracts.update({ dataContract: updated, identityKey, signer });
+  } catch (e) {
+    // A gateway timeout on the wait does not mean the update was refused: the read-back decides.
+    console.log(`broadcast returned an error, reading back to see whether it landed: ${describeErr(e)}`);
+  }
 
-  const after = await readback(handle, () => handle.sdk.contracts.fetch(contractId));
+  // A node that is behind still answers the old version, so read until it moves or the attempts run out.
+  let after = null;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    after = await readback(handle, () => handle.sdk.contracts.fetch(contractId));
+    if (after && Number(after.version) === version + 1) break;
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+  }
   const ok = after && Number(after.version) === version + 1 && sameSchemas(after.toJSON(platformVersion).documentSchemas, wanted);
   console.log(`read back: version ${after?.version}, document types equal the file: ${Boolean(ok)}`);
-  console.log(`pin it: ${contractId}:${version + 1} in NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS`);
   if (!ok) process.exit(1);
+  console.log(`pin it: ${contractId}:${version + 1} in NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS`);
 } catch (e) {
   console.error('ERROR:', describeErr(e));
   process.exit(1);
