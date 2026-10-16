@@ -121,7 +121,12 @@ encrypted order payload, which the contract cannot read.
   selection shown, but an edit writes `shippingZoneIds` only when the seller
   touched these controls (`zoneUpdateFor`): otherwise the key is left out and
   the stored list stays, stale ids included, so a save never quietly lifts a
-  limit it could not show. A product limited only to zones that no longer
+  limit it could not show (it also writes an untouched draft whose shape
+  disagrees with the stored ids, so what is shown is what is saved). After
+  every load and every successful listing write the draft is reset from the
+  item as saved (`zoneDraftFromItem`): a digital save drops the zones, and a
+  form left open by a failed kit write then shows every zone, as stored. A
+  product limited only to zones that no longer
   exist (or whose zones could not be loaded) gets a notice and a "Ship it
   under every zone" button, which counts as a change. A create writes the
   choice.
@@ -129,6 +134,11 @@ encrypted order payload, which the contract cannot read.
   separates names with them).
 - The buyer's item page and the store manager's product list show "Ships to:
   Zone A, Zone B" for a limited item.
+
+- `shippingZoneService.getByStore` reads every zone of the store, fresh,
+  100 at a time with `startAfter`, and throws past 10 pages (1,000 zones)
+  rather than answer with part of the list: a zone missing from it would
+  read as deleted everywhere it is checked.
 
 ## Inventory CSV
 

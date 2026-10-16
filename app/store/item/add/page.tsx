@@ -30,7 +30,7 @@ import { storefrontSupportsDigital, storefrontSupportsItemZones, storefrontVaria
 import { encodeKit, kitDeliveryFitError } from '@/lib/services/digital-delivery-plan'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
-import type { ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload, ShippingZone } from '@/lib/types'
+import type { ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload, ShippingZone, StoreItem } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { LIST_LIMITS, ListLimitError } from '@/lib/typed-array-codecs'
 import { StaleRevisionError } from '@/lib/services/document-service'
@@ -39,7 +39,7 @@ import { clampImages, emptyVariants, variantProblems } from '@/lib/storefront/va
 import { convertPrices, defaultCombinationPrice, parseCountInput, parsePriceInput, shiftImagesAfterRemoval, tidyNames } from '@/lib/storefront/variant-editor-model'
 import { VariantEditor } from '@/components/store/variant-editor'
 import { ItemShippingZones } from '@/components/store/item-shipping-zones'
-import { zoneUpdateFor, zonesStranded, type ItemZoneMode } from '@/lib/storefront/item-zones'
+import { zoneDraftFromItem, zoneUpdateFor, zonesStranded, type ItemZoneMode } from '@/lib/storefront/item-zones'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
@@ -118,6 +118,14 @@ function AddItemPage() {
   const changeSelectedZones = useCallback((ids: string[]) => {
     setSelectedZoneIds(ids)
     setZonesTouched(true)
+  }, [])
+  /** Reset the shipping-scope draft to what `item` holds on chain (after a load or a successful save). */
+  const applyZoneDraft = useCallback((item: StoreItem, zones: ShippingZone[] | null = null) => {
+    const draft = zoneDraftFromItem(item, zones)
+    setZoneMode(draft.mode)
+    setSelectedZoneIds(draft.selection)
+    setStoredZoneIds(draft.stored)
+    setZonesTouched(false)
   }, [])
 
   const [isLoading, setIsLoading] = useState(isEditMode || !!storeId)
@@ -220,10 +228,7 @@ function AddItemPage() {
         setImageUrls(item.imageUrls || [])
         setLoadedStoreId(item.storeId)
         setFulfillment(item.fulfillment === 'digital' ? 'digital' : 'shipped')
-        setZoneMode(item.shippingZoneIds ? 'only' : 'all')
-        setSelectedZoneIds(item.shippingZoneIds ?? [])
-        setStoredZoneIds(item.shippingZoneIds ?? [])
-        setZonesTouched(false)
+        applyZoneDraft(item)
 
         // Convert price from smallest unit to display value
         if (item.basePrice !== undefined) {
@@ -249,7 +254,7 @@ function AddItemPage() {
     }
 
     loadItem().catch((err) => logger.error('Failed to load item:', err))
-  }, [sdkReady, isEditMode, itemId, setVariants])
+  }, [sdkReady, isEditMode, itemId, setVariants, applyZoneDraft])
 
   // The store's zones, for the per-item choice. A stored id that is not one of
   // them any more (a deleted zone) is dropped from the selection.
@@ -411,7 +416,7 @@ function AddItemPage() {
     // could not show stays as stored); never for a digital product. None
     // ticked is not "all": the seller must choose, or switch back to every zone.
     const zoneUpdate = supportsItemZones && !isDigital
-      ? zoneUpdateFor(zoneMode, selectedZoneIds, { touched: zonesTouched, editing: Boolean(editingItemId || pendingItemId) })
+      ? zoneUpdateFor(zoneMode, selectedZoneIds, { touched: zonesTouched, editing: Boolean(editingItemId || pendingItemId), stored: storedZoneIds })
       : { kind: 'keep' as const }
     if (zoneUpdate.kind === 'noneChosen') {
       setError("Choose at least one shipping zone, or let this product ship under all of the store's zones.")
@@ -513,11 +518,14 @@ function AddItemPage() {
       let savedItemId: string
       if (targetItemId && effectiveStoreId) {
         const updated = await storeItemService.updateItem(targetItemId, user.identityId, effectiveStoreId, itemData, await revisionOf(targetItemId))
+        // The draft follows what was saved (a kit write may still fail and keep the form open).
+        applyZoneDraft(updated, storeZones)
         setSourceRevision(updated.$revision)
         if (itemData.variants && variantsAreTyped) keepSentVariants()
         savedItemId = targetItemId
       } else if (effectiveStoreId) {
         const created = await storeItemService.createItem(user.identityId, effectiveStoreId, itemData)
+        applyZoneDraft(created, storeZones)
         // Broadcast (confirmed or not) with a table: from here it keeps its options.
         if (itemData.variants && variantsAreTyped) keepSentVariants()
         setSourceRevision(created.$revision ?? 1)

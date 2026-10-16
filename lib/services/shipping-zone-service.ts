@@ -23,6 +23,10 @@ import type {
 } from '../../types';
 import { gramsToUnit } from '../utils/weight';
 
+const ZONE_PAGE_SIZE = 100;
+/** Pages of zones read before `getByStore` gives up (1,000 zones). */
+const MAX_ZONE_PAGES = 10;
+
 class ShippingZoneService extends BaseDocumentService<ShippingZone> {
   constructor() {
     super(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE, YAPPR_STOREFRONT_CONTRACT_ID);
@@ -96,16 +100,27 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
   }
 
   /**
-   * Get zones for a store
+   * Every zone of a store, by priority, read fresh (no cache), 100 at a time.
+   * The list must be whole: an item's zone missing from it would read as
+   * deleted (checkout refuses the item, the editor calls it stranded, the
+   * export leaves it out). Past {@link MAX_ZONE_PAGES} pages it throws rather
+   * than answer with part of the list, so callers fail closed.
    */
   async getByStore(storeId: string): Promise<ShippingZone[]> {
-    const { documents } = await this.query({
-      where: [['storeId', '==', storeId]],
-      orderBy: [['storeId', 'asc'], ['priority', 'asc']],
-      limit: 100
-    });
-
-    return documents;
+    const zones: ShippingZone[] = [];
+    let startAfter: string | undefined;
+    for (let page = 0; page < MAX_ZONE_PAGES; page++) {
+      const { documents, nextCursor } = await this.cursorPage({
+        where: [['storeId', '==', storeId]],
+        orderBy: [['storeId', 'asc'], ['priority', 'asc']],
+        limit: ZONE_PAGE_SIZE,
+        startAfter
+      });
+      zones.push(...documents);
+      if (!nextCursor) return zones;
+      startAfter = nextCursor;
+    }
+    throw new Error(`Store ${storeId} has more than ${MAX_ZONE_PAGES * ZONE_PAGE_SIZE} shipping zones`);
   }
 
   /**

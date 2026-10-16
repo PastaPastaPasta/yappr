@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { itemZones, shipsToLabel, zoneCountriesLabel, zoneDeletionImpact, zoneDeletionMessage, readZoneCell, zoneUpdateFor, zonesStranded } from './item-zones'
+import { itemZones, shipsToLabel, zoneCountriesLabel, zoneDeletionImpact, zoneDeletionMessage, readZoneCell, zoneDraftFromItem, zoneUpdateFor, zonesStranded } from './item-zones'
 
 const zones = [{ id: 'us', name: 'Domestic' }, { id: 'eu', name: 'Europe' }, { id: 'row', name: 'Rest of World' }]
 
@@ -46,15 +46,43 @@ describe('per-item shipping zones', () => {
   })
 
   it('an edit writes the zones only when the seller touched the controls; a create writes the choice', () => {
+    const limited = { stored: ['gone'] }
+    const open = { stored: [] }
     // A stranded limit (no zones, or unreadable ones) shown as "only" with nothing ticked is kept, not cleared.
-    expect(zoneUpdateFor('only', [], { touched: false, editing: true })).toEqual({ kind: 'keep' })
-    expect(zoneUpdateFor('all', [], { touched: false, editing: true })).toEqual({ kind: 'keep' })
+    expect(zoneUpdateFor('only', [], { touched: false, editing: true, ...limited })).toEqual({ kind: 'keep' })
+    expect(zoneUpdateFor('all', [], { touched: false, editing: true, ...open })).toEqual({ kind: 'keep' })
     // "Ship it under every zone" counts as a change.
-    expect(zoneUpdateFor('all', ['us'], { touched: true, editing: true })).toEqual({ kind: 'set', ids: [] })
-    expect(zoneUpdateFor('only', ['us', 'eu'], { touched: true, editing: true })).toEqual({ kind: 'set', ids: ['us', 'eu'] })
-    expect(zoneUpdateFor('only', [], { touched: true, editing: true })).toEqual({ kind: 'noneChosen' })
-    expect(zoneUpdateFor('all', [], { touched: false, editing: false })).toEqual({ kind: 'set', ids: [] })
-    expect(zoneUpdateFor('only', ['us'], { touched: true, editing: false })).toEqual({ kind: 'set', ids: ['us'] })
+    expect(zoneUpdateFor('all', ['us'], { touched: true, editing: true, ...limited })).toEqual({ kind: 'set', ids: [] })
+    expect(zoneUpdateFor('only', ['us', 'eu'], { touched: true, editing: true, ...open })).toEqual({ kind: 'set', ids: ['us', 'eu'] })
+    expect(zoneUpdateFor('only', [], { touched: true, editing: true, ...open })).toEqual({ kind: 'noneChosen' })
+    expect(zoneUpdateFor('all', [], { touched: false, editing: false, ...open })).toEqual({ kind: 'set', ids: [] })
+    expect(zoneUpdateFor('only', ['us'], { touched: true, editing: false, ...open })).toEqual({ kind: 'set', ids: ['us'] })
+  })
+
+  it('an untouched draft whose shape disagrees with the chain is written as shown', () => {
+    // A restriction shown over an item the chain holds unrestricted.
+    expect(zoneUpdateFor('only', ['us'], { touched: false, editing: true, stored: [] })).toEqual({ kind: 'set', ids: ['us'] })
+    // Every zone shown over an item the chain holds limited.
+    expect(zoneUpdateFor('all', [], { touched: false, editing: true, stored: ['us'] })).toEqual({ kind: 'set', ids: [] })
+  })
+
+  it('a draft follows the item as stored, ticking only the store\'s current zones', () => {
+    expect(zoneDraftFromItem({})).toEqual({ mode: 'all', selection: [], stored: [] })
+    expect(zoneDraftFromItem({ shippingZoneIds: ['us', 'gone'] })).toEqual({ mode: 'only', selection: ['us', 'gone'], stored: ['us', 'gone'] })
+    expect(zoneDraftFromItem({ shippingZoneIds: ['us', 'gone'] }, zones)).toEqual({ mode: 'only', selection: ['us'], stored: ['us', 'gone'] })
+  })
+
+  it('regression: a digital save whose kit write fails, then back to Physical, saves what is shown', () => {
+    // Loaded: shipped, limited to "us".
+    let draft = zoneDraftFromItem({ shippingZoneIds: ['us'] }, zones)
+    // Switched to digital and saved: the listing write succeeded (digital drops the zones),
+    // the kit write failed, the form stays open, and the draft follows the saved item.
+    draft = zoneDraftFromItem({ shippingZoneIds: undefined }, zones)
+    expect(draft).toEqual({ mode: 'all', selection: [], stored: [] })
+    // Back to Physical without touching the zones: the form shows every zone, and that is what the item holds.
+    expect(zoneUpdateFor(draft.mode, draft.selection, { touched: false, editing: true, stored: draft.stored })).toEqual({ kind: 'keep' })
+    // Without the reconcile, the stale "only us" draft over the now unrestricted item is written as shown, not kept.
+    expect(zoneUpdateFor('only', ['us'], { touched: false, editing: true, stored: draft.stored })).toEqual({ kind: 'set', ids: ['us'] })
   })
 
   it('sees a stored limit that names none of the current zones', () => {

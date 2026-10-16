@@ -182,3 +182,46 @@ describe('per-item zones at checkout (storefront v9, docs/STOREFRONT_V9.md)', ()
     });
   });
 });
+
+describe('getByStore reads every zone of the store', () => {
+  const zoneNo = (index: number) => ({
+    id: `zone-${index}`, ownerId: 'owner', storeId, createdAt: new Date(0), name: `Zone ${index}`,
+    rateType: 'flat' as const, flatRate: 100 + index, priority: index, countryPattern: index === 140 ? 'CA' : 'US',
+  });
+  const all = Array.from({ length: 150 }, (_, index) => zoneNo(index));
+
+  it('walks the pages with startAfter, fresh each time, so a zone on page two resolves', async () => {
+    const query = vi.spyOn(shippingZoneService, 'query').mockImplementation(async (options = {}) => {
+      const from = options.startAfter ? all.findIndex((zone) => zone.id === options.startAfter) + 1 : 0;
+      return { documents: all.slice(from, from + (options.limit ?? 100)) };
+    });
+    try {
+      const zones = await shippingZoneService.getByStore(storeId);
+      expect(zones).toHaveLength(150);
+      expect(query.mock.calls.map(([options]) => [options?.startAfter, options?.limit])).toEqual([[undefined, 100], ['zone-99', 100]]);
+      // An item limited to the zone on page two ships to Canada.
+      const check = checkShipping(zones, [{ itemId: 'belt', title: 'Belt', zoneIds: ['zone-140'], weight: 0, subtotal: 100 }], { name: 'B', street: '1', city: 'C', postalCode: 'K1A', country: 'CA' });
+      expect(check.problem).toBeNull();
+      expect(check.quote?.shipments.map((shipment) => shipment.zone.id)).toEqual(['zone-140']);
+      // No cache: the next read asks Platform again.
+      await shippingZoneService.getByStore(storeId);
+      expect(query).toHaveBeenCalledTimes(4);
+    } finally {
+      query.mockRestore();
+    }
+  });
+
+  it('throws rather than answer with part of a list past 10 pages', async () => {
+    let page = 0;
+    const query = vi.spyOn(shippingZoneService, 'query').mockImplementation(async () => {
+      page += 1;
+      return { documents: Array.from({ length: 100 }, (_, index) => zoneNo(page * 100 + index)) };
+    });
+    try {
+      await expect(shippingZoneService.getByStore(storeId)).rejects.toThrow('more than 1000 shipping zones');
+      expect(query).toHaveBeenCalledTimes(10);
+    } finally {
+      query.mockRestore();
+    }
+  });
+});

@@ -18,14 +18,44 @@ export type ItemZoneMode = 'all' | 'only'
  * or `noneChosen` ("only these zones" with none ticked, which is refused). An
  * edit writes the zones only when the seller touched the controls, so a save
  * never quietly rewrites a limit it could not show (no zones, or unreadable
- * ones); a create writes the choice.
+ * ones), or when the draft's shape disagrees with `stored` (what the item
+ * holds on chain: a restriction shown over an unrestricted item, or the
+ * reverse), so what the seller sees is what is saved. A create writes the
+ * choice.
  */
 export type ZoneUpdate = { kind: 'keep' } | { kind: 'set'; ids: string[] } | { kind: 'noneChosen' }
 
-export function zoneUpdateFor(mode: ItemZoneMode, selection: readonly string[], { touched, editing }: { touched: boolean; editing: boolean }): ZoneUpdate {
-  if (editing && !touched) return { kind: 'keep' }
+export function zoneUpdateFor(
+  mode: ItemZoneMode,
+  selection: readonly string[],
+  { touched, editing, stored }: { touched: boolean; editing: boolean; stored: readonly string[] }
+): ZoneUpdate {
+  const disagrees = (mode === 'only') !== (stored.length > 0)
+  if (editing && !touched && !disagrees) return { kind: 'keep' }
   if (mode === 'all') return { kind: 'set', ids: [] }
   return selection.length > 0 ? { kind: 'set', ids: [...selection] } : { kind: 'noneChosen' }
+}
+
+/** The editor's shipping-scope draft: its mode, the ticked zones, and the ids the item holds. */
+export interface ZoneDraft {
+  mode: ItemZoneMode
+  selection: string[]
+  stored: string[]
+}
+
+/**
+ * The draft for `item` as stored: "only" with its ids, else every zone. With
+ * the store's `zones` known, ids that are not among them are left unticked
+ * (they stay in `stored`). Set after every load and every successful save, so
+ * the draft always matches the chain (a digital save, for one, drops the zones).
+ */
+export function zoneDraftFromItem(item: Pick<StoreItem, 'shippingZoneIds'>, zones: readonly ZoneLike[] | null = null): ZoneDraft {
+  const stored = item.shippingZoneIds ?? []
+  return {
+    mode: stored.length > 0 ? 'only' : 'all',
+    selection: zones ? stored.filter((id) => zones.some((zone) => zone.id === id)) : [...stored],
+    stored: [...stored],
+  }
 }
 
 /** Whether a stored limit names none of the store's current zones (`zones`: null while unknown). */
