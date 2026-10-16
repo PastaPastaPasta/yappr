@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useStarterGrantModal } from '@/hooks/use-starter-grant-modal'
 import { starterGrantAmount, yappIsLocked, yappIsPausedForGood } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
-import { markStarterGrantClaimed, useStarterClaimState } from '@/hooks/use-starter-claim'
+import { markStarterGrantClaimed, refreshStarterClaimState, useStarterClaimState } from '@/hooks/use-starter-claim'
 import { tokenService } from '@/lib/services/token-service'
 import { useTokenClaimHidden } from '@/lib/app-connect/session-manager'
 
@@ -62,6 +62,14 @@ export function StarterGrantModal() {
   const handleClaim = async () => {
     if (busy) return
     setBusy(true)
+    // Asked again right before the claim: it may have been made in another tab or on another device since.
+    const latest = await refreshStarterClaimState(identityId)
+    if (latest !== 'unclaimed') {
+      setBusy(false)
+      if (latest === 'unknown') toast.error('Couldn\'t check your starter YAPP right now. Please try again in a moment.')
+      else close()
+      return
+    }
     const result = await tokenService.claimStarterGrant(identityId, needsCritical ? wif : undefined)
     setBusy(false)
     if (result.success || result.errorCode === 'ALREADY_CLAIMED') {

@@ -44,18 +44,14 @@ function keyFacts(match: KeyMatchResult): Pick<LoginKeyResult, 'keyId' | 'securi
 function rejection(match: KeyMatchResult): LoginKeyResult {
   const base = { isValid: false, ...keyFacts(match) }
   if (match.purpose !== KeyPurpose.AUTHENTICATION) {
-    return {
-      ...base,
-      error: `This key cannot be used for authentication (it's a ${getPurposeName(match.purpose)} key)`,
-      errorType: 'WRONG_PURPOSE',
-    }
+    return { ...base, error: 'This key can\'t be used to sign in. Use a sign-in key for this account.', errorType: 'WRONG_PURPOSE' }
   }
   return {
     ...base,
     // MASTER is more powerful than CRITICAL/HIGH but must never be used to sign in; MEDIUM and lower are too weak.
     error: match.securityLevel === SecurityLevel.MASTER
-      ? 'This is your MASTER key - keep it safe! Use a HIGH or CRITICAL authentication key instead.'
-      : `This key's security level is too low (${getSecurityLevelName(match.securityLevel)}) - need HIGH or CRITICAL`,
+      ? 'This is your account\'s master key. Keep it safe, and sign in with a different key.'
+      : 'This key\'s security level is too low to sign in. Use a high or critical key.',
     errorType: 'WRONG_SECURITY_LEVEL',
   }
 }
@@ -90,20 +86,22 @@ export function checkLoginKey(
     allowedSecurityLevels: LOGIN_LEVELS,
   })
   if (result.ok) return { isValid: true, ...keyFacts(result.match) }
-  if (result.reason === 'rejected' || result.reason === 'wrong-key-id') return rejection(result.match)
 
-  const disabled = publicKeys
+  // A disabled sign-in key is named as such, even when the same key is also enabled under another purpose or level.
+  const disabledSignInKeys = publicKeys
     .filter((key) => key.disabledAt)
     .map(toKeyInfo)
-    .filter((info): info is IdentityPublicKeyInfo => info !== null)
-  const disabledMatch = findMatchingKeyIndex(privateKeyWif, disabled, network)
+    .filter((info): info is IdentityPublicKeyInfo => info !== null
+      && info.purpose === KeyPurpose.AUTHENTICATION && LOGIN_LEVELS.some((level) => level === info.securityLevel))
+  const disabledMatch = findMatchingKeyIndex(privateKeyWif, disabledSignInKeys, network)
   if (disabledMatch) {
     return {
       isValid: false,
       ...keyFacts(disabledMatch),
-      error: 'This key has been disabled on this identity. Use another key.',
+      error: 'This key has been turned off for this account. Use another key.',
       errorType: 'DISABLED',
     }
   }
+  if (result.reason === 'rejected') return rejection(result.match)
   return { isValid: false, error: 'This key does not match this identity', errorType: 'NO_MATCH' }
 }

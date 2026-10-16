@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger'
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
-import { getEncryptionKey, getEncryptionKeyType, type KeyType } from '@/lib/secure-storage'
+import { getEncryptionKey } from '@/lib/secure-storage'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { KeyIcon, LockClosedIcon, PlusIcon } from '@heroicons/react/24/outline'
@@ -11,32 +11,18 @@ import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-moda
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { identityService } from '@/lib/services/identity-service'
 
-interface KeyInfo {
-  hasKey: boolean
-  type: KeyType | null
-}
-
 /** The key row's right-hand side: the stored key, or the way to enter or create one. */
-function EncryptionKeyStatus({ info, hasKeyOnIdentity, onEnter, onSetUp }: {
-  info: KeyInfo
+function EncryptionKeyStatus({ hasKey, hasKeyOnIdentity, onEnter, onSetUp }: {
+  hasKey: boolean
   hasKeyOnIdentity: boolean | null
   onEnter: () => void
   onSetUp: () => void
 }) {
-  if (info.hasKey) {
+  if (hasKey) {
     return (
-      <>
-        <span className={`text-xs px-2 py-0.5 rounded ${
-          info.type === 'derived'
-            ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
-            : 'bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300'
-        }`}>
-          {info.type === 'derived' ? 'Derived' : 'External'}
-        </span>
-        <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded">
-          Active
-        </span>
-      </>
+      <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded">
+        On this device
+      </span>
     )
   }
   if (hasKeyOnIdentity === null) return <span className="text-xs text-gray-500">Checking…</span>
@@ -64,15 +50,11 @@ export function EncryptionKeySettings({ onEncryptionKeyChanged }: EncryptionKeyS
   const { user } = useAuth()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
-  const [encryptionKeyInfo, setEncryptionKeyInfo] = useState<KeyInfo>({ hasKey: false, type: null })
+  const [hasKey, setHasKey] = useState(false)
   const [hasKeyOnIdentity, setHasKeyOnIdentity] = useState<boolean | null>(null)
 
   const refreshEncryptionKeyInfo = useCallback(() => {
-    if (!user) {
-      setEncryptionKeyInfo({ hasKey: false, type: null })
-      return
-    }
-    setEncryptionKeyInfo({ hasKey: getEncryptionKey(user.identityId) !== null, type: getEncryptionKeyType(user.identityId) })
+    setHasKey(user ? getEncryptionKey(user.identityId) !== null : false)
   }, [user])
 
   useEffect(() => {
@@ -89,11 +71,15 @@ export function EncryptionKeySettings({ onEncryptionKeyChanged }: EncryptionKeyS
       .then((onChain) => {
         if (!cancelled) setHasKeyOnIdentity(onChain)
       })
-      .catch((err) => logger.error('Error checking on-chain encryption key status:', err))
+      .catch((err) => {
+        logger.error('Error checking on-chain encryption key status:', err)
+        // Set Up re-checks the identity before it adds anything.
+        if (!cancelled) setHasKeyOnIdentity(false)
+      })
     return () => {
       cancelled = true
     }
-  }, [identityId, encryptionKeyInfo.hasKey])
+  }, [identityId, hasKey])
 
   const handleEncryptionKeyChanged = useCallback(() => {
     refreshEncryptionKeyInfo()
@@ -119,7 +105,7 @@ export function EncryptionKeySettings({ onEncryptionKeyChanged }: EncryptionKeyS
           </div>
           <div className="flex items-center gap-2">
             <EncryptionKeyStatus
-              info={encryptionKeyInfo}
+              hasKey={hasKey}
               hasKeyOnIdentity={hasKeyOnIdentity}
               onEnter={() => openEncryptionKeyModal('generic', handleEncryptionKeyChanged)}
               onSetUp={() => setShowAddKeyModal(true)}

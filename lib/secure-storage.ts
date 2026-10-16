@@ -12,10 +12,13 @@ import { rememberedAnchorKey } from '@/lib/app-connect/anchor-key-mark'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { bytesToHex, hexToBytes } from '@/lib/bytes'
+import { purgeRetiredSecrets } from '@/lib/auth/retired-secrets'
 import { sha256 } from '@noble/hashes/sha2.js'
 
+const SECRET_PREFIX = scopedKey('yappr_secure_')
+
 const browserSecretStore = createBrowserSecretStore({
-  prefix: scopedKey('yappr_secure_'),
+  prefix: SECRET_PREFIX,
   // Stored secrets are WIF-encoded, so this follows the key network: devnet reuses testnet's prefixes.
   network: keyNetwork(),
   crypto: {
@@ -26,6 +29,17 @@ const browserSecretStore = createBrowserSecretStore({
 })
 
 export type KeyType = BrowserStoredKeyType
+
+// A vault data key an earlier build left behind is removed on the first page load.
+if (typeof window !== 'undefined') {
+  for (const storage of [() => localStorage, () => sessionStorage]) {
+    try {
+      purgeRetiredSecrets(storage(), SECRET_PREFIX)
+    } catch {
+      // Storage missing (the mobile engine has no sessionStorage) or blocked: nothing stored to remove.
+    }
+  }
+}
 
 export const {
   storePrivateKey,

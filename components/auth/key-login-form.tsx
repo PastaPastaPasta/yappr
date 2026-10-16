@@ -292,7 +292,10 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
             placeholder="Paste your private key"
-            autoComplete="current-password"
+            // A private key is never offered to the browser's or a manager's password saving.
+            autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
             spellCheck={false}
             className={`${inputClass} pr-20 ${credentialBorderClass(Boolean(error), isLoading)}`}
             required
@@ -339,7 +342,7 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
             value={identityInput}
             onChange={(e) => setIdentityInput(e.target.value)}
             placeholder="john.dash or 5DbLwAxGBzUzo…"
-            autoComplete="username"
+            autoComplete="off"
             spellCheck={false}
             className={`${inputClass} pr-10 border-gray-200 dark:border-gray-800`}
           />

@@ -114,11 +114,12 @@ async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
 }
 
 /**
- * On App Connect builds a raw key typed in by hand is a one-key session, and a
- * CRITICAL one (or one whose level cannot be told) is kept for this tab only.
- * The session user, with the identity's keys, is saved just before this runs.
- * The raw key replaces this tab's wallet grant for the identity, so writes
- * sign with the key the user just entered.
+ * On App Connect builds (the release builds) a raw key typed in by hand is a
+ * one-key session, and a CRITICAL one (or one whose level cannot be told) is
+ * kept for this tab only. The session user, with the identity's keys, is saved
+ * just before this runs. The raw key replaces this tab's wallet grant for the
+ * identity, so writes sign with the key the user just entered. Other builds
+ * keep the key as they always have (the mobile engine's secure area relies on it).
  */
 async function storeRawLoginKey(identityId: string, wif: string): Promise<void> {
   if (!isAppConnectBuild()) {

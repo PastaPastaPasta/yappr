@@ -286,7 +286,7 @@ export class PlatformAuthController {
         publicKeys: identity.publicKeys,
       }
 
-      // Checked with nothing awaited before the session is stored, so nothing can slip in between.
+      // Checked after the last read, right before the session is stored: an overtaken sign-in stores nothing.
       if (options.stillCurrent && !options.stillCurrent()) throw new SupersededSignInError()
       await this.persistSessionUser(user)
       if (privateKey !== null) await this.deps.secretStore.storePrivateKey(identity.id, privateKey)

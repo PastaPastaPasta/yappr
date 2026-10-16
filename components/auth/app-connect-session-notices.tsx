@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { KeyRound, LogOut } from 'lucide-react'
 import { clearSensitiveBytes, type AppConnectGrant } from 'platform-auth'
@@ -45,15 +45,20 @@ export function AppConnectSessionNotices() {
    * The identity being renewed, kept (in the session status) for as long as
    * the dialog is open: the wallet disables the old keys before the new grant
    * arrives, so the hourly or startup check can find them revoked meanwhile.
-   * The sign-out that would follow waits for the renewal (auth-context.tsx).
+   * The sign-out that would follow waits for the renewal (auth-context.tsx),
+   * including a grant still being stored after the dialog closed.
    */
+  const adopting = useRef<Promise<void> | null>(null)
+  const endRenewal = useCallback(() => {
+    if (!adopting.current) setRenewing(null)
+  }, [setRenewing])
   useEffect(() => {
     if (!wantsRenew) {
-      if (renewing !== null) setRenewing(null)
+      if (renewing !== null) endRenewal()
     } else if (sessionUser && renewing === null) {
       setRenewing(sessionUser.identityId)
     }
-  }, [renewing, sessionUser, setRenewing, wantsRenew])
+  }, [endRenewal, renewing, sessionUser, setRenewing, wantsRenew])
   const dialogOpen = wantsRenew && renewing !== null
   // A refused write asks for renewal through the session status, which a
   // sign-out resets; hold the dialog open on its own state so it survives that.
@@ -64,10 +69,10 @@ export function AppConnectSessionNotices() {
 
   const closeRenew = useCallback(() => {
     // Ends the renewal first, in the same update: a revoke it held back is settled before anything renders.
-    setRenewing(null)
+    endRenewal()
     renew.close()
     dismissRenewRequired()
-  }, [dismissRenewRequired, renew, setRenewing])
+  }, [dismissRenewRequired, endRenewal, renew])
 
   /** The panel showed its success state: close the dialog. */
   const finishRenew = closeRenew
@@ -80,14 +85,22 @@ export function AppConnectSessionNotices() {
       throw new Error('The renewal came from another account')
     }
     // Renews the keys, or signs the identity back in if a revocation signed it out meanwhile.
-    await renewWithAppConnect(grant)
+    // Until it is stored, the renewal stays under way even if the dialog closes.
+    const adoption = renewWithAppConnect(grant)
+    adopting.current = adoption
+    try {
+      await adoption
+    } finally {
+      adopting.current = null
+      if (!useRenewModal.getState().isOpen && useAppConnectStatus.getState().renewRequired === null) setRenewing(null)
+    }
     // Side effects of a landed renewal run here, not when the panel finishes,
     // so dismissing the dialog during its success state loses none of them.
     // The renewal may have added keys: callers re-checking the identity must not see a cached copy.
     identityService.clearCache(grant.identityId)
     onRenewed?.()
     window.dispatchEvent(new CustomEvent(APP_CONNECT_RENEWED_EVENT))
-  }, [renewWithAppConnect, renewing])
+  }, [renewWithAppConnect, renewing, setRenewing])
 
   return (
     <>

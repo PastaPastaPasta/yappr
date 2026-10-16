@@ -37,11 +37,16 @@ describe('checkLoginKey', () => {
     expect(checkLoginKey(WIF, keys, 'testnet')).toMatchObject({ isValid: true, keyId: 2 })
   })
 
+  it('names a disabled sign-in key as disabled even when the same key is enabled for another purpose', () => {
+    const keys = [key({ id: 1, disabledAt: 5 }), key({ id: 3, purpose: KeyPurpose.ENCRYPTION, securityLevel: SecurityLevel.MEDIUM })]
+    expect(checkLoginKey(WIF, keys, 'testnet')).toMatchObject({ isValid: false, errorType: 'DISABLED', keyId: 1 })
+  })
+
   it('names the reason a matched key of the wrong kind is refused', () => {
     expect(checkLoginKey(WIF, [key({ securityLevel: SecurityLevel.MASTER })], 'testnet'))
-      .toMatchObject({ isValid: false, errorType: 'WRONG_SECURITY_LEVEL', error: expect.stringContaining('MASTER') })
+      .toMatchObject({ isValid: false, errorType: 'WRONG_SECURITY_LEVEL', error: expect.stringContaining('master key') })
     expect(checkLoginKey(WIF, [key({ securityLevel: SecurityLevel.MEDIUM })], 'testnet'))
-      .toMatchObject({ isValid: false, errorType: 'WRONG_SECURITY_LEVEL', error: expect.stringContaining('MEDIUM') })
+      .toMatchObject({ isValid: false, errorType: 'WRONG_SECURITY_LEVEL', error: expect.stringContaining('too low') })
     expect(checkLoginKey(WIF, [key({ purpose: KeyPurpose.ENCRYPTION, securityLevel: SecurityLevel.MEDIUM })], 'testnet'))
       .toMatchObject({ isValid: false, errorType: 'WRONG_PURPOSE' })
   })

@@ -18,9 +18,9 @@ export function markStarterGrantClaimed(identityId: string): void {
   setClaimState(identityId, 'claimed')
 }
 
-const inFlight = new Set<string>()
+const inFlight = new Map<string, Promise<StarterClaimState>>()
 
-async function readClaimState(identityId: string): Promise<void> {
+async function readClaimState(identityId: string): Promise<StarterClaimState> {
   let state: StarterClaimState
   try {
     state = await tokenService.readStarterClaimState(identityId)
@@ -30,21 +30,38 @@ async function readClaimState(identityId: string): Promise<void> {
   } finally {
     inFlight.delete(identityId)
   }
-  if (state === 'claimed') markStarterGrantClaimed(identityId)
+  if (state === 'claimed') {
+    markStarterGrantClaimed(identityId)
+    return state
+  }
   // A claim that landed while this read was under way stands.
-  else if (useStarterClaimStore.getState().states[identityId] !== 'claimed') setClaimState(identityId, state)
+  if (useStarterClaimStore.getState().states[identityId] === 'claimed') return 'claimed'
+  setClaimState(identityId, state)
+  return state
 }
 
-/** Reads the claim state from chain, one read per identity at a time; an unknown answer is read again by the next caller. */
-function load(identityId: string): void {
-  const current = useStarterClaimStore.getState().states[identityId]
-  if (current === 'claimed' || current === 'unclaimed' || inFlight.has(identityId)) return
+/**
+ * The claim state read from chain now, sharing a read already under way. A
+ * claim this browser has seen (another tab included) answers without a read.
+ */
+export function refreshStarterClaimState(identityId: string): Promise<StarterClaimState> {
   if (isStarterGrantSettled(identityId)) {
     setClaimState(identityId, 'claimed')
-    return
+    return Promise.resolve('claimed')
   }
-  inFlight.add(identityId)
-  readClaimState(identityId).catch((error: unknown) => logger.error('Starter grant: storing the claim state failed', error))
+  let read = inFlight.get(identityId)
+  if (!read) {
+    read = readClaimState(identityId)
+    inFlight.set(identityId, read)
+  }
+  return read
+}
+
+/** Reads the claim state once per identity and page; an unknown answer is read again by the next caller. */
+function load(identityId: string): void {
+  const current = useStarterClaimStore.getState().states[identityId]
+  if (current === 'claimed' || (current === 'unclaimed' && !isStarterGrantSettled(identityId))) return
+  refreshStarterClaimState(identityId).catch((error: unknown) => logger.error('Starter grant: reading the claim state failed', error))
 }
 
 /**
