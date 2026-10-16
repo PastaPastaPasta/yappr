@@ -958,6 +958,29 @@ describe('isConsensusRefusal', () => {
   })
 })
 
+describe('5.0.0-rc.3 wait errors (platform#5400)', () => {
+  // A failed wait now says so ("Failed to wait for state transition result: …"
+  // instead of "Failed to broadcast: …"), and a strict wait that got only an
+  // affected-state proof is a bare ExecutionNotProved, with no prefix.
+  const WAIT = 'Failed to wait for state transition result'
+
+  it('still reads a refusal by its code behind the new prefix', () => {
+    const refused = { code: 40106, name: 'Protocol', message: `${WAIT}: Protocol error: invalid revision`, isRetriable: false }
+    expect(isConsensusRefusal(refused)).toBe(true)
+    expect(sentWriteOutcomeUnknown(refused)).toBe(false)
+  })
+
+  it('leaves a lost wait and an unproven execution with an unknown outcome', () => {
+    const lost = { code: -1, name: 'DapiClientError', message: `${WAIT}: Dapi client error: transport error: deadline exceeded` }
+    const unproven = { code: -1, name: 'ExecutionNotProved', message: "proof authenticates the transition's affected state only, not its execution: Document" }
+    for (const error of [lost, unproven]) {
+      expect(isConsensusRefusal(error)).toBe(false)
+      expect(sentWriteOutcomeUnknown(error)).toBe(true)
+    }
+    expect(isOutcomeUnknownError(unproven)).toBe(true)
+  })
+})
+
 describe('isUnverifiedOutcomeError', () => {
   it.each([
     [{ code: -1, name: 'Proof', message: 'context provider error: invalid quorum: Quorum not found in cache for hash: 1855' }],

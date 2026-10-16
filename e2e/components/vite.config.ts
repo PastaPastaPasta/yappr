@@ -16,6 +16,7 @@ export default defineConfig({
       { find: /^@\/hooks\/use-encryption-key-modal$/, replacement: mocks },
       { find: /^\.\/reset-private-feed-dialog$/, replacement: mocks },
       { find: /^@\/components\/auth\/add-encryption-key-modal$/, replacement: mocks },
+      { find: /^@\/hooks\/use-image-upload$/, replacement: fromHere('./blog-editor-mocks.ts') },
       { find: '@', replacement: fromHere('../../') },
     ],
     dedupe: ['react', 'react-dom'],
