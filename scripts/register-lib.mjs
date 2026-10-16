@@ -51,11 +51,14 @@ export function renderModeration(moderation) {
 }
 
 /**
- * The interim each network registers an elected contract with, unless the
- * caller names one: mainnet `notYetUsable` (nobody moderates and the moderated
- * types stay closed until a team is seated); every other network keeps the
- * file's interim. The committed files declare `contractOwner`, so one file
- * serves a devnet, testnet (undecided: pass `--interim` to change it) and mainnet.
+ * The interim an elected contract renders with when the caller names none:
+ * mainnet `notYetUsable` (nobody moderates and the moderated types stay closed
+ * until a team is seated); every other network keeps the file's interim (the
+ * committed files declare `contractOwner`). This default is for the offline
+ * validators and devnet tools. The App Connect publisher
+ * (register-app-connect-contracts.mjs) never relies on it off devnet: there
+ * `--interim` is required and journaled (testnet registers `notYetUsable`,
+ * owner decision D1).
  */
 const NETWORK_INTERIM = { mainnet: 'notYetUsable' };
 

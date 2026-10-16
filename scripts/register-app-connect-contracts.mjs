@@ -21,10 +21,38 @@
  *   [--upto <name>]       live: stop after that entry (`--upto app` registers only the anchor)
  *   [--retry-refused]     live: re-prepare a create the chain refused, at the next nonce
  *
- *   node scripts/register-app-connect-contracts.mjs --plan --maker <id> --start-nonce 13
+ *   NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --maker <id> --start-nonce 13
  *   NETWORK=devnet node scripts/register-app-connect-contracts.mjs --dry-run
  *   NETWORK=devnet node scripts/register-app-connect-contracts.mjs --signed-dry-run
  *   NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal ~/ops/appconnect-sakura.json
+ *
+ * NETWORK is required. Every elected contract (social, blog, storefront) is
+ * rendered with:
+ *   --interim <kind>                 the moderation interim (contractOwner | notYetUsable | noModeration)
+ *   --election-windows <join>,<vote> the election windows, in seconds (mainnet: at least 86400 each)
+ * On a devnet both are optional and default to the committed file's values.
+ * On testnet and mainnet (production networks) they are REQUIRED, never a
+ * default, since both are frozen into the contracts for good; and:
+ *   --maker <id>                     is required in every mode;
+ *   --maker-key-file <path> --maker-key-id <n>
+ *                                    is the only signing key source of --signed-dry-run and
+ *                                    --live: an identity key file of this user's with mode 0600
+ *                                    or tighter (no default path, no seed derivation). The key
+ *                                    must be the maker's enabled CRITICAL AUTHENTICATION key on
+ *                                    chain; --dry-run proves that too when given the file;
+ *   --production                     is required by --live (and refused on a devnet);
+ *   --journal                        must sit in a directory only its owner may enter (0700).
+ * Testnet (owner decision D1):
+ *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --plan --maker <id> --start-nonce <n> \
+ *     --interim notYetUsable --election-windows 3600,3600
+ *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --journal <0700 dir>/journal.json \
+ *     --maker <id> --maker-key-file <0600 file> --maker-key-id <n> --interim notYetUsable --election-windows 3600,3600
+ *
+ * Every mode but --plan gates on the protocol version of the PROVED current
+ * epoch (never a status page), and prints the cost estimate of what it would
+ * register (each create's registration fee plus a storage allowance) beside
+ * the maker's balance. --signed-dry-run and --live refuse to sign unless the
+ * balance covers the estimate plus 20%.
  *
  * Every mode first builds and decodes every create unsigned, so a changed file
  * or a rule the node would refuse stops the run before anything is signed.
@@ -39,22 +67,23 @@
  *     refused anchor leaves nothing of the set on chain: start a fresh journal.
  * The env lines it prints at the end carry the ids the journal recorded.
  *
- * The maker defaults to DEVNET_MAKER_IDENTITY_ID on a devnet (signing key: seed
- * index 9) and to the contract-maker file elsewhere (`resolveMakerOwner`).
- * The start nonce defaults to the journal's, else the maker's chain nonce + 1.
- * An elected declaration registers with the network's interim (`withInterim`).
- * Nothing here prints private key material.
+ * On a devnet the maker defaults to DEVNET_MAKER_IDENTITY_ID (signing key: seed
+ * index 9, `resolveMakerOwner`) unless a key file is named. The start nonce
+ * defaults to the journal's, else the maker's chain nonce + 1. The journal
+ * records the network, the interim and the election windows, and a resumed run
+ * must name the same ones. Nothing here prints private key material.
  */
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fchmodSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey, StateTransition, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
 import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, planAppConnectSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
-import { describeErr, signerFor } from './owner-keys.mjs';
+import { describeErr, resolveKeyFileOwner, signerFor } from './owner-keys.mjs';
 import { auditModeration, contractSource, registrationJson, withInterim } from './register-lib.mjs';
-import { envValue, network } from './sdk-env.mjs';
+import { balanceGate, createCostEstimate, directoryProblem, formatCredits, isElected, registrationPolicy, withElectionWindows } from './registration-policy.mjs';
+import { envValue, keyNetwork, network } from './sdk-env.mjs';
 import { NONCE_SEQUENCE_MASK, createSdkHandle, readback, sleep } from './seed/seed-lib.mjs';
 import { resolveMakerOwner } from './social-battery-lib.mjs';
 
@@ -64,7 +93,15 @@ const generateId = (owner, nonce) => DataContract.generateId(owner, nonce).toBas
 const big = (_key, value) => (typeof value === 'bigint' ? String(value) : value);
 
 function parseArgs(argv) {
-  const args = { mode: null, maker: null, startNonce: null, journal: null, upto: null, retryRefused: false };
+  const args = {
+    mode: null, maker: null, startNonce: null, journal: null, upto: null, retryRefused: false,
+    interim: null, electionWindows: null, production: false, keyFile: null, keyId: null,
+  };
+  const value = (i, flag) => {
+    const next = argv[i];
+    if (next === undefined || next.startsWith('--')) throw new Error(`${flag} takes a value`);
+    return next;
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (MODES.includes(arg)) {
@@ -73,11 +110,16 @@ function parseArgs(argv) {
       continue;
     }
     switch (arg) {
-      case '--maker': args.maker = argv[++i]; break;
-      case '--start-nonce': args.startNonce = BigInt(argv[++i]); break;
-      case '--journal': args.journal = argv[++i]; break;
-      case '--upto': args.upto = argv[++i]; break;
+      case '--maker': args.maker = value(++i, arg); break;
+      case '--start-nonce': args.startNonce = BigInt(value(++i, arg)); break;
+      case '--journal': args.journal = value(++i, arg); break;
+      case '--upto': args.upto = value(++i, arg); break;
       case '--retry-refused': args.retryRefused = true; break;
+      case '--interim': args.interim = value(++i, arg); break;
+      case '--election-windows': args.electionWindows = value(++i, arg); break;
+      case '--production': args.production = true; break;
+      case '--maker-key-file': args.keyFile = value(++i, arg); break;
+      case '--maker-key-id': args.keyId = value(++i, arg); break;
       default: throw new Error(`Unknown argument: ${arg}`);
     }
   }
@@ -88,30 +130,39 @@ function parseArgs(argv) {
   return args;
 }
 
-/** The maker id and where it came from: --maker, else the devnet maker, else the contract-maker file. */
+/** The maker id and where it came from: --maker, else (devnet only) the devnet maker. */
 function makerFor(args) {
   if (args.maker) return { id: args.maker, source: '--maker' };
   const devnetMaker = network() === 'devnet' ? envValue('DEVNET_MAKER_IDENTITY_ID') : undefined;
   if (devnetMaker) return { id: devnetMaker, source: 'DEVNET_MAKER_IDENTITY_ID' };
-  if (args.mode === 'plan') throw new Error('--plan needs --maker <identityId> (no devnet maker in the environment)');
-  return { id: resolveMakerOwner().ownerId, source: 'the contract-maker file' };
+  throw new Error('pass --maker <identityId> (no devnet maker in the environment)');
+}
+
+/**
+ * The config an elected declaration registers with: the run's interim (or, on
+ * a devnet without --interim, the file's) and its election windows (or the
+ * file's). Any other config registers as committed.
+ */
+function renderConfig(config, policy) {
+  if (!isElected(config)) return config;
+  return withElectionWindows(withInterim(config, { network: network(), interim: policy.interim ?? undefined }), policy.electionWindows);
 }
 
 /** The assembled create JSON for one entry, refusing a file whose bytes are not the pinned ones. */
-function assemble(entry, ownerId) {
+function assemble(entry, ownerId, policy) {
   const bytes = readFileSync(contractFilePath(entry.file));
   const actual = sha256Hex(bytes);
   if (actual !== entry.sha256) throw new Error(`${entry.file}: sha256 ${actual} is not the pinned ${entry.sha256} (update APP_CONNECT_ENTRIES after review)`);
   const text = bytes.toString('utf8');
   if (text.includes('"SOCIAL_CONTRACT_ID"')) throw new Error(`${entry.file}: carries the SOCIAL_CONTRACT_ID placeholder; no App Connect member may embed another contract's id`);
   const declared = contractSource(text);
-  const source = { ...declared, config: withInterim(declared.config, { network: network() }) };
+  const source = { ...declared, config: renderConfig(declared.config, policy) };
   return { source, json: registrationJson(source, { id: entry.id, ownerId }) };
 }
 
 /** A create at the entry's nonce, carrying the group registration (anchor only) and the membership. */
-function buildCreate(entry, { plan, platformVersion, signing }) {
-  const { source, json } = assemble(entry, plan.groupOwner);
+function buildCreate(entry, { plan, platformVersion, signing, policy }) {
+  const { source, json } = assemble(entry, plan.groupOwner, policy);
   const dataContract = DataContract.fromJSON(json, true, platformVersion);
   if (dataContract.id.toBase58() !== entry.id) throw new Error(`${entry.name}: parsed id ${dataContract.id.toBase58()} != ${entry.id}`);
   if (json.config.moderation) auditModeration(json.documentSchemas, dataContract);
@@ -165,18 +216,29 @@ function decodeBoth(entry, bytes, { plan, echoed, signed, platformVersion }) {
   return size;
 }
 
-/** Builds and decodes one create, printing its size; returns the bytes. */
-function prepare(entry, { plan, platformVersion, signing }) {
+/**
+ * Builds and decodes one create, printing its size. Returns the bytes, the
+ * signed size and what it is estimated to cost (`createCostEstimate`).
+ */
+function prepare(entry, { plan, platformVersion, signing, policy, feeMultiplierPermille }) {
   console.log(`  ${entry.name} (nonce ${entry.nonce})`);
-  const { bytes, echoed } = buildCreate(entry, { plan, platformVersion, signing });
+  const { bytes, echoed } = buildCreate(entry, { plan, platformVersion, signing, policy });
   const size = decodeBoth(entry, bytes, { plan, echoed, signed: Boolean(signing), platformVersion });
+  const estimate = createCostEstimate({ contract: echoed, signedBytes: size, feeMultiplierPermille });
   const role = entry.name === plan.anchor.name ? 'registers the group and joins it' : 'joins the group';
-  console.log(`    ${signing ? '' : '~'}${size} B signed, ${role}; decoded by the wasm-sdk and wasm-dpp2`);
-  return bytes;
+  console.log(`    ${signing ? '' : '~'}${size} B signed, ${role}; decoded by the wasm-sdk and wasm-dpp2; estimated ${formatCredits(estimate)}`);
+  return { bytes, estimate };
 }
 
-function printPlan(plan, makerSource) {
+/** How the run renders the elected contracts, as printed and journaled: null means the committed file's value. */
+function describePolicy(policy) {
+  const windows = policy.electionWindows ? `join ${policy.electionWindows.joinWindow} s, vote ${policy.electionWindows.voteWindow} s` : "the files' own";
+  return `interim ${policy.interim ?? "the files' own"}; election windows ${windows}`;
+}
+
+function printPlan(plan, makerSource, policy) {
   console.log(`App Connect contract set on ${network()}: maker ${plan.groupOwner} (${makerSource}), anchor nonce ${plan.anchor.nonce}`);
+  console.log(`elected contracts register with: ${describePolicy(policy)}`);
   console.log(`APP_ID=${plan.appId}`);
   console.log(`GROUP_ID=${plan.groupId}`);
   console.log(`GROUP_OWNER=${plan.groupOwner}`);
@@ -192,11 +254,20 @@ function printEnv(set, heading) {
   for (const line of appConnectEnvLines(set)) console.log(line);
 }
 
-/** A journal that matches the plan: same network, maker, anchor nonce and group; every entry from its pinned file at a consistent id. */
-function checkJournal(journal, plan, path) {
+/** What a journal records of the rendering, compared on resume (an older journal without it rendered the files' own values). */
+const journalPolicy = (policy) => ({ interim: policy.interim, electionWindows: policy.electionWindows });
+
+/**
+ * A journal that matches the plan: same network, maker, anchor nonce, group,
+ * interim and election windows; every entry from its pinned file at a
+ * consistent id.
+ */
+function checkJournal(journal, plan, path, policy) {
   for (const [key, want] of [['network', network()], ['makerId', plan.groupOwner], ['startNonce', String(plan.anchor.nonce)], ['groupId', plan.groupId]]) {
     if (journal[key] !== want) throw new Error(`journal ${path}: ${key} is ${journal[key]}, this run's is ${want}`);
   }
+  const recorded = JSON.stringify({ interim: journal.interim ?? null, electionWindows: journal.electionWindows ?? null });
+  if (recorded !== JSON.stringify(journalPolicy(policy))) throw new Error(`journal ${path} was rendered with ${recorded}, this run with ${JSON.stringify(journalPolicy(policy))}; refusing to mix`);
   for (const c of plan.contracts) {
     const saved = journal.contracts[c.name];
     if (saved && (saved.sha256 !== c.sha256 || saved.id !== generateId(plan.groupOwner, BigInt(saved.nonce)))) {
@@ -215,6 +286,8 @@ function writeDurably(path, contents) {
   const tmp = `${path}.tmp-${process.pid}`;
   const fd = openSync(tmp, 'w', 0o600);
   try {
+    // Mode 0600 even when a stale temporary of another mode was left behind (open keeps an existing file's mode).
+    fchmodSync(fd, 0o600);
     // writeFileSync on a descriptor loops until every byte is written (a bare writeSync may stop short).
     writeFileSync(fd, contents);
     fsyncSync(fd);
@@ -272,7 +345,7 @@ async function createOutcome(handle, entry, plan) {
  * the pinned file's, so a stray id can never pass for this entry), its
  * membership, and the group itself (owner the maker, no admins).
  */
-async function verifyRegistered(handle, entry, plan, platformVersion) {
+async function verifyRegistered(handle, entry, plan, platformVersion, policy) {
   const read = (fn) => readback(handle, fn);
   const [contract, memberships, info] = await Promise.all([
     read(() => handle.sdk.contracts.fetch(entry.id)),
@@ -280,14 +353,16 @@ async function verifyRegistered(handle, entry, plan, platformVersion) {
     read(() => handle.sdk.contractGroups.info(plan.groupId)),
   ]);
   if (!contract || contract.ownerId.toBase58() !== plan.groupOwner) throw new Error(`${entry.name}: ${entry.id} absent or not owned by the maker`);
-  const expected = DataContract.fromJSON(assemble(entry, plan.groupOwner).json, true, platformVersion).toJSON(platformVersion).documentSchemas;
-  if (!sameSchemas(contract.toJSON(platformVersion).documentSchemas, expected)) throw new Error(`${entry.name}: ${entry.id} does not carry ${entry.file}'s document types`);
+  const expected = DataContract.fromJSON(assemble(entry, plan.groupOwner, policy).json, true, platformVersion).toJSON(platformVersion);
+  const registered = contract.toJSON(platformVersion);
+  if (!sameSchemas(registered.documentSchemas, expected.documentSchemas)) throw new Error(`${entry.name}: ${entry.id} does not carry ${entry.file}'s document types`);
+  if (!sameSchemas(registered.config, expected.config)) throw new Error(`${entry.name}: ${entry.id} does not carry the config this run rendered (${describePolicy(policy)})`);
   if (!memberships.contract.includes(plan.groupId)) throw new Error(`${entry.name}: ${entry.id} is not a member of ${plan.groupId}`);
   if (!info || info.ownerId !== plan.groupOwner || info.adminIds.length !== 0) throw new Error(`group ${plan.groupId}: owner ${info?.ownerId}, admins ${info?.adminIds}; expected ${plan.groupOwner} alone`);
 }
 
 /** The live run over the entries up to `--upto`, against the journal `state`. */
-async function registerLive({ args, plan, state, handle, makerNonce, signing, platformVersion }) {
+async function registerLive({ args, plan, state, handle, makerNonce, signing, platformVersion, policy }) {
   const save = () => writeDurably(args.journal, JSON.stringify(state, null, 2) + '\n');
   const read = (fn) => readback(handle, fn);
   /**
@@ -345,7 +420,7 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
       const entry = { ...planned, nonce, id: generateId(plan.groupOwner, nonce) };
       if (Object.values(state.contracts).some((c) => c.id === entry.id)) throw new Error(`${entry.name}: ${entry.id} is already in the journal`);
       if (await read(() => handle.sdk.contracts.fetch(entry.id))) throw new Error(`REFUSING: ${entry.name} ${entry.id} already exists on chain`);
-      const bytes = prepare(entry, { plan, platformVersion, signing });
+      const { bytes } = prepare(entry, { plan, platformVersion, signing, policy });
       saved = { nonce: String(nonce), id: entry.id, file: entry.file, sha256: entry.sha256, bytes: bytes.length, transition: bytes.toString('base64'), state: 'prepared' };
       state.contracts[planned.name] = saved;
       save();
@@ -376,7 +451,7 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
       await handle.reconnect('contract not visible yet');
     }
     if (!found) throw new Error(`${entry.name} is not proven yet; re-run with the same journal (it re-broadcasts the same bytes, never a new nonce)`);
-    await verifyRegistered(handle, entry, plan, platformVersion);
+    await verifyRegistered(handle, entry, plan, platformVersion, policy);
     const after = await read(() => handle.sdk.identities.balance(plan.groupOwner));
     Object.assign(saved, { state: 'verified', verifiedAt: new Date().toISOString(), makerCreditsSpent: String(BigInt(before ?? 0) - BigInt(after ?? 0)) });
     save();
@@ -422,7 +497,7 @@ function compareDriveVersions(a, b) {
 
 /**
  * Refuses to go on unless the node that answers runs Drive >= {@link MIN_DRIVE_VERSION}.
- * The protocol-version check above cannot tell beta.3 from beta.6 (all are PV14),
+ * The proved protocol version cannot tell beta.3 from beta.6 (all are PV14),
  * and the set is registered with beta.6-only grammar. The status API names the
  * Drive of the one node that answered, so this cannot prove every node has
  * upgraded: confirm that with `ops/status.mjs` first.
@@ -436,24 +511,72 @@ async function requireDriveVersion(handle) {
   console.log(`node Drive ${drive} (>= ${MIN_DRIVE_VERSION})`);
 }
 
+/**
+ * The journal's directory, created 0700 when missing. Off devnet an existing
+ * one must already be private to its owner: the journal holds the signed
+ * creates any resume or reconciliation depends on.
+ */
+function prepareJournalDirectory(path) {
+  const dir = dirname(resolve(path));
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const problem = directoryProblem(statSync(dir));
+  if (problem && network() !== 'devnet') throw new Error(`refusing the journal directory ${dir}: it ${problem}`);
+}
+
+/** The key the maker signs with: the named key file, else (devnet only) the devnet maker at seed index 9. */
+function signingOwner(args, policy, maker) {
+  const owner = args.keyFile !== null ? resolveKeyFileOwner({ file: args.keyFile, keyId: policy.keyId }) : resolveMakerOwner();
+  if (owner.ownerId !== maker.id) throw new Error(`the signing key belongs to ${owner.ownerId}, not the maker ${maker.id}`);
+  return owner;
+}
+
+/**
+ * The maker's on-chain key for `owner`: an enabled AUTHENTICATION (purpose 0)
+ * key at CRITICAL security level (1), the only kind a contract create takes,
+ * whose public key is the one the local private key derives.
+ */
+async function verifySigningKey(sdk, owner) {
+  const { identityKey } = await signerFor(sdk, owner);
+  const { purpose, securityLevel, disabledAt } = identityKey.toObject();
+  if (purpose !== 0 || securityLevel !== 1 || disabledAt !== undefined) {
+    throw new Error(`key ${owner.keyId} of ${owner.ownerId} is not an enabled CRITICAL AUTHENTICATION key (purpose ${purpose}, security level ${securityLevel}${disabledAt !== undefined ? ', disabled' : ''})`);
+  }
+  const privateKey = PrivateKey.fromWIF(owner.wif);
+  if (!identityKey.validatePrivateKey(privateKey.toBytes(), keyNetwork())) throw new Error(`the private key for ${owner.label} is not key ${owner.keyId} of ${owner.ownerId} on chain`);
+  console.log(`signing key: ${owner.label}, an enabled CRITICAL AUTHENTICATION key matching the chain`);
+  return { identityKey, privateKey };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const policy = registrationPolicy({ ...args, network: network() });
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
   const platformVersion = PlatformVersion.latest();
   const maker = makerFor(args);
+  // Refused before anything is read from the chain: a key file others may read, a journal directory they may enter.
+  // A --dry-run given a key file checks it too (on chain below), without signing.
+  const signs = args.mode === 'signed-dry-run' || args.mode === 'live';
+  const owner = signs || (args.keyFile !== null && args.mode !== 'plan') ? signingOwner(args, policy, maker) : null;
+  if (args.mode === 'live') prepareJournalDirectory(args.journal);
   const journal = args.mode === 'live' && existsSync(args.journal) ? JSON.parse(readFileSync(args.journal, 'utf8')) : null;
 
   let handle = null;
   let startNonce = args.startNonce;
+  let balance = null;
+  let feeMultiplierPermille = 1000n;
   const makerNonce = async () => ((await readback(handle, () => handle.sdk.identities.nonce(maker.id))) ?? 0n) & NONCE_SEQUENCE_MASK;
   if (args.mode !== 'plan') {
     handle = createSdkHandle({ contractIds: [] });
-    const { protocolVersion } = await handle.connect();
-    if (!(protocolVersion >= 14)) throw new Error(`contract groups need protocol version 14; the chain reports ${protocolVersion}`);
+    await handle.connect();
+    // The protocol version the chain PROVES for the current epoch, not what a status page or one node reports.
+    const epoch = await readback(handle, () => handle.sdk.epoch.currentWithProof());
+    const { protocolVersion, index } = epoch.data;
+    if (!(protocolVersion >= 14)) throw new Error(`contract groups need protocol version 14; the proved epoch ${index} runs ${protocolVersion}`);
+    feeMultiplierPermille = BigInt(epoch.data.feeMultiplierPermille);
     await requireDriveVersion(handle);
     const chainNonce = await makerNonce();
-    const balance = await readback(handle, () => handle.sdk.identities.balance(maker.id));
-    console.log(`connected to ${network()} (PV${protocolVersion}); maker nonce ${chainNonce}, ${balance} credits`);
+    balance = BigInt((await readback(handle, () => handle.sdk.identities.balance(maker.id))) ?? 0n);
+    console.log(`connected to ${network()}: proved epoch ${index} at height ${epoch.metadata.height} runs PV${protocolVersion}, fee multiplier ${feeMultiplierPermille}‰; maker nonce ${chainNonce}, ${formatCredits(balance)}`);
     if (journal) {
       if (startNonce !== null && startNonce !== BigInt(journal.startNonce)) throw new Error(`--start-nonce ${startNonce} disagrees with the journal's ${journal.startNonce}`);
       startNonce = BigInt(journal.startNonce);
@@ -461,10 +584,12 @@ async function main() {
     startNonce ??= chainNonce + 1n;
     if (args.mode !== 'live' && chainNonce !== startNonce - 1n) throw new Error(`the maker is at nonce ${chainNonce}; the anchor at ${startNonce} needs it at ${startNonce - 1n}`);
   }
+  // Before the balance gate, so a key file can be proved while the maker is still being funded.
+  const signing = owner ? await verifySigningKey(handle.sdk, owner) : null;
   const plan = planAppConnectSet({ makerId: maker.id, startNonce, generateId });
-  printPlan(plan, maker.source);
+  printPlan(plan, maker.source, policy);
   if (args.upto && !plan.contracts.some((c) => c.name === args.upto)) throw new Error(`--upto ${args.upto}: not an entry (${plan.contracts.map((c) => c.name).join(', ')})`);
-  if (journal) checkJournal(journal, plan, args.journal);
+  if (journal) checkJournal(journal, plan, args.journal, policy);
 
   // A fresh run: nothing of the planned set and not the group may exist yet. A resumed run
   // checks only what it allocates (registerLive), since a member may have landed at a later
@@ -478,22 +603,31 @@ async function main() {
 
   // Every mode builds the whole set unsigned first: nothing is signed or broadcast unless all of it would pass.
   console.log('\ncreates (unsigned, at the planned nonces):');
-  for (const entry of plan.contracts) prepare(entry, { plan, platformVersion, signing: null });
-  if (args.mode === 'plan' || args.mode === 'dry-run') { printEnv(plan, 'env'); return; }
+  const estimates = new Map(plan.contracts.map((entry) => [entry.name, prepare(entry, { plan, platformVersion, signing: null, policy, feeMultiplierPermille }).estimate]));
 
-  const owner = resolveMakerOwner();
-  if (owner.ownerId !== maker.id) throw new Error(`the maker key belongs to ${owner.ownerId}, not ${maker.id}`);
-  const { identityKey } = await signerFor(handle.sdk, owner);
-  const signing = { identityKey, privateKey: PrivateKey.fromWIF(owner.wif) };
+  // What this run would still pay for: a live run skips what its journal verified and stops at --upto.
+  // (A create a crashed run left `prepared` or `broadcasting` may have been paid already; it is counted again.)
+  const last = args.upto ? plan.contracts.findIndex((c) => c.name === args.upto) : plan.contracts.length - 1;
+  const pending = plan.contracts.slice(0, last + 1).filter((c) => journal?.contracts?.[c.name]?.state !== 'verified');
+  const estimate = pending.reduce((sum, c) => sum + estimates.get(c.name), 0n);
+  console.log(`\nestimated cost of ${pending.map((c) => c.name).join(', ') || 'nothing'}: ${formatCredits(estimate)}`);
+  if (balance !== null) {
+    const gate = balanceGate({ balance, estimate });
+    const verdict = `the maker holds ${formatCredits(balance)}; signing needs ${formatCredits(gate.required)} (the estimate + 20%)`;
+    if (!gate.ok && args.mode !== 'dry-run') throw new Error(`REFUSING to sign: ${verdict}. Top the maker up first.`);
+    console.log(`balance gate: ${gate.ok ? 'PASS' : 'FAIL (signing would be refused)'}: ${verdict}`);
+  }
+  if (!signs) { printEnv(plan, 'env'); return; }
+
   if (args.mode === 'signed-dry-run') {
     console.log('\ncreates (signed, never broadcast):');
-    for (const entry of plan.contracts) prepare(entry, { plan, platformVersion, signing });
+    for (const entry of plan.contracts) prepare(entry, { plan, platformVersion, signing, policy, feeMultiplierPermille });
     printEnv(plan, 'env');
     return;
   }
 
-  const state = journal ?? { network: network(), makerId: plan.groupOwner, startNonce: String(plan.anchor.nonce), groupId: plan.groupId, contracts: {} };
-  const verified = await registerLive({ args, plan, state, handle, makerNonce, signing, platformVersion });
+  const state = journal ?? { network: network(), makerId: plan.groupOwner, startNonce: String(plan.anchor.nonce), groupId: plan.groupId, ...journalPolicy(policy), contracts: {} };
+  const verified = await registerLive({ args, plan, state, handle, makerNonce, signing, platformVersion, policy });
   printEnv({ ...plan, contracts: verified }, verified.length === plan.contracts.length ? 'env' : `env so far (${verified.length} of ${plan.contracts.length})`);
 }
 

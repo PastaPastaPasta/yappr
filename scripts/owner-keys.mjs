@@ -1,25 +1,23 @@
 /**
  * Shared owner-identity/key resolution for the contract admin scripts.
  *
- * Two kinds of signing identities exist on testnet:
- *  - the "contract maker" (owner of the production/staging contracts): keys live in
- *    `~/Downloads/dash-identity-testnet-contract-maker.json` (never committed);
+ * Two kinds of signing identities exist:
+ *  - a key file named on the command line (`resolveKeyFileOwner`): how the
+ *    production maker signs, from a file only its owner may read. No path or
+ *    key id is built in;
  *  - the e2e bot pool derived from `E2E_SEED_PHRASE` (see derive-identities.mjs),
- *    used for scratch registrations and the /testing contracts.
+ *    used for scratch registrations, the /testing contracts and, at seed index 9,
+ *    the devnet maker.
  *
  * Nothing here prints private key material.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { IdentitySigner } from '@dashevo/evo-sdk';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
+import { keyFileProblem } from './registration-policy.mjs';
 import { network } from './sdk-env.mjs';
-
-const MAKER_IDENTITY_FILE = join(homedir(), 'Downloads', 'dash-identity-testnet-contract-maker.json');
-/** Contract create/update transitions must be signed with a CRITICAL AUTHENTICATION key. */
-const MAKER_CRITICAL_KEY_ID = 2;
 
 /** Compressed testnet WIFs, so a key echoed back inside an error never reaches the console. */
 export const WIF_PATTERN = /\b[c9][1-9A-HJ-NP-Za-km-z]{50,51}\b/g;
@@ -34,24 +32,34 @@ export function describeErr(e) {
 }
 
 /**
- * Resolves `--maker` / `--bot <index>` flags to `{ownerId, keyId, wif, label}`.
- * The WIF stays inside the returned object; callers feed it to an IdentitySigner.
+ * The identity and key `keyId` of an identity key file (`{ identityId,
+ * identityKeys: [{ id, privateKeyWif, publicKeyHex }] }`), as
+ * `{ownerId, keyId, wif, publicKeyHex, label}`. Refuses a file that is not a
+ * regular file of this user's with mode 0600 or tighter (`keyFileProblem`),
+ * before reading a byte of it.
  */
-export function resolveOwner({ maker, botIndex, ownerId }) {
-  if (maker) {
-    const json = JSON.parse(readFileSync(MAKER_IDENTITY_FILE, 'utf8'));
-    const key = (json.identityKeys ?? []).find((k) => k.id === MAKER_CRITICAL_KEY_ID);
-    if (!key?.privateKeyWif) {
-      throw new Error(`No key id ${MAKER_CRITICAL_KEY_ID} with privateKeyWif in ${MAKER_IDENTITY_FILE}`);
-    }
-    return {
-      ownerId: ownerId ?? json.identityId,
-      keyId: MAKER_CRITICAL_KEY_ID,
-      wif: key.privateKeyWif,
-      publicKeyHex: key.publicKeyHex,
-      label: `maker(${json.identityId})`,
-    };
+export function resolveKeyFileOwner({ file, keyId }) {
+  const path = resolve(file);
+  const problem = keyFileProblem(statSync(path), process.getuid?.());
+  if (problem) throw new Error(`refusing the key file ${path}: it ${problem}`);
+  let json;
+  try {
+    json = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    // Not the parse error itself: it quotes the start of the file, which may be a key.
+    throw new Error(`${path} is not an identity key JSON file`);
   }
+  const key = (json.identityKeys ?? []).find((k) => k.id === keyId);
+  if (!json.identityId || !key?.privateKeyWif) throw new Error(`${path} holds no identityId, or no key id ${keyId} with a privateKeyWif`);
+  return { ownerId: json.identityId, keyId, wif: key.privateKeyWif, publicKeyHex: key.publicKeyHex, label: `key file(${json.identityId}, key ${keyId})` };
+}
+
+/**
+ * Resolves a `--bot <index>` flag to `{ownerId, keyId, wif, label}`: seed
+ * index `botIndex` of E2E_SEED_PHRASE, its CRITICAL key. The WIF stays inside
+ * the returned object; callers feed it to an IdentitySigner.
+ */
+export function resolveOwner({ botIndex, ownerId }) {
   const index = botIndex ?? 0;
   const key = criticalAuthKey(deriveIdentityKeys(index));
   const resolvedId = ownerId ?? loadIdentityIds()[index];
