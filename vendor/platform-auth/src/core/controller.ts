@@ -1,17 +1,12 @@
 import type {
   AuthSessionSnapshot,
   AuthUser,
-  AuthVaultBundle,
-  AuthVaultUnlockResult,
-  EncryptionKeyType,
-  PasskeyAccess,
   PlatformAuthDependencies,
   PlatformAuthEvent,
   PlatformAuthFeatures,
   PlatformAuthIntent,
   PlatformAuthResult,
   PlatformAuthState,
-  VaultSource,
   YapprDecryptedKeyExchangeResult,
   YapprKeyExchangeConfig,
   YapprKeyRegistrationRequest,
@@ -26,11 +21,7 @@ import {
 const DEFAULT_FEATURES: PlatformAuthFeatures = {
   usernameGate: true,
   profileGate: true,
-  passwordLogin: true,
-  passkeyLogin: true,
   keyExchangeLogin: true,
-  authVault: true,
-  legacyPasswordLogin: true,
   autoDeriveEncryptionKey: true,
   postLoginTasks: true,
   balanceRefresh: true,
@@ -44,12 +35,27 @@ const noopLogger = {
   error: () => undefined,
 }
 
-function sameBytes(left?: Uint8Array, right?: Uint8Array): boolean {
-  if (!left || !right || left.length !== right.length) return false
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false
+/**
+ * A key-ring sign-in that lost its claim to the session while it read the
+ * identity (a logout, or another sign-in that replaced its keys): it stops
+ * before it stores or publishes anything, so the session that replaced it stands.
+ */
+export class SupersededSignInError extends Error {
+  public constructor() {
+    super('Signed out while the wallet was connecting')
+    this.name = 'SupersededSignInError'
   }
-  return true
+}
+
+/** Options for a key-ring sign-in. */
+export interface KeyRingLoginOptions {
+  skipUsernameCheck?: boolean
+  /**
+   * Asked once the identity has been read, right before the session is
+   * stored: false means the keys this sign-in was started for are no longer
+   * the tab's, and it rejects with {@link SupersededSignInError} instead.
+   */
+  stillCurrent?: () => boolean
 }
 
 function buildIntent(kind: PlatformAuthIntent['kind'], identityId: string, username?: string): PlatformAuthIntent {
@@ -234,11 +240,12 @@ export class PlatformAuthController {
    * Signs in an identity whose signing keys the platform already holds outside
    * the secret store's single private key (an App Connect key ring, stored by
    * the caller before this call). `secretStore.hasPrivateKey` must answer true
-   * for it, or a later restore drops the session.
+   * for it, or a later restore drops the session. `stillCurrent` binds the
+   * sign-in to the keys it was started for (see {@link KeyRingLoginOptions}).
    */
   public async loginWithKeyRing(
     identityId: string,
-    options: { skipUsernameCheck?: boolean } = {},
+    options: KeyRingLoginOptions = {},
   ): Promise<PlatformAuthResult> {
     if (!identityId) {
       this.patchState({ error: 'Identity ID is required' })
@@ -250,13 +257,12 @@ export class PlatformAuthController {
   private async establishSession(
     identityId: string,
     privateKey: string | null,
-    options: { skipUsernameCheck?: boolean },
+    options: KeyRingLoginOptions,
   ): Promise<PlatformAuthResult> {
     const skipUsernameCheck = options.skipUsernameCheck ?? false
     this.patchState({ isLoading: true, error: null })
 
     try {
-
       const identity = await this.deps.identity.getIdentity(identityId)
       if (!identity) {
         throw new Error('Identity not found')
@@ -280,6 +286,8 @@ export class PlatformAuthController {
         publicKeys: identity.publicKeys,
       }
 
+      // Checked with nothing awaited before the session is stored, so nothing can slip in between.
+      if (options.stillCurrent && !options.stillCurrent()) throw new SupersededSignInError()
       await this.persistSessionUser(user)
       if (privateKey !== null) await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
       await this.deps.clientIdentity?.setIdentity(identity.id)
@@ -321,150 +329,11 @@ export class PlatformAuthController {
         intent: buildIntent('ready', identity.id),
       }
     } catch (error) {
+      // A superseded sign-in leaves the state to the session that replaced it.
+      if (error instanceof SupersededSignInError) throw error
       this.logger.error('platform-auth: auth-key login failed', error)
       this.patchState({
         error: error instanceof Error ? error.message : 'Failed to login',
-      })
-      throw error
-    } finally {
-      this.patchState({ isLoading: false })
-    }
-  }
-
-  public async loginWithPassword(identityOrUsername: string, password: string): Promise<PlatformAuthResult> {
-    if (!this.features.passwordLogin) {
-      throw new Error('Password login is disabled')
-    }
-
-    this.patchState({ isLoading: true, error: null })
-
-    try {
-      let fallbackResult: { identityId: string; privateKey: string } | null = null
-      let sawInvalidPassword = false
-      let lastNonPasswordError: Error | null = null
-
-      if (this.features.authVault && this.deps.vault?.isConfigured()) {
-        try {
-          const unlocked = await this.deps.vault.unlockWithPassword(identityOrUsername, password)
-          return await this.restoreUnlockedVaultSession(unlocked)
-        } catch (error) {
-          const message = error instanceof Error ? error.message : ''
-          if (message === 'Invalid password') {
-            sawInvalidPassword = true
-          } else if (error instanceof Error) {
-            lastNonPasswordError = error
-          }
-        }
-      }
-
-      if (this.features.legacyPasswordLogin && this.deps.legacyPasswordLogins) {
-        for (const adapter of this.deps.legacyPasswordLogins) {
-          if (!adapter.isConfigured()) continue
-
-          try {
-            fallbackResult = await adapter.loginWithPassword(identityOrUsername, password)
-            break
-          } catch (error) {
-            const message = error instanceof Error ? error.message : ''
-            if (message === 'Invalid password') {
-              sawInvalidPassword = true
-            } else if (error instanceof Error) {
-              lastNonPasswordError = error
-            }
-          }
-        }
-      }
-
-      if (!fallbackResult) {
-        if (sawInvalidPassword) {
-          throw new Error('Invalid password')
-        }
-        throw lastNonPasswordError ?? new Error('Password login is not configured')
-      }
-
-      return await this.loginWithAuthKey(fallbackResult.identityId, fallbackResult.privateKey, {
-        skipUsernameCheck: true,
-      })
-    } catch (error) {
-      this.logger.error('platform-auth: password login failed', error)
-      this.patchState({
-        error: error instanceof Error ? error.message : 'Failed to login with password',
-      })
-      throw error
-    } finally {
-      this.patchState({ isLoading: false })
-    }
-  }
-
-  public async loginWithPasskey(identityOrUsername?: string): Promise<PlatformAuthResult> {
-    if (!this.features.passkeyLogin) {
-      throw new Error('Passkey login is disabled')
-    }
-    if (!this.deps.vault?.isConfigured() || !this.deps.passkeys) {
-      throw new Error('Passkey login is not configured')
-    }
-
-    this.patchState({ isLoading: true, error: null })
-
-    try {
-      const normalizedIdentity = identityOrUsername?.trim()
-      const currentRpId = this.deps.passkeys.getDefaultRpId()
-      let accesses: PasskeyAccess[] = []
-      let selectedCredentialHash: Uint8Array | undefined
-
-      if (normalizedIdentity) {
-        const identityId = await this.deps.vault.resolveIdentityId(normalizedIdentity)
-        if (!identityId) {
-          throw new Error('Username not found')
-        }
-
-        accesses = (await this.deps.vault.getPasskeyAccesses(identityId)).filter((entry) => entry.rpId === currentRpId)
-      } else {
-        const selected = await this.deps.passkeys.selectDiscoverablePasskey(currentRpId)
-        if (!selected.userHandle) {
-          throw new Error('This passkey did not provide an account identifier. Try signing in with your username once, then use passkey login again.')
-        }
-
-        accesses = (await this.deps.vault.getPasskeyAccesses(selected.userHandle)).filter((entry) => entry.rpId === currentRpId)
-        selectedCredentialHash = selected.credentialIdHash
-      }
-
-      if (accesses.length === 0) {
-        if (normalizedIdentity) {
-          throw new Error('No passkey login is configured for this site and account')
-        }
-        throw new Error('No passkey login is configured for this selected passkey on this site yet')
-      }
-
-      if (selectedCredentialHash) {
-        accesses = accesses.filter((entry) => sameBytes(entry.credentialIdHash, selectedCredentialHash))
-        if (accesses.length === 0) {
-          throw new Error('This selected passkey is not registered for this site')
-        }
-      }
-
-      const descriptors = accesses.flatMap((entry) => {
-        if (!entry.credentialId || !entry.prfInput || !entry.rpId) return []
-        return [{
-          credentialId: entry.credentialId,
-          prfInput: entry.prfInput,
-          rpId: entry.rpId,
-        }]
-      })
-
-      const assertion = await this.deps.passkeys.getPrfAssertionForCredentials(descriptors)
-      const expectedCredentialHash = selectedCredentialHash ?? assertion.credentialIdHash
-      const access = accesses.find((entry) => sameBytes(entry.credentialIdHash, expectedCredentialHash))
-      if (!access) {
-        throw new Error('Selected passkey is not registered for this site')
-      }
-
-      const unlocked = await this.deps.vault.unlockWithPrf(access.$ownerId, access, assertion.prfOutput)
-      return await this.restoreUnlockedVaultSession(unlocked)
-    } catch (error) {
-      this.logger.error('platform-auth: passkey login failed', error)
-      this.patchState({
-        error: error instanceof Error ? error.message : 'Failed to login with passkey',
       })
       throw error
     } finally {
@@ -499,18 +368,6 @@ export class PlatformAuthController {
       await this.deps.secretStore.storeEncryptionKey(identityId, encryptionKeyWif)
       await this.deps.secretStore.storeEncryptionKeyType(identityId, 'derived')
 
-      await this.createOrUpdateVaultFromLoginKey(identityId, loginKey).catch((error) => {
-        this.logger.warn('platform-auth: failed to create or update vault from login key', error)
-      })
-
-      await this.mergeSecretsIntoVault(identityId, {
-        loginKey,
-        encryptionKeyWif,
-        source: 'wallet-derived',
-      }).catch((error) => {
-        this.logger.warn('platform-auth: failed to merge login-key secrets into vault', error)
-      })
-
       return result
     } catch (error) {
       await this.deps.secretStore.clearPrivateKey(identityId)
@@ -528,89 +385,6 @@ export class PlatformAuthController {
     }
   }
 
-  public async createOrUpdateVaultFromLoginKey(identityId: string, loginKey: Uint8Array): Promise<AuthVaultUnlockResult> {
-    return this.ensureVaultForCurrentSession(identityId, {
-      loginKey,
-      source: 'wallet-derived',
-    })
-  }
-
-  public async createOrUpdateVaultFromAuthKey(identityId: string, authKeyWif: string): Promise<AuthVaultUnlockResult> {
-    return this.ensureVaultForCurrentSession(identityId, {
-      authKeyWif,
-      source: 'direct-key',
-    })
-  }
-
-  public async mergeSecretsIntoVault(
-    identityId: string,
-    partialSecrets: {
-      loginKey?: Uint8Array
-      authKeyWif?: string
-      encryptionKeyWif?: string
-      transferKeyWif?: string
-      source?: VaultSource
-    },
-  ): Promise<AuthVaultUnlockResult | null> {
-    if (!this.features.authVault || !this.deps.vault?.isConfigured()) {
-      return null
-    }
-
-    const dek = await this.deps.secretStore.getAuthVaultDek(identityId)
-    if (!dek) {
-      return null
-    }
-
-    const merged = await this.deps.vault.mergeSecrets(identityId, dek, partialSecrets)
-    if (!merged) {
-      return null
-    }
-
-    await this.deps.secretStore.storeAuthVaultDek(identityId, merged.dek)
-    if (partialSecrets.loginKey) {
-      await this.deps.secretStore.storeLoginKey(identityId, partialSecrets.loginKey)
-    }
-    return merged
-  }
-
-  public async addPasswordAccess(password: string, iterations: number, label = 'Password'): Promise<void> {
-    const user = this.requireUser('You must be logged in to add a password unlock method.')
-    if (!this.deps.vault?.isConfigured()) {
-      throw new Error('Auth vault is not configured')
-    }
-
-    const ensured = await this.ensureVaultForCurrentSession(user.identityId)
-    await this.deps.vault.addPasswordAccess(user.identityId, {
-      vaultId: ensured.vault.$id,
-      dek: ensured.dek,
-      password,
-      iterations,
-      label,
-    })
-  }
-
-  public async addPasskeyAccess(label = 'Current device'): Promise<void> {
-    const user = this.requireUser('You must be logged in to add a passkey.')
-    if (!this.deps.vault?.isConfigured() || !this.deps.passkeys) {
-      throw new Error('Passkeys are not configured')
-    }
-
-    const ensured = await this.ensureVaultForCurrentSession(user.identityId)
-    const username = user.username ?? user.identityId
-    const passkey = await this.deps.passkeys.createPasskeyWithPrf({
-      identityId: user.identityId,
-      username,
-      displayName: username,
-      label,
-    })
-
-    await this.deps.vault.addPasskeyAccess(user.identityId, {
-      vaultId: ensured.vault.$id,
-      dek: ensured.dek,
-      passkey,
-    })
-  }
-
   public async logout(): Promise<PlatformAuthResult> {
     const identityId = this.state.user?.identityId
 
@@ -621,7 +395,6 @@ export class PlatformAuthController {
       await this.deps.secretStore.clearEncryptionKeyType(identityId)
       await this.deps.secretStore.clearTransferKey(identityId)
       await this.deps.secretStore.clearLoginKey(identityId)
-      await this.deps.secretStore.clearAuthVaultDek(identityId)
       await this.deps.sideEffects?.runLogoutCleanup?.(identityId)
     }
 
@@ -702,169 +475,6 @@ export class PlatformAuthController {
     }))
   }
 
-  private async ensureVaultForCurrentSession(
-    identityId: string,
-    overrides: {
-      loginKey?: Uint8Array
-      authKeyWif?: string
-      encryptionKeyWif?: string
-      transferKeyWif?: string
-      source?: VaultSource
-    } = {},
-  ): Promise<AuthVaultUnlockResult> {
-    if (!this.features.authVault || !this.deps.vault?.isConfigured()) {
-      throw new Error('Auth vault is not configured')
-    }
-
-    let activeDek = await this.deps.secretStore.getAuthVaultDek(identityId)
-
-    if (!activeDek) {
-      const status = await this.deps.vault.getStatus(identityId)
-
-      if (status.hasVault && status.passkeyCount > 0) {
-        if (!this.deps.passkeys) {
-          throw new Error('Passkeys are required to unlock this auth vault on this device.')
-        }
-
-        const currentRpId = this.deps.passkeys.getDefaultRpId()
-        const passkeyAccesses = (await this.deps.vault.getPasskeyAccesses(identityId)).filter((entry) =>
-          entry.rpId === currentRpId &&
-          entry.credentialId &&
-          entry.credentialIdHash &&
-          entry.prfInput,
-        )
-
-        if (passkeyAccesses.length === 0) {
-          throw new Error('This auth vault has passkeys, but none are registered for this site. Use an existing unlock method for this site before updating it.')
-        }
-
-        const descriptors = passkeyAccesses.map((entry) => ({
-          credentialId: entry.credentialId as Uint8Array,
-          prfInput: entry.prfInput as Uint8Array,
-          rpId: entry.rpId as string,
-        }))
-
-        const assertion = await this.deps.passkeys.getPrfAssertionForCredentials(descriptors)
-        const matchingAccess = passkeyAccesses.find((entry) => sameBytes(entry.credentialIdHash, assertion.credentialIdHash))
-        if (!matchingAccess) {
-          throw new Error('The selected passkey is not registered for this account on this site.')
-        }
-
-        const unlocked = await this.deps.vault.unlockWithPrf(identityId, matchingAccess, assertion.prfOutput)
-        await this.deps.secretStore.storeAuthVaultDek(identityId, unlocked.dek)
-        activeDek = unlocked.dek
-      } else if (status.hasVault && status.hasPasswordAccess) {
-        throw new Error('This auth vault already has a password unlock method. Sign in once with that auth-vault password or an existing passkey on this device before adding another unlock method.')
-      }
-    }
-
-    if (activeDek) {
-      const merged = await this.deps.vault.mergeSecrets(identityId, activeDek, {
-        loginKey: overrides.loginKey,
-        authKeyWif: overrides.authKeyWif,
-        encryptionKeyWif: overrides.encryptionKeyWif,
-        transferKeyWif: overrides.transferKeyWif,
-        source: overrides.source,
-      })
-
-      if (merged) {
-        await this.deps.secretStore.storeAuthVaultDek(identityId, merged.dek)
-        if (overrides.loginKey) {
-          await this.deps.secretStore.storeLoginKey(identityId, overrides.loginKey)
-        }
-        return merged
-      }
-    }
-
-    const hasExistingVault = await this.deps.vault.hasVault(identityId)
-    if (hasExistingVault && !activeDek) {
-      throw new Error('This auth vault already exists but is not unlocked on this device. Unlock it once with its current password or passkey, then try again.')
-    }
-
-    const loginKey = overrides.loginKey ?? (await this.deps.secretStore.getLoginKey(identityId)) ?? undefined
-    const authKeyWif = overrides.authKeyWif ?? (await this.deps.secretStore.getPrivateKey(identityId)) ?? undefined
-    const encryptionKeyWif = overrides.encryptionKeyWif ?? (await this.deps.secretStore.getEncryptionKey(identityId)) ?? undefined
-    const transferKeyWif = overrides.transferKeyWif ?? (await this.deps.secretStore.getTransferKey(identityId)) ?? undefined
-
-    if (!loginKey && !authKeyWif) {
-      throw new Error('No active login secret is available for auth vault enrollment.')
-    }
-
-    const bundle: AuthVaultBundle = {
-      version: 1,
-      identityId,
-      network: this.deps.network,
-      secretKind: loginKey ? 'login-key' : 'auth-key',
-      loginKey,
-      authKeyWif,
-      encryptionKeyWif,
-      transferKeyWif,
-      source: overrides.source ?? (loginKey ? 'wallet-derived' : 'direct-key'),
-      updatedAt: this.now(),
-    }
-
-    const created = await this.deps.vault.createOrUpdateVaultBundle(identityId, bundle, activeDek ?? undefined)
-    await this.deps.secretStore.storeAuthVaultDek(identityId, created.dek)
-    if (loginKey) {
-      await this.deps.secretStore.storeLoginKey(identityId, loginKey)
-    }
-    return created
-  }
-
-  private async restoreUnlockedVaultSession(unlocked: AuthVaultUnlockResult): Promise<PlatformAuthResult> {
-    await this.deps.secretStore.storeAuthVaultDek(unlocked.identityId, unlocked.dek)
-
-    let authKeyWif = unlocked.bundle.authKeyWif
-    let encryptionKeyWif = unlocked.bundle.encryptionKeyWif
-    let encryptionKeyType: EncryptionKeyType = 'external'
-
-    if (unlocked.bundle.secretKind === 'login-key') {
-      if (!this.deps.crypto || !unlocked.bundle.loginKey) {
-        throw new Error('Auth vault is missing the wallet login secret.')
-      }
-
-      const identityIdBytes = this.deps.crypto.decodeIdentityId(unlocked.identityId)
-      const authKey = this.deps.crypto.deriveAuthKeyFromLogin(unlocked.bundle.loginKey, identityIdBytes)
-      const derivedEncryptionKey = this.deps.crypto.deriveEncryptionKeyFromLogin(unlocked.bundle.loginKey, identityIdBytes)
-      authKeyWif = this.deps.crypto.privateKeyToWif(authKey, this.deps.network, true)
-      const derivedEncryptionKeyWif = this.deps.crypto.privateKeyToWif(derivedEncryptionKey, this.deps.network, true)
-      encryptionKeyWif = unlocked.bundle.encryptionKeyWif ?? derivedEncryptionKeyWif
-      encryptionKeyType = !unlocked.bundle.encryptionKeyWif || unlocked.bundle.encryptionKeyWif === derivedEncryptionKeyWif
-        ? 'derived'
-        : 'external'
-
-      await this.deps.secretStore.storeLoginKey(unlocked.identityId, unlocked.bundle.loginKey)
-    } else if (authKeyWif && encryptionKeyWif && this.deps.crypto) {
-      try {
-        const parsed = this.deps.crypto.parsePrivateKey(authKeyWif)
-        const derived = this.deps.crypto.deriveEncryptionKey(parsed.privateKey, unlocked.identityId)
-        const derivedWif = this.deps.crypto.privateKeyToWif(derived, this.deps.network, true)
-        encryptionKeyType = derivedWif === encryptionKeyWif ? 'derived' : 'external'
-      } catch {
-        encryptionKeyType = 'external'
-      }
-    }
-
-    if (!authKeyWif) {
-      throw new Error('Auth vault is missing the authentication key.')
-    }
-
-    const result = await this.loginWithAuthKey(unlocked.identityId, authKeyWif, {
-      skipUsernameCheck: true,
-    })
-
-    if (encryptionKeyWif) {
-      await this.deps.secretStore.storeEncryptionKey(unlocked.identityId, encryptionKeyWif)
-      await this.deps.secretStore.storeEncryptionKeyType(unlocked.identityId, encryptionKeyType)
-    }
-
-    if (unlocked.bundle.transferKeyWif) {
-      await this.deps.secretStore.storeTransferKey(unlocked.identityId, unlocked.bundle.transferKeyWif)
-    }
-
-    return result
-  }
-
   private tryAutoDeriveEncryptionKey(identityId: string, privateKey: string, publicKeys: AuthUser['publicKeys']): void {
     if (!this.features.autoDeriveEncryptionKey || !this.deps.crypto) {
       return
@@ -890,13 +500,6 @@ export class PlatformAuthController {
         const derivedKeyWif = crypto.privateKeyToWif(derivedKey, this.deps.network, true)
         await this.deps.secretStore.storeEncryptionKey(identityId, derivedKeyWif)
         await this.deps.secretStore.storeEncryptionKeyType(identityId, 'derived')
-
-        const dek = await this.deps.secretStore.getAuthVaultDek(identityId)
-        if (dek && this.deps.vault?.isConfigured()) {
-          await this.deps.vault.mergeSecrets(identityId, dek, {
-            encryptionKeyWif: derivedKeyWif,
-          })
-        }
       } catch (error) {
         await this.emit({ type: 'background-error', operation: 'derive-encryption-key', error })
       }
@@ -955,13 +558,6 @@ export class PlatformAuthController {
       port: this.deps.yapprKeyExchange,
       config: this.getYapprKeyExchangeConfig(overrides),
     }
-  }
-
-  private requireUser(message: string): AuthUser {
-    if (!this.state.user) {
-      throw new Error(message)
-    }
-    return this.state.user
   }
 
   private isSessionActive(identityId: string): boolean {

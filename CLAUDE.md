@@ -147,7 +147,7 @@ Singleton service classes handle all Dash Platform operations:
 ### Authentication System
 - `contexts/auth-context.tsx` manages user sessions and exposes the `withAuth` HOC
 - It delegates to the vendored `platform-auth` controller (`vendor/platform-auth`) through the adapters in `lib/auth/platform-auth-adapters.ts`
-- Private keys live in the browser secret store built in `lib/secure-storage.ts` (localStorage, keys prefixed `yappr_secure_`); passkey/PRF unlock is in `lib/webauthn/passkey-prf.ts`
+- Private keys live in the browser secret store built in `lib/secure-storage.ts` (localStorage, keys prefixed `yappr_secure_`). Sign-in is App Connect (wallet) or a typed-in private key (`lib/auth/login-key.ts`); a CRITICAL key typed in on an App Connect build stays in the tab only. There is no password or passkey sign-in: the passkey vault is being redesigned (DECISIONS D10)
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure

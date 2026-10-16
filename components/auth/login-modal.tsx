@@ -4,60 +4,56 @@ import { useState, useEffect, useCallback, useId, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { X, KeyRound, ChevronDown } from 'lucide-react'
+import { X, ChevronDown, Wallet } from 'lucide-react'
 import type { AppConnectGrant } from 'platform-auth'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
-import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
 import { identityBridgeUrl } from '@/lib/identity-bridge'
 import { getConfiguredNetwork } from '@/lib/constants'
-import { WalletLoginPanel } from './wallet-login-panel'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
-import { isAppConnectBuild } from '@/lib/app-connect/config'
+import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { KeyLoginForm } from './key-login-form'
 
-/** Where "New to Dash?" sends people: the wallet on mainnet, the identity bridge elsewhere. */
+/** Where newcomers go: the wallet on mainnet, the identity bridge elsewhere. */
 const DASH_WALLET_DOWNLOAD_URL = 'https://www.dash.org/download/'
 
 function newUserLink(): { href: string; label: string } {
   return getConfiguredNetwork() === 'mainnet'
     ? { href: DASH_WALLET_DOWNLOAD_URL, label: 'Get the Dash wallet' }
-    : { href: identityBridgeUrl(), label: 'Create an identity' }
+    : { href: identityBridgeUrl(), label: 'Create a Dash identity' }
+}
+
+/** Wallet sign-in is offered only where App Connect is set up on this build. */
+function walletSignInAvailable(): boolean {
+  return isAppConnectBuild() && appConnectPins() !== null
 }
 
 /**
  * Global sign-in dialog.
  *
- * Wallet sign-in is the primary path: opening the dialog immediately shows a
- * dash-key: QR code for the user's Dash wallet. A passkey button sits under
- * it for returning users on an enrolled device. Password and private-key
- * entry live behind a collapsed "more ways to sign in" disclosure.
+ * Private-key sign-in is the primary path, with the way to create an
+ * identity right under it. Wallet sign-in (App Connect) sits behind a
+ * collapsed option until Dash wallets ship support for it; its request is
+ * only made once the option is opened.
  */
 export function LoginModal() {
   const router = useRouter()
   const pathname = usePathname()
   const { isOpen, close } = useLoginModal()
-  const { loginWithPasskey, loginWithAppConnect } = useAuth()
+  const { loginWithAppConnect } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const reduceMotion = useReducedMotion()
-  const advancedId = useId()
+  const walletId = useId()
   const opener = useRef<HTMLElement | null>(null)
 
   const newUser = newUserLink()
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [walletKey, setWalletKey] = useState(0)
-  const [passkeyBusy, setPasskeyBusy] = useState(false)
-  const [passkeyError, setPasskeyError] = useState<string | null>(null)
+  const walletAvailable = walletSignInAvailable()
+  const [showWallet, setShowWallet] = useState(false)
 
   // Reset to the primary view whenever the dialog closes.
   useEffect(() => {
-    if (!isOpen) {
-      setShowAdvanced(false)
-      setPasskeyBusy(false)
-      setPasskeyError(null)
-    }
+    if (!isOpen) setShowWallet(false)
   }, [isOpen])
 
   const handleClose = useCallback(() => {
@@ -68,23 +64,6 @@ export function LoginModal() {
       router.push('/')
     }
   }, [close, pathname, router])
-
-  const handlePasskey = async () => {
-    setPasskeyError(null)
-    setPasskeyBusy(true)
-    try {
-      await loginWithPasskey()
-      close()
-    } catch (err) {
-      setPasskeyError(err instanceof Error ? err.message : 'Passkey sign-in failed')
-    } finally {
-      setPasskeyBusy(false)
-    }
-  }
-
-  // Backing out of first-time key registration restarts the wallet request
-  // with a fresh code rather than leaving a dead panel behind.
-  const restartWallet = useCallback(() => setWalletKey((k) => k + 1), [])
 
   const signInWithGrant = useCallback(async (grant: AppConnectGrant) => {
     await loginWithAppConnect(grant)
@@ -139,87 +118,69 @@ export function LoginModal() {
                 </Dialog.Title>
                 <Dialog.Description asChild>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                  Scan the code with your Dash wallet to sign in.
+                  Sign in with your Dash identity&apos;s private key.
                 </p>
                 </Dialog.Description>
               </div>
 
-              {/* Primary: wallet */}
-              {isAppConnectBuild() ? (
-                <AppConnectLoginPanel onGrant={signInWithGrant} onComplete={close} />
-              ) : (
-                <WalletLoginPanel key={walletKey} onComplete={close} onCancel={restartWallet} />
-              )}
-
-              {/* Secondary: passkey */}
-              <div className="mt-6">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="lg"
-                  className="w-full"
-                  disabled={passkeyBusy}
-                  onClick={handlePasskey}
-                >
-                  {passkeyBusy ? (
-                    <Spinner size="sm" className="mr-2" />
-                  ) : (
-                    <KeyRound className="w-4 h-4 mr-2" />
-                  )}
-                  Sign in with a passkey
-                </Button>
-                {passkeyError && (
-                  <p className="mt-2 text-xs text-red-500 dark:text-red-400" aria-live="polite">
-                    {passkeyError}
-                  </p>
-                )}
-              </div>
-
-              {/* Advanced: password / private key */}
-              <div className="mt-5 border-t border-gray-100 dark:border-gray-800 pt-4">
-                <button
-                  type="button"
-                  aria-expanded={showAdvanced}
-                  aria-controls={advancedId}
-                  onClick={() => setShowAdvanced((v) => !v)}
-                  className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
-                >
-                  <span>{showAdvanced ? 'Hide password and key sign-in' : 'Sign in with a password or private key'}</span>
-                  <ChevronDown
-                    aria-hidden="true"
-                    className={`w-4 h-4 transition-transform duration-200 ${showAdvanced ? 'rotate-180' : ''}`}
-                  />
-                </button>
-                <AnimatePresence initial={false}>
-                  {showAdvanced && (
-                    <motion.div
-                      id={advancedId}
-                      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="pt-4">
-                        <KeyLoginForm onComplete={close} />
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+              {/* Primary: private key */}
+              <KeyLoginForm onComplete={close} />
 
               {/* New users */}
-              <p className="mt-5 text-center text-sm text-gray-600 dark:text-gray-400">
-                New to Dash?{' '}
+              <div className="mt-5 rounded-xl bg-gray-50 dark:bg-neutral-800/60 px-4 py-3 text-center">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Don&apos;t have a Dash identity yet?
+                </p>
                 <a
                   href={newUser.href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="font-medium text-yappr-600 dark:text-yappr-400 hover:underline underline-offset-4"
+                  className="mt-1 inline-block text-sm font-semibold text-yappr-600 dark:text-yappr-400 hover:underline underline-offset-4"
                 >
                   {newUser.label}
                 </a>
-              </p>
+              </div>
+
+              {/* Secondary: wallet sign-in, for wallets that already support it */}
+              {walletAvailable && (
+                <div className="mt-5 border-t border-gray-100 dark:border-gray-800 pt-4">
+                  <button
+                    type="button"
+                    aria-expanded={showWallet}
+                    aria-controls={walletId}
+                    onClick={() => setShowWallet((v) => !v)}
+                    className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Wallet aria-hidden="true" className="w-4 h-4" />
+                      Sign in with a Dash wallet app
+                    </span>
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={`w-4 h-4 transition-transform duration-200 ${showWallet ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {showWallet && (
+                      <motion.div
+                        id={walletId}
+                        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="pt-4">
+                          <p className="mb-4 text-xs text-center text-gray-500 dark:text-gray-400">
+                            Wallet sign-in is coming to the Dash wallet apps soon. If yours already supports it, scan this code with it.
+                          </p>
+                          <AppConnectLoginPanel onGrant={signInWithGrant} onComplete={close} />
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
             </div>
           </motion.div>
           </Dialog.Content>

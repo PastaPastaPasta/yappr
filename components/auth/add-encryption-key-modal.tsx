@@ -50,7 +50,7 @@ function KeyEntryAddEncryptionKeyModal({
   onSuccess,
   context = 'generic',
 }: AddEncryptionKeyModalProps) {
-  const { user, mergeSecretsIntoAuthVault } = useAuth()
+  const { user } = useAuth()
   const userId = user?.identityId
   // App Connect builds: the messaging key is bound to the anchor, set up with a MASTER signature, and never replaced here.
   const appConnect = isAppConnectBuild()
@@ -129,24 +129,13 @@ function KeyEntryAddEncryptionKeyModal({
     isOpenRef.current = isOpen
   }, [isOpen])
 
-  const mergeEncryptionKeyIntoVault = useCallback(async (encryptionKeyWif: string) => {
-    if (!user) return
-
-    try {
-      await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif })
-    } catch (err) {
-      logger.error('Failed to merge encryption key into auth vault:', err)
-    }
-  }, [mergeSecretsIntoAuthVault, user])
-
   // App Connect setup finished: the key is the anchor's current one and stored for this session.
-  const handleMessagingReady = useCallback((identityId: string, encryptionKeyWif: string) => {
-    // A switch of account mid-setup must not merge one identity's key into another's vault.
+  const handleMessagingReady = useCallback((identityId: string) => {
+    // A switch of account mid-setup must not report another identity's setup as done.
     if (user?.identityId !== identityId) return
     setStep('success')
-    mergeEncryptionKeyIntoVault(encryptionKeyWif).catch((err) => logger.error('Failed to save the messaging key to the vault:', err))
     onSuccess?.()
-  }, [mergeEncryptionKeyIntoVault, onSuccess, user])
+  }, [onSuccess, user])
 
   // On modal open: check if user already has an encryption key on their identity.
   // If so, redirect to the enter-existing path instead of the create-new path.
@@ -197,7 +186,6 @@ function KeyEntryAddEncryptionKeyModal({
             const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
             storeEncryptionKey(user.identityId, derivedKeyWif)
             storeEncryptionKeyType(user.identityId, 'derived')
-            await mergeEncryptionKeyIntoVault(derivedKeyWif)
             setIsEnterExistingPath(true)
             setIsValidatingExistingKey(false)
             setStep('success')
@@ -215,7 +203,7 @@ function KeyEntryAddEncryptionKeyModal({
     // Auto-derivation unavailable or failed — show manual entry form
     setIsValidatingExistingKey(false)
     setStep('enter-existing')
-  }, [mergeEncryptionKeyIntoVault, user, onSuccess])
+  }, [user, onSuccess])
 
   // Validate a manually entered existing key and store it
   const validateAndStoreExistingKey = useCallback(async () => {
@@ -237,13 +225,9 @@ function KeyEntryAddEncryptionKeyModal({
         return
       }
 
-      const { getEncryptionKey, storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
+      const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
       storeEncryptionKey(user.identityId, existingKeyInput.trim())
       storeEncryptionKeyType(user.identityId, 'external')
-      const normalizedEncryptionKey = getEncryptionKey(user.identityId)
-      if (normalizedEncryptionKey) {
-        await mergeEncryptionKeyIntoVault(normalizedEncryptionKey)
-      }
       setIsEnterExistingPath(true)
       setIsValidatingExistingKey(false)
       setStep('success')
@@ -253,7 +237,7 @@ function KeyEntryAddEncryptionKeyModal({
       setExistingKeyError(err instanceof Error ? err.message : 'Failed to validate key')
       setIsValidatingExistingKey(false)
     }
-  }, [mergeEncryptionKeyIntoVault, user, existingKeyInput, onSuccess])
+  }, [user, existingKeyInput, onSuccess])
 
   // Derive encryption key from auth key using HKDF
   const deriveKey = useCallback(async () => {
@@ -323,7 +307,6 @@ function KeyEntryAddEncryptionKeyModal({
         storeEncryptionKey(user.identityId, privateKeyWif)
         // Mark as derived since we derived it from auth key
         storeEncryptionKeyType(user.identityId, 'derived')
-        await mergeEncryptionKeyIntoVault(privateKeyWif)
 
         setStep('success')
         toast.success('Encryption key added to your identity!')
@@ -340,7 +323,7 @@ function KeyEntryAddEncryptionKeyModal({
       setError(err instanceof Error ? err.message : 'Unknown error occurred')
       setStep('error')
     }
-  }, [mergeEncryptionKeyIntoVault, user, privateKeyWif, privateKeyBytes, criticalKeyWif, onSuccess])
+  }, [user, privateKeyWif, privateKeyBytes, criticalKeyWif, onSuccess])
 
   // Validate the CRITICAL key before proceeding
   const validateCriticalKey = useCallback(async () => {

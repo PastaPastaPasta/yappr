@@ -188,24 +188,6 @@ export function createBrowserSecretStore(options: BrowserSecretStoreOptions) {
 
   const clearLoginKey = (identityId: string): boolean => storage.delete(`lk_${identityId}`)
 
-  const storeAuthVaultDek = (identityId: string, dek: Uint8Array): void => {
-    storage.set(`avd_${identityId}`, bytesToBase64(dek))
-  }
-
-  const getAuthVaultDek = (identityId: string): string | null => {
-    const value = storage.get(`avd_${identityId}`)
-    return typeof value === 'string' ? value : null
-  }
-
-  const getAuthVaultDekBytes = (identityId: string): Uint8Array | null => {
-    const value = getAuthVaultDek(identityId)
-    return value ? base64ToBytes(value) : null
-  }
-
-  const hasAuthVaultDek = (identityId: string): boolean => storage.has(`avd_${identityId}`)
-
-  const clearAuthVaultDek = (identityId: string): boolean => storage.delete(`avd_${identityId}`)
-
   const storeNormalizedWif = (storageKey: string, privateKey: string): void => {
     if (options.crypto.isLikelyWif(privateKey)) {
       storage.set(storageKey, privateKey)
@@ -280,11 +262,6 @@ export function createBrowserSecretStore(options: BrowserSecretStoreOptions) {
     getLoginKeyBytes,
     hasLoginKey,
     clearLoginKey,
-    storeAuthVaultDek,
-    getAuthVaultDek,
-    getAuthVaultDekBytes,
-    hasAuthVaultDek,
-    clearAuthVaultDek,
     storeEncryptionKey,
     getEncryptionKey,
     getEncryptionKeyBytes,

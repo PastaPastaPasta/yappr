@@ -10,13 +10,15 @@ import { useAuth } from '@/contexts/auth-context'
 import { useStarterGrantModal } from '@/hooks/use-starter-grant-modal'
 import { starterGrantAmount, yappIsLocked, yappIsPausedForGood } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
-import { isStarterGrantSettled, markStarterGrantSettled } from '@/lib/starter-grant'
+import { markStarterGrantClaimed, useStarterClaimState } from '@/hooks/use-starter-claim'
 import { tokenService } from '@/lib/services/token-service'
 import { useTokenClaimHidden } from '@/lib/app-connect/session-manager'
 
 /**
  * On a contract whose token declares a once-per-identity grant (v9, v10: 100
- * YAPP), a signed-in identity with NO YAPP is offered its grant once. A
+ * YAPP), a signed-in identity with NO YAPP is offered its grant once. Whether
+ * it was already claimed is read from chain first (#740): the claim is only
+ * offered when chain says it is still open, never while that is unknown. A
  * successful claim, or a 40722 "already claimed", settles the identity so the
  * prompt never returns; declining only postpones it to the next session.
  *
@@ -37,12 +39,13 @@ export function StarterGrantModal() {
   const amount = starterGrantAmount()
   // A wallet sign-in whose group key is only HIGH cannot sign the claim: never offer it.
   const claimHidden = useTokenClaimHidden(identityId)
+  const claimState = useStarterClaimState(identityId)
 
   const locked = yappIsLocked()
   const paused = yappIsPausedForGood()
 
   useEffect(() => {
-    if (!identityId || amount === null || paused || claimHidden || isStarterGrantSettled(identityId)) return
+    if (!identityId || amount === null || paused || claimHidden || claimState !== 'unclaimed') return
     let cancelled = false
     tokenService.getBalance(identityId)
       .then((balance) => {
@@ -52,7 +55,7 @@ export function StarterGrantModal() {
     return () => {
       cancelled = true
     }
-  }, [identityId, amount, paused, claimHidden, open])
+  }, [identityId, amount, paused, claimHidden, claimState, open])
 
   if (!identityId || amount === null) return null
 
@@ -62,7 +65,7 @@ export function StarterGrantModal() {
     const result = await tokenService.claimStarterGrant(identityId, needsCritical ? wif : undefined)
     setBusy(false)
     if (result.success || result.errorCode === 'ALREADY_CLAIMED') {
-      markStarterGrantSettled(identityId)
+      markStarterGrantClaimed(identityId)
       if (result.success) {
         toast.success(`${amount} YAPP claimed`)
         if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
@@ -81,7 +84,8 @@ export function StarterGrantModal() {
     toast.error(result.error ?? 'Claim failed')
   }
 
-  if (locked && isStarterGrantSettled(identityId)) {
+  // Fail closed: unless chain says the grant is still open, there is nothing to claim here.
+  if (locked && claimState !== 'unclaimed') {
     return (
       <Modal open={isOpen} onOpenChange={(next) => !next && close()} className="w-[420px] max-w-[90vw]">
         <ModalTitle>
@@ -91,7 +95,9 @@ export function StarterGrantModal() {
         <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
           {paused
             ? 'YAPP can\'t be spent, bought or transferred on this network. Posts, replies, likes and reposts are paid in credits instead.'
-            : 'You don\'t have enough YAPP for this, and your starter YAPP is already claimed. YAPP can\'t be bought on this network, so try again to pay with credits instead.'}
+            : claimState === 'claimed'
+              ? 'You don\'t have enough YAPP for this, and your starter YAPP is already claimed. YAPP can\'t be bought on this network, so try again to pay with credits instead.'
+              : 'You don\'t have enough YAPP for this. YAPP can\'t be bought on this network, so try again to pay with credits instead.'}
         </Dialog.Description>
         <Button data-testid="starter-grant-dismiss" onClick={close} className="w-full bg-yappr-500 hover:bg-yappr-600 text-white">
           OK
@@ -100,7 +106,7 @@ export function StarterGrantModal() {
     )
   }
 
-  if (claimHidden) return null
+  if (claimHidden || claimState !== 'unclaimed') return null
 
   return (
     <Modal open={isOpen} onOpenChange={(next) => !next && !busy && close()} className="w-[420px] max-w-[90vw]">

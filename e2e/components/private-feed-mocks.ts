@@ -1,4 +1,4 @@
-// Test-only boundaries: no identity lookup, state transition, or vault write is real.
+// Test-only boundaries: no identity lookup or state transition is real.
 import { getEncryptionKey, getEncryptionKeyType } from '@/lib/secure-storage'
 import { scopedKey } from '@/lib/storage-scope'
 
@@ -16,9 +16,6 @@ const state = {
   statusReads: 0,
   enableCalls: 0,
   storageWriteFailures: 0,
-  vaultCalls: 0,
-  vaultHadLocalKey: false,
-  vaultReceivedCanonicalKey: false,
 }
 
 // The stale-key scenario seeds a different key for this identity first, so the swallowed
@@ -58,15 +55,7 @@ export function snapshot() {
 }
 
 export function useAuth() {
-  return {
-    user,
-    mergeSecretsIntoAuthVault: async (identityId: string, secrets: { encryptionKeyWif: string }) => {
-      state.vaultCalls += 1
-      state.vaultHadLocalKey = getEncryptionKey(identityId) === EXPECTED_WIF
-      state.vaultReceivedCanonicalKey = identityId === DUMMY_IDENTITY && secrets.encryptionKeyWif === EXPECTED_WIF
-      if (scenario === 'vault-failure') throw new Error('Synthetic vault backup failure')
-    },
-  }
+  return { user }
 }
 
 export const TREE_CAPACITY = 65536

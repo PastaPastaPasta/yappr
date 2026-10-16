@@ -5,12 +5,17 @@ import { Identifier } from '@dashevo/evo-sdk';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
+import { TOKEN_HISTORY_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
 import { starterGrantAmount, yappIsLocked } from '../contract-topology';
 import { UNCONFIRMED_WRITE_MESSAGE, extractErrorMessage, isOncePerIdentityAlreadyClaimedError, sentWriteOutcomeUnknown } from '../error-utils';
 import { withSdkSignedWrite } from './identity-nonce';
 import { SigningUnavailableError, assertRawKeyCovers, hasAppConnectSession, reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
 import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
+import { isStarterGrantSettled, markStarterGrantSettled, starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
+import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
+
+/** One page of an identity's token-history claims is plenty: YAPP's only distribution is the starter grant. */
+const CLAIM_HISTORY_PAGE = 20;
 
 export interface TokenResult {
   success: boolean;
@@ -246,6 +251,35 @@ class TokenService {
    * (40722), which comes back as ALREADY_CLAIMED so the prompt can stop for
    * good. Like every token transition it needs a CRITICAL key.
    */
+  /**
+   * Whether `identityId` has claimed its starter grant, read from chain: the
+   * `claim` document Platform writes into the SYSTEM token-history contract
+   * for every claim (byRecipient index). A claim found is remembered in this
+   * browser. Rejects when the read fails; callers then treat it as unknown
+   * and offer no claim (#740).
+   */
+  async readStarterClaimState(identityId: string): Promise<StarterClaimState> {
+    if (isStarterGrantSettled(identityId)) return 'claimed';
+    const [sdk, tokenId] = await Promise.all([getEvoSdk(), this.getTokenId()]);
+    const response = await sdk.documents.query({
+      dataContractId: TOKEN_HISTORY_CONTRACT_ID,
+      documentTypeName: 'claim',
+      where: [
+        ['tokenId', '==', tokenId],
+        ['recipientId', '==', identityId],
+      ] as DocumentWhereClause[],
+      orderBy: [
+        ['tokenId', 'asc'],
+        ['recipientId', 'asc'],
+        ['$createdAt', 'asc'],
+      ] as DocumentOrderByClause[],
+      limit: CLAIM_HISTORY_PAGE,
+    });
+    const state = starterClaimFromHistory(normalizeSDKResponse(response), CLAIM_HISTORY_PAGE);
+    if (state === 'claimed') markStarterGrantSettled(identityId);
+    return state;
+  }
+
   async claimStarterGrant(identityId: string, criticalKeyWif?: string): Promise<TokenResult> {
     if (starterGrantAmount() === null) {
       return { success: false, error: 'This contract declares no starter grant', errorCode: 'NOT_AUTHORIZED' };

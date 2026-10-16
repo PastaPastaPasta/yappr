@@ -4,7 +4,7 @@
  *
  * A raw-key session's stored encryption key counts only when it is that key
  * (`lib/secure-storage.ts`). Without the check, a key a legacy build left in
- * the same storage, or one a password vault restored unchecked, would be used
+ * the same storage, or one entered unchecked, would be used
  * to read and send messages that peers can never match: on these builds they
  * encrypt to the anchor key. Such a key is not used; it stays in storage until
  * a confirmed key replaces it. The mark records a confirmation, not a live

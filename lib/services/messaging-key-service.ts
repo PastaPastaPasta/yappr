@@ -112,7 +112,7 @@ export async function messagingKeyHandOffUri(draft: MessagingKeyDraft): Promise<
 
 /**
  * App Connect builds: confirm this browser's stored encryption key for
- * `identityId` (whatever put it there, e.g. a password vault) by comparing it
+ * `identityId` (whatever put it there) by comparing it
  * with the anchor's current key, read fresh. On a match the stored key may
  * stand in for the anchor key from now on (anchor-key-mark). Returns whether
  * it was confirmed; a key that does not match stays unused.
@@ -129,7 +129,7 @@ export async function confirmStoredEncryptionKey(identityId: string): Promise<bo
 
 /**
  * Keep the draft, now the anchor's current key, as this session's encryption
- * key. Returns its WIF for the caller to merge into the password vault.
+ * key. Returns its WIF.
  */
 export function adoptMessagingKey(draft: MessagingKeyDraft): string {
   const wif = privateKeyToWif(draft.privateKey, keyNetwork(), true)

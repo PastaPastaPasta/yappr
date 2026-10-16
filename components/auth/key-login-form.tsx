@@ -1,7 +1,6 @@
 'use client'
 
 import { logger } from '@/lib/logger'
-import { scopedKey } from '@/lib/storage-scope'
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { Eye, EyeOff } from 'lucide-react'
@@ -12,12 +11,9 @@ import { Button } from '@/components/ui/button'
 import { identityService } from '@/lib/services/identity-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { keyValidationService } from '@/lib/services/key-validation-service'
-import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
-import { authVaultService } from '@/lib/services/auth-vault-service'
 import { isLikelyWif, validateWifNetwork, wifToPrivateKey } from '@/lib/crypto/wif'
 import { publicKeyHashFromWif } from '@/lib/crypto/keys'
 import { keyNetwork } from '@/lib/constants'
-import { useKeyBackupModal } from '@/hooks/use-key-backup-modal'
 
 // Check if input looks like an Identity ID (base58, ~44 chars)
 function isLikelyIdentityId(input: string): boolean {
@@ -27,13 +23,6 @@ function isLikelyIdentityId(input: string): boolean {
 interface ResolvedIdentity {
   id: string
   dpnsUsername?: string
-}
-
-type CredentialType = 'key' | 'password' | null
-
-function credentialTypeOf(credential: string): CredentialType {
-  if (!credential) return null
-  return isLikelyWif(credential) ? 'key' : 'password'
 }
 
 /** The identity that holds this key, found through Platform's public-key-hash index. */
@@ -84,11 +73,9 @@ interface KeyLoginFormProps {
 }
 
 /**
- * The advanced sign-in form: either a raw private key on its own (the
- * identity is looked up from the key), or a Dash username or identity ID plus
- * its vault password. Wallet and passkey sign-in are the primary paths; this
- * form exists for identities that have no wallet or passkey enrolled, and for
- * developers.
+ * Private-key sign-in: a key on its own (the identity is looked up from the
+ * key), or with the Dash username or identity ID it belongs to. The key must
+ * be one of the identity's enabled CRITICAL or HIGH authentication keys.
  */
 export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
   // Identity lookup states
@@ -97,10 +84,8 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
   const [lookupError, setLookupError] = useState<string | null>(null)
   const [resolvedIdentity, setResolvedIdentity] = useState<ResolvedIdentity | null>(null)
 
-  // Unified credential field (password OR private key)
   const [credential, setCredential] = useState('')
   const [showCredential, setShowCredential] = useState(false)
-  const [hasOnchainBackup, setHasOnchainBackup] = useState<boolean | null>(null)
   // Identity found from the key itself when no username or ID was typed.
   const [keyIdentity, setKeyIdentity] = useState<ResolvedIdentity | null>(null)
 
@@ -130,15 +115,13 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
     }
   }, [])
 
-  const { login, loginWithPassword } = useAuth()
-  const openBackupModal = useKeyBackupModal((state) => state.open)
+  const { login } = useAuth()
 
   // Debounced identity lookup. The previous resolution is dropped straight
   // away so a key is never checked, or signed in, against a stale identity.
   useEffect(() => {
     setResolvedIdentity(null)
     setLookupError(null)
-    setHasOnchainBackup(null)
     const trimmedInput = identityInput.trim()
     if (trimmedInput.length < 3) return
 
@@ -176,51 +159,6 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
         }
 
         setResolvedIdentity({ id: identity.id, dpnsUsername })
-
-        // Check unified auth vault first.
-        try {
-          if (authVaultService.isConfigured()) {
-            const status = await authVaultService.getStatus(identityId)
-            if (cancelled) return
-            setHasOnchainBackup(status.hasPasswordAccess)
-
-            if (status.hasPasswordAccess || status.passkeyCount > 0) {
-              return
-            }
-          }
-        } catch (err) {
-          logger.error('Auth vault lookup failed during login identity resolution:', err)
-          if (cancelled) return
-          if (authVaultService.isConfigured()) {
-            setHasOnchainBackup(false)
-            return
-          }
-        }
-
-        // Then the older vault contract.
-        try {
-          const { vaultService } = await import('@/lib/services/vault-service')
-          if (vaultService.isConfigured()) {
-            const hasVaultBackup = await vaultService.hasPasswordBackup(identityId)
-            if (cancelled) return
-            if (hasVaultBackup) {
-              setHasOnchainBackup(true)
-              return
-            }
-          }
-        } catch {
-          // Vault check failed; try the older contract.
-        }
-        try {
-          if (encryptedKeyService.isConfigured()) {
-            const hasBackup = await encryptedKeyService.hasBackup(identityId)
-            if (!cancelled) setHasOnchainBackup(hasBackup)
-          } else {
-            setHasOnchainBackup(false)
-          }
-        } catch {
-          if (!cancelled) setHasOnchainBackup(false)
-        }
       } catch (err) {
         logger.error('Identity lookup error:', err)
         if (!cancelled) setLookupError('Failed to lookup identity')
@@ -289,20 +227,20 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
     }
   }, [credential, identityInput, resolvedIdentity])
 
-  const detectedCredentialType = credentialTypeOf(credential)
+  const isKey = isLikelyWif(credential)
   const typedIdentity = identityInput.trim()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    const target = detectedCredentialType === 'key' ? resolvedIdentity ?? keyIdentity : resolvedIdentity
+    const target = resolvedIdentity ?? keyIdentity
 
     // Guard against submit when form is not ready (e.g., Enter key bypass)
     if (isLoading || !credential || !target) {
       return
     }
-    if (detectedCredentialType === 'key' && keyValidationStatus !== 'valid') {
-      setErrorWithShake('Private key does not match this identity')
+    if (keyValidationStatus !== 'valid') {
+      setErrorWithShake(keyError ?? 'This key does not match this identity')
       return
     }
 
@@ -310,70 +248,24 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
     setIsLoading(true)
 
     try {
-      const identityId = target.id
-
-      if (detectedCredentialType === 'key') {
-        await login(identityId, credential)
-
-        if (!sessionStorage.getItem(scopedKey('yappr_backup_prompt_shown'))) {
-          let unifiedStatus = null
-          let authVaultUnavailable = false
-
-          if (authVaultService.isConfigured()) {
-            try {
-              unifiedStatus = await authVaultService.getStatus(identityId)
-            } catch (statusError) {
-              logger.error('Auth vault status lookup failed after key login:', statusError)
-              authVaultUnavailable = true
-            }
-          }
-
-          const hasBackup = authVaultUnavailable
-            ? false
-            : unifiedStatus
-              ? (unifiedStatus.hasPasswordAccess || unifiedStatus.passkeyCount > 0)
-              : (encryptedKeyService.isConfigured() ? await encryptedKeyService.hasBackup(identityId) : false)
-          if (!authVaultUnavailable && !hasBackup) {
-            sessionStorage.setItem(scopedKey('yappr_backup_prompt_shown'), 'true')
-            openBackupModal(identityId, target.dpnsUsername || '')
-          }
-        }
-      } else {
-        const username = target.dpnsUsername || identityInput
-        await loginWithPassword(username, credential)
-      }
-
+      await login(target.id, credential)
       onComplete()
     } catch (err) {
-      setErrorWithShake(err instanceof Error ? err.message : 'Failed to login')
+      setErrorWithShake(err instanceof Error ? err.message : 'Failed to sign in')
     } finally {
       setIsLoading(false)
     }
   }
 
-  const canSubmit = (() => {
-    if (isLoading || !credential) return false
+  const canSubmit = !isLoading && isKey && keyValidationStatus === 'valid'
 
-    switch (detectedCredentialType) {
-      case 'key':
-        return keyValidationStatus === 'valid'
-      case 'password':
-        return resolvedIdentity !== null && hasOnchainBackup === true && credential.length >= 16
-      default:
-        return false
-    }
-  })()
-
-  // A resolved identity without a vault password can only sign in with a key.
-  const keyOnly = Boolean(resolvedIdentity) && hasOnchainBackup === false
   const credentialNote = (() => {
     if (keyIdentity && keyValidationStatus === 'valid') {
       return `Signing in as ${keyIdentity.dpnsUsername ?? keyIdentity.id}.`
     }
-    if (detectedCredentialType === 'password' && !typedIdentity) {
-      return 'Enter your Dash username to sign in with a password.'
-    }
-    if (detectedCredentialType === 'key' && typedIdentity && !resolvedIdentity && !isLookingUp) {
+    if (keyValidationStatus === 'invalid' && keyError) return keyError
+    if (credential && !isKey) return 'That doesn\'t look like a private key.'
+    if (isKey && typedIdentity && !resolvedIdentity && !isLookingUp) {
       return 'Fix the username, or clear it to sign in with the key alone.'
     }
     return 'Your key stays on this device. Every signature happens locally.'
@@ -383,11 +275,60 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Identity ID / DPNS Input */}
+      <div>
+        <label htmlFor="loginCredential" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Private key
+        </label>
+        <motion.div
+          className="relative"
+          animate={isShaking ? { x: [0, -8, 8, -5, 5, -2, 2, 0] } : { x: 0 }}
+          transition={{ duration: 0.4 }}
+        >
+          <input
+            id="loginCredential"
+            type={showCredential ? 'text' : 'password'}
+            value={credential}
+            onChange={(e) => setCredential(e.target.value)}
+            placeholder="Paste your private key"
+            autoComplete="current-password"
+            spellCheck={false}
+            className={`${inputClass} pr-20 ${credentialBorderClass(Boolean(error), isLoading)}`}
+            required
+          />
+          <div className="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">
+            {isLoading && <Spinner size="sm" className="text-yappr-400" />}
+            {!isLoading && isKey && (
+              <>
+                {keyValidationStatus === 'validating' && <Spinner size="sm" className="text-gray-400" />}
+                {keyValidationStatus === 'valid' && <VerifiedIcon label="Key matches this identity" />}
+                {keyValidationStatus === 'invalid' && (
+                  <RejectedIcon message={keyError ?? 'Invalid private key'} />
+                )}
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowCredential(!showCredential)}
+              aria-label={showCredential ? 'Hide key' : 'Show key'}
+              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              tabIndex={-1}
+            >
+              {showCredential ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+          </div>
+        </motion.div>
+        <p
+          className={`mt-2 text-xs transition-colors ${error || keyValidationStatus === 'invalid' ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}
+          aria-live="polite"
+        >
+          {error ?? credentialNote}
+        </p>
+      </div>
+
       <div>
         <label htmlFor="loginIdentityInput" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
           Dash username or identity ID
-          <span className="font-normal text-gray-500 dark:text-gray-400"> (not needed with a private key)</span>
+          <span className="font-normal text-gray-500 dark:text-gray-400"> (optional)</span>
         </label>
         <div className="relative">
           <input
@@ -408,56 +349,6 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
             {!isLookingUp && lookupError && <RejectedIcon message={lookupError} />}
           </div>
         </div>
-      </div>
-
-      {/* Password or Private Key Input */}
-      <div>
-        <label htmlFor="loginCredential" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {keyOnly ? 'Private key (high or critical)' : 'Private key or password'}
-        </label>
-        <motion.div
-          className="relative"
-          animate={isShaking ? { x: [0, -8, 8, -5, 5, -2, 2, 0] } : { x: 0 }}
-          transition={{ duration: 0.4 }}
-        >
-          <input
-            id="loginCredential"
-            type={showCredential ? 'text' : 'password'}
-            value={credential}
-            onChange={(e) => setCredential(e.target.value)}
-            placeholder={keyOnly ? 'A WIF private key for this identity' : 'A WIF private key, or your vault password'}
-            autoComplete="current-password"
-            className={`${inputClass} pr-20 ${credentialBorderClass(Boolean(error), isLoading)}`}
-            required
-          />
-          <div className="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">
-            {isLoading && <Spinner size="sm" className="text-yappr-400" />}
-            {!isLoading && detectedCredentialType === 'key' && (
-              <>
-                {keyValidationStatus === 'validating' && <Spinner size="sm" className="text-gray-400" />}
-                {keyValidationStatus === 'valid' && <VerifiedIcon label="Key matches this identity" />}
-                {keyValidationStatus === 'invalid' && (
-                  <RejectedIcon message={keyError ?? 'Invalid private key'} />
-                )}
-              </>
-            )}
-            <button
-              type="button"
-              onClick={() => setShowCredential(!showCredential)}
-              aria-label={showCredential ? 'Hide credential' : 'Show credential'}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-              tabIndex={-1}
-            >
-              {showCredential ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-            </button>
-          </div>
-        </motion.div>
-        <p
-          className={`mt-2 text-xs transition-colors ${error ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}
-          aria-live="polite"
-        >
-          {error ?? credentialNote}
-        </p>
       </div>
 
       <Button

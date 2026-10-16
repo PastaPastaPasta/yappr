@@ -1,17 +1,11 @@
 /**
- * AES-256-GCM over Web Crypto, plus the two key derivations the app pairs it
- * with. Every symmetric-encryption path (auth vault, legacy vault, on-chain
- * key backup, direct messages) is built from these.
+ * AES-256-GCM over Web Crypto, plus the key derivations the app pairs it
+ * with. The symmetric-encryption paths (direct messages, the App Connect key
+ * ring) are built from these.
  */
 
 export const AES_GCM_IV_LENGTH = 12
 export const AES_KEY_LENGTH = 256
-
-// Iteration limits for password-derived keys (1M to 1B). Shared by every
-// password-wrapped secret so a stored iteration count is validated the same
-// way regardless of which feature wrote it.
-export const MIN_KDF_ITERATIONS = 1_000_000
-export const MAX_KDF_ITERATIONS = 1_000_000_000
 
 export interface AesGcmSealed {
   ciphertext: Uint8Array
@@ -77,36 +71,6 @@ export async function aesGcmEncrypt(key: CryptoKey, plaintext: Uint8Array): Prom
 /** AES-GCM decrypt of `iv (12) || ciphertext || tag`. */
 export async function aesGcmDecrypt(key: CryptoKey, data: Uint8Array): Promise<Uint8Array> {
   return aesGcmOpen(key, data.slice(AES_GCM_IV_LENGTH), data.slice(0, AES_GCM_IV_LENGTH))
-}
-
-export function assertKdfIterations(iterations: number): void {
-  if (iterations < MIN_KDF_ITERATIONS || iterations > MAX_KDF_ITERATIONS) {
-    throw new Error(`Iterations must be between ${MIN_KDF_ITERATIONS} and ${MAX_KDF_ITERATIONS}`)
-  }
-}
-
-/** PBKDF2-SHA256 from a password and explicit salt to a non-extractable AES-256-GCM key. */
-export async function deriveKeyFromPasswordAndSalt(
-  password: string,
-  salt: Uint8Array,
-  iterations: number,
-  usages: KeyUsage[] = ['encrypt', 'decrypt']
-): Promise<CryptoKey> {
-  assertKdfIterations(iterations)
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    toArrayBuffer(new TextEncoder().encode(password)),
-    'PBKDF2',
-    false,
-    ['deriveBits', 'deriveKey']
-  )
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: toArrayBuffer(salt), iterations, hash: 'SHA-256' },
-    keyMaterial,
-    { name: 'AES-GCM', length: AES_KEY_LENGTH },
-    false,
-    usages
-  )
 }
 
 /**

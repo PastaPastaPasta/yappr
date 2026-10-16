@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import type { AppConnectIdentityKey, AppConnectSession, AppConnectSessionKey } from 'platform-auth'
-import { appConnectHealth, reconcileSessionWithChain, withoutOutdatedEncryptionKeys } from './session-health'
+import { appConnectStanding, reconcileSessionWithChain, withoutOutdatedEncryptionKeys } from './session-health'
 
 const DAY = 24 * 60 * 60_000
 const NOW = 1_000 * DAY
+/** A grant of 100 units of 1e9 credits, so shares of it clear the budget floor. */
+const UNIT = 1_000_000_000n
+const health = (s: AppConnectSession) => appConnectStanding(s, NOW).health
 
 function groupKey(overrides: Partial<AppConnectSessionKey> = {}): AppConnectSessionKey {
   return {
     keyId: 5,
     bounds: { kind: 'contractGroup', groupId: 'group' },
     securityLevel: 1,
-    totalBudget: 100n,
-    remainingBudget: 50n,
+    totalBudget: 100n * UNIT,
+    remainingBudget: 50n * UNIT,
     expiresAt: NOW + 60 * DAY,
     keyRef: 'key-5',
     ...overrides,
@@ -26,22 +29,30 @@ function session(authKeys: AppConnectSessionKey[] = [groupKey()]): AppConnectSes
   }
 }
 
-describe('appConnectHealth', () => {
+describe('appConnectStanding', () => {
   it('is ok with budget and time to spare', () => {
-    expect(appConnectHealth(session(), NOW)).toBe('ok')
+    expect(appConnectStanding(session(), NOW)).toEqual({ health: 'ok', renewSoon: null })
   })
 
-  it('asks to renew soon under 20% of the allowance or 14 days', () => {
-    expect(appConnectHealth(session([groupKey({ remainingBudget: 19n })]), NOW)).toBe('renew-soon')
-    expect(appConnectHealth(session([groupKey({ remainingBudget: 20n })]), NOW)).toBe('ok')
-    expect(appConnectHealth(session([groupKey({ expiresAt: NOW + 13 * DAY })]), NOW)).toBe('renew-soon')
+  it('asks to renew soon under 20% of the allowance or 14 days, and says which', () => {
+    expect(appConnectStanding(session([groupKey({ remainingBudget: 19n * UNIT })]), NOW)).toEqual({ health: 'renew-soon', renewSoon: 'allowance' })
+    expect(health(session([groupKey({ remainingBudget: 20n * UNIT })]))).toBe('ok')
+    expect(appConnectStanding(session([groupKey({ expiresAt: NOW + 13 * DAY })]), NOW)).toEqual({ health: 'renew-soon', renewSoon: 'expiry' })
+  })
+
+  it('asks to renew soon from sign-in when the whole grant is below the floor (#738)', () => {
+    // Before the first budget read the grant counts as unspent: a tiny one is flagged at once, not at the first refused write.
+    expect(appConnectStanding(session([groupKey({ totalBudget: 1000n, remainingBudget: undefined })]), NOW))
+      .toEqual({ health: 'renew-soon', renewSoon: 'allowance' })
+    expect(health(session([groupKey({ remainingBudget: undefined })]))).toBe('ok')
+    expect(health(session([groupKey({ remainingBudget: UNIT - 1n })]))).toBe('renew-soon')
   })
 
   it('requires renewal when spent, expired, disabled or missing', () => {
-    expect(appConnectHealth(session([groupKey({ remainingBudget: 0n })]), NOW)).toBe('renew-required')
-    expect(appConnectHealth(session([groupKey({ expiresAt: NOW + 60_000 })]), NOW)).toBe('renew-required')
-    expect(appConnectHealth(session([groupKey({ disabled: true })]), NOW)).toBe('renew-required')
-    expect(appConnectHealth(session([]), NOW)).toBe('renew-required')
+    expect(health(session([groupKey({ remainingBudget: 0n })]))).toBe('renew-required')
+    expect(health(session([groupKey({ expiresAt: NOW + 60_000 })]))).toBe('renew-required')
+    expect(health(session([groupKey({ disabled: true })]))).toBe('renew-required')
+    expect(health(session([]))).toBe('renew-required')
   })
 })
 
@@ -59,7 +70,7 @@ describe('reconcileSessionWithChain', () => {
 
   it('keeps the cached budget when the read gave none', () => {
     const result = reconcileSessionWithChain(session(), chain(), new Map())
-    if (!result.revoked) expect(result.session.authKeys[0].remainingBudget).toBe(50n)
+    if (!result.revoked) expect(result.session.authKeys[0].remainingBudget).toBe(50n * UNIT)
   })
 
   it('signs out when a key is disabled, gone, or no longer what the session recorded', () => {

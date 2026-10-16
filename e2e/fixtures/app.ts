@@ -2,6 +2,8 @@
  * Shared knowledge about the app under test: where it is mounted and how it
  * namespaces browser storage.
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 /**
  * `baseURL` in playwright.config.ts has no trailing slash, so `page.goto('/x')`
@@ -34,6 +36,20 @@ export function appUrlPattern(path: string): RegExp {
   const pathname = new URL(BASE_URL).pathname
   const full = `${pathname}${path.startsWith('/') ? path : `/${path}`}`
   return new RegExp(full.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+}
+
+/**
+ * Whether the build under test offers wallet sign-in (App Connect). Read from
+ * the env file the build used, like the other build-shape fixtures.
+ */
+export function isAppConnectBuild(): boolean {
+  if (process.env.E2E_LOGIN_PROTOCOL) return process.env.E2E_LOGIN_PROTOCOL === 'app-connect'
+  const file = process.env.E2E_ENV_FILE?.trim() || '.env.testing'
+  try {
+    return /^NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect\s*$/m.test(readFileSync(join(process.cwd(), file), 'utf8'))
+  } catch {
+    return false
+  }
 }
 
 export function scopedKey(key: string): string {

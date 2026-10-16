@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { PlatformAuthController } from './controller'
+import { PlatformAuthController, SupersededSignInError } from './controller'
 import type { AuthSessionSnapshot, AuthUser, PlatformAuthEvent, SecretStore, UsernamePort } from './types'
 
 const IDENTITY_ID = 'victim-identity'
@@ -35,7 +35,6 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
       clearEncryptionKeyType: async () => undefined,
       clearTransferKey: async () => undefined,
       clearLoginKey: async () => undefined,
-      clearAuthVaultDek: async () => undefined,
     } as unknown as SecretStore,
     identity: {
       getIdentity: async (identityId) => ({ id: identityId, balance: 1, publicKeys: [] }),
@@ -180,5 +179,36 @@ describe('PlatformAuthController key-ring login', () => {
   it('refuses an empty identity', async () => {
     const { controller } = setup(async () => null)
     await expect(controller.loginWithKeyRing('')).rejects.toThrow('Identity ID is required')
+  })
+
+  it('stores nothing when its keys stopped being current while it read the identity', async () => {
+    let current = true
+    // The username lookup is the last read before the session is stored: another sign-in lands meanwhile.
+    const { controller, events, storedUser } = setup(async () => {
+      current = false
+      return 'alice.dash'
+    }, 'raw-key.dash')
+    await controller.restoreSession()
+    await vi.waitFor(() => expect(storedUser()?.username).toBe('alice.dash'))
+    current = true
+    const before = storedUser()
+
+    await expect(controller.loginWithKeyRing('ring-identity', { stillCurrent: () => current }))
+      .rejects.toBeInstanceOf(SupersededSignInError)
+
+    expect(storedUser()).toBe(before)
+    expect(controller.getState().user?.identityId).toBe(IDENTITY_ID)
+    expect(controller.getState().error).toBeNull()
+    expect(events.some((event) => event.type === 'login-succeeded')).toBe(false)
+  })
+
+  it('signs in when its keys are still current', async () => {
+    const stillCurrent = vi.fn(() => true)
+    const { controller, storedUser } = setup(async () => 'alice.dash')
+
+    await controller.loginWithKeyRing('ring-identity', { stillCurrent })
+
+    expect(stillCurrent).toHaveBeenCalledTimes(1)
+    expect(storedUser()?.identityId).toBe('ring-identity')
   })
 })
