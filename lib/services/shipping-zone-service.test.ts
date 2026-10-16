@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { get, updateDocument } = vi.hoisted(() => ({ get: vi.fn(), updateDocument: vi.fn() }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get } }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }));
-import { SHIPPING_CHECK_FAILED_MESSAGE, SHIPPING_UNAVAILABLE_MESSAGE, checkShipping, shippingProblem, shippingZoneService } from './shipping-zone-service';
+import { SHIPPING_CHECK_FAILED_MESSAGE, SHIPPING_UNAVAILABLE_MESSAGE, checkShipping, finalShippingCheck, shippingProblem, shippingZoneService } from './shipping-zone-service';
 import type { ShippingAddress, ShippingLine, ShippingZone } from '../../types';
 
 const storeId = '11111111111111111111111111111111';
@@ -154,6 +154,31 @@ describe('per-item zones at checkout (storefront v9, docs/STOREFRONT_V9.md)', ()
       expect(check.quote?.cost).toBe(1500);
       expect(check.problem).toBe("Leather Wallet doesn't ship to Canada. Remove it from your cart to continue.");
       expect(checkShipping(zones, [mug], address('US')).problem).toBeNull();
+    });
+  });
+
+  describe('finalShippingCheck: shipping read again when the order is placed', () => {
+    const format = (cost: number) => `$${(cost / 100).toFixed(2)}`;
+    const quoted = (cost: number) => ({ quote: { shipments: [], unshippable: [], cost }, problem: null });
+
+    it('the same cost proceeds', () => {
+      expect(finalShippingCheck(1500, quoted(1500), format)).toEqual({ kind: 'proceed' });
+      // A store with unreadable zones and only unrestricted lines ships free, as reviewed.
+      expect(finalShippingCheck(0, { quote: null, problem: null }, format)).toEqual({ kind: 'proceed' });
+    });
+
+    it('a changed cost goes back to review, naming the new amount', () => {
+      expect(finalShippingCheck(500, quoted(1500), format)).toEqual({ kind: 'review', message: 'Shipping changed to $15.00. Please review your order.' });
+    });
+
+    it('a line that no longer ships goes back to the shipping step', () => {
+      const blocked = { quote: null, problem: "Leather Wallet doesn't ship to Canada. Remove it from your cart to continue." };
+      expect(finalShippingCheck(500, blocked, format)).toEqual({ kind: 'back', message: blocked.problem });
+    });
+
+    it('shipping that could not be checked goes back too', () => {
+      expect(finalShippingCheck(500, null, format)).toEqual({ kind: 'back', message: SHIPPING_CHECK_FAILED_MESSAGE });
+      expect(finalShippingCheck(0, { quote: null, problem: SHIPPING_CHECK_FAILED_MESSAGE }, format)).toEqual({ kind: 'back', message: SHIPPING_CHECK_FAILED_MESSAGE });
     });
   });
 });

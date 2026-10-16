@@ -125,6 +125,34 @@ describe('Shipping Zones CSV column (storefront v9)', () => {
     ])
   })
 
+  it('names that begin, end or consist of a separator: round-trip when unambiguous, refused when not', async () => {
+    const v9 = await under('v9')
+    /** An item limited to `limit`, exported with `zones` and read back: its errors, ids, and whether the export warned. */
+    const roundTrip = (zones: { id: string; name: string }[], limit: string[]) => {
+      const exported = v9.inventoryToCsv([storeItem({ id: 'w', title: 'Wallet', shippingZoneIds: limit })], 'USD', zones)
+      const [item] = v9.parseInventoryCSV(exported.csv, 'USD', zones).items
+      return { errors: item.errors.length, ids: item.shippingZoneIds, warned: exported.zonesAmbiguous.length > 0 }
+    }
+    const us = { id: 'zone-us', name: 'US' }
+    // ";US" also reads as a blank part, then "US".
+    expect(roundTrip([us, { id: 'zone-lead', name: ';US' }], ['zone-lead'])).toEqual({ errors: 1, ids: undefined, warned: true })
+    expect(roundTrip([{ id: 'zone-lead', name: ';US' }], ['zone-lead'])).toEqual({ errors: 0, ids: ['zone-lead'], warned: false })
+    // "US;" also reads as "US" and a trailing separator.
+    expect(roundTrip([us, { id: 'zone-trail', name: 'US;' }], ['zone-trail'])).toEqual({ errors: 1, ids: undefined, warned: true })
+    expect(roundTrip([{ id: 'zone-trail', name: 'US;' }], ['zone-trail'])).toEqual({ errors: 0, ids: ['zone-trail'], warned: false })
+    // A zone named just ";" is that zone, never "no zones" (which would import unrestricted).
+    expect(roundTrip([us, { id: 'zone-semi', name: ';' }], ['zone-semi'])).toEqual({ errors: 0, ids: ['zone-semi'], warned: false })
+    // Beside another zone it exports "US; ;", which also reads as "US" and two stray separators.
+    expect(roundTrip([us, { id: 'zone-semi', name: ';' }], ['zone-semi', 'zone-us'])).toEqual({ errors: 1, ids: undefined, warned: true })
+  })
+
+  it('refuses a cell that names no zone at all, rather than reading it as every zone', async () => {
+    const v9 = await under('v9')
+    const [item] = v9.parseInventoryCSV('Title,Price,Shipping Zones\nBelt,10.00,; |', 'USD', ZONES).items
+    expect(item.shippingZoneIds).toBeUndefined()
+    expect(item.errors).toEqual(['"Belt": the shipping zones "; |" name no zone. Write the zone names separated by ";", or leave the cell blank to ship under every zone.'])
+  })
+
   it('round-trips a zone stored with surrounding spaces', async () => {
     const v9 = await under('v9')
     const zones = [{ id: 'zone-eu', name: '  Europe ' }, { id: 'zone-dom', name: 'Domestic' }]

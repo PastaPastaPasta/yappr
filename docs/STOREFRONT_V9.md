@@ -72,8 +72,17 @@ test pins this). An unshippable line blocks the shipping step with a message
 naming it: "Leather Wallet doesn't ship to Canada. Remove it from your cart
 to continue." When a line that may use any zone ships nowhere, the store does
 not serve the address at all, and the old "We cannot ship to this address"
-stays. Placing the order checks the current quote again and sends the buyer
-back to the details step if a line no longer ships.
+stays.
+
+Placing the order checks shipping again, fresh: the lines are re-read
+uncached (`getShippingLines`) and the zones queried again (`getByStore` reads
+no cache), then `checkShipping` runs on them, because a seller may limit an
+item or delete a zone while the buyer is on the payment step, which re-runs
+nothing there. `finalShippingCheck(previousCost, fresh)` decides: the same cost
+places the order; a different cost updates the quote and stops with "Shipping
+changed to <amount>. Please review your order.", so the buyer submits again; a
+line that no longer ships, or shipping that cannot be checked, sends the buyer
+back to the details step with that message.
 
 The listings are read fresh for the quote (`cartService.getShippingLines`,
 `storeItemService.getManyOrThrow`), before the zones, and a failed read **blocks** the shipping
@@ -131,7 +140,10 @@ store's are left out. The import reads `Shipping Zones` (also `Shipping Zone`,
 cell is split on `;` and `|`, and every way to group consecutive parts
 (re-joined with their own separators, trimmed) into zone names, exactly else
 ignoring case, is tried, so an older zone name holding `;` or `|` still
-reads. One complete reading is used. More than one (zones "US", "Canada" and
+reads. A blank part is tried both as a stray separator and as the start of a
+name that begins with one (`;US`), so zones `US` and `;US` make `;US` read two
+ways, and a reading of no zones at all (a cell of only separators) never
+counts: a non-empty cell that names no zone is an error, never "every zone". One complete reading is used. More than one (zones "US", "Canada" and
 "US; Canada" make "US; Canada" read two ways) is an error on that product,
 "can be read more than one way…; rename that zone", never a guess, and the
 export warns about such products. With no complete reading, the names no zone

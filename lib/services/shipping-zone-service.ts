@@ -514,6 +514,26 @@ export interface ShippingCheck {
 const isLimited = (line: ShippingLine) => Boolean(line.zoneIds && line.zoneIds.length > 0);
 
 /**
+ * What placing an order does after checking shipping again, fresh:
+ * `proceed`; `review` (the cost differs from what the buyer saw, so the new
+ * quote is shown and the buyer submits again); `back` (a line no longer ships,
+ * or it could not be checked: back to the shipping step).
+ */
+export type FinalShipping = { kind: 'proceed' } | { kind: 'review'; message: string } | { kind: 'back'; message: string };
+
+/**
+ * The final check before an order is placed. `fresh` is `checkShipping` on
+ * freshly read lines and zones, or null when they could not be read;
+ * `previousCost` is the shipping the buyer reviewed.
+ */
+export function finalShippingCheck(previousCost: number, fresh: ShippingCheck | null, formatCost: (cost: number) => string): FinalShipping {
+  if (!fresh) return { kind: 'back', message: SHIPPING_CHECK_FAILED_MESSAGE };
+  if (fresh.problem) return { kind: 'back', message: fresh.problem };
+  const cost = fresh.quote?.cost ?? 0;
+  return cost === previousCost ? { kind: 'proceed' } : { kind: 'review', message: `Shipping changed to ${formatCost(cost)}. Please review your order.` };
+}
+
+/**
  * The shipping step's verdict on `lines` to `address`, given the store's
  * `zones` (null: they could not be read). A store with no zones, or zones that
  * could not be read, has always checked out without a shipping charge; that

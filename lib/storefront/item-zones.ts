@@ -106,6 +106,7 @@ export const ZONE_SEPARATOR = '; '
 /** The zone named `name` (trimmed on both sides): exactly, else ignoring case. */
 function zoneNamed<Zone extends ZoneLike>(zones: readonly Zone[], name: string): Zone | undefined {
   const wanted = name.trim()
+  if (wanted === '') return undefined
   return zones.find((zone) => zone.name.trim() === wanted) ?? zones.find((zone) => zone.name.trim().toLowerCase() === wanted.toLowerCase())
 }
 
@@ -148,28 +149,33 @@ function greedyZoneCell<Zone extends ZoneLike>(cell: string, zones: readonly Zon
 }
 
 /**
- * Every way (at most 2) to read `parts`, from `from` on, as consecutive zone
+ * Up to 3 distinct ways to read `parts`, from `from` on, as consecutive zone
  * names: a name is one or more consecutive parts re-joined with their own
- * separators. A blank part (a trailing or doubled separator) is skipped.
+ * separators. A blank part is either a doubled or trailing separator (skipped)
+ * or the start of a name that itself begins with one (";US"), and both are
+ * tried. Only the all-skipped reading is empty, and there is at most one per
+ * position, so 3 keeps any two non-empty readings there are.
  */
 function zoneReadings<Zone extends ZoneLike>(parts: readonly string[], separators: readonly string[], zones: readonly Zone[], from: number, memo = new Map<number, Zone[][]>()): Zone[][] {
   if (from >= parts.length) return [[]]
   const known = memo.get(from)
   if (known) return known
   const readings: Zone[][] = []
-  if (parts[from].trim() === '') {
-    readings.push(...zoneReadings(parts, separators, zones, from + 1, memo))
-  } else {
-    let name = ''
-    for (let to = from; to < parts.length && readings.length < 2; to++) {
-      name += (to > from ? separators[to - 1] : '') + parts[to]
-      const zone = zoneNamed(zones, name)
-      if (!zone) continue
-      for (const rest of zoneReadings(parts, separators, zones, to + 1, memo)) {
-        readings.push([zone, ...rest])
-        if (readings.length === 2) break
-      }
+  const seen = new Set<string>()
+  const add = (reading: Zone[]) => {
+    const key = reading.map((zone) => zone.id).join('\n')
+    if (readings.length < 3 && !seen.has(key)) {
+      seen.add(key)
+      readings.push(reading)
     }
+  }
+  if (parts[from].trim() === '') for (const rest of zoneReadings(parts, separators, zones, from + 1, memo)) add(rest)
+  let name = ''
+  for (let to = from; to < parts.length && readings.length < 3; to++) {
+    name += (to > from ? separators[to - 1] : '') + parts[to]
+    const zone = zoneNamed(zones, name)
+    if (!zone) continue
+    for (const rest of zoneReadings(parts, separators, zones, to + 1, memo)) add([zone, ...rest])
   }
   memo.set(from, readings)
   return readings
@@ -188,7 +194,8 @@ export function readZoneCell<Zone extends ZoneLike>(cell: string, zones: readonl
   const pieces = cell.split(/([;|])/)
   const parts = pieces.filter((_, index) => index % 2 === 0)
   const separators = pieces.filter((_, index) => index % 2 === 1)
-  const readings = zoneReadings(parts, separators, zones, 0)
+  // A reading of no zones (a cell of only separators) says nothing: it never stands for "every zone".
+  const readings = zoneReadings(parts, separators, zones, 0).filter((reading) => reading.length > 0)
   if (readings.length === 1) return { found: readings[0], unknown: [], ambiguous: false }
   if (readings.length > 1) return { found: [], unknown: [], ambiguous: true }
   return { ...greedyZoneCell(cell, zones), ambiguous: false }

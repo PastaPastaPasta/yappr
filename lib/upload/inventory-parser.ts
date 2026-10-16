@@ -142,6 +142,11 @@ function resolveZones(rows: readonly ParsedInventoryRow[], zones: readonly Impor
     errors.push(`"${title}": the shipping zones "${cells[0]}" can be read more than one way, because a zone name contains ";" or "|". Rename that zone, then import again.`)
     return undefined
   }
+  // A cell with something in it never reads as "every zone".
+  if (found.length === 0 && unknown.length === 0) {
+    errors.push(`"${title}": the shipping zones "${cells[0]}" name no zone. Write the zone names separated by ";", or leave the cell blank to ship under every zone.`)
+    return undefined
+  }
   for (const name of unknown) errors.push(`"${title}": there's no shipping zone named "${name}". Add it under Shipping Zones first, or fix the name.`)
   const ids = [...new Set(found.map((zone) => zone.id))]
   if (ids.length > ITEM_SHIPPING_ZONE_LIMIT) errors.push(`"${title}": a product can be limited to at most ${ITEM_SHIPPING_ZONE_LIMIT} shipping zones (it lists ${ids.length}).`)

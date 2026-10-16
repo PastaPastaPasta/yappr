@@ -21,7 +21,8 @@ import { useSdk } from '@/contexts/sdk-context'
 import { cartService, getCartCurrency } from '@/lib/services/cart-service'
 import { isDigitalLine } from '@/lib/services/digital-delivery-plan'
 import { storeService } from '@/lib/services/store-service'
-import { SHIPPING_CHECK_FAILED_MESSAGE, SHIPPING_UNAVAILABLE_MESSAGE, checkShipping, shippingZoneService, type ShippingCheck } from '@/lib/services/shipping-zone-service'
+import { SHIPPING_CHECK_FAILED_MESSAGE, SHIPPING_UNAVAILABLE_MESSAGE, checkShipping, finalShippingCheck, shippingZoneService, type ShippingCheck } from '@/lib/services/shipping-zone-service'
+import { formatPrice } from '@/lib/utils/format'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { ORDER_PAYMENT_FIELD_LIMITS, OWN_STORE_ORDER_MESSAGE, isOwnStore, orderPaymentBudgetError } from '@/lib/storefront/storefront-contract'
 import { storefrontIsV6 } from '@/lib/constants'
@@ -755,18 +756,41 @@ function CheckoutPage() {
   const handlePlaceOrder = async () => {
     // A quote being recalculated reads as 0 until it settles: never place on it.
     if (!user?.identityId || !store || !selectedPaymentUri || isSubmitting || isCheckingAvailability || isCalculatingShipping || stockError) return
-    // The quote may have changed since the shipping step (a cart or listing refresh re-quotes it).
-    const shippingIssue = includeShipping ? shippingBlocker() : null
-    if (shippingIssue) {
-      showShippingBlocker(shippingIssue)
-      setStep('details')
-      return
-    }
 
     setIsSubmitting(true)
     setError(null)
 
     try {
+      // Shipping again, fresh: the seller may have limited an item or deleted
+      // a zone since the buyer reviewed it, which re-runs nothing here.
+      if (includeShipping && storeId) {
+        let fresh: ShippingCheck | null
+        try {
+          const [lines, zones] = await Promise.all([
+            cartService.getShippingLines(cartItems),
+            shippingZoneService.getByStore(storeId).catch((zoneError: unknown) => {
+              logger.error('Failed to load shipping zones:', zoneError)
+              return null
+            }),
+          ])
+          fresh = checkShipping(zones, lines, shippingAddress)
+        } catch (readError) {
+          logger.error('Failed to read the cart for shipping:', readError)
+          fresh = null
+        }
+        const verdict = finalShippingCheck(shippingCost, fresh, (cost) => formatPrice(cost, currency))
+        if (verdict.kind !== 'proceed') {
+          if (fresh) setShippingCheck(fresh)
+          if (verdict.kind === 'back') {
+            showShippingBlocker(verdict.message)
+            setStep('details')
+          } else {
+            setError(verdict.message)
+          }
+          return
+        }
+      }
+
       // Resolves null (and returns the buyer to review) if any line's fulfillment changed.
       if (!await validateCartAvailability(cartItems)) return
 
