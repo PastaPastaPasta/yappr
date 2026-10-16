@@ -12,13 +12,11 @@ import type { ItemVariants, ShippingZone, StoreItem } from '@/lib/types'
 import { storefrontSupportsItemZones } from '@/lib/constants'
 import { findOption } from './variant-codec'
 import { formatPriceInput } from './variant-editor-model'
-import { itemZones } from './item-zones'
+import { ZONE_SEPARATOR, itemZones, readZoneCell } from './item-zones'
 
 const ITEM_COLUMNS = ['Group', 'Title', 'Description', 'Section', 'Category', 'Subcategory', 'Tags', 'SKU', 'Price', 'Quantity', 'Weight']
 /** v9: the zone names a product ships under, after `Weight`; blank = every zone. */
 const ZONES_COLUMN = 'Shipping Zones'
-/** Between zone names in one cell: names may hold commas, so not a comma. */
-const ZONE_SEPARATOR = '; '
 
 /** A value as one CSV cell, quoted when it needs to be. */
 function csvCell(value: string): string {
@@ -60,6 +58,12 @@ export interface InventoryExport {
    * every zone, so the caller should say so.
    */
   zonesGone: StoreItem[]
+  /**
+   * v9 listings whose cell reads as more than one set of zones, because a
+   * zone name holds ";" or "|" (an upload refuses them): the caller should
+   * say so.
+   */
+  zonesAmbiguous: StoreItem[]
 }
 
 /**
@@ -114,7 +118,13 @@ export function inventoryToCsv(allItems: readonly StoreItem[], defaultCurrency: 
       ])
     }
   }
-  return { csv: toCsv(rows), omitted, zonesGone }
+  const zonesAmbiguous = storefrontSupportsItemZones()
+    ? items.filter((item) => {
+        const [cell] = zoneCells(item, zones)
+        return Boolean(cell) && readZoneCell(cell, zones).ambiguous
+      })
+    : []
+  return { csv: toCsv(rows), omitted, zonesGone, zonesAmbiguous }
 }
 
 /**

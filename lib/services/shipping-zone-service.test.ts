@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { get, updateDocument } = vi.hoisted(() => ({ get: vi.fn(), updateDocument: vi.fn() }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get } }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }));
-import { SHIPPING_UNAVAILABLE_MESSAGE, shippingProblem, shippingZoneService } from './shipping-zone-service';
+import { SHIPPING_CHECK_FAILED_MESSAGE, SHIPPING_UNAVAILABLE_MESSAGE, checkShipping, shippingProblem, shippingZoneService } from './shipping-zone-service';
 import type { ShippingAddress, ShippingLine, ShippingZone } from '../../types';
 
 const storeId = '11111111111111111111111111111111';
@@ -128,5 +128,32 @@ describe('per-item zones at checkout (storefront v9, docs/STOREFRONT_V9.md)', ()
     // An item that may use any zone and still misses: the store does not ship there, whatever else is limited.
     const mixed = shippingZoneService.quoteShipping(local, [line('a'), line('b', { title: 'Belt', zoneIds: ['local'] })], address('CA'));
     expect(shippingProblem(mixed, 'CA')).toBe(SHIPPING_UNAVAILABLE_MESSAGE);
+  });
+
+  describe('checkShipping: a store with no zones, or zones that could not be read', () => {
+    const mug = line('mug', { title: 'Mug' });
+    const wallet = line('wallet', { title: 'Leather Wallet', zoneIds: ['domestic'] });
+
+    it('no zones: unrestricted lines check out free', () => {
+      expect(checkShipping([], [mug], address('CA'))).toEqual({ quote: { shipments: [], unshippable: [], cost: 0 }, problem: null });
+    });
+
+    it('no zones: a line limited to zones ships nowhere, and is named', () => {
+      const check = checkShipping([], [mug, wallet], address('CA'));
+      expect(check.quote?.unshippable).toEqual([wallet]);
+      expect(check.problem).toBe("Leather Wallet doesn't ship to Canada. Remove it from your cart to continue.");
+    });
+
+    it('zones unreadable: unrestricted lines check out free; a limited line waits for them', () => {
+      expect(checkShipping(null, [mug], address('US'))).toEqual({ quote: null, problem: null });
+      expect(checkShipping(null, [mug, wallet], address('US'))).toEqual({ quote: null, problem: SHIPPING_CHECK_FAILED_MESSAGE });
+    });
+
+    it('with zones: the quote and its problem', () => {
+      const check = checkShipping(zones, [mug, wallet], address('CA'));
+      expect(check.quote?.cost).toBe(1500);
+      expect(check.problem).toBe("Leather Wallet doesn't ship to Canada. Remove it from your cart to continue.");
+      expect(checkShipping(zones, [mug], address('US')).problem).toBeNull();
+    });
   });
 });

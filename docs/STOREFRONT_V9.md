@@ -76,14 +76,20 @@ stays. Placing the order checks the current quote again and sends the buyer
 back to the details step if a line no longer ships.
 
 The listings are read fresh for the quote (`cartService.getShippingLines`,
-`storeItemService.getManyOrThrow`), and a failed read **blocks** the shipping
+`storeItemService.getManyOrThrow`), before the zones, and a failed read **blocks** the shipping
 step ("We couldn't check shipping for your cart. Please try again."; trying
 again reads them again): a line priced without its item would ship under
 every zone, so a limited item could slip through on a transient error. An
 item that no longer exists weighs nothing and ships under every zone; the
-cart's availability check refuses it before an order is placed. A store with
-no zones, or zones that failed to load, still checks out without a shipping
-charge.
+cart's availability check refuses it before an order is placed.
+
+A store with no zones, or zones that failed to load, still checks out without
+a shipping charge, but only for lines no zone limits
+(`checkShipping(zones, lines, address)`, the pure verdict both the shipping
+step and order placement use). With no zones, a limited line ships nowhere
+and is named like any other unshippable line; with the zones unreadable, its
+limit cannot be checked, so checkout shows "We couldn't check shipping for
+your cart" and reads again on the next try.
 
 The ship-to restriction is enforced by the app, not by consensus: the
 property has no `refersTo`, and the order's address and lines travel in the
@@ -103,7 +109,15 @@ encrypted order payload, which the contract cannot read.
 - The item editor offers "All of the store's shipping zones" (writes nothing)
   or "Only these zones" with a checkbox per store zone; at least one must be
   ticked. A stored id that is no longer a store zone is dropped from the
-  selection.
+  selection shown, but an edit writes `shippingZoneIds` only when the seller
+  touched these controls (`zoneUpdateFor`): otherwise the key is left out and
+  the stored list stays, stale ids included, so a save never quietly lifts a
+  limit it could not show. A product limited only to zones that no longer
+  exist (or whose zones could not be loaded) gets a notice and a "Ship it
+  under every zone" button, which counts as a change. A create writes the
+  choice.
+- The zone editor refuses `;` and `|` in a new or renamed zone name (the CSV
+  separates names with them).
 - The buyer's item page and the store manager's product list show "Ships to:
   Zone A, Zone B" for a limited item.
 
@@ -113,10 +127,15 @@ On v9 the export has a `Shipping Zones` column right after `Weight`: the
 item's zone NAMES joined with `; ` (a name may contain a comma), the same on
 every row of the item, blank for every zone. Ids that are no longer the
 store's are left out. The import reads `Shipping Zones` (also `Shipping Zone`,
-`Zones`, `Ships To`) against the store's zone names: at each position the
-longest name (trimmed) that runs up to a `;`, a `|` or the cell's end is taken,
-exactly, else ignoring case, so a name may itself hold `;` or `|`. Only text
-no name accounts for is split on `;` and `|`, as unknown names. A product takes its first non-empty cell
+`Zones`, `Ships To`) against the store's zone names (`readZoneCell`): the
+cell is split on `;` and `|`, and every way to group consecutive parts
+(re-joined with their own separators, trimmed) into zone names, exactly else
+ignoring case, is tried, so an older zone name holding `;` or `|` still
+reads. One complete reading is used. More than one (zones "US", "Canada" and
+"US; Canada" make "US; Canada" read two ways) is an error on that product,
+"can be read more than one way…; rename that zone", never a guess, and the
+export warns about such products. With no complete reading, the names no zone
+has are reported as unknown. A product takes its first non-empty cell
 (later rows that disagree are a warning); an unknown name or more than 16
 zones is an error on that product. Below v9 the column is not exported and an
 uploaded one is ignored with one file-level warning. An exported file parses

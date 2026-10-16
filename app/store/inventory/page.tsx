@@ -135,7 +135,7 @@ function InventoryPage() {
     }
 
     // One row per combination, in the format the import reads (an upload creates new listings).
-    const { csv, omitted, zonesGone } = inventoryToCsv(items, store?.defaultCurrency || 'USD', zones)
+    const { csv, omitted, zonesGone, zonesAmbiguous } = inventoryToCsv(items, store?.defaultCurrency || 'USD', zones)
     if (omitted.length === items.length) {
       toast.error("These items' options couldn't be read, so there is nothing to export")
       return
@@ -152,6 +152,9 @@ function InventoryPage() {
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
 
+    if (zonesAmbiguous.length > 0) {
+      toast(`${zonesAmbiguous.length} product${zonesAmbiguous.length !== 1 ? 's' : ''} won't upload again as exported: a shipping zone name contains ";" or "|", so ${zonesAmbiguous.length !== 1 ? 'their' : 'its'} zones can be read more than one way. Rename that zone, then export again.`)
+    }
     if (zonesGone.length > 0) {
       toast(`${zonesGone.length} product${zonesGone.length !== 1 ? 's were' : ' was'} limited to shipping zones you've since deleted. ${zonesGone.length !== 1 ? 'They have' : 'It has'} no zones in the file, so uploading it would ship ${zonesGone.length !== 1 ? 'them' : 'it'} under all of your zones.`)
     }

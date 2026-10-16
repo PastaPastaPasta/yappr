@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { itemZones, shipsToLabel, zoneCountriesLabel, zoneDeletionImpact, zoneDeletionMessage } from './item-zones'
+import { itemZones, shipsToLabel, zoneCountriesLabel, zoneDeletionImpact, zoneDeletionMessage, readZoneCell, zoneUpdateFor, zonesStranded } from './item-zones'
 
 const zones = [{ id: 'us', name: 'Domestic' }, { id: 'eu', name: 'Europe' }, { id: 'row', name: 'Rest of World' }]
 
@@ -43,5 +43,40 @@ describe('per-item shipping zones', () => {
     expect(zoneCountriesLabel({})).toBe('All countries')
     expect(zoneCountriesLabel({ countryPattern: 'US|ca' })).toBe('US, CA')
     expect(zoneCountriesLabel({ countryPattern: 'US.IL|US.6' })).toBe('US (IL), US (6)')
+  })
+
+  it('an edit writes the zones only when the seller touched the controls; a create writes the choice', () => {
+    // A stranded limit (no zones, or unreadable ones) shown as "only" with nothing ticked is kept, not cleared.
+    expect(zoneUpdateFor('only', [], { touched: false, editing: true })).toEqual({ kind: 'keep' })
+    expect(zoneUpdateFor('all', [], { touched: false, editing: true })).toEqual({ kind: 'keep' })
+    // "Ship it under every zone" counts as a change.
+    expect(zoneUpdateFor('all', ['us'], { touched: true, editing: true })).toEqual({ kind: 'set', ids: [] })
+    expect(zoneUpdateFor('only', ['us', 'eu'], { touched: true, editing: true })).toEqual({ kind: 'set', ids: ['us', 'eu'] })
+    expect(zoneUpdateFor('only', [], { touched: true, editing: true })).toEqual({ kind: 'noneChosen' })
+    expect(zoneUpdateFor('all', [], { touched: false, editing: false })).toEqual({ kind: 'set', ids: [] })
+    expect(zoneUpdateFor('only', ['us'], { touched: true, editing: false })).toEqual({ kind: 'set', ids: ['us'] })
+  })
+
+  it('sees a stored limit that names none of the current zones', () => {
+    expect(zonesStranded(['gone'], zones)).toBe(true)
+    expect(zonesStranded(['gone'], [])).toBe(true)
+    expect(zonesStranded(['gone', 'eu'], zones)).toBe(false)
+    expect(zonesStranded([], zones)).toBe(false)
+    expect(zonesStranded(['gone'], null)).toBe(false)
+  })
+
+  it('reads a Shipping Zones cell into zones: one reading, several, or none', () => {
+    const store = [{ id: 'us', name: 'US' }, { id: 'ca', name: 'Canada' }, { id: 'na', name: ' US; Canada ' }, { id: 'eu', name: 'EU' }]
+    const ids = (cell: string, zones = store) => {
+      const read = readZoneCell(cell, zones)
+      return { ids: read.found.map((zone) => zone.id), unknown: read.unknown, ambiguous: read.ambiguous }
+    }
+    expect(ids('US; Canada')).toEqual({ ids: [], unknown: [], ambiguous: true })
+    expect(ids('us | eu;')).toEqual({ ids: ['us', 'eu'], unknown: [], ambiguous: false })
+    // Without the separate zones the combined name is the only reading.
+    expect(ids('US; Canada; EU', store.slice(2))).toEqual({ ids: ['na', 'eu'], unknown: [], ambiguous: false })
+    expect(ids('US; Mars')).toEqual({ ids: ['us'], unknown: ['Mars'], ambiguous: false })
+    // Many parts stay quick: the readings are memoized and capped at two.
+    expect(ids(Array.from({ length: 40 }, () => 'US').join(';') + ';Mars').unknown).toEqual(['Mars'])
   })
 })

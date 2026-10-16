@@ -9,6 +9,30 @@ import type { ShippingZone, StoreItem } from '@/lib/types'
 
 type ZoneLike = Pick<ShippingZone, 'id' | 'name'>
 
+/** The item editor's choice: every zone of the store, or only the ticked ones. */
+export type ItemZoneMode = 'all' | 'only'
+
+/**
+ * What an item save does with `shippingZoneIds`: `keep` (the key is left out,
+ * so the stored value stays, stale ids included), `set` (`[]` = every zone),
+ * or `noneChosen` ("only these zones" with none ticked, which is refused). An
+ * edit writes the zones only when the seller touched the controls, so a save
+ * never quietly rewrites a limit it could not show (no zones, or unreadable
+ * ones); a create writes the choice.
+ */
+export type ZoneUpdate = { kind: 'keep' } | { kind: 'set'; ids: string[] } | { kind: 'noneChosen' }
+
+export function zoneUpdateFor(mode: ItemZoneMode, selection: readonly string[], { touched, editing }: { touched: boolean; editing: boolean }): ZoneUpdate {
+  if (editing && !touched) return { kind: 'keep' }
+  if (mode === 'all') return { kind: 'set', ids: [] }
+  return selection.length > 0 ? { kind: 'set', ids: [...selection] } : { kind: 'noneChosen' }
+}
+
+/** Whether a stored limit names none of the store's current zones (`zones`: null while unknown). */
+export function zonesStranded(storedIds: readonly string[], zones: readonly ZoneLike[] | null): boolean {
+  return storedIds.length > 0 && zones !== null && !storedIds.some((id) => zones.some((zone) => zone.id === id))
+}
+
 /**
  * The store's zones `item` is limited to, in the store's order; null when it
  * names none and so ships under every zone. An empty list means it names only
@@ -72,4 +96,100 @@ export function zoneCountriesLabel(zone: Pick<ShippingZone, 'countryPattern'>): 
       return suffix ? `${country.toUpperCase()} (${suffix.toUpperCase()})` : part.toUpperCase()
     })
     .join(', ')
+}
+
+// ---- the inventory CSV's Shipping Zones cell ---------------------------------------
+
+/** Between zone names in one cell: names may hold commas, so not a comma. */
+export const ZONE_SEPARATOR = '; '
+
+/** The zone named `name` (trimmed on both sides): exactly, else ignoring case. */
+function zoneNamed<Zone extends ZoneLike>(zones: readonly Zone[], name: string): Zone | undefined {
+  const wanted = name.trim()
+  return zones.find((zone) => zone.name.trim() === wanted) ?? zones.find((zone) => zone.name.trim().toLowerCase() === wanted.toLowerCase())
+}
+
+/** Whether `text` has nothing from `end` on but spaces up to a separator (";" or "|") or its end. */
+const atZoneBoundary = (text: string, end: number) => /^\s*(?:[;|]|$)/.test(text.slice(end))
+
+/**
+ * A cell no complete reading accounts for, read for its error: at each
+ * position the longest store name that runs up to a separator or the cell's
+ * end (exactly, else ignoring case; names trimmed) is taken, and only text no
+ * name accounts for is split on the separators, as unknown names.
+ */
+function greedyZoneCell<Zone extends ZoneLike>(cell: string, zones: readonly Zone[]): { found: Zone[]; unknown: string[] } {
+  const names = zones
+    .map((zone) => ({ zone, name: zone.name.trim() }))
+    .filter(({ name }) => name !== '')
+    .sort((a, b) => b.name.length - a.name.length)
+  const found: Zone[] = []
+  const unknown: string[] = []
+  let at = 0
+  while (at < cell.length) {
+    const lead = /^[\s;|]*/.exec(cell.slice(at))?.[0].length ?? 0
+    at += lead
+    if (at >= cell.length) break
+    const text = cell.slice(at)
+    const matching = (same: (a: string, b: string) => boolean) =>
+      names.find(({ name }) => same(text.slice(0, name.length), name) && atZoneBoundary(text, name.length))
+    const hit = matching((a, b) => a === b) ?? matching((a, b) => a.toLowerCase() === b.toLowerCase())
+    if (hit) {
+      found.push(hit.zone)
+      at += hit.name.length
+      continue
+    }
+    const separator = text.search(/[;|]/)
+    const token = (separator < 0 ? text : text.slice(0, separator)).trim()
+    if (token) unknown.push(token)
+    at += separator < 0 ? text.length : separator
+  }
+  return { found, unknown }
+}
+
+/**
+ * Every way (at most 2) to read `parts`, from `from` on, as consecutive zone
+ * names: a name is one or more consecutive parts re-joined with their own
+ * separators. A blank part (a trailing or doubled separator) is skipped.
+ */
+function zoneReadings<Zone extends ZoneLike>(parts: readonly string[], separators: readonly string[], zones: readonly Zone[], from: number, memo = new Map<number, Zone[][]>()): Zone[][] {
+  if (from >= parts.length) return [[]]
+  const known = memo.get(from)
+  if (known) return known
+  const readings: Zone[][] = []
+  if (parts[from].trim() === '') {
+    readings.push(...zoneReadings(parts, separators, zones, from + 1, memo))
+  } else {
+    let name = ''
+    for (let to = from; to < parts.length && readings.length < 2; to++) {
+      name += (to > from ? separators[to - 1] : '') + parts[to]
+      const zone = zoneNamed(zones, name)
+      if (!zone) continue
+      for (const rest of zoneReadings(parts, separators, zones, to + 1, memo)) {
+        readings.push([zone, ...rest])
+        if (readings.length === 2) break
+      }
+    }
+  }
+  memo.set(from, readings)
+  return readings
+}
+
+/**
+ * The store zones a `Shipping Zones` cell names. Names are separated by ";"
+ * (the export's) or "|", but an older zone's own name may hold either, so the
+ * cell is split into parts and every way to group consecutive parts into
+ * zone names is tried. One complete reading is the answer; more than one is
+ * `ambiguous` (zones "US", "Canada" and "US; Canada" make "US; Canada" read
+ * two ways), which an import refuses rather than guess; none reports the
+ * names no zone has as `unknown`.
+ */
+export function readZoneCell<Zone extends ZoneLike>(cell: string, zones: readonly Zone[]): { found: Zone[]; unknown: string[]; ambiguous: boolean } {
+  const pieces = cell.split(/([;|])/)
+  const parts = pieces.filter((_, index) => index % 2 === 0)
+  const separators = pieces.filter((_, index) => index % 2 === 1)
+  const readings = zoneReadings(parts, separators, zones, 0)
+  if (readings.length === 1) return { found: readings[0], unknown: [], ambiguous: false }
+  if (readings.length > 1) return { found: [], unknown: [], ambiguous: true }
+  return { ...greedyZoneCell(cell, zones), ambiguous: false }
 }

@@ -38,7 +38,8 @@ import { itemImageLimit, itemStockCap, storefrontCreateFeeCredits } from '@/lib/
 import { clampImages, emptyVariants, variantProblems } from '@/lib/storefront/variant-codec'
 import { convertPrices, defaultCombinationPrice, parseCountInput, parsePriceInput, shiftImagesAfterRemoval, tidyNames } from '@/lib/storefront/variant-editor-model'
 import { VariantEditor } from '@/components/store/variant-editor'
-import { ItemShippingZones, type ItemZoneMode } from '@/components/store/item-shipping-zones'
+import { ItemShippingZones } from '@/components/store/item-shipping-zones'
+import { zoneUpdateFor, zonesStranded, type ItemZoneMode } from '@/lib/storefront/item-zones'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
@@ -107,6 +108,17 @@ function AddItemPage() {
   const [zonesLoadFailed, setZonesLoadFailed] = useState(false)
   const [zoneMode, setZoneMode] = useState<ItemZoneMode>('all')
   const [selectedZoneIds, setSelectedZoneIds] = useState<string[]>([])
+  /** The zones the item was read with: an edit that does not touch the controls keeps them as stored. */
+  const [storedZoneIds, setStoredZoneIds] = useState<string[]>([])
+  const [zonesTouched, setZonesTouched] = useState(false)
+  const changeZoneMode = useCallback((mode: ItemZoneMode) => {
+    setZoneMode(mode)
+    setZonesTouched(true)
+  }, [])
+  const changeSelectedZones = useCallback((ids: string[]) => {
+    setSelectedZoneIds(ids)
+    setZonesTouched(true)
+  }, [])
 
   const [isLoading, setIsLoading] = useState(isEditMode || !!storeId)
   const [title, setTitle] = useState('')
@@ -210,6 +222,8 @@ function AddItemPage() {
         setFulfillment(item.fulfillment === 'digital' ? 'digital' : 'shipped')
         setZoneMode(item.shippingZoneIds ? 'only' : 'all')
         setSelectedZoneIds(item.shippingZoneIds ?? [])
+        setStoredZoneIds(item.shippingZoneIds ?? [])
+        setZonesTouched(false)
 
         // Convert price from smallest unit to display value
         if (item.basePrice !== undefined) {
@@ -393,12 +407,13 @@ function AddItemPage() {
       return
     }
 
-    // The zones are written only once the store's are known (a failed read keeps
-    // the stored ones), and never for a digital product. None ticked is not
-    // "all": the seller must choose, or switch back to every zone.
-    const writesZones = supportsItemZones && !isDigital && storeZones !== null
-    const limitToZones = writesZones && storeZones.length > 0 && zoneMode === 'only'
-    if (limitToZones && selectedZoneIds.length === 0) {
+    // An edit writes the zones only if the seller changed them (a limit it
+    // could not show stays as stored); never for a digital product. None
+    // ticked is not "all": the seller must choose, or switch back to every zone.
+    const zoneUpdate = supportsItemZones && !isDigital
+      ? zoneUpdateFor(zoneMode, selectedZoneIds, { touched: zonesTouched, editing: Boolean(editingItemId || pendingItemId) })
+      : { kind: 'keep' as const }
+    if (zoneUpdate.kind === 'noneChosen') {
       setError("Choose at least one shipping zone, or let this product ship under all of the store's zones.")
       return
     }
@@ -435,7 +450,7 @@ function AddItemPage() {
         // Only named on v6, which is the first cut that has the property.
         ...(supportsDigital ? { fulfillment } : {}),
         // v9: an empty list stores nothing, so the product ships under every zone.
-        ...(writesZones ? { shippingZoneIds: limitToZones ? selectedZoneIds : [] } : {})
+        ...(zoneUpdate.kind === 'set' ? { shippingZoneIds: zoneUpdate.ids } : {})
       }
 
       // An EDIT must use the item's own store, never the URL's: v2 freezes
@@ -869,11 +884,15 @@ function AddItemPage() {
                 zones={storeZones}
                 loadFailed={zonesLoadFailed}
                 mode={zoneMode}
-                onModeChange={setZoneMode}
+                onModeChange={changeZoneMode}
                 selected={selectedZoneIds}
-                onSelectedChange={setSelectedZoneIds}
+                onSelectedChange={changeSelectedZones}
                 manageHref={`/store/manage?id=${loadedStoreId ?? storeId ?? ''}`}
                 editing={Boolean(editingItemId || pendingItemId)}
+                // Limited, and none of its zones can be shown: say so, and offer to lift the limit.
+                stranded={!zonesTouched && (zonesStranded(storedZoneIds, storeZones) || (zonesLoadFailed && storedZoneIds.length > 0))}
+                onShipEverywhere={() => changeZoneMode('all')}
+                limitLifted={zonesTouched && zoneMode === 'all' && storedZoneIds.length > 0}
                 disabled={isSubmitting}
               />
             )}

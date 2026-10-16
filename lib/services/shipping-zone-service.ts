@@ -502,6 +502,33 @@ function listNames(names: readonly string[]): string {
 
 /** What checkout tells a buyer when nothing in the cart can ship to the address. */
 export const SHIPPING_UNAVAILABLE_MESSAGE = 'We cannot ship to this address. Please check your shipping address.';
+/** The listings, or the zones a limited item needs, could not be read: the restriction cannot be checked, so checkout waits. */
+export const SHIPPING_CHECK_FAILED_MESSAGE = "We couldn't check shipping for your cart. Please try again.";
+
+/** Checkout's shipping for a cart: its quote (null: unpriced, free) and why it cannot go on (null: it can). */
+export interface ShippingCheck {
+  quote: ShippingQuote | null;
+  problem: string | null;
+}
+
+const isLimited = (line: ShippingLine) => Boolean(line.zoneIds && line.zoneIds.length > 0);
+
+/**
+ * The shipping step's verdict on `lines` to `address`, given the store's
+ * `zones` (null: they could not be read). A store with no zones, or zones that
+ * could not be read, has always checked out without a shipping charge; that
+ * holds only for lines that may ship under any zone. With no zones, a line
+ * limited to some ships nowhere; with zones unreadable, its limit cannot be
+ * checked, so checkout waits for them.
+ */
+export function checkShipping(zones: ShippingZone[] | null, lines: readonly ShippingLine[], address: ShippingAddress): ShippingCheck {
+  const limited = lines.some(isLimited);
+  if (zones === null) return { quote: null, problem: limited ? SHIPPING_CHECK_FAILED_MESSAGE : null };
+  const quote = zones.length > 0
+    ? shippingZoneService.quoteShipping(zones, lines, address)
+    : { shipments: [], unshippable: lines.filter(isLimited), cost: 0 };
+  return { quote, problem: shippingProblem(quote, address.country) };
+}
 
 /**
  * Why `quote` cannot be checked out to `country`, or null when every line

@@ -109,6 +109,22 @@ describe('Shipping Zones CSV column (storefront v9)', () => {
     expect(parsed('USA').errors).toEqual(['"Belt": there\'s no shipping zone named "USA". Add it under Shipping Zones first, or fix the name.'])
   })
 
+  it('refuses, rather than guesses, a cell that reads as more than one set of zones', async () => {
+    const v9 = await under('v9')
+    const zones = [{ id: 'zone-us', name: 'US' }, { id: 'zone-ca', name: 'Canada' }, { id: 'zone-both', name: 'US; Canada' }]
+    const separate = storeItem({ id: 'w', title: 'Wallet', shippingZoneIds: ['zone-us', 'zone-ca'] })
+    const combined = storeItem({ id: 'b', title: 'Belt', shippingZoneIds: ['zone-both'] })
+    const exported = v9.inventoryToCsv([separate, combined, mug], 'USD', zones)
+    // The export warns about both; the mug names no zones.
+    expect(exported.zonesAmbiguous.map((item) => item.id)).toEqual(['w', 'b'])
+    const result = v9.parseInventoryCSV(exported.csv, 'USD', zones)
+    expect(result.items.map((item) => [item.errors, item.shippingZoneIds])).toEqual([
+      [['"Wallet": the shipping zones "US; Canada" can be read more than one way, because a zone name contains ";" or "|". Rename that zone, then import again.'], undefined],
+      [['"Belt": the shipping zones "US; Canada" can be read more than one way, because a zone name contains ";" or "|". Rename that zone, then import again.'], undefined],
+      [[], undefined],
+    ])
+  })
+
   it('round-trips a zone stored with surrounding spaces', async () => {
     const v9 = await under('v9')
     const zones = [{ id: 'zone-eu', name: '  Europe ' }, { id: 'zone-dom', name: 'Domestic' }]

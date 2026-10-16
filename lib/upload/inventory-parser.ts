@@ -17,6 +17,7 @@ import { toSmallestUnit } from '../utils/format'
 import { LIST_LIMITS } from '../typed-array-codecs'
 import { ITEM_SHIPPING_ZONE_LIMIT, LEGACY_STRING_LIST_CAPS, VARIANT_LIMITS, itemImageLimit, itemStockCap } from '../storefront/storefront-contract'
 import { variantProblems, variantsFromRows, type VariantRow } from '../storefront/variant-codec'
+import { readZoneCell } from '../storefront/item-zones'
 
 /** The single-valued columns the parser reads, by internal name. */
 type Column =
@@ -119,63 +120,28 @@ export interface ImportZone {
   name: string
 }
 
-/** Whether `text` has nothing from `end` on but spaces up to a separator (";" or "|") or its end. */
-const atZoneBoundary = (text: string, end: number) => /^\s*(?:[;|]|$)/.test(text.slice(end))
-
-/**
- * The store zones a `Shipping Zones` cell names, and what it names that is no
- * zone. Names are separated by ";" (the export's) or "|", but a zone's own
- * name may hold either, so the cell is read against the store's names first:
- * at each position the longest name that matches up to a separator or the
- * cell's end (exactly, else ignoring case; names trimmed) is taken. Only text
- * no name accounts for is split on the separators, as unknown names.
- */
-function parseZoneCell(cell: string, zones: readonly ImportZone[]): { found: ImportZone[]; unknown: string[] } {
-  const names = zones
-    .map((zone) => ({ zone, name: zone.name.trim() }))
-    .filter(({ name }) => name !== '')
-    .sort((a, b) => b.name.length - a.name.length)
-  const found: ImportZone[] = []
-  const unknown: string[] = []
-  let at = 0
-  while (at < cell.length) {
-    const lead = /^[\s;|]*/.exec(cell.slice(at))?.[0].length ?? 0
-    at += lead
-    if (at >= cell.length) break
-    const text = cell.slice(at)
-    const matching = (same: (a: string, b: string) => boolean) =>
-      names.find(({ name }) => same(text.slice(0, name.length), name) && atZoneBoundary(text, name.length))
-    const hit = matching((a, b) => a === b) ?? matching((a, b) => a.toLowerCase() === b.toLowerCase())
-    if (hit) {
-      found.push(hit.zone)
-      at += hit.name.length
-      continue
-    }
-    const separator = text.search(/[;|]/)
-    const token = (separator < 0 ? text : text.slice(0, separator)).trim()
-    if (token) unknown.push(token)
-    at += separator < 0 ? text.length : separator
-  }
-  return { found, unknown }
-}
-
 /**
  * The ids of the zones a product's `Shipping Zones` cells name (the first
  * non-empty cell of its rows), matched to the store's zones by name
- * ({@link parseZoneCell}). Undefined when no row names any, so the product
- * ships under every zone. Unknown names and too many zones are product errors.
+ * (`readZoneCell`). Undefined when no row names any, so the product ships
+ * under every zone. Unknown names, a cell that reads more than one way and
+ * too many zones are product errors.
  */
 function resolveZones(rows: readonly ParsedInventoryRow[], zones: readonly ImportZone[], title: string, errors: string[], warnings: string[]): string[] | undefined {
   const cells = rows.map((row) => row.shippingZones).filter((cell): cell is string => Boolean(cell))
   if (cells.length === 0) return undefined
   const key = (cell: string) => {
-    const { found, unknown } = parseZoneCell(cell, zones)
+    const { found, unknown } = readZoneCell(cell, zones)
     return [...new Set([...found.map((zone) => zone.id), ...unknown.map((name) => `?${name.toLowerCase()}`)])].sort().join('\n')
   }
   if (cells.some((cell) => key(cell) !== key(cells[0]))) {
     warnings.push(`"${title}": its rows list different shipping zones, so the first row's were used.`)
   }
-  const { found, unknown } = parseZoneCell(cells[0], zones)
+  const { found, unknown, ambiguous } = readZoneCell(cells[0], zones)
+  if (ambiguous) {
+    errors.push(`"${title}": the shipping zones "${cells[0]}" can be read more than one way, because a zone name contains ";" or "|". Rename that zone, then import again.`)
+    return undefined
+  }
   for (const name of unknown) errors.push(`"${title}": there's no shipping zone named "${name}". Add it under Shipping Zones first, or fix the name.`)
   const ids = [...new Set(found.map((zone) => zone.id))]
   if (ids.length > ITEM_SHIPPING_ZONE_LIMIT) errors.push(`"${title}": a product can be limited to at most ${ITEM_SHIPPING_ZONE_LIMIT} shipping zones (it lists ${ids.length}).`)
