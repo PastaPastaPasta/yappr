@@ -268,13 +268,16 @@ Rare, manual, never from CI. Everything below runs from the repo root.
    from Node. The same applies after a chain rollback that wipes documents but
    keeps identities.
 
-3. **Register the test contracts** with `scripts/register-app-connect-contracts.mjs`
-   from a test-owned maker (never the production one). Its header lists what
-   testnet requires: `NETWORK=testnet`, `--interim`, `--election-windows`,
-   `--maker-key-file`/`--maker-key-id` (a 0600 key file) and, for `--live`,
-   `--production`. It prints the env lines to paste. The current /testing pair
-   (social and profile, above) predates the App Connect set; the next /testing
-   registration replaces it with the whole set rather than resetting the pair.
+3. **Register the test contracts.** Not available right now. The script that
+   cloned the current /testing pair (social v2 and profile, above) is retired.
+   Its replacement is the App Connect set, registered from a test-owned maker
+   (never the production one) with `scripts/register-app-connect-contracts.mjs`.
+   That set has different contracts (social v16 and the v5+ feature contracts),
+   so `.env.testing` has to move with it: the contract and group ids the
+   publisher prints, and the topology settings that select those contracts
+   (`NEXT_PUBLIC_CONTRACT_TOPOLOGY` and the feature topologies; see
+   `.env.devnet`). Until that migration lands, re-registering /testing with the
+   publisher would pair the app's v2 defaults with v16 contracts.
 
 4. **Update `.env.testing`** with the new contract IDs and identity IDs, and
    commit it.
@@ -333,11 +336,9 @@ NETWORK=testnet node scripts/provision-test-identity.mjs --topup <identityId>
 ## 5. Resetting test state
 
 There is no per-test cleanup (deletes cost credits and flake), so the test
-contracts accumulate documents. To wipe the slate, register a fresh App Connect set from the test maker
-(`scripts/register-app-connect-contracts.mjs`, step 3 of the provisioning
-above). New contracts start empty and the old ones are simply abandoned. Paste the
-printed IDs into `.env.testing` and commit — the next `build:testing` (local and
-deployed) picks them up.
+contracts accumulate documents. Wiping the slate means registering fresh
+contracts, which waits on the App Connect migration described in step 3 of the
+provisioning above. Until then the current /testing contracts cannot be reset.
 
 ### Test content on the public devnet
 
@@ -466,8 +467,8 @@ Verified during implementation; each of these costs hours to rediscover.
 PRODUCTION contract IDs** on the `/testing` deployment, because `.env.testing`
 leaves their overrides commented out and `lib/constants.ts` falls back to
 production. Any e2e coverage of those features would write to production state.
-Register test copies first (`scripts/register-app-connect-contracts.mjs`
-registers the whole set), fill in the corresponding `NEXT_PUBLIC_*_CONTRACT_ID` in
+Register test copies first (the App Connect set, once the migration in
+step 3 of the provisioning runbook lands), fill in the corresponding `NEXT_PUBLIC_*_CONTRACT_ID` in
 `.env.testing`, and only then write the specs.
 
 ### A profile is optional
