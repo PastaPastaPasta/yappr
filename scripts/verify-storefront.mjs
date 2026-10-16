@@ -742,8 +742,14 @@ async function caseS26ItemZones(ctx) {
     const back = ((await battery.fetchDocument('storeItem', item.id))?.toObject?.().shippingZoneIds ?? []).map(normalizeId);
     battery.check('s26b both zone ids read back, in order', JSON.stringify(back) === JSON.stringify(zoneIds), JSON.stringify(back));
   }
-  const refused = (label, ids) => battery.probeCreate(label, ARRAY_OUT_OF_BOUNDS, seller, 'storeItem', zoned(`Bad ${run} ${label.slice(0, 4)}`, ids));
-  await refused('s26c seventeen zone ids are refused (10101 maxItems 16)', Array.from({ length: 17 }, () => randomEntropy()));
+  const refused = (label, ids, pattern = ARRAY_OUT_OF_BOUNDS) => battery.probeCreate(label, pattern, seller, 'storeItem', zoned(`Bad ${run} ${label.slice(0, 4)}`, ids));
+  // Drive's JsonSchemaError quotes the whole value, and with seventeen 32-byte ids the serialized
+  // consensus error outgrows what the SDK unpacks from the gRPC status: it surfaces as the raw
+  // InvalidArgument carrying `serializedError` (sakura beta.6, 2026-10-15) rather than "JsonSchemaError".
+  const OVERSIZED_SCHEMA_REFUSAL = new RegExp(`${ARRAY_OUT_OF_BOUNDS.source}|invalid argument', message: "oWRkYXRhoW9zZXJpYWxpemVkRXJyb3K`, 'i');
+  // The cap itself lands, so seventeen being refused is the cap and not the value's size.
+  await battery.probeCreate('s26c0 sixteen zone ids (the cap) are accepted', null, seller, 'storeItem', zoned(`Cap ${run}`, Array.from({ length: 16 }, () => randomEntropy())));
+  await refused('s26c seventeen zone ids are refused (10101 maxItems 16)', Array.from({ length: 17 }, () => randomEntropy()), OVERSIZED_SCHEMA_REFUSAL);
   await refused('s26d the same zone twice is refused (10101 uniqueItems)', [id32(zoneIds[0]), id32(zoneIds[0])]);
   await refused('s26e an empty list is refused (10101 minItems 1: absent means every zone)', []);
 }
