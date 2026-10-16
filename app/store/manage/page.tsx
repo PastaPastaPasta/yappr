@@ -835,7 +835,7 @@ function StoreManagePage() {
         onClose={() => setDeleteZoneId(null)}
         onConfirm={handleDeleteZone}
         title="Delete Shipping Zone"
-        message={zoneDeletionMessage(deleteZoneId ? zoneDeletionImpact(deleteZoneId, items, zones) : { limited: 0, stranded: 0 })}
+        message={zoneDeletionMessage(deleteZoneId ? zoneDeletionImpact(deleteZoneId, items, zones) : { limited: 0, stranded: 0 }, { productsUnknown: itemsLoadError })}
         confirmText="Delete"
         variant="danger"
         isLoading={isDeleting}

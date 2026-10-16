@@ -12,6 +12,7 @@ import { stateTransitionService } from './state-transition-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '../constants';
 import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeIdentifierList, decodeStringList, encodeIdentifierList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
+import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { ITEM_SHIPPING_ZONE_LIMIT, LEGACY_STRING_LIST_CAPS, itemImageLimit, itemSizeError, itemStockCap } from '../storefront/storefront-contract';
 import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabel, variantOptionPairs, variantProblems, type VariantOptionPairs } from '../storefront/variant-codec';
 import { decodeLegacyVariants, encodeLegacyVariants } from '../storefront/legacy-variants';
@@ -223,6 +224,17 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   }
 
   /**
+   * These items read from Platform (no cache), throwing when a read fails:
+   * for a check that must not pass on a transport error, as `getMany` would
+   * (it drops what it could not read). An id with no document is just absent.
+   */
+  async getManyOrThrow(itemIds: string[]): Promise<StoreItem[]> {
+    const batches = chunk([...new Set(itemIds.filter(Boolean))], MAX_IN_CLAUSE_VALUES);
+    const pages = await Promise.all(batches.map((batch) => this.query({ where: [['$id', 'in', batch]], limit: batch.length })));
+    return pages.flatMap((page) => page.documents);
+  }
+
+  /**
    * Whether a listing created without confirmation (`__createConfirmed ===
    * false`) is on chain yet, polled a few times. False is not proof it never
    * will be: the broadcast may still execute.
@@ -397,7 +409,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (writesTable) documentData.variants = variants && storedVariants(variants, imageUrls);
     if ('fulfillment' in data) documentData.fulfillment = data.fulfillment === 'digital' ? 'digital' : undefined;
     // An empty list (or undefined) clears the field: the item ships under every zone again.
-    if ('shippingZoneIds' in data) documentData.shippingZoneIds = storedZoneIds(data.shippingZoneIds);
+    // Below v9 the key is ignored, so it never clears zones a v9 build stored.
+    if ('shippingZoneIds' in data && storefrontSupportsItemZones()) documentData.shippingZoneIds = storedZoneIds(data.shippingZoneIds);
     // A digital item never ships, so switching to digital drops its zones.
     if (('fulfillment' in data ? data.fulfillment : existing.fulfillment) === 'digital') documentData.shippingZoneIds = undefined;
 

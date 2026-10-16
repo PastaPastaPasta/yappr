@@ -322,12 +322,17 @@ class CartService {
    * The lines of `items` that ship, as checkout prices them
    * (`shippingZoneService.quoteShipping`): each line's weight (its variant's,
    * else its item's, times the quantity), its subtotal and the zones its item
-   * is limited to. Digital lines are left out. A line whose item cannot be
-   * read weighs nothing and ships under every zone.
+   * is limited to. Digital lines are left out. Read fresh, and THROWS when the
+   * read fails: a line priced without its item would ship under every zone, so
+   * an item limited to some could slip through on a transient error. An item
+   * that no longer exists weighs nothing and ships under every zone (the
+   * availability check refuses it before an order is placed).
    */
   async getShippingLines(items: readonly CartItem[]): Promise<ShippingLine[]> {
-    return Promise.all(shippableItems(items).map(async (cartItem) => {
-      const item = await storeItemService.get(cartItem.itemId);
+    const lines = shippableItems(items);
+    const byId = new Map((await storeItemService.getManyOrThrow(lines.map((line) => line.itemId))).map((item) => [item.id, item]));
+    return lines.map((cartItem) => {
+      const item = byId.get(cartItem.itemId);
       const weight = item ? storeItemService.getWeight(item, cartItem.variantId) : undefined;
       return {
         itemId: cartItem.itemId,
@@ -336,7 +341,7 @@ class CartService {
         weight: (weight ?? 0) * cartItem.quantity,
         subtotal: cartItem.unitPrice * cartItem.quantity
       };
-    }));
+    });
   }
 
   /**

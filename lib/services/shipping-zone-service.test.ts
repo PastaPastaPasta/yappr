@@ -80,14 +80,24 @@ describe('per-item zones at checkout (storefront v9, docs/STOREFRONT_V9.md)', ()
     expect(shippingZoneService.quoteShipping(zones, lines, address('DE')).cost).toBe(0);
   });
 
-  it('prices each zone\'s lines as their own shipment', () => {
-    const lines = [line('anywhere', { weight: 2000, subtotal: 3000 }), line('worldwideOnly', { zoneIds: ['worldwide'], weight: 1000, subtotal: 2000 })];
+  it('prices each zone\'s lines as their own shipment when no zone covers them all', () => {
+    const lines = [line('domesticOnly', { zoneIds: ['domestic'], weight: 2000, subtotal: 3000 }), line('worldwideOnly', { zoneIds: ['worldwide'], weight: 1000, subtotal: 2000 })];
     const quote = shippingZoneService.quoteShipping(zones, lines, address('US'));
     expect(quote.shipments.map((shipment) => [shipment.zone.id, shipment.lines.map((carried) => carried.itemId), shipment.cost])).toEqual([
-      ['domestic', ['anywhere'], 500 + 2 * 200],
+      ['domestic', ['domesticOnly'], 500 + 2 * 200],
       ['worldwide', ['worldwideOnly'], 300],
     ]);
     expect(quote.cost).toBe(900 + 300);
+  });
+
+  it('prefers one shipment: an unrestricted line joins the zone a limited line needs', () => {
+    const local = zone('local', { countryPattern: 'US', flatRate: 500, priority: 1 });
+    const northAmerica = zone('na', { countryPattern: 'US|CA|MX', flatRate: 1500, priority: 2 });
+    const quote = shippingZoneService.quoteShipping([local, northAmerica], [line('mug'), line('belt', { zoneIds: ['na'] })], address('US'));
+    expect(quote.shipments.map((shipment) => [shipment.zone.id, shipment.lines.map((carried) => carried.itemId)])).toEqual([['na', ['mug', 'belt']]]);
+    expect(quote.cost).toBe(1500);
+    // Alone, the mug still takes its own highest-priority zone.
+    expect(shippingZoneService.quoteShipping([local, northAmerica], [line('mug')], address('US')).cost).toBe(500);
   });
 
   it('a line limited to zones that miss the address ships nowhere', () => {

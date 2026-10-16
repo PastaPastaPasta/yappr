@@ -32,6 +32,7 @@ describe('per-item shipping zones', () => {
 
   it('warns in the delete confirmation', () => {
     expect(zoneDeletionMessage({ limited: 0, stranded: 0 })).not.toMatch(/limited/)
+    expect(zoneDeletionMessage({ limited: 0, stranded: 0 }, { productsUnknown: true })).toMatch(/cannot be undone\. Products limited to this zone may stop shipping\.$/)
     expect(zoneDeletionMessage({ limited: 2, stranded: 0 })).toMatch(/2 products are limited to this zone\. They keep shipping under their other zones/)
     expect(zoneDeletionMessage({ limited: 1, stranded: 0 })).toMatch(/1 product is limited to this zone\. It keeps shipping under its other zones/)
     expect(zoneDeletionMessage({ limited: 1, stranded: 1 })).toMatch(/1 product is limited to this zone\. It ships under no other zone, so it will stop shipping/)

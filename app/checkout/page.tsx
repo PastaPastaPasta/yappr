@@ -31,9 +31,11 @@ import { parseStorePolicies } from '@/lib/utils/policies'
 import { savedAddressService } from '@/lib/services/saved-address-service'
 import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
-import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingQuote, StorePolicy, SavedAddress } from '@/lib/types'
+import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingLine, ShippingQuote, ShippingZone, StorePolicy, SavedAddress } from '@/lib/types'
 import { normalizeBytes } from '@/lib/bytes'
 
+/** The cart's listings could not be read to price shipping: never priced as if every item shipped everywhere. */
+const SHIPPING_CHECK_FAILED_MESSAGE = "We couldn't check shipping for your cart. Please try again."
 const FULFILLMENT_CHANGED_MESSAGE = 'The seller changed how one of these products is delivered (shipped or digital). Review your order and shipping again before continuing.'
 
 /**
@@ -138,6 +140,10 @@ function CheckoutPage() {
   /** The shipping problem last shown, cleared again when the address or cart changes. */
   const shippingErrorRef = useRef<string | null>(null)
   const [zonesLoadFailed, setZonesLoadFailed] = useState(false)
+  // The listings could not be read for the quote: unlike zonesLoadFailed, this blocks.
+  const [shippingCheckFailed, setShippingCheckFailed] = useState(false)
+  /** Bumped to read the listings again after a failed shipping check. */
+  const [shippingRetry, setShippingRetry] = useState(0)
   const [hasNoZones, setHasNoZones] = useState(false)
   const [isCalculatingShipping, setIsCalculatingShipping] = useState(false)
 
@@ -405,6 +411,7 @@ function CheckoutPage() {
       setShippingQuote(null)
       setHasNoZones(false)
       setZonesLoadFailed(false)
+      setShippingCheckFailed(false)
       setShowSavePrompt(false)
       return
     }
@@ -420,11 +427,21 @@ function CheckoutPage() {
       setIsCalculatingShipping(true)
       try {
         setZonesLoadFailed(false)
+        setShippingCheckFailed(false)
         setShippingQuote(null)
         setHasNoZones(false)
 
         // First try to get zones to check if store has any configured
-        const zones = await shippingZoneService.getByStore(storeId)
+        let zones: ShippingZone[]
+        try {
+          zones = await shippingZoneService.getByStore(storeId)
+        } catch (error) {
+          if (cancelled) return
+          logger.error('Failed to load shipping zones:', error)
+          // If zones failed to load, allow checkout anyway
+          setZonesLoadFailed(true)
+          return
+        }
         if (cancelled) return
 
         if (zones.length === 0) {
@@ -433,19 +450,21 @@ function CheckoutPage() {
           return
         }
 
-        setHasNoZones(false)
         // Rates apply to what ships: digital lines add neither weight nor subtotal.
-        const lines = await cartService.getShippingLines(cartItems)
+        // A failed read of the listings blocks: an item limited to some zones must not pass as unrestricted.
+        let lines: ShippingLine[]
+        try {
+          lines = await cartService.getShippingLines(cartItems)
+        } catch (error) {
+          if (cancelled) return
+          logger.error('Failed to read the cart for shipping:', error)
+          setShippingCheckFailed(true)
+          return
+        }
         if (cancelled) return
 
-        const quote = shippingZoneService.quoteShipping(zones, lines, shippingAddress)
-        setShippingQuote(quote)
-      } catch (error) {
-        if (cancelled) return
-        logger.error('Failed to calculate shipping:', error)
-        // If zones failed to load, allow checkout anyway
-        setZonesLoadFailed(true)
-        setShippingQuote(null)
+        setShippingQuote(shippingZoneService.quoteShipping(zones, lines, shippingAddress))
+        setError(current => current === SHIPPING_CHECK_FAILED_MESSAGE ? null : current)
       } finally {
         if (!cancelled) setIsCalculatingShipping(false)
       }
@@ -453,7 +472,7 @@ function CheckoutPage() {
 
     calculateShipping().catch((error) => logger.error(error))
     return () => { cancelled = true }
-  }, [includeShipping, sdkReady, storeId, shippingAddress, cartItems])
+  }, [includeShipping, sdkReady, storeId, shippingAddress, cartItems, shippingRetry])
 
   const subtotal = useMemo(() => {
     return cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
@@ -670,16 +689,30 @@ function CheckoutPage() {
     }
   }
 
+  /**
+   * Why the cart cannot ship to the address as quoted, or null. Checkout is
+   * allowed when every line ships, the zones failed to load, or the store has
+   * none; a failed read of the listings blocks.
+   */
+  const shippingBlocker = (): string | null => {
+    if (zonesLoadFailed || hasNoZones) return null
+    if (shippingCheckFailed) return SHIPPING_CHECK_FAILED_MESSAGE
+    return shippingQuote ? shippingProblem(shippingQuote, shippingAddress.country) : SHIPPING_UNAVAILABLE_MESSAGE
+  }
+
+  /** Show `problem`; a failed check is read again (its message stays until that succeeds). */
+  const showShippingBlocker = (problem: string) => {
+    if (shippingCheckFailed) setShippingRetry(attempt => attempt + 1)
+    else shippingErrorRef.current = problem
+    setError(problem)
+  }
+
   const handleShippingValidation = () => {
     if (isCalculatingShipping) return
-    // Allow checkout if: every line ships, zones failed to load, or store has no zones
-    if (!zonesLoadFailed && !hasNoZones) {
-      const problem = shippingQuote ? shippingProblem(shippingQuote, shippingAddress.country) : SHIPPING_UNAVAILABLE_MESSAGE
-      if (problem) {
-        shippingErrorRef.current = problem
-        setError(problem)
-        return
-      }
+    const problem = shippingBlocker()
+    if (problem) {
+      showShippingBlocker(problem)
+      return
     }
     setError(null)
     setStep('policies')
@@ -742,6 +775,13 @@ function CheckoutPage() {
   const handlePlaceOrder = async () => {
     // A quote being recalculated reads as 0 until it settles: never place on it.
     if (!user?.identityId || !store || !selectedPaymentUri || isSubmitting || isCheckingAvailability || isCalculatingShipping || stockError) return
+    // The quote may have changed since the shipping step (a cart or listing refresh re-quotes it).
+    const shippingIssue = includeShipping ? shippingBlocker() : null
+    if (shippingIssue) {
+      showShippingBlocker(shippingIssue)
+      setStep('details')
+      return
+    }
 
     setIsSubmitting(true)
     setError(null)

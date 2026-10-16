@@ -144,7 +144,7 @@ describe('cart inventory', () => {
 
   it('weighs each shipped line by its variant, else by its item', async () => {
     const item = product({ weight: 500, basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Single', price: 100 }, { name: '4-pack', price: 353, weight: 1800 }]) })
-    vi.spyOn(storeItemService, 'get').mockResolvedValue(item)
+    vi.spyOn(storeItemService, 'getManyOrThrow').mockResolvedValue([item])
     cartService.addStoreItem(item, '1', 2)
     cartService.addStoreItem(item, '2')
     const lines = await cartService.getShippingLines(cartService.getItems())
@@ -153,17 +153,23 @@ describe('cart inventory', () => {
 
   it('prices only shipped lines, each with the zones its item is limited to', async () => {
     const zones = ['zone-a']
-    vi.spyOn(storeItemService, 'get').mockImplementation(async (id) => (id === 'limited' ? product({ id, weight: 90, shippingZoneIds: zones }) : null))
+    const read = vi.spyOn(storeItemService, 'getManyOrThrow').mockResolvedValue([product({ id: 'limited', weight: 90, shippingZoneIds: zones })])
     const lines = await cartService.getShippingLines([
       cartItem({ itemId: 'limited', title: 'Leather Wallet', quantity: 1 }),
       cartItem({ itemId: 'ebook', fulfillment: 'digital' }),
       cartItem({ itemId: 'gone', quantity: 3 }),
     ])
+    expect(read).toHaveBeenCalledWith(['limited', 'gone'])
     expect(lines).toEqual([
       { itemId: 'limited', title: 'Leather Wallet', zoneIds: zones, weight: 90, subtotal: 100 },
-      // Unreadable: weighs nothing and ships under every zone.
+      // No longer exists: weighs nothing and ships under every zone (the availability check refuses it).
       { itemId: 'gone', title: 'Limited item', zoneIds: undefined, weight: 0, subtotal: 300 },
     ])
+  })
+
+  it('fails closed: a read that fails throws instead of pricing the line under every zone', async () => {
+    vi.spyOn(storeItemService, 'getManyOrThrow').mockRejectedValue(new Error('offline'))
+    await expect(cartService.getShippingLines([cartItem({ itemId: 'limited' })])).rejects.toThrow('offline')
   })
 
   it('returns a maximum for a cart already at available stock', async () => {

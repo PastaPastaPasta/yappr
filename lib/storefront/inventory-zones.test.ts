@@ -94,6 +94,29 @@ describe('Shipping Zones CSV column (storefront v9)', () => {
     expect(result.items.map((item) => [item.errors, item.shippingZoneIds])).toEqual([[[], ['zone-na']]])
   })
 
+  it('reads names holding ";" or "|" against the store\'s zones, and only leftover text as unknown names', async () => {
+    const v9 = await under('v9')
+    const zones = [{ id: 'zone-na', name: 'US; Canada' }, { id: 'zone-eu', name: 'EU' }, { id: 'zone-us', name: 'US' }, { id: 'zone-pipe', name: 'A|B' }]
+    const both = storeItem({ id: 'w', title: 'Wallet', shippingZoneIds: ['zone-na', 'zone-eu'] })
+    const result = v9.parseInventoryCSV(v9.inventoryToCsv([both], 'USD', zones).csv, 'USD', zones)
+    expect(result.items.map((item) => [item.errors, item.shippingZoneIds])).toEqual([[[], ['zone-na', 'zone-eu']]])
+    const parsed = (cell: string) => v9.parseInventoryCSV(`Title,Price,Shipping Zones\nBelt,10.00,"${cell}"`, 'USD', zones).items[0]
+    // The longest name that ends at a separator wins; "US" alone is still "US".
+    expect(parsed('us; canada | US | a|b').shippingZoneIds).toEqual(['zone-na', 'zone-us', 'zone-pipe'])
+    expect(parsed('US; Mars; EU').errors).toEqual(['"Belt": there\'s no shipping zone named "Mars". Add it under Shipping Zones first, or fix the name.'])
+    expect(parsed('US; Mars; EU').shippingZoneIds).toEqual(['zone-us', 'zone-eu'])
+    // "USA" is not "US" followed by more text.
+    expect(parsed('USA').errors).toEqual(['"Belt": there\'s no shipping zone named "USA". Add it under Shipping Zones first, or fix the name.'])
+  })
+
+  it('round-trips a zone stored with surrounding spaces', async () => {
+    const v9 = await under('v9')
+    const zones = [{ id: 'zone-eu', name: '  Europe ' }, { id: 'zone-dom', name: 'Domestic' }]
+    const item = storeItem({ id: 'w', title: 'Wallet', shippingZoneIds: ['zone-dom', 'zone-eu'] })
+    const result = v9.parseInventoryCSV(v9.inventoryToCsv([item], 'USD', zones).csv, 'USD', zones)
+    expect(result.items.map((parsed) => [parsed.errors, parsed.shippingZoneIds])).toEqual([[[], ['zone-eu', 'zone-dom']]])
+  })
+
   it('holds only a file that has the column when the store\'s zones could not be read', async () => {
     const v9 = await under('v9')
     const withColumn = v9.parseInventoryCSV('Title,Price,Shipping Zones\nBelt,10.00,Domestic', 'USD', null)

@@ -445,6 +445,15 @@ describe('per-item shipping zones (storefront v9, docs/STOREFRONT_V9.md)', () =>
     } finally { restore(); }
   });
 
+  it('below v9 an edit naming shippingZoneIds leaves the stored zones alone', async () => {
+    try {
+      const { service } = await at('v8');
+      get.mockResolvedValue({ ...raw, shippingZoneIds: zoneBytes([zoneA, zoneB]) });
+      await service.updateItem('item', 'owner', storeId, { shippingZoneIds: [] });
+      expect(updateDocument.mock.calls[0][4].shippingZoneIds).toEqual(zoneBytes([zoneA, zoneB]));
+    } finally { restore(); }
+  });
+
   it('a build below v9 editing an item on an updated contract keeps the zones it read', async () => {
     try {
       const { service } = await at('v8');
@@ -465,5 +474,16 @@ describe('per-item shipping zones (storefront v9, docs/STOREFRONT_V9.md)', () =>
       expect(updateDocument.mock.calls[1][4]).not.toHaveProperty('shippingZoneIds');
       expect(updateDocument.mock.calls[1][4]).toMatchObject({ fulfillment: 'digital' });
     } finally { restore(); }
+  });
+});
+
+describe('getManyOrThrow', () => {
+  it('reads fresh in batches of 100 and throws when a read fails', async () => {
+    query.mockImplementation(async ({ where }: { where: [string, string, string[]][] }) => where[0][2].map((id) => ({ ...raw, $id: id })));
+    const ids = Array.from({ length: 150 }, (_, index) => `item-${index}`);
+    expect((await storeItemService.getManyOrThrow([...ids, 'item-0'])).map((item) => item.id)).toEqual(ids);
+    expect(query.mock.calls.map(([options]) => options.where[0][2].length)).toEqual([100, 50]);
+    query.mockRejectedValueOnce(new Error('offline'));
+    await expect(storeItemService.getManyOrThrow(['item-1'])).rejects.toThrow('offline');
   });
 });

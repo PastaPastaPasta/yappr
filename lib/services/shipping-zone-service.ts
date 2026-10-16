@@ -198,24 +198,15 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
    * Find the matching zone for a shipping address
    */
   findMatchingZone(zones: ShippingZone[], address: ShippingAddress): ShippingZone | null {
-    // Sort by priority (lower = higher priority)
-    const sortedZones = [...zones].sort((a, b) => a.priority - b.priority);
+    return this.matchingZones(zones, address)[0] ?? null;
+  }
 
-    for (const zone of sortedZones) {
-      const matchesPostal = this.matchesPostalPatterns(zone.postalPatterns, address.postalCode);
-      const matchesCountry = this.matchesCountryPattern(
-        zone.countryPattern,
-        address.country,
-        address.state,
-        address.postalCode
-      );
-
-      if (matchesPostal && matchesCountry) {
-        return zone;
-      }
-    }
-
-    return null;
+  /** Every zone covering `address`, by priority (lower = higher priority; ties keep `zones` order). */
+  private matchingZones(zones: readonly ShippingZone[], address: ShippingAddress): ShippingZone[] {
+    return [...zones]
+      .sort((a, b) => a.priority - b.priority)
+      .filter((zone) => this.matchesPostalPatterns(zone.postalPatterns, address.postalCode)
+        && this.matchesCountryPattern(zone.countryPattern, address.country, address.state, address.postalCode));
   }
 
   /**
@@ -444,26 +435,45 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
    * A cart's shipping to `address` (docs/STOREFRONT_V9.md). Each line ships
    * under the store's zones its item names (ids that are not among `zones`,
    * the store's, are ignored), or under every zone when it names none; an item
-   * whose named zones are all gone ships nowhere. Each line takes the first
-   * matching zone in priority order, as a whole cart did before v9, and the
-   * lines a zone takes are priced together as one shipment. With no item
-   * naming zones this is exactly the one-zone price of the whole cart.
+   * whose named zones are all gone ships nowhere. The lines a zone takes are
+   * priced together as one shipment, so the cart is kept to as few shipments
+   * as it can be: the lines with the fewest covering zones choose first, and
+   * a line takes the highest-priority zone an earlier line already chose when
+   * one covers it, else its own highest-priority zone. With no item naming
+   * zones every line takes the first matching zone, so this is exactly the
+   * one-zone price of the whole cart.
    */
   quoteShipping(zones: ShippingZone[], lines: readonly ShippingLine[], address: ShippingAddress): ShippingQuote {
-    const groups = new Map<string, { zone: ShippingZone; lines: ShippingLine[] }>();
-    const unshippable: ShippingLine[] = [];
-    for (const line of lines) {
+    const candidates = lines.map((line) => {
       const named = line.zoneIds && line.zoneIds.length > 0 ? new Set(line.zoneIds) : null;
       // Filtered from the store's own list, so equal priorities break the same way as for an unrestricted line.
-      const zone = this.findMatchingZone(named ? zones.filter((candidate) => named.has(candidate.id)) : zones, address);
+      return this.matchingZones(named ? zones.filter((zone) => named.has(zone.id)) : zones, address);
+    });
+    const chosen = new Set<string>();
+    const zoneOf = new Map<number, ShippingZone>();
+    // Stable: lines with as many covering zones choose in cart order.
+    const order = lines.map((_, index) => index).sort((a, b) => candidates[a].length - candidates[b].length);
+    for (const index of order) {
+      const matches = candidates[index];
+      const zone = matches.find((match) => chosen.has(match.id)) ?? matches[0];
+      if (!zone) continue;
+      chosen.add(zone.id);
+      zoneOf.set(index, zone);
+    }
+
+    // Shipments, and the lines in each, in cart order.
+    const groups = new Map<string, { zone: ShippingZone; lines: ShippingLine[] }>();
+    const unshippable: ShippingLine[] = [];
+    lines.forEach((line, index) => {
+      const zone = zoneOf.get(index);
       if (!zone) {
         unshippable.push(line);
-        continue;
+        return;
       }
       const group = groups.get(zone.id) ?? { zone, lines: [] };
       group.lines.push(line);
       groups.set(zone.id, group);
-    }
+    });
     const shipments: Shipment[] = [...groups.values()].map(({ zone, lines: carried }) => ({
       zone,
       lines: carried,

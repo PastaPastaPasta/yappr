@@ -52,22 +52,42 @@ limited to it and how many name no other zone (those stop shipping).
 
 1. each shipped line's candidate zones are its item's `shippingZoneIds`
    filtered to the store's zones (in the store's order), or every zone when
-   the item names none;
-2. the line takes the first matching zone by priority (`findMatchingZone`,
-   country and postal patterns), as the whole cart did before v9; a line
-   with no match is **unshippable**;
+   the item names none; of those, the ones covering the address (country and
+   postal patterns) are its matches, by priority. A line with no match is
+   **unshippable**;
+2. the cart is kept to as few shipments as it can be: lines with the fewest
+   matches choose first, and each takes the highest-priority zone an earlier
+   line already chose if one of its matches is such a zone, else its own
+   highest-priority match. For example, with Domestic ($5, priority 1) and
+   North America ($15, priority 2), an unrestricted mug and a belt limited to
+   North America shipped to the US are one North America shipment, $15, not
+   $5 + $15;
 3. the lines a zone takes are one shipment, priced with
    `calculateRate(zone, { totalWeight, subtotal })` over that group's weight
    and subtotal; the shipping cost is the sum of the shipments.
 
-With no item naming zones every line takes the same zone, so the quote is
-exactly the one-zone price of the whole cart (a unit test pins this). An
-unshippable line blocks the shipping step with a message naming it: "Leather
-Wallet doesn't ship to Canada. Remove it from your cart to continue." When a
-line that may use any zone ships nowhere, the store does not serve the address
-at all, and the old "We cannot ship to this address" stays. A line whose item
-cannot be read weighs nothing and ships under every zone, as before. A store with no zones, or zones that failed to load, still
-checks out without a shipping charge.
+With no item naming zones every line has the same matches and takes the
+first, so the quote is exactly the one-zone price of the whole cart (a unit
+test pins this). An unshippable line blocks the shipping step with a message
+naming it: "Leather Wallet doesn't ship to Canada. Remove it from your cart
+to continue." When a line that may use any zone ships nowhere, the store does
+not serve the address at all, and the old "We cannot ship to this address"
+stays. Placing the order checks the current quote again and sends the buyer
+back to the details step if a line no longer ships.
+
+The listings are read fresh for the quote (`cartService.getShippingLines`,
+`storeItemService.getManyOrThrow`), and a failed read **blocks** the shipping
+step ("We couldn't check shipping for your cart. Please try again."; trying
+again reads them again): a line priced without its item would ship under
+every zone, so a limited item could slip through on a transient error. An
+item that no longer exists weighs nothing and ships under every zone; the
+cart's availability check refuses it before an order is placed. A store with
+no zones, or zones that failed to load, still checks out without a shipping
+charge.
+
+The ship-to restriction is enforced by the app, not by consensus: the
+property has no `refersTo`, and the order's address and lines travel in the
+encrypted order payload, which the contract cannot read.
 
 ## Client
 
@@ -93,9 +113,10 @@ On v9 the export has a `Shipping Zones` column right after `Weight`: the
 item's zone NAMES joined with `; ` (a name may contain a comma), the same on
 every row of the item, blank for every zone. Ids that are no longer the
 store's are left out. The import reads `Shipping Zones` (also `Shipping Zone`,
-`Zones`, `Ships To`), splits on `;` or `|` (unless the whole cell is one
-zone's name), and matches names to the store's zones, exactly, else ignoring
-case. A product takes its first non-empty cell
+`Zones`, `Ships To`) against the store's zone names: at each position the
+longest name (trimmed) that runs up to a `;`, a `|` or the cell's end is taken,
+exactly, else ignoring case, so a name may itself hold `;` or `|`. Only text
+no name accounts for is split on `;` and `|`, as unknown names. A product takes its first non-empty cell
 (later rows that disagree are a warning); an unknown name or more than 16
 zones is an error on that product. Below v9 the column is not exported and an
 uploaded one is ignored with one file-level warning. An exported file parses

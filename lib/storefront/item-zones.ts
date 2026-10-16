@@ -45,9 +45,14 @@ export function zoneDeletionImpact(zoneId: string, items: readonly Pick<StoreIte
 
 const products = (count: number) => `${count} product${count === 1 ? '' : 's'}`
 
-/** The delete-zone confirmation, warning about the listings limited to the zone. */
-export function zoneDeletionMessage(impact: { limited: number; stranded: number }): string {
+/**
+ * The delete-zone confirmation, warning about the listings limited to the
+ * zone. `productsUnknown`: the listings could not be read, so the warning is
+ * a general one.
+ */
+export function zoneDeletionMessage(impact: { limited: number; stranded: number }, { productsUnknown = false } = {}): string {
   const base = 'Are you sure you want to delete this shipping zone? This action cannot be undone.'
+  if (productsUnknown) return `${base} Products limited to this zone may stop shipping.`
   if (impact.limited === 0) return base
   const limited = `${products(impact.limited)} ${impact.limited === 1 ? 'is' : 'are'} limited to this zone.`
   if (impact.stranded === 0) return `${base} ${limited} ${impact.limited === 1 ? 'It keeps shipping under its' : 'They keep shipping under their'} other zones.`
