@@ -2,8 +2,8 @@ import { defineConfig } from 'vitest/config'
 import path from 'node:path'
 
 // Unit tests cover the pure modules under lib/ (crypto primitives, codecs,
-// parsers) and the vendored platform-auth core. Anything that touches the SDK
-// or the DOM belongs in e2e/.
+// parsers) and the vendored platform-auth core, plus offline checks of the SDK's
+// WASM (no network). Anything that needs the network or the DOM belongs in e2e/.
 export default defineConfig({
   resolve: {
     alias: [

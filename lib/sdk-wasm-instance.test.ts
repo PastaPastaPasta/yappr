@@ -5,10 +5,10 @@
  * the direct `@dashevo/wasm-sdk` imports (the key-registration builder, the
  * username statics) share one glue module and one WASM instance.
  *
- * From 5.0.0-rc.3 (platform#5428) a WASM wrapper (Identifier, IdentityPublicKey,
- * Document, ...) is refused by any instance but the one that made it. A broken
- * alias would therefore fail every write that mixes the two, so it has to fail
- * here first.
+ * From 5.0.0-rc.2 (platform#5405) a WASM wrapper (Identifier, IdentityPublicKey,
+ * Document, ...) is refused by any instance but the one that made it; before,
+ * the other instance read it in the wrong memory. A broken alias would
+ * therefore fail every write that mixes the two, so it has to fail here first.
  */
 import { createRequire } from 'node:module'
 import path from 'node:path'
