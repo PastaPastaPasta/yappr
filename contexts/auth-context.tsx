@@ -13,6 +13,7 @@ import { keyValidationService } from '@/lib/services/key-validation-service'
 import { useUsernameModal } from '@/hooks/use-username-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
+import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 
 export interface AuthUser {
   identityId: string
@@ -77,8 +78,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */
   const revokeLogout = useRef<Promise<void> | null>(null)
-  /** The identity whose revoke a renewal under way held back; settled once that renewal ends. */
-  const deferredRevoke = useRef<string | null>(null)
+  /**
+   * A revoke a renewal under way held back, with the session it was found on;
+   * settled once that renewal ends, and dropped if another session replaced that one.
+   */
+  const deferredRevoke = useRef<HeldRevoke | null>(null)
 
   // The wallet revoked this browser's App Connect keys: end the session here too,
   // if this tab is still signed in as that identity.
@@ -93,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // The wallet disables the old keys before the renewal's grant arrives, so a
     // revoke found while this identity renews is that renewal: its outcome decides (#738).
     if (useAppConnectStatus.getState().renewing === identityId) {
-      deferredRevoke.current = identityId
+      deferredRevoke.current = { identityId, epoch: controller.sessionEpoch() }
       return
     }
     revokeLogout.current = controller.logout()
@@ -106,15 +110,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // The renewal a revoke waited for ended, with a new grant or abandoned: settle the revoke now.
     const unsubscribe = useAppConnectStatus.subscribe((state, previous) => {
       const held = deferredRevoke.current
-      if (!held || previous.renewing !== held || state.renewing === held) return
+      if (!held) return
+      const outcome = settleHeldRevoke(held, previous.renewing, state.renewing, controller.sessionEpoch())
+      if (outcome === 'wait') return
       deferredRevoke.current = null
-      signOutRevoked(held)
+      if (outcome === 'sign-out') signOutRevoked(held.identityId)
+      // A sign-in (say, with a typed key) or a sign-out since the revoke: its notice is out of date too.
+      else useAppConnectStatus.getState().dismissSignedOut()
     })
     return () => {
       appConnectSessions.onSignedOut(null)
       unsubscribe()
     }
-  }, [signOutRevoked])
+  }, [controller, signOutRevoked])
 
   useEffect(() => {
     controller.restoreSession().catch((error) => {
@@ -154,8 +162,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await revokeLogout.current
     const session = await appConnectSessions.adopt(grant)
     try {
-      // Bound to this grant: if a logout or a raw-key sign-in takes the session
-      // while the identity is read, this sign-in stores nothing (#734).
+      // Bound to this grant and to the session it started on: if a logout or any
+      // other sign-in takes the session while the identity is read, this sign-in
+      // stores nothing (#734).
       const result = await controller.loginWithKeyRing(session.identityId, {
         stillCurrent: () => appConnectSessions.current(session.identityId) !== null,
       })

@@ -202,6 +202,38 @@ describe('PlatformAuthController key-ring login', () => {
     expect(events.some((event) => event.type === 'login-succeeded')).toBe(false)
   })
 
+  it('stores nothing when another sign-in stored its session while it read the identity', async () => {
+    let wallet: Promise<unknown> | null = null
+    let finishWalletLookup: (username: string | null) => void = () => undefined
+    const { controller, storedUser } = setup((identityId) => identityId === 'wallet-identity'
+      ? new Promise((resolve) => { finishWalletLookup = resolve })
+      : Promise.resolve('raw.dash'))
+
+    wallet = controller.loginWithKeyRing('wallet-identity', { stillCurrent: () => true })
+    // A typed-key sign-in for another identity completes while the wallet sign-in waits on its lookup.
+    await controller.loginWithAuthKey('raw-identity', 'private-key')
+    finishWalletLookup('wallet.dash')
+
+    await expect(wallet).rejects.toBeInstanceOf(SupersededSignInError)
+    expect(storedUser()?.identityId).toBe('raw-identity')
+    expect(controller.getState().user?.identityId).toBe('raw-identity')
+  })
+
+  it('stores nothing when the tab signed out while it read the identity', async () => {
+    let finish: (username: string | null) => void = () => undefined
+    const { controller, storedUser } = setup(() => new Promise((resolve) => { finish = resolve }))
+    const before = controller.sessionEpoch()
+
+    const login = controller.loginWithAuthKey('raw-identity', 'private-key')
+    await controller.logout()
+    expect(controller.sessionEpoch()).not.toBe(before)
+    finish('raw.dash')
+
+    await expect(login).rejects.toBeInstanceOf(SupersededSignInError)
+    expect(storedUser()).toBeUndefined()
+    expect(controller.getState().user).toBeNull()
+  })
+
   it('signs in when its keys are still current', async () => {
     const stillCurrent = vi.fn(() => true)
     const { controller, storedUser } = setup(async () => 'alice.dash')

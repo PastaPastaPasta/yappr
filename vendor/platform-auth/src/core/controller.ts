@@ -36,13 +36,14 @@ const noopLogger = {
 }
 
 /**
- * A key-ring sign-in that lost its claim to the session while it read the
- * identity (a logout, or another sign-in that replaced its keys): it stops
- * before it stores or publishes anything, so the session that replaced it stands.
+ * A sign-in overtaken while it read the identity: another sign-in stored its
+ * session, the tab signed out, or (key-ring sign-ins) its keys stopped being
+ * the tab's. It stops before it stores or publishes anything, so whatever
+ * overtook it stands.
  */
 export class SupersededSignInError extends Error {
   public constructor() {
-    super('Signed out while the wallet was connecting')
+    super('Another sign-in or a sign-out happened first. Please try again.')
     this.name = 'SupersededSignInError'
   }
 }
@@ -83,10 +84,22 @@ export class PlatformAuthController {
 
   private balanceInterval: ReturnType<typeof setInterval> | null = null
 
+  /** Bumped whenever a session is stored or ended, so a sign-in can tell it was overtaken. */
+  private epoch = 0
+
   public constructor(private readonly deps: PlatformAuthDependencies) {
     this.features = { ...DEFAULT_FEATURES, ...deps.features }
     this.logger = deps.logger ?? noopLogger
     this.balanceRefreshMs = deps.balanceRefreshMs ?? DEFAULT_BALANCE_REFRESH_MS
+  }
+
+  /**
+   * Changes whenever a sign-in stores its session or the tab signs out. A
+   * caller holding an action back for the current session compares it later,
+   * so the action never lands on a session that replaced that one.
+   */
+  public sessionEpoch(): number {
+    return this.epoch
   }
 
   public getState(): PlatformAuthState {
@@ -260,6 +273,7 @@ export class PlatformAuthController {
     options: KeyRingLoginOptions,
   ): Promise<PlatformAuthResult> {
     const skipUsernameCheck = options.skipUsernameCheck ?? false
+    const startedAt = this.epoch
     this.patchState({ isLoading: true, error: null })
 
     try {
@@ -287,7 +301,8 @@ export class PlatformAuthController {
       }
 
       // Checked after the last read, right before the session is stored: an overtaken sign-in stores nothing.
-      if (options.stillCurrent && !options.stillCurrent()) throw new SupersededSignInError()
+      if (this.epoch !== startedAt || (options.stillCurrent && !options.stillCurrent())) throw new SupersededSignInError()
+      this.epoch += 1
       await this.persistSessionUser(user)
       if (privateKey !== null) await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
       await this.deps.clientIdentity?.setIdentity(identity.id)
@@ -387,6 +402,7 @@ export class PlatformAuthController {
 
   public async logout(): Promise<PlatformAuthResult> {
     const identityId = this.state.user?.identityId
+    this.epoch += 1
 
     await this.deps.sessionStore.clearSession()
     if (identityId) {
