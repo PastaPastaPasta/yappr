@@ -22,7 +22,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -41,7 +41,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -60,7 +60,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -85,7 +85,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -112,7 +112,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -124,6 +124,29 @@ jobs:
       - name: Run knip
         run: npx knip
 
+  # Known advisories in shipped (production) dependencies. Report-only until the
+  # dependency fixes land: the tree still has open high/critical advisories, so
+  # blocking now would turn every PR red. Tracked in
+  # https://github.com/PastaPastaPasta/yappr/issues/766, which makes this job
+  # blocking by dropping the `|| echo` fallback. Dev-only tooling is omitted
+  # because it never reaches the static export.
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Audit production dependencies (report-only)
+        run: |
+          npm audit --omit=dev --audit-level=high \
+            || echo "::warning::npm audit found high or critical advisories in production dependencies (report-only until issue 766)"
+
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -134,7 +157,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -167,7 +190,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -242,11 +265,19 @@ jobs:
   # resets without notice, its nodes are a hand-maintained three-machine pool, and
   # the bot identities are funded by hand — none of which may block a PR. Read its
   # result as a signal, not a gate; a genuine regression reproduces locally.
+  #
+  # Pull requests only. The shared-bots concurrency group below keeps a single
+  # pending job and cancels any older one, and a cancelled job turns the whole
+  # workflow run's conclusion into `cancelled` even with continue-on-error. A
+  # master push must never wait on, or be cancelled by, this job: deploy.yml only
+  # follows a CI run that concluded `success`, so a cancelled master run skips the
+  # production deploy.
   devnet-e2e:
     name: End-to-End (devnet, non-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 75
     continue-on-error: true
+    if: github.event_name == 'pull_request'
     # Every PR's run signs with the same few bot identities on the same devnet.
     # Two at once take each other's identity nonces ("the network used its place
     # without recording it"), pick the same next group number, and block or
@@ -267,7 +298,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
