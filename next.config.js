@@ -65,15 +65,6 @@ const nextConfig = {
       ...config.resolve.alias,
       '@dashevo/evo-sdk$': path.resolve(__dirname, 'node_modules/@dashevo/evo-sdk/dist/sdk.js'),
     }
-    // wasm-sdk's raw loader keeps wasm-bindgen's default
-    // `new URL('wasm_sdk_bg.wasm', import.meta.url)`, which makes webpack emit the
-    // 26 MB wasm as an asset. The wrapper always passes the inlined module, so
-    // that URL is never fetched: don't follow it.
-    config.module.rules.push({
-      test: /[\\/]@dashevo[\\/]wasm-sdk[\\/]dist[\\/]raw[\\/]wasm_sdk(\.no_url)?\.js$/,
-      parser: { url: false },
-    })
-
     // Handle WASM files (required for @dashevo/evo-sdk)
     config.experiments = {
       ...config.experiments,
