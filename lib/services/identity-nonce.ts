@@ -324,29 +324,44 @@ const SPENT_READ_MS = 1_000;
  * before or after it executed). Every nonce up to `signedAfter` was spent
  * before it, and nothing else of this browser can take one in its range, so
  * the tip Platform shows once a nonce in the range is consumed is the one it
- * took. A confirmed one whose range holds a single nonce took that one. A
- * floor too low lets a node that is behind settle a later write early (a
- * nonce of this one in that write's range), and a floor too high makes a
- * later lost answer wait out its lifetime, every time, while the SDK signs
- * below it. So a refusal Platform does not show taking a nonce within a few
- * reads counts as one that took none (refused before it executed), and a
- * confirmation it does not show as one that took the last nonce of its range.
+ * took. A confirmed one whose range holds a single nonce, signed past the tip
+ * read before it (`tipBefore`), took that one. A floor too low lets a node
+ * that is behind settle a later write early (a nonce of this one in that
+ * write's range), and a floor too high makes a later lost answer wait out its
+ * lifetime, every time, while the SDK signs below it. So:
+ *  - a refusal Platform does not show taking a nonce within a few reads
+ *    counts as one that took none (refused before it executed);
+ *  - a confirmation Platform shows moving the tip past `tipBefore`, but not
+ *    into its range, took a nonce below the range (the floor was already
+ *    higher than the tip), and the floor is not raised past that tip;
+ *  - a confirmation it does not show at all counts as one that took the last
+ *    nonce of its range.
  */
-async function nonceTakenOnAnswer(ownerId: string, contractId: string, entry: PendingTransition, executed: boolean): Promise<bigint | undefined> {
+async function nonceTakenOnAnswer(
+  ownerId: string,
+  contractId: string,
+  entry: PendingTransition,
+  executed: boolean,
+  tipBefore: bigint
+): Promise<bigint | undefined> {
   if (entry.signedAfter === undefined || entry.signedAtMost === undefined) return undefined;
   const from = entry.signedAfter + BigInt(1);
-  if (executed && from === entry.signedAtMost) return from;
+  if (executed && from === entry.signedAtMost && entry.signedAfter === tipBefore) return from;
+  let lastTip: bigint | undefined;
   for (let attempt = 0; attempt < SPENT_READS; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, SPENT_READ_MS));
     try {
       const sdk = await getEvoSdk();
       const current = await sdk.identities.contractNonce(ownerId, contractId);
       if (anyConsumed(current, from, entry.signedAtMost)) return tipOf(current);
+      lastTip = tipOf(current);
     } catch (error) {
       logger.debug('Could not read the contract nonce after an SDK-signed write:', error);
     }
   }
-  return executed ? entry.signedAtMost : undefined;
+  if (!executed) return undefined;
+  // Still not in its range a few seconds on, past a node catching up: it took one below it.
+  return lastTip !== undefined && lastTip > tipBefore ? lastTip : entry.signedAtMost;
 }
 
 /** A write's precondition no longer held under the write lock: nothing was reserved or sent. */
@@ -397,11 +412,11 @@ export async function withSdkSignedWrite<T>(
     try {
       result = await write();
     } catch (error) {
-      if (isVerdict(error)) releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, false));
+      if (isVerdict(error)) releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, false, tipOf(current)));
       else renewPending(ownerId, contractId, entry);
       throw error;
     }
-    releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, true));
+    releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, true, tipOf(current)));
     return result;
   });
 }

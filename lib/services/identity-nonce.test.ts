@@ -234,6 +234,15 @@ describe('an SDK-signed write whose answer was lost (#644)', () => {
     expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(102))
   })
 
+  it('stops raising a floor that is above the tip once the SDK signs below the range', async () => {
+    // An earlier confirmation Platform never showed left the floor at 102 while the tip is 101.
+    releaseNonce(OWNER, CONTRACT, reserveNonce(OWNER, CONTRACT, n(102), n(101)), n(102))
+    // The SDK, fresh, signs 102 (below the range 103..103); Platform then shows 102.
+    sdk.identities.contractNonce.mockResolvedValueOnce(n(101)).mockResolvedValue(n(102))
+    expect(await runSdkWrite(async () => 'sent')).toEqual({ ok: true, value: 'sent' })
+    expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(102))
+  })
+
   it('counts its minute from when the answer was lost, however long the SDK took to lose it', async () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const slow = () => new Promise<string>((_, reject) => setTimeout(() => reject(new Error('transport error: Failed to fetch')), 70_000))
