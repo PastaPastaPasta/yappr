@@ -36,7 +36,6 @@
  */
 import { Identifier } from '@dashevo/evo-sdk';
 import { logger } from '@/lib/logger';
-import { scopedKey } from '@/lib/storage-scope';
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
@@ -92,9 +91,13 @@ const NONCE_SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1);
  * Kept in localStorage, the one copy every tab reads and writes, only under
  * the write lock. A transition is signed only once its reservation is stored
  * there: one this tab alone knew of would be invisible to the next tab to take
- * the lock.
+ * the lock. Not scoped to the deployment (`lib/storage-scope.ts`), like the
+ * lock itself: a nonce belongs to the identity and the contract, and two
+ * deployments on one origin (`/` and `/staging`) can write to the same
+ * contract. The contract id in the key keeps deployments on different
+ * contracts apart.
  */
-const RESERVATION_PREFIX = scopedKey('yappr:nonce-reservation:');
+const RESERVATION_PREFIX = 'yappr:nonce-reservation:';
 
 /**
  * Entries this tab released (each on a verdict) whose release localStorage may
