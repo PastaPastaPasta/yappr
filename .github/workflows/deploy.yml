@@ -34,9 +34,11 @@ on:
     inputs:
       production_ref:
         description: >-
-          Branch, tag or commit to build production (/) and /testing from, for
-          example a release tag when rolling back. Leave as master to deploy
-          the newest master commit whose CI passed.
+          Tag, branch or full 40-character commit SHA to build production (/)
+          and /testing from, for example a release tag when rolling back. A
+          ref other than master is deployed as given, without a CI check, and
+          must contain the build:testing script. Leave as master to deploy the
+          newest master commit whose CI passed.
         required: false
         default: master
         type: string
@@ -73,6 +75,9 @@ jobs:
       #     whose CI run on a push succeeded. Failing here, rather than falling
       #     back to the master tip, keeps an unchecked commit from shipping.
       # Inputs reach the shell through env so a ref name is never parsed as script.
+      # A re-run of an older CI run keeps its original commit, so a workflow_run
+      # that is behind the newest green master commit is moved forward to it
+      # rather than rolling production back.
       - name: Resolve the production ref
         id: production
         env:
@@ -82,19 +87,32 @@ jobs:
           REQUESTED_REF: ${{ inputs.production_ref }}
         run: |
           set -euo pipefail
+          latest_green() {
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=master&event=push&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha // empty'
+          }
           if [ "$EVENT_NAME" = "workflow_run" ]; then
             ref="$CI_RUN_SHA"
             why="the commit of the CI run that triggered this deploy"
+            newest=$(latest_green)
+            if [ -n "$newest" ] && [ "$newest" != "$ref" ] \
+              && [ "$(gh api "repos/$GITHUB_REPOSITORY/compare/$ref...$newest" --jq .status)" = "ahead" ]; then
+              ref="$newest"
+              why="the newest green master commit, which is ahead of the CI run that triggered this deploy"
+            fi
           elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$REQUESTED_REF" ] && [ "$REQUESTED_REF" != "master" ]; then
             ref="$REQUESTED_REF"
             why="the production_ref requested for this manual run"
           else
-            ref=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=master&event=push&status=success&per_page=1" \
-              --jq '.workflow_runs[0].head_sha // empty')
+            ref=$(latest_green)
             why="the newest master commit whose CI run passed"
           fi
           if [ -z "$ref" ]; then
             echo "::error::No master commit with a passing CI run was found, so there is nothing safe to deploy to production."
+            exit 1
+          fi
+          if ! printf '%s' "$ref" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+            echo "::error::The production ref contains characters that are not valid in a git ref."
             exit 1
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"

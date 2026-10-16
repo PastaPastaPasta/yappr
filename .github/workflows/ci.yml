@@ -128,12 +128,11 @@ jobs:
   # dependency fixes land: the tree still has open high/critical advisories, so
   # blocking now would turn every PR red. Tracked in
   # https://github.com/PastaPastaPasta/yappr/issues/766, which makes this job
-  # blocking by removing `continue-on-error`. Dev-only tooling is omitted because
-  # it never reaches the static export.
+  # blocking by dropping the `|| echo` fallback. Dev-only tooling is omitted
+  # because it never reaches the static export.
   audit:
-    name: Dependency audit (report-only)
+    name: Dependency audit
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -142,10 +141,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit production dependencies (report-only)
+        run: |
+          npm audit --omit=dev --audit-level=high \
+            || echo "::warning::npm audit found high or critical advisories in production dependencies (report-only until issue 766)"
 
   build:
     name: Build
