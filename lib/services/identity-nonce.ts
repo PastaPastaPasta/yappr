@@ -112,9 +112,6 @@ const max = (a: bigint, b: bigint): bigint => (a > b ? a : b);
 /** The sequence part of the raw value `identities.contractNonce` returned: the last nonce Platform executed. */
 const tipOf = (current: bigint | undefined | null): bigint => nextIdentityContractNonce(current) - BigInt(1);
 
-/** The lowest nonce `entry` can carry. */
-const lowestNonceOf = (entry: PendingTransition): bigint => entry.nonce ?? (entry.signedAfter ?? BigInt(0)) + BigInt(1);
-
 /** Whether Platform shows any nonce from `from` to `to` consumed (none past the tip is; every one far behind it is). */
 function anyConsumed(current: bigint | undefined | null, from: bigint, to: bigint): boolean {
   const last = to < tipOf(current) ? to : tipOf(current);
@@ -279,18 +276,17 @@ export function reserveNonce(
 
 /**
  * The transition was confirmed or refused: it will not execute later. The
- * mark stays. `spent` (the default) says it took its nonce (a confirmed one,
- * or a paid refusal of one this browser built), and raises the floor to the
- * lowest it can carry; pass false when it may not have. When localStorage
- * refuses the write, other tabs keep the entry pending until it settles on
- * chain, which only holds their writes back.
+ * mark stays. `spentThrough`, when given, is a nonce Platform has executed
+ * (the one the transition took, when it took one) and raises the floor to it.
+ * When localStorage refuses the write, other tabs keep the entry pending
+ * until it settles on chain, which only holds their writes back.
  */
-export function releaseNonce(ownerId: string, contractId: string, entry: PendingTransition, spent = true): void {
+export function releaseNonce(ownerId: string, contractId: string, entry: PendingTransition, spentThrough?: bigint): void {
   try {
     const reservation = loadReservation(ownerId, contractId);
     if (reservation) {
       const pending = reservation.pending.filter((p) => p.id !== entry.id);
-      const floor = spent ? max(reservation.floor, lowestNonceOf(entry)) : reservation.floor;
+      const floor = spentThrough === undefined ? reservation.floor : max(reservation.floor, spentThrough);
       if (pending.length !== reservation.pending.length || floor !== reservation.floor) {
         saveReservation(ownerId, contractId, { mark: reservation.mark, floor, pending });
       }
@@ -318,6 +314,41 @@ function renewPending(ownerId: string, contractId: string, entry: PendingTransit
   }
 }
 
+/** How often, and how far apart, Platform is read for the nonce an answered SDK-signed transition took. */
+const SPENT_READS = 3;
+const SPENT_READ_MS = 1_000;
+
+/**
+ * The nonce an answered SDK-signed transition took, to raise the floor to
+ * (`executed`: it was confirmed; otherwise refused, which it may have been
+ * before or after it executed). Every nonce up to `signedAfter` was spent
+ * before it, and nothing else of this browser can take one in its range, so
+ * the tip Platform shows once a nonce in the range is consumed is the one it
+ * took. A confirmed one whose range holds a single nonce took that one. A
+ * floor too low lets a node that is behind settle a later write early (a
+ * nonce of this one in that write's range), and a floor too high makes a
+ * later lost answer wait out its lifetime, every time, while the SDK signs
+ * below it. So a refusal Platform does not show taking a nonce within a few
+ * reads counts as one that took none (refused before it executed), and a
+ * confirmation it does not show as one that took the last nonce of its range.
+ */
+async function nonceTakenOnAnswer(ownerId: string, contractId: string, entry: PendingTransition, executed: boolean): Promise<bigint | undefined> {
+  if (entry.signedAfter === undefined || entry.signedAtMost === undefined) return undefined;
+  const from = entry.signedAfter + BigInt(1);
+  if (executed && from === entry.signedAtMost) return from;
+  for (let attempt = 0; attempt < SPENT_READS; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, SPENT_READ_MS));
+    try {
+      const sdk = await getEvoSdk();
+      const current = await sdk.identities.contractNonce(ownerId, contractId);
+      if (anyConsumed(current, from, entry.signedAtMost)) return tipOf(current);
+    } catch (error) {
+      logger.debug('Could not read the contract nonce after an SDK-signed write:', error);
+    }
+  }
+  return executed ? entry.signedAtMost : undefined;
+}
+
 /** A write's precondition no longer held under the write lock: nothing was reserved or sent. */
 export const WRITE_PRECONDITION_FAILED = 'This was not sent: what it depended on changed.';
 
@@ -338,9 +369,8 @@ function isVerdict(error: unknown): boolean {
  * as soon as Platform shows one of them consumed. A consensus refusal is a
  * verdict, but a nonce refusal only when it shows the nonce spent ("already
  * present", "too far in past"): "too far in future" can come from a node
- * behind one that admitted the same transition. A refusal does not show the
- * nonce taken (the SDK does not say whether it was refused before or after
- * execution), so it leaves the floor as it was.
+ * behind one that admitted the same transition. On an answer the floor goes
+ * to the nonce it took, read back from Platform ({@link nonceTakenOnAnswer}).
  *
  * `scope` is stored with its pending entry (see {@link PendingTransition.scope}).
  *
@@ -363,15 +393,16 @@ export async function withSdkSignedWrite<T>(
     const sdk = await getEvoSdk();
     try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
     const entry = reserveNonce(ownerId, contractId, null, current, scope);
+    let result: T;
     try {
-      const result = await write();
-      releaseNonce(ownerId, contractId, entry);
-      return result;
+      result = await write();
     } catch (error) {
-      if (isVerdict(error)) releaseNonce(ownerId, contractId, entry, false);
+      if (isVerdict(error)) releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, false));
       else renewPending(ownerId, contractId, entry);
       throw error;
     }
+    releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, true));
+    return result;
   });
 }
 

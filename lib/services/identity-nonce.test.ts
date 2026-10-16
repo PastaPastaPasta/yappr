@@ -200,6 +200,40 @@ describe('an SDK-signed write whose answer was lost (#644)', () => {
     expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT), Date.now() + 2 * MINUTE)).toBe(n(103))
   })
 
+  it('never settles a lost answer off a nonce an earlier write of this browser took, when a node is behind', async () => {
+    // W1 is refused before it executes, with Platform at 100: this tab's SDK signed 101, which nothing took.
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(100) })
+
+    // W2: the SDK signs 102, past its own last nonce, and Platform then shows 102 with 101 missing.
+    const shows102 = n(102) | (BigInt(1) << BigInt(40))
+    sdk.identities.contractNonce.mockResolvedValueOnce(n(100)).mockResolvedValue(shows102)
+    expect(await runSdkWrite(async () => 'sent')).toEqual({ ok: true, value: 'sent' })
+    expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(102))
+
+    // W3 reads a node still at 100, and its answer is lost.
+    await lostAnswer(100)
+    expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ signedAfter: n(102), signedAtMost: n(103) })
+    // W4 (another tab, a fresh SDK that would sign 103) reads 102: W2's nonce does not settle W3.
+    expect(stillPending(shows102, loadReservation(OWNER, CONTRACT))).toHaveLength(1)
+    expect(stillPending(n(103), loadReservation(OWNER, CONTRACT))).toEqual([])
+  })
+
+  it('counts a refusal as spent when Platform shows it took a nonce (a paid error)', async () => {
+    sdk.identities.contractNonce.mockResolvedValueOnce(n(100)).mockResolvedValue(n(101))
+    await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(101), pending: [] })
+  })
+
+  it('counts a confirmation Platform does not show yet as having taken the last nonce it may carry', async () => {
+    // A refused create left the mark at 101, so the SDK may sign 101 or 102.
+    releaseNonce(OWNER, CONTRACT, reserveNonce(OWNER, CONTRACT, n(101), n(100)))
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    expect(await runSdkWrite(async () => 'sent')).toEqual({ ok: true, value: 'sent' })
+    expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(102))
+  })
+
   it('counts its minute from when the answer was lost, however long the SDK took to lose it', async () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const slow = () => new Promise<string>((_, reject) => setTimeout(() => reject(new Error('transport error: Failed to fetch')), 70_000))
@@ -268,11 +302,11 @@ describe('an SDK-signed write whose answer was lost (#644)', () => {
 
   it('takes the floor from creates that took their nonce, but not from one refused at broadcast', () => {
     const confirmed = reserveNonce(OWNER, CONTRACT, n(101), n(100))
-    releaseNonce(OWNER, CONTRACT, confirmed)
+    releaseNonce(OWNER, CONTRACT, confirmed, n(101))
     expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(101))
 
     const refused = reserveNonce(OWNER, CONTRACT, n(102), n(100))
-    releaseNonce(OWNER, CONTRACT, refused, false)
+    releaseNonce(OWNER, CONTRACT, refused)
     expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(102), floor: n(101) })
     // An SDK-signed write now signs past 101, the nonce Platform has executed, and at most past the mark.
     expect(reserveNonce(OWNER, CONTRACT, null, n(100))).toMatchObject({ signedAfter: n(101), signedAtMost: n(103) })
@@ -376,7 +410,7 @@ describe('allocateNonce', () => {
   it('falls back to the one after the tip once nothing signed may still execute', () => {
     const entries = []
     for (let nonce = 101; nonce <= 124; nonce++) entries.push(reserveNonce(OWNER, CONTRACT, n(nonce), n(100)))
-    for (const entry of entries) releaseNonce(OWNER, CONTRACT, entry, false)
+    for (const entry of entries) releaseNonce(OWNER, CONTRACT, entry)
     expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT))).toBe(n(101))
   })
 })

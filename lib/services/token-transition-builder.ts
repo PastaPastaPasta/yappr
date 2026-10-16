@@ -71,7 +71,7 @@ export async function buildUnsignedTokenBatch(
 
     const entry = reserveNonce(ownerId, YAPPR_CONTRACT_ID, nonce, rawNonce);
     // Never shown to a wallet, so never signed: its nonce was not taken.
-    const discard = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry, false));
+    const discard = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry));
     return { bytes, discard };
   });
 }

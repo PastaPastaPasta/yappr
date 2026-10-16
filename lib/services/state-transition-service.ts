@@ -604,7 +604,7 @@ class StateTransitionService {
       // it will not execute later. `spent` is false only for a refusal at
       // broadcast, which never took the nonce.
       const decided = (result: StateTransitionResult, spent = true): StateTransitionResult => {
-        if (pendingEntry) releaseNonce(ownerId, contractId, pendingEntry, spent);
+        if (pendingEntry) releaseNonce(ownerId, contractId, pendingEntry, spent ? newNonce : undefined);
         return result;
       };
       // Platform refused it for its nonce: taken by another write, or by this
