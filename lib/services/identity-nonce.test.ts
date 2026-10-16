@@ -162,12 +162,12 @@ describe('withSdkSignedWrite', () => {
     expect(loadReservation(OWNER, CONTRACT)?.pending).toEqual([])
   })
 
-  it('releases an SDK write the network refused, without counting its nonce as spent', async () => {
+  it('counts a refusal Platform does not show as having taken the last nonce it may carry: it may have been paid', async () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const refused = await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
     expect(refused.ok).toBe(false)
-    // It may have been refused before it executed: the floor stays at the tip.
-    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(100), pending: [] })
+    // Refused before or after it executed: nothing tells, so the floor goes to the top of its range.
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(101), pending: [] })
   })
 
   it('counts the nonce an SDK write took as spent once it is confirmed', async () => {
@@ -183,15 +183,14 @@ describe('an SDK-signed write whose answer was lost (#644)', () => {
     expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), pending: [{ nonce: null, signedAfter: n(100), signedAtMost: n(101) }] })
   })
 
-  it('settles whichever nonce the SDK signed: past the tip from a fresh tab, or past its own last one', async () => {
-    // A replace refused at 100: this tab's SDK signed 101, which was never taken.
-    sdk.identities.contractNonce.mockResolvedValue(n(100))
-    await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
+  it('settles whichever nonce the SDK signed, from the tip or past its own last one, when the mark is ahead', async () => {
+    // A create refused at broadcast left the mark at 101 with Platform at 100.
+    releaseNonce(OWNER, CONTRACT, reserveNonce(OWNER, CONTRACT, n(101), n(100)))
     expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(100) })
 
     await lostAnswer(100)
     expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ signedAfter: n(100), signedAtMost: n(102) })
-    // After a reload the SDK signs 101; in the same tab it signs 102, leaving 101 missing.
+    // A fresh SDK signs 101; one whose last nonce was 101 signs 102, leaving 101 missing.
     expect(stillPending(n(101), loadReservation(OWNER, CONTRACT))).toEqual([])
     expect(stillPending(n(102) | (BigInt(1) << BigInt(40)), loadReservation(OWNER, CONTRACT))).toEqual([])
     // Nothing of it shows yet.
@@ -201,10 +200,10 @@ describe('an SDK-signed write whose answer was lost (#644)', () => {
   })
 
   it('never settles a lost answer off a nonce an earlier write of this browser took, when a node is behind', async () => {
-    // W1 is refused before it executes, with Platform at 100: this tab's SDK signed 101, which nothing took.
+    // W1 is refused with Platform at 100: this tab's SDK signed 101, which nothing took; nothing shows it, so the floor counts it.
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
-    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(100) })
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(101) })
 
     // W2: the SDK signs 102, past its own last nonce, and Platform then shows 102 with 101 missing.
     const shows102 = n(102) | (BigInt(1) << BigInt(40))
@@ -218,6 +217,31 @@ describe('an SDK-signed write whose answer was lost (#644)', () => {
     // W4 (another tab, a fresh SDK that would sign 103) reads 102: W2's nonce does not settle W3.
     expect(stillPending(shows102, loadReservation(OWNER, CONTRACT))).toHaveLength(1)
     expect(stillPending(n(103), loadReservation(OWNER, CONTRACT))).toEqual([])
+  })
+
+  it('never settles a lost answer off a paid refusal Platform showed only later', async () => {
+    // W1 takes 101 as a paid error, but every read back still shows 100.
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
+    // W2 reads 100, its SDK signs 102 past its own last nonce, and its answer is lost.
+    await lostAnswer(100)
+    expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ signedAfter: n(101), signedAtMost: n(102) })
+    // Another tab now reads W1's 101: W2 still holds writes back.
+    expect(stillPending(n(101), loadReservation(OWNER, CONTRACT))).toHaveLength(1)
+    expect(allocateNonce(n(101), loadReservation(OWNER, CONTRACT))).toBeNull()
+  })
+
+  it('keeps a floor it raised when localStorage refused to store it', async () => {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const outcome = settle(withSdkSignedWrite(OWNER, CONTRACT, async () => {
+      storageFull.value = true
+      return 'sent'
+    }))
+    expect(await outcome).toEqual({ ok: true, value: 'sent' })
+    storageFull.value = false
+    // Stored: floor 100 and the entry; read back: neither the entry nor the lower floor.
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(101), pending: [] })
+    expect(reserveNonce(OWNER, CONTRACT, null, n(100))).toMatchObject({ signedAfter: n(101) })
   })
 
   it('counts a refusal as spent when Platform shows it took a nonce (a paid error)', async () => {

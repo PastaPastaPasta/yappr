@@ -103,6 +103,12 @@ const RESERVATION_PREFIX = scopedKey('yappr:nonce-reservation:');
  */
 const released = new Set<string>();
 
+/**
+ * Floors this tab raised (per reservation key) that localStorage may not have
+ * stored, for the same reason: never read back lower.
+ */
+const raisedFloors = new Map<string, bigint>();
+
 function reservationKey(ownerId: string, contractId: string): string {
   return `${RESERVATION_PREFIX}${ownerId}:${contractId}`;
 }
@@ -141,7 +147,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
     };
     return {
       mark: BigInt(parsed.mark),
-      floor: sequence(parsed.floor) ?? BigInt(0),
+      floor: max(sequence(parsed.floor) ?? BigInt(0), raisedFloors.get(reservationKey(ownerId, contractId)) ?? BigInt(0)),
       pending: parsed.pending
         .filter((p) => !released.has(p.id))
         .map((p) => {
@@ -259,7 +265,7 @@ export function reserveNonce(
 ): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
   const mark = previous?.mark ?? BigInt(0);
-  const floor = max(previous?.floor ?? BigInt(0), tipOf(current));
+  const floor = max(previous?.floor ?? raisedFloors.get(reservationKey(ownerId, contractId)) ?? BigInt(0), tipOf(current));
   // Unique across tabs: releasing one must never release another.
   const id = crypto.randomUUID();
   const entry: PendingTransition = nonce === null
@@ -292,9 +298,13 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
       }
     }
   } catch {
-    // Already logged; this tab no longer reads it as pending.
+    // Already logged; this tab no longer reads it as pending, nor the floor lower.
   } finally {
     released.add(entry.id);
+    if (spentThrough !== undefined) {
+      const key = reservationKey(ownerId, contractId);
+      raisedFloors.set(key, max(raisedFloors.get(key) ?? BigInt(0), spentThrough));
+    }
   }
 }
 
@@ -328,13 +338,12 @@ const SPENT_READ_MS = 1_000;
  * read before it (`tipBefore`), took that one. A floor too low lets a node
  * that is behind settle a later write early (a nonce of this one in that
  * write's range), and a floor too high makes a later lost answer wait out its
- * lifetime, every time, while the SDK signs below it. So:
- *  - a refusal Platform does not show taking a nonce within a few reads
- *    counts as one that took none (refused before it executed);
- *  - a confirmation Platform shows moving the tip past `tipBefore`, but not
- *    into its range, took a nonce below the range (the floor was already
- *    higher than the tip), and the floor is not raised past that tip;
- *  - a confirmation it does not show at all counts as one that took the last
+ * lifetime while the SDK signs below it. Only the first can lose a write, so:
+ *  - one Platform shows moving the tip past `tipBefore`, but not into its
+ *    range, took a nonce below the range (the floor was already higher than
+ *    the tip), and the floor is not raised past that tip;
+ *  - one it does not show at all within a few reads, confirmed or refused
+ *    (a refusal may have been a paid one), counts as having taken the last
  *    nonce of its range.
  */
 async function nonceTakenOnAnswer(
@@ -359,8 +368,7 @@ async function nonceTakenOnAnswer(
       logger.debug('Could not read the contract nonce after an SDK-signed write:', error);
     }
   }
-  if (!executed) return undefined;
-  // Still not in its range a few seconds on, past a node catching up: it took one below it.
+  // Still not in its range a few seconds on, past a node catching up: it took one below it, or (unseen) any up to the top.
   return lastTip !== undefined && lastTip > tipBefore ? lastTip : entry.signedAtMost;
 }
 

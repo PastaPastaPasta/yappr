@@ -170,15 +170,17 @@ describe('createDocument with an inconclusive outcome', () => {
   })
 
   it('counts a nonce as spent after a confirmed or wait-refused create, never after one refused at broadcast', async () => {
+    // Its own identity: the floors this tab raised for others stay in memory.
+    const me = 'floor-owner'
     sdk.stateTransitions.broadcastStateTransition.mockRejectedValueOnce({ code: 10405, message: 'Document id is invalid' }).mockResolvedValue(undefined)
     sdk.stateTransitions.waitForResponse.mockResolvedValue({})
 
     // Refused at broadcast: 101 was never taken, so an SDK-signed write still signs past 100.
-    expect(await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'refused' })).toMatchObject({ success: false })
-    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(100), pending: [] })
+    expect(await stateTransitionService.createDocument(CONTRACT, 'post', me, { text: 'refused' })).toMatchObject({ success: false })
+    expect(loadReservation(me, CONTRACT)).toMatchObject({ mark: n(101), floor: n(100), pending: [] })
 
-    expect(await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'kept' })).toMatchObject({ success: true, confirmed: true })
-    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(102), floor: n(102), pending: [] })
+    expect(await stateTransitionService.createDocument(CONTRACT, 'post', me, { text: 'kept' })).toMatchObject({ success: true, confirmed: true })
+    expect(loadReservation(me, CONTRACT)).toMatchObject({ mark: n(102), floor: n(102), pending: [] })
   })
 
   it('reports a broadcast that failed without a verdict as unconfirmed, so no caller rebuilds it', async () => {
