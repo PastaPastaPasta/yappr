@@ -119,8 +119,8 @@ describe('Shipping Zones CSV column (storefront v9)', () => {
     expect(exported.zonesAmbiguous.map((item) => item.id)).toEqual(['w', 'b'])
     const result = v9.parseInventoryCSV(exported.csv, 'USD', zones)
     expect(result.items.map((item) => [item.errors, item.shippingZoneIds])).toEqual([
-      [['"Wallet": the shipping zones "US; Canada" can be read more than one way, because a zone name contains ";" or "|". Rename that zone, then import again.'], undefined],
-      [['"Belt": the shipping zones "US; Canada" can be read more than one way, because a zone name contains ";" or "|". Rename that zone, then import again.'], undefined],
+      [['"Wallet": the shipping zones "US; Canada" can be read more than one way (a zone name contains ";" or "|", or two zone names differ only in capitals). Rename that zone, then import again.'], undefined],
+      [['"Belt": the shipping zones "US; Canada" can be read more than one way (a zone name contains ";" or "|", or two zone names differ only in capitals). Rename that zone, then import again.'], undefined],
       [[], undefined],
     ])
   })

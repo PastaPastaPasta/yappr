@@ -103,11 +103,18 @@ export function zoneCountriesLabel(zone: Pick<ShippingZone, 'countryPattern'>): 
 /** Between zone names in one cell: names may hold commas, so not a comma. */
 export const ZONE_SEPARATOR = '; '
 
-/** The zone named `name` (trimmed on both sides): exactly, else ignoring case. */
-function zoneNamed<Zone extends ZoneLike>(zones: readonly Zone[], name: string): Zone | undefined {
+/**
+ * The zones `name` (trimmed on both sides) can mean: the one named exactly so,
+ * else every zone whose name differs only in case. Names are unique per store
+ * but not case-insensitively ("Domestic" and "DOMESTIC" may both exist), so a
+ * case-insensitive match can be more than one zone, which makes the cell
+ * ambiguous rather than the first one found.
+ */
+function zonesNamed<Zone extends ZoneLike>(zones: readonly Zone[], name: string): Zone[] {
   const wanted = name.trim()
-  if (wanted === '') return undefined
-  return zones.find((zone) => zone.name.trim() === wanted) ?? zones.find((zone) => zone.name.trim().toLowerCase() === wanted.toLowerCase())
+  if (wanted === '') return []
+  const exact = zones.filter((zone) => zone.name.trim() === wanted)
+  return exact.length > 0 ? exact : zones.filter((zone) => zone.name.trim().toLowerCase() === wanted.toLowerCase())
 }
 
 /** Whether `text` has nothing from `end` on but spaces up to a separator (";" or "|") or its end. */
@@ -173,9 +180,9 @@ function zoneReadings<Zone extends ZoneLike>(parts: readonly string[], separator
   let name = ''
   for (let to = from; to < parts.length && readings.length < 3; to++) {
     name += (to > from ? separators[to - 1] : '') + parts[to]
-    const zone = zoneNamed(zones, name)
-    if (!zone) continue
-    for (const rest of zoneReadings(parts, separators, zones, to + 1, memo)) add([zone, ...rest])
+    for (const zone of zonesNamed(zones, name)) {
+      for (const rest of zoneReadings(parts, separators, zones, to + 1, memo)) add([zone, ...rest])
+    }
   }
   memo.set(from, readings)
   return readings

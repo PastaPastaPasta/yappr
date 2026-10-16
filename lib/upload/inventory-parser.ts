@@ -139,7 +139,7 @@ function resolveZones(rows: readonly ParsedInventoryRow[], zones: readonly Impor
   }
   const { found, unknown, ambiguous } = readZoneCell(cells[0], zones)
   if (ambiguous) {
-    errors.push(`"${title}": the shipping zones "${cells[0]}" can be read more than one way, because a zone name contains ";" or "|". Rename that zone, then import again.`)
+    errors.push(`"${title}": the shipping zones "${cells[0]}" can be read more than one way (a zone name contains ";" or "|", or two zone names differ only in capitals). Rename that zone, then import again.`)
     return undefined
   }
   // A cell with something in it never reads as "every zone".

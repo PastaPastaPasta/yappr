@@ -324,20 +324,22 @@ class CartService {
    * else its item's, times the quantity), its subtotal and the zones its item
    * is limited to. Digital lines are left out. Read fresh, and THROWS when the
    * read fails: a line priced without its item would ship under every zone, so
-   * an item limited to some could slip through on a transient error. An item
-   * that no longer exists weighs nothing and ships under every zone (the
-   * availability check refuses it before an order is placed).
+   * an item limited to some could slip through on a transient error. Every
+   * line's item must be in the answer too: one left out (not yet visible to
+   * the node that answered, or gone) cannot be priced or checked against its
+   * zones, so it throws as well, and checkout says shipping can't be checked.
    */
   async getShippingLines(items: readonly CartItem[]): Promise<ShippingLine[]> {
     const lines = shippableItems(items);
     const byId = new Map((await storeItemService.getManyOrThrow(lines.map((line) => line.itemId))).map((item) => [item.id, item]));
     return lines.map((cartItem) => {
       const item = byId.get(cartItem.itemId);
-      const weight = item ? storeItemService.getWeight(item, cartItem.variantId) : undefined;
+      if (!item) throw new Error(`getShippingLines: item ${cartItem.itemId} was not in the answer`);
+      const weight = storeItemService.getWeight(item, cartItem.variantId);
       return {
         itemId: cartItem.itemId,
         title: cartItem.title,
-        zoneIds: item?.shippingZoneIds,
+        zoneIds: item.shippingZoneIds,
         weight: (weight ?? 0) * cartItem.quantity,
         subtotal: cartItem.unitPrice * cartItem.quantity
       };

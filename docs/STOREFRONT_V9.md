@@ -144,7 +144,9 @@ reads. A blank part is tried both as a stray separator and as the start of a
 name that begins with one (`;US`), so zones `US` and `;US` make `;US` read two
 ways, and a reading of no zones at all (a cell of only separators) never
 counts: a non-empty cell that names no zone is an error, never "every zone". One complete reading is used. More than one (zones "US", "Canada" and
-"US; Canada" make "US; Canada" read two ways) is an error on that product,
+"US; Canada" make "US; Canada" read two ways; so do "Domestic" and "DOMESTIC"
+for a cell of "domestic", since names are unique per store but not
+case-insensitively, while an exact match always wins) is an error on that product,
 "can be read more than one way…; rename that zone", never a guess, and the
 export warns about such products. With no complete reading, the names no zone
 has are reported as unknown. A product takes its first non-empty cell

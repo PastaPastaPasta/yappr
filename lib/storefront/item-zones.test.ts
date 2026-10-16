@@ -79,4 +79,17 @@ describe('per-item shipping zones', () => {
     // Many parts stay quick: the readings are memoized and capped at two.
     expect(ids(Array.from({ length: 40 }, () => 'US').join(';') + ';Mars').unknown).toEqual(['Mars'])
   })
+
+  it('refuses a name that matches two zones once case is ignored, but keeps an exact match', () => {
+    // Zone names are unique per store, not case-insensitively.
+    const store = [{ id: 'd1', name: 'Domestic' }, { id: 'd2', name: 'DOMESTIC' }, { id: 'eu', name: 'EU' }]
+    const read = (cell: string) => {
+      const result = readZoneCell(cell, store)
+      return { ids: result.found.map((zone) => zone.id), ambiguous: result.ambiguous }
+    }
+    expect(read('domestic')).toEqual({ ids: [], ambiguous: true })
+    expect(read('eu; domestic')).toEqual({ ids: [], ambiguous: true })
+    expect(read('DOMESTIC')).toEqual({ ids: ['d2'], ambiguous: false })
+    expect(read('Domestic; eu')).toEqual({ ids: ['d1', 'eu'], ambiguous: false })
+  })
 })

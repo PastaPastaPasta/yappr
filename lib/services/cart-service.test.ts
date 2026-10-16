@@ -157,14 +157,15 @@ describe('cart inventory', () => {
     const lines = await cartService.getShippingLines([
       cartItem({ itemId: 'limited', title: 'Leather Wallet', quantity: 1 }),
       cartItem({ itemId: 'ebook', fulfillment: 'digital' }),
-      cartItem({ itemId: 'gone', quantity: 3 }),
     ])
-    expect(read).toHaveBeenCalledWith(['limited', 'gone'])
-    expect(lines).toEqual([
-      { itemId: 'limited', title: 'Leather Wallet', zoneIds: zones, weight: 90, subtotal: 100 },
-      // No longer exists: weighs nothing and ships under every zone (the availability check refuses it).
-      { itemId: 'gone', title: 'Limited item', zoneIds: undefined, weight: 0, subtotal: 300 },
-    ])
+    expect(read).toHaveBeenCalledWith(['limited'])
+    expect(lines).toEqual([{ itemId: 'limited', title: 'Leather Wallet', zoneIds: zones, weight: 90, subtotal: 100 }])
+  })
+
+  it('fails closed: an item the answer leaves out throws instead of shipping under every zone', async () => {
+    // The availability check reads separately, so it may still find the item: shipping cannot assume it was refused.
+    vi.spyOn(storeItemService, 'getManyOrThrow').mockResolvedValue([product({ id: 'limited', shippingZoneIds: ['zone-a'] })])
+    await expect(cartService.getShippingLines([cartItem({ itemId: 'limited' }), cartItem({ itemId: 'not-yet-visible' })])).rejects.toThrow('not-yet-visible')
   })
 
   it('fails closed: a read that fails throws instead of pricing the line under every zone', async () => {
