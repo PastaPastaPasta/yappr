@@ -57,6 +57,12 @@ export interface KeyRingLoginOptions {
    * the tab's, and it rejects with {@link SupersededSignInError} instead.
    */
   stillCurrent?: () => boolean
+  /**
+   * The {@link PlatformAuthController.sessionEpoch} the sign-in began on, when
+   * it began before this call (say, before its keys were stored). Any sign-in
+   * or sign-out since then supersedes it. Defaults to the epoch at this call.
+   */
+  since?: number
 }
 
 function buildIntent(kind: PlatformAuthIntent['kind'], identityId: string, username?: string): PlatformAuthIntent {
@@ -273,7 +279,7 @@ export class PlatformAuthController {
     options: KeyRingLoginOptions,
   ): Promise<PlatformAuthResult> {
     const skipUsernameCheck = options.skipUsernameCheck ?? false
-    const startedAt = this.epoch
+    const startedAt = options.since ?? this.epoch
     this.patchState({ isLoading: true, error: null })
 
     try {

@@ -160,12 +160,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
     await revokeLogout.current
+    // Taken before the grant is stored: a sign-in or sign-out while it is
+    // stored or while the identity is read supersedes this one.
+    const since = controller.sessionEpoch()
     const session = await appConnectSessions.adopt(grant)
     try {
       // Bound to this grant and to the session it started on: if a logout or any
-      // other sign-in takes the session while the identity is read, this sign-in
-      // stores nothing (#734).
+      // other sign-in takes the session meanwhile, this sign-in stores nothing (#734).
       const result = await controller.loginWithKeyRing(session.identityId, {
+        since,
         stillCurrent: () => appConnectSessions.current(session.identityId) !== null,
       })
       await applyIntent(result.intent)
