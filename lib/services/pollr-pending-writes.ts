@@ -3,7 +3,7 @@ import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES } from '@/lib/constants';
 import { NONCE_STORE_ERROR, extractErrorMessage } from '@/lib/error-utils';
 import { scopedKey } from '@/lib/storage-scope';
 import { getEvoSdk } from './evo-sdk-service';
-import { loadReservation, settleSupersededReplaces, stillPending } from './identity-nonce';
+import { loadReservation, settlePendingWrites, stillPending } from './identity-nonce';
 import { markPollHasBallots } from './pollr-known-ballots';
 import { documentToPlainObject } from './sdk-helpers';
 
@@ -150,14 +150,14 @@ async function uncertainReplaceMayLand(ownerId: string, pollId: string): Promise
  * confirmation timed out leaves its nonce reservation pending with no known
  * nonce, and that holds back every later write this identity makes on the
  * contract — the next ballot edit, a ballot on another poll, a new poll —
- * until it expires (reloading does not clear it). This releases the ones
- * Platform proves superseded: the ballot at the revision the replace wrote AND
- * the nonce after it consumed. Genuinely uncertain reservations stay, and a
- * failure here only leaves them as they were, so it never blocks the write.
+ * until Platform shows the nonce it took consumed. This drops the ones it
+ * already does (`settlePendingWrites`). Genuinely uncertain reservations stay,
+ * and a failure here only leaves them as they were, so it never blocks the
+ * write.
  */
 export async function settlePendingPollrReplaces(ownerId: string): Promise<void> {
   try {
-    await settleSupersededReplaces(ownerId, POLLR_CONTRACT_ID);
+    await settlePendingWrites(ownerId, POLLR_CONTRACT_ID);
   } catch (error) {
     logger.warn('Pollr: could not settle pending ballot replaces', { error: extractErrorMessage(error) });
   }
@@ -186,10 +186,10 @@ export function pollrBallotScope(pollId: string): string {
  * window behind the tip — and on no clock. A create that was dropped therefore
  * holds back this one poll's ballots until then (or until the poll closes,
  * which ends voting anyway); nothing else proves it cannot still execute. A
- * replace the SDK signed has no known nonce; its reservation counts until it is
- * settled (see {@link settlePendingPollrReplaces}, which callers run first) or
- * expires, and past that expiry the ballot replace record above keeps it
- * counting until the chain proves it cannot land or the poll closes.
+ * replace the SDK signed has no known nonce; its reservation counts until
+ * Platform shows the nonce it took consumed (`stillPending`) or it expires,
+ * and past that expiry the ballot replace record above keeps it counting
+ * until the chain proves it cannot land or the poll closes.
  * True when the nonce cannot be read while something relevant is pending,
  * since nothing then proves it cannot execute.
  *

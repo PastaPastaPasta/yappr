@@ -1,16 +1,16 @@
 /**
- * QA D-01 review findings on nonce bookkeeping: an SDK-signed write must never
- * run while a transition this browser signed may still execute (the polling
- * budget used to lapse into the write); nothing may take a nonce while an
- * SDK-signed transition whose nonce is unknown may still execute; the mark
- * never goes down; and nothing is signed unless its reservation is stored
- * where every tab sees it.
+ * Nonce bookkeeping (QA D-01, #644): an SDK-signed write must never run while
+ * a transition this browser signed may still execute (the polling budget used
+ * to lapse into the write); nothing may take a nonce while an SDK-signed
+ * transition may still execute; a lost answer stops holding writes back as
+ * soon as Platform shows the transition landed; the mark and the floor never
+ * go down; and nothing is signed unless its reservation is stored where every
+ * tab sees it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
   identities: { contractNonce: vi.fn() },
-  documents: { get: vi.fn() },
   wasm: { refreshIdentityNonce: vi.fn(async () => undefined) },
 }))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
@@ -28,10 +28,11 @@ vi.stubGlobal('localStorage', {
 })
 
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
-import { WRITE_PRECONDITION_FAILED, allocateNonce, loadReservation, releaseNonce, reserveNonce, settleSupersededReplaces, stillPending, withSdkSignedWrite } from './identity-nonce'
+import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
 
 const n = (value: number) => BigInt(value)
 const PENDING_STORE = NONCE_STORE_ERROR
+const MINUTE = 60 * 1000
 let owner = 0
 let OWNER = ''
 const CONTRACT = 'contract'
@@ -42,15 +43,14 @@ beforeEach(() => {
   // A fresh identity per test: this tab's in-memory copies are module state.
   OWNER = `owner-${++owner}`
   sdk.identities.contractNonce.mockReset()
-  sdk.documents.get.mockReset()
   vi.useFakeTimers()
 })
 afterEach(() => {
   vi.useRealTimers()
 })
 
-async function runSdkWrite(write: () => Promise<string>) {
-  const outcome = withSdkSignedWrite(OWNER, CONTRACT, write).then(
+async function settle<T>(promise: Promise<T>) {
+  const outcome = promise.then(
     (value) => ({ ok: true as const, value }),
     (error: unknown) => ({ ok: false as const, error })
   )
@@ -58,9 +58,22 @@ async function runSdkWrite(write: () => Promise<string>) {
   return outcome
 }
 
+const runSdkWrite = (write: () => Promise<string>) => settle(withSdkSignedWrite(OWNER, CONTRACT, write))
+
+/** The nonce the next create gets, as `createDocument` asks for it. */
+const nextCreateNonce = () => settle(awaitNonce(OWNER, CONTRACT, allocateNonce).then(({ value }) => value))
+
+/** An SDK-signed write sent with Platform at `tip`, whose answer was lost after the broadcast. */
+async function lostAnswer(tip: number) {
+  sdk.identities.contractNonce.mockResolvedValue(n(tip))
+  const outcome = await runSdkWrite(async () => { throw new Error('transport error: grpc error: Failed to fetch') })
+  expect(outcome.ok).toBe(false)
+  expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
+}
+
 describe('reservation scope', () => {
   it('stores and reads back what a transition writes, and leaves it absent when unnamed', () => {
-    reserveNonce(OWNER, CONTRACT, n(101), n(100), undefined, 'pollr-vote:p1')
+    reserveNonce(OWNER, CONTRACT, n(101), n(100), 'pollr-vote:p1')
     reserveNonce(OWNER, CONTRACT, n(102), n(100))
 
     const [scoped, unscoped] = loadReservation(OWNER, CONTRACT)?.pending ?? []
@@ -98,13 +111,9 @@ describe('withSdkSignedWrite', () => {
   it('sends and reserves nothing when its precondition fails under the lock', async () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const write = vi.fn(async () => 'sent')
-    const outcome = withSdkSignedWrite(OWNER, CONTRACT, write, undefined, undefined, async () => false).then(
-      (value) => ({ ok: true as const, value }),
-      (error: unknown) => ({ ok: false as const, error })
-    )
-    await vi.runAllTimersAsync()
+    const outcome = await settle(withSdkSignedWrite(OWNER, CONTRACT, write, undefined, async () => false))
 
-    expect(await outcome).toEqual({ ok: false, error: new Error(WRITE_PRECONDITION_FAILED) })
+    expect(outcome).toEqual({ ok: false, error: new Error(WRITE_PRECONDITION_FAILED) })
     expect(write).not.toHaveBeenCalled()
     expect(loadReservation(OWNER, CONTRACT)?.pending ?? []).toEqual([])
   })
@@ -117,10 +126,8 @@ describe('withSdkSignedWrite', () => {
       seen.push(await sdk.identities.contractNonce(OWNER, CONTRACT))
       return true
     })
-    const outcome = withSdkSignedWrite(OWNER, CONTRACT, async () => 'sent', undefined, undefined, precondition)
-    await vi.runAllTimersAsync()
 
-    expect(await outcome).toBe('sent')
+    expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sent', undefined, precondition))).toEqual({ ok: true, value: 'sent' })
     // Called once, after Platform showed the earlier nonce consumed.
     expect(precondition).toHaveBeenCalledTimes(1)
     expect(seen).toEqual([n(101)])
@@ -155,123 +162,179 @@ describe('withSdkSignedWrite', () => {
     expect(loadReservation(OWNER, CONTRACT)?.pending).toEqual([])
   })
 
-  it('releases an SDK write the network refused', async () => {
+  it('releases an SDK write the network refused, without counting its nonce as spent', async () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const refused = await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
     expect(refused.ok).toBe(false)
-    expect(loadReservation(OWNER, CONTRACT)?.pending).toEqual([])
+    // It may have been refused before it executed: the floor stays at the tip.
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(100), pending: [] })
+  })
+
+  it('counts the nonce an SDK write took as spent once it is confirmed', async () => {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    expect(await runSdkWrite(async () => 'sent')).toEqual({ ok: true, value: 'sent' })
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(101), pending: [] })
   })
 })
 
-describe('an SDK-signed write whose outcome is unknown', () => {
-  // Its nonce is whatever the SDK picked, from its cache or a node this code
-  // never sees: 101, or 102 if that node was a block ahead.
-  async function timedOutSdkWrite() {
-    sdk.identities.contractNonce.mockResolvedValue(n(100))
-    const outcome = await runSdkWrite(async () => { throw new Error('waitForResponse timed out') })
-    expect(outcome.ok).toBe(false)
-  }
+describe('an SDK-signed write whose answer was lost (#644)', () => {
+  it('records the nonces the SDK may have signed, and the last of them as the mark', async () => {
+    await lostAnswer(100)
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), pending: [{ nonce: null, signedAfter: n(100), signedAtMost: n(101) }] })
+  })
 
-  it('holds up the next SDK-signed write even once the tip moves past some nonce it could have used', async () => {
-    await timedOutSdkWrite()
-    // Tip 101: the SDK write may have executed at 101, or signed 102 and still be waiting.
-    sdk.identities.contractNonce.mockResolvedValue(n(101))
+  it('settles whichever nonce the SDK signed: past the tip from a fresh tab, or past its own last one', async () => {
+    // A replace refused at 100: this tab's SDK signed 101, which was never taken.
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(100) })
+
+    await lostAnswer(100)
+    expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ signedAfter: n(100), signedAtMost: n(102) })
+    // After a reload the SDK signs 101; in the same tab it signs 102, leaving 101 missing.
+    expect(stillPending(n(101), loadReservation(OWNER, CONTRACT))).toEqual([])
+    expect(stillPending(n(102) | (BigInt(1) << BigInt(40)), loadReservation(OWNER, CONTRACT))).toEqual([])
+    // Nothing of it shows yet.
+    expect(stillPending(n(100), loadReservation(OWNER, CONTRACT))).toHaveLength(1)
+    // And nothing this browser builds takes either.
+    expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT), Date.now() + 2 * MINUTE)).toBe(n(103))
+  })
+
+  it('counts its minute from when the answer was lost, however long the SDK took to lose it', async () => {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const slow = () => new Promise<string>((_, reject) => setTimeout(() => reject(new Error('transport error: Failed to fetch')), 70_000))
+    expect((await runSdkWrite(slow)).ok).toBe(false)
+    const lostAt = Date.now()
+    expect(stillPending(n(100), loadReservation(OWNER, CONTRACT), lostAt + MINUTE - 1)).toHaveLength(1)
+    expect(stillPending(n(100), loadReservation(OWNER, CONTRACT), lostAt + MINUTE + 1)).toEqual([])
+  })
+
+  it('holds every write back while Platform does not show the nonce after that tip consumed', async () => {
+    await lostAnswer(100)
     const next = vi.fn(async () => 'sent')
 
-    const outcome = await runSdkWrite(next)
-
+    expect(await runSdkWrite(next)).toEqual({ ok: false, error: new Error(PENDING_WRITE_ERROR) })
     expect(next).not.toHaveBeenCalled()
-    expect(outcome).toEqual({ ok: false, error: new Error(PENDING_WRITE_ERROR) })
+    expect(await nextCreateNonce()).toEqual({ ok: false, error: new Error(PENDING_WRITE_ERROR) })
+    expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT))).toBeNull()
   })
 
-  it('gives a create no nonce at all, whatever node the create reads', () => {
-    return timedOutSdkWrite().then(() => {
-      for (const tip of [100, 101, 102]) expect(allocateNonce(n(tip), loadReservation(OWNER, CONTRACT))).toBeNull()
-    })
+  it('lets every later write go once it landed: a replace, a delete, a create, a token action', async () => {
+    await lostAnswer(100)
+    // It landed at 101.
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
+    const next = vi.fn(async () => 'sent')
+
+    expect(await nextCreateNonce()).toEqual({ ok: true, value: n(102) })
+    expect(await runSdkWrite(next)).toEqual({ ok: true, value: 'sent' })
+    expect(next).toHaveBeenCalledTimes(1)
   })
 
-  it('stops holding writes up once it is too old to execute', async () => {
-    await timedOutSdkWrite()
-    const later = Date.now() + 16 * 60 * 1000
-    expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT), later)).toBe(n(101))
+  it('lets the write that follows wait the few seconds a node takes to show it landed', async () => {
+    await lostAnswer(100)
+    sdk.identities.contractNonce.mockResolvedValueOnce(n(100)).mockResolvedValueOnce(n(100)).mockResolvedValue(n(101))
+    expect(await runSdkWrite(async () => 'sent')).toEqual({ ok: true, value: 'sent' })
+  })
+
+  it('is settled when another transition took that nonce: it can no longer execute', async () => {
+    await lostAnswer(100)
+    // Tip 103 with 101 among the missing (bit 40 + (103 - 101 - 1)): 101 is not consumed.
+    const withMissing101 = n(103) | (BigInt(1) << BigInt(41))
+    expect(stillPending(withMissing101, loadReservation(OWNER, CONTRACT))).toHaveLength(1)
+    expect(stillPending(n(103), loadReservation(OWNER, CONTRACT))).toEqual([])
+  })
+
+  it('stops holding writes back after a minute when Platform never shows that nonce, and nothing built takes it', async () => {
+    await lostAnswer(100)
+    const later = Date.now() + MINUTE + 1
+    expect(stillPending(n(100), loadReservation(OWNER, CONTRACT), later)).toEqual([])
+    // Past the nonce it may still carry, should it execute late.
+    expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT), later)).toBe(n(102))
+  })
+
+  it('signs past the floor, not a tip a lagging node reports behind this browser\'s own writes', async () => {
+    // A replace confirmed with Platform at 100: it took 101.
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    expect(await runSdkWrite(async () => 'sent')).toEqual({ ok: true, value: 'sent' })
+    expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(101))
+
+    // The next one reads a node still at 100, while the SDK reads one at 101 and signs 102.
+    await lostAnswer(100)
+    expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ signedAfter: n(101) })
+    // 101 consumed proves nothing about 102.
+    expect(stillPending(n(101), loadReservation(OWNER, CONTRACT))).toHaveLength(1)
+    expect(stillPending(n(102), loadReservation(OWNER, CONTRACT))).toEqual([])
+  })
+
+  it('takes the floor from creates that took their nonce, but not from one refused at broadcast', () => {
+    const confirmed = reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    releaseNonce(OWNER, CONTRACT, confirmed)
+    expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(101))
+
+    const refused = reserveNonce(OWNER, CONTRACT, n(102), n(100))
+    releaseNonce(OWNER, CONTRACT, refused, false)
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(102), floor: n(101) })
+    // An SDK-signed write now signs past 101, the nonce Platform has executed, and at most past the mark.
+    expect(reserveNonce(OWNER, CONTRACT, null, n(100))).toMatchObject({ signedAfter: n(101), signedAtMost: n(103) })
+  })
+
+  it('reads an entry stored without its range (or with the missing-revision bits) as one that only expires', async () => {
+    await lostAnswer(100)
+    const [key] = [...storage.keys()]
+    const stored = JSON.parse(storage.get(key) ?? '{}') as { floor?: string; pending: Record<string, unknown>[] }
+    delete stored.floor
+    for (const p of stored.pending) {
+      delete p.signedAtMost
+      p.signedAfter = ((BigInt(1) << BigInt(45)) | n(100)).toString()
+    }
+    storage.set(key, JSON.stringify(stored))
+    vi.resetModules()
+    const reloaded = await import('./identity-nonce')
+
+    const reservation = reloaded.loadReservation(OWNER, CONTRACT)
+    expect(reservation?.floor).toBe(n(0))
+    expect(reservation?.pending[0]).not.toHaveProperty('signedAfter')
+    expect(reloaded.stillPending(n(105), reservation)).toHaveLength(1)
+    expect(reloaded.stillPending(n(105), reservation, Date.now() + 2 * MINUTE)).toEqual([])
+  })
+
+  it('is seen by every tab, and settled by every tab once it landed', async () => {
+    await lostAnswer(100)
+    vi.resetModules()
+    const otherTab = await import('./identity-nonce')
+    expect(otherTab.allocateNonce(n(100), otherTab.loadReservation(OWNER, CONTRACT))).toBeNull()
+    expect(otherTab.allocateNonce(n(101), otherTab.loadReservation(OWNER, CONTRACT))).toBe(n(102))
   })
 })
 
-describe('settleSupersededReplaces: an SDK-signed replace Platform shows superseded', () => {
-  const REPLACE = { documentType: 'dmSelfState', documentId: 'doc-1', revision: 3 }
+describe('settlePendingWrites', () => {
+  it('drops what Platform shows can no longer execute and keeps the rest', async () => {
+    await lostAnswer(100)
+    reserveNonce(OWNER, CONTRACT, n(102), n(100))
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
 
-  /** A replace of doc-1 to revision 3 whose answer was lost after the broadcast. */
-  async function lostReplace(replaces: typeof REPLACE | null = REPLACE) {
-    sdk.identities.contractNonce.mockResolvedValue(n(100))
-    const outcome = withSdkSignedWrite(OWNER, CONTRACT, async () => { throw new Error('transport error: Failed to fetch') }, replaces ?? undefined)
-      .then(() => undefined, () => undefined)
-    await vi.runAllTimersAsync()
-    await outcome
-    expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
-  }
-
-  async function settle() {
-    const settled = settleSupersededReplaces(OWNER, CONTRACT)
-    await vi.runAllTimersAsync()
-    return settled
-  }
-
-  it('stores what the replace writes, and the nonce Platform reported before it, with its pending entry, for every tab', async () => {
-    await lostReplace()
-    expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ replaces: REPLACE, signedAfter: n(100) })
+    expect(await settle(settlePendingWrites(OWNER, CONTRACT))).toEqual({ ok: true, value: 1 })
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map((p) => p.nonce)).toEqual([n(102)])
   })
 
-  it('releases it once the document is at its revision or later and the next nonce is consumed, and the next SDK-signed write runs', async () => {
-    await lostReplace()
-    sdk.identities.contractNonce.mockResolvedValue(n(101))
-    sdk.documents.get.mockResolvedValue({ $revision: 3 })
-    expect(await settle()).toBe(1)
-    expect(sdk.documents.get).toHaveBeenCalledWith(CONTRACT, 'dmSelfState', 'doc-1')
-    expect(loadReservation(OWNER, CONTRACT)?.pending).toEqual([])
-    const next = vi.fn(async () => 'sent')
-    expect(await runSdkWrite(next)).toEqual({ ok: true, value: 'sent' })
+  it('drops nothing when the nonce cannot be read: a failure proves nothing', async () => {
+    await lostAnswer(100)
+    sdk.identities.contractNonce.mockRejectedValue(new Error('no available addresses'))
 
-    await lostReplace()
-    sdk.identities.contractNonce.mockResolvedValue(n(101))
-    sdk.documents.get.mockResolvedValue({ $revision: 5 })
-    expect(await settle()).toBe(1)
-  })
-
-  it('keeps it pending while the nonce after the reported one is unconsumed: a stale-revision replace may still execute', async () => {
-    await lostReplace()
-    sdk.documents.get.mockResolvedValue({ $revision: 3 })
-    expect(await settle()).toBe(0)
+    expect(await settle(settlePendingWrites(OWNER, CONTRACT))).toEqual({ ok: true, value: 0 })
     expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
   })
 
-  it('keeps it pending while it may still execute, or when nothing can be proved', async () => {
-    await lostReplace()
-    sdk.identities.contractNonce.mockResolvedValue(n(101))
-    for (const answer of [
-      () => sdk.documents.get.mockResolvedValue({ $revision: 2 }),
-      () => sdk.documents.get.mockResolvedValue(undefined),
-      () => sdk.documents.get.mockRejectedValue(new Error('no available addresses')),
-    ]) {
-      answer()
-      expect(await settle()).toBe(0)
-      expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
-    }
-  })
-
-  it('never touches an SDK-signed write that named no replace, nor one whose nonce is known', async () => {
-    await lostReplace(null)
-    reserveNonce(OWNER, CONTRACT, n(101), n(100))
-    sdk.documents.get.mockResolvedValue({ $revision: 99 })
-    expect(await settle()).toBe(0)
-    expect(sdk.documents.get).not.toHaveBeenCalled()
-    expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(2)
+  it('reads nothing when nothing is pending', async () => {
+    expect(await settle(settlePendingWrites(OWNER, CONTRACT))).toEqual({ ok: true, value: 0 })
+    expect(sdk.identities.contractNonce).not.toHaveBeenCalled()
   })
 })
 
 describe('a transition whose nonce is known (a create, a wallet request)', () => {
   it('stays pending, however long ago, until Platform shows its nonce consumed', async () => {
     reserveNonce(OWNER, CONTRACT, n(101), n(100))
-    vi.setSystemTime(Date.now() + 60 * 60 * 1000)
+    vi.setSystemTime(Date.now() + 60 * MINUTE)
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const write = vi.fn(async () => 'sent')
 
@@ -283,6 +346,12 @@ describe('a transition whose nonce is known (a create, a wallet request)', () =>
 
     sdk.identities.contractNonce.mockResolvedValue(n(101))
     expect(await runSdkWrite(write)).toEqual({ ok: true, value: 'sent' })
+  })
+
+  it('never holds back a create, whose nonce goes past it', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    expect(await nextCreateNonce()).toEqual({ ok: true, value: n(102) })
   })
 })
 
@@ -307,7 +376,7 @@ describe('allocateNonce', () => {
   it('falls back to the one after the tip once nothing signed may still execute', () => {
     const entries = []
     for (let nonce = 101; nonce <= 124; nonce++) entries.push(reserveNonce(OWNER, CONTRACT, n(nonce), n(100)))
-    for (const entry of entries) releaseNonce(OWNER, CONTRACT, entry)
+    for (const entry of entries) releaseNonce(OWNER, CONTRACT, entry, false)
     expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT))).toBe(n(101))
   })
 })
@@ -345,7 +414,8 @@ describe('localStorage, the one store every tab shares', () => {
     releaseNonce(OWNER, CONTRACT, entry)
     storageFull.value = false
     expect(loadReservation(OWNER, CONTRACT)?.pending.map((p) => p.nonce)).toEqual([n(101)])
-    expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT))).toBe(n(102))
+    // Past 102 too: the SDK may have signed it.
+    expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT))).toBe(n(103))
   })
 
   it('gives every pending entry its own id, even on the same clock tick in two tabs, so releasing one never releases another', async () => {

@@ -18,7 +18,7 @@ vi.mock('./evo-sdk-service', () => ({
 // The real reservation rules (stillPending) over a mocked store.
 vi.mock('./identity-nonce', async (load) => ({
   ...(await load<typeof import('./identity-nonce')>()),
-  settleSupersededReplaces: mocks.settle,
+  settlePendingWrites: mocks.settle,
   loadReservation: mocks.loadReservation,
 }));
 vi.mock('./state-transition-service', () => ({

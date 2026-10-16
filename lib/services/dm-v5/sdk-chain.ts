@@ -23,7 +23,7 @@ import { hasPrivateKey } from '@/lib/secure-storage'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { getEvoSdk } from '../evo-sdk-service'
 import { stateTransitionService, type StateTransitionResult } from '../state-transition-service'
-import { settleSupersededReplaces } from '../identity-nonce'
+import { settlePendingWrites } from '../identity-nonce'
 import { identityService } from '../identity-service'
 import { followService } from '../follow-service'
 import { bytesToBase64QueryOperand, documentToPlainObject, type DocumentWhereClause, type DocumentOrderByClause } from '../sdk-helpers'
@@ -239,23 +239,21 @@ export class SdkDmChain implements DmChain {
   }
 
   /**
-   * Before every write: release an SDK-signed replace of mine (a roster or
-   * self-state save) whose answer was lost but which Platform shows landed.
-   * A page closed or reloaded while one waited for its answer leaves it
-   * pending in this browser for 15 minutes, and every DM write in between is
-   * refused unsent (PENDING_WRITE_ERROR): "Resend keys" right after the
-   * owner's client removed a member who left, or any send after a reload
-   * that cut a save short. One that cannot be shown landed keeps holding
-   * writes back, as it must. With nothing pending this is one localStorage
-   * read under the write lock. The mobile engine does the same per write
-   * (mobile/engine/README.md, "Lost replace answers").
+   * Before every write: drop the pending entries of my earlier writes (a
+   * roster or self-state save) that Platform shows landed or refused. A page
+   * closed or reloaded while one waited for its answer leaves it pending in
+   * this browser; the write that follows would settle it too, but this logs
+   * what a lost answer had left behind. One that may still execute keeps
+   * holding writes back, as it must. With nothing pending this is one
+   * localStorage read under the write lock. The mobile engine does the same
+   * per write (mobile/engine/README.md, "Lost replace answers").
    */
   private async settlePending(): Promise<void> {
     try {
-      const released = await settleSupersededReplaces(this.me, this.contractId)
-      if (released > 0) logger.warn(`DM v5: released ${released} replace(s) whose answer was lost; they had held DM writes back`)
+      const released = await settlePendingWrites(this.me, this.contractId)
+      if (released > 0) logger.warn(`DM v5: settled ${released} earlier write(s) whose answer was lost`)
     } catch (error) {
-      logger.debug('DM v5: could not settle pending replaces:', error)
+      logger.debug('DM v5: could not settle pending writes:', error)
     }
   }
 

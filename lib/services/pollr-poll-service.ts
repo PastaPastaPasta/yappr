@@ -125,8 +125,8 @@ class PollrPollService extends BaseDocumentService<Poll> {
   async createPoll(ownerId: string, data: CreatePollData): Promise<Poll> {
     const { question, options } = this.normalize(data);
     const endsAt = data.endsAt === undefined ? undefined : Math.floor(data.endsAt);
-    // A landed but unconfirmed ballot replace would otherwise hold this create
-    // back until its reservation expires. A no-op when nothing is pending.
+    // Drop the reservation of a landed but unconfirmed ballot replace. A no-op
+    // when nothing is pending.
     await settlePendingPollrReplaces(ownerId);
 
     if (pollrHasEditableBallots()) {
@@ -198,9 +198,8 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // Stored ballot replaces prove a ballot even once pruned or past the close.
     noteReplacedBallots(ownerId);
     if (this.hasBallots(poll.id)) return { status: 'voted' };
-    // A landed but unconfirmed ballot replace would otherwise hold this delete
-    // back until its reservation expires (as createPoll does). A no-op when
-    // nothing is pending.
+    // Drop the reservation of a landed but unconfirmed ballot replace (as
+    // createPoll does). A no-op when nothing is pending.
     await settlePendingPollrReplaces(ownerId);
     // A ballot write of the owner's that may still land (say an unconfirmed
     // vote from another card) would turn this delete into a paid 40147 if it

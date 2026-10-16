@@ -169,6 +169,18 @@ describe('createDocument with an inconclusive outcome', () => {
     expect(next).toMatchObject({ success: true, confirmed: true })
   })
 
+  it('counts a nonce as spent after a confirmed or wait-refused create, never after one refused at broadcast', async () => {
+    sdk.stateTransitions.broadcastStateTransition.mockRejectedValueOnce({ code: 10405, message: 'Document id is invalid' }).mockResolvedValue(undefined)
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+
+    // Refused at broadcast: 101 was never taken, so an SDK-signed write still signs past 100.
+    expect(await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'refused' })).toMatchObject({ success: false })
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(100), pending: [] })
+
+    expect(await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'kept' })).toMatchObject({ success: true, confirmed: true })
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(102), floor: n(102), pending: [] })
+  })
+
   it('reports a broadcast that failed without a verdict as unconfirmed, so no caller rebuilds it', async () => {
     sdk.stateTransitions.broadcastStateTransition.mockRejectedValue(new Error('transport error: connection reset'))
     sdk.identities.contractNonceWithProof.mockRejectedValue(new Error('transport error: unavailable'))
@@ -268,23 +280,22 @@ describe('createDocument beforeBroadcast (DM v5 counts a send at its broadcast)'
   })
 })
 
-describe('DM v5 writes after a replace whose answer was lost (devnet "Resend keys")', () => {
+describe('DM v5 writes after a replace whose answer was lost (devnet "Resend keys", #644)', () => {
   const ME = new Uint8Array(32).fill(9)
   const me = bs58.encode(ME)
-  const roster = { documentType: 'dmGroupDoc', documentId: 'roster', revision: 6 }
   const grant = () => new SdkDmChain(ME, CONTRACT).createMessage(new Uint8Array([1]), new Uint8Array([2]))
 
   beforeEach(() => {
     // What `withSdkSignedWrite` keeps for the owner's roster replace while it waits for the answer
-    // (Platform at 100 when it was signed). The page moved on before the answer came: never released.
-    reserveNonce(me, CONTRACT, null, n(100), roster)
-    sdk.identities.contractNonce.mockResolvedValue(n(101))
+    // (Platform at 100 when it was signed, so it takes 101). The page moved on before the answer
+    // came: never released.
+    reserveNonce(me, CONTRACT, null, n(100))
     sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
     sdk.stateTransitions.waitForResponse.mockResolvedValue({})
   })
 
   it('sends the grant once Platform shows the replace landed', async () => {
-    sdk.documents.get.mockResolvedValue({ $revision: 6 })
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
 
     expect(await grant()).toMatchObject({ ok: true, id: 'doc-102', confirmed: true })
     expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(1)
@@ -292,9 +303,13 @@ describe('DM v5 writes after a replace whose answer was lost (devnet "Resend key
   })
 
   it('keeps holding writes back while the replace is not shown landed, as it may still execute', async () => {
-    sdk.documents.get.mockResolvedValue({ $revision: 5 })
+    vi.useFakeTimers()
+    const pending = grant()
+    await vi.runAllTimersAsync()
+    const result = await pending
+    vi.useRealTimers()
 
-    expect(await grant()).toMatchObject({ ok: false, error: PENDING_WRITE_ERROR })
+    expect(result).toMatchObject({ ok: false, error: PENDING_WRITE_ERROR })
     expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
   })
 })

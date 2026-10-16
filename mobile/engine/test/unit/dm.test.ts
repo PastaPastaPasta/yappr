@@ -19,8 +19,8 @@ import type { SessionEvents } from '../../src/api/session'
 import type { OwnBlocksListener } from '../../src/api/own-blocks'
 
 // The settle before each v5 write reads lib's nonce reservations; here it only records its calls.
-const settleSupersededReplaces = vi.hoisted(() => vi.fn<(ownerId: string, contractId: string) => Promise<number>>(async () => 0))
-vi.mock('@/lib/services/identity-nonce', async (load) => ({ ...await load<object>(), settleSupersededReplaces }))
+const settlePendingWrites = vi.hoisted(() => vi.fn<(ownerId: string, contractId: string) => Promise<number>>(async () => 0))
+vi.mock('@/lib/services/identity-nonce', async (load) => ({ ...await load<object>(), settlePendingWrites }))
 
 // lib/store's persisted settings (read receipts) need the engine's storage before lib loads.
 const { createEngineStorage, installEngineStorage } = await import('../../src/shims/storage')
@@ -334,12 +334,12 @@ describe('dm on DM v5: 1:1', () => {
     expect((await a.dm.conversations()).map(c => [c.key, c.flags.draft])).toEqual([[key, true]])
     await expect(a.dm.send(key, '   ')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
 
-    settleSupersededReplaces.mockClear()
+    settlePendingWrites.mockClear()
     const ticket = await a.dm.send(key, 'hello bob')
     expect(ticket).toMatchObject({ op: 'dm.send', state: 'pending', identityId: alice, target: { conversationKey: key } })
     expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed', error: null })
     // A lost-but-landed roster or self-state replace never holds this send back (PENDING_WRITE).
-    expect(settleSupersededReplaces).toHaveBeenCalledWith(alice, expect.any(String))
+    expect(settlePendingWrites).toHaveBeenCalledWith(alice, expect.any(String))
     // The text never reaches the persisted tickets.
     expect(a.storage.items.get(WRITES_STORAGE_KEY)).not.toContain('hello bob')
     const [mine] = (await a.dm.messages(key)).items
@@ -767,7 +767,7 @@ describe('dm on DM v5: 1:1', () => {
     const { ledger, a, key, broadcasts, written } = await talking()
     // A write in progress (a stalled roster save) holds the account's write lock; the settle before
     // the send waits for it.
-    settleSupersededReplaces.mockImplementation(actual.settleSupersededReplaces)
+    settlePendingWrites.mockImplementation(actual.settlePendingWrites)
     let release: () => void = () => undefined
     const held = new Promise<void>(resolve => { release = resolve })
     let holding = false
@@ -779,7 +779,7 @@ describe('dm on DM v5: 1:1', () => {
     try {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
       const ticket = await a.dm.send(key, 'held')
-      await vi.waitFor(() => expect(settleSupersededReplaces).toHaveBeenCalledWith(alice, YAPPR_DM_V5_CONTRACT_ID))
+      await vi.waitFor(() => expect(settlePendingWrites).toHaveBeenCalledWith(alice, YAPPR_DM_V5_CONTRACT_ID))
       await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
       const notSent = { state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) }
       expect(await a.settled(ticket)).toMatchObject(notSent)
@@ -796,7 +796,7 @@ describe('dm on DM v5: 1:1', () => {
       expect(await a.settled(ticket)).toMatchObject(notSent)
     } finally {
       release()
-      settleSupersededReplaces.mockImplementation(async () => 0)
+      settlePendingWrites.mockImplementation(async () => 0)
     }
   })
 
@@ -1036,7 +1036,7 @@ describe('dm on DM v5: 1:1', () => {
       const { a, b, key, chain } = await sending()
       let writes = 0
       chain.hook = method => (method === 'createMessage' && ++writes === 2
-        ? { ok: false, failure: 'other', error: 'An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.' }
+        ? { ok: false, failure: 'other', error: 'Your last change is still going through, so this one was not sent. Try again in a moment.' }
         : null)
       const ticket = await a.settled(await a.dm.send(key, text))
       expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'PENDING_WRITE' }) })
@@ -1956,10 +1956,10 @@ describe('dm on legacy 1:1 (testnet)', () => {
     expect(await user.dm.conversations()).toEqual([])
     await user.dm.open(key)
     expect((await user.dm.conversations())[0].flags.draft).toBe(true)
-    settleSupersededReplaces.mockClear()
+    settlePendingWrites.mockClear()
     const ticket = await user.settled(await user.dm.send(key, 'hey'))
     expect(ticket).toMatchObject({ state: 'confirmed', documents: [{ type: 'directMessage', id: 'sent-hey', action: 'create', confirmed: true }] })
-    expect(settleSupersededReplaces).not.toHaveBeenCalled()
+    expect(settlePendingWrites).not.toHaveBeenCalled()
     expect(user.legacy.service.sendMessage).toHaveBeenCalledWith(alice, carol, 'hey')
     expect((await user.dm.conversations())[0]).toMatchObject({ lastMessage: { text: 'hey', own: true }, flags: { draft: false } })
   })

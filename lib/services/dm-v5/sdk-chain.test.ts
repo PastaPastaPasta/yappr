@@ -2,14 +2,14 @@ import bs58 from 'bs58'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PENDING_WRITE_ERROR } from '@/lib/error-utils'
 
-const { createDocument, updateDocument, deleteDocument, settleSupersededReplaces } = vi.hoisted(() => ({
+const { createDocument, updateDocument, deleteDocument, settlePendingWrites } = vi.hoisted(() => ({
   createDocument: vi.fn(),
   updateDocument: vi.fn(),
   deleteDocument: vi.fn(),
-  settleSupersededReplaces: vi.fn(),
+  settlePendingWrites: vi.fn(),
 }))
 vi.mock('../state-transition-service', () => ({ stateTransitionService: { createDocument, updateDocument, deleteDocument } }))
-vi.mock('../identity-nonce', () => ({ settleSupersededReplaces }))
+vi.mock('../identity-nonce', () => ({ settlePendingWrites }))
 vi.mock('../evo-sdk-service', () => ({ getEvoSdk: vi.fn() }))
 vi.mock('../identity-service', () => ({ identityService: {} }))
 vi.mock('../follow-service', () => ({ followService: {} }))
@@ -25,11 +25,11 @@ const doc = { id: 'doc', revision: 5 }
 /**
  * The browser's nonce reservations as lib keeps them: an SDK-signed replace whose answer was lost
  * (the page moved on while it waited) holds every later write back with PENDING_WRITE_ERROR until
- * `settleSupersededReplaces` proves it landed.
+ * `settlePendingWrites` sees its nonce consumed.
  */
 function lostReplaceAnswer() {
   let pending = true
-  settleSupersededReplaces.mockImplementation(async () => {
+  settlePendingWrites.mockImplementation(async () => {
     const released = pending ? 1 : 0
     pending = false
     return released
@@ -59,13 +59,13 @@ describe('SdkDmChain writes after a lost replace answer', () => {
   it.each(writes)('settles it first, so %s goes out instead of failing PENDING_WRITE', async (_, write) => {
     const outcome = await write(chain())
     expect(outcome.ok).toBe(true)
-    expect(settleSupersededReplaces).toHaveBeenCalledWith(bs58.encode(ME), CONTRACT)
+    expect(settlePendingWrites).toHaveBeenCalledWith(bs58.encode(ME), CONTRACT)
   })
 
   it('still writes when the settle itself fails, and reports what the write returned', async () => {
-    settleSupersededReplaces.mockRejectedValue(new Error('transport'))
+    settlePendingWrites.mockRejectedValue(new Error('transport'))
     const outcome = await chain().createMessage(bytes(32), bytes(156))
-    expect(settleSupersededReplaces).toHaveBeenCalledTimes(1)
+    expect(settlePendingWrites).toHaveBeenCalledTimes(1)
     expect(createDocument).toHaveBeenCalledTimes(1)
     expect(outcome).toMatchObject({ ok: false, failure: 'other', error: PENDING_WRITE_ERROR })
   })

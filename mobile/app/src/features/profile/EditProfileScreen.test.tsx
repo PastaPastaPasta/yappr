@@ -462,7 +462,7 @@ describe('EditProfileScreen', () => {
       ),
     );
     const shown = useToastStore.getState().current;
-    expect(shown).toMatchObject({ kind: 'info', message: 'Your last change is still saving. Try again in a few minutes.' });
+    expect(shown).toMatchObject({ kind: 'info', message: 'Your last change is still saving. Try again in a moment.' });
     expect(shown?.action).toBeUndefined();
     expect(cachedProfile()?.pronouns).toBeUndefined();
     expect(router.back).not.toHaveBeenCalled();
@@ -544,7 +544,7 @@ describe('EditProfileScreen', () => {
       expect(cachedProfile()).not.toHaveProperty('pronouns');
       expect(cachedProfile()).not.toHaveProperty('location');
       expect(cachedProfile()?.bio).toBe(PROFILE.bio);
-      expect(shown).toEqual(['Your last change is still saving. Try again in a few minutes.']);
+      expect(shown).toEqual(['Your last change is still saving. Try again in a moment.']);
     });
 
     it('shows what the chain says when the later save is refused before a ticket, after the earlier one was proved absent', async () => {

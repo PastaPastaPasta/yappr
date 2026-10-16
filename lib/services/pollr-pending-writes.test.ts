@@ -29,7 +29,7 @@ const MINUTE = 60_000;
 /** A store holding one create reserved at `nonce`, for `scope`. */
 const createPending = (nonce: bigint, scope?: string): NonceReservation => {
   const entry: PendingTransition = { id: 'c', nonce, expiresAt: null };
-  return { mark: nonce, pending: [scope === undefined ? entry : { ...entry, scope }] };
+  return { mark: nonce, floor: BigInt(0), pending: [scope === undefined ? entry : { ...entry, scope }] };
 };
 
 beforeEach(() => {

@@ -1400,7 +1400,7 @@ class ModerationService {
    * Runs one moderation write under the moderator's write lock. `reason`, when
    * the write carries one, is checked BEFORE the lock: a reason refused locally
    * (over 16 documents, over 1024 bytes) thrown inside it would carry no
-   * verdict, and the lock would then hold every later write back for 15 minutes.
+   * verdict, and would then hold every later write back until it expires.
    */
   private async moderate(
     moderatorId: string,

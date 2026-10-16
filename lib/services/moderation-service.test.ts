@@ -923,7 +923,7 @@ describe('refusals and unverified answers seen live on sakura (QA 2026-10-01)', 
     ['ban', () => moderationService.ban(MODERATOR, TARGET, '\u00e9'.repeat(600))],
     ['remove', () => moderationService.removeDocument(MODERATOR, 'post', 'D1', '\u00e9'.repeat(600))],
   ] as const)('refuses a %s reason over 1024 bytes before taking the write lock or a signer', async (_label, run) => {
-    // Inside the lock, a local refusal carries no verdict and would hold every later write back for 15 minutes.
+    // Inside the lock, a local refusal carries no verdict and would hold every later write back until it expires.
     const result = await run()
     expect(result).toMatchObject({ success: false, errorCode: 'REASON_TOO_LONG' })
     expect(sdk.identities.fetch).not.toHaveBeenCalled()
