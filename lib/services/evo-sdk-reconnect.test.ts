@@ -186,6 +186,14 @@ describe('connection recovery', () => {
     }
   });
 
+  it('leaves an instance alone through a quorum rotation, but rebuilds one whose pool it exhausted', async () => {
+    const sdkService = await service();
+    const rotation = 'Proof verification error: quorum key unavailable for quorum 107:1c64: invalid quorum: Quorum not found in cache for hash: 1c64';
+    // beta.6: the instance fetches the new key itself once the quorum source catches up.
+    expect(sdkService.isConnectionError(new Error(rotation))).toBe(false);
+    expect(sdkService.isConnectionError(new Error(`no available addresses to retry, last error: ${rotation}`))).toBe(true);
+  });
+
   it('keeps the SDK instance when a read fails on an unreachable quorum service', async () => {
     const sdkService = await service();
     await sdkService.initialize(config);

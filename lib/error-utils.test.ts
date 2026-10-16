@@ -7,6 +7,11 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
+  UNCONFIRMED_WRITE_MESSAGE,
+  sentWriteOutcomeUnknown,
+  isNotFoundAnswer,
+  isOutcomeUnknownError,
+  isQuorumKeyUnavailableError,
   brokenPropertyRule,
   CREATE_NOT_RECORDED_ERROR,
   isConsensusRefusal,
@@ -980,6 +985,69 @@ describe('isUnverifiedOutcomeError', () => {
     [new Error('offline')],
   ])('never reads a verdict or an unrelated failure %o as unverified', (error) => {
     expect(isUnverifiedOutcomeError(error)).toBe(false)
+  })
+})
+
+describe('beta.6 QuorumKeyUnavailable (a quorum rotation)', () => {
+  // wasm-sdk 5.0.0-beta.6, as sakura answered for ~15-20 s around every rotation.
+  const QKU = {
+    name: 'Proof',
+    kind: 4,
+    code: -1,
+    isRetriable: true,
+    message: 'Proof verification error: quorum key unavailable for quorum 107:1c64a92f: invalid quorum: Quorum not found in cache for hash: 1c64a92f',
+  }
+  const EXHAUSTED = new Error(`no available addresses to retry, last error: ${QKU.message}`)
+  const SOURCE_DOWN = new Error('Context provider error: quorum source unavailable: error sending request')
+
+  it('recognises the missing key, bare, wrapped in an exhausted pool, or as plain text', () => {
+    expect(isQuorumKeyUnavailableError(QKU)).toBe(true)
+    expect(isQuorumKeyUnavailableError(EXHAUSTED)).toBe(true)
+    expect(isQuorumKeyUnavailableError(QKU.message)).toBe(true)
+    expect(isQuorumKeyUnavailableError(new Error('invalid quorum: Quorum not found in cache for hash: 00ab'))).toBe(true)
+  })
+
+  it('does not take an unreachable quorum service, an exhausted pool or an absence for a missing key', () => {
+    expect(isQuorumKeyUnavailableError(SOURCE_DOWN)).toBe(false)
+    expect(isQuorumKeyUnavailableError(new Error('invalid quorum: Quorum source unavailable'))).toBe(false)
+    expect(isQuorumKeyUnavailableError(new Error('no available addresses to retry'))).toBe(false)
+    expect(isQuorumKeyUnavailableError(new Error('Document D1 not found'))).toBe(false)
+  })
+
+  it('leaves a write it answered with an unknown outcome, never a verdict', () => {
+    expect(isUnverifiedOutcomeError(QKU)).toBe(true)
+    expect(isOutcomeUnknownError(QKU)).toBe(true)
+    expect(isOutcomeUnknownError(EXHAUSTED)).toBe(true)
+    expect(isOutcomeUnknownError(new Error('waitForResponse timed out'))).toBe(true)
+    expect(isOutcomeUnknownError({ code: -1, name: 'ExecutionNotProved', message: 'execution not proved' })).toBe(true)
+    expect(isConsensusRefusal(QKU)).toBe(false)
+    expect(isOutcomeUnknownError(new Error('Document D1 has invalid revision Some(2) (code=40106)'))).toBe(false)
+  })
+
+  it('is never read as an answer that the document is absent', () => {
+    expect(isNotFoundAnswer(QKU)).toBe(false)
+    expect(isNotFoundAnswer(EXHAUSTED)).toBe(false)
+    expect(isNotFoundAnswer(new Error('invalid quorum: Quorum not found in cache for hash: 00ab'))).toBe(false)
+    expect(isNotFoundAnswer(new Error('Document not found'))).toBe(true)
+    expect(isNotFoundAnswer(new Error('HTTP 404'))).toBe(true)
+  })
+
+  it('leaves anything but a verdict on a sent write unknown', () => {
+    expect(sentWriteOutcomeUnknown(QKU)).toBe(true)
+    expect(sentWriteOutcomeUnknown(new Error('transport error: TypeError: Failed to fetch'))).toBe(true)
+    expect(sentWriteOutcomeUnknown(new Error('Identity C is trying to set an invalid identity nonce. error is nonce already present at tip'))).toBe(true)
+    // Verdicts: a consensus refusal, and the SDK's own protocol validation before it broadcasts.
+    expect(sentWriteOutcomeUnknown({ code: 40700, name: 'Protocol', message: 'not enough token balance' })).toBe(false)
+    expect(sentWriteOutcomeUnknown(new Error('state transition broadcast error: Identity X has insufficient balance'))).toBe(false)
+    expect(sentWriteOutcomeUnknown({ code: -1, name: 'Protocol', message: "Failed to claim tokens: Protocol error: identity 'C' already claimed" })).toBe(false)
+    expect(sentWriteOutcomeUnknown({ code: -1, name: 'InvalidArgument', message: 'amount must be positive' })).toBe(false)
+    expect(sentWriteOutcomeUnknown({ code: -1, name: 'IdentityNonceNotFound', message: 'nonce not found for identity' })).toBe(false)
+  })
+
+  it('tells the user a write may have gone through, rather than inviting a retry', () => {
+    expect(categorizeError(QKU)).toBe(UNCONFIRMED_WRITE_MESSAGE)
+    expect(categorizeError(EXHAUSTED)).toBe(UNCONFIRMED_WRITE_MESSAGE)
+    expect(categorizeError(SOURCE_DOWN)).toBe('Dash Platform is temporarily unavailable. Please try again in a few moments.')
   })
 })
 

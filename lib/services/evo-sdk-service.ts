@@ -8,6 +8,7 @@ import type { AppNetwork } from '../constants';
 import { SDK_FACADES } from './sdk-facades';
 import { installDapiPathShim } from './dapi-path-shim';
 import { observeSdkFailures } from './sdk-failure-observer';
+import { installReadRetry } from './sdk-read-retry';
 
 export interface EvoSdkConfig {
   network: AppNetwork;
@@ -55,6 +56,9 @@ const CONNECTION_ERROR_MARKERS = [
  * way. The service is back when the next read succeeds.
  */
 const QUORUM_SOURCE_UNAVAILABLE = 'quorum source unavailable';
+
+/** wasm-sdk 5.0.0-beta.6's `QuorumKeyUnavailable`; see isConnectionError(). */
+const QUORUM_KEY_UNAVAILABLE = 'quorum key unavailable';
 
 /** The message of a rejection, whether or not it is an Error. */
 function errorMessage(error: unknown): string {
@@ -185,6 +189,9 @@ class EvoSdkService {
       // Installed after the preload so a preload failure cannot ask for a
       // rebuild that is itself waiting on this initialization.
       this._observeFailures(this.sdk);
+      // Outermost, so every attempt is observed: reads ride out a quorum
+      // rotation, repeated on whichever instance is current by then.
+      installReadRetry(this.sdk, () => this.getSdk());
       this.connectionLost = false;
       this._isInitialized = true;
       logger.debug('EvoSdkService: SDK initialized successfully');
@@ -514,6 +521,11 @@ class EvoSdkService {
   isConnectionError(error: unknown): boolean {
     const message = errorMessage(error).toLowerCase();
     if (message.includes(QUORUM_SOURCE_UNAVAILABLE)) return false;
+    // beta.6's QuorumKeyUnavailable during a rotation: the instance fetches the
+    // key itself once the quorum source catches up (~17 s), and reads ride the
+    // gap out (sdk-read-retry.ts). A rebuild would only stall every caller. An
+    // address pool it exhausted still says "no available addresses" and rebuilds.
+    if (message.includes(QUORUM_KEY_UNAVAILABLE) && !message.includes('no available addresses')) return false;
     return CONNECTION_ERROR_MARKERS.some(marker => message.includes(marker));
   }
 

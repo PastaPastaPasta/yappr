@@ -273,6 +273,11 @@ describe('describeDpnsRegistrationError (contested names, 4.2.0-beta.5)', () => 
   it('passes any other error through unchanged', () => {
     expect(describeDpnsRegistrationError(new Error('Username alice is already taken'))).toBe('Username alice is already taken');
   });
+
+  it('asks to check before trying again when the registration may have landed (a quorum rotation)', () => {
+    const proof = { name: 'Proof', code: -1, message: 'Proof verification error: quorum key unavailable for quorum 107:1c64: invalid quorum: Quorum not found in cache for hash: 1c64' };
+    expect(describeDpnsRegistrationError(proof)).toMatch(/may have gone through, so check your names before trying again/);
+  });
 });
 
 describe('DPNS credit amounts', () => {

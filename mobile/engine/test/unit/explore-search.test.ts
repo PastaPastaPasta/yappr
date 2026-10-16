@@ -27,10 +27,8 @@ vi.mock('@/lib/services/evo-sdk-service', async (load) => {
 
 const { explore } = await import('../../src/api/explore')
 const { posts } = await import('../../src/api/posts')
-const { retryReadsOnStaleQuorum } = await import('../../src/api/stale-quorum')
 
 const ALICE = 'A1iceA1iceA1iceA1iceA1iceA1iceA1iceA1iceA1ic'
-const STALE = 'context provider error: invalid quorum: Quorum not found in cache for hash: 05c491ec'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -73,16 +71,6 @@ describe('explore.searchUsers', () => {
   it('rejects when the exact-name fallback fails', async () => {
     m.findIdentityByName.mockRejectedValue(new Error('deadline exceeded'))
     await expect(explore.searchUsers('alice')).rejects.toMatchObject({ code: 'TIMEOUT' })
-  })
-
-  it('reads again on the rebuilt SDK after a stale quorum, as the engine wraps explore', async () => {
-    m.findUsernamesByPrefix
-      .mockRejectedValueOnce(new Error(STALE))
-      .mockResolvedValueOnce([{ username: 'alice.dash', ownerId: ALICE }])
-    const users = await retryReadsOnStaleQuorum(explore).searchUsers('ali')
-    expect(users.map(user => user.id)).toEqual([ALICE])
-    expect(m.getSdk).toHaveBeenCalledTimes(1)
-    expect(m.findUsernamesByPrefix).toHaveBeenCalledTimes(2)
   })
 })
 

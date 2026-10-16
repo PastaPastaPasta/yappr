@@ -88,6 +88,8 @@ import {
   SOCIAL_SHAPES,
   tokenCostFor,
   TRANSPORT_COLLAPSE,
+  QUORUM_GAP,
+  QUORUM_GAP_SETTLE_MS,
   WAIT_MAYBE_LANDED,
   YAPP_LOCKED,
   YAPP_TOKEN_POSITION,
@@ -578,7 +580,11 @@ function buildExecutor({ handle, contractId, actors, progressRefs, mediaFor }) {
         }
         // The broadcast may have landed even though the call threw (504 on the
         // confirmation wait, post-broadcast indexOnly throw, retried duplicate).
-        const settlePolls = WAIT_MAYBE_LANDED.test(text) || plan.indexOnly ? SETTLE_POLLS : 1;
+        // A quorum gap hides a landed write from readback until it closes (~15-20 s): wait it out
+        // before the retry below, which would otherwise create the document a second time.
+        const settlePolls = QUORUM_GAP.test(text)
+          ? Math.ceil(QUORUM_GAP_SETTLE_MS / SETTLE_MS)
+          : WAIT_MAYBE_LANDED.test(text) || plan.indexOnly ? SETTLE_POLLS : 1;
         for (let poll = 0; poll < settlePolls; poll++) {
           await sleep(SETTLE_MS);
           try {

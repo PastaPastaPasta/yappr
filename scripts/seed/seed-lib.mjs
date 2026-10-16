@@ -1158,18 +1158,35 @@ export function createDocument(sdk, { contractId, actor, docType, document, data
 export const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
 /** Confirmation-wait shapes that do NOT mean the write was refused (readback decides). */
 export const WAIT_MAYBE_LANDED = /\b504\b(?! bytes)|gateway|deadline|timed? ?out|timeout|wait.*state.*transition|AffectedState/i;
+/**
+ * A proof the SDK had no quorum key for (beta.6 `QuorumKeyUnavailable`, ~15-20 s
+ * around every quorum rotation while the quorum source lags the chain). On a
+ * write's result it says nothing about the write, which may have landed, and
+ * readbacks fail the same way until the gap closes (lib/quorum-gap.ts).
+ */
+export const QUORUM_GAP = /quorum key unavailable|quorum not found|invalid quorum|quorum source unavailable/i;
+/** How long readback keeps trying through a quorum gap before it gives up. */
+export const QUORUM_GAP_SETTLE_MS = 30_000;
 
 /**
  * After a write threw: false when the error is a refusal; otherwise (a gateway
  * timeout on the wait, or a dead SDK, which is reconnected first) waits a beat
- * and answers `probe()`, the chain's word on whether the write landed.
+ * and answers `probe()`, the chain's word on whether the write landed. Through
+ * a quorum gap a probe that fails on the gap is asked again until it closes.
  */
 export async function landedAfter(handle, error, probe) {
   const text = describeErr(error);
   if (!WAIT_MAYBE_LANDED.test(text) && !TRANSPORT_COLLAPSE.test(text)) return false;
   if (TRANSPORT_COLLAPSE.test(text)) await handle.reconnect(text);
-  await sleep(3000);
-  return probe();
+  const deadline = Date.now() + (QUORUM_GAP.test(text) ? QUORUM_GAP_SETTLE_MS : 0);
+  for (;;) {
+    await sleep(3000);
+    try {
+      return await probe();
+    } catch (probeError) {
+      if (Date.now() >= deadline || !QUORUM_GAP.test(describeErr(probeError))) throw probeError;
+    }
+  }
 }
 /**
  * A query refused because the doctype has no index for the where clause. Unlike

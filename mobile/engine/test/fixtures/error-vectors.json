@@ -649,12 +649,28 @@
         "message": "invalid quorum: Quorum not found in cache for hash: 00000abc"
       },
       "expect": {
-        "code": "NETWORK",
+        "code": "TIMEOUT",
         "consensusCode": null,
-        "outcome": "not-sent",
-        "retryable": true,
+        "outcome": "unknown",
+        "retryable": false,
         "state": "unconfirmed",
-        "userMessage": "Failed to create post: invalid quorum: Quorum not found in cache for hash: 00000abc"
+        "userMessage": "Dash Platform couldn't confirm this yet. It may have gone through, so check before trying again."
+      }
+    },
+    {
+      "name": "beta.6 QuorumKeyUnavailable on a write's result proof (quorum rotation)",
+      "error": {
+        "name": "Proof",
+        "code": -1,
+        "message": "Proof verification error: quorum key unavailable for quorum 107:1c64a92f00000000000000000000000000000000000000000000000000000000: invalid quorum: Quorum not found in cache for hash: 1c64a92f"
+      },
+      "expect": {
+        "code": "TIMEOUT",
+        "consensusCode": null,
+        "outcome": "unknown",
+        "retryable": false,
+        "state": "unconfirmed",
+        "userMessage": "Dash Platform couldn't confirm this yet. It may have gone through, so check before trying again."
       }
     },
     {

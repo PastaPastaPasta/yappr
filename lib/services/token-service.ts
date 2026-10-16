@@ -7,7 +7,7 @@ import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
 import { starterGrantAmount, yappIsLocked } from '../contract-topology';
-import { extractErrorMessage, isOncePerIdentityAlreadyClaimedError } from '../error-utils';
+import { UNCONFIRMED_WRITE_MESSAGE, extractErrorMessage, isOncePerIdentityAlreadyClaimedError, sentWriteOutcomeUnknown } from '../error-utils';
 import { withSdkSignedWrite } from './identity-nonce';
 import { SigningUnavailableError, assertRawKeyCovers, hasAppConnectSession, reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
 import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
@@ -15,7 +15,41 @@ import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
 export interface TokenResult {
   success: boolean;
   error?: string;
-  errorCode?: 'INVALID_KEY' | 'INSUFFICIENT_CREDITS' | 'BELOW_MINIMUM' | 'NOT_AUTHORIZED' | 'NETWORK_ERROR' | 'NEEDS_CRITICAL_KEY' | 'ALREADY_CLAIMED';
+  errorCode?:
+    | 'INVALID_KEY' | 'INSUFFICIENT_CREDITS' | 'BELOW_MINIMUM' | 'NOT_AUTHORIZED' | 'NETWORK_ERROR' | 'NEEDS_CRITICAL_KEY' | 'ALREADY_CLAIMED'
+    /**
+     * Sent, but no verdict came back: the confirmation timed out, or its proof
+     * could not be checked (a quorum rotation). It may have landed, so the UI
+     * must never offer a plain retry: that could move the tokens or credits twice.
+     */
+    | 'UNCONFIRMED';
+}
+
+/** A token write the SDK sent whose outcome is unknown (see TokenResult's UNCONFIRMED). */
+class UnconfirmedTokenWriteError extends Error {
+  constructor(unanswered: unknown) {
+    super(extractErrorMessage(unanswered));
+  }
+}
+
+/**
+ * Run an SDK-signed token write under the identity's write lock
+ * (`withSdkSignedWrite`). Anything but a verdict after the SDK was asked to
+ * send (a timeout, an answer that could not be verified, a transport failure)
+ * comes back as {@link UnconfirmedTokenWriteError}; a failure before that sent
+ * nothing and is rethrown as is.
+ */
+async function sendTokenWrite(ownerId: string, write: () => Promise<unknown>): Promise<void> {
+  let sent = false;
+  try {
+    await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, () => {
+      sent = true;
+      return write();
+    });
+  } catch (error) {
+    if (sent && sentWriteOutcomeUnknown(error)) throw new UnconfirmedTokenWriteError(error);
+    throw error;
+  }
 }
 
 /** Minimum YAPP per direct purchase — enforced on-chain by the SetPrices tier, mirrored here for UX. */
@@ -114,7 +148,7 @@ class TokenService {
         overrideWif: criticalKeyWif,
       });
 
-      await withSdkSignedWrite(buyerId, YAPPR_CONTRACT_ID, () => sdk.tokens.directPurchase({
+      await sendTokenWrite(buyerId, () => sdk.tokens.directPurchase({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         buyerId: new Identifier(buyerId),
@@ -165,7 +199,7 @@ class TokenService {
         overrideWif: criticalKeyWif,
       });
 
-      await withSdkSignedWrite(senderId, YAPPR_CONTRACT_ID, () => sdk.tokens.transfer({
+      await sendTokenWrite(senderId, () => sdk.tokens.transfer({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         senderId: new Identifier(senderId),
@@ -226,7 +260,7 @@ class TokenService {
       });
       const { signer, identityKey } = auth;
       signingKey = auth.signingKey;
-      await withSdkSignedWrite(identityId, YAPPR_CONTRACT_ID, () => sdk.tokens.claim({
+      await sendTokenWrite(identityId, () => sdk.tokens.claim({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         identityId: new Identifier(identityId),
@@ -237,7 +271,7 @@ class TokenService {
       reportSigningSuccess(identityId);
       return { success: true };
     } catch (error) {
-      if (signingKey) await reportSigningFailure(identityId, signingKey, error);
+      if (signingKey && !(error instanceof UnconfirmedTokenWriteError)) await reportSigningFailure(identityId, signingKey, error);
       return this.toResult(error, 'Claim failed');
     }
   }
@@ -280,7 +314,7 @@ class TokenService {
         signer,
       };
 
-      await withSdkSignedWrite(authorityId, YAPPR_CONTRACT_ID, async () => {
+      await sendTokenWrite(authorityId, async () => {
         if (action === 'freeze') {
           await sdk.tokens.freeze(options as Parameters<typeof sdk.tokens.freeze>[0]);
         } else if (action === 'unfreeze') {
@@ -367,6 +401,10 @@ class TokenService {
 
   private toResult(error: unknown, fallback: string): TokenResult {
     if (error instanceof SigningUnavailableError) return { success: false, error: error.message, errorCode: 'NOT_AUTHORIZED' };
+    if (error instanceof UnconfirmedTokenWriteError) {
+      logger.warn(`${fallback} unconfirmed:`, error.message);
+      return { success: false, error: UNCONFIRMED_WRITE_MESSAGE, errorCode: 'UNCONFIRMED' };
+    }
     const msg = extractErrorMessage(error);
     logger.error(`${fallback}:`, msg);
     const lower = msg.toLowerCase();
