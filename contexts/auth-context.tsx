@@ -14,6 +14,7 @@ import { useUsernameModal } from '@/hooks/use-username-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
+import { serialQueue } from '@/lib/app-connect/serial-queue'
 
 export interface AuthUser {
   identityId: string
@@ -75,6 +76,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [controllerState, setControllerState] = useState(() => controller.getState())
 
   useEffect(() => controller.subscribe(setControllerState), [controller])
+
+  /**
+   * Wallet sign-ins and renewals, one at a time: the key ring holds one grant
+   * per network, so an earlier sign-in's grant can never land over a later one's.
+   */
+  const walletQueue = useMemo(serialQueue, [])
 
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */
   const revokeLogout = useRef<Promise<void> | null>(null)
@@ -160,7 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await applyIntent(result.intent)
   }, [applyIntent, controller])
 
-  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
+  const loginWithAppConnect = useCallback((grant: AppConnectGrant) => walletQueue(async () => {
     await revokeLogout.current
     // Taken before the grant is stored: a sign-in or sign-out while it is
     // stored or while the identity is read supersedes this one.
@@ -181,7 +188,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (controller.getState().user?.identityId !== session.identityId) await appConnectSessions.discard(session)
       throw error
     }
-  }, [applyIntent, controller])
+  }), [applyIntent, controller, walletQueue])
 
   const renewWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
     // A revocation sign-out may still be running: let it finish first, so it
@@ -189,7 +196,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await revokeLogout.current
     const identityId = controller.getState().user?.identityId
     if (identityId === grant.identityId) {
-      await appConnectSessions.adopt(grant)
+      await walletQueue(() => appConnectSessions.adopt(grant))
       useAppConnectStatus.getState().dismissRenewRequired()
       return
     }
@@ -202,7 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await loginWithAppConnect(grant)
     useAppConnectStatus.getState().dismissSignedOut()
     useLoginModal.getState().close()
-  }, [controller, loginWithAppConnect])
+  }, [controller, loginWithAppConnect, walletQueue])
 
   const logout = useCallback(async () => {
     const result = await controller.logout()
