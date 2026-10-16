@@ -28,8 +28,7 @@ production:
    | social (`NEXT_PUBLIC_YAPPR_CONTRACT_ID`) | `2qvaZNJJU2KQxSn7SB7eTyyWtjvGD8wx3cpVHZSPC4mn` |
    | profile (`NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID`) | `HpQGZcLJMCTE27vFHmwdPGTUVzzcqsPpD6urGsapsBk` |
 
-   Both are owned by e2e bot identity 0 and were published by
-   `scripts/register-test-contracts.mjs`.
+   Both are owned by e2e bot identity 0.
 
 2. **Scoped storage.** `next.config.js` sets `NEXT_PUBLIC_STORAGE_SCOPE` from
    `BASE_PATH`, and `lib/storage-scope.ts` prefixes every persisted key with it.
@@ -257,7 +256,7 @@ Rare, manual, never from CI. Everything below runs from the repo root.
    faucet, registers the identity, and optionally registers a DPNS name:
 
    ```bash
-   node scripts/provision-test-identity.mjs 0 --dpns yappr-e2e-0
+   NETWORK=testnet node scripts/provision-test-identity.mjs 0 --dpns yappr-e2e-0
    ```
 
    Identity IDs are **not** derivable (they come from the asset-lock outpoint),
@@ -269,14 +268,13 @@ Rare, manual, never from CI. Everything below runs from the repo root.
    from Node. The same applies after a chain rollback that wipes documents but
    keeps identities.
 
-3. **Register the test contracts** (owner defaults to identity index 0):
-
-   ```bash
-   node scripts/register-test-contracts.mjs
-   ```
-
-   It clones the production contracts' on-chain schemas verbatim under the new
-   owner and prints the `.env.testing` lines to paste.
+3. **Register the test contracts** with `scripts/register-app-connect-contracts.mjs`
+   from a test-owned maker (never the production one). Its header lists what
+   testnet requires: `NETWORK=testnet`, `--interim`, `--election-windows`,
+   `--maker-key-file`/`--maker-key-id` (a 0600 key file) and, for `--live`,
+   `--production`. It prints the env lines to paste. The current /testing pair
+   (social and profile, above) predates the App Connect set; the next /testing
+   registration replaces it with the whole set rather than resetting the pair.
 
 4. **Update `.env.testing`** with the new contract IDs and identity IDs, and
    commit it.
@@ -305,7 +303,7 @@ Rare, manual, never from CI. Everything below runs from the repo root.
 - A **captcha** may be required. Solve it in the web UI and pass the token:
 
   ```bash
-  node scripts/provision-test-identity.mjs 2 --dpns yappr-e2e-2 --cap-token <token>
+  NETWORK=testnet node scripts/provision-test-identity.mjs 2 --dpns yappr-e2e-2 --cap-token <token>
   ```
 
   When the token cannot leave the browser, split the flow: generate the
@@ -313,10 +311,10 @@ Rare, manual, never from CI. Everything below runs from the repo root.
   back in.
 
   ```bash
-  node scripts/provision-test-identity.mjs --gen-asset-lock-key /tmp/al.key
+  NETWORK=testnet node scripts/provision-test-identity.mjs --gen-asset-lock-key /tmp/al.key
   # prints assetLockPublicKey; POST it to /api/asset-lock-proof from the faucet
   # page (its CAP widget runs there), save the JSON response to /tmp/al.json
-  node scripts/provision-test-identity.mjs 2 \
+  NETWORK=testnet node scripts/provision-test-identity.mjs 2 \
     --asset-lock-key-file /tmp/al.key \
     --funding-proof-file /tmp/al.json \
     --dpns yappr-e2e-2
@@ -328,20 +326,16 @@ CI pre-checks balances and fails fast with an actionable message when the pool
 is depleted. To do it by hand:
 
 ```bash
-node scripts/provision-test-identity.mjs --check-balances
-node scripts/provision-test-identity.mjs --topup <identityId>
+NETWORK=testnet node scripts/provision-test-identity.mjs --check-balances
+NETWORK=testnet node scripts/provision-test-identity.mjs --topup <identityId>
 ```
 
 ## 5. Resetting test state
 
 There is no per-test cleanup (deletes cost credits and flake), so the test
-contracts accumulate documents. To wipe the slate:
-
-```bash
-node scripts/register-test-contracts.mjs
-```
-
-New contracts start empty and the old ones are simply abandoned. Paste the
+contracts accumulate documents. To wipe the slate, register a fresh App Connect set from the test maker
+(`scripts/register-app-connect-contracts.mjs`, step 3 of the provisioning
+above). New contracts start empty and the old ones are simply abandoned. Paste the
 printed IDs into `.env.testing` and commit — the next `build:testing` (local and
 deployed) picks them up.
 
@@ -455,7 +449,7 @@ hit a faucet UTXO outage. CI already spreads runs over a three-slot pool
 size, so the missing slot is harmless until it is filled. To add it:
 
 ```bash
-node scripts/provision-test-identity.mjs 2 --dpns yappr-e2e-2
+NETWORK=testnet node scripts/provision-test-identity.mjs 2 --dpns yappr-e2e-2
 ```
 
 Append the printed identity ID to `E2E_IDENTITY_IDS` in `.env.testing` — **in
@@ -472,8 +466,8 @@ Verified during implementation; each of these costs hours to rediscover.
 PRODUCTION contract IDs** on the `/testing` deployment, because `.env.testing`
 leaves their overrides commented out and `lib/constants.ts` falls back to
 production. Any e2e coverage of those features would write to production state.
-Register test copies first (`scripts/register-test-contracts.mjs` is the
-pattern — extend it), fill in the corresponding `NEXT_PUBLIC_*_CONTRACT_ID` in
+Register test copies first (`scripts/register-app-connect-contracts.mjs`
+registers the whole set), fill in the corresponding `NEXT_PUBLIC_*_CONTRACT_ID` in
 `.env.testing`, and only then write the specs.
 
 ### A profile is optional
@@ -532,7 +526,7 @@ funding transaction to be confirmed and re-run with the block height it landed
 in:
 
 ```bash
-node scripts/provision-test-identity.mjs 2 \
+NETWORK=testnet node scripts/provision-test-identity.mjs 2 \
   --asset-lock-key-file /tmp/al.key \
   --funding-proof-file /tmp/al.json \
   --chain-lock <tx block height>

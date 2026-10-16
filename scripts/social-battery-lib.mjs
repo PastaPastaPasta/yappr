@@ -123,13 +123,18 @@ export function wifForBot(index) {
 const DEVNET_MAKER_SEED_INDEX = 9;
 
 /**
- * `maker` names the identity that published the contract. On testnet that is
- * the contract-maker key file; on devnet it is DEVNET_MAKER_IDENTITY_ID at seed
- * index 9. The key file is a different identity that does not exist on the
- * devnet, and verify-v9 accepts only `maker`, so it could not run there at all.
+ * `maker` names the identity that published the contract: on a devnet,
+ * DEVNET_MAKER_IDENTITY_ID at seed index 9. Off devnet the maker is the
+ * production owner, and no battery, seeder, cleaner or moderation run may sign
+ * as it (`--moderator maker` included): it is refused here, and the one script
+ * that does sign as it (register-app-connect-contracts.mjs) takes its key from
+ * an explicit `--maker-key-file`.
  */
 export function resolveMakerOwner() {
-  if (network() !== 'devnet') return resolveOwner({ maker: true });
+  const net = network();
+  if (net !== 'devnet') {
+    throw new Error(`the maker signs from the ops scripts on a devnet only (NETWORK is ${net}); on ${net} name a bot or a seed-ledger persona instead`);
+  }
   const ownerId = process.env.DEVNET_MAKER_IDENTITY_ID
     || readEnvFile(join(REPO_ROOT, '.env.devnet')).DEVNET_MAKER_IDENTITY_ID;
   if (!ownerId) throw new Error('--moderator maker on devnet needs DEVNET_MAKER_IDENTITY_ID (.env.devnet)');

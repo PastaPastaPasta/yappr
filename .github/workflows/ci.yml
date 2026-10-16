@@ -156,6 +156,10 @@ jobs:
     # registered from master's schemas (.env.testing), so a PR into staging or
     # another branch could pair diverged app code with mismatched contracts.
     if: github.event_name != 'pull_request' || github.base_ref == 'master'
+    # The scripts/ tooling has no default network (scripts/sdk-env.mjs): this
+    # job runs against the /testing contracts on testnet (.env.testing).
+    env:
+      NETWORK: testnet
     steps:
       - name: Checkout
         uses: actions/checkout@v4

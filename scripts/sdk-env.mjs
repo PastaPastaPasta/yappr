@@ -1,8 +1,10 @@
 /**
  * Shared network selection for the operational scripts in this directory.
  *
- * Every script used to hardcode `EvoSDK.testnetTrusted(...)`. They now go through
- * `connectSdk()`, which keeps testnet as the default and adds devnet support:
+ * Every script goes through `connectSdk()` / `buildSdk()`, which connect to the
+ * network NETWORK names. NETWORK has no default: testnet and mainnet hold the
+ * production contracts, so a forgotten `NETWORK=devnet` stops a script rather
+ * than pointing it at production:
  *
  *   NETWORK=devnet node scripts/<script>.mjs
  *
@@ -31,6 +33,7 @@
  */
 import { EvoSDK } from '@dashevo/evo-sdk';
 import { readEnvFile, REPO_ROOT } from './derive-identities.mjs';
+import { requireNetwork } from './registration-policy.mjs';
 import { join } from 'node:path';
 
 const DEFAULT_SDK_TIMEOUT_MS = 30000;
@@ -51,16 +54,13 @@ export function envValue(name) {
 }
 
 /**
- * The network the SDK connects to: `testnet` (default), `mainnet` or `devnet`.
- * Pass `override` to name a network explicitly — scripts that publish to one
- * network while reading their source material from another need both.
+ * The network the SDK connects to: `testnet`, `mainnet` or `devnet`, from
+ * NETWORK, which must be set. Pass `override` to name a network explicitly —
+ * scripts that publish to one network while reading their source material
+ * from another need both.
  */
 export function network(override) {
-  const value = (override ?? process.env.NETWORK ?? 'testnet').trim();
-  if (!['testnet', 'mainnet', 'devnet'].includes(value)) {
-    throw new Error(`NETWORK must be testnet, mainnet or devnet (got "${value}")`);
-  }
-  return value;
+  return requireNetwork(override ?? process.env.NETWORK);
 }
 
 /** The network whose address/WIF prefixes apply. Devnets reuse testnet's. */

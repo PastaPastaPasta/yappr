@@ -103,24 +103,32 @@ In the group, each would also widen what every group-bound key can sign, permane
 
 Prerequisites:
 - Every node of the target network runs 5.0.0-beta.6 (social v16's typed-array `where` and indexOnly element indexes are refused before it; social v15's format-1 token is undecodable on beta.3, and the beta.5 SDK cannot read beta.3 nodes). Beta.3 to beta.5 nodes report protocol version 14 too, so the publisher reads the Drive version from the status API and refuses to run in any connected mode (`--dry-run`, `--signed-dry-run`, `--live`) unless it is 5.0.0-beta.6 or newer. The publisher itself needs the 5.0.0-beta.6 SDK: even `--plan` decodes every create with wasm-dpp2, and the beta.5 one refuses v16 (10231). The status answers for the one node that responded, so confirm the rest with `ops/status.mjs` first.
-- The maker holds the cost above.
+- The maker holds the cost above. Every connected mode prints each create's estimate (its registration fee plus a storage allowance) beside the maker's balance, and `--signed-dry-run` and `--live` refuse to sign unless the balance covers the estimate plus 20%.
+- NETWORK is required (no script defaults to a network). On testnet and mainnet the run must also name, explicitly: `--maker <id>`; `--interim <kind>` and `--election-windows <join>,<vote>`, which render every elected contract (social, blog, storefront) and are frozen into it (mainnet needs at least 86400 s per window); for `--signed-dry-run` and `--live`, `--maker-key-file <path> --maker-key-id <n>` (a key file of this user's with mode 0600 or tighter; there is no default path and no seed derivation off devnet); and for `--live`, `--production`. The journal's directory must be private (0700; created so when missing). The interim and windows are printed by every mode and recorded in the journal, and a resumed run must name the same ones. On a devnet they are optional and default to the files' own.
+- The connected modes gate on the protocol version of the proved current epoch, never on a status page.
 - From the anchor's nonce to the last member's, the maker signs nothing else that takes an **identity** nonce: no other contract create or update, identity update, or credit transfer. Token mints and document writes use identity-contract nonces and do not interfere. The anchor must take the planned nonce, since it fixes APP_ID and GROUP_ID. A member that finds a later nonce still registers, under a different id than the plan printed; the run says so, and its final env lines carry the real ids.
 
 ```sh
 # 1. Offline: the ids for a maker and anchor nonce, then every create built, decoded and audited (no network, no keys)
-node scripts/register-app-connect-contracts.mjs --plan --maker <makerId> --start-nonce <N>
+NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --maker <makerId> --start-nonce <N>
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --start-nonce <N>   # devnet maker from .env.devnet
+NETWORK=testnet node scripts/register-app-connect-contracts.mjs --plan --maker <makerId> --start-nonce <N> \
+  --interim notYetUsable --election-windows 3600,3600                                     # testnet (decision D1)
 
 # 2. Read-only against the network: the maker's nonce (N defaults to chain nonce + 1), and that no
 #    contract of the set and not the group exists yet
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --dry-run
 
-# 3. The same, signed with the maker's key (devnet: seed index 9; elsewhere the contract-maker file); nothing is broadcast
+# 3. The same, signed with the maker's key (devnet: seed index 9, or a named key file; elsewhere only
+#    --maker-key-file <0600 file> --maker-key-id <n>); nothing is broadcast
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --signed-dry-run
 
 # 4. Register. The journal (mode 0600, outside the repo) keeps every signed transition; re-running with the
 #    same journal resumes and only ever re-broadcasts the same bytes for a nonce. `--upto app` stops after the anchor.
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal <ops-dir>/appconnect-<network>.json
+#    On testnet, every setting explicit:
+NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --journal <0700 ops-dir>/appconnect-testnet.json \
+  --maker <makerId> --maker-key-file <0600 key file> --maker-key-id <n> --interim notYetUsable --election-windows 3600,3600
 
 # 5. Prove it
 NETWORK=devnet node scripts/verify-appconnect.mjs --contract <APP_ID> --group <GROUP_ID> --owner <maker> --members <ids>
