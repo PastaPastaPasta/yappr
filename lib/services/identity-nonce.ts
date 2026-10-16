@@ -338,13 +338,11 @@ const SPENT_READ_MS = 1_000;
  * read before it (`tipBefore`), took that one. A floor too low lets a node
  * that is behind settle a later write early (a nonce of this one in that
  * write's range), and a floor too high makes a later lost answer wait out its
- * lifetime while the SDK signs below it. Only the first can lose a write, so:
- *  - one Platform shows moving the tip past `tipBefore`, but not into its
- *    range, took a nonce below the range (the floor was already higher than
- *    the tip), and the floor is not raised past that tip;
- *  - one it does not show at all within a few reads, confirmed or refused
- *    (a refusal may have been a paid one), counts as having taken the last
- *    nonce of its range.
+ * lifetime while the SDK signs below it (until a create, which takes a nonce
+ * past the mark, brings the tip past the floor). Only the first can lose a
+ * write, so one Platform does not show in its range within a few reads,
+ * confirmed or refused (a refusal may have been a paid one), counts as having
+ * taken the last nonce of its range.
  */
 async function nonceTakenOnAnswer(
   ownerId: string,
@@ -356,20 +354,17 @@ async function nonceTakenOnAnswer(
   if (entry.signedAfter === undefined || entry.signedAtMost === undefined) return undefined;
   const from = entry.signedAfter + BigInt(1);
   if (executed && from === entry.signedAtMost && entry.signedAfter === tipBefore) return from;
-  let lastTip: bigint | undefined;
   for (let attempt = 0; attempt < SPENT_READS; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, SPENT_READ_MS));
     try {
       const sdk = await getEvoSdk();
       const current = await sdk.identities.contractNonce(ownerId, contractId);
       if (anyConsumed(current, from, entry.signedAtMost)) return tipOf(current);
-      lastTip = tipOf(current);
     } catch (error) {
       logger.debug('Could not read the contract nonce after an SDK-signed write:', error);
     }
   }
-  // Still not in its range a few seconds on, past a node catching up: it took one below it, or (unseen) any up to the top.
-  return lastTip !== undefined && lastTip > tipBefore ? lastTip : entry.signedAtMost;
+  return entry.signedAtMost;
 }
 
 /** A write's precondition no longer held under the write lock: nothing was reserved or sent. */

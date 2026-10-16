@@ -258,12 +258,12 @@ describe('an SDK-signed write whose answer was lost (#644)', () => {
     expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(102))
   })
 
-  it('stops raising a floor that is above the tip once the SDK signs below the range', async () => {
-    // An earlier confirmation Platform never showed left the floor at 102 while the tip is 101.
-    releaseNonce(OWNER, CONTRACT, reserveNonce(OWNER, CONTRACT, n(102), n(101)), n(102))
-    // The SDK, fresh, signs 102 (below the range 103..103); Platform then shows 102.
-    sdk.identities.contractNonce.mockResolvedValueOnce(n(101)).mockResolvedValue(n(102))
-    expect(await runSdkWrite(async () => 'sent')).toEqual({ ok: true, value: 'sent' })
+  it('does not take a node catching up on an earlier nonce for the one a refusal took', async () => {
+    // 101 confirmed; the next write reads a node still at 100, and is refused (paid) at 102.
+    releaseNonce(OWNER, CONTRACT, reserveNonce(OWNER, CONTRACT, n(101), n(100)), n(101))
+    sdk.identities.contractNonce.mockResolvedValueOnce(n(100)).mockResolvedValue(n(101))
+    await runSdkWrite(async () => { throw { code: 40106, message: 'Document X has invalid revision' } })
+    // The reads only ever show 101: 102 counts as taken.
     expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(102))
   })
 
