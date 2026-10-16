@@ -57,7 +57,7 @@ const CONNECTION_ERROR_MARKERS = [
  */
 const QUORUM_SOURCE_UNAVAILABLE = 'quorum source unavailable';
 
-/** wasm-sdk 5.0.0-beta.6's `QuorumKeyUnavailable`; see isConnectionError(). */
+/** wasm-sdk's `QuorumKeyUnavailable` (unchanged from 5.0.0-beta.6 to rc.3); see isConnectionError(). */
 const QUORUM_KEY_UNAVAILABLE = 'quorum key unavailable';
 
 /** The message of a rejection, whether or not it is an Error. */

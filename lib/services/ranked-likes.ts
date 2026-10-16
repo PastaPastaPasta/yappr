@@ -89,14 +89,10 @@ export function isColdBucketError(error: unknown): boolean {
 /**
  * The pin on one tag of the like tag indexes: `hashtag ==` through v15; on
  * v16 `tags contains`, which the node keys as an equality on one element of
- * the list (a like enters the index once per tag of its post). The SDK's
- * `DocumentsIndexPin` type still lists only `==` and `in`, though its ranked
- * grammar accepts `contains` and keys it the same way, hence the widening.
+ * the list (a like enters the index once per tag of its post).
  */
 function tagPin(tag: string): DocumentsIndexPin {
-  return inlineTags()?.isArray
-    ? (['tags', 'contains', tag] as unknown as DocumentsIndexPin)
-    : ['hashtag', '==', tag];
+  return inlineTags()?.isArray ? ['tags', 'contains', tag] : ['hashtag', '==', tag];
 }
 
 /** The like property trending tags are grouped by: `hashtag`, or `tags` (v16, an element level). */
