@@ -55,6 +55,26 @@ function identifierOf(element: unknown): string | null {
   return bytes && bytes.length === IDENTIFIER_BYTES ? bs58.encode(bytes) : null
 }
 
+// ---- identifier lists (storefront storeItem.shippingZoneIds) ---------------------
+
+/**
+ * A typed list of identifiers as base58, first occurrence kept. Elements that
+ * are not 32-byte identifiers are dropped; anything but a list reads as none.
+ */
+export function decodeIdentifierList(value: unknown): string[] {
+  const ids = (asList(value) ?? []).map(identifierOf).filter((id): id is string => id !== null)
+  return [...new Set(ids)]
+}
+
+/** Base58 ids as a typed identifier list stores them: one 32-byte id each, first occurrence kept. Throws on a malformed id. */
+export function encodeIdentifierList(ids: readonly string[]): Uint8Array[] {
+  return uniqueStrings(ids).map((id) => {
+    const bytes = bs58.decode(id)
+    if (bytes.length !== IDENTIFIER_BYTES) throw new Error(`Not a ${IDENTIFIER_BYTES}-byte identifier: ${id}`)
+    return bytes
+  })
+}
+
 // ---- social blockFollow.followedBlockers --------------------------------------
 
 /**

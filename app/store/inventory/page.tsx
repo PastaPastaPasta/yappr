@@ -19,8 +19,10 @@ import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
+import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { inventoryToCsv } from '@/lib/storefront/inventory-csv'
-import type { Store, StoreItem } from '@/lib/types'
+import { storefrontSupportsItemZones } from '@/lib/constants'
+import type { ShippingZone, Store, StoreItem } from '@/lib/types'
 import { PageHeader } from '@/components/layout/page-shell'
 
 function InventoryPage() {
@@ -114,14 +116,26 @@ function InventoryPage() {
     setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...changes } : item))
   }, [])
 
-  const handleExportCSV = useCallback(() => {
+  const handleExportCSV = useCallback(async () => {
     if (items.length === 0) {
       toast.error('No items to export')
       return
     }
 
+    // v9 names each product's shipping zones; a file written without them would read as "every zone".
+    let zones: ShippingZone[] = []
+    if (storefrontSupportsItemZones() && store?.id && items.some((item) => item.shippingZoneIds)) {
+      try {
+        zones = await shippingZoneService.getByStore(store.id)
+      } catch (error) {
+        logger.error('Failed to load shipping zones for export:', error)
+        toast.error("Couldn't load your shipping zones, so nothing was exported. Try again.")
+        return
+      }
+    }
+
     // One row per combination, in the format the import reads (an upload creates new listings).
-    const { csv, omitted } = inventoryToCsv(items, store?.defaultCurrency || 'USD')
+    const { csv, omitted, zonesGone, zonesAmbiguous } = inventoryToCsv(items, store?.defaultCurrency || 'USD', zones)
     if (omitted.length === items.length) {
       toast.error("These items' options couldn't be read, so there is nothing to export")
       return
@@ -138,12 +152,18 @@ function InventoryPage() {
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
 
+    if (zonesAmbiguous.length > 0) {
+      toast(`${zonesAmbiguous.length} product${zonesAmbiguous.length !== 1 ? 's' : ''} won't upload again as exported: a shipping zone name contains ";" or "|", so ${zonesAmbiguous.length !== 1 ? 'their' : 'its'} zones can be read more than one way. Rename that zone, then export again.`)
+    }
+    if (zonesGone.length > 0) {
+      toast(`${zonesGone.length} product${zonesGone.length !== 1 ? 's were' : ' was'} limited to shipping zones you've since deleted. ${zonesGone.length !== 1 ? 'They have' : 'It has'} no zones in the file, so uploading it would ship ${zonesGone.length !== 1 ? 'them' : 'it'} under all of your zones.`)
+    }
     if (omitted.length > 0) {
       toast.success(`Inventory exported, except ${omitted.length} item${omitted.length !== 1 ? 's' : ''} whose options couldn't be read`)
     } else {
       toast.success('Inventory exported')
     }
-  }, [items, store?.name, store?.defaultCurrency])
+  }, [items, store?.id, store?.name, store?.defaultCurrency])
 
   const handleUploadComplete = useCallback((addedCount: number) => {
     if (addedCount > 0) {
@@ -202,7 +222,7 @@ function InventoryPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleExportCSV}
+                  onClick={() => { handleExportCSV().catch((error) => logger.error('Failed to export inventory:', error)) }}
                   disabled={items.length === 0}
                   className="flex items-center gap-1"
                 >

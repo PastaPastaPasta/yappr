@@ -70,8 +70,8 @@ contract id is an input to every registration.
 `contracts/yappr-storefront-contract.json` — `store`, `storeItem`,
 `shippingZone`, `itemDeliverable`, `storeOrder`, `orderStatusUpdate`,
 `orderDelivery`, `storeReview`, `itemReview`, `savedAddress`. Client gate:
-`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v8`, resolved in `lib/constants.ts`).
-**The file is storefront v8**, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)), not yet registered. v7 is v6 (below) with `storeItem.variants` as a typed
+`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v9`, resolved in `lib/constants.ts`).
+**The file is storefront v9**: v8 plus `storeItem.shippingZoneIds`, the store zones an item ships under ([STOREFRONT_V9.md](STOREFRONT_V9.md)), an update a registered v8 contract takes in place. v8 is the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)). v7 is v6 (below) with `storeItem.variants` as a typed
 table instead of a JSON string, and up to 12 image URLs per item
 ([STOREFRONT_V7.md](STOREFRONT_V7.md)). v6, the 5.0.0-beta.2 mainnet-ready cut
 that also carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638), was
@@ -84,7 +84,7 @@ on sakura as `2P2KqWzZXqULWMD1e2tL1dr67YAjNqUTP8cyNGkekzdz` (maker nonce 12,
 | Doctype | Shape | Serves |
 | --- | --- | --- |
 | `store` | `canBeDeleted: false` (`closed` is the tombstone), `moderatorAbilities.delete`; required `category` slug; `byStatus [status, $createdAt]`; `byCategory [status, category, $createdAt]` rangeCountable, ranked at `category`; 1000M action fee | "newest stores", per-category newest, "top categories"; moderatedDocument target |
-| `storeItem` | `canBeDeleted: false`, `moderatorAbilities.delete`; `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]`; `fulfillment` (`shipped`/`digital`); v7 `variants` table (options with stable ids, a byte-array selector and a price per combination, optional stock/SKU/weight/image lists; 9 alignment rules); 50M action fee | item reviews, ghost-store rejection, seller-only listings, variant pickers |
+| `storeItem` | `canBeDeleted: false`, `moderatorAbilities.delete`; `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]`; `fulfillment` (`shipped`/`digital`); v9 `shippingZoneIds` (1–16 unique zone ids, no reference; absent = every zone); v7 `variants` table (options with stable ids, a byte-array selector and a price per combination, optional stock/SKU/weight/image lists; 9 alignment rules); 50M action fee | item reviews, ghost-store rejection, seller-only listings, variant pickers |
 | `shippingZone` | `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]` | seller-only zones |
 | `itemDeliverable` | one per item; `itemId`→storeItem (moderatedDocument) **writer-gated**; `immutable [itemId]`; seller-encrypted kit (≤ 5,120 B) | digital products |
 | `storeOrder` | permanent; `storeId`→store `{$ownerId: sellerId, status: {const: active}}` (v8); `sellerId` distinctFrom `$ownerId`; `buyerOrders [$ownerId, $createdAt]` rangeCountable; `storeOrders [storeId, $createdAt]` rangeCountable, ranked at `storeId`; payload ≤ 5,120 B | buyer and seller order lists and counts, "most ordered stores" |
@@ -92,6 +92,10 @@ on sakura as `2P2KqWzZXqULWMD1e2tL1dr67YAjNqUTP8cyNGkekzdz` (maker nonce 12,
 | `orderDelivery` | `orderId`→storeOrder **writer-gated to the seller**; permanent, append-only; `buyerDeliveries [orderId.$ownerId, $createdAt]` (derived); payload ≤ 5,120 B | encrypted digital delivery, buyer library |
 | `storeReview` | `orderId`→storeOrder **writer-gated to the buyer**; `storeRating` avg ranked; `storeRatingDistribution` grouped count; 16M action fee | averages, distribution, top rated |
 | `itemReview` | one per (order, item); `itemId`→storeItem `{storeId}`; `orderId` **writer-gated**; `storeItemRating [storeId, itemId]` avg+count, avg ranked; 8M action fee | item averages and counts within a store, top items in a store |
+
+### What v9 changed (from v8)
+
+- **An item may name the store zones it ships under**: `storeItem.shippingZoneIds`, 1–16 unique identifiers at position 16, optional, with no `refersTo` (a zone delete must never make an item unwritable; the client ignores ids that are not the store's zones). Checkout prices each zone's lines as their own shipment; the inventory CSV carries a `Shipping Zones` column. Signed size 16,522 B (v8 16,315 B). See [STOREFRONT_V9.md](STOREFRONT_V9.md).
 
 ### What v8 changed (from v7)
 

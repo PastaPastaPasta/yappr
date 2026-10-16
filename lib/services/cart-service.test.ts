@@ -144,10 +144,33 @@ describe('cart inventory', () => {
 
   it('weighs each shipped line by its variant, else by its item', async () => {
     const item = product({ weight: 500, basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Single', price: 100 }, { name: '4-pack', price: 353, weight: 1800 }]) })
-    vi.spyOn(storeItemService, 'get').mockResolvedValue(item)
+    vi.spyOn(storeItemService, 'getManyOrThrow').mockResolvedValue([item])
     cartService.addStoreItem(item, '1', 2)
     cartService.addStoreItem(item, '2')
-    expect(await cartService.getTotalWeight()).toBe(2 * 500 + 1800)
+    const lines = await cartService.getShippingLines(cartService.getItems())
+    expect(lines.map(line => [line.weight, line.subtotal])).toEqual([[2 * 500, 2 * 100], [1800, 353]])
+  })
+
+  it('prices only shipped lines, each with the zones its item is limited to', async () => {
+    const zones = ['zone-a']
+    const read = vi.spyOn(storeItemService, 'getManyOrThrow').mockResolvedValue([product({ id: 'limited', weight: 90, shippingZoneIds: zones })])
+    const lines = await cartService.getShippingLines([
+      cartItem({ itemId: 'limited', title: 'Leather Wallet', quantity: 1 }),
+      cartItem({ itemId: 'ebook', fulfillment: 'digital' }),
+    ])
+    expect(read).toHaveBeenCalledWith(['limited'])
+    expect(lines).toEqual([{ itemId: 'limited', title: 'Leather Wallet', zoneIds: zones, weight: 90, subtotal: 100 }])
+  })
+
+  it('fails closed: an item the answer leaves out throws instead of shipping under every zone', async () => {
+    // The availability check reads separately, so it may still find the item: shipping cannot assume it was refused.
+    vi.spyOn(storeItemService, 'getManyOrThrow').mockResolvedValue([product({ id: 'limited', shippingZoneIds: ['zone-a'] })])
+    await expect(cartService.getShippingLines([cartItem({ itemId: 'limited' }), cartItem({ itemId: 'not-yet-visible' })])).rejects.toThrow('not-yet-visible')
+  })
+
+  it('fails closed: a read that fails throws instead of pricing the line under every zone', async () => {
+    vi.spyOn(storeItemService, 'getManyOrThrow').mockRejectedValue(new Error('offline'))
+    await expect(cartService.getShippingLines([cartItem({ itemId: 'limited' })])).rejects.toThrow('offline')
   })
 
   it('returns a maximum for a cart already at available stock', async () => {

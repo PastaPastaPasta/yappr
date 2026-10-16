@@ -469,6 +469,17 @@
           "position": 15,
           "description": "`shipped` (a parcel; also what absent means) or `digital` (delivered on chain as an orderDelivery)",
           "maxLength": 7
+        },
+        "shippingZoneIds": {
+          "type": "array",
+          "position": 16,
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "identifier"
+          },
+          "description": "The store's shipping zones this item ships under; absent = every zone of the store"
         }
       },
       "description": "A product listing, optionally with a variants table. Only the store owner writes it; status `deleted` is the tombstone.",

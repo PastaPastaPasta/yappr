@@ -39,6 +39,7 @@ import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { storefrontIsV2 } from '@/lib/constants'
+import { shipsToLabel, zoneDeletionImpact, zoneDeletionMessage } from '@/lib/storefront/item-zones'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { identityService } from '@/lib/services/identity-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
@@ -58,6 +59,7 @@ function StoreManagePage() {
   const [itemsLoadError, setItemsLoadError] = useState(false)
   const [isReloadingItems, setIsReloadingItems] = useState(false)
   const [zones, setZones] = useState<ShippingZone[]>([])
+  const [zonesLoaded, setZonesLoaded] = useState(false)
   const [pendingOrdersCount, setPendingOrdersCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'items' | 'shipping' | 'settings'>('items')
@@ -125,6 +127,7 @@ function StoreManagePage() {
           setItemsLoadError(true)
         }
 
+        setZonesLoaded(zonesResult.status === 'fulfilled')
         if (zonesResult.status === 'fulfilled') {
           setZones(zonesResult.value)
         } else {
@@ -553,6 +556,8 @@ function StoreManagePage() {
                 <div className="space-y-3">
                   {items.map((item, index) => {
                     const priceRange = storeItemService.getPriceRange(item)
+                    // Only a v9 listing names zones; everything else ships under all of them.
+                    const shipsTo = zonesLoaded ? shipsToLabel(item, zones) : null
 
                     return (
                       <motion.div
@@ -584,6 +589,7 @@ function StoreManagePage() {
                             {item.status === 'active' ? 'Active' : item.status}
                             {item.stockQuantity !== undefined && ` • ${item.stockQuantity} in stock`}
                           </p>
+                          {shipsTo && <p className="text-xs text-gray-500 truncate">{shipsTo}</p>}
                         </div>
                         <div className="flex gap-1">
                           <button
@@ -829,7 +835,7 @@ function StoreManagePage() {
         onClose={() => setDeleteZoneId(null)}
         onConfirm={handleDeleteZone}
         title="Delete Shipping Zone"
-        message="Are you sure you want to delete this shipping zone? This action cannot be undone."
+        message={zoneDeletionMessage(deleteZoneId ? zoneDeletionImpact(deleteZoneId, items, zones) : { limited: 0, stranded: 0 }, { productsUnknown: itemsLoadError })}
         confirmText="Delete"
         variant="danger"
         isLoading={isDeleting}

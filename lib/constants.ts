@@ -150,7 +150,13 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // `storeId.refersTo.where` carries the condition `status: {const: 'active'}`.
 // An order at a paused or closed store is refused 40127, and the client writes
 // no copy.
-export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'] as const
+// `v9` (docs/STOREFRONT_V9.md) is v8 plus `storeItem.shippingZoneIds`: up to
+// 16 of the store's shipping zones a shipped item ships under (absent: every
+// zone). Zones stay store-level; checkout prices each zone's lines as their
+// own shipment. Only an optional property is added, so a registered v8
+// contract takes it as an update. Below v9 the per-item zone UI and CSV
+// column are hidden, and nothing writes the field (v8 refuses it).
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
@@ -174,6 +180,8 @@ export const storefrontIsV6 = () => storefrontTopologyAtLeast('v6')
 export const storefrontVariantsAreTyped = () => storefrontTopologyAtLeast('v7')
 /** True on v6 and later: items can be digital, and sellers deliver them on chain. */
 export const storefrontSupportsDigital = () => storefrontIsV6()
+/** True on v9 and later: a shipped item may name which of its store's shipping zones it ships under. */
+export const storefrontSupportsItemZones = () => storefrontTopologyAtLeast('v9')
 /** True on v2–v5: store and item reviews cost YAPP (v6 charges an action fee instead). */
 export const storefrontReviewsCostYapp = () => storefrontIsV2() && !storefrontIsV6()
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)

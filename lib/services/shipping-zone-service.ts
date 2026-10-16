@@ -16,9 +16,16 @@ import type {
   ShippingTier,
   ShippingPricingConfig,
   SubtotalMultiplier,
-  ShippingAddress
+  ShippingAddress,
+  ShippingLine,
+  ShippingQuote,
+  Shipment
 } from '../../types';
 import { gramsToUnit } from '../utils/weight';
+
+const ZONE_PAGE_SIZE = 100;
+/** Pages of zones read before `getByStore` gives up (1,000 zones). */
+const MAX_ZONE_PAGES = 10;
 
 class ShippingZoneService extends BaseDocumentService<ShippingZone> {
   constructor() {
@@ -93,16 +100,27 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
   }
 
   /**
-   * Get zones for a store
+   * Every zone of a store, by priority, read fresh (no cache), 100 at a time.
+   * The list must be whole: an item's zone missing from it would read as
+   * deleted (checkout refuses the item, the editor calls it stranded, the
+   * export leaves it out). Past {@link MAX_ZONE_PAGES} pages it throws rather
+   * than answer with part of the list, so callers fail closed.
    */
   async getByStore(storeId: string): Promise<ShippingZone[]> {
-    const { documents } = await this.query({
-      where: [['storeId', '==', storeId]],
-      orderBy: [['storeId', 'asc'], ['priority', 'asc']],
-      limit: 100
-    });
-
-    return documents;
+    const zones: ShippingZone[] = [];
+    let startAfter: string | undefined;
+    for (let page = 0; page < MAX_ZONE_PAGES; page++) {
+      const { documents, nextCursor } = await this.cursorPage({
+        where: [['storeId', '==', storeId]],
+        orderBy: [['storeId', 'asc'], ['priority', 'asc']],
+        limit: ZONE_PAGE_SIZE,
+        startAfter
+      });
+      zones.push(...documents);
+      if (!nextCursor) return zones;
+      startAfter = nextCursor;
+    }
+    throw new Error(`Store ${storeId} has more than ${MAX_ZONE_PAGES * ZONE_PAGE_SIZE} shipping zones`);
   }
 
   /**
@@ -195,24 +213,15 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
    * Find the matching zone for a shipping address
    */
   findMatchingZone(zones: ShippingZone[], address: ShippingAddress): ShippingZone | null {
-    // Sort by priority (lower = higher priority)
-    const sortedZones = [...zones].sort((a, b) => a.priority - b.priority);
+    return this.matchingZones(zones, address)[0] ?? null;
+  }
 
-    for (const zone of sortedZones) {
-      const matchesPostal = this.matchesPostalPatterns(zone.postalPatterns, address.postalCode);
-      const matchesCountry = this.matchesCountryPattern(
-        zone.countryPattern,
-        address.country,
-        address.state,
-        address.postalCode
-      );
-
-      if (matchesPostal && matchesCountry) {
-        return zone;
-      }
-    }
-
-    return null;
+  /** Every zone covering `address`, by priority (lower = higher priority; ties keep `zones` order). */
+  private matchingZones(zones: readonly ShippingZone[], address: ShippingAddress): ShippingZone[] {
+    return [...zones]
+      .sort((a, b) => a.priority - b.priority)
+      .filter((zone) => this.matchesPostalPatterns(zone.postalPatterns, address.postalCode)
+        && this.matchesCountryPattern(zone.countryPattern, address.country, address.state, address.postalCode));
   }
 
   /**
@@ -438,23 +447,136 @@ class ShippingZoneService extends BaseDocumentService<ShippingZone> {
   }
 
   /**
-   * Calculate shipping cost for an order
+   * A cart's shipping to `address` (docs/STOREFRONT_V9.md). Each line ships
+   * under the store's zones its item names (ids that are not among `zones`,
+   * the store's, are ignored), or under every zone when it names none; an item
+   * whose named zones are all gone ships nowhere. The lines a zone takes are
+   * priced together as one shipment, so the cart is kept to as few shipments
+   * as it can be: the lines with the fewest covering zones choose first, and
+   * a line takes the highest-priority zone an earlier line already chose when
+   * one covers it, else its own highest-priority zone. With no item naming
+   * zones every line takes the first matching zone, so this is exactly the
+   * one-zone price of the whole cart.
    */
-  async calculateShipping(
-    storeId: string,
-    address: ShippingAddress,
-    params: { totalWeight?: number; subtotal?: number }
-  ): Promise<{ zone: ShippingZone | null; cost: number }> {
-    const zones = await this.getByStore(storeId);
-    const zone = this.findMatchingZone(zones, address);
-
-    if (!zone) {
-      return { zone: null, cost: 0 };
+  quoteShipping(zones: ShippingZone[], lines: readonly ShippingLine[], address: ShippingAddress): ShippingQuote {
+    const candidates = lines.map((line) => {
+      const named = line.zoneIds && line.zoneIds.length > 0 ? new Set(line.zoneIds) : null;
+      // Filtered from the store's own list, so equal priorities break the same way as for an unrestricted line.
+      return this.matchingZones(named ? zones.filter((zone) => named.has(zone.id)) : zones, address);
+    });
+    const chosen = new Set<string>();
+    const zoneOf = new Map<number, ShippingZone>();
+    // Stable: lines with as many covering zones choose in cart order.
+    const order = lines.map((_, index) => index).sort((a, b) => candidates[a].length - candidates[b].length);
+    for (const index of order) {
+      const matches = candidates[index];
+      const zone = matches.find((match) => chosen.has(match.id)) ?? matches[0];
+      if (!zone) continue;
+      chosen.add(zone.id);
+      zoneOf.set(index, zone);
     }
 
-    const cost = this.calculateRate(zone, params);
-    return { zone, cost };
+    // Shipments, and the lines in each, in cart order.
+    const groups = new Map<string, { zone: ShippingZone; lines: ShippingLine[] }>();
+    const unshippable: ShippingLine[] = [];
+    lines.forEach((line, index) => {
+      const zone = zoneOf.get(index);
+      if (!zone) {
+        unshippable.push(line);
+        return;
+      }
+      const group = groups.get(zone.id) ?? { zone, lines: [] };
+      group.lines.push(line);
+      groups.set(zone.id, group);
+    });
+    const shipments: Shipment[] = [...groups.values()].map(({ zone, lines: carried }) => ({
+      zone,
+      lines: carried,
+      cost: this.calculateRate(zone, {
+        totalWeight: carried.reduce((sum, line) => sum + line.weight, 0),
+        subtotal: carried.reduce((sum, line) => sum + line.subtotal, 0)
+      })
+    }));
+    return { shipments, unshippable, cost: shipments.reduce((sum, shipment) => sum + shipment.cost, 0) };
   }
+}
+
+/** A region code as its English name ("CA" → "Canada"), or the code as entered when it is not one. */
+function countryName(code: string): string {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region', fallback: 'none' }).of(code.toUpperCase()) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+/** "A", "A and B", "A, B and C". */
+function listNames(names: readonly string[]): string {
+  return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** What checkout tells a buyer when nothing in the cart can ship to the address. */
+export const SHIPPING_UNAVAILABLE_MESSAGE = 'We cannot ship to this address. Please check your shipping address.';
+/** The listings, or the zones a limited item needs, could not be read: the restriction cannot be checked, so checkout waits. */
+export const SHIPPING_CHECK_FAILED_MESSAGE = "We couldn't check shipping for your cart. Please try again.";
+
+/** Checkout's shipping for a cart: its quote (null: unpriced, free) and why it cannot go on (null: it can). */
+export interface ShippingCheck {
+  quote: ShippingQuote | null;
+  problem: string | null;
+}
+
+const isLimited = (line: ShippingLine) => Boolean(line.zoneIds && line.zoneIds.length > 0);
+
+/**
+ * What placing an order does after checking shipping again, fresh:
+ * `proceed`; `review` (the cost differs from what the buyer saw, so the new
+ * quote is shown and the buyer submits again); `back` (a line no longer ships,
+ * or it could not be checked: back to the shipping step).
+ */
+export type FinalShipping = { kind: 'proceed' } | { kind: 'review'; message: string } | { kind: 'back'; message: string };
+
+/**
+ * The final check before an order is placed. `fresh` is `checkShipping` on
+ * freshly read lines and zones, or null when they could not be read;
+ * `previousCost` is the shipping the buyer reviewed.
+ */
+export function finalShippingCheck(previousCost: number, fresh: ShippingCheck | null, formatCost: (cost: number) => string): FinalShipping {
+  if (!fresh) return { kind: 'back', message: SHIPPING_CHECK_FAILED_MESSAGE };
+  if (fresh.problem) return { kind: 'back', message: fresh.problem };
+  const cost = fresh.quote?.cost ?? 0;
+  return cost === previousCost ? { kind: 'proceed' } : { kind: 'review', message: `Shipping changed to ${formatCost(cost)}. Please review your order.` };
+}
+
+/**
+ * The shipping step's verdict on `lines` to `address`, given the store's
+ * `zones` (null: they could not be read). A store with no zones, or zones that
+ * could not be read, has always checked out without a shipping charge; that
+ * holds only for lines that may ship under any zone. With no zones, a line
+ * limited to some ships nowhere; with zones unreadable, its limit cannot be
+ * checked, so checkout waits for them.
+ */
+export function checkShipping(zones: ShippingZone[] | null, lines: readonly ShippingLine[], address: ShippingAddress): ShippingCheck {
+  const limited = lines.some(isLimited);
+  if (zones === null) return { quote: null, problem: limited ? SHIPPING_CHECK_FAILED_MESSAGE : null };
+  const quote = zones.length > 0
+    ? shippingZoneService.quoteShipping(zones, lines, address)
+    : { shipments: [], unshippable: lines.filter(isLimited), cost: 0 };
+  return { quote, problem: shippingProblem(quote, address.country) };
+}
+
+/**
+ * Why `quote` cannot be checked out to `country`, or null when every line
+ * ships. A line that may use any zone and still ships nowhere means the store
+ * does not ship there at all; otherwise only items limited to some zones miss
+ * the address, and the message names them so the buyer can remove them.
+ */
+export function shippingProblem(quote: ShippingQuote, country: string): string | null {
+  if (quote.unshippable.length === 0) return null;
+  if (quote.unshippable.some((line) => !line.zoneIds || line.zoneIds.length === 0)) return SHIPPING_UNAVAILABLE_MESSAGE;
+  const titles = [...new Set(quote.unshippable.map((line) => line.title))];
+  const one = titles.length === 1;
+  return `${listNames(titles)} ${one ? "doesn't" : "don't"} ship to ${countryName(country)}. Remove ${one ? 'it' : 'them'} from your cart to continue.`;
 }
 
 export const shippingZoneService = new ShippingZoneService();

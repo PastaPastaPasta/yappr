@@ -52,6 +52,10 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
   const [multipliers, setMultipliers] = useState<MultiplierRow[]>([])
 
   const isEditing = !!zone
+  // The inventory CSV separates zone names with ";" or "|", so a new or renamed zone may not hold either.
+  const nameProblem = name.trim() !== (zone?.name ?? '').trim() && /[;|]/.test(name)
+    ? 'A zone name can\'t contain ";" or "|".'
+    : null
 
   // Pre-fill form when editing
   useEffect(() => {
@@ -119,7 +123,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
   }
 
   const handleSubmit = async () => {
-    if (!name.trim()) return
+    if (!name.trim() || nameProblem) return
 
     setIsSubmitting(true)
     try {
@@ -222,7 +226,10 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
                     placeholder="e.g., Domestic, Europe, Worldwide"
                     className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     maxLength={63}
+                    aria-invalid={nameProblem !== null}
+                    aria-describedby={nameProblem ? `${formId}-name-error` : undefined}
                   />
+                  {nameProblem && <p id={`${formId}-name-error`} role="alert" className="text-xs text-red-600 mt-1">{nameProblem}</p>}
                 </div>
 
                 {/* Country Pattern */}
@@ -438,7 +445,7 @@ export function ShippingZoneModal({ isOpen, onClose, onSave, zone, defaultCurren
                 <Button
                   className="flex-1"
                   onClick={handleSubmit}
-                  disabled={isSubmitting || !name.trim()}
+                  disabled={isSubmitting || !name.trim() || nameProblem !== null}
                 >
                   {isSubmitting ? (isEditing ? 'Saving...' : 'Creating...') : (isEditing ? 'Save Changes' : 'Create Zone')}
                 </Button>

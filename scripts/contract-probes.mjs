@@ -1180,6 +1180,9 @@ const PROBES = [
   { label: 'storefront v8: the order where condition names a property the store lacks', file: STOREFRONT, expect: 'audit', node: '40126', why: /does not have/, mutate: (s) => { types(s).storeOrder.properties.storeId.refersTo.where = { $ownerId: 'sellerId', state: { const: 'active' } }; } },
   { label: 'storefront v8: the order where condition with a status outside the store\'s enum', file: STOREFRONT, expect: 'audit', node: '40126', why: /"open" is not a value/, mutate: (s) => { types(s).storeOrder.properties.storeId.refersTo.where.status = { const: 'open' }; } },
   { label: 'storefront v8: an order no longer carries storeStatus, and storeOrder declares no rule', file: STOREFRONT, mutate: () => {}, expect: 'accepted', holds: (s) => !types(s).storeOrder.properties.storeStatus && !types(s).storeOrder.propertyConstraints },
+  // Storefront v9 (docs/STOREFRONT_V9.md) is v8 plus one optional storeItem property, so a
+  // registered v8 contract takes it as a data contract update.
+  { label: 'storefront v9 update: v8 (no shippingZoneIds) updated in place to the committed v9', file: STOREFRONT, expect: 'accepted', base: (s) => { delete types(s).storeItem.properties.shippingZoneIds; }, update: (s) => { types(s).storeItem.properties.shippingZoneIds = structuredClone(types(JSON.parse(readFileSync(STOREFRONT, 'utf8'))).storeItem.properties.shippingZoneIds); } },
   { label: 'blog v8: comments-off as notEqual a string const on the boolean commentsEnabled', file: BLOG, expect: 'audit', node: '40126', why: /is not a value/, mutate: (s) => { types(s).blogComment.properties.blogPostId.refersTo.where.commentsEnabled = { notEqual: { const: 'false' } }; } },
   { label: 'blog v8: a comment no longer copies its post\'s flag', file: BLOG, mutate: () => {}, expect: 'accepted', holds: (s) => !types(s).blogComment.properties.postCommentsEnabled && !types(s).blogComment.propertyConstraints },
   { label: 'social v15: post and reply mention up to 8 identities, indexed per element, cleared by a tombstone', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s) => ['post', 'reply'].every((type) => {
@@ -1372,6 +1375,8 @@ export function runContractProbes({ loadContractSource, parseContract, parseWith
   for (const probe of PROBES) {
     // As the probe's network registers the file (mainnet: an elected interim becomes notYetUsable).
     const stored = loadContractSource(probe.file, { network: probe.network });
+    // An update probe may start from an earlier cut of the committed file (version 1).
+    probe.base?.(stored);
     const source = structuredClone(stored);
     if (probe.update) {
       source.version = (stored.version ?? 1) + 1;

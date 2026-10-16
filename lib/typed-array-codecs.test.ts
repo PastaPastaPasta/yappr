@@ -1,8 +1,8 @@
 import bs58 from 'bs58'
 import { describe, expect, it } from 'vitest'
 import {
-  decodeBlockFollowIds, decodeLabelList, decodePaymentUriList, decodeSocialLinkList, decodeStringList,
-  encodeBlockFollowIds, encodeLabelList, encodePaymentUriList, encodeSocialLinkList, encodeStringList,
+  decodeBlockFollowIds, decodeIdentifierList, decodeLabelList, decodePaymentUriList, decodeSocialLinkList, decodeStringList,
+  encodeBlockFollowIds, encodeIdentifierList, encodeLabelList, encodePaymentUriList, encodeSocialLinkList, encodeStringList,
   socialLinkFromString, uniqueStrings,
 } from './typed-array-codecs'
 
@@ -27,6 +27,31 @@ describe('typed-array codecs', () => {
       // A legacy byte array handed back as number[] is still packed bytes.
       expect(decodeBlockFollowIds(Array.from(new Uint8Array(64).fill(1)))).toEqual([idA, idA])
       expect(decodeBlockFollowIds(undefined)).toEqual([])
+    })
+  })
+
+  describe('identifier lists (storeItem.shippingZoneIds)', () => {
+    it('encodes one 32-byte id per element, first occurrence kept', () => {
+      const encoded = encodeIdentifierList([idA, idB, idA])
+      expect(encoded.map((id) => id.length)).toEqual([32, 32])
+      expect(encoded.map((id) => bs58.encode(id))).toEqual([idA, idB])
+      expect(encodeIdentifierList([])).toEqual([])
+    })
+
+    it('refuses an id that is not 32 bytes', () => {
+      expect(() => encodeIdentifierList([bs58.encode(new Uint8Array(20).fill(3))])).toThrow(/32-byte/)
+    })
+
+    it('decodes bytes, base58 strings and Identifier objects to base58', () => {
+      expect(decodeIdentifierList(encodeIdentifierList([idA, idB]))).toEqual([idA, idB])
+      expect(decodeIdentifierList([idA, idB])).toEqual([idA, idB])
+      expect(decodeIdentifierList([{ toBase58: () => idB }])).toEqual([idB])
+    })
+
+    it('drops what is not an id, duplicates, and anything that is not a list', () => {
+      expect(decodeIdentifierList([idA, new Uint8Array(5), idA])).toEqual([idA])
+      expect(decodeIdentifierList(undefined)).toEqual([])
+      expect(decodeIdentifierList(idA)).toEqual([])
     })
   })
 

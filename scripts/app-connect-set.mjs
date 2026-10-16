@@ -51,7 +51,7 @@ export const APP_CONNECT_ENTRIES = [
   { name: 'dmV5', file: 'yappr-dm-contract-v5.json', envKey: 'NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID', sha256: '4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21' },
   { name: 'blog', file: 'yappr-blog-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '79c8a4620cf1756cbc91dcb89d05fc902be74a703b24372f8cf93fe405c085a9' },
   { name: 'pollr', file: 'pollr-contract.json', envKey: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', sha256: '4b660df8d095f931c9b422714ddb4ed7bcc629ab1ff5a9919d8df4079469b7d4' },
-  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: '8f0feeebd2e8b1ac1cf415d93f47b606077118b192473938b39f7c324cd68ed8' },
+  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: 'e331d37dae44847ae3f323c365fe51ad027d1358b33f8b2de06ac866f5130cc3' },
   { name: 'authVault', file: 'yappr-auth-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID', sha256: 'cecf0ccca95ab0aff76ccf3142405dadd84c8f4c662419a727c0fa157f9738dd' },
 ];
 

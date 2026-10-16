@@ -12,16 +12,17 @@
  */
 
 import type { ItemVariants } from '../types'
-import { storefrontArraysAreTyped, storefrontVariantsAreTyped } from '../constants'
+import { storefrontArraysAreTyped, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '../constants'
 import { toSmallestUnit } from '../utils/format'
 import { LIST_LIMITS } from '../typed-array-codecs'
-import { LEGACY_STRING_LIST_CAPS, VARIANT_LIMITS, itemImageLimit, itemStockCap } from '../storefront/storefront-contract'
+import { ITEM_SHIPPING_ZONE_LIMIT, LEGACY_STRING_LIST_CAPS, VARIANT_LIMITS, itemImageLimit, itemStockCap } from '../storefront/storefront-contract'
 import { variantProblems, variantsFromRows, type VariantRow } from '../storefront/variant-codec'
+import { readZoneCell } from '../storefront/item-zones'
 
 /** The single-valued columns the parser reads, by internal name. */
 type Column =
   | 'group' | 'section' | 'category' | 'subcategory' | 'itemName' | 'description' | 'sku' | 'tags'
-  | 'variant' | 'subVariant' | 'price' | 'quantity' | 'shippingCost' | 'combine' | 'weight' | 'image'
+  | 'variant' | 'subVariant' | 'price' | 'quantity' | 'shippingCost' | 'combine' | 'weight' | 'image' | 'shippingZones'
 
 // Parsed inventory row before grouping
 interface ParsedInventoryRow {
@@ -48,6 +49,8 @@ interface ParsedInventoryRow {
   imageUrls: string[]
   /** This row's own image (`Image URL`), shown when its combination is picked. */
   image?: string
+  /** The store zone names the product ships under (`Shipping Zones`), as written. */
+  shippingZones?: string
   rowNumber: number       // Original CSV row number for error reporting
 }
 
@@ -67,6 +70,8 @@ export interface GroupedInventoryItem {
   stockQuantity?: number  // Stock for an item without variants
   weight?: number
   variants?: ItemVariants // Populated if the item has variants
+  /** storefront v9: the store zones (ids) the product ships under; absent = every zone. */
+  shippingZoneIds?: string[]
   /** Why this product cannot be uploaded; the others still can. */
   errors: string[]
   /** What the import changed or guessed for this product. */
@@ -106,6 +111,46 @@ const COLUMN_ALIASES: Record<Column, string[]> = {
   combine: ['combine', 'combine_shipping', 'combineshipping'],
   weight: ['weight', 'wt'],
   image: ['image url', 'image_url', 'imageurl', 'variant image', 'variant image url'],
+  shippingZones: ['shipping zones', 'shipping zone', 'zones', 'ships to'],
+}
+
+/** A store's shipping zone as the import matches it, by name. */
+export interface ImportZone {
+  id: string
+  name: string
+}
+
+/**
+ * The ids of the zones a product's `Shipping Zones` cells name (the first
+ * non-empty cell of its rows), matched to the store's zones by name
+ * (`readZoneCell`). Undefined when no row names any, so the product ships
+ * under every zone. Unknown names, a cell that reads more than one way and
+ * too many zones are product errors.
+ */
+function resolveZones(rows: readonly ParsedInventoryRow[], zones: readonly ImportZone[], title: string, errors: string[], warnings: string[]): string[] | undefined {
+  const cells = rows.map((row) => row.shippingZones).filter((cell): cell is string => Boolean(cell))
+  if (cells.length === 0) return undefined
+  const key = (cell: string) => {
+    const { found, unknown } = readZoneCell(cell, zones)
+    return [...new Set([...found.map((zone) => zone.id), ...unknown.map((name) => `?${name.toLowerCase()}`)])].sort().join('\n')
+  }
+  if (cells.some((cell) => key(cell) !== key(cells[0]))) {
+    warnings.push(`"${title}": its rows list different shipping zones, so the first row's were used.`)
+  }
+  const { found, unknown, ambiguous } = readZoneCell(cells[0], zones)
+  if (ambiguous) {
+    errors.push(`"${title}": the shipping zones "${cells[0]}" can be read more than one way (a zone name contains ";" or "|", or two zone names differ only in capitals). Rename that zone, then import again.`)
+    return undefined
+  }
+  // A cell with something in it never reads as "every zone".
+  if (found.length === 0 && unknown.length === 0) {
+    errors.push(`"${title}": the shipping zones "${cells[0]}" name no zone. Write the zone names separated by ";", or leave the cell blank to ship under every zone.`)
+    return undefined
+  }
+  for (const name of unknown) errors.push(`"${title}": there's no shipping zone named "${name}". Add it under Shipping Zones first, or fix the name.`)
+  const ids = [...new Set(found.map((zone) => zone.id))]
+  if (ids.length > ITEM_SHIPPING_ZONE_LIMIT) errors.push(`"${title}": a product can be limited to at most ${ITEM_SHIPPING_ZONE_LIMIT} shipping zones (it lists ${ids.length}).`)
+  return ids.length > 0 ? ids : undefined
 }
 
 /** Headers that say nothing about the option type, so its axis is just "Option". */
@@ -615,7 +660,7 @@ function fitSku(sku: string): string {
 }
 
 /** Build one product from its rows. */
-function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], columns: ColumnMap, currency: string): GroupedInventoryItem {
+function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], columns: ColumnMap, currency: string, zones: readonly ImportZone[]): GroupedInventoryItem {
   const firstRow = rows[0]
   const title = firstRow.itemName
   const errors: string[] = []
@@ -644,6 +689,7 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
     imageUrls,
     basePrice: firstRow.price,
     currency,
+    shippingZoneIds: resolveZones(rows, zones, title, errors, warnings),
     errors,
     warnings,
   }
@@ -745,7 +791,7 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
 /**
  * Group parsed rows into inventory items based on group ID
  */
-function groupRows(rows: ParsedInventoryRow[], columns: ColumnMap, currency: string): GroupedInventoryItem[] {
+function groupRows(rows: ParsedInventoryRow[], columns: ColumnMap, currency: string, zones: readonly ImportZone[]): GroupedInventoryItem[] {
   const groups = new Map<string, ParsedInventoryRow[]>()
   let ungroupedIndex = 0
 
@@ -757,13 +803,15 @@ function groupRows(rows: ParsedInventoryRow[], columns: ColumnMap, currency: str
   }
 
   return Array.from(groups, ([groupId, groupRowsArr]) =>
-    buildItem(groupId.startsWith('__ungrouped_') ? undefined : groupId, groupRowsArr, columns, currency))
+    buildItem(groupId.startsWith('__ungrouped_') ? undefined : groupId, groupRowsArr, columns, currency, zones))
 }
 
 /**
- * Parse inventory CSV content
+ * Parse inventory CSV content. `zones` are the store's shipping zones, which a
+ * `Shipping Zones` column names (storefront v9); null when they could not be
+ * read, which holds only a file that has the column.
  */
-export function parseInventoryCSV(content: string, currency = 'USD'): InventoryParseResult {
+export function parseInventoryCSV(content: string, currency = 'USD', zones: readonly ImportZone[] | null = []): InventoryParseResult {
   const errors: InventoryParseError[] = []
   const warnings: InventoryParseError[] = []
 
@@ -785,6 +833,16 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
   }
 
   if (errors.length > 0) {
+    return { items: [], errors, warnings }
+  }
+
+  // Only v9 lets a product name its shipping zones; before it the column is read as nothing.
+  if (columns.fields.shippingZones !== undefined && !storefrontSupportsItemZones()) {
+    warnings.push({ row: 1, column: 'shippingZones', message: "This store can't limit products to particular shipping zones, so the Shipping Zones column was ignored. Every product ships under all of the store's zones." })
+    delete columns.fields.shippingZones
+  }
+  if (columns.fields.shippingZones !== undefined && zones === null) {
+    errors.push({ row: 1, column: 'shippingZones', message: "Your shipping zones couldn't be loaded, so the Shipping Zones column can't be checked. Try again in a moment." })
     return { items: [], errors, warnings }
   }
 
@@ -856,6 +914,7 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
       weight,
       imageUrls,
       image: imageUrlOf(getValue('image')),
+      shippingZones: getValue('shippingZones') || undefined,
       rowNumber
     })
   }
@@ -863,7 +922,7 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
   // Formulas resolve across the whole file, before rows become combinations.
   evaluateQuantityFormulas(parsedRows)
 
-  const items = groupRows(parsedRows, columns, currency)
+  const items = groupRows(parsedRows, columns, currency, zones ?? [])
 
   // The merged tag list must fit what storefront v4 stores (32 tags of at most
   // 64 characters). Trim to fit and say so, rather than build a save the
@@ -904,6 +963,7 @@ export function toStoreItemData(item: GroupedInventoryItem): {
   stockQuantity?: number
   sku?: string
   variants?: ItemVariants
+  shippingZoneIds?: string[]
 } {
   const single = !item.variants
   return {
@@ -920,6 +980,7 @@ export function toStoreItemData(item: GroupedInventoryItem): {
     weight: item.weight,
     stockQuantity: single ? item.stockQuantity : undefined,
     sku: single ? item.sku : undefined,
-    variants: item.variants
+    variants: item.variants,
+    shippingZoneIds: item.shippingZoneIds
   }
 }

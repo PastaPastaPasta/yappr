@@ -204,7 +204,7 @@ NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal 
 ## Group trust model
 
 - **Append-only.** Anything the maker creates with a membership joins the group for good, and every group-bound key can then sign for it. Binding a key to a group trusts the group's owner (and admins; this group has none) with that growth. Nobody else can add a member: any other creator is refused 41002.
-- **Widening by update.** A `contract` membership covers every document type and token the contract has or will have. A maker update that adds a type to a member, or to the non-readonly anchor, therefore widens what every group-bound key signs for, without changing the member list. Contract updates are maker-only too. The battery checks that every member is still at version 1 (g3e), and the app pins each member's version beside its id: a member at another version blocks new logins, and the group key stops signing for it.
+- **Widening by update.** A `contract` membership covers every document type and token the contract has or will have. A maker update that adds a type to a member, or to the non-readonly anchor, therefore widens what every group-bound key signs for, without changing the member list. Contract updates are maker-only too. The app pins each member's version beside its id (`id:version`, a bare id pins 1), and the battery checks every member is at its pinned version (g3e): a member at another version blocks new logins, and the group key stops signing for it. An additive update (`scripts/update-contract-additive.mjs`, devnet only) therefore ships together with the new pin; storefront v9 is the first (docs/STOREFRONT_V9.md).
 - **Pinned in the app.** The app ships `GROUP_OWNER` and the member list. At startup it makes proved reads (`contractGroups.info`, `contractGroups.members`), and checks in both directions:
   - the group's owner must equal the pinned owner, with no admins;
   - every pinned member must be in the group;
@@ -223,7 +223,7 @@ NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal 
 | --- | --- |
 | g1 | The group exists, its owner is the pinned owner, it has no admins, and its name is "Yappr". |
 | g2 | Pinned members = group members, with no document-type or token members. |
-| g3 | `APP_ID` and `GROUP_ID` derive from the same maker nonce, and every member is maker-owned, lists the group, and is still at version 1. |
+| g3 | `APP_ID` and `GROUP_ID` derive from the same maker nonce, and every member is maker-owned, lists the group, and is at its pinned version. |
 | a1 | The deployed anchor's encryption opt-in is 2, with no decryption opt-in, and its schema equals the committed file. |
 | k1 | Writes. A seed-ledger persona with MASTER and CRITICAL keys (`--keyholder`, default 242; `--ledger` names the ledger file) registers an ENCRYPTION/MEDIUM key bound to the anchor, and `contractKeys` returns it. A second key moves the pointer to itself, and the first stays enabled and bound. Each key is the test wallet's own App Connect key at the next unused rotation, so the persona's wallet sign-in still holds its current key. In a `finally`, k1d checks that it does, and adds the next rotation if it does not. Every run adds two keys to that persona. |
 
