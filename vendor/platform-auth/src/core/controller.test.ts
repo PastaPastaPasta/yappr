@@ -229,6 +229,16 @@ describe('PlatformAuthController key-ring login', () => {
     expect(storedUser()?.identityId).toBe('raw-identity')
   })
 
+  it('stores nothing for a key sign-in whose check began before another sign-in completed', async () => {
+    const { controller, storedUser } = setup(async () => 'some.dash')
+    // Taken before the app's key check; a wallet sign-in for another identity lands during it.
+    const since = controller.sessionEpoch()
+    await controller.loginWithKeyRing('wallet-identity')
+
+    await expect(controller.loginWithAuthKey('raw-identity', 'private-key', { since })).rejects.toBeInstanceOf(SupersededSignInError)
+    expect(storedUser()?.identityId).toBe('wallet-identity')
+  })
+
   it('stores nothing when the tab signed out while it read the identity', async () => {
     let finish: (username: string | null) => void = () => undefined
     const { controller, storedUser } = setup(() => new Promise((resolve) => { finish = resolve }))

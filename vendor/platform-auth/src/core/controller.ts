@@ -252,10 +252,11 @@ export class PlatformAuthController {
     }
   }
 
+  /** `since`: as for {@link loginWithKeyRing}, when the sign-in began before this call (say, with a check of the key). */
   public async loginWithAuthKey(
     identityId: string,
     privateKey: string,
-    options: { skipUsernameCheck?: boolean } = {},
+    options: Pick<KeyRingLoginOptions, 'skipUsernameCheck' | 'since'> = {},
   ): Promise<PlatformAuthResult> {
     if (!identityId || !privateKey) {
       this.patchState({ error: 'Identity ID and private key are required' })

@@ -151,10 +151,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [router])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
-    // The same rule restore and signing apply: a disabled or wrong-level key never starts a session.
-    const check = await keyValidationService.validatePrivateKey(privateKey, identityId, keyNetwork())
+    // Taken before the key check: a sign-in or sign-out while it runs supersedes this one.
+    const since = controller.sessionEpoch()
+    // The same rule restore and signing apply, on keys read fresh: a disabled or wrong-level key never starts a session.
+    const check = await keyValidationService.validatePrivateKey(privateKey, identityId, keyNetwork(), { fresh: true })
     if (!check.isValid) throw new Error(check.error ?? 'This key cannot sign in to this account')
-    const result = await controller.loginWithAuthKey(identityId, privateKey, options)
+    const result = await controller.loginWithAuthKey(identityId, privateKey, { ...options, since })
     await applyIntent(result.intent)
   }, [applyIntent, controller])
 
