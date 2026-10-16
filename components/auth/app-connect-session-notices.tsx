@@ -34,7 +34,7 @@ const RENEW_SOON_COPY: Record<RenewSoonReason, string> = {
  */
 export function AppConnectSessionNotices() {
   const { user, renewWithAppConnect } = useAuth()
-  const { identityId, health, renewSoon, renewRequired, signedOutByWallet, renewing, dismissRenewRequired, dismissSignedOut, setRenewing } = useAppConnectStatus()
+  const { identityId, renewSoon, renewRequired, signedOutByWallet, renewing, dismissRenewRequired, dismissSignedOut, setRenewing } = useAppConnectStatus()
   const renew = useRenewModal()
   const openLogin = useLoginModal((state) => state.open)
   const [bannerDismissed, setBannerDismissed] = useState(false)
@@ -91,7 +91,7 @@ export function AppConnectSessionNotices() {
 
   return (
     <>
-      {sessionUser && health === 'renew-soon' && renewSoon && !bannerDismissed && !dialogOpen && (
+      {sessionUser && renewSoon && !bannerDismissed && !dialogOpen && (
         <div className="fixed bottom-20 md:bottom-4 inset-x-4 md:left-auto md:right-4 md:w-96 z-40 rounded-2xl bg-white dark:bg-neutral-900 ring-1 ring-gray-200 dark:ring-neutral-700 shadow-lg p-4 flex flex-col gap-3" role="status" data-testid="app-connect-renew-banner">
           <p className="text-sm text-gray-700 dark:text-gray-300">
             {RENEW_SOON_COPY[renewSoon]}

@@ -9,10 +9,45 @@ import { Button } from '@/components/ui/button'
 import { KeyIcon, LockClosedIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
+import { identityService } from '@/lib/services/identity-service'
 
 interface KeyInfo {
   hasKey: boolean
   type: KeyType | null
+}
+
+/** The key row's right-hand side: the stored key, or the way to enter or create one. */
+function EncryptionKeyStatus({ info, hasKeyOnIdentity, onEnter, onSetUp }: {
+  info: KeyInfo
+  hasKeyOnIdentity: boolean | null
+  onEnter: () => void
+  onSetUp: () => void
+}) {
+  if (info.hasKey) {
+    return (
+      <>
+        <span className={`text-xs px-2 py-0.5 rounded ${
+          info.type === 'derived'
+            ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
+            : 'bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300'
+        }`}>
+          {info.type === 'derived' ? 'Derived' : 'External'}
+        </span>
+        <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded">
+          Active
+        </span>
+      </>
+    )
+  }
+  if (hasKeyOnIdentity === null) return <span className="text-xs text-gray-500">Checking…</span>
+  // On the identity already: enter it here. Otherwise: create one.
+  const [Icon, label, onClick] = hasKeyOnIdentity ? [KeyIcon, 'Enter Key', onEnter] : [PlusIcon, 'Set Up', onSetUp]
+  return (
+    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onClick}>
+      <Icon className="h-3 w-3 mr-1" />
+      {label}
+    </Button>
+  )
 }
 
 interface EncryptionKeySettingsProps {
@@ -50,8 +85,7 @@ export function EncryptionKeySettings({ onEncryptionKeyChanged }: EncryptionKeyS
     if (!identityId) return
     let cancelled = false
     setHasKeyOnIdentity(null)
-    import('@/lib/services/identity-service')
-      .then(({ identityService }) => identityService.hasEncryptionKey(identityId))
+    identityService.hasEncryptionKey(identityId)
       .then((onChain) => {
         if (!cancelled) setHasKeyOnIdentity(onChain)
       })
@@ -84,42 +118,12 @@ export function EncryptionKeySettings({ onEncryptionKeyChanged }: EncryptionKeyS
             <span className="text-sm">Encryption Key</span>
           </div>
           <div className="flex items-center gap-2">
-            {encryptionKeyInfo.hasKey ? (
-              <>
-                <span className={`text-xs px-2 py-0.5 rounded ${
-                  encryptionKeyInfo.type === 'derived'
-                    ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
-                    : 'bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300'
-                }`}>
-                  {encryptionKeyInfo.type === 'derived' ? 'Derived' : 'External'}
-                </span>
-                <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded">
-                  Active
-                </span>
-              </>
-            ) : hasKeyOnIdentity === null ? (
-              <span className="text-xs text-gray-500">Checking…</span>
-            ) : hasKeyOnIdentity ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => openEncryptionKeyModal('generic', handleEncryptionKeyChanged)}
-              >
-                <KeyIcon className="h-3 w-3 mr-1" />
-                Enter Key
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => setShowAddKeyModal(true)}
-              >
-                <PlusIcon className="h-3 w-3 mr-1" />
-                Set Up
-              </Button>
-            )}
+            <EncryptionKeyStatus
+              info={encryptionKeyInfo}
+              hasKeyOnIdentity={hasKeyOnIdentity}
+              onEnter={() => openEncryptionKeyModal('generic', handleEncryptionKeyChanged)}
+              onSetUp={() => setShowAddKeyModal(true)}
+            />
           </div>
         </div>
       </CardContent>

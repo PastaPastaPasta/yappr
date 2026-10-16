@@ -11,7 +11,7 @@ import { UNCONFIRMED_WRITE_MESSAGE, extractErrorMessage, isOncePerIdentityAlread
 import { withSdkSignedWrite } from './identity-nonce';
 import { SigningUnavailableError, assertRawKeyCovers, hasAppConnectSession, reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
 import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
-import { isStarterGrantSettled, markStarterGrantSettled, starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
+import { starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
 import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 
 /** One page of an identity's token-history claims is plenty: YAPP's only distribution is the starter grant. */
@@ -244,22 +244,12 @@ class TokenService {
   }
 
   /**
-   * Claims the once-per-identity STARTER GRANT the v9 contract's token
-   * declares (`distributionRules.oncePerIdentityDistribution`, 100 YAPP): a
-   * fixed amount every identity may claim exactly once. A second claim is
-   * refused, paid, with TokenOncePerIdentityDistributionAlreadyClaimedError
-   * (40722), which comes back as ALREADY_CLAIMED so the prompt can stop for
-   * good. Like every token transition it needs a CRITICAL key.
-   */
-  /**
    * Whether `identityId` has claimed its starter grant, read from chain: the
    * `claim` document Platform writes into the SYSTEM token-history contract
-   * for every claim (byRecipient index). A claim found is remembered in this
-   * browser. Rejects when the read fails; callers then treat it as unknown
-   * and offer no claim (#740).
+   * for every claim (byRecipient index). Rejects when the read fails;
+   * callers then treat it as unknown and offer no claim (#740).
    */
   async readStarterClaimState(identityId: string): Promise<StarterClaimState> {
-    if (isStarterGrantSettled(identityId)) return 'claimed';
     const [sdk, tokenId] = await Promise.all([getEvoSdk(), this.getTokenId()]);
     const response = await sdk.documents.query({
       dataContractId: TOKEN_HISTORY_CONTRACT_ID,
@@ -275,11 +265,17 @@ class TokenService {
       ] as DocumentOrderByClause[],
       limit: CLAIM_HISTORY_PAGE,
     });
-    const state = starterClaimFromHistory(normalizeSDKResponse(response), CLAIM_HISTORY_PAGE);
-    if (state === 'claimed') markStarterGrantSettled(identityId);
-    return state;
+    return starterClaimFromHistory(normalizeSDKResponse(response), CLAIM_HISTORY_PAGE);
   }
 
+  /**
+   * Claims the once-per-identity STARTER GRANT the v9 contract's token
+   * declares (`distributionRules.oncePerIdentityDistribution`, 100 YAPP): a
+   * fixed amount every identity may claim exactly once. A second claim is
+   * refused, paid, with TokenOncePerIdentityDistributionAlreadyClaimedError
+   * (40722), which comes back as ALREADY_CLAIMED so the prompt can stop for
+   * good. Like every token transition it needs a CRITICAL key.
+   */
   async claimStarterGrant(identityId: string, criticalKeyWif?: string): Promise<TokenResult> {
     if (starterGrantAmount() === null) {
       return { success: false, error: 'This contract declares no starter grant', errorCode: 'NOT_AUTHORIZED' };

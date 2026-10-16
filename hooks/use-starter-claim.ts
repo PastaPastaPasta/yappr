@@ -5,20 +5,18 @@ import { isStarterGrantSettled, markStarterGrantSettled, type StarterClaimState 
 import { starterGrantAmount } from '@/lib/contract-topology'
 import { tokenService } from '@/lib/services/token-service'
 
-interface StarterClaimStore {
-  /** Each identity's starter-grant claim state, as chain last answered it. */
-  states: Record<string, StarterClaimState>
-  /** The claim succeeded, or chain refused it as already claimed. */
-  markClaimed: (identityId: string) => void
+/** Each identity's starter-grant claim state, as chain last answered it. */
+const useStarterClaimStore = create<{ states: Record<string, StarterClaimState> }>(() => ({ states: {} }))
+
+function setClaimState(identityId: string, state: StarterClaimState): void {
+  useStarterClaimStore.setState((store) => ({ states: { ...store.states, [identityId]: state } }))
 }
 
-const useStarterClaimStore = create<StarterClaimStore>((set) => ({
-  states: {},
-  markClaimed: (identityId) => {
-    markStarterGrantSettled(identityId)
-    set((store) => ({ states: { ...store.states, [identityId]: 'claimed' } }))
-  },
-}))
+/** Records a claim that landed (or that chain refused as already made), here and in this browser. */
+export function markStarterGrantClaimed(identityId: string): void {
+  markStarterGrantSettled(identityId)
+  setClaimState(identityId, 'claimed')
+}
 
 const inFlight = new Set<string>()
 
@@ -32,10 +30,9 @@ async function readClaimState(identityId: string): Promise<void> {
   } finally {
     inFlight.delete(identityId)
   }
+  if (state === 'claimed') markStarterGrantClaimed(identityId)
   // A claim that landed while this read was under way stands.
-  useStarterClaimStore.setState((store) => (store.states[identityId] === 'claimed'
-    ? store
-    : { states: { ...store.states, [identityId]: state } }))
+  else if (useStarterClaimStore.getState().states[identityId] !== 'claimed') setClaimState(identityId, state)
 }
 
 /** Reads the claim state from chain, one read per identity at a time; an unknown answer is read again by the next caller. */
@@ -43,7 +40,7 @@ function load(identityId: string): void {
   const current = useStarterClaimStore.getState().states[identityId]
   if (current === 'claimed' || current === 'unclaimed' || inFlight.has(identityId)) return
   if (isStarterGrantSettled(identityId)) {
-    useStarterClaimStore.getState().markClaimed(identityId)
+    setClaimState(identityId, 'claimed')
     return
   }
   inFlight.add(identityId)
@@ -61,9 +58,4 @@ export function useStarterClaimState(identityId: string | undefined): StarterCla
     if (identityId && starterGrantAmount() !== null) load(identityId)
   }, [identityId])
   return state ?? 'unknown'
-}
-
-/** Records a claim that landed (or that chain refused as already made). */
-export function markStarterGrantClaimed(identityId: string): void {
-  useStarterClaimStore.getState().markClaimed(identityId)
 }

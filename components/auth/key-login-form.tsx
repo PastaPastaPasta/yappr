@@ -11,7 +11,8 @@ import { Button } from '@/components/ui/button'
 import { identityService } from '@/lib/services/identity-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { keyValidationService } from '@/lib/services/key-validation-service'
-import { isLikelyWif, validateWifNetwork, wifToPrivateKey } from '@/lib/crypto/wif'
+import { isLikelyWif } from '@/lib/crypto/wif'
+import { checkLoginKeyFormat } from '@/lib/auth/login-key'
 import { publicKeyHashFromWif } from '@/lib/crypto/keys'
 import { keyNetwork } from '@/lib/constants'
 
@@ -198,8 +199,9 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
       try {
         let target = resolvedIdentity
         if (!target) {
-          if (!validateWifNetwork(wifToPrivateKey(credential).prefix, keyNetwork())) {
-            reject('This key is for a different network')
+          const malformed = checkLoginKeyFormat(credential, keyNetwork())
+          if (malformed) {
+            reject(malformed.error ?? 'Invalid private key')
             return
           }
           target = await identityForKey(credential)

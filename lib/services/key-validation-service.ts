@@ -1,5 +1,5 @@
 import { identityService } from './identity-service'
-import { checkLoginKey, type KeyValidationResult } from '@/lib/auth/login-key'
+import { checkLoginKey, checkLoginKeyFormat, type LoginKeyResult } from '@/lib/auth/login-key'
 
 class KeyValidationService {
   /**
@@ -10,10 +10,9 @@ class KeyValidationService {
     privateKeyWif: string,
     identityId: string,
     network: 'testnet' | 'mainnet' = 'testnet'
-  ): Promise<KeyValidationResult> {
-    // A malformed or other-network key is refused before anything is fetched.
-    const format = checkLoginKey(privateKeyWif, [], network)
-    if (format.errorType === 'INVALID_WIF' || format.errorType === 'NETWORK_MISMATCH') return format
+  ): Promise<LoginKeyResult> {
+    const malformed = checkLoginKeyFormat(privateKeyWif, network)
+    if (malformed) return malformed
 
     const identity = await identityService.getIdentity(identityId)
     if (!identity) {

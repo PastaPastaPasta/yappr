@@ -7,7 +7,7 @@ import {
 } from '@/lib/crypto/identity-keys'
 import { validateWifNetwork, wifToPrivateKey } from '@/lib/crypto/wif'
 
-export type KeyValidationErrorType =
+type LoginKeyErrorType =
   | 'INVALID_WIF'
   | 'NO_MATCH'
   | 'DISABLED'
@@ -16,7 +16,7 @@ export type KeyValidationErrorType =
   | 'NETWORK_MISMATCH'
   | 'IDENTITY_NOT_FOUND'
 
-export interface KeyValidationResult {
+export interface LoginKeyResult {
   isValid: boolean
   keyId?: number
   securityLevel?: number
@@ -24,13 +24,13 @@ export interface KeyValidationResult {
   purpose?: number
   purposeName?: string
   error?: string
-  errorType?: KeyValidationErrorType
+  errorType?: LoginKeyErrorType
 }
 
 /** The keys a typed-in key may sign in with: the identity's enabled CRITICAL or HIGH authentication keys. */
 const LOGIN_LEVELS = [SecurityLevel.CRITICAL, SecurityLevel.HIGH] as const
 
-function keyFacts(match: KeyMatchResult): Pick<KeyValidationResult, 'keyId' | 'securityLevel' | 'securityLevelName' | 'purpose' | 'purposeName'> {
+function keyFacts(match: KeyMatchResult): Pick<LoginKeyResult, 'keyId' | 'securityLevel' | 'securityLevelName' | 'purpose' | 'purposeName'> {
   return {
     keyId: match.keyId,
     securityLevel: match.securityLevel,
@@ -41,23 +41,32 @@ function keyFacts(match: KeyMatchResult): Pick<KeyValidationResult, 'keyId' | 's
 }
 
 /** Why a key that matched an enabled identity key of the wrong kind can't sign in. */
-function rejection(match: KeyMatchResult): KeyValidationResult {
+function rejection(match: KeyMatchResult): LoginKeyResult {
+  const base = { isValid: false, ...keyFacts(match) }
   if (match.purpose !== KeyPurpose.AUTHENTICATION) {
     return {
-      isValid: false,
-      ...keyFacts(match),
+      ...base,
       error: `This key cannot be used for authentication (it's a ${getPurposeName(match.purpose)} key)`,
       errorType: 'WRONG_PURPOSE',
     }
   }
   return {
-    isValid: false,
-    ...keyFacts(match),
+    ...base,
     // MASTER is more powerful than CRITICAL/HIGH but must never be used to sign in; MEDIUM and lower are too weak.
     error: match.securityLevel === SecurityLevel.MASTER
       ? 'This is your MASTER key - keep it safe! Use a HIGH or CRITICAL authentication key instead.'
       : `This key's security level is too low (${getSecurityLevelName(match.securityLevel)}) - need HIGH or CRITICAL`,
     errorType: 'WRONG_SECURITY_LEVEL',
+  }
+}
+
+/** A key that isn't a WIF, or is one for another network: refused before any identity is read. */
+export function checkLoginKeyFormat(privateKeyWif: string, network: 'testnet' | 'mainnet'): LoginKeyResult | null {
+  try {
+    if (validateWifNetwork(wifToPrivateKey(privateKeyWif).prefix, network)) return null
+    return { isValid: false, error: 'This key is for a different network', errorType: 'NETWORK_MISMATCH' }
+  } catch {
+    return { isValid: false, error: 'Invalid private key format', errorType: 'INVALID_WIF' }
   }
 }
 
@@ -71,14 +80,9 @@ export function checkLoginKey(
   privateKeyWif: string,
   publicKeys: readonly IdentityKeyLike[],
   network: 'testnet' | 'mainnet',
-): KeyValidationResult {
-  try {
-    if (!validateWifNetwork(wifToPrivateKey(privateKeyWif).prefix, network)) {
-      return { isValid: false, error: 'This key is for a different network', errorType: 'NETWORK_MISMATCH' }
-    }
-  } catch {
-    return { isValid: false, error: 'Invalid private key format', errorType: 'INVALID_WIF' }
-  }
+): LoginKeyResult {
+  const malformed = checkLoginKeyFormat(privateKeyWif, network)
+  if (malformed) return malformed
 
   const result = matchIdentityKey(privateKeyWif, publicKeys, {
     network,
