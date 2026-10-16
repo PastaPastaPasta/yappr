@@ -19,8 +19,6 @@ import * as wasmSdkCompressed from '@dashevo/wasm-sdk/compressed'
 
 const ID_BYTES = new Uint8Array(32).fill(3)
 const EVO_SDK_DIST = path.resolve(__dirname, '../node_modules/@dashevo/evo-sdk/dist')
-const UNBUNDLED_EVO_SDK = path.join(EVO_SDK_DIST, 'sdk.js')
-const PUBLISHED_EVO_SDK = path.join(EVO_SDK_DIST, 'evo-sdk.module.js')
 
 beforeAll(async () => {
   await ensureInitialized()
@@ -29,24 +27,21 @@ beforeAll(async () => {
 describe('one wasm-sdk instance', () => {
   it('next.config.js resolves evo-sdk to its unbundled build', () => {
     type WebpackHook = (config: object, context: { isServer: boolean }) => { resolve: { alias: Record<string, string> } }
-    const nextConfig = createRequire(import.meta.url)('../next.config.js') as { webpack: WebpackHook }
+    const nextConfig = createRequire(__filename)('../next.config.js') as { webpack: WebpackHook }
     const config = nextConfig.webpack({ resolve: { alias: {} }, module: { rules: [] } }, { isServer: false })
-    expect(config.resolve.alias['@dashevo/evo-sdk$']).toBe(UNBUNDLED_EVO_SDK)
+    expect(config.resolve.alias['@dashevo/evo-sdk$']).toBe(path.join(EVO_SDK_DIST, 'sdk.js'))
   })
 
   it('evo-sdk and the direct wasm-sdk imports share their classes', () => {
     expect(wasmSdk.Identifier).toBe(Identifier)
     expect(wasmSdkCompressed.Identifier).toBe(Identifier)
-  })
-
-  it('evo-sdk accepts a wrapper built through the direct import', () => {
     const id = new wasmSdkCompressed.Identifier(ID_BYTES)
     expect(new Identifier(id).toBase58()).toBe(id.toBase58())
   })
 
   it('refuses a wrapper from a second instance, which is what a broken alias would produce', async () => {
     // The published entry the aliases avoid. It ships no types of its own, but its API is the unbundled build's.
-    const bundled: Pick<typeof import('@dashevo/evo-sdk'), 'Identifier' | 'ensureInitialized'> = await import(PUBLISHED_EVO_SDK)
+    const bundled: typeof import('@dashevo/evo-sdk') = await import(path.join(EVO_SDK_DIST, 'evo-sdk.module.js'))
     await bundled.ensureInitialized()
     const foreign = new bundled.Identifier(ID_BYTES)
     expect(() => new Identifier(foreign)).toThrow(/Invalid identifier/)

@@ -8,7 +8,6 @@ async function paste(page: Page, html: string) {
   await editor(page).evaluate((element, markup) => {
     const data = new DataTransfer()
     data.setData('text/html', markup)
-    data.setData('text/plain', 'pasted')
     element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
   }, html)
 }
@@ -19,10 +18,8 @@ test('blog-editor: typing and a markdown shortcut become blocks', async ({ page 
   await page.keyboard.type('# Title')
   await page.keyboard.press('Enter')
   await page.keyboard.type('Body text')
-  await expect.poll(() => page.evaluate(() => JSON.stringify(window.blogEditorBlocks))).toContain('Body text')
-  const heading = await page.evaluate(() => (window.blogEditorBlocks as Array<{ type: string; content?: Array<{ text?: string }> }>)[0])
-  expect(heading.type).toBe('heading')
-  expect(heading.content?.[0]?.text).toBe('Title')
+  await expect.poll(() => page.evaluate(() => window.blogEditorBlocks.slice(0, 2)))
+    .toMatchObject([{ type: 'heading', content: [{ text: 'Title' }] }, { type: 'paragraph', content: [{ text: 'Body text' }] }])
 })
 
 test('blog-editor: pasted HTML keeps its text and runs none of its script', async ({ page }) => {

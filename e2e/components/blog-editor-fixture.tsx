@@ -6,9 +6,9 @@ declare global {
     pastedScriptRan?: boolean
   }
 }
+window.blogEditorBlocks = []
 
 /** The real BlockNote blog editor; image uploads are stubbed (blog-editor-mocks.ts). */
 export function BlogEditorFixture() {
-  window.blogEditorBlocks = []
   return <BlogEditor onChange={(blocks) => { window.blogEditorBlocks = blocks }} />
 }

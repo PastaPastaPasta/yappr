@@ -3,6 +3,7 @@ import { defineConfig } from 'vite'
 
 const fromHere = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 const mocks = fromHere('./private-feed-mocks.ts')
+const blogEditorMocks = fromHere('./blog-editor-mocks.ts')
 
 export default defineConfig({
   root: fromHere('./'),
@@ -16,7 +17,7 @@ export default defineConfig({
       { find: /^@\/hooks\/use-encryption-key-modal$/, replacement: mocks },
       { find: /^\.\/reset-private-feed-dialog$/, replacement: mocks },
       { find: /^@\/components\/auth\/add-encryption-key-modal$/, replacement: mocks },
-      { find: /^@\/hooks\/use-image-upload$/, replacement: fromHere('./blog-editor-mocks.ts') },
+      { find: /^@\/hooks\/use-image-upload$/, replacement: blogEditorMocks },
       { find: '@', replacement: fromHere('../../') },
     ],
     dedupe: ['react', 'react-dom'],

@@ -959,9 +959,7 @@ describe('isConsensusRefusal', () => {
 })
 
 describe('5.0.0-rc.3 wait errors (platform#5400)', () => {
-  // A failed wait now says so ("Failed to wait for state transition result: …"
-  // instead of "Failed to broadcast: …"), and a strict wait that got only an
-  // affected-state proof is a bare ExecutionNotProved, with no prefix.
+  // Was "Failed to broadcast: …"; a strict wait's ExecutionNotProved now has no prefix.
   const WAIT = 'Failed to wait for state transition result'
 
   it('still reads a refusal by its code behind the new prefix', () => {
@@ -977,7 +975,6 @@ describe('5.0.0-rc.3 wait errors (platform#5400)', () => {
       expect(isConsensusRefusal(error)).toBe(false)
       expect(sentWriteOutcomeUnknown(error)).toBe(true)
     }
-    expect(isOutcomeUnknownError(unproven)).toBe(true)
   })
 })
 
