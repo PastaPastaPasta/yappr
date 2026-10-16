@@ -85,7 +85,7 @@ Once a contract is registered, the shape of its existing document types cannot c
 
 ## 3. Release plan
 
-Every PR goes to `staging` through the normal gates (lint, unit tests, build, dead-code, and a code review for complex changes). Production builds only come from `master`. **Nothing is broadcast on testnet before Phase 4.** Read-only testnet queries are fine at any time. WP numbers refer to the audit's work packages.
+Every PR goes to `staging` through the normal gates (lint, unit tests, build, dead-code, and a code review for complex changes). Production builds only come from `master`. **Nothing is broadcast for the production maker or the production contract set before Phase 4.** The only testnet writes allowed earlier are the Phase 3 rehearsal, which uses its own dedicated test maker and isolated `/testing` contracts. Write batteries never run against the production set. Read-only testnet queries are fine at any time. WP numbers refer to the audit's work packages.
 
 ### Phase 0: Decisions [done, except two items]
 
