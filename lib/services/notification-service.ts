@@ -3,8 +3,8 @@ import { queryDocumentBundle } from './document-query-bundle';
 import { getEvoSdk } from './evo-sdk-service';
 import { loadIdentityBatch } from './identity-batch';
 import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
-import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
-import { Notification, User, Post } from '../../types';
+import { YAPPR_CONTRACT_ID, blogIsV2, storefrontIsV6 } from '../constants';
+import { Notification, User, Post, StoreNotificationDetail, StoreNotificationType } from '../../types';
 import { truncateId } from '../utils';
 import { isBlogPostTombstone, isPublishedBlogPost } from '../blog/content-utils';
 import { likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
@@ -43,7 +43,7 @@ type BlogNotificationType = 'blogPost' | 'blogComment';
  */
 interface RawNotification {
   id: string;
-  type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType | BlogNotificationType;
+  type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType | BlogNotificationType | StoreNotificationType;
   fromUserId: string;
   postId?: string;
   /**
@@ -70,6 +70,8 @@ interface RawNotification {
    * on-chain time, so it never moves the poll watermark and is not shown.
    */
   timeless?: boolean;
+  /** Store notifications: what the order or review is about (store-notification-service). */
+  store?: StoreNotificationDetail;
   createdAt: number;
 }
 
@@ -590,6 +592,18 @@ class NotificationService {
   }
 
   /**
+   * Storefront events: new orders and reviews for a seller, status changes on
+   * a buyer's orders (lib/services/store-notification-service.ts). A failed
+   * read is reported to `onFailure`; the rest still notify.
+   */
+  async getStoreNotifications(userId: string, sinceTimestamp: number, onFailure: (error: unknown) => void): Promise<RawNotification[]> {
+    // Before v6 there is no buyer feed: nothing to read, and no reason to load the storefront services.
+    if (!storefrontIsV6()) return [];
+    const { storeNotificationService } = await import('./store-notification-service');
+    return storeNotificationService.getNotifications(userId, sinceTimestamp, onFailure);
+  }
+
+  /**
    * Enrich raw notifications with user profiles and post data.
    * Uses Promise.allSettled for fault tolerance - partial failures don't block other notifications.
    */
@@ -705,6 +719,7 @@ class NotificationService {
         targetKind: raw.targetKind,
         ...(raw.likerCount !== undefined ? { likerCount: raw.likerCount } : {}),
         ...(raw.timeless ? { timeless: true } : {}),
+        ...(raw.store ? { store: raw.store } : {}),
       };
     });
   }
@@ -901,15 +916,16 @@ class NotificationService {
     fallbackTimestamp: number
   ): Promise<NotificationResult> {
     const failures = new SourceFailures();
-    const [sourced, blogPosts, blogComments] = await Promise.all([
+    const [sourced, blogPosts, blogComments, storeEvents] = await Promise.all([
       notificationsAreWindowed()
         ? this.fetchWindowedSources(userId, sinceTimestamp, failures)
         : this.fetchBundledSources(userId, sinceTimestamp, failures),
       failures.source('Error fetching blog post notifications:', this.getBlogPostNotifications(userId, sinceTimestamp, failures.tolerated)),
       failures.source('Error fetching blog comment notifications:', this.getBlogCommentNotifications(userId, sinceTimestamp)),
+      failures.source('Error fetching store notifications:', this.getStoreNotifications(userId, sinceTimestamp, failures.tolerated)),
     ]);
 
-    const allRaw = [...sourced, ...blogPosts, ...blogComments];
+    const allRaw = [...sourced, ...blogPosts, ...blogComments, ...storeEvents];
 
     // Drop self-notifications across every type (liking/reposting/replying to your
     // own content, mentioning yourself, your own posts in a blog you follow).

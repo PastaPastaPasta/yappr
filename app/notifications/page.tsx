@@ -16,6 +16,9 @@ import {
   ChevronDownIcon,
   FunnelIcon,
   BookOpenIcon,
+  ShoppingBagIcon,
+  StarIcon,
+  TruckIcon,
 } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
@@ -30,8 +33,15 @@ import { formatTimeCompact } from '@/lib/utils'
 import Link from 'next/link'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import { getBlogPostUrl } from '@/lib/blog/content-utils'
-import { Notification } from '@/lib/types'
+import type { Notification, StoreNotificationType } from '@/lib/types'
 import { isNotificationEnabled } from '@/lib/notification-preferences'
+import {
+  isStoreNotificationType,
+  storeNotificationLinkLabel,
+  storeNotificationPath,
+  storeNotificationPhrase,
+  storeNotificationSnippet,
+} from '@/lib/storefront/store-notification-copy'
 
 /**
  * Get the URL to navigate to when clicking a notification.
@@ -40,6 +50,10 @@ import { isNotificationEnabled } from '@/lib/notification-preferences'
  * Returns null for follow and private feed notifications (no associated post).
  */
 function getNotificationUrl(notification: Notification): string | null {
+  if (isStoreNotificationType(notification.type)) {
+    return storeNotificationPath(notification.type, notification.store)
+  }
+
   // Follow and private feed notifications don't have an associated post
   if (
     notification.type === 'follow' ||
@@ -88,6 +102,9 @@ function getNotificationUrl(notification: Notification): string | null {
  * doctype, and replies that carry a thread root.
  */
 function notificationMessage(notification: Notification): string {
+  if (isStoreNotificationType(notification.type)) {
+    return storeNotificationPhrase(notification.type, notification.store)
+  }
   // v11 aggregated like: "Alice and 3 others liked your post".
   const others = (notification.likerCount ?? 1) - 1
   if (notification.type === 'like' && others > 0) {
@@ -103,7 +120,7 @@ function notificationMessage(notification: Notification): string {
   return NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'
 }
 
-type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'privateFeed'
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'store' | 'privateFeed'
 
 const FILTER_TABS: { key: NotificationFilter; label: string; icon: JSX.Element }[] = [
   { key: 'all', label: 'All', icon: <BellIcon className="h-4 w-4" /> },
@@ -113,6 +130,7 @@ const FILTER_TABS: { key: NotificationFilter; label: string; icon: JSX.Element }
   { key: 'follow', label: 'Follows', icon: <UserPlusIcon className="h-4 w-4 text-purple-500" /> },
   { key: 'mention', label: 'Mentions', icon: <AtSymbolIcon className="h-4 w-4 text-yellow-500" /> },
   { key: 'blogPost', label: 'Blog', icon: <BookOpenIcon className="h-4 w-4 text-yappr-500" /> },
+  { key: 'store', label: 'Store', icon: <ShoppingBagIcon className="h-4 w-4 text-emerald-500" /> },
   { key: 'privateFeed', label: 'Private', icon: <LockClosedIcon className="h-4 w-4 text-blue-500" /> }
 ]
 
@@ -125,12 +143,17 @@ const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
   reply: <ChatBubbleLeftIcon className="h-5 w-5 text-blue-500" />,
   blogPost: <BookOpenIcon className="h-5 w-5 text-yappr-500" />,
   blogComment: <ChatBubbleLeftIcon className="h-5 w-5 text-yappr-500" />,
+  storeOrder: <ShoppingBagIcon className="h-5 w-5 text-emerald-500" />,
+  storeReview: <StarIcon className="h-5 w-5 text-amber-500" />,
+  itemReview: <StarIcon className="h-5 w-5 text-amber-500" />,
+  orderStatus: <TruckIcon className="h-5 w-5 text-emerald-500" />,
   privateFeedRequest: <LockClosedIcon className="h-5 w-5 text-blue-500" />,
   privateFeedApproved: <LockOpenIcon className="h-5 w-5 text-green-500" />,
   privateFeedRevoked: <ShieldExclamationIcon className="h-5 w-5 text-red-500" />
 }
 
-const NOTIFICATION_MESSAGES: Record<Notification['type'], string> = {
+/** Store notifications word themselves (lib/storefront/store-notification-copy.ts). */
+const NOTIFICATION_MESSAGES: Record<Exclude<Notification['type'], StoreNotificationType>, string> = {
   follow: 'started following you',
   mention: 'mentioned you in a post',
   like: 'liked your post',
@@ -152,6 +175,7 @@ const EMPTY_STATE_MESSAGES: Record<NotificationFilter, string> = {
   follow: 'When someone follows you, you\'ll see it here',
   mention: 'When someone mentions you, you\'ll see it here',
   blogPost: 'When a blog you follow publishes, or someone comments on your post, you\'ll see it here',
+  store: 'When someone orders from or reviews your store, or a seller updates your order, you\'ll see it here',
   privateFeed: 'Private feed requests and updates will appear here'
 }
 
@@ -184,6 +208,7 @@ function NotificationsPage() {
     }
     // The Blog tab covers both blog sources: new posts and comments on yours.
     if (tabFilter === 'blogPost') return notifs.filter(n => n.type === 'blogPost' || n.type === 'blogComment')
+    if (tabFilter === 'store') return notifs.filter(n => isStoreNotificationType(n.type))
     // v10 quotes share the Reposts tab: on chain a quote and a repost are one slot.
     if (tabFilter === 'repost') return notifs.filter(n => n.type === 'repost' || n.type === 'quote')
     return notifs.filter(n => n.type === tabFilter)
@@ -422,6 +447,8 @@ function NotificationsPage() {
                             >
                               {gateSensitivePreview ? (
                                 <span className="italic text-gray-500">NSFW content</span>
+                              ) : isStoreNotificationType(notification.type) ? (
+                                storeNotificationSnippet(notification.type, notification.store) ?? storeNotificationLinkLabel(notification.type)
                               ) : (
                                 post?.content || 'View post'
                               )}

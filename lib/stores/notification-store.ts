@@ -9,7 +9,7 @@ import type { NotificationSettings } from '@/lib/store';
 // At ~44 chars per base58 ID, 1000 IDs ≈ 44KB, well under localStorage limits
 const MAX_READ_IDS = 1000;
 
-type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'privateFeed';
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'store' | 'privateFeed';
 
 /**
  * Add IDs to read set and prune if exceeds limit

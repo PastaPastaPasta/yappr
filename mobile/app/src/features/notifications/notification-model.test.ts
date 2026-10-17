@@ -25,7 +25,7 @@ function notification(overrides: Partial<NotificationDTO> & Pick<NotificationDTO
   };
 }
 
-const ALL_ON = { likes: true, reposts: true, replies: true, follows: true, mentions: true, messages: true, blogPosts: true };
+const ALL_ON = { likes: true, reposts: true, replies: true, follows: true, mentions: true, messages: true, blogPosts: true, store: true };
 const target = (id: string, kind: 'post' | 'reply' = 'post') => ({ id, kind });
 
 describe('filters', () => {
@@ -162,5 +162,26 @@ describe('destinationOf', () => {
   it('sends blog events to the web, or nowhere without coordinates', () => {
     expect(destinationOf(blog)).toEqual({ kind: 'web', path: '/blog?blog=blog%201&post=hi%26there' });
     expect(destinationOf(blogless)).toBeNull();
+  });
+});
+
+describe('store notifications', () => {
+  it('use the phrase and web path the engine worded, one row each', () => {
+    const shipped = notification({
+      id: 'orderStatus-1',
+      type: 'orderStatus',
+      store: { phrase: 'shipped your order', snippet: 'On its way', path: '/orders' },
+    });
+    const review = notification({
+      id: 'storeReview-1',
+      type: 'storeReview',
+      store: { phrase: 'reviewed your store', snippet: null, path: null },
+    });
+    const [shippedRow, reviewRow] = groupNotifications([shipped, review]);
+    expect(phraseOf(shippedRow)).toBe('shipped your order');
+    expect(shippedRow.store?.snippet).toBe('On its way');
+    expect(destinationOf(shippedRow)).toEqual({ kind: 'web', path: '/orders' });
+    // Nowhere to go: not the actor's profile.
+    expect(destinationOf(reviewRow)).toBeNull();
   });
 });
