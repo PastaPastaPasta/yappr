@@ -52,6 +52,21 @@ const IPNS = /^ipns:|^https?:\/\/(?:[^/?#]+\/ipns\/|[^./?#]+\.ipns\.)/i
  * base58btc, case-sensitive) and CIDv1 in base32 (`b…`, case-insensitive).
  */
 const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
+
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
+
+/**
+ * A CID in one of the two spellings Yappr writes, encoded canonically. Base32
+ * leaves `5n mod 8` unused bits in its last character, which decoders ignore,
+ * so `…a` and `…b` can name the same bytes: those bits must be zero. (46
+ * base58 digits can't overflow a CIDv0's 34 bytes, so `Qm…` is always canonical.)
+ */
+function isCanonicalCid(cid: string): boolean {
+  if (!CANONICAL_CID.test(cid) || cid.startsWith('Qm')) return CANONICAL_CID.test(cid)
+  const unusedBits = ((cid.length - 1) * 5) % 8
+  const last = BASE32_ALPHABET.indexOf(cid[cid.length - 1].toLowerCase())
+  return unusedBits < 5 && (last & ((1 << unusedBits) - 1)) === 0
+}
 /**
  * A subdomain gateway's label in another DNS-safe multibase (`k…` base36,
  * `f…` base16): long and alphanumeric. Shorter labels (`docs.ipfs.tech`)
@@ -102,7 +117,7 @@ function ipfsReferenceOf(url: string): IpfsReference | null {
 }
 
 function referenceTo(cid: string, path: string): IpfsReference {
-  return CANONICAL_CID.test(cid) && !ESCAPING_PATH.test(path) ? { cid, path } : 'refused'
+  return isCanonicalCid(cid) && !ESCAPING_PATH.test(path) ? { cid, path } : 'refused'
 }
 
 /**

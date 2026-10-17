@@ -24,6 +24,15 @@ const PATH_GATEWAY = /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i
 const IPNS = /^ipns:|^https?:\/\/(?:[^/?#]+\/ipns\/|[^./?#]+\.ipns\.)/i
 const OTHER_SUBDOMAIN_CID = /^[0-9a-z]{40,}$/i
 const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
+
+/** Same as isCanonicalCid in lib/media/remote-media.ts: base32's unused last bits must be zero. */
+function isCanonicalCid(cid) {
+  if (!CANONICAL_CID.test(cid) || cid.startsWith('Qm')) return CANONICAL_CID.test(cid)
+  const unusedBits = ((cid.length - 1) * 5) % 8
+  const last = BASE32_ALPHABET.indexOf(cid[cid.length - 1].toLowerCase())
+  return unusedBits < 5 && (last & ((1 << unusedBits) - 1)) === 0
+}
 /** Same as ESCAPING_PATH in lib/media/remote-media.ts: a path that could leave its CID. */
 const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
 
@@ -34,10 +43,10 @@ const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
  */
 export function ipfsCidOf(input) {
   const trimmed = input.trim()
-  if (CANONICAL_CID.test(trimmed)) return trimmed
+  if (CANONICAL_CID.test(trimmed)) return isCanonicalCid(trimmed) ? trimmed : null
   // Credential-bearing URLs and IPNS names are refused by the apps outright.
   if (/^https?:\/\/[^/?#\\]*@/i.test(trimmed) || IPNS.test(trimmed)) return null
-  const cidIn = (match) => (CANONICAL_CID.test(match[1]) && !ESCAPING_PATH.test(match[2]) ? match[1] : null)
+  const cidIn = (match) => (isCanonicalCid(match[1]) && !ESCAPING_PATH.test(match[2]) ? match[1] : null)
   const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
   if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) return cidIn(subdomain)
   const pathRef = IPFS_PROTOCOL.exec(trimmed) ?? PATH_GATEWAY.exec(trimmed)

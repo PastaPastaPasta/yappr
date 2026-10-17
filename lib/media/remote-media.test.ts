@@ -86,6 +86,10 @@ describe('IPFS spellings', () => {
       'https://ipfs.io/ipfs/uAXASIJ00OJvXLJYZ46V2uRPI2G68_2AOFWMsGCPx18olnBqo',
       'ipfs://uAXASIJ00OJvXLJYZ46V2uRPI2G68_2AOFWMsGCPx18olnBqo/a.png',
       'https://ipfs.io/ipfs/mAXASIJ00OJvXLJYZ46V2uRPI2G68+2AOFWMsGCPx18olnBqo',
+      // The same bytes with base32's unused trailing bits set (`…va` → `…vb`).
+      `ipfs://${CID_V1.slice(0, -1)}b`,
+      `https://ipfs.io/ipfs/${CID_V1.slice(0, -1)}b/a.png`,
+      `https://${CID_V1.slice(0, -1)}b.ipfs.dweb.link/`,
       // IPNS names are mutable and can point at anything.
       'https://ipfs.io/ipns/example.com/a.png',
       'https://k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8.ipns.dweb.link/',
