@@ -7,7 +7,7 @@ import bs58 from 'bs58';
 const connected = vi.hoisted(() => ({ document: vi.fn(), connect: vi.fn(), decoded: vi.fn((bytes) => ({ bytes })) }));
 vi.mock('./sdk-env.mjs', () => ({ connectSdk: connected.connect, keyNetwork: () => 'testnet', devnetName: () => 'sakura' }));
 vi.mock('@dashevo/evo-sdk', async (original) => { const actual = await original(); return { ...actual, Document: { fromBytes: connected.document, fromObject: actual.Document.fromObject }, StateTransition: { fromBytes: connected.decoded } }; });
-import { assertRegistered, existsStep, manifestHash, balancesFor, charterOptions, commitStep, main, validateManifest, watchContract, writeCheckpoint } from './file-release-charters.mjs';
+import { assertRegistered, existsStep, nextNonce, manifestHash, balancesFor, charterOptions, commitStep, main, validateManifest, watchContract, writeCheckpoint } from './file-release-charters.mjs';
 
 const id = (n) => bs58.encode(new Uint8Array(32).fill(n));
 const actor = (n) => ({ identityId: id(n), keyFile: `/missing/actor-${n}.json`, keyId: 1, masterKeyFile: `/missing/actor-${n}.json`, masterKeyId: 0 });
@@ -129,6 +129,37 @@ describe('read-only modes', () => {
 describe('journaled create recovery', () => {
   const step = () => ({ id: id(8), type: 'submittedCharter', owner: id(2), bytes: Buffer.from('same signed bytes').toString('base64'), state: 'prepared' });
   const sdkFor = () => ({ documents: { get: vi.fn() }, system: { status: vi.fn().mockResolvedValue({ toJSON: () => ({ chain: { latestBlockHeight: '10' } }), free: vi.fn() }) }, stateTransitions: { broadcastAndWait: vi.fn() } });
+  it('waits for a nonce read to catch up with the preceding proved write by this actor', async () => {
+    vi.useFakeTimers();
+    const sdk = { wasm: { getIdentityContractNonce: vi.fn().mockResolvedValueOnce(4n).mockResolvedValueOnce(4n).mockResolvedValue(5n) } };
+    const state = { steps: { reason: { owner: id(2), nonce: '5', state: 'verified' },
+      otherActor: { owner: id(3), nonce: '90', state: 'verified' }, uncertain: { owner: id(2), nonce: '80', state: 'broadcasting' } } };
+    const pending = nextNonce(sdk, state, id(2));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await pending).toBe(6n);
+    expect(sdk.wasm.getIdentityContractNonce).toHaveBeenCalledTimes(3);
+  });
+  it('never checkpoints or broadcasts a new step if nonce reads stay below the proved floor', async () => {
+    vi.useFakeTimers();
+    const sdk = sdkFor(), state = { targetContractId: id(1), steps: { reason: { owner: id(2), nonce: '5', state: 'verified' } } }, save = vi.fn();
+    sdk.wasm = { getIdentityContractNonce: vi.fn().mockResolvedValue(4n) };
+    const pending = expect(commitStep(sdk, state, 'proposal', save, async () => ({ ...step(), nonce: String(await nextNonce(sdk, state, id(2))) }))).rejects.toThrow('no new transition prepared');
+    await vi.advanceTimersByTimeAsync(60_000); await pending;
+    expect(state.steps.proposal).toBeUndefined();
+    expect(save).not.toHaveBeenCalled();
+    expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled();
+  });
+  it('proves an application beyond the first contender page by querying its owner directly', async () => {
+    const owner = id(250), documentId = id(8);
+    const application = { id: { toBase58: () => documentId }, ownerId: { toBase58: () => owner }, free: vi.fn() };
+    connected.document.mockReturnValue(application);
+    const earlier = Array.from({ length: 100 }, (_, i) => ({ identityId: { toBase58: () => id(i + 1) } }));
+    const sdk = { contracts: { fetch: vi.fn().mockResolvedValue({ free: vi.fn() }) }, moderationCharters: { seatedCharter: vi.fn().mockResolvedValue(null) },
+      voting: { contestedResourceVoteState: vi.fn().mockImplementation(async (query) => ({ contenders: query.startAtContenderId === owner && query.startAtIncluded && query.limit === 1
+        ? [{ identityId: application.ownerId, serializedDocument: new Uint8Array([1]) }] : earlier, free: vi.fn() })) } };
+    expect(await existsStep(sdk, { id: documentId, owner, type: 'electedCharter' }, id(1))).toBe(true);
+    expect(sdk.voting.contestedResourceVoteState).toHaveBeenCalledWith(expect.objectContaining({ startAtContenderId: owner, startAtIncluded: true, limit: 1 }));
+  });
   it('checkpoints signed bytes before broadcast and proves success even when the wait throws', async () => {
     const sdk = sdkFor(), state = { targetContractId: id(1), steps: {} }, saved = [];
     sdk.documents.get.mockResolvedValueOnce(null).mockResolvedValueOnce({});

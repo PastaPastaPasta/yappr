@@ -153,9 +153,22 @@ function document(type, owner, data) {
     $dataContractId: idBytes(CHARTERS), $type: type, $revision: 1n, $entropy: randomBytes(32), ...data }, w.PlatformVersion.latest());
 }
 
-async function createStep(sdk, actor, type, data, fund = false) {
-  const raw = await sdk.wasm.getIdentityContractNonce(actor.identityId, CHARTERS);
-  const nonce = (BigInt(raw ?? 0) & NONCE_MASK) + 1n;
+/** Never allocate below a write this journal has already proved. Nodes may lag. */
+export async function nextNonce(sdk, state, owner) {
+  const floor = Object.values(state.steps).reduce((highest, step) =>
+    step.owner === owner && step.state === 'verified' && step.nonce && BigInt(step.nonce) > highest
+      ? BigInt(step.nonce) : highest, 0n);
+  for (let attempt = 0; attempt <= 12; attempt++) {
+    const raw = await sdk.wasm.getIdentityContractNonce(owner, CHARTERS);
+    const current = BigInt(raw ?? 0) & NONCE_MASK;
+    if (current >= floor) return current + 1n;
+    if (attempt < 12) await sleep(5000);
+  }
+  throw new Error('nonce reads remain behind this journal’s proved writes; retry after the node catches up (no new transition prepared)');
+}
+
+async function createStep(sdk, state, actor, type, data, fund = false) {
+  const nonce = await nextNonce(sdk, state, actor.identityId);
   const doc = document(type, actor.identityId, data);
   if (fund) {
     const required = await sdk.documents.contestFundToJoin(doc);
@@ -175,7 +188,8 @@ async function createStep(sdk, actor, type, data, fund = false) {
 export async function existsStep(sdk, step, target) {
   if (step.type === 'electedCharter') {
     const state = await sdk.voting.contestedResourceVoteState({ dataContractId: CHARTERS, documentTypeName: 'electedCharter', indexName: 'byTargetContract',
-      indexValues: [target], resultType: 'documentsAndVoteTally', includeLockedAndAbstaining: true, limit: 100 });
+      indexValues: [target], resultType: 'documentsAndVoteTally', includeLockedAndAbstaining: true,
+      startAtContenderId: step.owner, startAtIncluded: true, limit: 1 });
     try {
       const contender = state.contenders.find((c) => c.identityId.toBase58() === step.owner);
       if (contender?.serializedDocument) {
@@ -410,7 +424,7 @@ async function live(sdk, manifest, options) {
           if (data.label !== reason.label || (data.description ?? null) !== (reason.description ?? null)) throw new Error(`reason ${reason.code} already exists with different text; choose another code`);
           return { id: found.id.toBase58(), type: 'reason', owner: leader.identityId, state: 'verified' };
         }
-        return createStep(sdk, leader, 'reason', { code: reason.code, label: reason.label, ...(reason.description ? { description: reason.description } : {}) });
+        return createStep(sdk, state, leader, 'reason', { code: reason.code, label: reason.label, ...(reason.description ? { description: reason.description } : {}) });
       });
       reasons.push(step.id);
     }
@@ -426,7 +440,7 @@ async function live(sdk, manifest, options) {
     const seated = await sdk.moderationCharters.team(manifest.targetContractId);
     if (seated) { seated.free(); throw new Error('target already has a seated team'); }
     state.registered = { targetContractId: manifest.targetContractId, ...manifest.expected }; target.free(); save();
-    const proposal = await commitStep(sdk, state, 'proposal', save, () => createStep(sdk, leader, 'submittedCharter', proposalData));
+    const proposal = await commitStep(sdk, state, 'proposal', save, () => createStep(sdk, state, leader, 'submittedCharter', proposalData));
     const joined = await Promise.allSettled(members.map(async (member, i) => {
       await commitStep(sdk, state, `join-${member.identityId}`, save, async () => {
         const writer = await sdk.identities.fetch(member.identityId);
@@ -434,7 +448,7 @@ async function live(sdk, manifest, options) {
         // Keep the SDK's encryption envelope and recipient/sender key ids.
         const data = join.toObject();
         for (const key of Object.keys(data)) if (key.startsWith('$')) delete data[key];
-        return createStep(sdk, member, 'joinRequest', data);
+        return createStep(sdk, state, member, 'joinRequest', data);
       });
     }));
     const failedJoin = joined.find((result) => result.status === 'rejected');
@@ -444,7 +458,7 @@ async function live(sdk, manifest, options) {
     // Check again immediately before committing the nonrefundable contest fund.
     const remaining = await sdk.identities.balance(leader.identityId);
     if (remaining === undefined || BigInt(remaining) < LEADER_MINIMUM) throw new Error('leader fell below 0.51 DASH before application; top up and resume the same journal');
-    await commitStep(sdk, state, 'application', save, () => createStep(sdk, leader, 'electedCharter', { targetContractId: idBytes(manifest.targetContractId), submittedCharterId: idBytes(proposal.id), members: members.map((m) => idBytes(m.identityId)) }, true));
+    await commitStep(sdk, state, 'application', save, () => createStep(sdk, state, leader, 'electedCharter', { targetContractId: idBytes(manifest.targetContractId), submittedCharterId: idBytes(proposal.id), members: members.map((m) => idBytes(m.identityId)) }, true));
     console.log('Application proved. Tie-break priority starts at this elected application, not the submitted proposal. Watch for rivals and arrange masternode votes.');
   } finally { closeSync(fd); unlinkSync(lock); }
 }
