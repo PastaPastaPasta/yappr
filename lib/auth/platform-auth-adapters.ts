@@ -212,6 +212,8 @@ async function runLogoutCleanup(identityId: string): Promise<void> {
   invalidateBlockCache(identityId)
   privateFeedKeyStore.clearAllKeys()
   clearPasskeyCriticalKey(identityId)
+  const { forgetPendingEnrolments } = await import('@/lib/auth/passkey-vault')
+  forgetPendingEnrolments()
 }
 
 export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies {

@@ -11,7 +11,11 @@
  *   on this device.
  * - For this tab, whether its CRITICAL key came from a passkey (see below).
  */
+import { sha256 } from '@noble/hashes/sha2.js'
 import { readScoped, scopedKey, writeScoped } from '@/lib/storage-scope'
+import { bytesToHex } from '@/lib/bytes'
+import { getPublicKey } from '@/lib/crypto/keys'
+import { parsePrivateKey } from '@/lib/crypto/wif'
 
 const DEVICE_KEY = 'yappr_passkeys_here'
 const NAMES_KEY = 'yappr_passkey_names'
@@ -97,33 +101,70 @@ export function markPasskeyOfferMade(): void {
  * key moderates, but never signs token transitions (the starter claim, YAPP
  * transfers): those ask for the key itself (owner decision V2). Kept for the
  * tab only, like the key.
+ *
+ * Each mark names the key it is for (a fingerprint of its public key) and the
+ * sign-in that set it, so a mark only ever holds back that exact key, and a
+ * sign-in that was superseded removes its own mark and nobody else's.
  */
 const PASSKEY_CRITICAL_KEY = scopedKey('yappr_passkey_critical_')
-const passkeyCriticalMemory = new Set<string>()
+const passkeyCriticalMemory = new Map<string, CriticalMark[]>()
 
-export function markPasskeyCriticalKey(identityId: string): void {
-  passkeyCriticalMemory.add(identityId)
+interface CriticalMark {
+  token: string
+  fingerprint: string
+}
+
+function fingerprintOf(wif: string): string | null {
   try {
-    sessionStorage.setItem(PASSKEY_CRITICAL_KEY + identityId, '1')
+    return bytesToHex(sha256(getPublicKey(parsePrivateKey(wif).privateKey)))
   } catch {
-    // Storage blocked: the in-memory mark covers this tab.
+    return null
   }
 }
 
-export function isPasskeyCriticalKey(identityId: string): boolean {
-  if (passkeyCriticalMemory.has(identityId)) return true
+function readMarks(identityId: string): CriticalMark[] {
+  const remembered = passkeyCriticalMemory.get(identityId)
+  if (remembered) return remembered
   try {
-    return sessionStorage.getItem(PASSKEY_CRITICAL_KEY + identityId) === '1'
+    const parsed = JSON.parse(sessionStorage.getItem(PASSKEY_CRITICAL_KEY + identityId) ?? '[]') as unknown
+    return Array.isArray(parsed)
+      ? parsed.filter((mark): mark is CriticalMark => typeof mark?.token === 'string' && typeof mark?.fingerprint === 'string')
+      : []
   } catch {
-    return false
+    return []
   }
 }
 
+function writeMarks(identityId: string, marks: CriticalMark[]): void {
+  passkeyCriticalMemory.set(identityId, marks)
+  try {
+    if (marks.length > 0) sessionStorage.setItem(PASSKEY_CRITICAL_KEY + identityId, JSON.stringify(marks))
+    else sessionStorage.removeItem(PASSKEY_CRITICAL_KEY + identityId)
+  } catch {
+    // Storage blocked: the in-memory marks cover this tab.
+  }
+}
+
+/** Marks `wif` as a passkey's CRITICAL key, before it is stored. Returns this sign-in's token for {@link unmarkPasskeyCriticalKey}. */
+export function markPasskeyCriticalKey(identityId: string, wif: string): string {
+  const token = bytesToHex(globalThis.crypto.getRandomValues(new Uint8Array(8)))
+  // A key whose fingerprint cannot be taken cannot sign either; mark it anyway, failing safe.
+  writeMarks(identityId, [...readMarks(identityId), { token, fingerprint: fingerprintOf(wif) ?? '*' }])
+  return token
+}
+
+/** Removes one sign-in's mark (one that was superseded before it stored its key). */
+export function unmarkPasskeyCriticalKey(identityId: string, token: string): void {
+  writeMarks(identityId, readMarks(identityId).filter((mark) => mark.token !== token))
+}
+
+/** Whether the stored key `wif` came from a passkey as a CRITICAL key. */
+export function isPasskeyCriticalKey(identityId: string, wif: string): boolean {
+  const fingerprint = fingerprintOf(wif)
+  return readMarks(identityId).some((mark) => mark.fingerprint === '*' || mark.fingerprint === fingerprint)
+}
+
+/** Forgets every mark for `identityId` (a sign-out, or a sign-in with another key that stored its own). */
 export function clearPasskeyCriticalKey(identityId: string): void {
-  passkeyCriticalMemory.delete(identityId)
-  try {
-    sessionStorage.removeItem(PASSKEY_CRITICAL_KEY + identityId)
-  } catch {
-    // Nothing stored where storage is blocked.
-  }
+  writeMarks(identityId, [])
 }

@@ -17,7 +17,7 @@ import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/sessi
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 import { createWalletSignIn, wipeGrant } from '@/lib/app-connect/wallet-sign-in'
 import { restorePasskeyMessagingKey, unlockWithPasskey, type PasskeyRenewal } from '@/lib/auth/passkey-vault'
-import { clearPasskeyCriticalKey, markPasskeyCriticalKey } from '@/lib/auth/passkey-device'
+import { clearPasskeyCriticalKey, markPasskeyCriticalKey, unmarkPasskeyCriticalKey } from '@/lib/auth/passkey-device'
 import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompts'
 
 /**
@@ -217,13 +217,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         noteSignIn(await signInWithGrant(unlocked.grant, since), 'passkey', controller.sessionEpoch())
         return null
       case 'raw-key': {
-        // Marked before the key is stored, so it never signs unmarked; a HIGH key clears the mark only once it is the session's.
-        if (unlocked.critical) markPasskeyCriticalKey(unlocked.identityId)
+        // Marked (for this exact key) before it is stored, so it never signs unmarked. A HIGH key clears
+        // the marks only once it is the session's.
+        const mark = unlocked.critical ? markPasskeyCriticalKey(unlocked.identityId, unlocked.signInWif) : null
         let intent: PlatformAuthIntent
         try {
           intent = await signInWithKey(unlocked.identityId, unlocked.signInWif, { since })
         } catch (error) {
-          if (controller.getState().user?.identityId !== unlocked.identityId) clearPasskeyCriticalKey(unlocked.identityId)
+          // Superseded before its commit, this sign-in stored nothing: its own mark goes, and any winner's stays.
+          // After a commit the key may be stored, so the mark stays.
+          if (mark && (error instanceof SupersededSignInError || controller.getState().user?.identityId !== unlocked.identityId)) {
+            unmarkPasskeyCriticalKey(unlocked.identityId, mark)
+          }
           throw error
         }
         if (!unlocked.critical) clearPasskeyCriticalKey(unlocked.identityId)

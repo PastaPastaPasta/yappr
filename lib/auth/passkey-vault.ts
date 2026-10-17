@@ -367,6 +367,23 @@ async function ceremony<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Enrolments whose entry was sent but not confirmed, by identity. Authoritative
+ * for this tab (unlike the best-effort device markers): a new passkey excludes
+ * their credentials, and only a confirmed landing or removal retires them.
+ */
+const pendingEnrolments = new Map<string, PendingPasskey>()
+
+/** The enrolment still settling for `identityId` in this tab, if any. */
+export function pendingEnrolmentFor(identityId: string): PendingPasskey | null {
+  return pendingEnrolments.get(identityId) ?? null
+}
+
+/** Forgets every unsettled enrolment (the session ended). */
+export function forgetPendingEnrolments(): void {
+  pendingEnrolments.clear()
+}
+
 /** A passkey made by {@link startPasskeyEnrolment}, waiting for its confirming sign-in. */
 export interface PendingPasskey {
   identityId: string
@@ -393,8 +410,12 @@ export async function startPasskeyEnrolment(user: { identityId: string; username
     userName: name,
     displayName: passkeyDisplayName(name, { network: getConfiguredNetwork(), scope: STORAGE_SCOPE }),
     prfInput: prfInput(contractId),
-    // Also this browser's own passkeys, so one whose entry is still settling is never replaced in the provider.
-    excludeCredentialIds: [...existing.map((entry) => entry.credentialId), ...credentialsHere(user.identityId)],
+    // Also this browser's own passkeys and any still settling, so none is ever replaced in the provider.
+    excludeCredentialIds: [
+      ...existing.map((entry) => entry.credentialId),
+      ...credentialsHere(user.identityId),
+      ...[pendingEnrolments.get(user.identityId)?.credentialId].filter((id): id is Uint8Array => id !== undefined),
+    ],
   }))
   if (created.prfEnabled === false) {
     created.prfOutput?.fill(0)
@@ -434,6 +455,7 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<v
     rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipient.publicKey))
     if (!confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipient.publicKey)) {
       pending.sentTo = recipient.publicKey
+      pendingEnrolments.set(pending.identityId, pending)
       throw new PasskeyVaultError('pending')
     }
   } finally {
@@ -466,7 +488,9 @@ async function entryLanded(identityId: string, credentialId: Uint8Array, recipie
  */
 export async function passkeySaved(pending: PendingPasskey): Promise<boolean> {
   if (!pending.sentTo) return false
-  return entryLanded(pending.identityId, pending.credentialId, pending.sentTo)
+  const landed = await entryLanded(pending.identityId, pending.credentialId, pending.sentTo)
+  if (landed && pendingEnrolments.get(pending.identityId) === pending) pendingEnrolments.delete(pending.identityId)
+  return landed
 }
 
 /** What opening a passkey restores. */
@@ -717,6 +741,9 @@ async function removeEntries(identityId: string, entryIds: readonly string[]): P
   const here = passkeysHere(identityId)
   const ours = gone.filter((entry) => here.includes(markerOf(entry.credentialId, entry.recipientKey)))
   for (const entry of gone) forgetPasskeyHere(identityId, bytesToBase64Url(entry.credentialId))
+  // A pending enrolment whose entry landed and was then removed is over.
+  const pending = pendingEnrolments.get(identityId)
+  if (pending && gone.some((entry) => bytesEqual(entry.credentialId, pending.credentialId))) pendingEnrolments.delete(identityId)
   // Counted over what was asked for: a requested entry this read missed (a node behind) is not known gone either.
   const failed = new Set(entryIds).size - gone.length
   await signalRemoved(ours.map((entry) => entry.credentialId))

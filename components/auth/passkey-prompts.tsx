@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { CheckCircleIcon, KeyIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
-import { bytesToBase64Url } from '@/lib/bytes'
 import { useAuth } from '@/contexts/auth-context'
 import { usePasskeyPrompts } from '@/hooks/use-passkey-prompts'
 import { useUsernameModal } from '@/hooks/use-username-modal'
@@ -15,6 +14,7 @@ import {
   finishPasskeyEnrolment,
   listPasskeys,
   passkeySaved,
+  pendingEnrolmentFor,
   passkeyEligibility,
   passkeysOffered,
   removeAllPasskeys,
@@ -28,12 +28,6 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { enrolErrorCopy, lockOutCopy, passkeyDetails, passkeyLabel } from './passkey-copy'
-
-/** Whether a pending enrolment's passkey is still remembered here (its marker goes with a confirmed removal). */
-function pendingStillHere(pending: PendingPasskey): boolean {
-  const prefix = `${bytesToBase64Url(pending.credentialId)}.`
-  return passkeysHere(pending.identityId).some((marker) => marker.startsWith(prefix))
-}
 
 /** Resolves once the username prompt (opened by a sign-in without a Dash username) is closed. */
 function usernamePromptClosed(): Promise<void> {
@@ -133,20 +127,12 @@ type EnrolStep =
 const ENROL_BUTTON: Partial<Record<EnrolStep['kind'], string>> = { creating: 'Waiting for your passkey…', saving: 'Saving…' }
 
 function EnrolDialog({ identityId, username, offer, onClose }: { identityId: string; username?: string; offer: boolean; onClose: () => void }) {
-  const { changed, setPendingEnrolment } = usePasskeyPrompts()
+  const changed = usePasskeyPrompts((state) => state.changed)
   const [step, setStep] = useState<EnrolStep>(() => {
-    const pending = usePasskeyPrompts.getState().pendingEnrolment
-    // A confirmed removal forgets the passkey's marker (Settings, or "Remove all"): its enrolment is over.
-    return pending && pending.identityId === identityId && pendingStillHere(pending)
-      ? { kind: 'pending', pending, checking: false }
-      : { kind: 'intro' }
+    // An enrolment still settling resumes with only "Check again" (lib/auth/passkey-vault.ts retires it).
+    const pending = pendingEnrolmentFor(identityId)
+    return pending ? { kind: 'pending', pending, checking: false } : { kind: 'intro' }
   })
-
-  // Forget a pending enrolment whose passkey was removed since, so it never comes back.
-  useEffect(() => {
-    const pending = usePasskeyPrompts.getState().pendingEnrolment
-    if (pending && pending.identityId === identityId && !pendingStillHere(pending)) setPendingEnrolment(null)
-  }, [identityId, setPendingEnrolment])
   const busy = step.kind === 'creating' || step.kind === 'saving' || (step.kind === 'pending' && step.checking)
 
   const fail = useCallback((error: unknown, back: EnrolStep) => {
@@ -171,29 +157,27 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
       })
       .catch((error: unknown) => {
         if (error instanceof PasskeyVaultError && error.code === 'pending') {
-          // Kept past this dialog: reopening resumes it, and Settings may show the entry once it lands.
-          setPendingEnrolment(pending)
+          // Kept past this dialog (the vault module holds it): reopening resumes it, and Settings may show the entry once it lands.
           changed()
           setStep({ kind: 'pending', pending, checking: false })
           return
         }
         fail(error, { kind: 'confirm', pending })
       })
-  }, [changed, fail, setPendingEnrolment])
+  }, [changed, fail])
 
   const checkAgain = useCallback((pending: PendingPasskey) => {
     setStep({ kind: 'pending', pending, checking: true })
     passkeySaved(pending)
       .then((saved) => {
         changed()
-        if (saved) setPendingEnrolment(null)
         setStep(saved ? { kind: 'done' } : { kind: 'pending', pending, checking: false })
       })
       .catch((error: unknown) => {
         logger.warn('Passkeys: checking a saved passkey failed:', error)
         setStep({ kind: 'pending', pending, checking: false })
       })
-  }, [changed, setPendingEnrolment])
+  }, [changed])
 
   return (
     <Modal open onOpenChange={(next) => { if (!next && !busy) onClose() }} className="w-[440px] max-w-[92vw]">

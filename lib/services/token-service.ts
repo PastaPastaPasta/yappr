@@ -230,11 +230,11 @@ class TokenService {
    */
   async canSignTokenTransitions(identityId: string): Promise<boolean> {
     try {
-      const { isPasskeyCriticalKey } = await import('../auth/passkey-device');
-      if (isPasskeyCriticalKey(identityId)) return false;
       const { getPrivateKey } = await import('../secure-storage');
       const wif = getPrivateKey(identityId)?.trim();
       if (!wif) return false;
+      const { isPasskeyCriticalKey } = await import('../auth/passkey-device');
+      if (isPasskeyCriticalKey(identityId, wif)) return false;
       const sdk = await getEvoSdk();
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) return false;
@@ -386,9 +386,6 @@ class TokenService {
       return { ...(await signerService.createSignerFromWasmKey(signingKey.wif, signingKey.identityKey)), signingKey };
     }
     if (!wif) {
-      // A moderator's CRITICAL key from a passkey never signs token transitions: they ask for the key itself.
-      const { isPasskeyCriticalKey } = await import('../auth/passkey-device');
-      if (isPasskeyCriticalKey(identityId)) throw new Error('critical key required');
       const { getPrivateKey } = await import('../secure-storage');
       const stored = getPrivateKey(identityId);
       if (!stored) {
@@ -397,6 +394,9 @@ class TokenService {
         throw new Error('Private key not found — please re-authenticate');
       }
       wif = stored.trim();
+      // A moderator's CRITICAL key from a passkey never signs token transitions: they ask for the key itself.
+      const { isPasskeyCriticalKey } = await import('../auth/passkey-device');
+      if (isPasskeyCriticalKey(identityId, wif)) throw new Error('critical key required');
     }
 
     const sdk = await getEvoSdk();
