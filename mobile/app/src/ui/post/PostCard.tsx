@@ -678,6 +678,7 @@ export const PostCard = memo(function PostCard({
               reposted={post.viewer?.reposted}
               quoted={Boolean(post.viewer?.ownQuoteId) && !post.viewer?.ownQuoteBare}
               bookmarked={post.viewer?.bookmarked}
+              canLike={viewerId !== post.author.id}
               canReply={canReply}
               canRepost={canRepost}
               canBookmark={canBookmark}

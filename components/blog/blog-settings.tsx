@@ -1,9 +1,10 @@
 'use client'
 
+import { fieldLimits } from '@/lib/field-limits'
+import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
+
 import { useState } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
@@ -105,23 +106,23 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
 
       <div>
         <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
-        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} />
+        <LimitedInput contract="blog" document="blog" field="name" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
 
       <div>
         <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Description</label>
-        <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={256} />
+        <LimitedTextarea contract="blog" document="blog" field="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <ProfileImageUpload
+        <ProfileImageUpload urlLimits={fieldLimits('blog', 'blog', 'avatar')}
           aspectRatio="square"
           label="Avatar"
           currentUrl={avatar || undefined}
           onUpload={setAvatar}
           onClear={() => setAvatar('')}
         />
-        <ProfileImageUpload
+        <ProfileImageUpload urlLimits={fieldLimits('blog', 'blog', 'headerImage')}
           aspectRatio="banner"
           label="Header image"
           currentUrl={headerImage || undefined}
@@ -157,10 +158,9 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
         </div>
 
         <div className="flex gap-2">
-          <Input
+          <LimitedInput contract="blog" document="blog" field="labels[]"
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
-            maxLength={40}
             placeholder="Add new label"
             onKeyDown={(event) => {
               if (event.key === 'Enter') {

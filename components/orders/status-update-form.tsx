@@ -1,5 +1,8 @@
 'use client'
 
+import { encodeOrderStatusNote, STATUS_NOTE_CIPHERTEXT_OVERHEAD, type OrderStatusNote } from '@/lib/crypto/digital-delivery'
+import { STATUS_NOTE_MAX_BYTES } from '@/lib/storefront/storefront-contract'
+import { fitTextChange } from '@/lib/text-limits'
 import { useId } from 'react'
 import { Button } from '@/components/ui/button'
 import { storefrontStatusIsSealed } from '@/lib/constants'
@@ -56,6 +59,14 @@ export function StatusUpdateForm({
   isSubmitting
 }: StatusUpdateFormProps) {
   const formId = useId()
+  const note = { trackingNumber, trackingCarrier, message }
+  const noteBytes = (value: OrderStatusNote) => encodeOrderStatusNote(value).length + STATUS_NOTE_CIPHERTEXT_OVERHEAD
+  const sealed = storefrontStatusIsSealed()
+  const bytes = noteBytes(note)
+  const updateNote = (field: keyof OrderStatusNote, text: string, change: (value: string) => void) => {
+    if (!sealed) { change(text); return }
+    change(fitTextChange(note[field] ?? '', text, value => noteBytes({ ...note, [field]: value }) <= STATUS_NOTE_MAX_BYTES))
+  }
 
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-4">
@@ -99,7 +110,7 @@ export function StatusUpdateForm({
               type="text"
               id={`${formId}-tracking`}
               value={trackingNumber}
-              onChange={(e) => onTrackingNumberChange(e.target.value)}
+              onChange={(e) => updateNote('trackingNumber', e.target.value, onTrackingNumberChange)}
               placeholder="Enter tracking number"
               className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
             />
@@ -112,12 +123,13 @@ export function StatusUpdateForm({
         <textarea
           id={`${formId}-message`}
           value={message}
-          onChange={(e) => onMessageChange(e.target.value)}
+          onChange={(e) => updateNote('message', e.target.value, onMessageChange)}
           placeholder="Optional message..."
           rows={2}
           className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
         />
-        {storefrontStatusIsSealed() && (
+        {sealed && <p className="text-xs text-gray-500 text-right">{bytes}/{STATUS_NOTE_MAX_BYTES} bytes</p>}
+        {sealed && (
           <p className="mt-1 text-xs text-gray-500">Tracking details and your message are sent privately to the buyer.</p>
         )}
       </div>
@@ -133,7 +145,7 @@ export function StatusUpdateForm({
         <Button
           size="sm"
           onClick={onSubmit}
-          disabled={isSubmitting}
+          disabled={isSubmitting || (sealed && bytes > STATUS_NOTE_MAX_BYTES)}
         >
           {isSubmitting ? 'Saving...' : 'Save Status'}
         </Button>

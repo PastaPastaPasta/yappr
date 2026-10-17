@@ -1,5 +1,8 @@
 'use client'
 
+import { LimitedInput } from '@/components/ui/limited-text'
+import type { TextLimits } from '@/lib/text-limits'
+
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { useFileDrop } from '@/hooks/use-file-drop'
@@ -25,6 +28,8 @@ export interface ProfileImageUploadProps {
   label?: string
   /** Placeholder text when no image */
   placeholder?: string
+  /** Limits of the field that stores this image address. */
+  urlLimits?: TextLimits
 }
 
 /**
@@ -39,6 +44,7 @@ export function ProfileImageUpload({
   maxSizeMB = 5,
   label = 'Upload Image',
   placeholder = 'Click or drag to upload',
+  urlLimits = { maxLength: 512, maxBytes: 512 },
 }: ProfileImageUploadProps) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -266,7 +272,7 @@ export function ProfileImageUpload({
       {!currentUrl && !previewUrl && (
         showUrlInput ? (
           <div className="flex gap-1.5">
-            <input
+            <LimitedInput limits={urlLimits}
               type="url"
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}

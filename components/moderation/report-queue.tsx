@@ -1,5 +1,7 @@
 'use client'
 
+import { LimitedTextarea } from '@/components/ui/limited-text'
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
@@ -11,7 +13,6 @@ import { postRemovalTarget, useModeratorRemoveModal } from '@/hooks/use-moderato
 import { logger } from '@/lib/logger'
 import {
   OPEN_REPORTS,
-  REPORT_RESOLUTION_MAX_LENGTH,
   REPORT_STATUSES,
   groupReports,
   isReportGoneError,
@@ -660,10 +661,9 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                     <label htmlFor={`report-resolution-${key}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                       Note for the reporters (optional, public)
                     </label>
-                    <textarea
+                    <LimitedTextarea contract="social" document="report" field="resolution"
                       id={`report-resolution-${key}`}
                       value={form.note}
-                      maxLength={REPORT_RESOLUTION_MAX_LENGTH}
                       rows={2}
                       disabled={dismissing !== null}
                       onChange={(e) => setResolveForm({ ...form, note: e.target.value })}
@@ -674,7 +674,6 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                         These reports carry different notes. The note written here replaces all of them; left empty, it removes them.
                       </p>
                     )}
-                    <p className="text-xs text-gray-500 dark:text-gray-400 text-right">{form.note.length}/{REPORT_RESOLUTION_MAX_LENGTH}</p>
                     <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"

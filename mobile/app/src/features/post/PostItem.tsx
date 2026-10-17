@@ -284,7 +284,7 @@ export const PostItem = memo(function PostItem({
         else action();
       });
 
-    const like = known(() => sendWrite(likeWrite, { post, like: !post.viewer?.liked }));
+    const like = own ? undefined : known(() => sendWrite(likeWrite, { post, like: !post.viewer?.liked }));
 
     const deleteQuote = () => {
       if (!viewerId) return;
