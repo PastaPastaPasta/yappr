@@ -73,9 +73,10 @@ import { cleanBlog, printReport } from './surface-cleanup.mjs';
 
 const CONTRACT_FILE = 'yappr-blog-contract.json';
 const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
-const SCHEMAS = CONTRACT.documentSchemas;
-/** A property the type does not declare (`additionalProperties: false`): JSON-schema 10101. */
-const UNKNOWN_PROPERTY = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror|additional ?propert/i;
+let SCHEMAS = CONTRACT.documentSchemas;
+const publishedOnly = () => SCHEMAS.blogPost.required.includes('publishedAt');
+/** A JSON-schema refusal (10101): an unknown property or a missing required field. */
+const SCHEMA_REFUSED = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror|additional ?propert/i;
 
 /** An index `docType` declares, by name (undefined when it declares none). */
 const index = (docType, name) => (SCHEMAS[docType].indices ?? []).find((entry) => entry.name === name);
@@ -105,7 +106,7 @@ const blogData = (run, labels) => ({ name: `Battery ${run}`, description: 'blog 
 // `immutableAllowSetting`): a replace must resend the stored value
 // byte-identically, so it is a parameter, not a fresh `Date.now()`.
 // Passing `null` omits it, which is how a DRAFT is written.
-const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({ blogId, title, slug, data0: crypto.getRandomValues(new Uint8Array(64)), ...(publishedAt === null ? {} : { publishedAt }) });
+const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({ blogId, title, slug, ...(SCHEMAS.blogPost.properties.live ? { live: true } : {}), data0: crypto.getRandomValues(new Uint8Array(64)), ...(publishedAt === null ? {} : { publishedAt }) });
 // v6 (5.0.0-beta.1): no `blogPostOwnerId`; `postOwnerAndTime` derives the post's
 // owner through `blogPostId` (`blogPostId.$ownerId`). v8 (5.0.0-beta.5): no
 // `postCommentsEnabled` either; the blogPostId reference checks the post's flag.
@@ -129,7 +130,8 @@ async function caseB1Fixtures(ctx) {
     // A draft: `publishedAt` absent, so b12 can publish it exactly once.
     ['b1i draft post created (no publishedAt)', 'Draft', 'draft', null],
   ]) {
-    const created = await battery.probeCreate(label, null, author, 'blogPost', postData({ ...base, title: `${title} ${run}`, slug: `${slug}-${run}`, publishedAt }));
+    const expect = publishedAt === null && publishedOnly() ? SCHEMA_REFUSED : null;
+    const created = await battery.probeCreate(publishedAt === null && publishedOnly() ? 'b1i an on-chain draft without publishedAt is refused (10101)' : label, expect, author, 'blogPost', postData({ ...base, title: `${title} ${run}`, slug: `${slug}-${run}`, publishedAt }));
     posts.push(created.ok ? created.id : null);
   }
   [ctx.post1, ctx.post2, ctx.draftId] = posts;
@@ -168,7 +170,7 @@ async function caseB3Comments(ctx) {
   // v6 has no `blogPostOwnerId`: a client still on v5 (copying the owner) is refused (10101,
   // additionalProperties), not silently accepted. The field is spread past commentData(),
   // which would drop it before it reached the document. A refused write charges no fee.
-  await battery.probeCreate('b3d a v6 comment that still copies blogPostOwnerId is refused (10101)', UNKNOWN_PROPERTY, reader, 'blogComment',
+  await battery.probeCreate('b3d a v6 comment that still copies blogPostOwnerId is refused (10101)', SCHEMA_REFUSED, reader, 'blogComment',
     { ...commentData({ blogPostId: id32(ctx.post1), content: `stale client ${run}` }), blogPostOwnerId: id32(ctx.author.ownerId) });
 }
 
@@ -294,9 +296,14 @@ async function caseB12Immutable(ctx) {
     // Back-dated: a date more than 10 minutes past the replace would be refused first by
     // `publishedNotAhead` (10422, judged before immutability), so it would prove nothing.
     ['b12b a replace re-dating publishedAt is rejected (40128)', { blogId: id32(ctx.blogId), publishedAt: ctx.publishedAt - 86_400_000 }],
-    ['b12c a replace DROPPING publishedAt is rejected (40128) — removal counts as a change', { blogId: id32(ctx.blogId), publishedAt: null }],
-  ]) await edit(label, IMMUTABLE_CHANGED, ctx.post2, postData({ ...post2Base, ...data }), revision);
+    ['b12c a replace DROPPING publishedAt is rejected', { blogId: id32(ctx.blogId), publishedAt: null }],
+  ]) await edit(label, data.publishedAt === null && publishedOnly() ? SCHEMA_REFUSED : IMMUTABLE_CHANGED, ctx.post2, postData({ ...post2Base, ...data }), revision);
 
+  if (publishedOnly()) {
+    const first = await battery.probeCreate('b12d a local draft is first published as a new post with publishedAt', null, author, 'blogPost', postData({ blogId: id32(ctx.blogId), title: `Draft ${run}`, slug: `draft-${run}`, publishedAt: ctx.publishedAt }));
+    if (first.ok) await edit('b12e re-dating a published draft is refused (40128)', IMMUTABLE_CHANGED, first.id, postData({ blogId: id32(ctx.blogId), title: `Draft ${run}`, slug: `draft-${run}`, publishedAt: ctx.publishedAt - 1000 }), await battery.revisionOf('blogPost', first.id));
+    return;
+  }
   if (!ctx.draftId) { battery.check('b12d draft publish', false, 'no draft fixture'); return; }
   const draftBase = { blogId: id32(ctx.blogId), title: `Draft ${run}`, slug: `draft-${run}` };
   const firstPublish = Date.now();
@@ -389,7 +396,7 @@ async function caseB20CommentsOff(ctx) {
     { ...commentData({ blogPostId: id32(postId), content: `${label} ${run}` }), ...extra });
   if (on.ok) {
     await comment('b20a a comment on a post that stores commentsEnabled true lands', null, on.id);
-    await comment('b20b a comment still copying postCommentsEnabled is refused (10101: v8 checks the post through the reference)', UNKNOWN_PROPERTY, on.id, { postCommentsEnabled: true });
+    await comment('b20b a comment still copying postCommentsEnabled is refused (10101: v8 checks the post through the reference)', SCHEMA_REFUSED, on.id, { postCommentsEnabled: true });
   }
   if (unset.ok) await comment('b20f a comment on a post that leaves commentsEnabled out lands', null, unset.id);
   if (off.ok) await comment('b20c a comment on a comments-off post is refused (40127: commentsEnabled notEqual false fails)', PROPERTY_MISMATCH, off.id);
@@ -564,7 +571,8 @@ await runBattery({
   // Every create of a priced type (blog, blogPost, blogComment) carries the declared agreement,
   // unless a case opts out (`noAgreement`, b3c) or names its own (`agreement`, b9).
   agreementFor: (sdk, docType) => feeAgreementFor(sdk, docType, SCHEMAS),
-  setup: async ({ battery, args }) => {
+  setup: async ({ battery, args, contractId }) => {
+    SCHEMAS = (await battery.readback(() => battery.sdk.contracts.fetch(contractId))).toJSON().documentSchemas;
     const moderator = await battery.moderatorActor(args.moderator);
     console.log(`moderator=${moderator.label}`);
     return { startedAt: Date.now() - 60_000, strangerCommentId: null, draftId: null, publishedAt: null, tombstone: null, moderator };

@@ -202,16 +202,20 @@ const notTombstone = (row) => row.deleted !== true;
  * @returns {Promise<CleanupReport>}
  */
 export async function cleanBlog({ battery, contractId, owners, since, moderator = null, live }) {
+  const schemas = (await battery.readback(() => battery.sdk.contracts.fetch(contractId))).toJSON().documentSchemas;
+  const livePosts = schemas.blogPost.properties.live ? [['live', '==', true]] : [];
   const report = newReport('blog', live);
   const blogs = await readEach(owners, (who) => queryAll(battery, 'blog', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]));
   // Only a blog's owner posts to it (b21), so the owners' posts are the posts on their blogs.
-  const posts = await readEach(blogs, (blog) => queryAll(battery, 'blogPost', [['blogId', '==', normalizeId(blog.$id)], ['$createdAt', '>=', since]], [['blogId', 'asc'], ['$createdAt', 'asc']]));
+  const posts = await readEach(blogs, (blog) => queryAll(battery, 'blogPost', [...livePosts, ['blogId', '==', normalizeId(blog.$id)], ['$createdAt', '>=', since]], [['blogId', 'asc'], ['$createdAt', 'asc']]));
   // blogComment keeps no owner index, so the owners' comments are found through every post author's
   // postOwnerAndTime from `since`, then kept by owner below: an owner's comment on anyone's post, not only
   // on the owners' own. The authors come from the whole blogPost timeline, read to the end: posts outlive a
   // moderator's removal of their blog, so the blogs alone would miss them. (discussedRecent is a timeRange
   // index, which document queries do not read.)
-  const authors = new Set((await queryEvery(battery, 'blogPost', [['$createdAt', '>', 0]], [['$createdAt', 'asc']])).map((row) => normalizeId(row.$ownerId)));
+  const authors = new Set((await queryEvery(battery, 'blogPost', [...livePosts, ['$createdAt', '>', 0]], [['$createdAt', 'asc']])).map((row) => normalizeId(row.$ownerId)));
+  // Blog owners remain discoverable even when every one of their posts is tombstoned.
+  for (const row of await queryEvery(battery, 'blog', [['$createdAt', '>', 0]], [['$createdAt', 'asc']])) authors.add(normalizeId(row.$ownerId));
   for (const who of owners) authors.add(who.ownerId);
   const comments = await readEach([...authors], (author) => queryAll(battery, 'blogComment', [['blogPostId.$ownerId', '==', author], ['$createdAt', '>=', since]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]));
   const follows = await readEach(owners, (who) => queryAll(battery, 'blogFollow', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['blogId', 'asc']]));
@@ -305,9 +309,17 @@ export async function cleanStorefront({ battery, owners, since, reopened = new M
  * @param {{ battery: object, owners: Owner[], since: number, live: boolean }} args
  * @returns {Promise<CleanupReport>}
  */
-export async function cleanPollr({ battery, owners, since, live }) {
+export async function cleanPollr({ battery, contractId, owners, since, live, pollIds }) {
   const report = newReport('pollr', live);
-  const read = await readEach(owners, (who) => queryAll(battery, 'poll', [['$ownerId', '==', who.ownerId], ['$createdAt', '>=', since]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]));
+  const schemas = (await battery.readback(() => battery.sdk.contracts.fetch(contractId))).toJSON().documentSchemas;
+  const canList = (schemas.poll.indices ?? []).some((i) => Object.keys(i.properties[0])[0] === '$ownerId');
+  const known = pollIds ?? battery.createdDocuments?.get('poll');
+  if (!canList && !known) {
+    report.failed.push({ label: 'poll discovery', error: 'pollr has no poll listing index: pass --poll-ids for the polls to clean' });
+    return report;
+  }
+  const read = canList ? await readEach(owners, (who) => queryAll(battery, 'poll', [['$ownerId', '==', who.ownerId], ['$createdAt', '>=', since]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]))
+    : (await Promise.all([...known].map(async (id) => (await battery.fetchDocument('poll', id))?.toObject()))).filter(Boolean);
   const polls = createdSince(read, { owners: ownerSet(owners), since });
   const deletable = [];
   for (const poll of polls) {
@@ -327,6 +339,6 @@ export function printReport(report, log = console.log) {
   for (const [label, count] of Object.entries(report.done)) log(`OK    ${report.surface}: ${verb} ${count} × ${label}`);
   for (const { type, id, count, name, why } of report.leftovers) log(`LEFT  ${report.surface}: ${type} ${id ?? `×${count}`}${name ? ` "${name}"` : ''} stays: ${why}`);
   // WARN, not FAIL: a cleanup never changes a battery's verdict, so its lines must not read as failed checks.
-  for (const { label, id, error } of report.failed) log(`WARN  ${report.surface}: ${label} ${id} not removed: ${error}`);
+  for (const { label, id, error } of report.failed) log(`WARN  ${report.surface}: ${label}${id ? ` ${id}` : ''} not removed: ${error}`);
   return report.failed.length === 0;
 }

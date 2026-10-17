@@ -23,7 +23,7 @@ import {
  * list of at most 64 (blog) / 16 (post) labels of 1-40 characters; v1-v3 the
  * comma-separated string. Chosen by NEXT_PUBLIC_BLOG_TOPOLOGY, like the app.
  */
-const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'];
+const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'];
 /** The target cut is \`topology\` or later (lib/constants.ts blogTopologyAtLeast; unset is v1). */
 const blogAtLeast = (topology) => topologyAtLeast(BLOG_TOPOLOGIES, 'NEXT_PUBLIC_BLOG_TOPOLOGY', topology);
 const labelsTyped = () => blogAtLeast('v4');
@@ -478,10 +478,12 @@ function buildPlan({ seed, only, publishAnchor }) {
       check(chunks >= 1 && chunks <= MAX_CHUNKS, `${key}: needs ${chunks} chunks (max ${MAX_CHUNKS})`);
 
       const commentsEnabled = !COMMENTS_OFF.has(key);
+      if (blogAtLeast('v9') && DRAFTS.has(key)) continue; // v9 keeps drafts on the device.
       const published = !DRAFTS.has(key);
       // Every blogPost field except the chunked payload; create and edit differ
       // only in their data0–dataN, so both spread this.
       const meta = {
+        ...(blogAtLeast('v9') ? { live: true } : {}),
         title: post.title, ...(post.subtitle ? { subtitle: post.subtitle } : {}), ...(post.labels ? { labels: storedLabels(post.labels) } : {}),
         coverImage: coverUrl(post.cover), commentsEnabled, slug: post.slug,
         ...(published ? { publishedAt: publishAnchor - daysBack * 86_400_000 } : {}),
@@ -666,7 +668,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
   for (const blog of plan.blogs) {
     const blogId = blogIds.get(blog.key);
     if (!blogId) continue;
-    const posts = await battery.queryDocs('blogPost', { where: [['blogId', '==', blogId]], orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']], limit: 100 });
+    const posts = await battery.queryDocs('blogPost', { where: [...(blogAtLeast('v9') ? [['live', '==', true]] : []), ['blogId', '==', blogId]], orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']], limit: 100 });
     const ranked = battery.groupValueOf(followed, blogId);
     rows.push([
       await battery.countBy('blogFollow', [['blogId', '==', blogId]]),
@@ -781,10 +783,10 @@ async function selfTest(args) {
     ['an empty checkpoint still recognises an existing v7+ comment by its post (postAndTime, newest first), and only its author\'s',
       scoped === 'already-written' && queries.at(-1).where[0][2] === postId && JSON.stringify(queries.at(-1).orderBy) === '[["blogPostId","desc"],["$createdAt","desc"]]'],
     ['every commented post stores commentsEnabled true (what a v5-v7 comment copies, and what v8 requires not to be false)', plan.comments.every((comment) => plan.posts.find((post) => post.key === comment.postKey)?.data.commentsEnabled === true)],
-    [`8 blogs / 42 posts (${plan.blogs.length}/${plan.posts.length})`, plan.blogs.length === 8 && plan.posts.length === 42],
+    [`8 blogs / ${blogAtLeast('v9') ? 40 : 42} posts (${plan.blogs.length}/${plan.posts.length})`, plan.blogs.length === 8 && plan.posts.length === (blogAtLeast('v9') ? 40 : 42)],
     [`40 follows / 4 edits (${plan.follows.length}/${plan.edits.length})`, plan.follows.length === 40 && plan.edits.length === 4],
     [`73 comments (${plan.comments.length})`, plan.comments.length === 73],
-    ['two drafts, written with publishedAt OMITTED entirely', drafts.length === 2],
+    ['v9 seeds published posts only; older cuts include two drafts', drafts.length === (blogAtLeast('v9') ? 0 : 2)],
     ['a draft carries no publishedAt key at all', drafts.every((post) => !('publishedAt' in post.data))],
     ['one post has commentsEnabled: false', plan.posts.filter((post) => !post.commentsEnabled).length === 1],
     ['drafts collect no comments', plan.comments.every((comment) => plan.posts.find((post) => post.key === comment.postKey).published)],

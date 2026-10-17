@@ -408,7 +408,7 @@ const CASES = new Map([
 /** runBattery's cleanup: on the published contract, the creator's polls without a ballot go; the test contract keeps its polls. */
 async function cleanUpRun(ctx, { since }) {
   if (!ctx.liveContract) { console.log('the pollr-test contract keeps its polls: the app never reads it'); return; }
-  printReport(await cleanPollr({ battery: ctx.battery, owners: [ctx.creator], since, live: true }));
+  printReport(await cleanPollr({ battery: ctx.battery, contractId: ctx.contractId, owners: [ctx.creator], since, live: true }));
 }
 
 await runBattery({

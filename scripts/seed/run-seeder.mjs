@@ -93,6 +93,7 @@ import {
   WAIT_MAYBE_LANDED,
   YAPP_LOCKED,
   YAPP_TOKEN_POSITION,
+  YAPP_MINT_DISABLED,
   actionFeeAgreementOptions,
   actionFeeFor,
   appendProgress,
@@ -873,6 +874,9 @@ async function selfTest() {
     '{"type":"post","ref":"p1","author":0,"content":"x","hashtag":""}\n{"type":"like","author":1,"targetRef":"p1"}\n{"type":"like","author":1,"targetRef":"p1"}',
     '40105'
   ));
+  const ownPost = '{"type":"post","ref":"own","author":0,"content":"x","hashtag":""}';
+  check('parse: self post-like follows the cut', rejects(`${ownPost}\n{"type":"like","author":0,"targetRef":"own"}`, 'own post') === YAPP_MINT_DISABLED);
+  check('parse: self reply-like follows the cut', rejects(`${ownPost}\n{"type":"reply","ref":"ownReply","author":1,"rootRef":"own","parentRef":"own","content":"x"}\n{"type":"likeReply","author":1,"targetRef":"ownReply"}`, 'own reply') === YAPP_MINT_DISABLED);
   // One quote or repost per author and target (ownerAndQuotedPost / ownerAndQuotedReply, 40105).
   const target = '{"type":"post","ref":"p1","author":0,"content":"x","hashtag":""}\n';
   check('parse: a second repost of the same post by the same author rejected', rejects(
@@ -1341,6 +1345,10 @@ try {
   await ensureInitialized();
   const personas = loadPersonas(args.personas);
   const { ops, stats } = parseCorpus(readFileSync(args.corpus, 'utf8'), personas);
+  if (YAPP_MINT_DISABLED) {
+    args.creditsFraction = 1;
+    console.log('Release YAPP is claim-only: corpus writes pay credits to avoid exhausting starter grants.');
+  }
   const { total: yappNeeded, perAuthor } = corpusYappCost(ops, { paysCredits: (idx) => paysInCredits(idx, args.creditsFraction) });
   console.log(`corpus: ${ops.length} ops (${Object.entries(stats).filter(([, n]) => n > 0).map(([t, n]) => `${n} ${t}`).join(', ')})`);
   if (args.creditsFraction > 0) {

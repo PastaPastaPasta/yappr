@@ -18,9 +18,10 @@ import {
   actionFeeAgreementOptions,
   deriveDocumentIdBytes,
   feeMultiplierPermille,
+  ledgerEntry, loadLedger, wifFromHex,
 } from './seed/seed-lib.mjs';
 import { join } from 'node:path';
-import { REPO_ROOT, criticalAuthKey, deriveIdentityKeys, readEnvFile } from './derive-identities.mjs';
+import { REPO_ROOT, CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, readEnvFile } from './derive-identities.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { network } from './sdk-env.mjs';
 import { buildDocument, fetchDocument, randomIdBytes, readback } from './verify-lib.mjs';
@@ -143,6 +144,15 @@ export function resolveMakerOwner() {
 
 /** The moderating identity, its signer and (fetched) Identity, from a `maker` | `bot:<n>` spec. */
 export async function resolveModerator(sdk, spec) {
+  if (/^persona:\d+$/.test(spec)) {
+    const entry = ledgerEntry(loadLedger(), Number(spec.slice(8)));
+    if (!entry) throw new Error(`unknown moderator ${spec}`);
+    const auth = entry.identityKeys.find((key) => key.keyId === CRITICAL_AUTH_KEY_ID);
+    if (!auth) throw new Error(`${spec} has no critical authentication key ${CRITICAL_AUTH_KEY_ID}`);
+    const owner = { ownerId: entry.identityId, keyId: CRITICAL_AUTH_KEY_ID, wif: wifFromHex(auth.privateKeyHex), publicKeyHex: auth.publicKeyHex, label: spec };
+    const identity = await sdk.identities.fetch(owner.ownerId);
+    return { ...owner, identity, ...(await signerFor(sdk, owner)) };
+  }
   const owner = spec === 'maker'
     ? resolveMakerOwner()
     : resolveOwner({ botIndex: Number(spec.replace(/^bot:/, '')) });

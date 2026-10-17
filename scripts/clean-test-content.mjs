@@ -73,7 +73,7 @@ import { SURFACES, SURFACE_CONTRACT_ENV, cleanBlog, cleanPollr, cleanStorefront,
 import { cleanTestContent, parseSince, refuseIdentities, surveyTimeline } from './test-content-cleanup.mjs';
 
 const USAGE = 'Usage: node scripts/clean-test-content.mjs --plan|--live [--surface social,blog,storefront,pollr] [--bots <i[:id],…>] [--ci-pool [n]]\n'
-  + '       [--personas <p[:id],…>] [--moderator <maker|personal|p>] [--since <ms|iso>] [--until <ms|iso>] [--after <post|reply>:<id>] [--contract <id>] [--contract-file <path>] [--survey <n>]';
+  + '       [--personas <p[:id],…>] [--poll-ids <id,…>] [--moderator <maker|personal|p>] [--since <ms|iso>] [--until <ms|iso>] [--after <post|reply>:<id>] [--contract <id>] [--contract-file <path>] [--survey <n>]';
 const SURFACE_CLEANERS = { blog: cleanBlog, storefront: cleanStorefront, pollr: cleanPollr };
 /** The `--surface` entries other than the social timeline: the feature contracts. */
 const featureSurfaces = (surfaces) => surfaces.filter((surface) => surface !== 'social');
@@ -81,7 +81,7 @@ const AUTH_HIGH_KEY_ID = KEY_ROLES.find((role) => role.purpose === 'AUTHENTICATI
 
 /** The command line, parsed without reading the environment. Throws on anything it does not know. */
 export function parseArgs(argv) {
-  const args = { mode: null, surfaces: ['social'], bots: [], ciPool: null, personas: [], moderator: null, since: null, until: null, after: {}, contract: null, contractFile: null, survey: 60 };
+  const args = { mode: null, surfaces: ['social'], bots: [], ciPool: null, personas: [], pollIds: null, moderator: null, since: null, until: null, after: {}, contract: null, contractFile: null, survey: 60 };
   const value = (i, flag) => {
     if (argv[i] === undefined || argv[i].startsWith('--')) throw new Error(`${flag} takes a value`);
     return argv[i];
@@ -101,6 +101,7 @@ export function parseArgs(argv) {
         args.mode = flag.slice(2);
         break;
       case '--bots': args.bots = indexed(flag, value(++i, flag), 'a seed index'); break;
+      case '--poll-ids': args.pollIds = value(++i, flag).split(',').map((id) => id.trim()).filter(Boolean); break;
       case '--personas': args.personas = indexed(flag, value(++i, flag), 'a seed-ledger persona index'); break;
       case '--moderator': args.moderator = value(++i, flag); break;
       case '--surface':
@@ -236,7 +237,7 @@ async function cleanFeatures(args, maker) {
     if (surface === 'blog' && args.moderator) {
       moderator = args.mode === 'live' ? await battery.moderatorActor(args.moderator) : { label: args.moderator };
     }
-    const report = await SURFACE_CLEANERS[surface]({ battery, contractId, owners, since: args.since, moderator, live: args.mode === 'live' });
+    const report = await SURFACE_CLEANERS[surface]({ battery, contractId, owners, since: args.since, moderator, pollIds: args.pollIds, live: args.mode === 'live' });
     ok = printReport(report) && ok;
   }
   return ok;

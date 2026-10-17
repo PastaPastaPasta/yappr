@@ -205,7 +205,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
         // the cached epoch multiplier, and only a fresh agreement can pick up the new one.
         const agreement = await agreementFor(docType, contract);
         const created = await actor.lock(() => create(handle.sdk, {
-          contractId: contract, actor, docType, document, data, entropy, agreement, payment: payment(tokenCost),
+          contractId: contract, actor, docType, document, data, entropy, agreement, payment: actor.paysCredits ? {} : payment(tokenCost),
           // A priced create derives its id before broadcasting: keep it, so a create whose
           // wait throws after landing is recognised by id even on a doctype with no owner index.
           onDerivedId: (derived) => { derivedIds.push(derived); },
@@ -373,7 +373,10 @@ export async function ensureTokens(battery, tokenId, actors, needs, { headroom =
     await battery.ensureYapp(tokenId, actor, cost + headroom);
     const balance = await battery.yappBalance(tokenId, actor.ownerId);
     console.log(`  ${actor.label}: ${balance} YAPP (this run spends ${cost})`);
-    if (balance < cost) short.push(`${actor.label} holds ${balance}, needs ${cost}`);
+    if (balance < cost && await battery.mintDisabled()) {
+      actor.paysCredits = true;
+      console.log(`  ${actor.label}: paying credits because the starter balance cannot cover the plan`);
+    } else if (balance < cost) short.push(`${actor.label} holds ${balance}, needs ${cost}`);
   }
   if (short.length > 0) {
     throw new Error(`not enough YAPP after top-up, every token-priced write would be refused:\n  ${short.join('\n  ')}`);

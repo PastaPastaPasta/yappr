@@ -565,20 +565,33 @@ async function botSigner(sdk, index, explicitOwnerId) {
 }
 
 /** Aborts before any case runs if a bot cannot pay for its writes. */
-async function requireYapp(sdk, contractId, bots) {
+async function requireYapp(sdk, contractId, bots, minimum, claimStarter) {
   const tokenId = await sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION);
   console.log(`     YAPP token id: ${tokenId}`);
+  if (claimStarter) {
+    const initial = await sdk.tokens.balances(bots.map((bot) => bot.ownerId), tokenId);
+    for (const bot of bots) {
+      if ((initial.get(bot.ownerId) ?? 0n) >= minimum) continue;
+      try {
+        await sdk.tokens.claim({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION,
+          identityId: bot.ownerId, distributionType: 'oncePerIdentity', identityKey: bot.identityKey, signer: bot.signer });
+      } catch (e) {
+        console.log(`     ${bot.label} starter claim: ${describeErr(e).slice(0, 160)}`);
+      }
+    }
+    await settle();
+  }
   const balances = await sdk.tokens.balances(bots.map((bot) => bot.ownerId), tokenId);
   const short = [];
   for (const bot of bots) {
     const balance = (balances instanceof Map ? balances.get(bot.ownerId) : undefined) ?? 0n;
     console.log(`     ${bot.label}: ${balance} YAPP`);
-    if (balance < MIN_YAPP_BALANCE) short.push(`${bot.ownerId} (${balance})`);
+    if (balance < minimum) short.push(`${bot.ownerId} (${balance})`);
   }
   if (short.length > 0) {
     throw new Error(
-      `YAPP balance below ${MIN_YAPP_BALANCE} for ${short.join(', ')} on token ${tokenId}. ` +
-      `Fund them from the contract owner (maker, seed index 9).`
+      `YAPP balance below ${minimum} for ${short.join(', ')} on token ${tokenId}. ` +
+      (claimStarter ? `The actor's own starter claim cannot cover this run; use a fresh actor.` : `Fund them from the contract owner.`)
     );
   }
 }
@@ -698,6 +711,8 @@ export async function runBattery({
   makeContext,
   summarize = () => {},
   cleanup = null,
+  minYappBalance = MIN_YAPP_BALANCE,
+  claimStarter = false,
 }) {
   let args;
   try {
@@ -725,7 +740,7 @@ export async function runBattery({
     console.log(`${name} contract: ${args.contract}`);
     console.log(`A=${botA.label}  B=${botB.label}`);
     console.log('YAPP balances:');
-    await requireYapp(sdk, args.contract, [botA, botB]);
+    await requireYapp(sdk, args.contract, [botA, botB], minYappBalance, claimStarter);
 
     const ctx = makeContext({ sdk, contractId: args.contract, botA, botB });
 

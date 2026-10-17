@@ -75,7 +75,7 @@ import { cleanStorefront, printReport, withStatus } from './surface-cleanup.mjs'
 const CONTRACT_FILE = 'yappr-storefront-contract.json';
 const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
 /** The schemas in long form (the file writes identifiers and fixed-size byte arrays as shorthands). */
-const SCHEMAS = expandSchemas(CONTRACT.documentSchemas);
+let SCHEMAS = expandSchemas(CONTRACT.documentSchemas);
 const RATINGS = [1, 2, 3, 4, 5];
 /** The category every battery store files under (a v6 slug), so s23 knows what to look for. */
 const CATEGORY = 'battery-goods';
@@ -97,7 +97,7 @@ const zoneData = ({ storeId, name }) => ({ storeId, name, rateType: 'flat', flat
 // under it index `orderId.$ownerId` (v6), derived through the order. v8 has no
 // `storeStatus`: the storeId reference itself requires an active store (QA D-25).
 const orderData = ({ storeId, sellerId, ...extra }) => ({ storeId, sellerId, ...extra, encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) });
-const statusData = ({ orderId, status = 'shipped', message }) => ({ orderId, status, ...(message ? { message } : {}) });
+const statusData = ({ orderId, status = 'shipped', message }) => ({ orderId, status, ...(message ? (SCHEMAS.orderStatusUpdate.properties.encryptedPayload ? { encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) } : { message }) : {}) });
 const storeReviewData = ({ storeId, orderId, sellerId, rating, title }) => ({ storeId, orderId, sellerId, rating, ...(title ? { title } : {}) });
 const itemReviewData = ({ storeId, itemId, orderId, rating }) => ({ storeId, itemId, orderId, rating });
 // Digital payloads are opaque ciphertext to consensus, so random bytes stand in.
@@ -212,6 +212,12 @@ async function caseS4Status(ctx) {
   await update('s4d a STRANGER posting an update on the order is rejected (writer gate, 40127)', WRITER_GATE, stranger, { status: 'cancelled', message: 'spoof' });
   await update('s4e even the BUYER cannot post a status update on their own order (writer gate, 40127)', WRITER_GATE, buyer, { status: 'cancelled' });
   await update('s4f seller ships the order', null, seller, { status: 'shipped' });
+  if (SCHEMAS.orderStatusUpdate.properties.encryptedPayload) {
+    await battery.probeCreate('s4h a sealed status without its nonce is refused (10422 sealed)', constraintViolation('sealed'), seller, 'orderStatusUpdate',
+      { ...good, status: 'shipped', encryptedPayload: new Uint8Array(32).fill(1) });
+    await battery.probeCreate('s4i a nonce without its sealed status is refused (10422 sealed)', constraintViolation('sealed'), seller, 'orderStatusUpdate',
+      { ...good, status: 'shipped', nonce: new Uint8Array(24).fill(1) });
+  }
   await settle();
   const rows = await battery.queryDocs('orderStatusUpdate', buyerFeedQuery(buyer.ownerId));
   // The buyer persona may hold orders with other sellers too (the storefront
@@ -869,7 +875,8 @@ await runBattery({
   // agreement, unless a case opts out (`noAgreement`, s5e/s12a) or names its own (`agreement`, s12b).
   agreementFor: (sdk, docType) => feeAgreementFor(sdk, docType, SCHEMAS),
   selfTest: () => Math.max(selfTestV6(), selfTestRules()),
-  setup: async ({ battery, args }) => {
+  setup: async ({ battery, args, contractId }) => {
+    SCHEMAS = expandSchemas((await battery.readback(() => battery.sdk.contracts.fetch(contractId))).toJSON().documentSchemas);
     const moderator = await battery.moderatorActor(args.moderator);
     console.log(`moderator=${moderator.label}`);
     return { reviews: [], itemRatings: {}, zoneId: null, moderator, reopenedStores: new Map() };

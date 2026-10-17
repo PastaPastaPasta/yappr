@@ -1,6 +1,8 @@
 import bs58 from 'bs58'
-import { describe, expect, it } from 'vitest'
-import { contractFileSha256, contractTarget, recordedTestContract, testContractNetworkKey, withTestContract } from '../scripts/battery-lib.mjs'
+import { ensureInitialized } from '@dashevo/evo-sdk'
+import { describe, expect, it, vi } from 'vitest'
+import { createBattery, contractFileSha256, contractTarget, recordedTestContract, testContractNetworkKey, withTestContract } from '../scripts/battery-lib.mjs'
+import { ensureTokens } from '../scripts/seed/feature-seed-lib.mjs'
 import { parseArgs } from '../scripts/clean-test-content.mjs'
 import { blogPostTombstone, cleanBlog, cleanPollr, cleanStorefront, contentOf, createdSince, withStatus } from '../scripts/surface-cleanup.mjs'
 
@@ -60,12 +62,20 @@ describe('which documents a surface cleanup touches', () => {
  * clauses off canned rows (a derived property such as `blogPostId.$ownerId` is a plain field
  * here), `countBy` counts them. A plan never writes, so nothing else is needed.
  */
-function fakeBattery(rows: Record<string, Array<Record<string, unknown>>>) {
+function fakeBattery(rows: Record<string, Array<Record<string, unknown>>>, { release = false } = {}) {
   const value = (v: unknown) => (v instanceof Uint8Array ? bs58.encode(v) : v)
   const matches = (row: Record<string, unknown>, where: Array<[string, string, unknown]>) => where.every(([field, op, operand]) =>
     op === '==' ? value(row[field]) === operand : Number(row[field]) >= Number(operand))
   const queryDocs = async (docType: string, { where }: { where: Array<[string, string, unknown]> }) => (rows[docType] ?? []).filter((row) => matches(row, where))
-  return { queryDocs, countBy: async (docType: string, where: Array<[string, string, unknown]>) => (await queryDocs(docType, { where })).length }
+  const schemas = { blogPost: { properties: release ? { live: { const: true } } : {} }, poll: { indices: release ? [] : [{ properties: [{ $ownerId: 'asc' }] }] } };
+  return {
+    readback: async <T>(fn: () => Promise<T>) => fn(),
+    sdk: { contracts: { fetch: async () => ({ toJSON: () => ({ documentSchemas: schemas }) }) } },
+    fetchDocument: async (docType: string, docId: string) => {
+      const row = (rows[docType] ?? []).find((entry) => value(entry.$id) === docId);
+      return row ? { toObject: () => row } : null;
+    },
+    queryDocs, countBy: async (docType: string, where: Array<[string, string, unknown]>) => (await queryDocs(docType, { where })).length }
 }
 
 describe('what a surface cleanup plans', () => {
@@ -106,6 +116,47 @@ describe('what a surface cleanup plans', () => {
     expect(report.done).toEqual({ poll: 1 })
     expect(report.leftovers).toEqual([expect.objectContaining({ type: 'poll', id: b58(2), name: 'Withdrawn x?' })])
   })
+
+  it('pollr v8 cleans explicitly named polls by id without any poll query, scoped by owner and time', async () => {
+    const battery = fakeBattery({ poll: [
+      { $id: id(1), $ownerId: id(7), $createdAt: 6000n },
+      { $id: id(2), $ownerId: id(8), $createdAt: 6000n },
+      { $id: id(3), $ownerId: id(7), $createdAt: 10n },
+    ] }, { release: true });
+    const query = battery.queryDocs;
+    battery.queryDocs = async (type, q) => { if (type === 'poll') throw new Error('no poll index'); return query(type, q); };
+    const report = await cleanPollr({ battery, contractId: b58(9), owners: [persona], since, live: false, pollIds: [b58(1), b58(2), b58(3), b58(4)] });
+    expect(report.found).toEqual({ poll: 1 });
+    expect(report.done).toEqual({ poll: 1 });
+    const missing = await cleanPollr({ battery, contractId: b58(9), owners: [persona], since, live: false });
+    expect(missing.failed).toEqual([expect.objectContaining({ label: 'poll discovery', error: expect.stringContaining('--poll-ids') })]);
+  });
+
+  it('blog cleanup finds owned comments when the other author has only tombstoned posts', async () => {
+    const battery = fakeBattery({
+      blog: [{ $id: id(1), $ownerId: id(8), $createdAt: 1000n }],
+      blogPost: [{ $id: id(2), $ownerId: id(8), $createdAt: 2000n, blogId: id(1), deleted: true }],
+      blogComment: [{ $id: id(3), $ownerId: id(7), $createdAt: 6000n, 'blogPostId.$ownerId': b58(8) }],
+    }, { release: true });
+    const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false });
+    expect(report.done.blogComment).toBe(1);
+  });
+
+  it('blog v9 pins live on both listings and preserves publishedAt on tombstones', async () => {
+    const battery = fakeBattery({
+      blog: [{ $id: id(1), $ownerId: id(7), $createdAt: 6000n }],
+      blogPost: [{ $id: id(2), $ownerId: id(7), $createdAt: 6000n, blogId: id(1), slug: 'a', publishedAt: 5500, live: true }],
+    }, { release: true });
+    const query = battery.queryDocs;
+    let listings = 0;
+    battery.queryDocs = async (type, q) => {
+      if (type === 'blogPost') { expect(q.where[0]).toEqual(['live', '==', true]); listings += 1; }
+      return query(type, q);
+    };
+    const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false });
+    expect(report.done['blogPost (tombstone)']).toBe(1);
+    expect(listings).toBe(2);
+  });
 
   it('blog: tombstones live posts only, and leaves the run\'s blog up without a moderator', async () => {
     const rows = {
@@ -199,3 +250,31 @@ describe('the cleanup CLI on the feature surfaces', () => {
     expect(() => parseArgs(['--plan', '--surface', 'blog', '--personas', '1', '--since', since, '--contract', 'abc'])).toThrow(/social contract/)
   })
 })
+
+
+describe('battery rejection verdicts', () => {
+  it('does not count a rate limit as a schema refusal even with a broad expected pattern', () => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('invalid schema', { ok: false, error: 'grpc error: Some resource has been exhausted: rate limited' }, /[\s\S]+/);
+    expect(battery.failures).toBe(1);
+  });
+});
+
+describe('claim-only battery funding', () => {
+  it('uses the actor claim despite a stale ledger marker and falls back to credits without trying an owner mint', async () => {
+    await ensureInitialized();
+    let balance = 0n;
+    const claim = vi.fn(async () => { balance = 100n; });
+    const mint = vi.fn();
+    const sdk = {
+      tokens: { balances: async () => new Map([[b58(7), balance]]), claim, mint },
+      contracts: { fetch: async () => ({ toJSON: () => ({ tokens: { '0': { manualMintingRules: { authorizedToMakeChange: { $type: 'noOne' } } } } }) }) },
+    };
+    const battery = createBattery({ handle: { sdk }, contractId: b58(9), socialId: b58(9) });
+    const actor = { ownerId: b58(7), label: 'actor', identityKey: {}, signer: {}, starterClaimed: true, paysCredits: false };
+    await ensureTokens(battery, b58(8), new Map([[7, actor]]), new Map([[7, 200n]]));
+    expect(claim).toHaveBeenCalledWith(expect.objectContaining({ identityId: actor.ownerId, distributionType: 'oncePerIdentity' }));
+    expect(mint).not.toHaveBeenCalled();
+    expect(actor.paysCredits).toBe(true);
+  });
+});

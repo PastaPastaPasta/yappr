@@ -98,6 +98,8 @@ export const STARTER_GRANT = BigInt(SOCIAL_CONTRACT.tokens['0'].distributionRule
  * client does the same, lib/payment-preference.ts). Credits land on beta.2 too.
  */
 const YAPP_TOKEN = SOCIAL_CONTRACT.tokens['0'];
+/** v17 funds YAPP only through each actor's starter claim. */
+export const YAPP_MINT_DISABLED = YAPP_TOKEN.manualMintingRules?.authorizedToMakeChange?.$type === 'noOne';
 export const YAPP_LOCKED = YAPP_TOKEN.startAsPaused === true && YAPP_TOKEN.emergencyActionRules?.authorizedToMakeChange?.$type === 'noOne';
 /** TokenOncePerIdentityDistributionAlreadyClaimedError: a second claim. */
 export const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
@@ -571,6 +573,7 @@ export function parseCorpus(text, personas) {
   const hashtagPattern = new RegExp(`^$|^[a-z0-9_]{1,${hashtagMax}}$`);
   const personaIdxSet = new Set(personas.map((p) => p.idx));
   const refs = new Map(); // ref -> 'post' | 'reply'
+  const authors = new Map(); // target ref -> persona idx, for distinctFrom on release cuts
   const dedupe = new Set();
   const ops = [];
   const stats = Object.fromEntries(OP_TYPES.map((t) => [t, 0]));
@@ -646,6 +649,7 @@ export function parseCorpus(text, personas) {
       if (typeof ref !== 'string' || !ref) return fail(line, 'ref is required');
       if (refs.has(ref)) return fail(line, `duplicate ref "${ref}"`);
       refs.set(ref, kind);
+      authors.set(ref, op.author);
       return undefined;
     };
 
@@ -686,10 +690,13 @@ export function parseCorpus(text, personas) {
         break;
       case 'like':
         requireEarlierRef(op.targetRef, ['post'], 'targetRef');
+        if (SOCIAL_DOCUMENT_SCHEMAS.like.properties.postAuthor?.distinctFrom === '$ownerId' && authors.get(op.targetRef) === op.author) fail(line, 'an identity cannot like its own post on this cut (10419)');
         dedupeKey('like', op.targetRef);
         break;
       case 'likeReply':
         requireEarlierRef(op.targetRef, ['reply'], 'targetRef');
+        // v17's refersTo rejects a reply owned by the liker (40127).
+        if (SOCIAL_DOCUMENT_SCHEMAS.likeReply.properties.replyId.refersTo?.where?.['$ownerId']?.notEqual === '$ownerId' && authors.get(op.targetRef) === op.author) fail(line, 'an identity cannot like its own reply on this cut (40127)');
         dedupeKey('likeReply', op.targetRef);
         break;
       case 'repost':
@@ -933,7 +940,7 @@ export async function findRecentByValues(sdk, { contractId, docType, ownerId, da
   if (fields.length === 0) return null; // nothing to match on — every candidate would "match"
   // A v13 post is listed by its author on [live, $ownerId, $createdAt], which holds only posts
   // carrying `live`: without the pin no index serves `$ownerId ==` and the scan finds nothing.
-  const owner = docType === 'post' && data.live === true ? [['live', '==', true], ['$ownerId', '==', ownerId]] : [['$ownerId', '==', ownerId]];
+  const owner = (docType === 'post' || docType === 'reply') && data.live === true ? [['live', '==', true], ['$ownerId', '==', ownerId]] : [['$ownerId', '==', ownerId]];
   const base = { dataContractId: contractId, documentTypeName: docType, where: scope?.where ?? owner, limit };
   // Checked before the transient patterns: an index refusal never succeeds on retry,
   // whatever else its (truncated) text happens to contain.
