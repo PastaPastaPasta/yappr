@@ -151,6 +151,14 @@ function leftBehind(job: Pick<MoveJob, 'ownerId' | 'from' | 'to'>): string[] {
   }
 }
 
+function rememberLeftBehind(job: Pick<MoveJob, 'ownerId' | 'from' | 'to'>, ids: string[]): void {
+  try {
+    window.localStorage.setItem(leftBehindKey(job), JSON.stringify(ids))
+  } catch {
+    // only spares a later look one pass over them
+  }
+}
+
 const running = new Map<string, Promise<PrivateFeedResult>>()
 
 /** Continue this device's follower move for `ownerId` (one run at a time per owner). */
@@ -166,17 +174,18 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
   const saved = loadMove(ownerId)
   if (!saved) return { success: true }
   let job: MoveJob = { ...saved, error: undefined }
+  // A removal elsewhere in this tab (a block, the followers list) marks its follower skipped in the saved job.
+  const mergeSkipped = () => {
+    const skippedElsewhere = (loadMove(ownerId)?.skipped ?? []).filter((id) => !job.skipped.includes(id) && !job.done.includes(id))
+    if (skippedElsewhere.length > 0) job = { ...job, skipped: [...job.skipped, ...skippedElsewhere] }
+  }
   const pause = (error: string): PrivateFeedResult => {
+    mergeSkipped()
     saveMove({ ...job, error })
     return { success: false, error }
   }
   const settle = (list: 'done' | 'skipped', recipientId: string) => {
     job = { ...job, [list]: [...job[list], recipientId] }
-  }
-  // A removal elsewhere in this tab (a block, the followers list) marks its follower skipped in the saved job.
-  const mergeSkipped = () => {
-    const skippedElsewhere = (loadMove(ownerId)?.skipped ?? []).filter((id) => !job.skipped.includes(id) && !job.done.includes(id))
-    if (skippedElsewhere.length > 0) job = { ...job, skipped: [...job.skipped, ...skippedElsewhere] }
   }
   try {
     const synced = await privateFeedService.ownerFeedState(ownerId, encryptionPrivateKey)
@@ -190,7 +199,7 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
     const joined = (await movableFollowers(ownerId, job.from)).filter((id) => !job.recipients.includes(id))
     if (joined.length > 0) job = { ...job, recipients: [...job.recipients, ...joined] }
     const requestOf = new Map(requests.map((request) => [request.$ownerId, request]))
-    const granted = new Set(existing.map((grant) => grant.recipientId))
+    const grantedTo = new Map(existing.map((grant) => [grant.recipientId, grant]))
     const taken = new Set(existing.map((grant) => grant.leafIndex))
     const capacity = synced.state.feed.treeCapacity
     const isTaken = (leaf: number) => leaf >= capacity || taken.has(leaf)
@@ -203,8 +212,16 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
     for (const [planned, recipientId] of job.recipients.entries()) {
       mergeSkipped()
       if (job.done.includes(recipientId) || job.skipped.includes(recipientId)) continue
-      if (granted.has(recipientId)) settle('done', recipientId)
-      else {
+      const already = grantedTo.get(recipientId)
+      if (already) {
+        // Granted by an earlier run (or device): removed from the old feed since, the new grant goes back.
+        const source = await fetchGrant(ownerId, job.from, recipientId)
+        if (source && (await grantIsRevoked(source)) && !(await grantIsRevoked(already))) {
+          const back = await privateFeedService.revokeLeaf(ownerId, synced.state.feed, already.leafIndex, encryptionPrivateKey)
+          if (!back.success) return pause(back.error ?? 'The move paused.')
+          settle('skipped', recipientId)
+        } else settle('done', recipientId)
+      } else {
         // Re-read their old grant and its revocations now: removed since the plan, on any device, they stay behind.
         const source = await fetchGrant(ownerId, job.from, recipientId)
         const stillMember = source !== null && !blocked.has(recipientId) && !(await grantIsRevoked(source))
@@ -217,9 +234,12 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
           const outcome = await privateFeedService.writeGrant(ownerId, synced.state, recipientId, key, leafIndex)
           if (outcome.success) {
             taken.add(leafIndex)
-            settle('done', recipientId)
-            // Removed while their grant was being written: take the new one back too.
-            if (source && (await grantIsRevoked(source))) await privateFeedService.revokeFollower(ownerId, recipientId, encryptionPrivateKey)
+            // Removed while their grant was being written: revoke exactly the grant just written, or pause (a later run re-checks).
+            if (source && (await grantIsRevoked(source))) {
+              const back = await privateFeedService.revokeLeaf(ownerId, synced.state.feed, leafIndex, encryptionPrivateKey)
+              if (!back.success) return pause(back.error ?? 'The move paused.')
+              settle('skipped', recipientId)
+            } else settle('done', recipientId)
           } else if (outcome.errorCode === 'REQUEST_WITHDRAWN') settle('skipped', recipientId)
           else if (await fetchGrant(ownerId, job.to, recipientId)) settle('done', recipientId)
           else return pause(outcome.error ?? 'The move paused.')
@@ -237,13 +257,7 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       const deleted = await privateFeedService.deleteGrants(ownerId, old)
       if (deleted < old.length) return pause('Some of your old feed\'s access could not be cleaned up yet.')
     }
-    if (job.skipped.length > 0) {
-      try {
-        window.localStorage.setItem(leftBehindKey(job), JSON.stringify(job.skipped))
-      } catch {
-        // only spares a later look one pass over them
-      }
-    }
+    if (job.skipped.length > 0) rememberLeftBehind(job, job.skipped)
     clearMove(ownerId)
     return { success: true }
   } catch (error) {
@@ -269,10 +283,12 @@ export async function adoptUnfinishedMove(ownerId: string): Promise<number> {
   const requestOf = new Map(requests.map((request) => [request.$ownerId, request]))
   // Left behind here, or with no encryption key to seal a grant to (every device would only skip them again).
   const behind = new Set(leftBehind({ ownerId, from: previous.feed, to: current.feed }))
+  const behindBefore = behind.size
   for (const recipientId of recipients) {
     if (granted.has(recipientId) || behind.has(recipientId)) continue
     if (!(await recipientKey(recipientId, requestOf.get(recipientId)?.publicKey))) behind.add(recipientId)
   }
+  if (behind.size > behindBefore) rememberLeftBehind({ ownerId, from: previous.feed, to: current.feed }, [...behind])
   const left = recipients.filter((recipientId) => !granted.has(recipientId) && !behind.has(recipientId))
   if (left.length === 0) return 0
   saveMove({

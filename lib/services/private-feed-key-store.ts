@@ -142,6 +142,11 @@ class PrivateFeedKeyStore {
     this.changed()
   }
 
+  forgetOwnerKeys(ownerId: string, feed: number): void {
+    storage()?.removeItem(PREFIX + ownerKey(ownerId, feed))
+    this.changed()
+  }
+
   // ---- member ----
 
   memberKeys(viewerId: string, ownerId: string, feed: number): MemberFeedKeys | null {

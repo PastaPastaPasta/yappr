@@ -266,7 +266,7 @@ class PrivateFeedService {
       const feeds = await fetchFeeds(ownerId, { fresh: true })
       const feed = (feeds[0]?.feed ?? 0) + 1
       // Two devices renewing at once: the carry must name the feed right before this one, or the walk would skip one.
-      if (options.carryFrom && options.carryFrom.feed !== feed - 1) return failure('FEED_CHANGED')
+      if (options.carryFrom && options.carryFrom.feed !== mainFeeds(feeds)[0]?.feed) return failure('FEED_CHANGED')
       const seed = generateSeed()
       const ownerBytes = identifierToBytes(ownerId)
       const data: Record<string, unknown> = {
@@ -285,6 +285,11 @@ class PrivateFeedService {
           return { success: false, error: 'Your private feed changed on another device. Reload and try again.' }
         }
         return { success: false, error: result.error || 'Could not open your private feed.' }
+      }
+      // Sent but not confirmed: keep the seed only once the feed on chain is this one (another device may have won the number).
+      if (result.confirmed === false) {
+        const landed = (await fetchFeeds(ownerId, { fresh: true })).find((doc) => doc.feed === feed)
+        if (!landed || !bytesEqual(landed.encryptedSeed, data.encryptedSeed as Uint8Array)) return failure(landed ? 'FEED_CHANGED' : 'UNCONFIRMED')
       }
       privateFeedKeyStore.storeOwnerKeys(ownerId, feed, { seed, sealedSeed: data.encryptedSeed as Uint8Array, keyGeneration: 1, revokedLeaves: [], ...caps })
       const document: PrivateFeedDocument = {
@@ -319,6 +324,7 @@ class PrivateFeedService {
     // Keys for another document under this feed number (an open on this device that lost a race) are no keys.
     const stored = privateFeedKeyStore.ownerKeys(ownerId, feed.feed)
     const local = stored && bytesEqual(stored.sealedSeed, feed.encryptedSeed) ? stored : null
+    if (stored && !local) privateFeedKeyStore.forgetOwnerKeys(ownerId, feed.feed)
     const chainGeneration = await fetchLatestKeyGeneration(ownerId, feed.feed)
     if (local && local.keyGeneration === chainGeneration) return { success: true, state: { feed, keys: local } }
     if (!local && !encryptionPrivateKey) return failure('SYNC_REQUIRED')
@@ -440,38 +446,45 @@ class PrivateFeedService {
       const grant = (await inForce(current)) ?? (held.some((candidate) => candidate.feed === current.feed) ? null : await inForce(previous))
       if (!grant) return held.length > 0 ? { success: true } : { success: false, error: 'This person is not a private follower.' }
       const job = loadMove(ownerId)
-      if (job && !job.skipped.includes(followerId)) saveMove({ ...job, skipped: [...job.skipped, followerId] })
-      if (grant.feed === current.feed) return await this.revokeGrant(ownerId, current, grant, encryptionPrivateKey)
-      const revoked = await this.revokeGrant(ownerId, previous as PrivateFeedDocument, grant, encryptionPrivateKey)
+      if (job && !job.skipped.includes(followerId) && !job.done.includes(followerId)) saveMove({ ...job, skipped: [...job.skipped, followerId] })
+      if (grant.feed === current.feed) return await this.revokeLeaf(ownerId, current, grant.leafIndex, encryptionPrivateKey)
+      const revoked = await this.revokeLeaf(ownerId, previous as PrivateFeedDocument, grant.leafIndex, encryptionPrivateKey)
       if (!revoked.success) return revoked
       // A move on another device may have granted them into the current feed meanwhile: take that back too.
       const moved = await fetchGrant(ownerId, current.feed, followerId)
-      return moved && (await inForceGrant(moved)) ? await this.revokeGrant(ownerId, current, moved, encryptionPrivateKey) : revoked
+      return moved && (await inForceGrant(moved)) ? await this.revokeLeaf(ownerId, current, moved.leafIndex, encryptionPrivateKey) : revoked
     } catch (error) {
       logger.error('Error revoking follower:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Could not remove this follower.' }
     }
   }
 
-  /** Rekey `grant`'s leaf in `feed` to the next generation (design §7.3). */
-  private async revokeGrant(ownerId: string, feed: PrivateFeedDocument, grant: GrantDocument, encryptionPrivateKey?: Uint8Array): Promise<PrivateFeedResult> {
+  /**
+   * Rekey `leafIndex` of `feed` to the next generation (design §7.3). When
+   * another device took that generation with a rekey of the same leaf, the
+   * leaf is revoked all the same: that is success.
+   */
+  async revokeLeaf(ownerId: string, feed: PrivateFeedDocument, leafIndex: number, encryptionPrivateKey?: Uint8Array): Promise<PrivateFeedResult> {
     try {
       const synced = await this.feedState(ownerId, feed, encryptionPrivateKey)
       if (!synced.success) return synced
       const { keys } = synced.state
       const keyGeneration = keys.keyGeneration + 1
       if (keyGeneration > feed.maxKeyGeneration) return failure('GENERATIONS_USED')
-      const rekey = buildRekey(keys.seed, keys, { ownerId: identifierToBytes(ownerId), feed: feed.feed, keyGeneration }, keys.revokedLeaves, grant.leafIndex)
+      const rekey = buildRekey(keys.seed, keys, { ownerId: identifierToBytes(ownerId), feed: feed.feed, keyGeneration }, keys.revokedLeaves, leafIndex)
       const written = await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.PRIVATE_FEED_REKEY, ownerId, {
-        feed: feed.feed, keyGeneration, revokedLeaf: grant.leafIndex, packets: rekey.packets, encryptedCEK: rekey.encryptedCEK,
+        feed: feed.feed, keyGeneration, revokedLeaf: leafIndex, packets: rekey.packets, encryptedCEK: rekey.encryptedCEK,
       })
       if (!written.success) {
-        // Another device revoked at this generation first: these keys were behind.
-        if (isDuplicateUniqueIndexError(written.error)) return failure('FEED_CHANGED')
+        // Another device rekeyed at this generation first: fine if it revoked this leaf, else these keys were behind.
+        if (isDuplicateUniqueIndexError(written.error)) {
+          const sinceThen = await fetchRekeys(ownerId, feed.feed, keys.keyGeneration)
+          return sinceThen.some((other) => other.revokedLeaf === leafIndex) ? { success: true } : failure('FEED_CHANGED')
+        }
         return { success: false, error: written.error || 'Could not remove this follower.' }
       }
       if (written.confirmed === false && (await fetchLatestKeyGeneration(ownerId, feed.feed)) < keyGeneration) return failure('UNCONFIRMED')
-      privateFeedKeyStore.storeOwnerKeys(ownerId, feed.feed, { ...keys, keyGeneration, revokedLeaves: [...keys.revokedLeaves, grant.leafIndex] })
+      privateFeedKeyStore.storeOwnerKeys(ownerId, feed.feed, { ...keys, keyGeneration, revokedLeaves: [...keys.revokedLeaves, leafIndex] })
       return { success: true }
     } catch (error) {
       logger.error('Error revoking follower:', error)

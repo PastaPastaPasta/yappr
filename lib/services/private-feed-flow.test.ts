@@ -363,4 +363,28 @@ describe('private feeds v2 end to end', () => {
     expect(moved.length).toBeGreaterThan(0)
     expect(grantsIn(before + 1)).not.toContain(NAMES[last])
   })
+
+  it('a follower removed elsewhere while their new grant is being written gets that grant taken back', async () => {
+    const before = (await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true }))?.feed as number
+    const members = (await s.owner.privateFeedService.getPrivateFollowers(O)).map((f) => f.recipientId)
+    expect(members.length).toBeGreaterThan(0)
+    expect((await s.owner.privateFeedService.openFeed(O, keys[O])).success).toBe(true)
+    expect(await s.move.adoptUnfinishedMove(O)).toBeGreaterThan(0)
+    const { fetchFeed } = await import('./private-feed-reads')
+    let removed = ''
+    chain.afterGrant = async () => {
+      // Device B, which cannot see this new grant yet, removes its holder in the old feed only.
+      const grant = chain.docs.filter((doc) => doc.$type === 'privateFeedGrant').at(-1) as Record<string, unknown>
+      removed = norm(grant.recipientId) as string
+      const source = chain.docs.find((doc) => doc.$type === 'privateFeedGrant' && doc.feed === before && norm(doc.recipientId) === removed) as Record<string, unknown>
+      const oldFeed = await fetchFeed(O, before)
+      if (!oldFeed) throw new Error('old feed missing')
+      expect((await s.owner.privateFeedService.revokeLeaf(O, oldFeed, source.leafIndex as number, keys[O])).success).toBe(true)
+    }
+    expect(await s.move.runMove(O, keys[O])).toEqual({ success: true })
+    expect(removed).not.toBe('')
+    const now = (await s.owner.privateFeedService.getPrivateFollowers(O)).map((f) => f.recipientId)
+    expect(now).not.toContain(removed)
+    expect(await s.follower.getAccessStatus(O, removed)).toBe('revoked')
+  })
 })
