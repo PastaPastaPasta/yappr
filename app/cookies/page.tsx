@@ -1,96 +1,143 @@
 'use client'
 
+import Link from 'next/link'
 import { CircleStackIcon } from '@heroicons/react/24/outline'
-import { InfoPage, InfoSection, Prose } from '@/components/layout/info-page'
+import { InfoPage, InfoSection, Prose, BulletList } from '@/components/layout/info-page'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
+import { LEGAL_UPDATED } from '@/lib/legal'
 
-function StorageCard({ tone, name, badge, summary, children }: { tone: 'green' | 'blue'; name: string; badge: string; summary: string; children: React.ReactNode }) {
-  const dot = tone === 'green' ? 'bg-green-500' : 'bg-blue-500'
-  const pill = tone === 'green' ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' : 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
+interface StoredItem {
+  name: string
+  what: string
+  howLong: string
+}
+
+function StorageGroup({ name, summary, items }: { name: string; summary: string; items: StoredItem[] }) {
   return (
     <div className="bg-gray-50 dark:bg-gray-950 rounded-xl p-6">
-      <div className="flex items-center gap-2 mb-3">
-        <div className={`h-3 w-3 ${dot} rounded-full`} />
-        <h3 className="font-semibold">{name}</h3>
-        <span className={`text-xs ${pill} px-2 py-0.5 rounded-full`}>{badge}</span>
-      </div>
-      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{summary}</p>
-      {children}
+      <h3 className="font-semibold">{name}</h3>
+      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 mb-4">{summary}</p>
+      <dl className="space-y-4">
+        {items.map((item) => (
+          <div key={item.name} className="border-l-2 border-yappr-500 pl-4">
+            <dt className="font-medium text-gray-700 dark:text-gray-300">{item.name}</dt>
+            <dd className="text-sm text-gray-600 dark:text-gray-400 mt-1">{item.what}</dd>
+            <dd className="text-xs text-gray-500 mt-1">Kept: {item.howLong}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   )
 }
 
-function StorageEntry({ tone, name, children }: { tone: 'green' | 'blue'; name: string; children: React.ReactNode }) {
-  return (
-    <div className={`border-l-2 ${tone === 'green' ? 'border-green-500' : 'border-blue-500'} pl-4`}>
-      <p className="font-medium text-gray-700 dark:text-gray-300">{name}</p>
-      <div className="text-sm text-gray-500 dark:text-gray-500 mt-1">{children}</div>
-    </div>
-  )
-}
+/** Wallet sign-in (App Connect builds only) keeps its keys in IndexedDB. */
+const INDEXED_DB_ITEMS: StoredItem[] = [
+  {
+    name: 'Wallet sign-in keys',
+    what: 'When you sign in with a Dash wallet app, the keys it grants Yappr are stored encrypted, under a device key the browser will not let anyone export.',
+    howLong: 'until you sign out',
+  },
+  {
+    name: 'Connection ID',
+    what: 'A random ID for this browser, so your next wallet sign-in replaces this one instead of adding another.',
+    howLong: 'until you clear site data',
+  },
+]
 
 export default function CookiesPage() {
+  // Builds with wallet sign-in keep the most powerful typed-in keys for the tab only, and wallet keys in IndexedDB.
+  const walletBuild = isAppConnectBuild()
+
+  const localItems: StoredItem[] = [
+    {
+      name: 'Your sign-in key',
+      what: walletBuild
+        ? 'When you sign in with a private key, Yappr keeps it so you stay signed in. Your identity’s most powerful (CRITICAL) key is the exception (see below).'
+        : 'When you sign in with a private key, Yappr keeps it so you stay signed in.',
+      howLong: 'until you sign out',
+    },
+    {
+      name: 'Encryption keys',
+      what: 'Your encryption key, which opens your messages and private feed, and the keys for the private feeds you follow.',
+      howLong: 'until you sign out',
+    },
+    {
+      name: 'Session details',
+      what: 'Your identity ID, username, profile and balance, so the app can show them straight away.',
+      howLong: 'until you sign out',
+    },
+    {
+      name: 'Settings, drafts and caches',
+      what: 'Theme and other preferences, unsent drafts, your cart, and copies of recently loaded posts and profiles, so pages load faster.',
+      howLong: 'until you clear site data',
+    },
+    {
+      name: 'Upload service details',
+      what: 'If you connect Storacha or Pinata to upload media, the details needed to use your account.',
+      howLong: 'until you disconnect the service',
+    },
+  ]
+
+  const sessionItems: StoredItem[] = [
+    ...(walletBuild
+      ? [{
+          name: 'Your most powerful key',
+          what: 'If the key you enter is your identity’s most powerful (CRITICAL) key, Yappr keeps it only until you close this tab.',
+          howLong: 'until you close the tab',
+        }]
+      : []),
+    { name: 'Tab state', what: 'Small markers for this tab, such as a sign-in step in progress.', howLong: 'until you close the tab' },
+  ]
+
   return (
-    <InfoPage icon={CircleStackIcon} title="Cookies & Storage" subtitle="How Yappr uses browser storage" updated="January 2025">
-      <InfoSection title="No Tracking Cookies">
-        <Prose>
-          Yappr does not use cookies for tracking, analytics, or advertising. We don&apos;t set any third-party cookies, and we
-          don&apos;t participate in any ad networks or tracking systems. Your browsing activity on Yappr is not monitored or recorded.
+    <InfoPage icon={CircleStackIcon} title="Cookies & Storage" subtitle="What Yappr keeps in your browser, and why" updated={LEGAL_UPDATED}>
+      <InfoSection title="Cookies">
+        <Prose className="space-y-3">
+          <p>
+            Yappr itself sets no cookies, and there are no advertising or tracking cookies. Cloudflare, which delivers the site, may
+            set a short-lived security cookie to protect it from abuse.
+          </p>
+          <p>
+            We count visits with Cloudflare Web Analytics, which uses no cookies and builds no profile of you. The{' '}
+            <Link href="/privacy" className="underline">Privacy Policy</Link> lists every service your browser talks to.
+          </p>
         </Prose>
       </InfoSection>
 
-      <InfoSection title="What We Store Locally">
+      <InfoSection title="What Yappr stores in your browser">
         <Prose className="mb-6">
-          For the app to function, we use your browser&apos;s built-in storage mechanisms. Here&apos;s exactly what we store and why:
+          Yappr has no server to remember you, so it keeps what it needs in your browser&apos;s own storage. None of it is sent to
+          us.
         </Prose>
         <div className="space-y-6">
-          <StorageCard tone="green" name="Session Storage" badge="Most Secure" summary="Automatically cleared when you close the browser tab. Isolated to each tab.">
-            <StorageEntry tone="green" name="Private Key">
-              <p>Your private key is stored here while you&apos;re logged in. This means:</p>
-              <ul className="mt-2 space-y-1 list-disc list-inside">
-                <li>Closing the tab logs you out automatically</li>
-                <li>Other tabs cannot access your key</li>
-                <li>The key is never written to disk</li>
-                <li>Refreshing the page keeps you logged in (same tab)</li>
-              </ul>
-            </StorageEntry>
-          </StorageCard>
-
-          <StorageCard tone="blue" name="Local Storage" badge="Persistent" summary="Persists until manually cleared. Shared across tabs on the same domain.">
-            <div className="space-y-4">
-              <StorageEntry tone="blue" name="Session Metadata">
-                Your identity ID, cached profile data, and balance. This lets the app remember who you are when you reload the page
-                (though you&apos;ll need to re-enter your key if you closed the tab).
-              </StorageEntry>
-              <StorageEntry tone="blue" name="App Preferences">Theme settings (dark/light mode) and other UI preferences.</StorageEntry>
-            </div>
-          </StorageCard>
+          <StorageGroup name="Local storage" summary="Stays on this device, shared by all Yappr tabs, until removed." items={localItems} />
+          {walletBuild && <StorageGroup name="IndexedDB" summary="Stays on this device until removed." items={INDEXED_DB_ITEMS} />}
+          <StorageGroup name="Session storage" summary="Belongs to one tab and is cleared when that tab closes." items={sessionItems} />
         </div>
       </InfoSection>
 
-      <InfoSection title="Why This Design?">
-        <Prose className="space-y-3">
-          <p>Security and convenience often conflict. We chose this approach because:</p>
-          <ul className="space-y-2 list-disc list-inside">
+      <InfoSection title="Keeping your keys safe">
+        <Prose>
+          <BulletList>
             <li>
-              <strong>Private keys are sensitive.</strong> They should never persist on disk where malware or other users might find
-              them. Session storage provides tab-isolated, memory-only storage.
+              Staying signed in means your key is stored on this device. Anyone who can use this browser profile could use it, so sign
+              out on computers you share.
             </li>
-            <li>
-              <strong>Session continuity matters.</strong> We cache non-sensitive data in local storage so you don&apos;t have to fetch
-              your profile every time you reload.
-            </li>
-            <li>
-              <strong>No external dependencies.</strong> We don&apos;t rely on external cookie services or authentication providers.
-              Everything happens locally in your browser.
-            </li>
-          </ul>
+            <li>Malicious browser extensions or software on your device could read stored keys. Only install ones you trust.</li>
+            {walletBuild && (
+              <li>
+                Signing in with a Dash wallet app, where your wallet supports it, gives Yappr limited keys of its own, so your
+                identity&apos;s main keys never enter the browser.
+              </li>
+            )}
+          </BulletList>
         </Prose>
       </InfoSection>
 
-      <InfoSection title="Clearing Your Data">
+      <InfoSection title="Clearing your data">
         <Prose>
-          You can clear all locally stored data by using your browser&apos;s &quot;Clear site data&quot; feature, or by logging out of the
-          app. Clearing this data will log you out and remove all cached preferences. It will not affect your data on the blockchain.
+          Signing out removes your keys and session from this browser. To remove everything else, use your browser&apos;s
+          &quot;Clear site data&quot; for this site. Neither affects anything on Dash Platform.
         </Prose>
       </InfoSection>
     </InfoPage>

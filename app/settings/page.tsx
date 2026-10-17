@@ -56,6 +56,8 @@ import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore, type SensitiveContentMode } from '@/lib/store'
 import { LINK_PREVIEW_SERVICES } from '@/lib/link-preview/fetch'
 import { UsernameModal } from '@/components/dpns/username-modal'
+import { LegalLinks } from '@/components/layout/legal-links'
+import { SOURCE_URL } from '@/lib/legal'
 
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'developer' | 'about' | 'moderation'
 const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'developer', 'about', 'moderation']
@@ -755,7 +757,7 @@ function SettingsPage() {
 
       <div className="space-y-3">
         <Button variant="outline" className="w-full" asChild>
-          <a href="https://github.com/pastapastapasta/yappr" target="_blank" rel="noopener noreferrer">
+          <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
             GitHub Repository
           </a>
         </Button>
@@ -766,7 +768,8 @@ function SettingsPage() {
         </Button>
       </div>
 
-      <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
+      <div className="pt-6 border-t border-gray-200 dark:border-gray-800 space-y-3">
+        <LegalLinks />
         <p className="text-xs text-gray-500 text-center">
           © {new Date().getFullYear()} Yappr. All rights reserved.
         </p>

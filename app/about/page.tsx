@@ -14,9 +14,15 @@ import {
   ShoppingBagIcon,
   BellIcon,
   CurrencyDollarIcon,
+  BookOpenIcon,
+  FlagIcon,
+  ScaleIcon,
+  ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline'
 import { YAPPR_CONTRACT_ID, getContractTopology } from '@/lib/constants'
 import { InfoPage, InfoSection, Prose } from '@/components/layout/info-page'
+import { SupportEmailLink } from '@/components/layout/legal-links'
+import { COMMUNITY_RULES_HREF, ISSUES_URL, LEGAL_UPDATED, SOURCE_URL } from '@/lib/legal'
 
 const GITHUB_PATH =
   'M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0012 2z'
@@ -33,13 +39,15 @@ const FEATURES: Feature[] = [
   { title: 'Profiles', desc: 'Customize your name, bio, avatar, and banner' },
   { title: 'Follow', desc: 'Build your network and see updates from people you follow' },
   { title: 'Likes & Reposts', desc: 'Engage with content you enjoy' },
-  { title: 'Encrypted DMs', desc: 'Private conversations, encrypted end-to-end' },
-  { title: 'Private Feeds', desc: 'Encrypted posts visible only to approved followers', href: '/about/private-feeds', icon: LockClosedIcon },
-  { title: 'Store', desc: 'Create a storefront, list items, and sell with Dash', href: '/store', icon: ShoppingBagIcon },
-  { title: 'Tips', desc: 'Send Dash tips directly to users you appreciate', icon: CurrencyDollarIcon },
+  { title: 'Polls', desc: 'Ask a question and let people vote' },
+  { title: 'Encrypted Messages', desc: 'One-to-one and group conversations, encrypted end-to-end' },
+  { title: 'Private Feeds', desc: 'Encrypted posts for the followers you approve', href: '/about/private-feeds', icon: LockClosedIcon },
+  { title: 'Store', desc: 'Create a storefront, list items, and get paid directly', href: '/store', icon: ShoppingBagIcon },
+  { title: 'Blog', desc: 'Write long-form posts with your own blog', href: '/blog', icon: BookOpenIcon },
+  { title: 'Tips', desc: 'Send tips straight to the people you appreciate', icon: CurrencyDollarIcon },
   { title: 'Notifications', desc: 'Tabbed alerts with unread indicators and preferences', icon: BellIcon },
-  { title: 'Bookmarks', desc: 'Save posts to revisit later' },
-  { title: 'Blocking', desc: 'Control what you see in your feed' },
+  { title: 'Bookmarks', desc: 'Save posts to revisit later (bookmarks are public)' },
+  { title: 'Blocking & Reporting', desc: 'Control what you see, and report what breaks the rules', icon: FlagIcon },
 ]
 
 const RESOURCES = [
@@ -77,21 +85,22 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 
 export default function AboutPage() {
   return (
-    <InfoPage icon={InformationCircleIcon} title="About Yappr" subtitle="Decentralized social media on Dash Platform" updated="January 2025">
+    <InfoPage icon={InformationCircleIcon} title="About Yappr" subtitle="Decentralized social media on Dash Platform" updated={LEGAL_UPDATED}>
       <InfoSection title="What is Yappr?">
         <Prose>
-          Yappr is a decentralized social media platform built on Dash Platform. Unlike traditional social networks where a company
-          owns and controls your data, Yappr stores everything on a blockchain. You truly own your identity, your content, and your
-          social connections. No company can ban you, delete your posts, or shut down the service.
+          Yappr is a social app for Dash Platform. Instead of a company database, your identity, posts and connections live on a
+          public network, signed with keys only you hold. Any app can read them, so you can take them with you, and the rules are
+          enforced in the open by elected community moderators rather than by a company behind closed doors.
         </Prose>
       </InfoSection>
 
       <InfoSection title="How It Works" icon={GlobeAltIcon}>
         <Prose className="space-y-3">
-          <p>When you use Yappr, you&apos;re interacting directly with the Dash Platform blockchain:</p>
+          <p>When you use Yappr, you&apos;re interacting directly with Dash Platform:</p>
           <ul className="space-y-2 list-disc list-inside">
             <li>
-              <strong>Your identity</strong> is a cryptographic key pair. Your private key is your password, your public key is your ID.
+              <strong>Your identity</strong> is an account on Dash Platform with its own ID and keys. Your private keys prove it&apos;s
+              you, so keep them safe: nobody can recover them for you.
             </li>
             <li>
               <strong>Your posts</strong> are documents stored on the blockchain, signed with your private key to prove you created them.
@@ -117,19 +126,34 @@ export default function AboutPage() {
 
       <InfoSection title="No Central Server" icon={ServerStackIcon}>
         <Prose>
-          Yappr has no backend servers. This website is just a client application that runs entirely in your browser. It connects
-          directly to Dash Platform&apos;s decentralized network of nodes. If this website went offline, your data would still exist on
-          the blockchain, and other applications could access it.
+          Yappr has no backend servers. This website is a client application that runs entirely in your browser and connects
+          directly to Dash Platform&apos;s network of nodes. If this website went offline, your data would still exist on Dash
+          Platform, and other applications could read it. The <Link href="/privacy" className="underline">Privacy Policy</Link> lists
+          the few outside services the app does use, such as hosting and image loading.
         </Prose>
       </InfoSection>
 
-      <InfoSection title="Open Source" icon={CodeBracketIcon}>
+      <InfoSection title="Moderated in the Open" icon={ScaleIcon}>
+        <Prose className="space-y-3">
+          <p>
+            Yappr&apos;s social network, blogs and stores each get a moderation team, elected on Dash Platform. Moderators can remove
+            content and warn, suspend or ban accounts, but only for a reason listed in their team&apos;s published charter, and every
+            removal, warning, suspension or ban leaves a public record.
+          </p>
+          <p>
+            Anyone can report a post, reply or profile, and you can block anyone. Read the{' '}
+            <Link href={COMMUNITY_RULES_HREF} className="underline">Community Rules</Link>.
+          </p>
+        </Prose>
+      </InfoSection>
+
+      <InfoSection title="Public Source Code" icon={CodeBracketIcon}>
         <Prose className="mb-4">
-          Yappr is open source software. Anyone can view the code, verify what it does, suggest improvements, or create their own
-          version. Transparency builds trust.
+          Yappr&apos;s source code is public on GitHub. Anyone can read it, check what the app does, and suggest improvements.
+          Transparency builds trust.
         </Prose>
         <a
-          href="https://github.com/pastapastapasta/yappr"
+          href={SOURCE_URL}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg hover:opacity-90 transition-opacity text-sm font-medium"
@@ -143,8 +167,24 @@ export default function AboutPage() {
 
       <InfoSection title="Community Driven" icon={UserGroupIcon}>
         <Prose>
-          Yappr is a community project. There&apos;s no company behind it, no investors to please, no ads to sell. It exists because
-          people believe in the idea of social media that users actually own. Contributions, feedback, and ideas are always welcome.
+          Yappr is a community project with no ads. It exists because people believe in social media that users
+          actually own. Contributions, feedback, and ideas are always welcome.
+        </Prose>
+      </InfoSection>
+
+      <InfoSection title="Contact" icon={ChatBubbleLeftRightIcon}>
+        <Prose className="space-y-2">
+          <p>
+            Questions, abuse reports, or legal requests: <SupportEmailLink />.
+          </p>
+          <p>
+            Found a bug or have an idea?{' '}
+            <a href={ISSUES_URL} target="_blank" rel="noopener noreferrer" className="underline">Open an issue on GitHub</a>.
+          </p>
+          <p>
+            <Link href="/terms" className="underline">Terms</Link> · <Link href="/privacy" className="underline">Privacy</Link> ·{' '}
+            <Link href="/cookies" className="underline">Cookies</Link>
+          </p>
         </Prose>
       </InfoSection>
 
@@ -164,9 +204,6 @@ export default function AboutPage() {
             <p className="text-sm font-semibold text-gray-700 dark:text-gray-300" data-testid="about-topology">
               {getContractTopology()}
             </p>
-          </Detail>
-          <Detail label="Document Types">
-            <p className="text-sm text-gray-700 dark:text-gray-300">23 types across 2 contracts (social + storefront)</p>
           </Detail>
           <div className="pt-2">
             <Link
