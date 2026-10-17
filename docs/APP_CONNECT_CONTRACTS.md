@@ -77,6 +77,7 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 | N+5 | `pollr` (v7) | `pollr-contract.json` | `4b660df8…` | ~3,704 B | `NEXT_PUBLIC_POLLR_CONTRACT_ID` |
 | N+6 | `storefront` (v8) | `yappr-storefront-contract.json` | `8f0feeeb…` | ~16,314 B | `NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID` |
 | N+7 | `authVault` | `yappr-auth-vault-contract.json` | `cecf0ccc…` | 2,029 B | `NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID` |
+| N+8 | `passkeyVault` ([PASSKEY_VAULT.md](PASSKEY_VAULT.md)) | `yappr-passkey-vault-contract.json` | `14094cad…` | 1,008 B | `NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID` |
 
 - Signed sizes are the PV14 version 1 creates with the membership. A membership adds about 33 B to a create.
 - Every file passes rs-dpp's full validation at PV14 (5.0.0-beta.5 `b5val` for the four beta.5 re-cuts, 5.0.0-beta.4 `b4val` for the others), the two 5.0.0-beta.5 wasm full parses, meta-schema v3 at beta.5 and the node-rule audit. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
@@ -93,7 +94,7 @@ These never join the group (`RETIRED_ON_PV14`). On sakura's beta.5 and beta.6 ge
 | Contract | Why it goes |
 | --- | --- |
 | key exchange (`key-exchange-v2.json`) | The legacy QR login. App Connect responses go to Platform's own login-response store (`H8F9…`, `loginKeyResponse`), and the wallet registers the keys itself. |
-| password vault (`yappr-vault-contract.json`) | It stores the login key wrapped under a password. An App Connect session has no single long-lived login key to store. Password access goes; restored sessions come from the passkey-wrapped bundle in the auth vault. |
+| password vault (`yappr-vault-contract.json`) | It stores the login key wrapped under a password. An App Connect session has no single long-lived login key to store. Password access goes; a passkey restores a session from the passkey vault instead ([PASSKEY_VAULT.md](PASSKEY_VAULT.md)). |
 | key backup (`encrypted-key-backup-contract.json`) | It holds passphrase-encrypted login-key backups, for the same reason. |
 | DM v4 (`yappr-dm-contract.json`) | Read-only since DM v5. Its threads only merge into the v5 timeline, so a fresh PV14 network has none to read. |
 
