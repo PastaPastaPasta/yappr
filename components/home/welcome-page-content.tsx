@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowRightIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
+import { LegalLinks } from '@/components/layout/legal-links'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useHomepageData } from '@/hooks/use-homepage-data'
@@ -144,6 +145,11 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
             </Button>
           )}
         </section>
+
+        {/* From tablet width up the sidebar carries these links. */}
+        <footer className="md:hidden pb-8">
+          <LegalLinks />
+        </footer>
       </main>
     </div>
   )
