@@ -53,5 +53,4 @@ Throwaway `5ASqUSu2maK1ibbmD3Go6L1MGypsTuvmSKN9LNcNA3XS` (owner corpus:81), 2026
 ## What WP4 still has to do
 
 - The storefront report form and queue (store, listing, review), with product-specific copy.
-- Item image inputs must refuse `http://` (the contract does).
 - A note sealed while the messaging key is locked only opens after a reload once the key is unlocked.

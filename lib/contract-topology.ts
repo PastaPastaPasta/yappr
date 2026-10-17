@@ -1459,6 +1459,17 @@ export function privateFeedKeyFields(): { readonly generation: 'epoch' | 'keyGen
   return isV10() ? { generation: 'keyGeneration', latest: 'maxKeyGeneration' } : { generation: 'epoch', latest: 'maxEpoch' }
 }
 
+/**
+ * The pattern the configured cut's `yapprProfile.<field>` declares (v10 on),
+ * or null where it declares none: v17 takes an https website only, an https
+ * or ipfs banner, and an avatar that is a DiceBear recipe or an https/ipfs
+ * image. The profile planner checks it before any write.
+ */
+export function profileExtensionPattern(field: 'website' | 'bannerUri' | 'avatar'): RegExp | null {
+  const pattern = dashpayProfileExtension() ? devnetSchemas().yapprProfile?.properties?.[field]?.pattern : undefined
+  return pattern ? new RegExp(pattern) : null
+}
+
 /** The DashPay contract, whose `profile` is v10's base profile (a system contract on every network). */
 export const DASHPAY_PROFILE = { contractId: DASHPAY_CONTRACT_ID, documentType: 'profile' } as const
 
@@ -1709,6 +1720,7 @@ interface SocialDocumentSchema {
     maxBytes?: number
     maxItems?: number
     maximum?: number
+    pattern?: string
   }>
   indices?: Array<{ name: string }>
   tokenCost?: { create?: { amount: number; optional?: boolean; gasFeesPaidBy?: number } }
@@ -2117,6 +2129,20 @@ export function ownerDistinctProperties(docType: string): readonly string[] {
   return Object.entries(schemaOf(docType)?.properties ?? {})
     .filter(([, property]) => (property.distinctFrom ?? property.items?.distinctFrom) === '$ownerId')
     .map(([name]) => name)
+}
+
+/**
+ * True when a like of one's own `kind` is refused (v17, D6): `like.postAuthor`
+ * is `distinctFrom: $ownerId` (10419 before broadcast), and `likeReply.replyId`
+ * refers to its reply `where { $ownerId: { notEqual: $ownerId } }` (a paid
+ * 40127). Read off the committed JSON; the UI offers no like of one's own
+ * target and the like service refuses it before signing.
+ */
+export function selfLikesAreRefused(kind: TargetKind): boolean {
+  if (!isDevnetCut()) return false
+  if (kind === 'post') return ownerDistinctProperties('like').includes('postAuthor')
+  const where = devnetSchemas().likeReply?.properties?.replyId?.refersTo as { where?: Record<string, unknown> } | undefined
+  return JSON.stringify(where?.where?.$ownerId) === JSON.stringify({ notEqual: '$ownerId' })
 }
 
 /**

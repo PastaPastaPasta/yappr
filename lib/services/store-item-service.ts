@@ -13,7 +13,7 @@ import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArra
 import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeIdentifierList, decodeStringList, encodeIdentifierList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
-import { ITEM_SHIPPING_ZONE_LIMIT, LEGACY_STRING_LIST_CAPS, itemImageLimit, itemSizeError, itemStockCap } from '../storefront/storefront-contract';
+import { ITEM_IMAGE_URL_PATTERN, ITEM_SHIPPING_ZONE_LIMIT, LEGACY_STRING_LIST_CAPS, itemImageLimit, itemSizeError, itemStockCap } from '../storefront/storefront-contract';
 import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabel, variantOptionPairs, variantProblems, type VariantOptionPairs } from '../storefront/variant-codec';
 import { decodeLegacyVariants, encodeLegacyVariants } from '../storefront/legacy-variants';
 import type {
@@ -38,8 +38,12 @@ const storedList = (values: readonly string[], limits: ListLimits) => {
   return encodeStringList(values, typed);
 };
 const TAG_LIMITS = LIST_LIMITS.storeTags;
-/** v7 stores up to 12 images (a variant names one by index); v4–v6 up to 8. */
-const imageLimits = (): ListLimits => ({ ...LIST_LIMITS.storeImageUrls, maxItems: Math.max(itemImageLimit(), LIST_LIMITS.storeImageUrls.maxItems) });
+/** v7 stores up to 12 images (a variant names one by index); v4–v6 up to 8. v10 takes https:// and ipfs:// only. */
+const imageLimits = (): ListLimits => ({
+  ...LIST_LIMITS.storeImageUrls,
+  maxItems: Math.max(itemImageLimit(), LIST_LIMITS.storeImageUrls.maxItems),
+  ...(storefrontIsV10() ? { pattern: ITEM_IMAGE_URL_PATTERN, patternHint: 'start with https:// or ipfs://' } : {}),
+});
 /** A stored list (either shape) as the app models it; undefined when empty or absent. */
 const listOf = (stored: unknown): string[] | undefined => {
   const values = decodeStringList(stored);

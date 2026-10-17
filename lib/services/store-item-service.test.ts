@@ -487,3 +487,26 @@ describe('getManyOrThrow', () => {
     await expect(storeItemService.getManyOrThrow(['item-1'])).rejects.toThrow('offline');
   });
 });
+
+describe('storefront v10 item images', () => {
+  const restore = () => { vi.unstubAllEnvs(); vi.resetModules(); };
+  async function at(topology: string) {
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
+    vi.resetModules();
+    return (await import('./store-item-service')).storeItemService;
+  }
+
+  it('refuses an http:// image before signing on v10, and keeps taking one on v9', async () => {
+    try {
+      get.mockResolvedValue({ ...raw, imageUrls: [] });
+      const v10 = await at('v10');
+      await expect(v10.updateItem('item', 'owner', storeId, { imageUrls: ['http://a/1.png'] })).rejects.toThrow(/https:\/\/ or ipfs:\/\//);
+      expect(updateDocument).not.toHaveBeenCalled();
+      await v10.updateItem('item', 'owner', storeId, { imageUrls: ['https://a/1.png', 'ipfs://bafy'] });
+      expect(updateDocument.mock.calls[0][4].imageUrls).toEqual(['https://a/1.png', 'ipfs://bafy']);
+      const v9 = await at('v9');
+      await v9.updateItem('item', 'owner', storeId, { imageUrls: ['http://a/1.png'] });
+      expect(updateDocument.mock.calls[1][4].imageUrls).toEqual(['http://a/1.png']);
+    } finally { restore(); }
+  });
+});

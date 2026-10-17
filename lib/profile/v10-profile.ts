@@ -1,5 +1,5 @@
 import { YAPPR_CONTRACT_ID, YAPPR_PROFILE_CONTRACT_ID } from '@/lib/constants'
-import { dashpayProfileExtension } from '@/lib/contract-topology'
+import { dashpayProfileExtension, profileExtensionPattern } from '@/lib/contract-topology'
 import { normalizeBytes } from '@/lib/bytes'
 import { extractErrorMessage, hasConsensusCode } from '@/lib/error-utils'
 import { ListLimitError } from '@/lib/typed-array-codecs'
@@ -96,11 +96,21 @@ const UNPREFIXED_METADATA_FIELDS = new Set([
   'createdAtBlockHeight', 'updatedAtBlockHeight', 'transferredAtBlockHeight',
   'createdAtCoreBlockHeight', 'updatedAtCoreBlockHeight', 'transferredAtCoreBlockHeight',
 ])
-/** `yapprProfile`'s URL patterns, which the profile contract did not have. */
-const EXTENSION_URL_RULES = [
-  { field: 'website', pattern: /^https?:\/\/.+$/, message: 'Website must start with http:// or https://' },
-  { field: 'bannerUri', pattern: /^(https?|ipfs):\/\/.+$/, message: 'Banner image must be an http://, https:// or ipfs:// address' },
-] as const
+/**
+ * `yapprProfile`'s URL patterns, which the profile contract did not have, as
+ * the configured cut declares them (v17: https only, and the avatar too).
+ */
+function extensionUrlRules(): { field: 'website' | 'bannerUri' | 'avatar'; pattern: RegExp; message: string }[] {
+  const takesHttp = (pattern: RegExp) => pattern.test('http://example.com')
+  const website = profileExtensionPattern('website') ?? /^https?:\/\/.+$/
+  const banner = profileExtensionPattern('bannerUri') ?? /^(https?|ipfs):\/\/.+$/
+  const avatar = profileExtensionPattern('avatar')
+  return [
+    { field: 'website', pattern: website, message: takesHttp(website) ? 'Website must start with http:// or https://' : 'Website must start with https://' },
+    { field: 'bannerUri', pattern: banner, message: takesHttp(banner) ? 'Banner image must be an http://, https:// or ipfs:// address' : 'Banner image must be an https:// or ipfs:// address' },
+    ...(avatar ? [{ field: 'avatar' as const, pattern: avatar, message: 'Avatar image must be an https:// or ipfs:// address' }] : []),
+  ]
+}
 
 type PlainDocument = Record<string, unknown>
 
@@ -307,7 +317,7 @@ export function planV10ProfileWrite({ base, extension, patch, avatarDigest, fall
     assertMaxLength(nextBase.publicMessage, DASHPAY_PROFILE_LIMITS.bio,
       `Bio must be at most ${DASHPAY_PROFILE_LIMITS.bio} characters`)
   }
-  for (const { field, pattern, message } of EXTENSION_URL_RULES) {
+  for (const { field, pattern, message } of extensionUrlRules()) {
     const value = nextExtension[field]
     if (typeof value === 'string' && !pattern.test(value)) throw new ListLimitError(message)
   }

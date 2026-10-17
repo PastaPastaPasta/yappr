@@ -45,7 +45,8 @@ interface PostActionBarProps {
    * viewer's slot holds a quote with text, and undoing deletes it).
    */
   repost: { count: number; active: boolean; loading: boolean; allowed: boolean; undoLabel?: string; onClick: () => void }
-  like: { count: number; active: boolean; loading: boolean; onClick: () => void }
+  /** `allowed` false: the viewer may not like it (their own post or reply, where the network refuses self-likes). */
+  like: { count: number; active: boolean; loading: boolean; allowed?: boolean; onClick: () => void }
   /** Absent where the topology has no bookmark doctype for this kind. */
   bookmark?: { active: boolean; loading: boolean; onClick: () => void }
   onQuote: () => void
@@ -69,7 +70,8 @@ export function stopAndRun(e: React.MouseEvent, action: () => void | Promise<voi
 export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like, bookmark, onQuote, quoteLabel = 'Quote', onTip, onShare }: PostActionBarProps) {
   const repostLabel = repost.allowed ? 'Repost or quote' : 'Quote'
   const showRepostItem = repost.allowed && (!deleted || repost.active)
-  const likeDisabled = like.loading || (deleted && !like.active)
+  const likeRefused = like.allowed === false && !like.active
+  const likeDisabled = like.loading || (deleted && !like.active) || likeRefused
   const tipDisabled = isOwnPost || deleted
 
   return (
@@ -134,7 +136,7 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
 
-        <ActionTooltip label="Like">
+        <ActionTooltip label={likeRefused ? "Can't like your own post" : 'Like'}>
           <button
             data-testid={`like-btn-${postId}`}
             aria-label={`Like, ${like.count} like${like.count === 1 ? '' : 's'}`}
@@ -144,7 +146,7 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
             className={cn(
               'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-red-50 dark:hover:bg-red-950',
               like.loading && 'opacity-50 cursor-wait',
-              deleted && !like.active && 'opacity-50 cursor-not-allowed',
+              ((deleted && !like.active) || likeRefused) && 'opacity-50 cursor-not-allowed',
               like.active && 'text-red-500'
             )}
           >

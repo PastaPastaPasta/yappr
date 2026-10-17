@@ -71,6 +71,9 @@ export const itemStockCap = (): number => (storefrontIsV6() ? VARIANT_LIMITS.max
 /** Most of its store's shipping zones a v9 item can name (`storeItem.shippingZoneIds`, docs/STOREFRONT_V9.md). */
 export const ITEM_SHIPPING_ZONE_LIMIT = property('storeItem', 'shippingZoneIds').maxItems ?? 16
 
+/** The committed cut's `storeItem.imageUrls` element pattern (v10: https:// or ipfs:// only). */
+export const ITEM_IMAGE_URL_PATTERN = new RegExp(property('storeItem', 'imageUrls').items?.pattern ?? '^(https|ipfs)://.+$')
+
 /** v1–v3 keep `imageUrls` and `tags` as JSON strings, each capped as a whole. */
 export const LEGACY_STRING_LIST_CAPS = { imageUrls: 2100, tags: 500 } as const
 
