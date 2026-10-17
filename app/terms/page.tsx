@@ -5,6 +5,15 @@ import { DocumentTextIcon } from '@heroicons/react/24/outline'
 import { InfoPage, InfoSection, Prose, BulletList, NetworkNotice, testNetwork } from '@/components/layout/info-page'
 import { SupportEmailLink } from '@/components/layout/legal-links'
 import { LEGAL_UPDATED, MINIMUM_AGE } from '@/lib/legal'
+import {
+  declaredActionFee,
+  electedModeration,
+  starterGrantAmount,
+  tokenCostFor,
+  yappIsLocked,
+  yappIsTransferable,
+  type ElectedModerationDeclaration,
+} from '@/lib/contract-topology'
 
 const COMMUNITY_RULES = [
   { title: 'Nothing illegal', body: 'Don’t post, sell or link to anything that is illegal where you or the people you share it with live.' },
@@ -24,6 +33,32 @@ const COMMUNITY_RULES = [
   },
   { title: 'Respect other people’s rights', body: 'Only post what you have the right to share, including other people’s photos, writing and trademarks.' },
 ]
+
+/** Who moderates before a team is seated, as the configured social contract declares it. */
+const INTERIM_COPY: Record<ElectedModerationDeclaration['interim'] | 'none', string> = {
+  notYetUsable: 'Until a team is elected and seated, the parts of Yappr it moderates (such as posting) stay closed.',
+  contractOwner: 'Until a team is elected and seated, the contract’s owner moderates in its place.',
+  appointedModerators: 'Until a team is elected and seated, moderators appointed by the contract’s owner moderate in its place.',
+  noModeration: 'Until a team is elected and seated, nobody moderates.',
+  none: '',
+}
+
+/** What YAPP costs and is, as the configured contract declares it. */
+function yappCostCopy(): string {
+  const cost = tokenCostFor('post')
+  if (!cost) return ''
+  const sentences = [
+    cost.optional
+      ? 'Posting, replying and liking can be paid in YAPP, Yappr’s in-app token.'
+      : 'Posting, replying and liking are paid in YAPP, Yappr’s in-app token.',
+  ]
+  if (starterGrantAmount() !== null) sentences.push('New accounts get a starter amount.')
+  if (cost.gasFeesPaidBy !== 0) sentences.push('While you pay in YAPP, the network fee is usually covered for you.')
+  if (cost.optional) sentences.push('Once your YAPP runs out, or if you choose, you pay in credits.')
+  if (yappIsLocked()) sentences.push('YAPP has no monetary value, and Yappr never sells it.')
+  if (!yappIsTransferable()) sentences.push('YAPP can’t be sent to other people.')
+  return ` ${sentences.join(' ')}`
+}
 
 export default function TermsPage() {
   const network = testNetwork()
@@ -134,7 +169,7 @@ export default function TermsPage() {
             that is more than a week old needs the team&apos;s leader and two more moderators to agree.
           </p>
           <p>
-            Until a team is elected and seated, the parts of Yappr it moderates (such as posting) stay closed. We can also stop
+            {INTERIM_COPY[electedModeration()?.interim ?? 'none']} We can also stop
             showing content or media in the apps we publish when it breaks these rules or the law, but we can&apos;t remove anything
             from Dash Platform ourselves.
           </p>
@@ -191,10 +226,9 @@ export default function TermsPage() {
 
       <InfoSection title="Costs">
         <Prose>
-          Writing to Dash Platform costs credits, paid from your identity&apos;s balance. Some actions also carry a small moderation
-          fee that goes to the elected moderators. Posting, replying and liking can be paid in YAPP, Yappr&apos;s in-app token. New
-          accounts get a starter amount, and while you pay in YAPP the network fee is usually covered for you. Once your YAPP runs
-          out, or if you choose, you pay in credits. YAPP has no monetary value and can&apos;t be sent to other people.
+          Writing to Dash Platform costs credits, paid from your identity&apos;s balance.
+          {declaredActionFee('post', 'create') && ' Some actions also carry a small moderation fee that goes to the elected moderators.'}
+          {yappCostCopy()}
           {network && ` On ${network}, credits are free: you can get them through the identity bridge linked from the sign-in screen.`}
         </Prose>
       </InfoSection>

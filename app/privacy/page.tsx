@@ -6,6 +6,7 @@ import { InfoPage, InfoSection, Prose, BulletList, NetworkNotice } from '@/compo
 import { SupportEmailLink } from '@/components/layout/legal-links'
 import { IPFS_GATEWAYS } from '@/lib/utils/ipfs-gateway'
 import { LEGAL_UPDATED } from '@/lib/legal'
+import { YAPPR_DM_CONTRACT_ID, dmIsV5 } from '@/lib/constants'
 
 const PUBLIC_DATA = [
   'Your username, identity ID and credit balance',
@@ -120,22 +121,39 @@ export default function PrivacyPage() {
         <Prose className="space-y-4">
           <div>
             <p className="font-medium text-gray-700 dark:text-gray-300">Direct messages</p>
-            <p className="mt-1">
-              Message content, and who you are talking to, are hidden from people reading the network. Some things still show:
-            </p>
-            <BulletList>
-              <li>that you send messages, how many, when, and roughly how long they are;</li>
-              <li>
-                the network nodes your app asks for new messages can, over time, work out who you talk to and which groups you are in;
-              </li>
-              <li>if two people often write moments apart, someone watching closely could guess they are talking;</li>
-              <li>
-                everyone in a conversation or group can read it, and keeps their copy; group members see messages from when they joined;
-              </li>
-              <li>
-                anyone who gets your encryption key can read your whole message history. Keep it as safe as your sign-in key.
-              </li>
-            </BulletList>
+            {dmIsV5() ? (
+              <>
+                <p className="mt-1">
+                  Message content, and who you are talking to, are hidden from people reading the network. Some things still show:
+                </p>
+                <BulletList>
+                  <li>that you send messages, how many, when, and roughly how long they are;</li>
+                  <li>
+                    the network nodes your app asks for new messages can, over time, work out who you talk to and which groups you are
+                    in;
+                  </li>
+                  <li>if two people often write moments apart, someone watching closely could guess they are talking;</li>
+                  <li>
+                    everyone in a conversation or group can read it, and keeps their copy; group members see messages from when they
+                    joined;
+                  </li>
+                  <li>
+                    anyone who gets your encryption key can read your whole message history. Keep it as safe as your sign-in key.
+                  </li>
+                </BulletList>
+                {YAPPR_DM_CONTRACT_ID !== '' && (
+                  <p className="mt-2">
+                    Conversations from Yappr&apos;s earlier messaging, still shown in your inbox, work differently: who took part, and
+                    when each message was sent, are public. Only their content is encrypted.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="mt-1">
+                Message content is encrypted, so only the people in the conversation can read it. Who you message, and when, are
+                public. Anyone who gets your encryption key can read your messages, so keep it as safe as your sign-in key.
+              </p>
+            )}
           </div>
           <div>
             <p className="font-medium text-gray-700 dark:text-gray-300">Private feeds</p>
