@@ -72,6 +72,10 @@ describe('the denylist', () => {
       expect(canonicalHttpsUrl(same)).toBe(listed)
       expect(isDeniedMedia(same)).toBe(true)
     }
+    // Browsers send the encoded form of literal non-ASCII and spaces.
+    expect(canonicalHttpsUrl('https://cdn.example/caf\u00e9 1.png?q=\u00e9 x')).toBe(canonicalHttpsUrl('https://cdn.example/caf%c3%a9%201.png?q=%C3%A9%20x'))
+    expect(canonicalHttpsUrl('https://cdn.example/caf\u00e9.png')).toBe('https://cdn.example/caf%C3%A9.png')
+    expect(canonicalHttpsUrl('https://cdn.example/pix\nel.png')).toBe('https://cdn.example/pixel.png')
     expect(canonicalHttpsUrl('https://tracker.example')).toBe('https://tracker.example/')
     expect(canonicalHttpsUrl('https://tracker.example/a/..')).toBe('https://tracker.example/')
     expect(canonicalHttpsUrl('https://tracker.example:8443/pixel.png?id=1')).toBe('https://tracker.example:8443/pixel.png?id=1')
@@ -83,6 +87,7 @@ describe('the denylist', () => {
     for (const url of [
       DENIED_URL, 'https://a.b/c?d=e&f=g', 'https://EXAMPLE.com', `https://${CID_V1}.ipfs.dweb.link/x`,
       'https://a.b:443/x/../y/./z?q#f', 'https://a.b.:8443/%2e%2E/x\\y', 'https://a.b/x/..',
+      'https://a.b/caf\u00e9 x.png?q=\u00e9"\'<>', 'https://a.b/%c3%a9`{}',
     ]) {
       expect(scriptCanonical(url)).toBe(canonicalHttpsUrl(url))
       expect(scriptCid(url)).toBe(ipfsCidOf(url))

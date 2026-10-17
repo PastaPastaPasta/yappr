@@ -57,14 +57,16 @@ export function ipfsCidOf(input) {
  * The form of an https URL whose sha256 the denylist stores, spelled the way
  * a browser requests it, so equivalent spellings hash alike: host lowercased
  * without a trailing dot, the default port dropped, an empty path as `/`,
- * `.`/`..` segments resolved (also `%2e` and backslash forms), fragment
- * dropped; the query is kept as written, so `?a=1` and `?a=2` differ. Null
+ * `.`/`..` segments resolved (also `%2e` and backslash forms), path and
+ * query percent-encoded as a browser sends them (`café` as `caf%C3%A9`, a
+ * space as `%20`), fragment dropped. `?a=1` and `?a=2` still differ. Null
  * when the URL isn't https in a plain `scheme://host` shape (those are
  * refused anyway). lib/media/remote-media.ts carries the same function (a
  * test holds them together).
  */
 export function canonicalHttpsUrl(url) {
-  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?#][^#]*)?(?:#.*)?$/i.exec(url.trim())
+  // Browsers drop tabs and newlines anywhere in a URL.
+  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?#][^#]*)?(?:#.*)?$/i.exec(url.trim().replace(/[\t\n\r]/g, ''))
   if (!match) return null
   const host = match[1].toLowerCase().replace(/\.$/, '')
   const port = match[2] !== undefined && Number(match[2]) !== 443 ? `:${Number(match[2])}` : ''
@@ -72,7 +74,28 @@ export function canonicalHttpsUrl(url) {
   const queryAt = rest.indexOf('?')
   const path = queryAt === -1 ? rest : rest.slice(0, queryAt)
   const query = queryAt === -1 ? '' : rest.slice(queryAt)
-  return `https://${host}${port}${resolvedPath(path)}${query}`
+  try {
+    return `https://${host}${port}${resolvedPath(percentEncoded(path, PATH_ENCODE))}${percentEncoded(query, QUERY_ENCODE)}`
+  } catch {
+    // A lone surrogate can't be encoded; such a URL can't be requested either.
+    return null
+  }
+}
+
+/** Characters browsers percent-encode in a path and a query, besides controls, spaces and non-ASCII (WHATWG URL). */
+const PATH_ENCODE = '"<>`{}'
+const QUERY_ENCODE = '"<>\''
+
+/** `text` with the characters a browser would escape percent-encoded as UTF-8, and every escape's hex uppercased. */
+function percentEncoded(text, set) {
+  let out = ''
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0
+    if (code >= 0x7f) out += encodeURIComponent(char)
+    else if (code <= 0x20 || set.includes(char)) out += `%${code.toString(16).toUpperCase().padStart(2, '0')}`
+    else out += char
+  }
+  return out.replace(/%[0-9a-f]{2}/gi, (escape) => escape.toUpperCase())
 }
 
 /** A URL path with `.` and `..` segments resolved, as browsers do (WHATWG URL). */
