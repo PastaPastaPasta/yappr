@@ -1,0 +1,193 @@
+#!/usr/bin/env node
+/**
+ * Adds an entry to the media takedown denylist (lib/media/media-denylist.json).
+ * Runbook: docs/MEDIA_TAKEDOWN.md.
+ *
+ *   node scripts/media-denylist.mjs add <ipfs-cid | ipfs://… | gateway URL | https URL> --ref <ticket>
+ *   node scripts/media-denylist.mjs check <same forms>
+ *
+ * An IPFS reference is listed by CID, in both its v0 and v1 forms where they
+ * exist, so either spelling is caught. Any other https URL is listed only by
+ * the sha256 of its canonical form, so the public repository never names it.
+ */
+
+import { createHash } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+const LIST_PATH = fileURLToPath(new URL('../lib/media/media-denylist.json', import.meta.url))
+
+const IPFS_REFERENCES = [
+  /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)/i,
+  /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)/i,
+  /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+/i,
+]
+const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
+
+/**
+ * Same rule as ipfsCidOf in lib/media/remote-media.ts (a test holds them
+ * together), plus a bare CID. Only the two spellings Yappr writes count; the
+ * apps already refuse every other spelling of a CID.
+ */
+export function ipfsCidOf(input) {
+  const trimmed = input.trim()
+  if (CANONICAL_CID.test(trimmed)) return trimmed
+  for (const pattern of IPFS_REFERENCES) {
+    const match = pattern.exec(trimmed)
+    if (match && CANONICAL_CID.test(match[1])) return match[1]
+  }
+  return null
+}
+
+/** Same form as canonicalHttpsUrl in lib/media/remote-media.ts; a test holds them together. */
+export function canonicalHttpsUrl(url) {
+  const match = /^https:\/\/([^/?#]+)([^#]*)/i.exec(url.trim())
+  return match ? `https://${match[1].toLowerCase()}${match[2]}` : null
+}
+
+export function urlSha256(url) {
+  const canonical = canonicalHttpsUrl(url)
+  if (!canonical) throw new Error(`Not an https URL: ${url}`)
+  return createHash('sha256').update(canonical, 'utf8').digest('hex')
+}
+
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567'
+
+function base58Decode(text) {
+  let value = 0n
+  for (const char of text) {
+    const digit = BASE58.indexOf(char)
+    if (digit < 0) throw new Error(`Not base58: ${text}`)
+    value = value * 58n + BigInt(digit)
+  }
+  const bytes = []
+  while (value > 0n) {
+    bytes.unshift(Number(value % 256n))
+    value /= 256n
+  }
+  for (const char of text) {
+    if (char !== '1') break
+    bytes.unshift(0)
+  }
+  return Uint8Array.from(bytes)
+}
+
+function base58Encode(bytes) {
+  let value = 0n
+  for (const byte of bytes) value = value * 256n + BigInt(byte)
+  let text = ''
+  while (value > 0n) {
+    text = BASE58[Number(value % 58n)] + text
+    value /= 58n
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break
+    text = `1${text}`
+  }
+  return text
+}
+
+function base32Encode(bytes) {
+  let bits = 0
+  let buffer = 0
+  let text = ''
+  for (const byte of bytes) {
+    buffer = (buffer << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      text += BASE32[(buffer >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) text += BASE32[(buffer << (5 - bits)) & 31]
+  return text
+}
+
+function base32Decode(text) {
+  let bits = 0
+  let buffer = 0
+  const bytes = []
+  for (const char of text) {
+    const digit = BASE32.indexOf(char)
+    if (digit < 0) throw new Error(`Not base32: ${text}`)
+    buffer = (buffer << 5) | digit
+    bits += 5
+    if (bits >= 8) {
+      bytes.push((buffer >>> (bits - 8)) & 255)
+      bits -= 8
+    }
+  }
+  return Uint8Array.from(bytes)
+}
+
+/** A sha2-256 multihash: what a CIDv0 is, and what a dag-pb CIDv1 wraps. */
+const isSha256Multihash = (bytes) => bytes.length === 34 && bytes[0] === 0x12 && bytes[1] === 0x20
+
+/**
+ * Every spelling of a CID worth listing: as given, plus its v0/v1 twin for
+ * dag-pb content (the same bytes behind `Qm…` and `bafy…`).
+ */
+export function cidForms(cid) {
+  if (cid.startsWith('Qm')) {
+    const multihash = base58Decode(cid)
+    if (!isSha256Multihash(multihash)) throw new Error(`Not a CIDv0: ${cid}`)
+    return [cid, `b${base32Encode(Uint8Array.from([0x01, 0x70, ...multihash]))}`]
+  }
+  const v1 = cid.toLowerCase()
+  if (!v1.startsWith('b')) throw new Error(`Only base32 CIDv1 (b…) is supported: ${cid}`)
+  const bytes = base32Decode(v1.slice(1))
+  if (bytes[0] !== 0x01) throw new Error(`Not a CIDv1: ${cid}`)
+  const multihash = bytes.subarray(2)
+  return bytes[1] === 0x70 && isSha256Multihash(multihash) ? [v1, base58Encode(multihash)] : [v1]
+}
+
+function load() {
+  return JSON.parse(readFileSync(LIST_PATH, 'utf8'))
+}
+
+function save(list) {
+  writeFileSync(LIST_PATH, `${JSON.stringify(list, null, 2)}\n`)
+}
+
+function main(argv) {
+  const [command, target, ...rest] = argv
+  const refIndex = rest.indexOf('--ref')
+  const ref = refIndex >= 0 ? rest[refIndex + 1] : undefined
+  if (!['add', 'check'].includes(command) || !target) {
+    console.error('Usage: node scripts/media-denylist.mjs <add|check> <cid | ipfs URL | https URL> [--ref <ticket>]')
+    process.exit(2)
+  }
+
+  const list = load()
+  const cid = ipfsCidOf(target)
+  const cids = cid ? cidForms(cid) : []
+  const hash = cid ? null : urlSha256(target)
+  const listed = cid
+    ? cids.filter((form) => list.cids.some((entry) => entry.cid === form))
+    : list.urlSha256.filter((entry) => entry.sha256 === hash).map((entry) => entry.sha256)
+
+  if (command === 'check') {
+    console.log(listed.length > 0 ? `Listed: ${listed.join(', ')}` : 'Not listed')
+    return
+  }
+
+  if (!ref) {
+    console.error('add needs --ref <ticket or report id> for the audit trail (never a description of the content)')
+    process.exit(2)
+  }
+  const added = new Date().toISOString().slice(0, 10)
+  if (cid) {
+    for (const form of cids) {
+      if (!listed.includes(form)) list.cids.push({ cid: form, added, ref })
+    }
+  } else if (listed.length === 0) {
+    list.urlSha256.push({ sha256: hash, added, ref })
+  }
+  save(list)
+  console.log(cid ? `Listed CID ${cids.join(' and ')}` : `Listed URL sha256 ${hash}`)
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main(process.argv.slice(2))
+}

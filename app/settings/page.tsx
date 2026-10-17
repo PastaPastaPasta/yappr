@@ -55,7 +55,7 @@ import { postsHaveLanguage } from '@/lib/contract-topology'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore, type SensitiveContentMode } from '@/lib/store'
-import { CORS_PROXY_INFO } from '@/lib/link-preview/fetch'
+import { LINK_PREVIEW_SERVICES } from '@/lib/link-preview/fetch'
 import { UsernameModal } from '@/components/dpns/username-modal'
 
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'developer' | 'about' | 'moderation'
@@ -417,23 +417,20 @@ function SettingsPage() {
           {linkPreviewsEnabled && (
             <div className="ml-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
               <p className="text-sm text-amber-800 dark:text-amber-200">
-                <strong>Privacy note:</strong> {CORS_PROXY_INFO.warning}
+                <strong>Privacy note:</strong> {LINK_PREVIEW_SERVICES.summary}
               </p>
               <p className="text-xs text-amber-700 dark:text-amber-300 mt-2">
-                Third-party services used:{' '}
-                {CORS_PROXY_INFO.proxies.map((p, i) => (
-                  <span key={p.name}>
-                    {i > 0 && ', '}
-                    <a
-                      href={p.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline hover:text-amber-900 dark:hover:text-amber-100"
-                    >
-                      {p.name}
-                    </a>
-                  </span>
-                ))}
+                Services used:{' '}
+                <a
+                  href={LINK_PREVIEW_SERVICES.imageProxy.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-amber-900 dark:hover:text-amber-100"
+                >
+                  {LINK_PREVIEW_SERVICES.imageProxy.name}
+                </a>
+                , the IPFS gateways {LINK_PREVIEW_SERVICES.ipfsGateways.map((gateway) => gateway.name).join(', ')}, and{' '}
+                {LINK_PREVIEW_SERVICES.directServices.map((service) => service.name).join(', ')} for their own links.
               </p>
             </div>
           )}

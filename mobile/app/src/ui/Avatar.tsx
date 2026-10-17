@@ -92,7 +92,7 @@ export const Avatar = memo(function Avatar({
     () => (svgProp === undefined && recipeSvg !== undefined ? recipeSvg : svgMarkup(svgProp ?? storedUri)),
     [svgProp, recipeSvg, storedUri],
   );
-  const uri = urls.media(storedUri);
+  const uri = urls.media(storedUri, 'avatar');
   const fallbackMarkup = useMemo(() => svgMarkup(fallback), [fallback]);
 
   let content = null;

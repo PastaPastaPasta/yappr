@@ -1,41 +1,15 @@
 /**
- * Fetching a page for its preview metadata. `ipfs://` goes through the
- * gateway list, a short allow-list of CORS-enabled hosts is fetched directly,
- * and everything else goes through a third-party CORS proxy.
+ * Fetching a page for its preview metadata, from the viewer's browser. Only
+ * two kinds of link are fetched: `ipfs://` (and IPFS gateway URLs) through the
+ * gateway list, and a short allow-list of CORS-enabled hosts. Every other link
+ * is shown as a card built from the URL alone (see ./preview): nothing is
+ * fetched and no preview service sees it.
  */
 
-import { IPFS_GATEWAYS, isIpfsProtocol, isIpfsUrl, getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
+import { IPFS_GATEWAYS, getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
+import { IMAGE_PROXY_ORIGIN, imageSourceFor } from '@/lib/media/remote-media'
 
-/**
- * PRIVACY: the proxies see every URL they fetch. Rich previews are on by
- * default; the settings page and the preview modal disclose this using the
- * lists below. Keep them in step with CORS_PROXIES and CORS_ALLOWED_DOMAINS.
- */
-export const CORS_PROXY_INFO = {
-  warning:
-    'Some URLs (YouTube, Reddit, IPFS, etc.) are fetched directly from their services. Other URLs use third-party proxy servers to fetch metadata. These services may log the URLs you view.',
-  directServices: [
-    { name: 'YouTube', description: 'Video thumbnails (img.youtube.com)' },
-    { name: 'Reddit', description: 'Image hosting (i.redd.it)' },
-    { name: 'Imgur', description: 'Image hosting (i.imgur.com)' },
-    { name: 'Giphy', description: 'GIF hosting (media.giphy.com)' },
-    { name: 'GitHub', description: 'Raw files (raw.githubusercontent.com)' },
-    { name: 'Twitter/X', description: 'Images (pbs.twimg.com)' },
-  ],
-  /** IPFS gateways used for ipfs:// URLs (derived from the shared gateway list) */
-  ipfsGateways: IPFS_GATEWAYS.map((gateway) => ({ name: gateway.domain, url: `https://${gateway.domain}` })),
-  proxies: [
-    { name: 'allorigins.win', url: 'https://allorigins.win/' },
-    { name: 'corsproxy.io', url: 'https://corsproxy.io/' },
-  ],
-}
-
-const CORS_PROXIES = [
-  (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-]
-
-/** Major hosts known to send CORS headers; fetched without a proxy. Keep it short to limit IP exposure. */
+/** Major hosts known to send CORS headers; fetched directly. Keep it short to limit IP exposure. */
 const CORS_ALLOWED_DOMAINS = new Set([
   'media.giphy.com',
   'i.giphy.com',
@@ -44,6 +18,26 @@ const CORS_ALLOWED_DOMAINS = new Set([
   'pbs.twimg.com',
   'raw.githubusercontent.com',
 ])
+
+/**
+ * PRIVACY: who sees what when previews are on. The settings page and the
+ * preview modal show these lists; keep them in step with
+ * CORS_ALLOWED_DOMAINS, the gateway list and lib/media/remote-media.
+ */
+export const LINK_PREVIEW_SERVICES = {
+  summary:
+    'Most previews are made from the link itself, without contacting the website. Links to IPFS and a few image hosts are read directly from those services. Pictures that aren\'t on IPFS load through the wsrv.nl image service, so the sites hosting them don\'t see your IP address.',
+  directServices: [
+    { name: 'Reddit', description: 'Image hosting (i.redd.it)' },
+    { name: 'Imgur', description: 'Image hosting (i.imgur.com)' },
+    { name: 'Giphy', description: 'GIF hosting (media.giphy.com, i.giphy.com)' },
+    { name: 'GitHub', description: 'Raw files (raw.githubusercontent.com)' },
+    { name: 'Twitter/X', description: 'Images (pbs.twimg.com)' },
+  ],
+  /** IPFS gateways used for ipfs:// URLs (derived from the shared gateway list) */
+  ipfsGateways: IPFS_GATEWAYS.map((gateway) => ({ name: gateway.domain, url: `https://${gateway.domain}` })),
+  imageProxy: { name: 'wsrv.nl', url: `${IMAGE_PROXY_ORIGIN}/` },
+}
 
 const FETCH_TIMEOUT_MS = 8000
 /** Larger bodies are not worth downloading for a title and an image URL. */
@@ -81,7 +75,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   }
 }
 
-/** Fetch without a proxy. Images are not downloaded; only their Content-Type matters. */
+/** Fetch from the viewer's browser. Images are not downloaded; only their Content-Type matters. */
 async function fetchDirectly(url: string): Promise<PreviewFetchResult> {
   const response = await fetchWithTimeout(url)
   const contentType = response.headers.get('content-type')
@@ -107,24 +101,30 @@ async function firstSuccessful(
   throw lastError
 }
 
+/**
+ * The IPFS content a link names (`ipfs://` or any gateway's URL), unless it is
+ * on the takedown denylist: it is read from Yappr's own gateway list, never
+ * from the host the link names.
+ */
+function ipfsContentOf(url: string): string | null {
+  const source = imageSourceFor(url)
+  return source.kind === 'ipfs' ? source.ipfsUrl : null
+}
+
+/** Whether a link's page may be fetched for its preview: IPFS content, or an allow-listed https host. */
+export function canFetchPreview(url: string): boolean {
+  return ipfsContentOf(url) !== null || (url.startsWith('https://') && isCorsAllowedDomain(url))
+}
+
+/** Callers check {@link canFetchPreview} first; anything else is refused. */
 export async function fetchPreviewContent(url: string): Promise<PreviewFetchResult> {
-  if (isIpfsProtocol(url)) {
-    return firstSuccessful(getAllGatewayUrls(url), async (gatewayUrl) => ({
+  const ipfsUrl = ipfsContentOf(url)
+  if (ipfsUrl) {
+    return firstSuccessful(getAllGatewayUrls(ipfsUrl), async (gatewayUrl) => ({
       ...(await fetchDirectly(gatewayUrl)),
       resolvedUrl: gatewayUrl,
     }))
   }
-  if (isIpfsUrl(url)) return fetchDirectly(url)
-  if (isCorsAllowedDomain(url)) {
-    try {
-      return await fetchDirectly(url)
-    } catch {
-      // A direct fetch that fails still has the proxies to fall back on.
-    }
-  }
-  // Proxies do not preserve Content-Type reliably, so the body is treated as HTML.
-  return firstSuccessful(
-    CORS_PROXIES.map((proxy) => proxy(url)),
-    async (proxyUrl) => ({ content: await (await fetchWithTimeout(proxyUrl)).text(), contentType: 'text/html' })
-  )
+  if (!canFetchPreview(url)) throw new Error('Not fetched for previews')
+  return fetchDirectly(url)
 }

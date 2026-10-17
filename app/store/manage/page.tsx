@@ -568,13 +568,17 @@ function StoreManagePage() {
                         className="flex items-center gap-4 p-3 border border-gray-200 dark:border-gray-800 rounded-lg"
                       >
                         <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden flex-shrink-0">
-                          {item.imageUrls?.[0] ? (
-                            <img src={item.imageUrls[0]} alt={item.title} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <CubeIcon className="h-6 w-6 text-gray-300" />
-                            </div>
-                          )}
+                          <IpfsImage
+                            src={item.imageUrls?.[0] ?? ''}
+                            size="thumbnail"
+                            alt={item.title}
+                            className="w-full h-full object-cover"
+                            fallback={
+                              <div className="w-full h-full flex items-center justify-center">
+                                <CubeIcon className="h-6 w-6 text-gray-300" />
+                              </div>
+                            }
+                          />
                         </div>
                         <div className="flex-1 min-w-0">
                           <h4 className="font-medium truncate">{item.title}</h4>

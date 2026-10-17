@@ -34,7 +34,7 @@ import { PlayIcon } from '@heroicons/react/24/solid'
 import { extractYouTubeVideoId } from '@/lib/link-preview/urls'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
 import { IpfsImage } from '@/components/ui/ipfs-image'
-import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
+import { YouTubeThumbnail } from '@/components/ui/youtube-thumbnail'
 import { extractInlineText } from '@/lib/blog/content-utils'
 
 const CODE_LANGUAGES = ['javascript', 'typescript', 'python', 'rust', 'bash', 'json', 'html', 'css', 'go', 'solidity'] as const
@@ -351,17 +351,9 @@ function VideoEmbedPlayer({ url }: { url: string }) {
   const youtubeVideoId = extractYouTubeVideoId(url)
   const embedUrl = toVideoEmbedUrl(url)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [thumbnailUrl, setThumbnailUrl] = useState(
-    youtubeVideoId ? `https://img.youtube.com/vi/${youtubeVideoId}/maxresdefault.jpg` : ''
-  )
 
   useEffect(() => {
-    if (youtubeVideoId) {
-      setThumbnailUrl(`https://img.youtube.com/vi/${youtubeVideoId}/maxresdefault.jpg`)
-      setIsPlaying(false)
-    } else {
-      setThumbnailUrl('')
-    }
+    setIsPlaying(false)
   }, [youtubeVideoId])
 
   if (!embedUrl) {
@@ -377,16 +369,7 @@ function VideoEmbedPlayer({ url }: { url: string }) {
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsPlaying(true) }}
             className="relative w-full aspect-video bg-black cursor-pointer group"
           >
-            <img
-              src={thumbnailUrl}
-              alt="YouTube video thumbnail"
-              className="w-full h-full object-cover"
-              onError={() => {
-                if (thumbnailUrl.includes('maxresdefault')) {
-                  setThumbnailUrl(`https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg`)
-                }
-              }}
-            />
+            <YouTubeThumbnail videoId={youtubeVideoId} className="w-full h-full object-cover" />
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-16 h-16 bg-red-600 rounded-full flex items-center justify-center shadow-lg group-hover:bg-red-700 transition-colors">
                 <PlayIcon className="h-8 w-8 text-white ml-1" />
@@ -724,21 +707,13 @@ const imageBlock = createReactBlockSpec(
       return (
         <div className="w-full">
           <div style={{ maxWidth: width }} className="mx-auto">
-            {isIpfsProtocol(url) ? (
-              <IpfsImage
-                src={url}
-                alt={altText}
-                className="w-full rounded-lg"
-                loadingFallback={imageLoadingFallback}
-                fallback={imageUnavailableFallback}
-              />
-            ) : (
-              <img
-                src={url}
-                alt={altText}
-                className="w-full rounded-lg"
-              />
-            )}
+            <IpfsImage
+              src={url}
+              alt={altText}
+              className="w-full rounded-lg"
+              loadingFallback={imageLoadingFallback}
+              fallback={imageUnavailableFallback}
+            />
           </div>
           {editable && (
             <input

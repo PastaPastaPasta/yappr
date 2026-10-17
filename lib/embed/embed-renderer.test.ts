@@ -57,3 +57,19 @@ describe('saved custom blog blocks in embeds', () => {
     expect(renderEmbedHtml([{ type: 'videoEmbed', props: { url: '' } }])).toBe('')
   })
 })
+
+describe('images in embeds', () => {
+  const image = (url: string) => renderEmbedHtml([{ type: 'image', props: { url } }])
+
+  it('loads IPFS images from the gateway and other https images through the image proxy', () => {
+    expect(image('ipfs://bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'))
+      .toContain('src="https://gateway.pinata.cloud/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"')
+    expect(image('https://cdn.example/a.jpg')).toContain('src="https://wsrv.nl/?url=https%3A%2F%2Fcdn.example%2Fa.jpg&amp;w=1600')
+  })
+
+  it('drops images that must not load', () => {
+    for (const url of ['http://cdn.example/a.jpg', 'data:image/png;base64,AAAA', 'javascript:alert(1)']) {
+      expect(image(url)).toBe('')
+    }
+  })
+})

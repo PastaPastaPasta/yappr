@@ -8,6 +8,7 @@
 import { getContractTopology } from '../constants'
 import { SESSION_STORAGE_KEY } from '../storage-scope'
 import { getPinataGateway } from '../upload/providers/pinata/credential-storage'
+import { imageSourceFor, type ProxyImageSize } from '../media/remote-media'
 
 /**
  * IPFS Gateway Configuration
@@ -222,42 +223,21 @@ export function getAllGatewayUrls(ipfsUrl: string): string[] {
 }
 
 /**
- * Check if a URL points to IPFS content (either protocol or gateway URL).
- *
- * Matches:
- * - Protocol: ipfs:// URLs
- * - Subdomain gateways: hostname contains ".ipfs." (e.g., bafybeib.ipfs.dweb.link)
- * - Direct gateways: ipfs.io domain (e.g., gateway.ipfs.io, ipfs.io)
- * - Path gateways: path starts with /ipfs/ (e.g., https://gateway.pinata.cloud/ipfs/Qm...)
+ * The single URL to load an image from, for renderers that can't fail over
+ * between candidates (plain HTML, third-party components): IPFS through the
+ * primary gateway, other https through the image proxy, inline and
+ * same-origin images as they are. Null when it must not be loaded at all
+ * (denied, plain http, unknown schemes). Prefer IpfsImage where possible.
  */
-export function isIpfsUrl(url: string): boolean {
-  // Check for ipfs:// protocol first (before URL parsing which doesn't support it)
-  if (isIpfsProtocol(url)) {
-    return true
-  }
-
-  try {
-    const parsed = new URL(url)
-    const hostname = parsed.hostname.toLowerCase()
-    const pathname = parsed.pathname.toLowerCase()
-
-    // Check for subdomain gateway pattern: *.ipfs.* (e.g., cid.ipfs.dweb.link)
-    if (hostname.includes('.ipfs.')) {
-      return true
-    }
-
-    // Check for ipfs.io domain specifically (e.g., ipfs.io, gateway.ipfs.io)
-    if (hostname === 'ipfs.io' || hostname.endsWith('.ipfs.io')) {
-      return true
-    }
-
-    // Check for path gateway pattern: /ipfs/ in the path
-    if (pathname.startsWith('/ipfs/')) {
-      return true
-    }
-
-    return false
-  } catch {
-    return false
+export function loadableImageUrl(url: string | null | undefined, size: ProxyImageSize = 'full'): string | null {
+  const source = imageSourceFor(url, size)
+  switch (source.kind) {
+    case 'ipfs':
+      return ipfsToGatewayUrl(source.ipfsUrl)
+    case 'proxied':
+    case 'local':
+      return source.url
+    default:
+      return null
   }
 }

@@ -650,17 +650,17 @@ function StoreDetailContent() {
                           className="cursor-pointer group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-black"
                         >
                           <div className="relative aspect-square bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden">
-                            {item.imageUrls?.[0] ? (
-                              <img
-                                src={item.imageUrls[0]}
-                                alt={item.title}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <BuildingStorefrontIcon className="h-12 w-12 text-gray-300" />
-                              </div>
-                            )}
+                            <IpfsImage
+                              src={item.imageUrls?.[0] ?? ''}
+                              size="thumbnail"
+                              alt={item.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                              fallback={
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <BuildingStorefrontIcon className="h-12 w-12 text-gray-300" />
+                                </div>
+                              }
+                            />
                             {isOutOfStock && (
                               <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
                                 <span className="text-white font-medium">Out of Stock</span>
