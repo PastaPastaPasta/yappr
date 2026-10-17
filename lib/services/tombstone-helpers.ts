@@ -49,6 +49,8 @@ export interface TombstoneParams {
    * `commentsEnabled: false` (`BLOG_POST_TOMBSTONE`).
    */
   base?: Readonly<Record<string, unknown>>;
+  /** References this contract permits clearing after their targets disappear. */
+  clearableReferences?: readonly string[];
 }
 
 /**
@@ -147,7 +149,7 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
     // is refused once for each, and each rejection names the next one. The
     // drops accumulate on a COPY, so the first attempt's replacement — already
     // handed to the write path — is never mutated underneath it.
-    const clearable = clearableReferencesFor(documentType);
+    const clearable = params.clearableReferences ?? clearableReferencesFor(documentType);
     const attempt = { ...replacement };
     for (let dropped = 0; dropped < clearable.length; dropped++) {
       if (result.success || !isReferenceNotFoundError(result.error)) break;

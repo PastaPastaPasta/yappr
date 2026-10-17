@@ -46,7 +46,7 @@
   "documentSchemas": {
     "blog": {
       "type": "object",
-      "canBeDeleted": false,
+      "canBeDeleted": true,
       "indices": [
         {
           "name": "ownerAndTime",
@@ -132,7 +132,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag — an abandoned blog is simply empty.",
+      "description": "A blog (many per user). Its author can delete it; posts remain as records and stop appearing on the blog page and in discovery.",
       "moderatorAbilities": {
         "delete": true
       },
@@ -172,11 +172,27 @@
             {
               "slug": "asc"
             }
-          ]
+          ],
+          "skipIfAbsent": true
         },
         {
           "name": "timeline",
           "properties": [
+            {
+              "live": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
             {
               "live": "asc"
             },
@@ -190,7 +206,6 @@
       "required": [
         "$createdAt",
         "$updatedAt",
-        "blogId",
         "slug",
         "publishedAt"
       ],
@@ -200,7 +215,7 @@
           "position": 0,
           "description": "Reference to parent blog document",
           "refersTo": {
-            "type": "moderatedDocument",
+            "type": "deletableDocument",
             "documentType": "blog",
             "where": {
               "$ownerId": "$ownerId"
@@ -319,7 +334,16 @@
         }
       ],
       "moderatorAbilities": {
-        "delete": true
+        "delete": true,
+        "deleteKeepsFields": [
+          "blogId",
+          "$createdAt"
+        ],
+        "deleteWithin": 604800,
+        "deleteSettled": {
+          "leader": true,
+          "approvals": 3
+        }
       },
       "propertyConstraints": {
         "chunksContiguous": {
@@ -358,6 +382,9 @@
                 },
                 {
                   "present": "data0"
+                },
+                {
+                  "present": "blogId"
                 }
               ]
             }
@@ -491,6 +518,17 @@
             "step": 86400,
             "ttl": 604800
           }
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
         }
       ],
       "required": [
@@ -527,7 +565,16 @@
       "additionalProperties": false,
       "description": "A comment on a post. blogPostId must name a real post, and postOwnerAndTime reads that post's $ownerId through it (blogPostId.$ownerId), so the notification key cannot be forged and comments on ghost posts are impossible.",
       "moderatorAbilities": {
-        "delete": true
+        "delete": true,
+        "deleteKeepsFields": [
+          "blogPostId",
+          "$createdAt"
+        ],
+        "deleteWithin": 604800,
+        "deleteSettled": {
+          "leader": true,
+          "approvals": 3
+        }
       },
       "actionFees": {
         "pricing": "feeMultiplier",
@@ -597,7 +644,7 @@
           "position": 0,
           "description": "Reference to the blog being followed",
           "refersTo": {
-            "type": "moderatedDocument",
+            "type": "deletableDocument",
             "documentType": "blog"
           }
         }
@@ -686,7 +733,7 @@
           "type": "identifier",
           "position": 0,
           "refersTo": {
-            "type": "moderatedDocument",
+            "type": "deletableDocument",
             "documentType": "blog",
             "where": {
               "$ownerId": "targetOwnerId"

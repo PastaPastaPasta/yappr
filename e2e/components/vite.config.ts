@@ -18,6 +18,8 @@ export default defineConfig({
       { find: /^\.\/reset-private-feed-dialog$/, replacement: mocks },
       { find: /^@\/components\/auth\/add-encryption-key-modal$/, replacement: mocks },
       { find: /^@\/hooks\/use-image-upload$/, replacement: blogEditorMocks },
+      { find: /^@\/components\/ui\/profile-image-upload$/, replacement: fromHere('./blog-management-mocks.tsx') },
+      { find: /^@\/components\/moderation\/barred-writer-notice$/, replacement: fromHere('./blog-management-mocks.tsx') },
       { find: '@', replacement: fromHere('../../') },
     ],
     dedupe: ['react', 'react-dom'],
@@ -25,6 +27,7 @@ export default defineConfig({
   define: {
     'process.env': JSON.stringify({
       NODE_ENV: 'test',
+      NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9',
       NEXT_PUBLIC_NETWORK: 'testnet',
       NEXT_PUBLIC_STORAGE_SCOPE: 'component-test',
     }),

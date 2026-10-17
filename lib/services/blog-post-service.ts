@@ -243,7 +243,9 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
    * An author's delete (blog v7): the post becomes a TOMBSTONE, `deleted` and
    * comments off with every content field gone, keeping `blogId`, `slug` and
    * `publishedAt` (`tombstoneIsBlank`; the contract freezes `deleted` once
-   * set, so it cannot be undone). Posts cannot be deleted outright on any
+   * set, so it cannot be undone). On v9 a missing parent reference can be
+   * cleared so deleting the blog never prevents this retraction.
+   * Posts cannot be deleted outright on any
    * cut. A banned or suspended author may still write it (`retractedWhen`),
    * but no other edit. Resolves false when the replace is refused; throws a
    * bar the network reports for anything else.
@@ -257,6 +259,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       ownerId,
       preserve: BLOG_POST_TOMBSTONE_KEEPS,
       base: BLOG_POST_TOMBSTONE,
+      clearableReferences: blogIsV9() ? ['blogId'] : [],
     })
     this.clearCache(postId)
     return deleted
@@ -273,6 +276,18 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       limit: 1,
     })
     return result.documents[0] || null
+  }
+
+  /** Author management never depends on the parent blog still existing. */
+  async getOwnerPostsPage(ownerId: string, options: BlogPostQueryOptions = {}): Promise<LatestBlogPostsPage> {
+    if (!blogIsV9()) return { posts: [] }
+    const page = await this.cursorPage({
+      where: [['$ownerId', '==', ownerId], ['live', '==', true]],
+      orderBy: [['$ownerId', 'asc'], ['live', 'asc'], ['$createdAt', 'desc']],
+      limit: Math.min(options.limit ?? 20, 100),
+      startAfter: options.startAfter,
+    })
+    return { posts: page.documents, nextCursor: page.nextCursor }
   }
 
   async getPostsByBlog(blogId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {

@@ -30,6 +30,8 @@ const sdk = vi.hoisted(() => ({
     suspendUser: vi.fn(),
     warnUser: vi.fn(),
     moderatorDeleteDocument: vi.fn(),
+    moderatorDeleteSettledDocument: vi.fn(),
+    moderatorApproveTeamAction: vi.fn(),
     moderatorRestoreDocument: vi.fn(),
     claimFees: vi.fn(),
     feePots: vi.fn(),
@@ -107,7 +109,7 @@ describe('each contract describes its own moderation', () => {
     expect(Object.isFrozen(moderatedContract('blog').elected())).toBe(true)
   })
 
-  it('declares no deletion window today, so one moderator removes at any age', () => {
+  it('keeps storefront and older blog cuts windowless', () => {
     for (const key of ['storefront', 'blog'] as const) {
       const contract = moderatedContract(key)
       for (const type of contract.deletableTypes()) {
@@ -133,6 +135,26 @@ describe('pure declaration readers', () => {
       },
     })
     expect(declaration).toMatchObject({ joinWindowSeconds: 3600, voteWindowSeconds: 3600, interim: 'notYetUsable', maxAddedModerators: 0, ownerProtected: false, electionDelaySeconds: null })
+  })
+
+  it('routes blog v9 posts and comments to settled proposals while storefront stays windowless', () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9')
+    const blog = moderatedContract('blog')
+    for (const type of ['blogPost', 'blogComment']) {
+      expect(blog.settledDeletionFor(type)).toEqual({ windowSeconds: 604800, leaderRequired: true, approvals: 3 })
+      expect(blog.deleteWindowSeconds(type)).toBe(604800)
+      expect(blog.keepsRecord(type)).toBe(true)
+    }
+    expect(blog.authorsDelete('blog')).toBe(true)
+    expect(moderationServiceFor('blog').teamDeletesSettled()).toBe(true)
+    expect(blog.settledDeletionFor('blog')).toBeNull()
+    expect(moderatedContract('storefront').settledDeletionFor('storeItem')).toBeNull()
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v8')
+    expect(blog.settledDeletionFor('blogPost')).toBeNull()
+    expect(blog.deleteWindowSeconds('blogComment')).toBeNull()
+    expect(blog.authorsDelete('blog')).toBe(false)
+    expect(moderationServiceFor('blog').teamDeletesSettled()).toBe(false)
+    vi.unstubAllEnvs()
   })
 
   it('reads a settled-deletion rule only with both a window and a team rule', () => {
@@ -174,6 +196,24 @@ describe('one service per contract, each sending its own contract id', () => {
     expect(moderationServiceFor('blog').canRemove('post')).toBe(false)
     expect(moderationServiceFor('blog').canRemove('blogComment')).toBe(true)
     expect(sdk.contracts.moderatorDeleteDocument).not.toHaveBeenCalled()
+  })
+
+  it('proposes and approves settled blog deletion on the blog contract', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9')
+    try {
+      const blog = moderationServiceFor('blog')
+      sdk.contracts.moderatorDeleteSettledDocument.mockResolvedValue({ actionId: { toBase58: () => 'BA1' }, status: 'active' })
+      sdk.contracts.moderatorApproveTeamAction.mockResolvedValue({ status: 'closed' })
+      expect(await blog.proposeSettledDeletion(MODERATOR, 'blogPost', 'BP1', { text: 'spam', reasonDocumentId: 'BR1' }))
+        .toMatchObject({ success: true, actionId: 'BA1', status: 'active' })
+      expect(sdk.contracts.moderatorDeleteSettledDocument).toHaveBeenCalledWith(expect.objectContaining({
+        contractId: ids.blog, documentTypeName: 'blogPost', documentId: 'BP1', reason: { text: 'spam', reasonDocumentId: 'BR1' },
+      }))
+      expect(await blog.approveTeamAction(MODERATOR, 'BA1')).toMatchObject({ success: true, status: 'closed' })
+      expect(sdk.contracts.moderatorApproveTeamAction).toHaveBeenCalledWith(expect.objectContaining({ contractId: ids.blog, actionId: 'BA1' }))
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('reads standing, lists, removals and pots on the blog contract with the blog lists', async () => {

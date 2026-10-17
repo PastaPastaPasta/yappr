@@ -9,7 +9,7 @@ export interface ModeratorRemoveTarget {
   /** The document type, as the contract names it (`post`, `storeReview`, `blogComment`, …). */
   docType: string
   documentId: string
-  /** When it was written (ms); NaN when unknown. Decides whether it has settled past its deletion window. */
+  /** When it was last written (ms); NaN when unknown. Decides whether it has settled past its deletion window. */
   createdAt: number
   /** What the moderator sees of it before removing it. */
   preview: string
@@ -28,14 +28,15 @@ export function documentRemovalTarget(
   contract: ModeratedContractKey,
   docType: string,
   noun: string,
-  doc: { id: string; createdAt?: Date | string | number | null },
+  doc: { id: string; createdAt?: Date | string | number | null; updatedAt?: Date | string | number | null },
   preview: string
 ): ModeratorRemoveTarget {
+  const windowStart = doc.updatedAt ?? doc.createdAt
   return {
     contract,
     docType,
     documentId: doc.id,
-    createdAt: doc.createdAt ? new Date(doc.createdAt).getTime() : Number.NaN,
+    createdAt: windowStart != null ? new Date(windowStart).getTime() : Number.NaN,
     preview,
     noun,
   }
