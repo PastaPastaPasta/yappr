@@ -152,6 +152,7 @@ export function TipModal() {
   // Payment URI support
   // `null` while the recipient's addresses are still loading.
   const [paymentUris, setPaymentUris] = useState<ParsedPaymentUri[] | null>(null)
+  const [paymentUrisFailed, setPaymentUrisFailed] = useState(false)
   const [activeTab, setActiveTab] = useState<PaymentTab>(defaultTab)
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
@@ -184,11 +185,23 @@ export function TipModal() {
 
   // Fetch recipient's payment URIs when modal opens
   useEffect(() => {
-    if (isOpen && recipientInfo) {
-      import('@/lib/services/unified-profile-service')
-        .then(({ unifiedProfileService }) => unifiedProfileService.getPaymentUris(recipientInfo.id))
-        .then(uris => setPaymentUris(uris))
-        .catch(() => setPaymentUris([]))
+    if (!isOpen || !recipientInfo) return
+    // A reopen for another recipient must not show this one's late answer.
+    let cancelled = false
+    setPaymentUrisFailed(false)
+    import('@/lib/services/unified-profile-service')
+      .then(({ unifiedProfileService }) => unifiedProfileService.getPaymentUris(recipientInfo.id))
+      .then((uris) => {
+        if (!cancelled) setPaymentUris(uris)
+      })
+      .catch((error) => {
+        logger.warn('Tip: could not load payment addresses', error)
+        if (cancelled) return
+        setPaymentUris([])
+        setPaymentUrisFailed(true)
+      })
+    return () => {
+      cancelled = true
     }
   }, [isOpen, recipientInfo])
 
@@ -216,6 +229,7 @@ export function TipModal() {
       setError(null)
       setActiveTab(defaultTab())
       setPaymentUris(null)
+      setPaymentUrisFailed(false)
       setSelectedQrPayment(null)
       setShowQrDialog(false)
       setKeySource(null)
@@ -340,7 +354,7 @@ export function TipModal() {
     if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
       // The only branch that keeps the entered key: the user stays on the key
       // screen to correct it in place.
-      setError(enteredKey ? "That key doesn't match a critical key on your identity. Check it and try again." : null)
+      setError(enteredKey ? "That isn't your account's highest-security key. Check it and try again." : null)
       setShowKeyEntry(Boolean(enteredKey))
       setState('needKey')
       return
@@ -579,7 +593,7 @@ export function TipModal() {
   const yappTips = !yappIsLocked()
   const creditTips = creditTipsEnabled()
   const hasPaymentUris = paymentUris !== null && paymentUris.length > 0
-  const tabCount = Number(yappTips) + Number(creditTips) + Number(hasPaymentUris)
+  const tabCount = [yappTips, creditTips, hasPaymentUris].filter(Boolean).length
   const dashAmount = parseFloat(amount) || 0
   const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
   const amountLabel = isYapp ? `${yappAmountBig.toString()} YAPP` : `${dashAmount} DASH`
@@ -598,6 +612,11 @@ export function TipModal() {
         Confirm &amp; Send
       </Button>
     )
+  }
+
+  const selectTab = (tab: PaymentTab) => () => {
+    setActiveTab(tab)
+    setError(null)
   }
 
   const tabClass = (tab: PaymentTab) =>
@@ -638,19 +657,19 @@ export function TipModal() {
                     {tabCount > 1 && (
                     <div className="flex rounded-lg bg-gray-100 dark:bg-neutral-800 p-1">
                       {yappTips && (
-                        <button type="button" onClick={() => { setActiveTab('yapp'); setError(null) }} className={tabClass('yapp')}>
+                        <button type="button" onClick={selectTab('yapp')} className={tabClass('yapp')}>
                           <SparklesIcon className="w-4 h-4" />
                           YAPP
                         </button>
                       )}
                       {creditTips && (
-                        <button type="button" onClick={() => { setActiveTab('credits'); setError(null) }} className={tabClass('credits')}>
+                        <button type="button" onClick={selectTab('credits')} className={tabClass('credits')}>
                           <CurrencyDollarIcon className="w-4 h-4" />
                           DASH
                         </button>
                       )}
                       {hasPaymentUris && (
-                        <button type="button" onClick={() => { setActiveTab('crypto'); setError(null) }} className={tabClass('crypto')}>
+                        <button type="button" onClick={selectTab('crypto')} className={tabClass('crypto')}>
                           <WalletIcon className="w-4 h-4" />
                           Other
                           <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-gray-200 dark:bg-neutral-600">
@@ -832,7 +851,9 @@ export function TipModal() {
                       <div className="py-6 text-center" data-testid="tip-no-addresses">
                         <WalletIcon className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
                         <p className="text-sm text-gray-600 dark:text-gray-400">
-                          {recipientName} hasn&apos;t added a way to receive tips yet.
+                          {paymentUrisFailed
+                            ? `Couldn't load ${recipientName}'s tip options. Close this and try again.`
+                            : `${recipientName} hasn't added a way to receive tips yet.`}
                         </p>
                       </div>
                     )}
@@ -935,7 +956,7 @@ export function TipModal() {
                         onClick={() => { setState('needKey'); setError(null); setShowKeyEntry(true) }}
                         className="w-full text-xs text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
                       >
-                        Paste a critical private key instead
+                        Paste your highest-security key instead
                       </button>
                     )}
                   </div>
@@ -945,9 +966,9 @@ export function TipModal() {
                 {state === 'needKey' && (
                   <div className="space-y-4">
                     <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Moving YAPP needs your identity&apos;s{' '}
-                      <span className="font-medium text-gray-900 dark:text-gray-100">critical</span> key. Your sign-in
-                      key can post but not transfer tokens, so approve this tip in the Dash wallet that holds it.
+                      Sending YAPP needs your account&apos;s{' '}
+                      <span className="font-medium text-gray-900 dark:text-gray-100">highest-security</span> key. Your sign-in
+                      key can post but not send tokens, so approve this tip in the Dash wallet that holds it.
                     </p>
                     <div className="flex justify-between text-sm bg-gray-50 dark:bg-neutral-800 rounded-lg px-3 py-2">
                       <span className="text-gray-600 dark:text-gray-400">Tipping {recipientName}</span>
@@ -973,7 +994,7 @@ export function TipModal() {
                         onClick={() => setShowKeyEntry(v => !v)}
                         className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors py-1"
                       >
-                        <span>{showKeyEntry ? 'Hide private key entry' : 'Paste a critical private key instead'}</span>
+                        <span>{showKeyEntry ? 'Hide private key entry' : 'Paste your highest-security key instead'}</span>
                         <ChevronDownIcon aria-hidden="true" className={`w-4 h-4 transition-transform ${showKeyEntry ? 'rotate-180' : ''}`} />
                       </button>
                       {showKeyEntry && (
@@ -985,7 +1006,7 @@ export function TipModal() {
                             type="password"
                             value={criticalKeyWif}
                             onChange={(e) => { setCriticalKeyWif(e.target.value); setError(null) }}
-                            placeholder="Critical private key (WIF)"
+                            placeholder="Highest-security private key"
                             autoComplete="off"
                             autoCorrect="off"
                             autoCapitalize="off"

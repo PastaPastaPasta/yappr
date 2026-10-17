@@ -51,7 +51,7 @@ function PostDetailContent() {
     enabled: !!postId
   })
   const authorName = post?.author.displayName || (post?.author.username ? `@${post.author.username}` : '')
-  useDocumentTitle(authorName ? `${authorName} on Yappr` : null)
+  useDocumentTitle(authorName ? `Post by ${authorName}` : null)
 
   const {
     sentinelRef: repliesSentinelRef,

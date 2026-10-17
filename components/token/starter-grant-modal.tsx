@@ -130,7 +130,7 @@ export function StarterGrantModal() {
       {needsCritical && (
         <div className="mb-4">
           <label htmlFor="starter-grant-wif" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Private key with full access
+            Highest-security private key
           </label>
           <input
             id="starter-grant-wif"

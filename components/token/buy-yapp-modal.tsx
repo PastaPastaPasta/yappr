@@ -168,7 +168,7 @@ export function BuyYappModal() {
     } else if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
       // Login key is HIGH but purchases must be signed with CRITICAL — ask for
       // it. If a key was already entered, it didn't match a CRITICAL key.
-      setError(enteredKey ? 'That key doesn\'t match a critical key on your identity. Check it and try again.' : null)
+      setError(enteredKey ? 'That isn\'t your account\'s highest-security key. Check it and try again.' : null)
       setShowKeyEntry(Boolean(enteredKey))
       setState('needKey')
     } else {
@@ -427,8 +427,8 @@ export function BuyYappModal() {
                     {state === 'needKey' && (
                       <div className="space-y-4">
                         <p className="text-sm text-gray-600 dark:text-gray-400">
-                          Buying YAPP spends DASH credits, which needs your identity&apos;s{' '}
-                          <span className="font-medium text-gray-900 dark:text-gray-100">critical</span> key.
+                          Buying YAPP spends DASH credits, which needs your account&apos;s{' '}
+                          <span className="font-medium text-gray-900 dark:text-gray-100">highest-security</span> key.
                           Your sign-in key can post but not spend, so approve this purchase in the Dash wallet
                           that holds it.
                         </p>
@@ -459,7 +459,7 @@ export function BuyYappModal() {
                             onClick={() => setShowKeyEntry(v => !v)}
                             className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors py-1"
                           >
-                            <span>{showKeyEntry ? 'Hide private key entry' : 'Paste a critical private key instead'}</span>
+                            <span>{showKeyEntry ? 'Hide private key entry' : 'Paste your highest-security key instead'}</span>
                             <ChevronDownIcon aria-hidden="true" className={`w-4 h-4 transition-transform ${showKeyEntry ? 'rotate-180' : ''}`} />
                           </button>
                           {showKeyEntry && (
@@ -477,7 +477,7 @@ export function BuyYappModal() {
                                     handleBuy().catch(err => logger.error('Failed to buy YAPP:', err))
                                   }
                                 }}
-                                placeholder="Critical private key (WIF)"
+                                placeholder="Highest-security private key"
                                 autoComplete="off"
                                 className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
                               />

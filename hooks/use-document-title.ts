@@ -9,9 +9,11 @@ export function useDocumentTitle(title: string | null | undefined): void {
   useEffect(() => {
     if (!title) return
     const previous = document.title
-    document.title = `${title} · Yappr`
+    const next = `${title} · Yappr`
+    document.title = next
     return () => {
-      document.title = previous
+      // The next route may already have set its own title; only undo ours.
+      if (document.title === next) document.title = previous
     }
   }, [title])
 }

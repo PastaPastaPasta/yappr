@@ -130,7 +130,9 @@ function UserProfileContent() {
   const dpnsLabel = username?.replace(/\.dash$/, '')
   const displayName = (profileDocumentMissing && dpnsLabel) || profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
   const isDisplayNameLoading = isLoading || !profile?.displayName
-  useDocumentTitle(isLoading ? null : dpnsLabel ? `${displayName} (@${dpnsLabel})` : displayName)
+  let documentTitle: string | null = null
+  if (!isLoading) documentTitle = dpnsLabel ? `${displayName} (@${dpnsLabel})` : displayName
+  useDocumentTitle(documentTitle)
 
   useEffect(() => {
     setNsfwAcknowledged(false)

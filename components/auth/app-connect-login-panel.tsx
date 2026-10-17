@@ -28,7 +28,7 @@ const UNAVAILABLE_COPY: Record<AppConnectUnavailableReason, { title: string; des
   },
   'network-not-ready': {
     title: 'Wallet sign-in isn\'t available yet',
-    description: 'Wallet sign-in is coming soon. Please try again later.',
+    description: 'Wallet sign-in is coming soon.',
     retry: false,
   },
   untrusted: {

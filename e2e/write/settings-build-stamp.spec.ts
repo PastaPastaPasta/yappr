@@ -5,7 +5,7 @@
  * It cross-checks the rendered value against the build id the smoke project
  * asserts — both come from `git rev-parse --short HEAD` in next.config.js.
  */
-import { appUrl, openBuildDetails } from '../fixtures/app'
+import { openBuildDetails } from '../fixtures/app'
 import { readBuildId } from '../fixtures/build-stamp'
 import { expect, hasSeedPhrase, NO_SEED_REASON, test } from '../fixtures/auth'
 

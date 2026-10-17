@@ -37,19 +37,21 @@ function BuildRow({ label, children, testId }: { label: string; children: ReactN
   )
 }
 
+/** The contracts this build talks to; a blank id means the build has none. */
+const BUILD_CONTRACTS = [
+  { label: 'Social contract', id: YAPPR_CONTRACT_ID },
+  { label: 'Messages contract', id: YAPPR_DM_V5_CONTRACT_ID },
+  { label: 'Store contract', id: YAPPR_STOREFRONT_CONTRACT_ID },
+  { label: 'Blog contract', id: YAPPR_BLOG_CONTRACT_ID },
+  { label: 'Polls contract', id: POLLR_CONTRACT_ID },
+].filter(({ id }) => id)
+
 /**
  * What this build was compiled against: the network, the commit and the
  * contracts it talks to. Collapsed by default; the e2e suite opens it to check
  * that the served artifact targets the contracts under test.
  */
 function BuildDetails() {
-  const contracts = [
-    { label: 'Social', id: YAPPR_CONTRACT_ID },
-    { label: 'Messages', id: YAPPR_DM_V5_CONTRACT_ID },
-    { label: 'Store', id: YAPPR_STOREFRONT_CONTRACT_ID },
-    { label: 'Blog', id: YAPPR_BLOG_CONTRACT_ID },
-    { label: 'Polls', id: POLLR_CONTRACT_ID },
-  ].filter(({ id }) => id)
   const builtAt = formatBuildDate(process.env.NEXT_PUBLIC_GIT_COMMIT_DATE)
 
   return (
@@ -67,8 +69,8 @@ function BuildDetails() {
             client compiled for one shape queries fields another lacks. Printing
             the compiled-in topology makes that checkable from the served build. */}
         <BuildRow label="Topology" testId="build-topology">{getContractTopology()}</BuildRow>
-        {contracts.map(({ label, id }) => (
-          <BuildRow key={label} label={`${label} contract`}>{id}</BuildRow>
+        {BUILD_CONTRACTS.map(({ label, id }) => (
+          <BuildRow key={label} label={label}>{id}</BuildRow>
         ))}
       </dl>
       <div className="border-t border-gray-200 px-4 py-3 dark:border-gray-800">
