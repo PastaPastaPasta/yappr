@@ -233,6 +233,18 @@ describe('IPFS spellings', () => {
     expect(imageSourceFor('https://cdn.example/\u{1F600}.png').kind).toBe('proxied')
   })
 
+  it('bounds the work of a deeply escaped or overlong URL and fails closed', () => {
+    const deep = `https://cdn.example/%${'25'.repeat(20000)}41.png`
+    const nested = `https://cdn.example/%${'25'.repeat(500)}41.png`
+    for (const url of [deep, nested]) {
+      expect(() => imageSourceFor(url)).not.toThrow()
+      expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
+      expect(scriptCid(url)).toBeNull()
+    }
+    // One or two layers, as real URLs have, are fine.
+    expect(imageSourceFor('https://cdn.example/a%2520b.png').kind).toBe('proxied')
+  })
+
   it('drops a gateway query string from the IPFS path', () => {
     const cid = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
     expect(imageSourceFor(`https://ipfs.io/ipfs/${cid}?filename=a.png`)).toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${cid}` })

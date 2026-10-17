@@ -119,11 +119,20 @@ type IpfsReference = { cid: string; path: string } | 'refused'
  * the denylist); null when the URL isn't an IPFS reference
  * (`https://docs.ipfs.tech/` is a website).
  */
-function ipfsReferenceOf(url: string): IpfsReference | null {
+/**
+ * Bounds on the work one untrusted URL may cost: its length (contract media
+ * fields hold 512 characters; blog content is the only longer source), and
+ * how many layers of escaping are peeled to find where it really goes. A real
+ * URL needs one or two; past the bound it fails closed.
+ */
+const MAX_URL_LENGTH = 2048
+const MAX_NORMALIZATION_ROUNDS = 3
+
+function ipfsReferenceOf(url: string, round = 0): IpfsReference | null {
   const trimmed = url.trim()
   // Browsers drop tabs and newlines anywhere in a URL (`i\tpfs` is `ipfs`), and
   // Yappr never writes control characters: refuse them before classifying.
-  if (CONTROL.test(trimmed) || (/^https?:/i.test(trimmed) && !hasPlainAuthority(trimmed)) || IPNS.test(trimmed)) return 'refused'
+  if (trimmed.length > MAX_URL_LENGTH || CONTROL.test(trimmed) || (/^https?:/i.test(trimmed) && !hasPlainAuthority(trimmed)) || IPNS.test(trimmed)) return 'refused'
   // The host's CID is the root: on a subdomain gateway `/ipfs/X/…` is a path inside it.
   const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
   if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) {
@@ -139,7 +148,9 @@ function ipfsReferenceOf(url: string): IpfsReference | null {
   // `/%69pfs/CID`, `/ipfs/%62afy…`): if that is IPFS content, refuse it.
   // Yappr never writes such URLs, so only a way around the denylist would.
   const destination = effectiveDestination(trimmed)
-  return destination !== trimmed && ipfsReferenceOf(destination) !== null ? 'refused' : null
+  if (destination === trimmed) return null
+  if (round >= MAX_NORMALIZATION_ROUNDS) return 'refused'
+  return ipfsReferenceOf(destination, round + 1) !== null ? 'refused' : null
 }
 
 function referenceTo(cid: string, path: string): IpfsReference {

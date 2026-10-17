@@ -78,7 +78,7 @@ describe('images in embeds', () => {
   })
 
   it('drops images that must not load', () => {
-    for (const url of ['http://cdn.example/a.jpg', 'data:image/png;base64,AAAA', 'javascript:alert(1)', 'https://cdn.example/\uD800.png']) {
+    for (const url of ['http://cdn.example/a.jpg', 'data:image/png;base64,AAAA', 'javascript:alert(1)', 'https://cdn.example/\uD800.png', `https://cdn.example/%${'25'.repeat(20000)}41.png`]) {
       expect(image(url)).toBe('')
     }
   })

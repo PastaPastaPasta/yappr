@@ -55,7 +55,8 @@ export function ipfsCidOf(input) {
   const trimmed = input.trim()
   if (CANONICAL_CID.test(trimmed)) return isCanonicalCid(trimmed) ? trimmed : null
   // Same as PLAIN_HTTP_AUTHORITY in lib/media/remote-media.ts: any other http(s) shape, and IPNS names, are refused by the apps outright.
-  if (CONTROL.test(trimmed) || (/^https?:/i.test(trimmed) && !hasPlainAuthority(trimmed)) || IPNS.test(trimmed)) return null
+  // Same length bound as MAX_URL_LENGTH in lib/media/remote-media.ts.
+  if (trimmed.length > 2048 || CONTROL.test(trimmed) || (/^https?:/i.test(trimmed) && !hasPlainAuthority(trimmed)) || IPNS.test(trimmed)) return null
   const cidIn = (match) => (isCanonicalCid(match[1]) && !ESCAPING_PATH.test(match[2]) ? match[1] : null)
   const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
   if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) return cidIn(subdomain)
