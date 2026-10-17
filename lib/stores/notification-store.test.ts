@@ -142,7 +142,27 @@ describe('blocks during this session', () => {
     expect(store().notifications.map(n => n.id)).toEqual(['a', 'b'])
   })
 
-  it('are forgotten when the account changes', () => {
+  it('belong to the account that made them: another account signing in sees that actor again', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: null })
+    store().setViewer('account-a')
+    store().removeFromActor('from-x')
+
+    store().setViewer(null)
+    store().setViewer('account-b')
+    store().setNotifications([notification('x', 'follow', 1)])
+    expect(store().notifications.map(n => n.id)).toEqual(['x'])
+  })
+
+  it('stay while the same account is signed in', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: null })
+    store().setViewer('account-a')
+    store().removeFromActor('from-x')
+    store().setViewer('account-a')
+    store().setNotifications([notification('x', 'follow', 1)])
+    expect(store().notifications).toEqual([])
+  })
+
+  it('are forgotten when the store is cleared', () => {
     store().removeFromActor('from-a')
     store().clearNotifications()
     expect(store().blockedActors).toEqual([])

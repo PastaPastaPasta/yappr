@@ -73,11 +73,13 @@ interface NotificationState {
   // Read state (persisted)
   readIds: string[];
 
+  /** The signed-in account the session state below belongs to. */
+  viewerId: string | null;
   /**
-   * Actors blocked during this session. A fetch that was already running when
-   * the block landed must not bring them back, so every ingest filters them
-   * (per liker, as {@link withoutBlockedActors}). Not persisted: each fetch
-   * filters blocks itself; this only covers the ones in flight.
+   * Actors `viewerId` blocked during this session. A fetch that was already
+   * running when the block landed must not bring them back, so every ingest
+   * filters them (per liker, as {@link withoutBlockedActors}). Not persisted:
+   * each fetch filters blocks itself; this only covers the ones in flight.
    */
   blockedActors: string[];
 
@@ -88,6 +90,8 @@ interface NotificationState {
   removeFromActor: (actorId: string) => void;
   /** The viewer unblocked this actor: their new notifications show again. */
   allowActor: (actorId: string) => void;
+  /** The account signed in now (null when signed out); another account's session blocks are forgotten. */
+  setViewer: (viewerId: string | null) => void;
   setFilter: (filter: NotificationFilter) => void;
   markAsRead: (id: string) => void;
   /**
@@ -115,6 +119,7 @@ export const useNotificationStore = create<NotificationState>()(
       isLoading: false,
       hasFetchedOnce: false,
       readIds: [],
+      viewerId: null,
       blockedActors: [],
       dmUnreadCount: 0,
 
@@ -156,6 +161,10 @@ export const useNotificationStore = create<NotificationState>()(
           notifications: withoutSessionBlocks(state.notifications, [actorId]),
           blockedActors: state.blockedActors.includes(actorId) ? state.blockedActors : [...state.blockedActors, actorId],
         });
+      },
+
+      setViewer: (viewerId) => {
+        if (get().viewerId !== viewerId) set({ viewerId, blockedActors: [] });
       },
 
       allowActor: (actorId) => {

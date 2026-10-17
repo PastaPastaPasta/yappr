@@ -303,7 +303,7 @@ export function sanitizeCustomCSS(css: string | undefined | null): string {
 
     if (!property || !value) continue
     if (!SAFE_CSS_PROPERTIES.has(property)) continue
-    if (FORBIDDEN_CSS_PATTERN.test(value)) continue
+    if (!isSafeCssValue(value)) continue
 
     declarations.push(`${property}: ${value}`)
   }

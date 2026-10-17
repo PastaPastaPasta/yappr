@@ -132,6 +132,8 @@ export function Sidebar() {
 
   // Initial notification fetch and polling
   useEffect(() => {
+    // Blocks made this session belong to the account that made them.
+    useNotificationStore.getState().setViewer(user?.identityId ?? null)
     if (!user?.identityId) {
       // Logout / user switch: drop the previous user's DM count. Nothing polls
       // while logged out, so a survivor would be shown until the next login.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isSafeCssValue } from './theme-types'
+import { isSafeCssValue, sanitizeCustomCSS } from './theme-types'
 
 describe('isSafeCssValue', () => {
   it('accepts colours and gradients', () => {
@@ -20,5 +20,12 @@ describe('isSafeCssValue', () => {
     ]) {
       expect(isSafeCssValue(value)).toBe(false)
     }
+  })
+})
+
+describe('sanitizeCustomCSS', () => {
+  it('drops a declaration whose value spells url() with a CSS escape, and keeps the rest', () => {
+    expect(sanitizeCustomCSS('color: red; background: u\\72l("https://ipfs.io/ipfs/bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va")'))
+      .toBe('color: red')
   })
 })
