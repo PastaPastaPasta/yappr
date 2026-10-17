@@ -1,7 +1,8 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { DevelopmentBanner } from '@/components/ui/development-banner'
+import { NetworkPill } from '@/components/layout/network-pill'
+import { SkipLink } from '@/components/layout/skip-link'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { LoginModal } from '@/components/auth/login-modal'
 import { ComposeModal } from '@/components/compose/compose-modal'
@@ -16,8 +17,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <LinkPreviewModalProvider>
-      <DevelopmentBanner />
-      <div className="h-[32px] sm:h-[40px]" />
+      <SkipLink />
+      <NetworkPill />
       {children}
       <div className="h-16 md:hidden" />
       <MobileBottomNav />

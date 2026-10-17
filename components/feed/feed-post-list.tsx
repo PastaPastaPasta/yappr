@@ -4,7 +4,6 @@ import { Post } from '@/lib/types';
 import ErrorBoundary from '@/components/error-boundary';
 import { LoadingState } from '@/components/ui/loading-state';
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel';
-import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link';
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll';
 import { PostCard } from '@/components/post/post-card';
 import { useSettingsStore } from '@/lib/store';
@@ -91,7 +90,6 @@ export function FeedPostList({
             ? 'Follow some people to see their posts here!'
             : 'Be the first to share something!'
         }
-        emptyAction={<LegacyYapprLink />}
       >
         <div data-testid="feed-post-list">
           {error && hasVisiblePosts && (
@@ -131,9 +129,8 @@ export function FeedPostList({
           )}
 
           {!hasMore && posts && posts.length > 0 && (
-            <div className="p-6 flex flex-col items-center gap-2 border-t border-gray-200 dark:border-gray-800 text-center">
+            <div className="p-6 border-t border-gray-200 dark:border-gray-800 text-center">
               <p className="text-sm text-gray-500">You&apos;ve reached the end.</p>
-              <LegacyYapprLink />
             </div>
           )}
         </div>

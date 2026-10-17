@@ -20,6 +20,7 @@ import { identityService } from '@/lib/services/identity-service'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
 import { targetKindOf, yappIsLocked } from '@/lib/contract-topology'
+import { creditTipsEnabled } from '@/lib/feature-flags'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import type { ParsedPaymentUri } from '@/lib/types'
@@ -58,10 +59,13 @@ type KeySource = 'prefilled' | 'manual' | null
  * The tab the modal opens on: YAPP, the provable path, wherever YAPP can move.
  * Where it is locked (v10 onwards, and always where it is not transferable,
  * v15: `yappIsLocked()` reads `yappIsTransferable()`) there is no YAPP tab at
- * all; tips are credit tips.
+ * all; tips are credit tips, unless the build leaves those out too
+ * (`creditTipsEnabled()`), and then only the recipient's own payment
+ * addresses remain.
  */
 function defaultTab(): PaymentTab {
-  return yappIsLocked() ? 'credits' : 'yapp'
+  if (!yappIsLocked()) return 'yapp'
+  return creditTipsEnabled() ? 'credits' : 'crypto'
 }
 
 /** The tip flow's primary-action styling, on every step that has one. */
@@ -146,7 +150,8 @@ export function TipModal() {
   const [showKeyEntry, setShowKeyEntry] = useState(false)
 
   // Payment URI support
-  const [paymentUris, setPaymentUris] = useState<ParsedPaymentUri[]>([])
+  // `null` while the recipient's addresses are still loading.
+  const [paymentUris, setPaymentUris] = useState<ParsedPaymentUri[] | null>(null)
   const [activeTab, setActiveTab] = useState<PaymentTab>(defaultTab)
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
@@ -210,7 +215,7 @@ export function TipModal() {
       setState('input')
       setError(null)
       setActiveTab(defaultTab())
-      setPaymentUris([])
+      setPaymentUris(null)
       setSelectedQrPayment(null)
       setShowQrDialog(false)
       setKeySource(null)
@@ -572,6 +577,9 @@ export function TipModal() {
 
   const isYapp = activeTab === 'yapp'
   const yappTips = !yappIsLocked()
+  const creditTips = creditTipsEnabled()
+  const hasPaymentUris = paymentUris !== null && paymentUris.length > 0
+  const tabCount = Number(yappTips) + Number(creditTips) + Number(hasPaymentUris)
   const dashAmount = parseFloat(amount) || 0
   const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
   const amountLabel = isYapp ? `${yappAmountBig.toString()} YAPP` : `${dashAmount} DASH`
@@ -627,6 +635,7 @@ export function TipModal() {
                       Send a tip to <span className="font-semibold text-gray-900 dark:text-white">{recipientName}</span>
                     </p>
 
+                    {tabCount > 1 && (
                     <div className="flex rounded-lg bg-gray-100 dark:bg-neutral-800 p-1">
                       {yappTips && (
                         <button type="button" onClick={() => { setActiveTab('yapp'); setError(null) }} className={tabClass('yapp')}>
@@ -634,11 +643,13 @@ export function TipModal() {
                           YAPP
                         </button>
                       )}
-                      <button type="button" onClick={() => { setActiveTab('credits'); setError(null) }} className={tabClass('credits')}>
-                        <CurrencyDollarIcon className="w-4 h-4" />
-                        DASH
-                      </button>
-                      {paymentUris.length > 0 && (
+                      {creditTips && (
+                        <button type="button" onClick={() => { setActiveTab('credits'); setError(null) }} className={tabClass('credits')}>
+                          <CurrencyDollarIcon className="w-4 h-4" />
+                          DASH
+                        </button>
+                      )}
+                      {hasPaymentUris && (
                         <button type="button" onClick={() => { setActiveTab('crypto'); setError(null) }} className={tabClass('crypto')}>
                           <WalletIcon className="w-4 h-4" />
                           Other
@@ -648,6 +659,7 @@ export function TipModal() {
                         </button>
                       )}
                     </div>
+                    )}
 
                     {/* YAPP Tab Content — the provable path */}
                     {activeTab === 'yapp' && (
@@ -810,7 +822,22 @@ export function TipModal() {
                     )}
 
                     {/* Other Crypto Tab Content */}
-                    {activeTab === 'crypto' && (
+                    {activeTab === 'crypto' && paymentUris === null && (
+                      <div className="flex justify-center py-6">
+                        <Spinner size="sm" className="border-amber-500" />
+                      </div>
+                    )}
+
+                    {activeTab === 'crypto' && paymentUris?.length === 0 && (
+                      <div className="py-6 text-center" data-testid="tip-no-addresses">
+                        <WalletIcon className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          {recipientName} hasn&apos;t added a way to receive tips yet.
+                        </p>
+                      </div>
+                    )}
+
+                    {activeTab === 'crypto' && hasPaymentUris && (
                       <div className="space-y-3">
                         <p className="text-sm text-gray-500">
                           Send a tip directly to {recipientName}&apos;s wallet. Click an address to see the QR code.
@@ -844,7 +871,7 @@ export function TipModal() {
                           })}
                         </div>
 
-                        <p className="text-xs text-gray-400 text-center pt-2">
+                        <p className="text-xs text-gray-500 text-center pt-2">
                           Tips sent via external wallets are not tracked on Yappr
                         </p>
                       </div>

@@ -21,6 +21,7 @@ import { BlogPostView } from '@/components/blog/blog-post-view'
 import { ThemeEditor } from '@/components/blog/theme-editor'
 import { DeletedBlogPost } from '@/components/blog/deleted-blog-post'
 import { Button } from '@/components/ui/button'
+import { BetaPill } from '@/components/ui/beta-pill'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { blogIsV7 } from '@/lib/constants'
 import { logger } from '@/lib/logger'
@@ -461,7 +462,7 @@ function BlogPageContent() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
+    <div className="min-h-screen flex">
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
         <main className={cn(
@@ -469,8 +470,11 @@ function BlogPageContent() {
           isWideMode ? "max-w-[1100px]" : "max-w-[700px] md:border-x"
         )}>
           {!isComposeMode && (
-            <header className="sticky top-[32px] sm:top-[40px] z-40 border-b border-gray-200 bg-white/80 p-4 backdrop-blur-xl dark:border-gray-800 dark:bg-neutral-900/80">
-              <h1 className="text-xl font-bold">Blog</h1>
+            <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/80 p-4 backdrop-blur-xl dark:border-gray-800 dark:bg-neutral-900/80">
+              <h1 className="flex items-center gap-2 text-xl font-bold">
+                Blog
+                <BetaPill product="blog" />
+              </h1>
             </header>
           )}
           {renderCenter()}

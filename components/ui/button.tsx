@@ -7,12 +7,12 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-yappr-500 text-white hover:bg-yappr-600 shadow-yappr',
+        default: 'bg-yappr-600 text-white hover:bg-yappr-700 shadow-yappr',
         destructive: 'bg-red-500 text-white hover:bg-red-600',
         outline: 'border border-gray-300 dark:border-gray-700 bg-transparent hover:bg-gray-100 dark:hover:bg-gray-900',
         secondary: 'bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800',
         ghost: 'hover:bg-gray-100 dark:hover:bg-gray-900',
-        link: 'text-yappr-500 underline-offset-4 hover:underline',
+        link: 'text-yappr-700 dark:text-yappr-400 underline-offset-4 hover:underline',
       },
       size: {
         default: 'h-10 px-4 py-2',

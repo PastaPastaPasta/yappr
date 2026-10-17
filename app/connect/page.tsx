@@ -110,7 +110,7 @@ export default function ConnectPage() {
   }, [router])
 
   return (
-    <div className="min-h-[calc(100vh-104px)] md:min-h-[calc(100vh-40px)] flex items-center justify-center px-4">
+    <div className="min-h-[calc(100vh-64px)] md:min-h-screen flex items-center justify-center px-4">
       <div className="max-w-sm text-center flex flex-col items-center gap-4" role="status" aria-live="polite">
         {view.kind === 'waiting' && (
           <>

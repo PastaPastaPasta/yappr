@@ -21,7 +21,7 @@ import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 import { hashtagsAreInline, likesAreIndexOnly } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
-import { LegacyYapprLink } from '@/components/ui/legacy-yappr-link'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 const PAGE_SIZE = 50
 
@@ -56,6 +56,7 @@ function HashtagPageContent() {
   const displayTag = isCashtag ? cashtagStorageToDisplay(tag) : tag
   const tagSymbol = isCashtag ? '$' : '#'
   const TagIcon = isCashtag ? CurrencyDollarIcon : HashtagIcon
+  useDocumentTitle(tag ? `${tagSymbol}${displayTag}` : null)
 
   useEffect(() => {
     const generation = ++loadGeneration.current
@@ -341,7 +342,6 @@ function HashtagPageContent() {
                 <p className="text-gray-500 mb-4">
                   Be the first to post with {tagSymbol}{displayTag}
                 </p>
-                <LegacyYapprLink />
               </div>
             ) : (
               filterHiddenSensitive(sortMode === 'top' ? topPosts : posts, sensitiveContentMode, user?.identityId).map((post, index) => (
@@ -372,7 +372,7 @@ function HashtagPageContent() {
 export default function HashtagPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <Spinner size="md" />
       </div>
     }>

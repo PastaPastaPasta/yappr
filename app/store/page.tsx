@@ -11,6 +11,7 @@ import {
   ClipboardDocumentListIcon
 } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
+import { BetaPill } from '@/components/ui/beta-pill'
 import { MobileCartFab } from '@/components/store/mobile-cart-fab'
 import { RatingStars } from '@/components/store/rating-stars'
 import { Button } from '@/components/ui/button'
@@ -175,6 +176,7 @@ export default function StoreBrowsePage() {
               <h1 className="text-xl font-bold flex items-center gap-2">
                 <BuildingStorefrontIcon className="h-6 w-6 text-yappr-500" />
                 Stores
+                <BetaPill product="store" />
               </h1>
               {user && (
                 <div className="flex items-center gap-2">
