@@ -61,19 +61,26 @@ const CASHTAG_SUFFIX = '_cashtag';
 /** A link in post text, as lib/post-helpers.ts `URL_PATTERN` (the renderer's): a tag inside one is none. */
 const URL_PATTERN = /(https?:\/\/[^\s<>"']+|ipfs:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g;
 
+/** What may not follow a tag, as lib/post-helpers.ts `TAG_END`: a letter, digit or mark in any script, or `_`. A tag is a whole ASCII word, so `#café` is none (never `#caf`). */
+const TAG_END = String.raw`(?![\p{L}\p{N}\p{M}_])`;
+/** A hashtag and a cashtag in post text, as lib/post-helpers.ts `HASHTAG_PATTERN` / `CASHTAG_PATTERN`: any length; the ceiling applies after. */
+const HASHTAG_PATTERN = new RegExp(String.raw`#([a-zA-Z0-9_]+)` + TAG_END, 'gu');
+const CASHTAG_PATTERN = new RegExp(String.raw`\$([a-zA-Z][a-zA-Z0-9_]*)` + TAG_END, 'gu');
+
 /**
  * The tags `content` is indexed under, in storage form, by the web client's
  * rule (`indexedTags` in lib/post-helpers.ts): the hashtags in content order,
- * then the cashtags, lowercase, distinct, at most `max` of them, each cut to
- * `maxLength` characters (a cashtag's ceiling includes its suffix), none
- * inside a link (a match overlapping a link that starts earlier is dropped,
- * as the renderer drops it). With `max` 1 that is the one-tag cuts' rule: the
- * first hashtag, else the first cashtag. `[]` when the content names no tag.
+ * then the cashtags, lowercase, distinct, at most `max` of them, none whose
+ * storage form is longer than `maxLength` (a cashtag's suffix included; a
+ * longer tag is plain text, never cut), none inside a link (a match
+ * overlapping a link that starts earlier is dropped, as the renderer drops
+ * it). With `max` 1 that is the one-tag cuts' rule: the first hashtag, else
+ * the first cashtag. `[]` when the content names no tag.
  */
 export function indexedTags(content, max, maxLength) {
   const found = [];
-  for (const [kind, regex] of [['url', URL_PATTERN], ['hashtag', new RegExp(`#([a-zA-Z0-9_]{1,${maxLength}})`, 'g')], ['cashtag', /\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g]]) {
-    for (const match of content.matchAll(new RegExp(regex.source, 'g'))) found.push({ kind, start: match.index, end: match.index + match[0].length, tag: match[1] });
+  for (const [kind, regex] of [['url', URL_PATTERN], ['hashtag', HASHTAG_PATTERN], ['cashtag', CASHTAG_PATTERN]]) {
+    for (const match of content.matchAll(new RegExp(regex.source, regex.flags))) found.push({ kind, start: match.index, end: match.index + match[0].length, tag: match[1] });
   }
   found.sort((a, b) => a.start - b.start);
   const rendered = [];
@@ -85,10 +92,10 @@ export function indexedTags(content, max, maxLength) {
   }
   const tags = [];
   const add = (tag) => {
-    if (tag !== '' && tags.length < max && !tags.includes(tag)) tags.push(tag);
+    if (tag.length <= maxLength && tags.length < max && !tags.includes(tag)) tags.push(tag);
   };
   for (const { tag } of rendered.filter(({ kind }) => kind === 'hashtag')) add(tag.toLowerCase());
-  for (const { tag } of rendered.filter(({ kind }) => kind === 'cashtag')) add(tag.slice(0, maxLength - CASHTAG_SUFFIX.length).toLowerCase() + CASHTAG_SUFFIX);
+  for (const { tag } of rendered.filter(({ kind }) => kind === 'cashtag')) add(tag.toLowerCase() + CASHTAG_SUFFIX);
   return tags;
 }
 
@@ -628,6 +635,8 @@ function builderExpectations(shapes, version) {
       JSON.stringify(shapes.contentTags('gm #B $dash #a #b #c')) === (cut.tagArray ? '["b","a","c","dash_cashtag"]' : '["b"]')
         && JSON.stringify(shapes.contentTags('just $DASH and $btc')) === (cut.tagArray ? '["dash_cashtag","btc_cashtag"]' : '["dash_cashtag"]')
         && JSON.stringify(shapes.contentTags('no tags here')) === '[]'],
+    ['the content rule names no tag in a non-ASCII word nor one past the ceiling, never a prefix of either',
+      JSON.stringify(shapes.contentTags(`#café #naïve #日本 $DASHé #${'a'.repeat(62)} #ok`)) === '["ok"]'],
     ['a content naming five tags throws on v16 (the client refuses it), indexes its first tag before',
       cut.tagArray ? throws(() => shapes.contentTags('#a #b #c #d $e')) : JSON.stringify(shapes.contentTags('#a #b #c #d $e')) === '["a"]'],
     ['the checker calls a repeated, empty, fifth or malformed tag wrong on v16',

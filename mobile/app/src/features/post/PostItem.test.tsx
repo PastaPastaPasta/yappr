@@ -283,18 +283,18 @@ describe('PostItem actions', () => {
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://dash.org');
   });
 
-  it('links an over-long tag whole to the page it was indexed under: 61 characters where tags are inline', () => {
-    const tag = `#longtag${'x'.repeat(58)}`; // 65 characters
+  it('leaves a tag longer than the contract stores as plain text: 61 characters where tags are inline, else 63', () => {
+    const tag = `#longtag${'x'.repeat(55)}`; // 62 characters
     fakeEngine.setStatus({ info: { capabilities: { ...CAPABILITIES, hashtagsInline: true } } });
     const { unmount } = renderPost(fixturePost({ id: 'long-tag', content: `see ${tag}` }));
-    fireEvent.press(screen.getByText(tag));
-    expect(router.push).toHaveBeenLastCalledWith({ pathname: '/hashtag/[tag]', params: { tag: tag.slice(1, 62) } });
+    expect(screen.queryByText(tag)).toBeNull();
+    expect(screen.getByText(`see ${tag}`)).toBeTruthy();
     unmount();
 
     fakeEngine.setStatus({ info: { capabilities: { ...CAPABILITIES, hashtagsInline: false } } });
     renderPost(fixturePost({ id: 'long-tag', content: `see ${tag}` }));
     fireEvent.press(screen.getByText(tag));
-    expect(router.push).toHaveBeenLastCalledWith({ pathname: '/hashtag/[tag]', params: { tag: tag.slice(1, 64) } });
+    expect(router.push).toHaveBeenLastCalledWith({ pathname: '/hashtag/[tag]', params: { tag: tag.slice(1) } });
   });
 });
 

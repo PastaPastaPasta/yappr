@@ -1054,6 +1054,16 @@ export function inlinePostTags(...sources: Array<Record<string, unknown>>): stri
 export const HASHTAG_MAX_LENGTH = 61
 
 /**
+ * The longest tag (in storage form, a cashtag's `_cashtag` included) the
+ * configured cut stores: {@link HASHTAG_MAX_LENGTH} where tags are inline,
+ * else v2's `postHashtag` pattern, `^[a-z0-9_]{1,63}$`. A longer tag in post
+ * text is plain text (`tagStorage` in lib/post-helpers).
+ */
+export function tagMaxLength(): number {
+  return hashtagsAreInline() ? HASHTAG_MAX_LENGTH : 63
+}
+
+/**
  * True when the like doctype's at-form `rankedCountable` chains can answer
  * proved PREFIX-level ranked groupBy queries (v9): trending hashtags off
  * `byHashtagPost {at: hashtag}` and the creator leaderboard off

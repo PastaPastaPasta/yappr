@@ -4,11 +4,12 @@
  * (COMP-06) and who a post with several mentions notifies.
  *
  * The patterns are the post parser's (`ui/rich-text/parse.ts`), so the
- * editor highlights what the published post links, except a tag longer
- * than the contract indexes: that one stays plain here, with no rule to
- * read (#11), since no tag page will list the post under it.
+ * editor highlights what the published post links. A tag longer than the
+ * contract indexes stays plain, here as in the post (#11), since no tag page
+ * will list the post under it; so does a word like `#café`.
  */
 
+import { tagStorage } from '~/lib-allowlist';
 import { INLINE_PATTERNS } from '~/ui/rich-text/parse';
 
 export type TokenKind = 'url' | 'hashtag' | 'cashtag' | 'mention';
@@ -49,26 +50,26 @@ export function tagMaxLength(hashtagsInline: boolean): number {
   return hashtagsInline ? 61 : 63;
 }
 
-/** A tag's length without its `#` / `$`. */
-const tagLength = (token: Token) => token.value.length - 1;
+const isTag = (token: Token) => token.kind === 'hashtag' || token.kind === 'cashtag';
 
-export function isTagTooLong(token: Token, maxLength: number): boolean {
-  return (token.kind === 'hashtag' || token.kind === 'cashtag') && tagLength(token) > maxLength;
+/** A hashtag or cashtag longer than `maxLength` (lib `tagStorage`): plain text, never indexed. */
+function isTagTooLong(token: Token, maxLength: number): boolean {
+  return isTag(token) && tagStorage(token.value, maxLength) === null;
 }
 
 /**
  * Why `text` cannot be a post for its tags, or null: it names more distinct
  * tags than `perPost` (social v16: 4; null where no such limit applies).
- * Counted as the engine writes them (lib `indexedTags`): a hashtag lowercased
- * and cut to `tagMax`, a cashtag as `<symbol>_cashtag` within `tagMax`, and
- * no tag inside a link. The message is web's (`tagLimitProblem`).
+ * Counted as the engine writes them (lib `indexedTags`): each in storage
+ * form (`dash`, `dash_cashtag`), none longer than `tagMax` (that one stays
+ * plain text) and none inside a link. The message is web's (`tagLimitProblem`).
  */
 export function tagLimitProblem(text: string, tagMax: number, perPost: number | null): string | null {
   if (perPost === null) return null;
   const tags = new Set<string>();
   for (const token of tokenize(text)) {
-    if (token.kind === 'hashtag') tags.add(token.value.slice(1, 1 + tagMax).toLowerCase());
-    else if (token.kind === 'cashtag') tags.add(`${token.value.slice(1, 1 + tagMax - '_cashtag'.length).toLowerCase()}_cashtag`);
+    const tag = isTag(token) ? tagStorage(token.value, tagMax) : null;
+    if (tag !== null) tags.add(tag);
   }
   if (tags.size <= perPost) return null;
   const over = tags.size - perPost;
