@@ -1399,6 +1399,13 @@ export function postsHaveLanguage(): boolean {
   return !isV10()
 }
 
+/** Text limits of the configured social cut, including typed array elements (`field[]`). */
+export function socialTextFieldLimits(docType: string, field: string): { maxLength?: number; maxBytes?: number } {
+  const property = devnetSchemas()[docType]?.properties?.[field.replace(/\[\]$/, '')]
+  const text = field.endsWith('[]') ? property?.items : property
+  return { maxLength: text?.maxLength, maxBytes: text?.maxBytes }
+}
+
 /**
  * The limits `post.content` and `reply.content` declare: `maxLength` counts
  * code points, `maxBytes` (v10 only) UTF-8 bytes; a write over either is
@@ -1712,7 +1719,7 @@ interface SocialDocumentSchema {
   properties?: Record<string, {
     refersTo?: { type?: string }
     distinctFrom?: string
-    items?: { distinctFrom?: string }
+    items?: { distinctFrom?: string; maxLength?: number; maxBytes?: number }
     maxLength?: number
     maxBytes?: number
     maxItems?: number

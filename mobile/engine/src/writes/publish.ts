@@ -7,6 +7,7 @@ import type { MediaItemInput } from '@/lib/media/media-fields'
 import type { Post } from '@/lib/types'
 import { isUnconfirmed } from '@/lib/unconfirmed-writes'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
+import { textBytes } from '@/lib/text-limits'
 import { RpcError } from '../protocol/envelope'
 import { assertId, assertMediaUrl, assertTarget, badRequest, characters, settleTarget, signer, socialDoc } from './handler-kit'
 import { ABSENCE_AFTER_MS, NotSentError, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
@@ -32,7 +33,7 @@ export interface DraftDTO {
   quote?: TargetRef | null
   /** The NSFW flag for the author's own thread (never applied to a reply to someone else's post, as on web). */
   sensitive?: boolean
-  /** An image already hosted (http(s):// or ipfs://), on the first part. 1.0 has no upload. */
+  /** An image already hosted (https:// or ipfs://), on the first part. 1.0 has no upload. */
   mediaUrl?: string | null
   /**
    * Resume a thread after a partial failure: the ids of the parts already
@@ -55,7 +56,7 @@ export function validateDraft(draft: DraftDTO): void {
   if (draft.mediaUrl != null) {
     assertMediaUrl(draft.mediaUrl, 'mediaUrl')
     // Over the contract's limit it would be refused after the ticket, every time: refuse it here.
-    if (characters(mediaUrlForContract(draft.mediaUrl)) > MAX_MEDIA_URL) throw badRequest(`mediaUrl is over ${MAX_MEDIA_URL} characters`)
+    if (characters(mediaUrlForContract(draft.mediaUrl)) > MAX_MEDIA_URL || textBytes(mediaUrlForContract(draft.mediaUrl)) > MAX_MEDIA_URL) throw badRequest(`mediaUrl is over ${MAX_MEDIA_URL} characters`)
   }
   const posted: unknown = draft.resume ? draft.resume.postedIds : []
   if (!Array.isArray(posted) || posted.length > parts.length) throw badRequest('resume.postedIds must name at most one id per part')

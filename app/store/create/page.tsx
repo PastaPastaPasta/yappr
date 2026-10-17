@@ -1,5 +1,7 @@
 'use client'
 
+import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
+
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useId } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -241,27 +243,25 @@ function CreateStorePage() {
 
               <div>
                 <label htmlFor={`${formId}-name`} className="block text-sm font-medium mb-1">Store Name *</label>
-                <input
+                <LimitedInput contract="storefront" document="store" field="name"
                   type="text"
                   id={`${formId}-name`}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Your Store Name"
                   required
-                  maxLength={100}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
               </div>
 
               <div>
                 <label htmlFor={`${formId}-description`} className="block text-sm font-medium mb-1">Description</label>
-                <textarea
+                <LimitedTextarea contract="storefront" document="store" field="description"
                   id={`${formId}-description`}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Describe your store and what you sell"
                   rows={3}
-                  maxLength={500}
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
                 />
               </div>
@@ -269,14 +269,13 @@ function CreateStorePage() {
               {needsCategory && (
                 <div>
                   <label htmlFor={`${formId}-category`} className="block text-sm font-medium mb-1">Category *</label>
-                  <input
+                  <LimitedInput limits={{ maxLength: STORE_CATEGORY_MAX_LENGTH * 2 }}
                     type="text"
                     id={`${formId}-category`}
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
                     placeholder="e.g. vintage clothing"
                     required
-                    maxLength={STORE_CATEGORY_MAX_LENGTH * 2}
                     list={`${formId}-categories`}
                     aria-describedby={`${formId}-category-hint`}
                     className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -305,7 +304,7 @@ function CreateStorePage() {
                   <summary className="cursor-pointer text-gray-500 hover:text-gray-700 dark:hover:text-gray-400">
                     Or paste a URL
                   </summary>
-                  <input
+                  <LimitedInput contract="storefront" document="store" field="logoUrl"
                     type="url"
                     value={logoUrl}
                     onChange={(e) => setLogoUrl(e.target.value)}
@@ -326,7 +325,7 @@ function CreateStorePage() {
                   <summary className="cursor-pointer text-gray-500 hover:text-gray-700 dark:hover:text-gray-400">
                     Or paste a URL
                   </summary>
-                  <input
+                  <LimitedInput contract="storefront" document="store" field="bannerUrl"
                     type="url"
                     value={bannerUrl}
                     onChange={(e) => setBannerUrl(e.target.value)}
@@ -339,13 +338,12 @@ function CreateStorePage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label htmlFor={`${formId}-location`} className="block text-sm font-medium mb-1">Location</label>
-                  <input
+                  <LimitedInput contract="storefront" document="store" field="location"
                     type="text"
                     id={`${formId}-location`}
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     placeholder="City, Country"
-                    maxLength={100}
                     className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                   />
                 </div>

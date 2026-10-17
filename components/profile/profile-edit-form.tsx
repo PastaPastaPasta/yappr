@@ -1,5 +1,7 @@
 'use client'
 
+import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
+
 import { useId } from 'react'
 import type { SocialLink } from '@/lib/types'
 import { PaymentUriInput } from '@/components/profile/payment-uri-input'
@@ -55,35 +57,32 @@ export function ProfileEditForm({ draft, onChange, disabled }: ProfileEditFormPr
   return (
     <div className="space-y-4">
       <Field label="Name" htmlFor={`${fieldId}-name`}>
-        <input id={`${fieldId}-name`} type="text" value={draft.displayName} onChange={(e) => set('displayName', e.target.value)} className={INPUT} maxLength={limits.displayName} />
+        <LimitedInput limits={{ maxLength: limits.displayName }} id={`${fieldId}-name`} type="text" value={draft.displayName} onChange={(e) => set('displayName', e.target.value)} className={INPUT} />
       </Field>
       <Field label="Pronouns" htmlFor={`${fieldId}-pronouns`}>
-        <input
+        <LimitedInput contract="social" document="yapprProfile" field="pronouns"
           id={`${fieldId}-pronouns`}
           type="text"
           value={draft.pronouns}
           onChange={(e) => set('pronouns', e.target.value)}
           placeholder="e.g. she/her"
           className={INPUT}
-          maxLength={20}
         />
       </Field>
       <Field label="Bio" htmlFor={`${fieldId}-bio`}>
-        <textarea id={`${fieldId}-bio`} value={draft.bio} onChange={(e) => set('bio', e.target.value)} className={`${INPUT} resize-none`} rows={3} maxLength={limits.bio} />
-        <p className="text-xs text-gray-500 mt-1">{draft.bio.length}/{limits.bio}</p>
+        <LimitedTextarea limits={{ maxLength: limits.bio }} id={`${fieldId}-bio`} value={draft.bio} onChange={(e) => set('bio', e.target.value)} className={`${INPUT} resize-none`} rows={3} />
       </Field>
       <Field label="Location" htmlFor={`${fieldId}-location`}>
-        <input id={`${fieldId}-location`} type="text" value={draft.location} onChange={(e) => set('location', e.target.value)} className={INPUT} maxLength={50} />
+        <LimitedInput contract="social" document="yapprProfile" field="location" id={`${fieldId}-location`} type="text" value={draft.location} onChange={(e) => set('location', e.target.value)} className={INPUT} />
       </Field>
       <Field label="Website" htmlFor={`${fieldId}-website`}>
-        <input
+        <LimitedInput contract="social" document="yapprProfile" field="website"
           id={`${fieldId}-website`}
           type="text"
           value={draft.website}
           onChange={(e) => set('website', e.target.value)}
           placeholder="https://example.com"
           className={INPUT}
-          maxLength={200}
         />
       </Field>
 

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
 import { blogCommentService, blogPostService, blogService } from '@/lib/services'
+import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { blogPostDate, commentsAreEnabled, estimateReadingTime, formatLabels, getBlogPostUrl, getPostExcerpt, publishedPostsNewestFirst } from '@/lib/blog/content-utils'
@@ -118,6 +119,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
               {followerCount} {followerCount === 1 ? 'follower' : 'followers'}
             </span>
           )}
+          <ContractReportButton contract="blog" docType="blog" targetId={blog.id} ownerId={blog.ownerId} />
           <ModeratorContentMenu
             target={documentRemovalTarget('blog', 'blog', 'blog', blog, blog.name)}
             ownerId={blog.ownerId}

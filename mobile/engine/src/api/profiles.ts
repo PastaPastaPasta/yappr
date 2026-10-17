@@ -1,3 +1,5 @@
+import { profileExtensionByteCaps, profileExtensionPattern } from '@/lib/contract-topology'
+import { textBytes } from '@/lib/text-limits'
 import { cacheManager } from '@/lib/cache-manager'
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { likesAreIndexOnly, repostsAreQuotes } from '@/lib/contract-topology'
@@ -294,6 +296,13 @@ function toProfileUpdate(patch: ProfilePatchDTO): UpdateUnifiedProfileData {
   if (patch.avatar !== undefined) {
     if (typeof patch.avatar !== 'object') throw badRequest('avatar must be {uri}, {dicebear} or null')
     update.avatar = avatarField(patch.avatar)
+  }
+  if (update.website?.trim() && !(profileExtensionPattern('website') ?? /^https:\/\/.+$/).test(update.website.trim())) {
+    throw badRequest('Website must start with https://')
+  }
+  for (const [field, cap] of Object.entries(profileExtensionByteCaps())) {
+    const value = (update as Record<string, unknown>)[field]
+    if (typeof value === 'string' && textBytes(value.trim()) > cap) throw badRequest('Shorten the profile field before saving')
   }
   return update
 }

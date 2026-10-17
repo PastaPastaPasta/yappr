@@ -15,6 +15,7 @@ import { CheckIcon } from '@heroicons/react/24/solid'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { ImageGallery, QuantityControl, MobileCartFab, RatingStars, ItemReviewList, BlockedOwnerBanner } from '@/components/store'
@@ -303,6 +304,7 @@ function ItemDetailContent() {
 
             <div className="flex items-start gap-1">
               <h1 className="text-2xl font-bold">{item.title}</h1>
+              <ContractReportButton contract="storefront" docType="storeItem" targetId={item.id} ownerId={item.ownerId} />
               <ModeratorContentMenu
                 className="ml-auto"
                 target={documentRemovalTarget('storefront', 'storeItem', 'listing', item, item.title)}
