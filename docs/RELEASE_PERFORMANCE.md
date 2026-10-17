@@ -13,11 +13,11 @@ settings.
 
 Baseline → updated, bytes raw / gzip:
 
-- `/`: 17,509,434 / 10,505,427 → 5,509,469 / 1,506,759.
-- `/feed`: 17,540,212 / 10,516,016 → 5,539,667 / 1,517,263.
-- `/post?id=…`: 17,525,231 / 10,510,944 → 5,524,752 / 1,512,166.
-- `/user?id=…`: 17,598,460 / 10,529,912 → 5,597,972 / 1,531,151.
-- `/terms`: 17,285,349 / 10,436,226 → 5,294,216 / 1,440,578.
+- `/`: 17,509,434 / 10,505,427 → 5,509,569 / 1,506,811.
+- `/feed`: 17,540,212 / 10,516,016 → 5,539,801 / 1,517,333.
+- `/post?id=…`: 17,525,231 / 10,510,944 → 5,524,852 / 1,512,218.
+- `/user?id=…`: 17,598,460 / 10,529,912 → 5,598,072 / 1,531,203.
+- `/terms`: 17,285,349 / 10,436,226 → 5,294,316 / 1,440,630.
 
 The feed's eager transfer is 85.6% smaller with gzip (68.4% smaller raw).
 The WASM payload and BlockNote/Mantine are absent from those eager scripts.
@@ -54,8 +54,8 @@ WASM and other existing eager UI dependencies remain separate follow-up work.
 
 ## Signed-in idle DAPI requests
 
-Two fresh browser contexts, one on `/feed` and one on `/messages`, with the same
-existing Sakura CI identity and its messaging key restored. No conversation was
+Two fresh browser contexts, one on `/feed` and one on `/messages` with DM v5,
+used the same existing Sakura CI identity and its restored messaging key. No conversation was
 open. A 60-second warmup is excluded, followed by five minutes with each page
 visible. Counts are requests entering browser networking, including SDK retries;
 they are not estimates from timer frequency. The identity was verified signed in.
@@ -79,11 +79,20 @@ existing feed cursor/DM unread behavior.
 
 The steady visible-tab improvement is modest because notification reads dominate
 this identity's workload. Feed checks move from 15 seconds to 30 seconds; DM
-cadences remain 30 seconds in the background and four seconds with a conversation
+v5 cadences remain 30 seconds in the background and four seconds with a conversation
 open. All use jitter. Feed/notification requests do not overlap. Hidden pages
 stop scheduling these polls and resume with a catch-up read; failed polls back
 off exponentially up to five minutes. Partial notification failures also trigger
 backoff without advancing the failed source's watermark.
+Following-feed continuation failures retain partial posts and their retry
+watermark while triggering backoff; an intentional batch cap alone does not.
+
+The legacy v3/v4 active-conversation poller is outside this DM-v5 engine policy.
+The current default config still selects that older path. The release audit
+assigns the v5 production config cut-over to R-B1 / WP15 and deletion of legacy
+DMs to R-C2 / WP17. [Issue #784](https://github.com/PastaPastaPasta/yappr/issues/784)
+tracks ensuring that poller is unreachable/removed before testnet go-live; these
+measurements do not establish a legacy active-conversation request budget.
 
 `scripts/measure-idle-dapi.mjs` reproduces this probe on a local `/devnet` export.
 Set `E2E_DEVNET_SEED_PHRASE` securely for the pool in `.env.devnet`; the script
@@ -111,7 +120,7 @@ No denylist of testnet node operators or upstream SDK/node changes is included.
 
 ## Validation
 
-Web lint and dead-code checks pass, with 224 unit-test files / 3,259 tests.
+Web lint and dead-code checks pass, with 224 unit-test files / 3,260 tests.
 The production export builds successfully. The Sakura export passes the
 per-file and eager-route size budgets; read-only smoke E2E reports 33 passed
 and two skipped. Mobile engine typecheck and lint pass, as do all 522 unit

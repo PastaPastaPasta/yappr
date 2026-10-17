@@ -438,13 +438,14 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
     let newPosts: Array<Record<string, unknown>> = [];
     let complete = true;
+    let failure: Error | undefined;
 
     if (activeTab === 'following' && user?.identityId) {
       // Held a minute: the whole following list is not re-read on every poll.
       const followingIds = await followService.getFollowingIdsCached(user.identityId);
 
       if (followingIds.length > 0) {
-        ({ posts: newPosts, complete } = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50));
+        ({ posts: newPosts, complete, failure } = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50));
       }
     } else {
       newPosts = await queryPostsSince(sinceTimestamp, 50, feedLanguage || 'en');
@@ -453,9 +454,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     if (generation !== loadGenerationRef.current) return;
     // A partial scan may have missed posts older than its newest: the mark stays at its start.
     newPostsMarkRef.current = markAfterCheck(generation, scannedThrough, { posts: newPosts, complete });
-    if (newPosts.length === 0) return;
-
-    logger.debug(`Feed: Found ${newPosts.length} new posts`);
+    if (newPosts.length > 0) logger.debug(`Feed: Found ${newPosts.length} new posts`);
 
     // v11: a post deleted since it was written is still listed, blank.
     const transformedPosts = withoutHiddenTombstones(newPosts.map((doc) => transformRawPost(doc)));
@@ -472,6 +471,8 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
       logger.debug(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
       setPendingNewPosts((prev) => generation === loadGenerationRef.current ? mergeFeedItems(uniqueNewPosts, prev) : prev);
     }
+    // Preserve useful partial data and its retry watermark, then slow failed reads.
+    if (failure !== undefined) throw failure;
   }, [activeTab, feedLanguage, isLoading, newestPostTimestamp, pendingNewPosts, posts, user?.identityId]);
 
   const showNewPosts = useCallback(() => {
