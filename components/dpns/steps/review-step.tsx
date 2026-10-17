@@ -107,7 +107,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
                       </span>
                       {entry.status === 'contested' && (
                         <span
-                          title="Short names are popular, so the Dash community votes on who gets them. Entering the vote has a fee, shown before you confirm. The name appears on Yappr once the vote is decided."
+                          title="Short names are popular, so the Dash community votes on who gets them. Entering the vote costs a fee, which is charged when you register. The name appears on Yappr once the vote is decided."
                           className="cursor-help"
                         >
                           <Info className="w-4 h-4 text-orange-400" />
@@ -132,7 +132,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
               </h3>
               <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
                 Short names are popular, so the Dash community votes on who gets them. Entering
-                the vote has a fee, which you&apos;ll see before you confirm.
+                the vote costs a fee, which is charged from your balance when you register.
               </p>
               <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
                 <strong>Until the vote is decided, people will see your account without a username.</strong>{' '}
