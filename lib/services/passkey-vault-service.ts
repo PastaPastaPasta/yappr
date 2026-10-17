@@ -99,8 +99,11 @@ class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
     return entry && entry.$ownerId === ownerId && bytesEqual(entry.credentialId, credentialId) ? entry : null
   }
 
-  async add(ownerId: string, entry: SealedVaultEntry): Promise<void> {
-    assertWritten(await stateTransitionService.createDocument(this.contractId, this.documentType, ownerId, contentOf(entry)), 'the passkey could not be saved')
+/** Writes a new entry. False when it was sent but Platform has not confirmed it yet (it may still land). */
+  async add(ownerId: string, entry: SealedVaultEntry): Promise<boolean> {
+    const result = await stateTransitionService.createDocument(this.contractId, this.documentType, ownerId, contentOf(entry))
+    assertWritten(result, 'the passkey could not be saved')
+    return result.confirmed !== false
   }
 
   /** Re-seals an entry in place; its credential and recipient key cannot change (the contract makes them immutable). */

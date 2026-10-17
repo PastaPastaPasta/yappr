@@ -99,6 +99,8 @@ export type PasskeyErrorCode =
   | 'renew-first'
   /** Wallet sign-in is paused on this build (the group check failed). */
   | 'untrusted'
+  /** The entry was sent but is not confirmed yet: it may still land, so another passkey is not needed. */
+  | 'pending'
   /** A read failed or something unexpected happened: try again. */
   | 'failed'
 
@@ -424,12 +426,33 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<v
     } finally {
       wipeBundle(bundle)
     }
-    await passkeyVaultService.add(pending.identityId, sealed)
+    const confirmed = await passkeyVaultService.add(pending.identityId, sealed)
+    // Remembered either way: if a write that is still settling lands, this is the device that made it.
     rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipient.publicKey))
+    if (!confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipient.publicKey)) {
+      throw new PasskeyVaultError('pending')
+    }
   } finally {
     prf?.fill(0)
     pending.createPrf?.fill(0)
   }
+}
+
+const LANDED_READS = 6
+const LANDED_READ_MS = 3000
+
+/** Whether the entry for this exact passkey and recipient key is on chain, read a few times while a write settles. */
+async function entryLanded(identityId: string, credentialId: Uint8Array, recipientKey: Uint8Array): Promise<boolean> {
+  for (let attempt = 0; attempt < LANDED_READS; attempt += 1) {
+    try {
+      const entry = await passkeyVaultService.find(identityId, credentialId)
+      if (entry) return bytesEqual(entry.recipientKey, recipientKey)
+    } catch (error) {
+      logger.debug('Passkey vault: checking a saved passkey failed:', error)
+    }
+    await new Promise((resolve) => setTimeout(resolve, LANDED_READ_MS))
+  }
+  return false
 }
 
 /** What opening a passkey restores. */
@@ -566,18 +589,16 @@ function viewOf(entry: VaultEntryDocument, keys: AppConnectIdentityKey[], budget
 
 /**
  * What budgeted entry keys have left, so a spent wallet key reads "Needs update".
- * A failed read reports nothing: an unknown budget is not a spent one.
+ * Rejects when a budget cannot be read: unknown must not read as spent or healthy.
  */
 async function entryKeyBudgets(identityId: string, entries: VaultEntryDocument[], keys: AppConnectIdentityKey[]): Promise<ReadonlyMap<number, bigint | undefined>> {
   const budgeted = [...new Set(entries.map((entry) => entry.authKeyId))]
     .filter((keyId) => keys.some((key) => key.id === keyId && key.totalBudget !== undefined && key.disabledAt === undefined))
   if (budgeted.length === 0) return new Map()
-  try {
-    return await appConnectPlatformPort.remainingBudgets(identityId, budgeted)
-  } catch (error) {
-    logger.warn('Passkey vault: could not read wallet key budgets:', error)
-    return new Map()
-  }
+  const budgets = await appConnectPlatformPort.remainingBudgets(identityId, budgeted)
+  // Unknown is neither spent nor healthy: a budget the node did not report fails the listing, so callers retry.
+  if (budgeted.some((keyId) => budgets.get(keyId) === undefined)) throw new PasskeyVaultError('failed', 'a wallet key budget could not be read')
+  return budgets
 }
 
 /** `identityId`'s passkeys, oldest first, each checked against the identity's keys now. Rejects when a read fails. */
@@ -661,10 +682,14 @@ async function removeEntries(identityId: string, entryIds: readonly string[]): P
   // Only a confirmed delete that is gone counts as removed: a read can miss an entry a failed delete left (a node behind).
   const stillThere = new Set(remaining.map((entry) => entry.$id))
   const gone = entries.filter((entry) => confirmed.has(entry.$id) && !stillThere.has(entry.$id))
+  // Only passkeys this browser made or opened are known to be this identity's: a planted entry can carry
+  // another account's public credential id, and the provider signal names no user.
+  const here = passkeysHere(identityId)
+  const ours = gone.filter((entry) => here.includes(markerOf(entry.credentialId, entry.recipientKey)))
   for (const entry of gone) forgetPasskeyHere(identityId, bytesToBase64Url(entry.credentialId))
   // Counted over what was asked for: a requested entry this read missed (a node behind) is not known gone either.
   const failed = new Set(entryIds).size - gone.length
-  await signalRemoved(gone.map((entry) => entry.credentialId))
+  await signalRemoved(ours.map((entry) => entry.credentialId))
   return { gone: gone.map((entry) => entry.$id), failed }
 }
 

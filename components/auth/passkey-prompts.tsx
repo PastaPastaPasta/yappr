@@ -6,6 +6,7 @@ import { CheckCircleIcon, KeyIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
 import { usePasskeyPrompts } from '@/hooks/use-passkey-prompts'
+import { useUsernameModal } from '@/hooks/use-username-modal'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { markPasskeyOfferMade, passkeyOfferMade, passkeysHere } from '@/lib/auth/passkey-device'
 import {
@@ -24,6 +25,18 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { enrolErrorCopy, lockOutCopy, passkeyDetails, passkeyLabel } from './passkey-copy'
+
+/** Resolves once the username prompt (opened by a sign-in without a Dash username) is closed. */
+function usernamePromptClosed(): Promise<void> {
+  if (!useUsernameModal.getState().isOpen) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsubscribe = useUsernameModal.subscribe((state) => {
+      if (state.isOpen) return
+      unsubscribe()
+      resolve()
+    })
+  })
+}
 
 /** The after-sign-in check retries a failed read this often, waiting a little longer each time. */
 const CHECK_ATTEMPTS = 4
@@ -67,6 +80,8 @@ export function PasskeyPrompts() {
     const check = async () => {
       const result = await read()
       if (!result) return
+      // A sign-in that asks for a username shows that first: the passkey dialog waits until it closes.
+      await usernamePromptClosed()
       const { entries, eligibility } = result
       // Another sign-in (or a sign-out) since this one: its own check decides.
       if (eligibility !== null || !stillThisSignIn()) return

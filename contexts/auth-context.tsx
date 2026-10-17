@@ -22,7 +22,8 @@ import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompt
 
 /** A sign-in finished (not a restore): the passkey prompts decide whether to offer one or ask to update them. */
 function noteSignIn(intent: PlatformAuthIntent, method: SignInMethod): void {
-  if (intent.kind === 'ready' || intent.kind === 'profile-required') usePasskeyPrompts.getState().noteSignIn(intent.identityId, method)
+  // A username prompt still means a signed-in session: the passkey dialogs wait for it to close.
+  if (intent.kind !== 'logged-out') usePasskeyPrompts.getState().noteSignIn(intent.identityId, method)
 }
 
 export interface AuthUser {

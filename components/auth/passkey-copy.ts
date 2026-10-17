@@ -15,6 +15,7 @@ const ENROL_COPY: Record<PasskeyErrorCode, string | null> = {
   'not-eligible': NOT_ELIGIBLE,
   'renew-first': 'Renew Yappr in your Dash wallet first, then add your passkey.',
   untrusted: 'Passkeys are paused right now. Please try again later.',
+  pending: 'Your passkey is still being saved. Check Settings in a minute; there\'s no need to add another.',
   failed: 'Your passkey couldn\'t be saved. Please try again.',
 }
 
@@ -33,6 +34,7 @@ const SIGN_IN_COPY: Record<PasskeyErrorCode, string | null> = {
   'not-eligible': 'This passkey can\'t sign you in any more. Sign in another way, then add a new one.',
   'renew-first': TRY_AGAIN,
   untrusted: 'Passkey sign-in is paused right now. Please try again later.',
+  pending: TRY_AGAIN,
   failed: 'That didn\'t work. Please try again.',
 }
 
