@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { logger } from '@/lib/logger'
 import { moderatedContract } from '@/lib/moderated-contracts'
-import { forgetStorefrontReads } from '@/lib/storefront/moderation-refresh'
+import { forgetModeratedReads } from '@/lib/moderation-refresh'
 import { countedSigners, moderationServiceFor, type RemovalRoute, type TeamAction } from '@/lib/services/moderation-service'
 import { CharterReasonPicker, useSeatedReasons } from './charter-reason-picker'
 
@@ -114,9 +114,9 @@ export function ModeratorRemoveModal() {
     setRouteFailed(false)
   }, [isOpen, loadRoute])
 
-  /** The document is gone: storefront reads that counted or showed it are dropped before the view updates. */
+  /** The document is gone: cached reads that counted or showed it are dropped before the view updates. */
   const afterRemoval = () => {
-    if (contract === 'storefront') forgetStorefrontReads()
+    forgetModeratedReads(contract)
     onRemoved?.()
   }
 

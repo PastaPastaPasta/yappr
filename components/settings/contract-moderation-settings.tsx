@@ -15,7 +15,7 @@ import { barredAuthorsCanTombstone, contractTakesReports, deletesAreTombstones }
 import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import type { ReportTargetKind } from '@/lib/reports'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
-import { forgetStorefrontReads } from '@/lib/storefront/moderation-refresh'
+import { forgetModeratedReads } from '@/lib/moderation-refresh'
 import {
   moderationServiceFor,
   postedOnLabel,
@@ -227,8 +227,8 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
       return
     }
     toast.success(`${what} restored`)
-    // A restored document shows and counts again; the record does not name the store it belongs to.
-    if (contract === 'storefront') forgetStorefrontReads()
+    // A restored document shows and counts again: drop the cached reads that left it out.
+    forgetModeratedReads(contract)
     refresh().catch(() => { /* reported inside */ })
   }
 
