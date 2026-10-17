@@ -63,7 +63,7 @@ const feed = { feed: 1, createdAt: 1700000000000, treeCapacity: 4096, maxKeyGene
 export const privateFeedService = {
   getOverview: async () => {
     state.statusReads += 1
-    return state.enabled ? { feed, feeds: [feed], followers: [], keyGeneration: 1, keyRotated: false, hasSeed: true } : null
+    return state.enabled ? { feed, feeds: [feed], followers: [], keyGeneration: 1, keyRotated: false } : null
   },
   enablePrivateFeed: async () => {
     state.enableCalls += 1

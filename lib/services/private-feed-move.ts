@@ -23,12 +23,13 @@
 
 import { logger } from '@/lib/logger'
 import { privateFeedService, type PrivateFeedResult } from './private-feed-service'
-import { fetchFeeds, fetchFollowRequestsTo, fetchGrant, fetchMembers, type PrivateFeedDocument } from './private-feed-reads'
+import { activeGrants, fetchFeeds, fetchFollowRequestsTo, fetchGrant, fetchMembers, fetchRekeys, type PrivateFeedDocument } from './private-feed-reads'
 import { clearMove, loadMove, moveProgress, saveMove, type MoveJob } from './private-feed-move-job'
 import { identityService } from './identity-service'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { normalizeBytes } from '@/lib/bytes'
+import { scopedKey } from '@/lib/storage-scope'
 import { cekAt, DEFAULT_FEED_CAPS, historyKey, MAX_TREE_CAPACITY, type CarriedFeed } from '@/lib/private-feed/crypto'
 
 /** Measured on sakura (docs/SOCIAL_V17.md): a grant 51–76M credits, a new feed 24–39M. Estimates sit at the upper middle. */
@@ -45,7 +46,7 @@ export interface RenewalEstimate {
 
 /** What renewing would move and roughly cost (PF3: "Moving your N followers costs about $X"). */
 export async function estimateRenewal(ownerId: string): Promise<RenewalEstimate> {
-  const followers = (await movableFollowers(ownerId, await currentMainFeed(ownerId))).length
+  const followers = (await movableFollowers(ownerId, (await currentMainFeed(ownerId)).feed)).length
   const credits = FEED_CREDITS + followers * GRANT_CREDITS
   return { followers, credits, usd: credits * USD_PER_CREDIT }
 }
@@ -56,20 +57,31 @@ async function currentMainFeed(ownerId: string): Promise<PrivateFeedDocument> {
   return feed
 }
 
-/** The members of `feed` that still stand by their request (PF8), in leaf order. */
-async function movableFollowers(ownerId: string, feed: PrivateFeedDocument): Promise<string[]> {
-  const [members, requests] = await Promise.all([fetchMembers(ownerId, feed.feed), fetchFollowRequestsTo(ownerId)])
+/**
+ * The members of `feed` to move: grants in force (a revoked grant stays as a
+ * record, never a member) whose holder still stands by their request (PF8),
+ * in leaf order.
+ */
+async function movableFollowers(ownerId: string, feed: number): Promise<string[]> {
+  const [grants, rekeys, requests] = await Promise.all([fetchMembers(ownerId, feed), fetchRekeys(ownerId, feed, 1), fetchFollowRequestsTo(ownerId)])
   const asking = new Set(requests.map((request) => request.$ownerId))
-  return members.filter((grant) => asking.has(grant.recipientId)).sort((a, b) => a.leafIndex - b.leafIndex).map((grant) => grant.recipientId)
+  return activeGrants(grants, rekeys).filter((grant) => asking.has(grant.recipientId)).map((grant) => grant.recipientId)
 }
 
-/** Whether a renewal can bring older posts along: this device can open the current feed's seed. */
-export async function canBringHistory(ownerId: string, encryptionPrivateKey?: Uint8Array): Promise<boolean> {
+/**
+ * Whether a renewal can bring older posts along: `yes` when this device can
+ * open the current feed's seed, `no` only when the seed is sealed to an
+ * encryption key this owner no longer holds (PF5), `unknown` otherwise (no
+ * key entered yet, or a read failed): the choice is still offered then, and
+ * the renewal itself finds out.
+ */
+export async function canBringHistory(ownerId: string, encryptionPrivateKey?: Uint8Array): Promise<'yes' | 'no' | 'unknown'> {
   try {
     const synced = await privateFeedService.ownerFeedState(ownerId, encryptionPrivateKey)
-    return synced.success
+    if (synced.success) return 'yes'
+    return synced.errorCode === 'KEY_CHANGED' ? 'no' : 'unknown'
   } catch {
-    return false
+    return 'unknown'
   }
 }
 
@@ -77,8 +89,8 @@ export type MoveListener = (progress: { done: number; total: number }) => void
 
 /**
  * Renew `ownerId`'s private feed: open the next feed (with a history link when
- * `bringHistory` and this device holds the current seed), then move every
- * follower. Doubles the tree when the followers fill more than half of it.
+ * `bringHistory` and the current seed opens), then move every follower.
+ * Doubles the tree when the followers fill more than half of it.
  */
 export async function renewPrivateFeed(
   ownerId: string, encryptionPrivateKey: Uint8Array, options: { bringHistory: boolean }, onProgress?: MoveListener,
@@ -96,7 +108,7 @@ export async function renewPrivateFeed(
         return synced
       }
     }
-    const recipients = await movableFollowers(ownerId, current)
+    const recipients = await movableFollowers(ownerId, current.feed)
     const treeCapacity = recipients.length > current.treeCapacity / 2 ? Math.min(current.treeCapacity * 2, MAX_TREE_CAPACITY) : current.treeCapacity
     const opened = await privateFeedService.openFeed(ownerId, encryptionPrivateKey, {
       carryFrom, caps: { treeCapacity: Math.max(treeCapacity, DEFAULT_FEED_CAPS.treeCapacity), maxKeyGeneration: DEFAULT_FEED_CAPS.maxKeyGeneration },
@@ -118,6 +130,18 @@ async function recipientKey(recipientId: string, requestKey?: Uint8Array): Promi
   return resolveEncryptionPublicKey(recipientId, async () => (await identityService.getIdentity(recipientId, { fresh: true }))?.publicKeys ?? null)
 }
 
+// Followers a move left behind (no encryption key), per move, so a later look does not adopt them again.
+const leftBehindKey = (job: Pick<MoveJob, 'ownerId' | 'from' | 'to'>) => scopedKey(`yappr_pf_move_left:${job.ownerId}:${job.from}:${job.to}`)
+
+function leftBehind(job: Pick<MoveJob, 'ownerId' | 'from' | 'to'>): string[] {
+  try {
+    const raw = typeof window === 'undefined' ? null : window.localStorage.getItem(leftBehindKey(job))
+    return raw ? (JSON.parse(raw) as string[]) : []
+  } catch {
+    return []
+  }
+}
+
 const running = new Map<string, Promise<PrivateFeedResult>>()
 
 /** Continue this device's follower move for `ownerId` (one run at a time per owner). */
@@ -132,7 +156,7 @@ export function runMove(ownerId: string, encryptionPrivateKey?: Uint8Array, onPr
 async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array, onProgress?: MoveListener): Promise<PrivateFeedResult> {
   const saved = loadMove(ownerId)
   if (!saved) return { success: true }
-  let job: MoveJob = saved
+  let job: MoveJob = { ...saved, error: undefined }
   const pause = (error: string): PrivateFeedResult => {
     saveMove({ ...job, error })
     return { success: false, error }
@@ -142,12 +166,15 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
   }
   try {
     const synced = await privateFeedService.ownerFeedState(ownerId, encryptionPrivateKey)
-    if (!synced.success) return synced.errorCode === 'SYNC_REQUIRED' ? synced : pause(synced.error ?? 'The move paused.')
+    if (!synced.success) return pause(synced.errorCode === 'SYNC_REQUIRED' ? 'Enter your encryption key to finish moving your followers.' : synced.error ?? 'The move paused.')
     if (synced.state.feed.feed !== job.to) {
       clearMove(ownerId)
       return { success: false, error: 'Your private feed was renewed again on another device. Move your followers from there.' }
     }
-    const [requests, existing] = await Promise.all([fetchFollowRequestsTo(ownerId), fetchMembers(ownerId, job.to)])
+    const [requests, existing, sourceRekeys] = await Promise.all([fetchFollowRequestsTo(ownerId), fetchMembers(ownerId, job.to), fetchRekeys(ownerId, job.from, 1)])
+    // Anyone who joined the old feed since the move was planned moves too.
+    const joined = (await movableFollowers(ownerId, job.from)).filter((id) => !job.recipients.includes(id))
+    if (joined.length > 0) job = { ...job, recipients: [...job.recipients, ...joined] }
     const requestOf = new Map(requests.map((request) => [request.$ownerId, request]))
     const granted = new Set(existing.map((grant) => grant.recipientId))
     const taken = new Set(existing.map((grant) => grant.leafIndex))
@@ -157,21 +184,24 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       for (let candidate = 0; taken.has(leaf) && candidate < synced.state.feed.treeCapacity; candidate++) leaf = candidate
       return taken.has(leaf) ? null : leaf
     }
-    job = { ...job, error: undefined }
     for (const [planned, recipientId] of job.recipients.entries()) {
       if (job.done.includes(recipientId) || job.skipped.includes(recipientId)) continue
       if (granted.has(recipientId)) settle('done', recipientId)
       else {
+        // Re-read their old grant: removed (or blocked) since the plan, on any device, they stay behind.
+        const source = await fetchGrant(ownerId, job.from, recipientId)
+        const stillMember = source !== null && activeGrants([source], sourceRekeys).length > 0
         const request = requestOf.get(recipientId)
-        const key = request ? await recipientKey(recipientId, request.publicKey) : null
+        const key = stillMember && request ? await recipientKey(recipientId, request.publicKey) : null
         const leafIndex = leafFor(planned)
         if (!key) settle('skipped', recipientId)
         else if (leafIndex === null) return pause('Your renewed private feed is full.')
         else {
           const outcome = await privateFeedService.writeGrant(ownerId, synced.state, recipientId, key, leafIndex)
-          if (outcome.success) taken.add(leafIndex)
-          if (outcome.success) settle('done', recipientId)
-          else if (outcome.errorCode === 'REQUEST_WITHDRAWN') settle('skipped', recipientId)
+          if (outcome.success) {
+            taken.add(leafIndex)
+            settle('done', recipientId)
+          } else if (outcome.errorCode === 'REQUEST_WITHDRAWN') settle('skipped', recipientId)
           else if (await fetchGrant(ownerId, job.to, recipientId)) settle('done', recipientId)
           else return pause(outcome.error ?? 'The move paused.')
         }
@@ -180,9 +210,19 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       onProgress?.(moveProgress(job))
     }
     if (job.deleteOldGrants) {
-      const old = await fetchMembers(ownerId, job.from)
+      // PF6: the moved followers read the old feed through the history link now. Grants of
+      // removed followers stay: they are the record that their request was answered.
+      const moved = new Set(job.done)
+      const old = (await fetchMembers(ownerId, job.from)).filter((grant) => moved.has(grant.recipientId))
       const deleted = await privateFeedService.deleteGrants(ownerId, old)
       if (deleted < old.length) return pause('Some of your old feed\'s access could not be cleaned up yet.')
+    }
+    if (job.skipped.length > 0) {
+      try {
+        window.localStorage.setItem(leftBehindKey(job), JSON.stringify(job.skipped))
+      } catch {
+        // only spares a later look one pass over them
+      }
     }
     clearMove(ownerId)
     return { success: true }
@@ -194,19 +234,25 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
 
 /**
  * A move that no device finished, read off the chain (a crash before the job
- * was saved, or a move begun on another device): followers of the previous
- * feed who still stand by their request and have no grant in the current one.
- * Resumes it as this device's job; returns how many are left.
+ * was saved, or a move begun on another device): followers in force of the
+ * previous feed who still stand by their request and have no grant in the
+ * current one. Saves it as this device's job, paused until it runs; returns
+ * how many are left.
  */
 export async function adoptUnfinishedMove(ownerId: string): Promise<number> {
-  if (loadMove(ownerId)) return moveProgress(loadMove(ownerId) as MoveJob).total
-  const main = (await fetchFeeds(ownerId, { fresh: true })).filter((doc) => doc.audience === undefined)
-  const [current, previous] = main
+  const existing = loadMove(ownerId)
+  if (existing) return moveProgress(existing).total - moveProgress(existing).done
+  const [current, previous] = (await fetchFeeds(ownerId, { fresh: true })).filter((doc) => doc.audience === undefined)
   if (!current || !previous) return 0
-  const [recipients, moved] = await Promise.all([movableFollowers(ownerId, previous), fetchMembers(ownerId, current.feed)])
+  const [recipients, moved] = await Promise.all([movableFollowers(ownerId, previous.feed), fetchMembers(ownerId, current.feed)])
   const granted = new Set(moved.map((grant) => grant.recipientId))
-  const left = recipients.filter((recipientId) => !granted.has(recipientId))
+  const behind = new Set(leftBehind({ ownerId, from: previous.feed, to: current.feed }))
+  const left = recipients.filter((recipientId) => !granted.has(recipientId) && !behind.has(recipientId))
   if (left.length === 0) return 0
-  saveMove({ ownerId, from: previous.feed, to: current.feed, recipients, done: recipients.filter((id) => granted.has(id)), skipped: [], deleteOldGrants: current.carry !== undefined })
+  saveMove({
+    ownerId, from: previous.feed, to: current.feed, recipients,
+    done: recipients.filter((id) => granted.has(id)), skipped: recipients.filter((id) => behind.has(id)),
+    deleteOldGrants: current.carry !== undefined, error: 'Some of your followers have not been moved to your renewed private feed yet.',
+  })
   return left.length
 }

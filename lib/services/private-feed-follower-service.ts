@@ -14,7 +14,7 @@ import { logger } from '@/lib/logger'
 import { stateTransitionService } from './state-transition-service'
 import { privateFeedKeyStore, type MemberFeedKeys } from './private-feed-key-store'
 import {
-  fetchCurrentFeed, fetchFeed, fetchFollowRequest, fetchGrant, fetchGrantsHeldBy, fetchNewestGrant, fetchRekeys,
+  fetchCurrentFeed, fetchFeed, fetchFollowRequest, fetchGrant, fetchGrantsHeldBy, fetchNewestGrant, fetchRekeys, grantIsRevoked,
   type GrantDocument,
 } from './private-feed-reads'
 import { identifierToBytes } from './sdk-helpers'
@@ -23,12 +23,12 @@ import { applyRekey, decodeRekeyPackets, openGrant } from '@/lib/private-feed/cr
 
 /**
  * Where a viewer stands with someone's private feed:
- * - `approved`: a grant in the current feed and the keys on this device;
- * - `approved-no-keys`: the grant, but not yet the keys here (enter the encryption key);
- * - `renewing`: a grant only in an older feed and the request still stands: the owner renewed and is moving followers;
- * - `pending`: asked, not granted;
- * - `revoked`: this device held keys, the grant is gone, and no request was made since;
- * - `none`: nothing.
+ * - `approved`: a grant in force in the current feed and the keys on this device;
+ * - `approved-no-keys`: that grant, but not yet the keys here (enter the encryption key);
+ * - `renewing`: a grant in force only in an older feed and the request still stands: the owner renewed and is moving followers;
+ * - `pending`: asked, and not answered since;
+ * - `revoked`: the owner removed them (their grant's leaf was rekeyed), and they have not asked again;
+ * - `none`: nothing, or they left (withdrew their request).
  */
 export type AccessStatus = 'none' | 'pending' | 'approved' | 'approved-no-keys' | 'renewing' | 'revoked'
 
@@ -102,16 +102,13 @@ class PrivateFeedFollowerService {
   async getAccessStatus(ownerId: string, myId: string): Promise<AccessStatus> {
     const [feed, grant, request] = await Promise.all([fetchCurrentFeed(ownerId), fetchNewestGrant(ownerId, myId), fetchFollowRequest(ownerId, myId)])
     if (!feed) return 'none'
-    if (grant && grant.feed === feed.feed) {
-      const keys = privateFeedKeyStore.memberKeys(myId, ownerId, feed.feed)
-      return keys && keys.leafIndex === grant.leafIndex && keys.keyGeneration >= grant.keyGeneration ? 'approved' : 'approved-no-keys'
-    }
-    if (grant) return request ? 'renewing' : 'none'
-    // Keys here and no grant: removed, unless they asked again since (the standing request predates the keys).
-    const newest = privateFeedKeyStore.newestMemberFeed(myId, ownerId)
-    const keys = newest === null ? null : privateFeedKeyStore.memberKeys(myId, ownerId, newest)
-    if (keys && (!request || request.$createdAt <= keys.grantedAt)) return 'revoked'
-    return request ? 'pending' : 'none'
+    if (!grant) return request ? 'pending' : 'none'
+    const askedSince = !!request && request.$createdAt > grant.createdAt
+    if (await grantIsRevoked(grant)) return askedSince ? 'pending' : 'revoked'
+    if (!request) return 'none'
+    if (grant.feed !== feed.feed) return 'renewing'
+    const keys = privateFeedKeyStore.memberKeys(myId, ownerId, feed.feed)
+    return keys && keys.leafIndex === grant.leafIndex && keys.keyGeneration >= grant.keyGeneration ? 'approved' : 'approved-no-keys'
   }
 
   // ============================================================
@@ -140,18 +137,6 @@ class PrivateFeedFollowerService {
     return { success: true }
   }
 
-  /** Recover `myId`'s keys for `ownerId`'s newest feed that granted them, with their encryption key. */
-  async recoverFollowerKeys(ownerId: string, myId: string, encryptionPrivateKey: Uint8Array): Promise<Outcome> {
-    try {
-      const grant = await fetchNewestGrant(ownerId, myId)
-      if (!grant) return { success: false, error: 'No access to this private feed' }
-      return await this.recoverFromGrant(grant, myId, encryptionPrivateKey)
-    } catch (error) {
-      logger.error('Error recovering follower keys:', error)
-      return { success: false, error: error instanceof Error ? error.message : 'Recovery failed' }
-    }
-  }
-
   /**
    * Apply `ownerId`'s rekeys of `feed` above the generation this device holds.
    * Fails with `REVOKED:` when the follower was removed, and `RECOVERY_NEEDED:`
@@ -168,11 +153,12 @@ class PrivateFeedFollowerService {
         const ctx = { ownerId: toBytes(ownerId), feed, keyGeneration: rekey.keyGeneration }
         const applied = applyRekey(keys.pathKeys, decodeRekeyPackets(rekey.packets, keys.treeCapacity), rekey.encryptedCEK, ctx)
         if (!applied) {
+          // A grant newer than these keys (re-approved after a removal) takes over; else this leaf was revoked.
           const grant = await fetchGrant(ownerId, feed, myId)
-          if (!grant) return { success: false, error: 'REVOKED:Your access has been revoked.' }
-          if (grant.leafIndex !== keys.leafIndex || grant.keyGeneration > keys.keyGeneration) {
+          if (grant && grant.createdAt > keys.grantedAt) {
             return { success: false, error: 'RECOVERY_NEEDED:Your access was renewed. Enter your encryption key to sync.' }
           }
+          if (!grant || rekey.revokedLeaf === keys.leafIndex) return { success: false, error: 'REVOKED:Your access has been revoked.' }
           return { success: false, error: 'This private feed\'s keys could not be updated' }
         }
         keys = { ...keys, keyGeneration: rekey.keyGeneration, cek: applied.cek, pathKeys: applied.pathKeys }
@@ -234,7 +220,9 @@ class PrivateFeedFollowerService {
         const held = privateFeedKeyStore.memberKeys(viewerId, grant.ownerId, grant.feed)
         if (!held && !key) continue
         const before = held?.keyGeneration
-        const result = held ? await this.catchUp(grant.ownerId, grant.feed, viewerId) : await this.recoverFromGrant(grant, viewerId, key as Uint8Array)
+        let result = held ? await this.catchUp(grant.ownerId, grant.feed, viewerId) : await this.recoverFromGrant(grant, viewerId, key as Uint8Array)
+        // Re-approved since these keys were kept: the new grant replaces them.
+        if (!result.success && key && result.error.startsWith('RECOVERY_NEEDED:')) result = await this.recoverFromGrant(grant, viewerId, key)
         if (!result.success) failed.push(label)
         else if (before !== undefined && privateFeedKeyStore.memberKeys(viewerId, grant.ownerId, grant.feed)?.keyGeneration === before) upToDate.push(label)
         else synced.push(label)

@@ -37,7 +37,8 @@ const INTRO: Record<NonNullable<RenewPrivateFeedDialogProps['reason']>, string> 
  */
 export function RenewPrivateFeedDialog({ open, onOpenChange, ownerId, reason = 'choice', onConfirm }: RenewPrivateFeedDialogProps) {
   const [estimate, setEstimate] = useState<RenewalEstimate | null>(null)
-  const [canLink, setCanLink] = useState<boolean | null>(null)
+  // 'no' only when the old feed's secret is out of reach for good (PF5); otherwise the renewal finds out.
+  const [canLink, setCanLink] = useState<'yes' | 'no' | 'unknown' | null>(null)
   const [bringHistory, setBringHistory] = useState(true)
 
   useEffect(() => {
@@ -53,7 +54,7 @@ export function RenewPrivateFeedDialog({ open, onOpenChange, ownerId, reason = '
       if (cancelled) return
       setEstimate(cost)
       setCanLink(link)
-      setBringHistory(link)
+      setBringHistory(link !== 'no')
     }
     load().catch((error) => logger.error('Could not prepare the private feed renewal:', error))
     return () => {
@@ -86,7 +87,7 @@ export function RenewPrivateFeedDialog({ open, onOpenChange, ownerId, reason = '
         </div>
       ) : (
         <div className="space-y-4 text-sm text-gray-700 dark:text-gray-300">
-          {canLink ? (
+          {canLink !== 'no' ? (
             <fieldset className="space-y-2">
               <legend className="font-medium mb-2">Bring your older private posts along?</legend>
               <label className="flex gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer has-[:checked]:border-yappr-500">

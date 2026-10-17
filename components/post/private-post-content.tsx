@@ -253,7 +253,8 @@ export function PrivatePostContent({
       let outcome = await decryptPrivateContent(content, user.identityId, encryptionKey)
       // A private reply under a public root is in its own author's feed, not the root's.
       if (!outcome.ok && (outcome.reason === 'no-access' || outcome.reason === 'failed') && content.feedOwnerId !== post.author.id) {
-        outcome = await decryptPrivateContent({ ...content, feedOwnerId: post.author.id }, user.identityId, encryptionKey)
+        const own = await decryptPrivateContent({ ...content, feedOwnerId: post.author.id }, user.identityId, encryptionKey)
+        if (own.ok) outcome = own
       }
       if (outcome.ok) {
         let followerCount: number | undefined

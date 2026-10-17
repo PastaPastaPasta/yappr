@@ -10,6 +10,12 @@
  * so a revocation made elsewhere is never undone. Caps are each feed's STORED
  * treeCapacity and maxKeyGeneration (R-M30), never constants.
  *
+ * Follow requests persist while the requester follows (PF8), so a revocation
+ * keeps its grant: the grant, with the rekey that revoked its leaf, is the
+ * cross-device record that the request was answered. Only a request made
+ * after the grant asks again. A leaf frees when its revoked grant is replaced
+ * or its feed is renewed.
+ *
  * Renewal (a new feed: key rotation, compromise, caps, or the owner's choice)
  * and the follower move live in private-feed-move.ts.
  */
@@ -18,10 +24,10 @@ import { logger } from '@/lib/logger'
 import { stateTransitionService } from './state-transition-service'
 import { privateFeedKeyStore, type OwnerFeedKeys } from './private-feed-key-store'
 import {
-  fetchCurrentFeed, fetchFeeds, fetchFollowRequest, fetchFollowRequestsTo, fetchGrant, fetchGrantsTo, fetchLatestKeyGeneration,
+  activeGrants, fetchCurrentFeed, fetchFeeds, fetchFollowRequest, fetchFollowRequestsTo, fetchGrantsTo, fetchLatestKeyGeneration,
   fetchMembers, fetchRekeys, forgetFeeds, type FollowRequestDocument, type GrantDocument, type PrivateFeedDocument,
 } from './private-feed-reads'
-import { moveInProgress } from './private-feed-move-job'
+import { loadMove, moveInProgress, saveMove } from './private-feed-move-job'
 import { identityService } from './identity-service'
 import { identifierToBytes } from './sdk-helpers'
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
@@ -31,7 +37,6 @@ import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { bytesEqual, normalizeBytes } from '@/lib/bytes'
-import { scopedKey } from '@/lib/storage-scope'
 import {
   isDuplicateUniqueIndexError, isPropertyAgreementError, isReferenceNotFoundError, referencedPathFromError,
 } from '@/lib/error-utils'
@@ -44,6 +49,8 @@ import {
 export type PrivateFeedErrorCode =
   /** The owner's keys for the current feed are not on this device: enter the encryption key. */
   | 'SYNC_REQUIRED'
+  /** Another device changed the feed in the meantime (it renewed it, or removed someone): try again. */
+  | 'FEED_CHANGED'
   /** The follower withdrew their request (or left) before the grant landed. */
   | 'REQUEST_WITHDRAWN'
   /** The owner has no private feed. */
@@ -56,6 +63,8 @@ export type PrivateFeedErrorCode =
   | 'KEY_CHANGED'
   /** Followers are being moved to a new feed; the feed takes no other writes until that finishes (PF4). */
   | 'MOVE_IN_PROGRESS'
+  /** The write was sent but not confirmed yet: nothing changed locally, try again in a moment. */
+  | 'UNCONFIRMED'
 
 export interface PrivateFeedResult {
   success: boolean
@@ -65,18 +74,17 @@ export interface PrivateFeedResult {
 
 const MESSAGES: Record<PrivateFeedErrorCode, string> = {
   SYNC_REQUIRED: 'SYNC_REQUIRED:Enter your encryption key to manage your private feed on this device.',
+  FEED_CHANGED: 'Your private feed changed on another device. Try again.',
   REQUEST_WITHDRAWN: 'This person withdrew their request, so there is nothing to approve.',
   FEED_NOT_ENABLED: 'Turn on your private feed first.',
   FEED_FULL: 'Your private feed is full. Renew it to make room for more followers.',
   GENERATIONS_USED: 'Your private feed has used all its key changes. Renew it to keep removing followers.',
   KEY_CHANGED: 'Your messaging key changed since this private feed was set up. Renew your private feed to keep posting privately.',
   MOVE_IN_PROGRESS: 'Your followers are being moved to your renewed private feed. Try again when the move finishes.',
+  UNCONFIRMED: 'That change is still being confirmed. Try again in a moment.',
 }
 
 const failure = (errorCode: PrivateFeedErrorCode): PrivateFeedResult & { success: false } => ({ success: false, error: MESSAGES[errorCode], errorCode })
-
-/** Kept for callers that show the withdrawn-request case by its text. */
-export const REQUEST_WITHDRAWN_MESSAGE = MESSAGES.REQUEST_WITHDRAWN
 
 /**
  * A grant write's refusal, by what consensus names: 40120 on `recipientId`
@@ -97,7 +105,7 @@ const toBytes = identifierToBytes
 
 const toFollower = (grant: GrantDocument): PrivateFollower => ({ recipientId: grant.recipientId, leafIndex: grant.leafIndex, grantedAt: grant.createdAt })
 
-/** The current feed and this device's keys for it, synced with the chain. */
+/** A feed and this device's keys for it, synced with the chain. */
 export interface OwnerFeedState {
   feed: PrivateFeedDocument
   keys: OwnerFeedKeys
@@ -105,30 +113,7 @@ export interface OwnerFeedState {
 
 type StateResult = { success: true; state: OwnerFeedState } | (PrivateFeedResult & { success: false })
 
-// ---- requests the owner already answered by revoking (this device only) ----
-
-const answeredKey = (ownerId: string) => scopedKey(`yappr_pf_answered:${ownerId}`)
-
-function answeredRequests(ownerId: string): Set<string> {
-  try {
-    const raw = typeof window === 'undefined' ? null : window.localStorage.getItem(answeredKey(ownerId))
-    return new Set(raw ? (JSON.parse(raw) as string[]) : [])
-  } catch {
-    return new Set()
-  }
-}
-
-function markAnswered(ownerId: string, requestId: string): void {
-  try {
-    const answered = answeredRequests(ownerId)
-    answered.add(requestId)
-    window.localStorage.setItem(answeredKey(ownerId), JSON.stringify([...answered]))
-  } catch (error) {
-    logger.warn('PrivateFeed: could not remember a revoked request', error)
-  }
-}
-
-/** A follow request waiting on the owner: new, or (`renewal`) a member asking for a fresh grant. */
+/** A follow request waiting on the owner: new, or (`renewal`) someone asking again after their grant. */
 export interface PendingRequest extends FollowRequestDocument {
   renewal: boolean
 }
@@ -144,12 +129,16 @@ export interface OwnerOverview {
   feed: PrivateFeedDocument
   /** All of the owner's feeds, newest first. */
   feeds: PrivateFeedDocument[]
+  /** The current feed's members in force. */
   followers: PrivateFollower[]
   keyGeneration: number
   /** The feed's seed is sealed to an encryption key the identity no longer uses. */
   keyRotated: boolean
-  /** This device holds the current feed's seed, so a renewal can bring older posts along. */
-  hasSeed: boolean
+}
+
+/** The current and the previous feed of the main audience, newest first. */
+function mainFeeds(feeds: readonly PrivateFeedDocument[]): PrivateFeedDocument[] {
+  return feeds.filter((doc) => doc.audience === undefined)
 }
 
 class PrivateFeedService {
@@ -174,11 +163,12 @@ class PrivateFeedService {
     return fetchCurrentFeed(ownerId, options)
   }
 
-  /** The current feed's members, by leaf. */
+  /** The current feed's members in force, by leaf. */
   async getPrivateFollowers(ownerId: string): Promise<PrivateFollower[]> {
     const feed = await fetchCurrentFeed(ownerId)
     if (!feed) return []
-    return (await fetchMembers(ownerId, feed.feed)).map(toFollower)
+    const [grants, rekeys] = await Promise.all([fetchMembers(ownerId, feed.feed), fetchRekeys(ownerId, feed.feed, 1)])
+    return activeGrants(grants, rekeys).map(toFollower)
   }
 
   async getPrivateFollowerCount(ownerId: string): Promise<number> {
@@ -186,41 +176,43 @@ class PrivateFeedService {
   }
 
   /**
-   * Follow requests waiting on the owner: requests with no grant in the
-   * current feed (requests persist while the requester follows, PF8), less the
-   * ones this device answered by revoking, plus `renewal` requests a member
-   * re-made after their grant (their encryption key changed).
+   * Follow requests waiting on the owner. A request a grant answered, in any
+   * feed (in force, revoked, or a follower still being moved after a
+   * renewal), is not waiting, unless the requester asked again after it
+   * (`renewal` when they hold a grant in the current feed).
    */
   async getPendingRequests(ownerId: string): Promise<PendingRequest[]> {
-    const feed = await fetchCurrentFeed(ownerId)
-    if (!feed) return []
-    const [requests, members] = await Promise.all([fetchFollowRequestsTo(ownerId), fetchMembers(ownerId, feed.feed)])
-    const grantedAt = new Map(members.map((grant) => [grant.recipientId, grant.createdAt]))
-    const answered = answeredRequests(ownerId)
-    return requests.flatMap((request): PendingRequest[] => {
-      const granted = grantedAt.get(request.$ownerId)
-      if (granted !== undefined) return request.$createdAt > granted ? [{ ...request, renewal: true }] : []
-      return answered.has(request.$id) ? [] : [{ ...request, renewal: false }]
+    const current = await fetchCurrentFeed(ownerId)
+    if (!current) return []
+    const [requests, grants] = await Promise.all([fetchFollowRequestsTo(ownerId), fetchMembers(ownerId, current.feed)])
+    const inCurrent = new Map(grants.map((grant) => [grant.recipientId, grant.createdAt]))
+    // Requesters without a grant here may hold one in an earlier feed: one indexed read each.
+    const elsewhere = await Promise.all(requests.map(async (request) => (
+      inCurrent.has(request.$ownerId) ? null : Math.max(0, ...(await fetchGrantsTo(ownerId, request.$ownerId)).map((grant) => grant.createdAt))
+    )))
+    return requests.flatMap((request, index): PendingRequest[] => {
+      const answered = inCurrent.get(request.$ownerId) ?? elsewhere[index] ?? 0
+      if (request.$createdAt <= answered) return []
+      return [{ ...request, renewal: inCurrent.has(request.$ownerId) }]
     })
   }
 
   /** The owner's feed, followers and key state for Settings. Null when there is no feed. */
   async getOverview(ownerId: string): Promise<OwnerOverview | null> {
     const feeds = await fetchFeeds(ownerId, { fresh: true })
-    const feed = feeds.find((doc) => doc.audience === undefined)
+    const [feed] = mainFeeds(feeds)
     if (!feed) return null
-    const [members, keyGeneration, current] = await Promise.all([
+    const [grants, rekeys, current] = await Promise.all([
       fetchMembers(ownerId, feed.feed),
-      fetchLatestKeyGeneration(ownerId, feed.feed),
+      fetchRekeys(ownerId, feed.feed, 1),
       this.currentEncryptionKeyId(ownerId),
     ])
     return {
       feed,
       feeds,
-      followers: members.map(toFollower),
-      keyGeneration,
+      followers: activeGrants(grants, rekeys).map(toFollower),
+      keyGeneration: rekeys.length + 1,
       keyRotated: current !== null && current !== feed.keyId,
-      hasSeed: privateFeedKeyStore.ownerKeys(ownerId, feed.feed) !== null,
     }
   }
 
@@ -314,17 +306,23 @@ class PrivateFeedService {
   // ============================================================
 
   /**
-   * The current feed and this device's keys for it, recovered from the chain
-   * when they are missing or behind. Fails closed: a failed read is an error,
-   * never "no revocations".
+   * The current feed and this device's keys for it, rebuilt from the chain
+   * whenever they disagree with it: behind (a revocation made elsewhere) or
+   * ahead (a revocation of this device's that never landed). Fails closed: a
+   * failed read is an error, never "no revocations".
    */
   async ownerFeedState(ownerId: string, encryptionPrivateKey?: Uint8Array): Promise<StateResult> {
     const feed = await fetchCurrentFeed(ownerId, { fresh: true })
     if (!feed) return failure('FEED_NOT_ENABLED')
+    return this.feedState(ownerId, feed, encryptionPrivateKey)
+  }
+
+  /** {@link ownerFeedState} for a given feed of the owner (a superseded one, to record a revocation in it). */
+  async feedState(ownerId: string, feed: PrivateFeedDocument, encryptionPrivateKey?: Uint8Array): Promise<StateResult> {
     const local = privateFeedKeyStore.ownerKeys(ownerId, feed.feed)
     const chainGeneration = await fetchLatestKeyGeneration(ownerId, feed.feed)
-    if (local && local.keyGeneration >= chainGeneration) return { success: true, state: { feed, keys: local } }
-    if (!encryptionPrivateKey) return failure('SYNC_REQUIRED')
+    if (local && local.keyGeneration === chainGeneration) return { success: true, state: { feed, keys: local } }
+    if (!local && !encryptionPrivateKey) return failure('SYNC_REQUIRED')
     return this.recoverOwnerFeed(ownerId, feed, encryptionPrivateKey, local?.seed)
   }
 
@@ -333,9 +331,10 @@ class PrivateFeedService {
    * device, or opened with the encryption key it was sealed to) and the
    * revocations in order.
    */
-  async recoverOwnerFeed(ownerId: string, feed: PrivateFeedDocument, encryptionPrivateKey: Uint8Array, knownSeed?: Uint8Array): Promise<StateResult> {
+  async recoverOwnerFeed(ownerId: string, feed: PrivateFeedDocument, encryptionPrivateKey?: Uint8Array, knownSeed?: Uint8Array): Promise<StateResult> {
     let seed = knownSeed
     if (!seed) {
+      if (!encryptionPrivateKey) return failure('SYNC_REQUIRED')
       try {
         seed = await openSeed(encryptionPrivateKey, feed.encryptedSeed, toBytes(ownerId), feed.feed, feed.keyId)
       } catch {
@@ -355,17 +354,6 @@ class PrivateFeedService {
     }
     privateFeedKeyStore.storeOwnerKeys(ownerId, feed.feed, keys)
     return { success: true, state: { feed, keys } }
-  }
-
-  /** Sync before write, as a plain success/failure for callers that only need the keys in place. */
-  async syncAndRecover(ownerId: string, encryptionPrivateKey: Uint8Array): Promise<PrivateFeedResult> {
-    try {
-      const synced = await this.ownerFeedState(ownerId, encryptionPrivateKey)
-      return synced.success ? { success: true } : synced
-    } catch (error) {
-      logger.error('Error syncing private feed keys:', error)
-      return { success: false, error: 'Could not sync your private feed. Check your connection and try again.' }
-    }
   }
 
   // ============================================================
@@ -399,9 +387,9 @@ class PrivateFeedService {
   }
 
   /**
-   * Approve `requesterId`: a grant on the lowest free leaf of the current feed.
-   * A member who asked again after their grant (their encryption key changed)
-   * is re-granted on the same leaf.
+   * Approve `requesterId`: a grant on the lowest free leaf of the current
+   * feed. Someone asking again after their grant (removed, or a member whose
+   * encryption key changed) has that grant replaced, on the same leaf.
    */
   async approveFollower(ownerId: string, requesterId: string, requesterPublicKey: Uint8Array, encryptionPrivateKey?: Uint8Array): Promise<PrivateFeedResult> {
     try {
@@ -430,37 +418,44 @@ class PrivateFeedService {
   }
 
   /**
-   * Revoke `followerId` (design §7.3): a rekey to the next generation that
-   * their keys cannot follow, then their grant's deletion, which frees the
-   * leaf. Grants they still hold in older feeds go too.
+   * Revoke `followerId` (design §7.3): a rekey of their leaf to the next
+   * generation, which their keys cannot follow. Their grant stays as the
+   * record of the answer (see the module comment). The rekey goes into the
+   * feed they hold a grant in force in: the current one, or, while they are
+   * still to be moved after a renewal, the previous one, so no device's move
+   * carries them over. A revocation still being confirmed changes nothing
+   * locally and asks to try again.
    */
   async revokeFollower(ownerId: string, followerId: string, encryptionPrivateKey?: Uint8Array): Promise<PrivateFeedResult> {
     try {
-      if (moveInProgress(ownerId)) return failure('MOVE_IN_PROGRESS')
-      const synced = await this.ownerFeedState(ownerId, encryptionPrivateKey)
-      if (!synced.success) return synced
-      const { feed, keys } = synced.state
-      const [grant, request] = await Promise.all([fetchGrant(ownerId, feed.feed, followerId), fetchFollowRequest(ownerId, followerId)])
-      if (grant) {
-        const keyGeneration = keys.keyGeneration + 1
-        if (keyGeneration > feed.maxKeyGeneration) return failure('GENERATIONS_USED')
-        const rekey = buildRekey(keys.seed, keys, { ownerId: toBytes(ownerId), feed: feed.feed, keyGeneration }, keys.revokedLeaves, grant.leafIndex)
-        const written = await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.PRIVATE_FEED_REKEY, ownerId, {
-          feed: feed.feed, keyGeneration, revokedLeaf: grant.leafIndex, packets: rekey.packets, encryptedCEK: rekey.encryptedCEK,
-        })
-        if (!written.success) {
-          // Another device revoked at this generation first: these keys are behind.
-          if (isDuplicateUniqueIndexError(written.error)) return failure('SYNC_REQUIRED')
-          return { success: false, error: written.error || 'Could not remove this follower.' }
-        }
-        privateFeedKeyStore.storeOwnerKeys(ownerId, feed.feed, { ...keys, keyGeneration, revokedLeaves: [...keys.revokedLeaves, grant.leafIndex] })
+      const [current, previous] = mainFeeds(await fetchFeeds(ownerId, { fresh: true }))
+      if (!current) return failure('FEED_NOT_ENABLED')
+      const held = await fetchGrantsTo(ownerId, followerId)
+      const inForce = async (feed: PrivateFeedDocument | undefined) => {
+        const grant = feed && held.find((candidate) => candidate.feed === feed.feed)
+        return grant && activeGrants([grant], await fetchRekeys(ownerId, feed.feed, grant.keyGeneration)).length > 0 ? grant : null
       }
-      // The rekey is the revocation; deleting grants frees the leaf and the
-      // follower's older-feed keys. A failed delete leaves them revoked.
-      const grants = grant ? [grant, ...(await fetchGrantsTo(ownerId, followerId)).filter((g) => g.$id !== grant.$id)] : await fetchGrantsTo(ownerId, followerId)
-      if (!grant && grants.length === 0) return { success: false, error: 'This person is not a private follower.' }
-      await this.deleteGrants(ownerId, grants)
-      if (request) markAnswered(ownerId, request.$id)
+      const grant = (await inForce(current)) ?? (held.some((candidate) => candidate.feed === current.feed) ? null : await inForce(previous))
+      if (!grant) return held.length > 0 ? { success: true } : { success: false, error: 'This person is not a private follower.' }
+      const feed = grant.feed === current.feed ? current : previous as PrivateFeedDocument
+      const synced = await this.feedState(ownerId, feed, encryptionPrivateKey)
+      if (!synced.success) return synced
+      const { keys } = synced.state
+      const keyGeneration = keys.keyGeneration + 1
+      if (keyGeneration > feed.maxKeyGeneration) return failure('GENERATIONS_USED')
+      const rekey = buildRekey(keys.seed, keys, { ownerId: toBytes(ownerId), feed: feed.feed, keyGeneration }, keys.revokedLeaves, grant.leafIndex)
+      const written = await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.PRIVATE_FEED_REKEY, ownerId, {
+        feed: feed.feed, keyGeneration, revokedLeaf: grant.leafIndex, packets: rekey.packets, encryptedCEK: rekey.encryptedCEK,
+      })
+      if (!written.success) {
+        // Another device revoked at this generation first: these keys were behind.
+        if (isDuplicateUniqueIndexError(written.error)) return failure('FEED_CHANGED')
+        return { success: false, error: written.error || 'Could not remove this follower.' }
+      }
+      if (written.confirmed === false && (await fetchLatestKeyGeneration(ownerId, feed.feed)) < keyGeneration) return failure('UNCONFIRMED')
+      privateFeedKeyStore.storeOwnerKeys(ownerId, feed.feed, { ...keys, keyGeneration, revokedLeaves: [...keys.revokedLeaves, grant.leafIndex] })
+      const job = loadMove(ownerId)
+      if (job && !job.skipped.includes(followerId)) saveMove({ ...job, skipped: [...job.skipped, followerId] })
       return { success: true }
     } catch (error) {
       logger.error('Error revoking follower:', error)

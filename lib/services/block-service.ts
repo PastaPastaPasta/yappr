@@ -228,10 +228,10 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       // Dynamically import to avoid circular dependencies
       if (!privateFeedClientSupported()) return false
       const { privateFeedService } = await import('./index')
+      const { fetchGrantsTo } = await import('./private-feed-reads')
 
-      // Only a member of the blocker's current feed needs a revocation (at launch there is one audience).
-      const followers = await privateFeedService.getPrivateFollowers(blockerId)
-      if (!followers.some(f => f.recipientId === targetUserId)) {
+      // Anyone holding a grant from the blocker: a member of the current feed, or one still to be moved after a renewal.
+      if ((await fetchGrantsTo(blockerId, targetUserId)).length === 0) {
         return false
       }
 

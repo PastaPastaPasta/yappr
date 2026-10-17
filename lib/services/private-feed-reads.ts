@@ -259,16 +259,35 @@ export async function fetchGrantsHeldBy(recipientId: string): Promise<GrantDocum
   return documents
 }
 
-/** Every grant `ownerId` still has out to `recipientId`, in any feed (to clean up after a revocation). */
+/** Every grant `ownerId` has out to `recipientId`, in any feed, oldest feed first. */
 export async function fetchGrantsTo(ownerId: string, recipientId: string): Promise<GrantDocument[]> {
-  const documents = await queryDocuments(await getEvoSdk(), {
+  const { documents } = await paginateFetchAll(await getEvoSdk(), (startAfter) => ({
     dataContractId: contract,
     documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
     where: [['recipientId', '==', recipientId], ['$ownerId', '==', ownerId]],
     orderBy: [['feed', 'asc']],
     limit: PAGE,
-  })
-  return documents.map(toGrant)
+    ...(startAfter && { startAfter }),
+  }), toGrant, { maxResults: Infinity })
+  return documents
+}
+
+/**
+ * The grants of one feed still in force: a revocation keeps its grant as the
+ * record that the request it answered was answered (requests persist, PF8),
+ * and only a rekey of the grant's leaf at a later generation says it is
+ * revoked. A grant written on that leaf after the rekey is a new member.
+ */
+export function activeGrants<T extends Pick<GrantDocument, 'leafIndex' | 'keyGeneration'>>(grants: readonly T[], rekeys: readonly Pick<RekeyDocument, 'revokedLeaf' | 'keyGeneration'>[]): T[] {
+  const revokedAt = new Map<number, number>()
+  for (const rekey of rekeys) revokedAt.set(rekey.revokedLeaf, Math.max(revokedAt.get(rekey.revokedLeaf) ?? 0, rekey.keyGeneration))
+  return grants.filter((grant) => (revokedAt.get(grant.leafIndex) ?? 0) <= grant.keyGeneration)
+}
+
+/** True when a rekey of `grant`'s feed revoked its leaf after it was written. */
+export async function grantIsRevoked(grant: GrantDocument): Promise<boolean> {
+  const rekeys = await fetchRekeys(grant.ownerId, grant.feed, grant.keyGeneration)
+  return rekeys.some((rekey) => rekey.revokedLeaf === grant.leafIndex)
 }
 
 const requestReads = new RequestDeduplicator<string, FollowRequestDocument | null>(0)

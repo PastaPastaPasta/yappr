@@ -139,11 +139,6 @@ class PrivateFeedKeyStore {
     this.changed()
   }
 
-  /** The feeds of `ownerId` whose seed this device holds, newest first. */
-  ownerFeeds(ownerId: string): number[] {
-    return keysWith(`o:${ownerId}:`).map((key) => Number(key.split(':')[2])).filter(Number.isInteger).sort((a, b) => b - a)
-  }
-
   // ---- member ----
 
   memberKeys(viewerId: string, ownerId: string, feed: number): MemberFeedKeys | null {

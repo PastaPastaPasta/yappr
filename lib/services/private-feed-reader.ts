@@ -23,6 +23,7 @@ import { fetchFeeds, fetchGrant, fetchNewestGrant, type PrivateFeedDocument } fr
 import { identifierToBytes } from './sdk-helpers'
 import { targetKindOf } from '@/lib/contract-topology'
 import { cekAt, decryptContent, hashBack, historyKey, openCarry, type ContentKind } from '@/lib/private-feed/crypto'
+import { bytesEqual } from '@/lib/bytes'
 
 /** A private post or reply, as the reader needs it. */
 export interface PrivateContent {
@@ -58,26 +59,50 @@ function heldHistoryKey(viewerId: string, ownerId: string, feed: number): Uint8A
   return privateFeedKeyStore.memberKeys(viewerId, ownerId, feed)?.history ?? privateFeedKeyStore.historyKeys(viewerId, ownerId, feed)?.history ?? null
 }
 
-/** The CEK for `keyGeneration` from keys this device holds for exactly this feed, catching a member up when needed. */
-async function directKey(viewerId: string, ownerId: string, feed: number, keyGeneration: number): Promise<ContentKeyResult | null> {
+/** The owner's CEK of one feed at its current generation, per seed: deriving it walks the chain down from the cap. */
+const ownerTops = new Map<string, { seed: Uint8Array; keyGeneration: number; cek: Uint8Array }>()
+
+function ownerCek(ownerId: string, feed: number, keyGeneration: number): Uint8Array | null {
+  const owner = privateFeedKeyStore.ownerKeys(ownerId, feed)
+  if (!owner || keyGeneration > owner.keyGeneration) return null
+  const name = `${ownerId}:${feed}`
+  let top = ownerTops.get(name)
+  if (!top || top.keyGeneration !== owner.keyGeneration || !bytesEqual(top.seed, owner.seed)) {
+    top = { seed: owner.seed, keyGeneration: owner.keyGeneration, cek: cekAt(owner.seed, owner.maxKeyGeneration, owner.keyGeneration) }
+    ownerTops.set(name, top)
+  }
+  return hashBack(top.cek, top.keyGeneration, keyGeneration)
+}
+
+/**
+ * The CEK for `keyGeneration` from keys this device holds for exactly this
+ * feed, catching a member up when the content is newer. A member re-approved
+ * since their keys were kept recovers the new grant when the encryption key
+ * is at hand. Content naming a generation the feed never reached does not
+ * open (anyone can post a reply claiming one).
+ */
+async function directKey(viewerId: string, ownerId: string, feed: number, keyGeneration: number, encryptionPrivateKey?: Uint8Array): Promise<ContentKeyResult | null> {
   if (viewerId === ownerId) {
-    const owner = privateFeedKeyStore.ownerKeys(ownerId, feed)
-    if (owner && keyGeneration <= owner.maxKeyGeneration) return { cek: cekAt(owner.seed, owner.maxKeyGeneration, keyGeneration) }
+    const cek = ownerCek(ownerId, feed, keyGeneration)
+    if (cek) return { cek }
   }
   let member = privateFeedKeyStore.memberKeys(viewerId, ownerId, feed)
   if (member && keyGeneration > member.keyGeneration) {
     const { privateFeedFollowerService } = await import('./private-feed-follower-service')
-    const caught = await privateFeedFollowerService.catchUp(ownerId, feed, viewerId)
-    if (!caught.success) {
-      if (caught.error.startsWith('REVOKED:')) return { reason: 'revoked' }
-      if (caught.error.startsWith('RECOVERY_NEEDED:')) return { reason: 'needs-key' }
-      return { reason: 'failed' }
+    let caught = await privateFeedFollowerService.catchUp(ownerId, feed, viewerId)
+    if (!caught.success && caught.error.startsWith('RECOVERY_NEEDED:')) {
+      const grant = encryptionPrivateKey ? await fetchGrant(ownerId, feed, viewerId) : null
+      if (!grant || !encryptionPrivateKey) return { reason: 'needs-key' }
+      caught = await privateFeedFollowerService.recoverFromGrant(grant, viewerId, encryptionPrivateKey)
+      if (!caught.success) return { reason: 'needs-key' }
     }
+    if (!caught.success) return { reason: caught.error.startsWith('REVOKED:') ? 'revoked' : 'failed' }
     member = privateFeedKeyStore.memberKeys(viewerId, ownerId, feed)
+    if (member && keyGeneration > member.keyGeneration) return { reason: 'failed' }
   }
   if (member && keyGeneration <= member.keyGeneration) return { cek: hashBack(member.cek, member.keyGeneration, keyGeneration) }
   const history = privateFeedKeyStore.historyKeys(viewerId, ownerId, feed)
-  if (history && keyGeneration <= history.finalKeyGeneration) return { cek: hashBack(history.cek, history.finalKeyGeneration, keyGeneration) }
+  if (history) return keyGeneration <= history.finalKeyGeneration ? { cek: hashBack(history.cek, history.finalKeyGeneration, keyGeneration) } : { reason: 'failed' }
   return null
 }
 
@@ -104,29 +129,43 @@ function walkBack(viewerId: string, ownerId: string, feeds: readonly PrivateFeed
 }
 
 /**
+ * Keys for exactly this feed, recovered with the encryption key: the owner
+ * opens its seed (sealed to a key they still hold, e.g. before a fresh
+ * start); a member opens their grant of it (the current feed, or one kept
+ * after a renewal without a history link, PF6b). Null when there is nothing
+ * to recover here.
+ */
+async function recoverThisFeed(viewerId: string, ownerId: string, feed: number, encryptionPrivateKey?: Uint8Array): Promise<'recovered' | LockReason | null> {
+  if (viewerId === ownerId) {
+    if (!encryptionPrivateKey) return null
+    const doc = (await fetchFeeds(ownerId)).find((candidate) => candidate.feed === feed)
+    if (!doc) return null
+    const { privateFeedService } = await import('./private-feed-service')
+    return (await privateFeedService.recoverOwnerFeed(ownerId, doc, encryptionPrivateKey)).success ? 'recovered' : null
+  }
+  if (privateFeedKeyStore.memberKeys(viewerId, ownerId, feed)) return null
+  const grant = await fetchGrant(ownerId, feed, viewerId)
+  if (!grant) return null
+  if (!encryptionPrivateKey) return 'needs-key'
+  const { privateFeedFollowerService } = await import('./private-feed-follower-service')
+  return (await privateFeedFollowerService.recoverFromGrant(grant, viewerId, encryptionPrivateKey)).success ? 'recovered' : 'needs-key'
+}
+
+/**
  * The content key of `ownerId`'s feed `feed` at `keyGeneration` for
  * `viewerId`. `encryptionPrivateKey`, when given, lets this device recover
- * keys it does not hold yet (the owner's current seed, or the viewer's newest
- * grant).
+ * keys it does not hold yet (the owner's seeds, or the viewer's grants).
  */
 export async function contentKeyFor(
   viewerId: string, ownerId: string, feed: number, keyGeneration: number, encryptionPrivateKey?: Uint8Array,
 ): Promise<ContentKeyResult> {
   try {
-    const direct = await directKey(viewerId, ownerId, feed, keyGeneration)
+    const direct = await directKey(viewerId, ownerId, feed, keyGeneration, encryptionPrivateKey)
     if (direct) return direct
 
-    // A grant of exactly this feed (current, or kept after a renewal without a history link, PF6b).
-    if (viewerId !== ownerId) {
-      const grant = await fetchGrant(ownerId, feed, viewerId)
-      if (grant) {
-        if (!encryptionPrivateKey) return { reason: 'needs-key' }
-        const { privateFeedFollowerService } = await import('./private-feed-follower-service')
-        const recovered = await privateFeedFollowerService.recoverFromGrant(grant, viewerId, encryptionPrivateKey)
-        if (!recovered.success) return { reason: 'needs-key' }
-        return (await directKey(viewerId, ownerId, feed, keyGeneration)) ?? { reason: 'revoked' }
-      }
-    }
+    const here = await recoverThisFeed(viewerId, ownerId, feed, encryptionPrivateKey)
+    if (here === 'recovered') return (await directKey(viewerId, ownerId, feed, keyGeneration, encryptionPrivateKey)) ?? { reason: 'failed' }
+    if (here !== null) return { reason: here }
 
     const feeds = await fetchFeeds(ownerId)
     const later = feeds.filter((doc) => doc.audience === undefined && doc.feed > feed).map((doc) => doc.feed)
@@ -134,14 +173,12 @@ export async function contentKeyFor(
     if (start === undefined) {
       const recovered = await recoverNewest(viewerId, ownerId, encryptionPrivateKey)
       if (recovered !== 'recovered') return { reason: recovered }
-      const again = await directKey(viewerId, ownerId, feed, keyGeneration)
-      if (again) return again
       start = later.find((candidate) => heldHistoryKey(viewerId, ownerId, candidate) !== null)
       // Nothing held at or after this feed: it is newer than this viewer's access, not lost history.
       if (start === undefined) return { reason: viewerId !== ownerId && (privateFeedKeyStore.newestMemberFeed(viewerId, ownerId) ?? 0) < feed ? 'no-access' : 'history-unavailable' }
     }
     if (!walkBack(viewerId, ownerId, feeds, start, feed)) return { reason: 'history-unavailable' }
-    return (await directKey(viewerId, ownerId, feed, keyGeneration)) ?? { reason: 'revoked' }
+    return (await directKey(viewerId, ownerId, feed, keyGeneration, encryptionPrivateKey)) ?? { reason: 'failed' }
   } catch (error) {
     logger.error('Private content key could not be derived:', error)
     return { reason: 'failed' }
@@ -151,7 +188,6 @@ export async function contentKeyFor(
 /** Bring the viewer's newest openable feed onto this device: the owner's current seed, or their newest grant. */
 async function recoverNewest(viewerId: string, ownerId: string, encryptionPrivateKey?: Uint8Array): Promise<'recovered' | LockReason> {
   if (viewerId === ownerId) {
-    if (!encryptionPrivateKey) return 'needs-key'
     const { privateFeedService } = await import('./private-feed-service')
     const synced = await privateFeedService.ownerFeedState(ownerId, encryptionPrivateKey)
     if (synced.success) return 'recovered'

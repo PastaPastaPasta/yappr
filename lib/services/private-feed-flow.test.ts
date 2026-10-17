@@ -22,6 +22,8 @@ const chain = vi.hoisted(() => ({
   identities: new Map<string, { publicKeys: Record<string, unknown>[] }>(),
   session: new Map<string, Uint8Array>(),
   writes: [] as string[],
+  /** The next create is sent but never lands, and comes back unconfirmed (a timed-out wait). */
+  dropNextCreate: false,
 }))
 
 const UNIQUE: Record<string, string[][]> = {
@@ -56,6 +58,10 @@ function refuse(error: string) {
 }
 
 async function createDocument(_contract: string, type: string, ownerId: string, data: Record<string, unknown>) {
+  if (chain.dropNextCreate) {
+    chain.dropNextCreate = false
+    return { success: true, confirmed: false }
+  }
   const doc: Doc = { ...data, $id: bs58.encode(new Uint8Array(32).fill(0).map((_, i) => (i === 0 ? ++chain.ids % 256 : i === 1 ? chain.ids >> 8 : 7))), $ownerId: ownerId, $type: type, $createdAt: ++chain.clock, $revision: 1 }
   for (const index of UNIQUE[type] ?? []) {
     if (chain.docs.some((other) => other.$type === type && index.every((name) => field(other, name) === field(doc, name)))) {
@@ -161,7 +167,8 @@ async function approve(...followers: string[]) {
   }
 }
 
-const grantsIn = (feed: number) => chain.docs.filter((doc) => doc.$type === 'privateFeedGrant' && doc.feed === feed).map((doc) => norm(doc.recipientId)).sort()
+const NAMES: Record<string, string> = { [O]: 'O', [F1]: 'F1', [F2]: 'F2', [F3]: 'F3', [F4]: 'F4', [F5]: 'F5' }
+const grantsIn = (feed: number) => chain.docs.filter((doc) => doc.$type === 'privateFeedGrant' && doc.feed === feed).map((doc) => NAMES[norm(doc.recipientId) as string]).sort()
 
 describe('private feeds v2 end to end', () => {
   const posts: Record<string, PrivateContent> = {}
@@ -201,11 +208,13 @@ describe('private feeds v2 end to end', () => {
     expect((await s.move.estimateRenewal(O)).followers).toBe(2)
     const renewed = await s.move.renewPrivateFeed(O, keys[O], { bringHistory: true })
     expect(renewed).toMatchObject({ success: true, historyLinked: true })
-    expect(grantsIn(2)).toEqual([F1, F3].sort())
-    expect(grantsIn(1)).toEqual([])
+    expect(grantsIn(2)).toEqual(['F1', 'F3'].sort())
+    // The moved followers' old grants go (PF6); the removed F2's stays as the record of the answer.
+    expect(grantsIn(1)).toEqual(['F2'])
     posts.three = await post('three')
     expect(posts.three.feed).toBe(2)
-    expect([await read(F1, posts.three), await read(F1, posts.one), await read(F2, posts.three)]).toEqual(['three', 'one', '<revoked>'])
+    expect([await read(F1, posts.three), await read(F1, posts.one), await read(F2, posts.three)]).toEqual(['three', 'one', '<no-access>'])
+    expect(await s.follower.getAccessStatus(O, F2)).toBe('revoked')
     await s.follower.requestAccess(O, F4)
     await approve(F4)
     expect([await read(F4, posts.one), await read(F4, posts.two), await read(F4, posts.three)]).toEqual(['one', 'two', 'three'])
@@ -214,13 +223,16 @@ describe('private feeds v2 end to end', () => {
   it('a fresh start keeps the old grants and gives newcomers nothing from before it', async () => {
     const renewed = await s.move.renewPrivateFeed(O, keys[O], { bringHistory: false })
     expect(renewed).toMatchObject({ success: true, historyLinked: false })
-    expect(grantsIn(3)).toEqual([F1, F3, F4].sort())
-    expect(grantsIn(2)).toEqual([F1, F3, F4].sort())
+    expect(grantsIn(3)).toEqual(['F1', 'F3', 'F4'].sort())
+    expect(grantsIn(2)).toEqual(['F1', 'F3', 'F4'].sort())
     posts.four = await post('four')
     await s.follower.requestAccess(O, F5)
     await approve(F5)
     expect([await read(F5, posts.four), await read(F5, posts.three)]).toEqual(['four', '<history-unavailable>'])
     expect([await read(F4, posts.four), await read(F4, posts.three)]).toEqual(['four', 'three'])
+    // The owner on a new device still opens the seed of the feed before the fresh start (sealed to the same key).
+    s.store.clearIdentity(O)
+    expect(await read(O, posts.three)).toBe('three')
   })
 
   it('after the owner\'s key changes on a device without the old secret, renewing opens a feed with no history link', async () => {
@@ -228,12 +240,12 @@ describe('private feeds v2 end to end', () => {
     giveEncryptionKey(O, rotated, 3, [{ id: 2, type: 0, purpose: 1, securityLevel: 2, data: bytesToBase64(getPublicKey(keys[O])), disabledAt: 1 }])
     keys[O] = rotated
     s.store.clearIdentity(O)
-    expect((await s.owner.privateFeedService.getOverview(O))).toMatchObject({ keyRotated: true, hasSeed: false })
-    expect(await s.move.canBringHistory(O, rotated)).toBe(false)
+    expect((await s.owner.privateFeedService.getOverview(O))).toMatchObject({ keyRotated: true })
+    expect(await s.move.canBringHistory(O, rotated)).toBe('no')
     const renewed = await s.move.renewPrivateFeed(O, rotated, { bringHistory: true })
     expect(renewed).toMatchObject({ success: true, historyLinked: false })
     expect((await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true }))).toMatchObject({ feed: 4, keyId: 3 })
-    expect(grantsIn(3)).toEqual([F1, F3, F4, F5].sort())
+    expect(grantsIn(3)).toEqual(['F1', 'F3', 'F4', 'F5'].sort())
     posts.five = await post('five')
     expect([await read(F1, posts.five), await read(F1, posts.four)]).toEqual(['five', 'four'])
     expect(await read(O, posts.four)).toBe('<history-unavailable>')
@@ -245,8 +257,8 @@ describe('private feeds v2 end to end', () => {
     // F3 still holds a grant in feed 4 (leaving does not revoke); the next renewal leaves them out.
     const renewed = await s.move.renewPrivateFeed(O, keys[O], { bringHistory: true })
     expect(renewed.success).toBe(true)
-    expect(grantsIn(5)).not.toContain(F3)
-    expect(grantsIn(5)).toContain(F1)
+    expect(grantsIn(5)).not.toContain('F3')
+    expect(grantsIn(5)).toContain('F1')
     expect(await s.follower.getAccessStatus(O, F3)).toBe('none')
   })
 
@@ -256,7 +268,7 @@ describe('private feeds v2 end to end', () => {
     const current = await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true })
     expect(sealed.data.feed).toBe(current?.feed)
     const reply: PrivateContent = { feedOwnerId: O, feed: sealed.data.feed, keyGeneration: sealed.data.keyGeneration, nonce: sealed.data.nonce, encryptedContent: sealed.data.encryptedContent, authorId: F1, kind: 'reply' }
-    expect([await read(O, reply), await read(F4, reply), await read(F3, reply), await read(F2, reply)]).toEqual(['a reply', 'a reply', '<no-access>', '<revoked>'])
+    expect([await read(O, reply), await read(F4, reply), await read(F3, reply), await read(F2, reply)]).toEqual(['a reply', 'a reply', '<no-access>', '<no-access>'])
     // F3 left and was not carried: no reply into the current feed.
     expect(await s.owner.prepareInheritedEncryption('nope', { ownerId: O }, F3)).toMatchObject({ success: false })
   })
@@ -269,5 +281,56 @@ describe('private feeds v2 end to end', () => {
     expect(await s.move.runMove(O, keys[O])).toEqual({ success: true })
     expect(loadMove(O)).toBeNull()
     expect((await post('open again')).feed).toBe(current?.feed)
+  })
+
+  it('a removed follower stays answered on the owner\'s other devices, and comes back only by asking again', async () => {
+    const before = await post('before removal')
+    expect(await read(F4, before)).toBe('before removal')
+    expect(await s.owner.privateFeedService.revokeFollower(O, F4, keys[O])).toEqual({ success: true })
+    // Another device of the owner: nothing local.
+    s.store.clearIdentity(O)
+    expect((await s.owner.privateFeedService.getPendingRequests(O)).map((r) => NAMES[r.$ownerId])).not.toContain('F4')
+    expect(await s.follower.getAccessStatus(O, F4)).toBe('revoked')
+    const after = await post('after removal')
+    expect(await read(F4, after)).toBe('<revoked>')
+    expect(await s.follower.requestAccess(O, F4)).toEqual({ success: true })
+    expect(await s.follower.getAccessStatus(O, F4)).toBe('pending')
+    expect((await s.owner.privateFeedService.getPendingRequests(O)).map((r) => [NAMES[r.$ownerId], r.renewal])).toContainEqual(['F4', true])
+    await approve(F4)
+    expect([await read(F4, after), await read(F4, await post('back again'))]).toEqual(['after removal', 'back again'])
+  })
+
+  it('a revocation that is not confirmed changes nothing locally', async () => {
+    const generation = (await s.owner.privateFeedService.getOverview(O))?.keyGeneration
+    chain.dropNextCreate = true
+    expect(await s.owner.privateFeedService.revokeFollower(O, F4, keys[O])).toMatchObject({ errorCode: 'UNCONFIRMED' })
+    expect((await s.owner.privateFeedService.getOverview(O))?.keyGeneration).toBe(generation)
+    expect(await read(F4, await post('still here'))).toBe('still here')
+  })
+
+  it('content claiming a generation the feed never reached does not open, and costs no key recovery', async () => {
+    const real = await post('real')
+    expect(await read(F4, { ...real, keyGeneration: real.keyGeneration + 50 })).toBe('<failed>')
+    expect(await read(F4, real)).toBe('real')
+  })
+
+  it('removing someone still waiting to be moved after a renewal keeps them out of the new feed on every device', async () => {
+    const before = (await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true }))?.feed as number
+    // A renewal whose device stopped right after opening the feed: nobody moved yet.
+    expect((await s.owner.privateFeedService.openFeed(O, keys[O])).success).toBe(true)
+    const pending = (await s.owner.privateFeedService.getPendingRequests(O)).map((r) => NAMES[r.$ownerId])
+    expect(pending).not.toContain('F1')
+    expect(pending).not.toContain('F4')
+    expect(await s.move.adoptUnfinishedMove(O)).toBeGreaterThan(0)
+    expect(await s.owner.privateFeedService.revokeFollower(O, F4, keys[O])).toEqual({ success: true })
+    expect(await s.move.runMove(O, keys[O])).toEqual({ success: true })
+    expect(grantsIn(before + 1)).toContain('F1')
+    expect(grantsIn(before + 1)).not.toContain('F4')
+    expect(await s.follower.getAccessStatus(O, F4)).toBe('revoked')
+  })
+
+  it('leaving shows as nothing to the follower, and the owner stops carrying them', async () => {
+    expect(await s.follower.leave(O, F1)).toEqual({ success: true })
+    expect(await s.follower.getAccessStatus(O, F1)).toBe('none')
   })
 })
