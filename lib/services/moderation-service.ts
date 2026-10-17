@@ -463,6 +463,9 @@ interface ModeratorAuth {
   signer: IdentitySigner;
 }
 
+/** Sends one moderation transition under the write lock (see `withSdkSignedWrite`). */
+type ModerationSend = <R>(write: () => Promise<R>) => Promise<R>;
+
 const NO_STANDING: ModerationStanding = { banned: false, banReason: null, suspendedUntil: null, suspensionReason: null, warnings: [] };
 
 const reasonText = (reason: ContractModerationReason | undefined): string | null =>
@@ -999,23 +1002,23 @@ class ModerationService {
   // ---- Writes -------------------------------------------------------------
 
   async ban(moderatorId: string, identityId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
-    return this.moderate(moderatorId, async (sdk, auth) => {
-      await sdk.contracts.banUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, reason: reasonOf(reason) });
+    return this.moderate(moderatorId, async (sdk, auth, send) => {
+      await send(() => sdk.contracts.banUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, reason: reasonOf(reason) }));
     }, identityId, reason);
   }
 
   async unban(moderatorId: string, identityId: string): Promise<ModerationResult> {
-    return this.moderate(moderatorId, async (sdk, auth) => {
-      await sdk.contracts.unbanUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId });
+    return this.moderate(moderatorId, async (sdk, auth, send) => {
+      await send(() => sdk.contracts.unbanUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId }));
     }, identityId);
   }
 
   /** `until` is the block time, in ms, at which the suspension lapses; it must be in the future (41106). */
   async suspend(moderatorId: string, identityId: string, until: number, reason: string | ModerationReasonInput): Promise<ModerationResult> {
     let targetBanned = false;
-    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       try {
-        await sdk.contracts.suspendUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, until: BigInt(until), reason: reasonOf(reason) });
+        await send(() => sdk.contracts.suspendUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, until: BigInt(until), reason: reasonOf(reason) }));
       } catch (error) {
         // Drive answers a suspension of a BANNED identity with 41107, whose
         // prose ("... is banned ... and can not act on its documents") reads
@@ -1031,8 +1034,8 @@ class ModerationService {
   }
 
   async unsuspend(moderatorId: string, identityId: string): Promise<ModerationResult> {
-    return this.moderate(moderatorId, async (sdk, auth) => {
-      await sdk.contracts.unsuspendUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId });
+    return this.moderate(moderatorId, async (sdk, auth, send) => {
+      await send(() => sdk.contracts.unsuspendUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId }));
     }, identityId);
   }
 
@@ -1046,8 +1049,8 @@ class ModerationService {
     if (!this.canWarn()) {
       return { success: false, error: 'This contract keeps no warning list', errorCode: 'NOT_MODERATED' };
     }
-    return this.moderate(moderatorId, async (sdk, auth) => {
-      await sdk.contracts.warnUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, reason: reasonOf(reason) });
+    return this.moderate(moderatorId, async (sdk, auth, send) => {
+      await send(() => sdk.contracts.warnUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, reason: reasonOf(reason) }));
     }, identityId, reason);
   }
 
@@ -1056,8 +1059,8 @@ class ModerationService {
     if (!this.canWarn()) {
       return { success: false, error: 'This contract keeps no warning list', errorCode: 'NOT_MODERATED' };
     }
-    return this.moderate(moderatorId, async (sdk, auth) => {
-      await sdk.contracts.clearUserWarnings({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId });
+    return this.moderate(moderatorId, async (sdk, auth, send) => {
+      await send(() => sdk.contracts.clearUserWarnings({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId }));
     }, identityId);
   }
 
@@ -1077,16 +1080,16 @@ class ModerationService {
     }
     let snapshotSaved = false;
     let documentGone = false;
-    const moderated = await this.moderate(moderatorId, async (sdk, auth) => {
+    const moderated = await this.moderate(moderatorId, async (sdk, auth, send) => {
       snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
       try {
-        await sdk.contracts.moderatorDeleteDocument({
+        await send(() => sdk.contracts.moderatorDeleteDocument({
           ...auth,
           contractId: YAPPR_CONTRACT_ID,
           documentTypeName: kind,
           documentId,
           reason: reasonOf(reason),
-        });
+        }));
       } catch (error) {
         // 40101: another moderator removed it first (or its author deleted it,
         // where authors can): the goal is met, and nothing was deleted here.
@@ -1140,13 +1143,13 @@ class ModerationService {
     if (!bytes) {
       return { success: false, error: 'This device kept no copy of the removed document, so it cannot be restored from here', errorCode: 'NO_SNAPSHOT' };
     }
-    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       const contract = await sdk.contracts.fetch(YAPPR_CONTRACT_ID);
       if (!contract) throw new Error('Social contract not found');
       // A fresh Document for the call, never a caller's: nothing holds a wasm
       // borrow on it across the await.
       const document = Document.fromBytes(bytes, contract, kind, PlatformVersion.latest());
-      await sdk.contracts.moderatorRestoreDocument({ ...auth, contractId: YAPPR_CONTRACT_ID, documentTypeName: kind, document });
+      await send(() => sdk.contracts.moderatorRestoreDocument({ ...auth, contractId: YAPPR_CONTRACT_ID, documentTypeName: kind, document }));
     });
     if (result.success || result.errorCode === 'ALREADY_RESTORED' || result.errorCode === 'RESTORE_WINDOW_ELAPSED'
       || result.errorCode === 'RESTORE_HASH_MISMATCH' || result.errorCode === 'SETTLED_DELETION_NOT_RESTORABLE') {
@@ -1178,14 +1181,14 @@ class ModerationService {
       return { success: false, error: 'A team removal must cite a reason the seated team\'s charter lists', errorCode: 'REASON_NOT_LISTED' };
     }
     let signed: { actionId: string; status: ContractTeamActionStatus } | undefined;
-    const result = await this.moderate(moderatorId, async (sdk, auth) => {
-      const proposal = await sdk.contracts.moderatorDeleteSettledDocument({
+    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
+      const proposal = await send(() => sdk.contracts.moderatorDeleteSettledDocument({
         ...auth,
         contractId: YAPPR_CONTRACT_ID,
         documentTypeName: kind,
         documentId,
         reason: reasonOf(reason),
-      });
+      }));
       signed = { actionId: proposal.actionId.toBase58(), status: proposal.status };
     }, undefined, reason);
     if (result.errorCode === 'MAYBE_APPLIED') {
@@ -1207,9 +1210,9 @@ class ModerationService {
     }
     let status: ContractTeamActionStatus | undefined;
     let documentGone = false;
-    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       try {
-        ({ status } = await sdk.contracts.moderatorApproveTeamAction({ ...auth, contractId: YAPPR_CONTRACT_ID, actionId }));
+        ({ status } = await send(() => sdk.contracts.moderatorApproveTeamAction({ ...auth, contractId: YAPPR_CONTRACT_ID, actionId })));
       } catch (error) {
         // 40101: the document is gone (another proposal for it ran, or its
         // author deleted it), so this action can never run.
@@ -1293,16 +1296,16 @@ class ModerationService {
     if (!this.canDismissReports()) {
       return { success: false, error: 'Moderators cannot dismiss reports on this contract', errorCode: 'NOT_MODERATED', dismissed };
     }
-    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       for (const documentId of reportIds) {
         try {
-          await sdk.contracts.moderatorDeleteDocument({
+          await send(() => sdk.contracts.moderatorDeleteDocument({
             ...auth,
             contractId: YAPPR_CONTRACT_ID,
             documentTypeName: 'report',
             documentId,
             reason: reasonOf(reason),
-          });
+          }));
         } catch (error) {
           // Withdrawn by its reporter or dismissed by another moderator since
           // the queue read it (DocumentNotFound, 40101): the goal is met, so
@@ -1349,12 +1352,12 @@ class ModerationService {
       return { success: false, error: 'Moderators cannot resolve reports on this contract', errorCode: 'NOT_MODERATED', resolved, alreadyResolved, gone };
     }
     const note = resolution.note?.trim() || null;
-    const result = await this.moderate(moderatorId, async (sdk, auth) => {
+    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       /** Writes one report's resolution; false when the report is gone. */
       const write = async (report: (typeof reports)[number]): Promise<boolean> => {
         if (report.status === resolution.status && report.resolution === note) return true;
         try {
-          await sdk.contracts.moderatorChangeDocumentFields({
+          await send(() => sdk.contracts.moderatorChangeDocumentFields({
             ...auth,
             contractId: YAPPR_CONTRACT_ID,
             documentTypeName: 'report',
@@ -1362,7 +1365,7 @@ class ModerationService {
             // `null` removes a note the report carries; an absent one is not named.
             fields: { status: resolution.status, ...(note !== null || report.resolution !== null ? { resolution: note } : {}) },
             reason: reasonOf(reason),
-          });
+          }));
           return true;
         } catch (error) {
           if (isReportGoneError(error) || isDocumentExpiredError(error)) return false;
@@ -1389,22 +1392,24 @@ class ModerationService {
   /** Pays the moderators pot out to the whole team (any member may claim). */
   async claimModeratorsPot(moderatorId: string): Promise<ModerationResult & { remainingCredits?: bigint }> {
     let remainingCredits: bigint | undefined;
-    const result = await this.moderate(moderatorId, async (sdk, auth) => {
-      const claimed = await sdk.contracts.claimFees({ ...auth, contractId: YAPPR_CONTRACT_ID, pot: 'moderators' });
+    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
+      const claimed = await send(() => sdk.contracts.claimFees({ ...auth, contractId: YAPPR_CONTRACT_ID, pot: 'moderators' }));
       remainingCredits = claimed.remainingCredits;
     });
     return remainingCredits === undefined ? result : { ...result, remainingCredits };
   }
 
   /**
-   * Runs one moderation write under the moderator's write lock. `reason`, when
-   * the write carries one, is checked BEFORE the lock: a reason refused locally
-   * (over 16 documents, over 1024 bytes) thrown inside it would carry no
-   * verdict, and would then hold every later write back until it expires.
+   * Runs one moderation write. `action` sends each transition through `send`,
+   * which runs it under the moderator's write lock with its own nonce
+   * reservation. `reason`, when the write carries one, is checked BEFORE the
+   * lock: a reason refused locally (over 16 documents, over 1024 bytes) thrown
+   * inside it would carry no verdict, and would then hold every later write
+   * back until it expires.
    */
   private async moderate(
     moderatorId: string,
-    action: (sdk: EvoSDK, auth: ModeratorAuth) => Promise<void>,
+    action: (sdk: EvoSDK, auth: ModeratorAuth, send: ModerationSend) => Promise<void>,
     moderatedIdentityId?: string,
     reason?: string | ModerationReasonInput
   ): Promise<ModerationResult> {
@@ -1418,16 +1423,18 @@ class ModerationService {
         return this.toResult(error);
       }
     }
-    // Set once the write lock is held and the action runs: from there on a
-    // failure whose answer could not be verified may hide a landed transition.
+    // Set once a transition is under way: from there on a failure whose
+    // answer could not be verified may hide a landed transition.
     let started = false;
+    // Each transition its own reservation (a batch signs one nonce per report).
+    const send: ModerationSend = (write) => withSdkSignedWrite(moderatorId, YAPPR_CONTRACT_ID, () => {
+      started = true;
+      return write();
+    });
     try {
       const sdk = await getEvoSdk();
       const { identity, signer } = await this.getCriticalSigner(moderatorId);
-      await withSdkSignedWrite(moderatorId, YAPPR_CONTRACT_ID, () => {
-        started = true;
-        return action(sdk, { identity, signer });
-      });
+      await action(sdk, { identity, signer }, send);
       if (moderatedIdentityId) this.standingCache.delete(moderatedIdentityId);
       return { success: true };
     } catch (error) {
