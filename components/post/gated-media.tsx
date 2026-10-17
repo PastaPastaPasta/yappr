@@ -1,13 +1,14 @@
 'use client'
 
 import { useCallback, useState } from 'react'
-import { EyeSlashIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { ArrowTopRightOnSquareIcon, EyeSlashIcon, PhotoIcon, VideoCameraSlashIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
 import { useSettingsStore } from '@/lib/store'
 import { checkServedMedia } from '@/lib/media/media-fingerprint'
 import { cn } from '@/lib/utils'
 import { IpfsImage } from '@/components/ui/ipfs-image'
-import { ipfsToGatewayUrl, isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
+import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
+import { imageSourceFor } from '@/lib/media/remote-media'
 import type { Media } from '@/lib/types'
 import type { MediaGate } from '@/hooks/use-media-gate'
 
@@ -90,19 +91,8 @@ export function GatedPostMedia({ media, gate }: GatedPostMediaProps) {
     return <GatedMediaPlaceholder kind="image" onReveal={gate.reveal} className="h-full rounded-none border-0" />
   }
 
-  // v13 `mediaKinds` 1: a video, played in place (a GIF is an image).
-  if (media.type === 'video') {
-    return (
-      <video
-        src={isIpfsProtocol(media.url) ? ipfsToGatewayUrl(media.url) : media.url}
-        controls
-        preload="metadata"
-        playsInline
-        className="absolute inset-0 h-full w-full bg-black object-contain"
-        onClick={(event) => event.stopPropagation()}
-      />
-    )
-  }
+  // v13 `mediaKinds` 1: a video (a GIF is an image).
+  if (media.type === 'video') return <PostVideo url={media.url} />
 
   return (
     <>
@@ -111,11 +101,7 @@ export function GatedPostMedia({ media, gate }: GatedPostMediaProps) {
         alt={media.alt || ''}
         className="absolute inset-0 h-full w-full object-cover"
         onLoad={hashes ? handleLoad : undefined}
-        fallback={
-          <div className="flex h-full w-full items-center justify-center text-neutral-400 dark:text-neutral-600">
-            <PhotoIcon className="h-8 w-8" />
-          </div>
-        }
+        fallback={<MediaUnavailable icon={PhotoIcon} />}
       />
       {changed && (
         <span
@@ -128,4 +114,54 @@ export function GatedPostMedia({ media, gate }: GatedPostMediaProps) {
       )}
     </>
   )
+}
+
+function MediaUnavailable({ icon: Icon }: { icon: typeof PhotoIcon }) {
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-neutral-400 dark:text-neutral-500">
+      <Icon className="h-8 w-8" />
+      <span className="text-xs">Media unavailable</span>
+    </div>
+  )
+}
+
+/**
+ * An IPFS video plays in place from the gateway. A video hosted anywhere
+ * else is never fetched by the viewer's browser (there is no proxy for
+ * video): it shows as a link the viewer can choose to open.
+ */
+function PostVideo({ url }: { url: string }) {
+  const source = imageSourceFor(url)
+
+  if (source.kind === 'ipfs') {
+    return (
+      <video
+        src={ipfsToGatewayUrl(source.ipfsUrl)}
+        controls
+        preload="metadata"
+        playsInline
+        className="absolute inset-0 h-full w-full bg-black object-contain"
+        onClick={(event) => event.stopPropagation()}
+      />
+    )
+  }
+
+  if (source.kind === 'proxied') {
+    const host = /^https:\/\/([^/?#]+)/i.exec(url)?.[1] ?? ''
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        onClick={(event) => event.stopPropagation()}
+        className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-neutral-900 text-neutral-200 transition-colors hover:bg-neutral-800"
+      >
+        <ArrowTopRightOnSquareIcon className="h-8 w-8" />
+        <span className="text-sm font-medium">Watch video</span>
+        {host && <span className="text-xs text-neutral-400">{host}</span>}
+      </a>
+    )
+  }
+
+  return <MediaUnavailable icon={VideoCameraSlashIcon} />
 }

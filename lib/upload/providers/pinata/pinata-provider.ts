@@ -11,6 +11,7 @@ import { logger } from '@/lib/logger';
 import type { UploadProvider, ProviderStatus, UploadOptions, FileUploadOptions, UploadResult } from '../../types'
 import type { PinataCredentials } from './types'
 import { UploadException, UploadErrorCode } from '../../errors'
+import { cleanImageForUpload } from '../../clean-image'
 import {
   storePinataCredentials,
   getPinataCredentials,
@@ -215,25 +216,17 @@ export class PinataProvider implements UploadProvider {
   }
 
   /**
-   * Upload an image file
+   * Upload an image file with its metadata (Exif, GPS, XMP...) stripped.
    */
   async uploadImage(file: File, options?: UploadOptions): Promise<UploadResult> {
     if (!this.client || this.status !== 'connected') {
       throw new UploadException(UploadErrorCode.NOT_CONNECTED, 'Not connected to Pinata')
     }
 
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      throw new UploadException(UploadErrorCode.INVALID_FILE, 'Only image files are supported')
-    }
-
-    // Validate file size (15MB limit for safety, well under Pinata's limits)
+    // 15MB limit for safety, well under Pinata's limits
     const MAX_SIZE = 15 * 1024 * 1024
-    if (file.size > MAX_SIZE) {
-      throw new UploadException(UploadErrorCode.INVALID_FILE, 'Image must be under 15MB')
-    }
-
-    return this.uploadFile(file, { ...options, maxBytes: MAX_SIZE })
+    const cleaned = await cleanImageForUpload(file, MAX_SIZE)
+    return this.uploadFile(cleaned, { ...options, maxBytes: MAX_SIZE })
   }
 
   /**

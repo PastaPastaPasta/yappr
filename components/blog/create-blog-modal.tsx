@@ -12,6 +12,9 @@ import { blogService } from '@/lib/services'
 import { BlogFieldError } from '@/lib/blog/content-utils'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
+import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 
 interface CreateBlogModalProps {
   open: boolean
@@ -26,6 +29,8 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
   const [avatar, setAvatar] = useState('')
   const [headerImage, setHeaderImage] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  // Testnet registers blogs `notYetUsable`: blogs open with the first seated blog team (41200 before).
+  const blogsOpen = useModeratedTypeOpen('blog', open, 'blog')
   const returnFocusRef = useRef<HTMLElement | null>(null)
 
   const handleSubmit = async () => {
@@ -48,7 +53,7 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
       setAvatar('')
       setHeaderImage('')
     } catch (error) {
-      toast.error(error instanceof BlogFieldError ? error.message : 'Failed to create blog')
+      if (!reportModerationRefusal(error, user.identityId, 'blog')) toast.error(error instanceof BlogFieldError ? error.message : 'Failed to create blog')
     } finally {
       setIsSaving(false)
     }
@@ -87,6 +92,8 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
             Give your blog a name, then add an optional description and images.
           </Dialog.Description>
 
+          {!blogsOpen && <ModerationClosedNotice product="blog" className="mb-4" />}
+
           <div className="space-y-4">
             <div>
               <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
@@ -117,7 +124,7 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-              <Button onClick={handleSubmit} disabled={isSaving || !name.trim()}>
+              <Button onClick={handleSubmit} disabled={isSaving || !name.trim() || !blogsOpen}>
                 {isSaving ? 'Creating...' : 'Create Blog'}
               </Button>
             </div>

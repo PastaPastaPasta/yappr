@@ -14,7 +14,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { avatarSeedMaxLength } from '@/lib/profile/v10-profile'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
-import { isIpfsProtocol, ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 import { ArrowPathIcon, SparklesIcon, PhotoIcon } from '@heroicons/react/24/outline'
 import Image from 'next/image'
 import { Loader2 } from 'lucide-react'
@@ -171,11 +171,6 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
     ? customUrl
     : previewUrl
 
-  // Check if custom URL is IPFS and convert for display
-  const displayPreviewUrl = currentPreviewUrl && isIpfsProtocol(currentPreviewUrl)
-    ? ipfsToGatewayUrl(currentPreviewUrl)
-    : currentPreviewUrl
-
   return (
     <div className="space-y-6">
       <h3 className="font-semibold">Avatar</h3>
@@ -220,20 +215,17 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
         <>
           {/* Preview */}
           <div className="flex justify-center">
-            {displayPreviewUrl ? (
-              <Image
-                src={displayPreviewUrl}
-                alt="Avatar preview"
-                width={96}
-                height={96}
-                className="w-24 h-24 rounded-full border-4 border-gray-200 dark:border-gray-700"
-                unoptimized
-              />
-            ) : (
-              <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
-                <SparklesIcon className="w-8 h-8 text-gray-400" />
-              </div>
-            )}
+            <IpfsImage
+              src={currentPreviewUrl ?? ''}
+              size="avatar"
+              alt="Avatar preview"
+              className="w-24 h-24 rounded-full border-4 border-gray-200 dark:border-gray-700"
+              fallback={
+                <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
+                  <SparklesIcon className="w-8 h-8 text-gray-400" />
+                </div>
+              }
+            />
           </div>
 
           {/* Style Selection */}

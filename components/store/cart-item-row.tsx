@@ -8,6 +8,7 @@ import { formatPrice } from '@/lib/utils/format'
 import type { CartItemAvailability } from '@/lib/services/cart-service'
 import type { CartItem } from '@/lib/types'
 import { DigitalBadge } from './digital-badge'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 interface CartItemRowProps {
   item: CartItem
@@ -37,17 +38,17 @@ export const CartItemRow = forwardRef<HTMLDivElement, CartItemRowProps>(
     >
       {/* Image */}
       <div className="w-20 h-20 bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden flex-shrink-0">
-        {item.imageUrl ? (
-          <img
-            src={item.imageUrl}
-            alt={item.title}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <BuildingStorefrontIcon className="h-8 w-8 text-gray-300" />
-          </div>
-        )}
+        <IpfsImage
+          src={item.imageUrl ?? ''}
+          size="thumbnail"
+          alt={item.title}
+          className="w-full h-full object-cover"
+          fallback={
+            <div className="w-full h-full flex items-center justify-center">
+              <BuildingStorefrontIcon className="h-8 w-8 text-gray-300" />
+            </div>
+          }
+        />
       </div>
 
       {/* Info */}

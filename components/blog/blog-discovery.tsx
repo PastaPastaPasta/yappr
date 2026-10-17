@@ -230,6 +230,7 @@ function BlogCard({ blog, currentUserId }: { blog: BlogWithUsername; currentUser
         {blog.avatar ? (
           <IpfsImage
             src={blog.avatar}
+            size="avatar"
             alt={blog.name}
             className="h-10 w-10 flex-shrink-0 rounded-full object-cover"
           />

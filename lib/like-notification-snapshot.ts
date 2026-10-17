@@ -40,7 +40,10 @@ export interface LikeBatch {
   targetId: string
   /** When this device first noticed these likers (there is no on-chain time). */
   firstSeenMs: number
-  /** The first {@link MAX_BATCH_LIKERS} new likers' identity ids. */
+  /**
+   * Every new liker's identity id (bounded by {@link MAX_TRACKED_LIKERS}), so
+   * a block filter can tell whether anyone unblocked is left.
+   */
   likers: string[]
   /** How many new likers the batch holds (may exceed `likers.length`). */
   total: number
@@ -88,7 +91,6 @@ export interface KindObservation {
 /** Batches older than this are dropped: the initial notification fetch covers 7 days. */
 const BATCH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_BATCHES = 100
-const MAX_BATCH_LIKERS = 10
 /**
  * Targets of one kind whose likers one poll reads (each is its own query, plus
  * pages). The rest keep their stale count in the snapshot and are read on a
@@ -134,7 +136,11 @@ export function parseLikeSnapshot(raw: string | null): LikeSnapshot | null {
       baselined: parsed.baselined.filter(isKind),
       horizons: Object.fromEntries(Object.entries(horizons).filter(([kind, at]) => isKind(kind) && typeof at === 'number')),
       targets: Object.fromEntries(targets),
-      batches: parsed.batches.filter(isBatch),
+      // Batches saved before every liker was kept named only the first ten:
+      // count only those, so `likers` is exhaustive and a block filter can
+      // tell whether anyone unblocked is left ("Ava and 9 others" for the
+      // few days such a batch is kept).
+      batches: parsed.batches.filter(isBatch).map((batch) => ({ ...batch, total: Math.min(batch.total, batch.likers.length) })),
     }
   } catch {
     return null
@@ -231,7 +237,7 @@ export function applyLikeObservations(
         kind,
         targetId,
         firstSeenMs: nowMs,
-        likers: added.slice(0, MAX_BATCH_LIKERS),
+        likers: added,
         total: added.length,
       })
     }

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
 import { blockStatusCache } from '@/lib/caches/user-status-cache'
+import { useNotificationStore } from '@/lib/stores/notification-store'
 import type { BlockProvenance } from '@/lib/services/block-service'
 import { useToggleRelation } from './use-toggle-relation'
 
@@ -36,12 +37,18 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     },
     turnOn: async (viewerId, subjectId, message) => {
       const { blockService } = await import('@/lib/services/block-service')
-      return blockService.blockUser(viewerId, subjectId, message)
+      const result = await blockService.blockUser(viewerId, subjectId, message)
+      // Their notifications already held disappear now, not at the next reload.
+      if (result.success) useNotificationStore.getState().removeFromActor(subjectId, viewerId)
+      return result
     },
     turnOff: async (viewerId, subjectId) => {
       const { blockService } = await import('@/lib/services/block-service')
       const result = await blockService.unblockUser(viewerId, subjectId)
       if (!result.success) return result
+      // The own block is gone: release its session exclusion. A followed block
+      // list that still blocks them is enforced by the fetches and the re-check.
+      useNotificationStore.getState().allowActor(subjectId, viewerId)
       // Only the viewer's own block can be deleted; a followed block list
       // keeps blocking, so the toggle must roll back instead of claiming success.
       const after = await blockService.getBlockProvenance(subjectId, viewerId).catch((error) => {
@@ -120,6 +127,8 @@ export function useBlockProvenance(targetUserId: string | undefined): UseBlockPr
       const { blockService } = await import('@/lib/services/block-service')
       const result = await blockService.unblockUser(viewerId, targetUserId)
       if (!result.success) throw new Error(result.error || 'Failed to unblock user')
+      // Own block gone: release its session exclusion (a followed list's block is enforced elsewhere).
+      useNotificationStore.getState().allowActor(targetUserId, viewerId)
     } catch (error) {
       logger.error('useBlockProvenance: unblock failed:', error)
       toast.error('Failed to update block status')

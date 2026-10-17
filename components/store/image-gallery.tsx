@@ -7,6 +7,7 @@ import {
   ChevronRightIcon,
   BuildingStorefrontIcon
 } from '@heroicons/react/24/outline'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 interface ImageGalleryProps {
   images: string[]
@@ -38,10 +39,15 @@ export function ImageGallery({ images, alt }: ImageGalleryProps) {
     <div>
       {/* Main Image */}
       <div className="relative aspect-square bg-gray-100 dark:bg-gray-800">
-        <img
+        <IpfsImage
           src={images[currentIndex]}
           alt={alt}
           className="w-full h-full object-contain"
+          fallback={
+            <div className="w-full h-full flex items-center justify-center">
+              <BuildingStorefrontIcon className="h-24 w-24 text-gray-300" />
+            </div>
+          }
         />
 
         {images.length > 1 && (
@@ -89,10 +95,12 @@ export function ImageGallery({ images, alt }: ImageGalleryProps) {
                   : 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'
               }`}
             >
-              <img
+              <IpfsImage
                 src={url}
+                size="thumbnail"
                 alt={`${alt} ${i + 1}`}
                 className="w-full h-full object-cover"
+                fallback={<div className="w-full h-full bg-gray-100 dark:bg-gray-800" />}
               />
             </button>
           ))}

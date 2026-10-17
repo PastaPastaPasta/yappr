@@ -22,7 +22,7 @@ import { useQuotedPost } from '@/hooks/use-quoted-post'
 import { usePostFieldValidation } from '@/hooks/use-post-field-validation'
 import { useRecoveryModal } from '@/hooks/use-recovery-modal'
 import { useDeleteConfirmationModal } from '@/hooks/use-delete-confirmation-modal'
-import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
+import { postRemovalTarget, useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { useReportPostModal } from '@/hooks/use-report-post-modal'
 import { useModerationRole } from '@/hooks/use-is-moderator'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
@@ -641,7 +641,7 @@ function PostCardView({
                         data-testid={`moderator-remove-${post.id}`}
                         onClick={(e) => {
                           e.stopPropagation()
-                          openModeratorRemoveModal(post, () => {
+                          openModeratorRemoveModal(postRemovalTarget(post), () => {
                             setLocallyRemoved(true)
                             onDelete?.(post.id)
                           })

@@ -1,5 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { renderEmbedHtml } from './embed-renderer'
+
+vi.mock('@/lib/media/media-denylist.json', async () => {
+  const { createHash } = await import('node:crypto')
+  return {
+    default: {
+      cids: [],
+      urlSha256: [{ sha256: createHash('sha256').update('https://www.youtube.com/watch?v=removed0001').digest('hex'), added: '2026-10-17', ref: 'TEST' }],
+    },
+  }
+})
 
 describe('saved custom blog blocks in embeds', () => {
   it('retains code from the editor props, including ordinary comparison operators', () => {
@@ -55,5 +65,29 @@ describe('saved custom blog blocks in embeds', () => {
 
   it('omits a video with no saved URL', () => {
     expect(renderEmbedHtml([{ type: 'videoEmbed', props: { url: '' } }])).toBe('')
+  })
+})
+
+describe('images in embeds', () => {
+  const image = (url: string) => renderEmbedHtml([{ type: 'image', props: { url } }])
+
+  it('loads IPFS images from the gateway and other https images through the image proxy', () => {
+    expect(image('ipfs://bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'))
+      .toContain('src="https://gateway.pinata.cloud/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"')
+    expect(image('https://cdn.example/a.jpg')).toContain('src="https://wsrv.nl/?url=https%3A%2F%2Fcdn.example%2Fa.jpg&amp;w=1600')
+  })
+
+  it('drops images that must not load', () => {
+    for (const url of ['http://cdn.example/a.jpg', 'data:image/png;base64,AAAA', 'javascript:alert(1)', 'https://cdn.example/\uD800.png', `https://cdn.example/%${'25'.repeat(20000)}41.png`]) {
+      expect(image(url)).toBe('')
+    }
+  })
+})
+
+describe('videos in embeds', () => {
+  it('leaves out a video on the takedown denylist and keeps others', () => {
+    expect(renderEmbedHtml([{ type: 'videoEmbed', props: { url: 'https://www.youtube.com/watch?v=removed0001' } }])).toBe('')
+    expect(renderEmbedHtml([{ type: 'videoEmbed', props: { url: 'https://www.youtube.com/watch?v=kept0000001' } }]))
+      .toContain('href="https://www.youtube.com/watch?v=kept0000001"')
   })
 })

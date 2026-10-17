@@ -44,9 +44,8 @@ import { SavedAddressesSettings } from '@/components/settings/saved-addresses-se
 import { StorachaSettings } from '@/components/settings/storacha-settings'
 import { PinataSettings } from '@/components/settings/pinata-settings'
 import { ModerationSettings } from '@/components/settings/moderation-settings'
-import { ContractModerationSettings } from '@/components/settings/contract-moderation-settings'
+import { ContractModerationSections, useModeratedContracts } from '@/components/settings/contract-moderation-sections'
 import { OwnWarningsNotice } from '@/components/moderation/own-warnings-notice'
-import { useIsModerator } from '@/hooks/use-is-moderator'
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import type { PayWith } from '@/lib/store'
 import { DeveloperSettings } from '@/components/settings/developer-settings'
@@ -55,7 +54,7 @@ import { postsHaveLanguage } from '@/lib/contract-topology'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore, type SensitiveContentMode } from '@/lib/store'
-import { CORS_PROXY_INFO } from '@/lib/link-preview/fetch'
+import { LINK_PREVIEW_SERVICES } from '@/lib/link-preview/fetch'
 import { UsernameModal } from '@/components/dpns/username-modal'
 
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'developer' | 'about' | 'moderation'
@@ -81,7 +80,7 @@ const SENSITIVE_CONTENT_OPTIONS: Array<{ value: SensitiveContentMode; label: str
   { value: 'hide', label: 'Hide', description: 'Remove NSFW posts from your feeds' },
 ]
 
-const NOTIFICATION_KEYS = ['likes', 'reposts', 'replies', 'follows', 'mentions', 'blogPosts'] as const
+const NOTIFICATION_KEYS = ['likes', 'reposts', 'replies', 'follows', 'mentions', 'blogPosts', 'store'] as const
 
 const NOTIFICATION_LABELS: Record<string, string> = {
   likes: 'Likes',
@@ -90,6 +89,7 @@ const NOTIFICATION_LABELS: Record<string, string> = {
   follows: 'Follows',
   mentions: 'Mentions',
   blogPosts: 'Blog posts',
+  store: 'Store',
 }
 
 const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
@@ -99,6 +99,7 @@ const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
   follows: 'When someone follows you',
   mentions: 'When someone mentions you',
   blogPosts: 'When a blog you follow publishes a new post',
+  store: 'New orders and reviews for your store, and updates on your orders',
 }
 
 function SettingsPage() {
@@ -107,11 +108,12 @@ function SettingsPage() {
   const { user, logout } = useAuth()
   const walletSession = useWalletSession()
   const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID
-  // The contract's moderation team (owner + appointed moderators, read off the
-  // contract) gets contract moderation; the token authority gets YAPP
+  // A contract's moderation team (social, storefront or blog, each read off its
+  // contract) gets that contract's moderation; the token authority gets YAPP
   // freeze/slash. Keep the visible-sections list in one place so the menu, the
   // section title, and the render gate can't drift apart.
-  const isContractModerator = useIsModerator()
+  const moderatedContracts = useModeratedContracts()
+  const isContractModerator = moderatedContracts.length > 0
   const canModerate = isAuthority || isContractModerator
   const visibleSections = canModerate ? [...settingsSections, MODERATION_SECTION] : settingsSections
   const { theme, setTheme } = useTheme()
@@ -417,23 +419,20 @@ function SettingsPage() {
           {linkPreviewsEnabled && (
             <div className="ml-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
               <p className="text-sm text-amber-800 dark:text-amber-200">
-                <strong>Privacy note:</strong> {CORS_PROXY_INFO.warning}
+                <strong>Privacy note:</strong> {LINK_PREVIEW_SERVICES.summary}
               </p>
               <p className="text-xs text-amber-700 dark:text-amber-300 mt-2">
-                Third-party services used:{' '}
-                {CORS_PROXY_INFO.proxies.map((p, i) => (
-                  <span key={p.name}>
-                    {i > 0 && ', '}
-                    <a
-                      href={p.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline hover:text-amber-900 dark:hover:text-amber-100"
-                    >
-                      {p.name}
-                    </a>
-                  </span>
-                ))}
+                Services used:{' '}
+                <a
+                  href={LINK_PREVIEW_SERVICES.imageProxy.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-amber-900 dark:hover:text-amber-100"
+                >
+                  {LINK_PREVIEW_SERVICES.imageProxy.name}
+                </a>
+                , the IPFS gateways {LINK_PREVIEW_SERVICES.ipfsGateways.map((gateway) => gateway.name).join(', ')}, and{' '}
+                {LINK_PREVIEW_SERVICES.directServices.map((service) => service.name).join(', ')} for their own links.
               </p>
             </div>
           )}
@@ -767,7 +766,7 @@ function SettingsPage() {
       case 'moderation':
         return canModerate ? (
           <div className="space-y-4">
-            {isContractModerator && <ContractModerationSettings />}
+            {isContractModerator && <ContractModerationSections contracts={moderatedContracts} />}
             {isAuthority && <ModerationSettings />}
           </div>
         ) : renderMainSettings()
@@ -812,6 +811,8 @@ function SettingsPage() {
           {activeSection === 'main' && (
             <div className="px-4 pt-4">
               <OwnWarningsNotice />
+              <OwnWarningsNotice contract="storefront" />
+              <OwnWarningsNotice contract="blog" />
             </div>
           )}
           {renderSection()}

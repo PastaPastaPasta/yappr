@@ -168,6 +168,8 @@ export interface NotificationSettings {
   mentions: boolean
   messages: boolean
   blogPosts: boolean
+  /** Store events: orders and reviews of your store, updates on your orders. */
+  store: boolean
 }
 
 /**
@@ -232,6 +234,7 @@ export const useSettingsStore = create<SettingsState>()(
         mentions: true,
         messages: true,
         blogPosts: true,
+        store: true,
       },
       setNotificationSettings: (settings) =>
         set((state) => ({

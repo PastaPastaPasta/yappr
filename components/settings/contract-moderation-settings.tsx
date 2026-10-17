@@ -12,10 +12,12 @@ import { ElectionStatusPanel } from '@/components/moderation/election-status-pan
 import { ReportQueue } from '@/components/moderation/report-queue'
 import { TeamActionsPanel } from '@/components/moderation/team-actions-panel'
 import { barredAuthorsCanTombstone, contractTakesReports, deletesAreTombstones } from '@/lib/contract-topology'
+import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import type { ReportTargetKind } from '@/lib/reports'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
+import { forgetModeratedReads } from '@/lib/moderation-refresh'
 import {
-  moderationService,
+  moderationServiceFor,
   postedOnLabel,
   type DocumentRemoval,
   type FeePotState,
@@ -31,10 +33,81 @@ const DAY_MS = 86_400_000
 
 type Action = 'ban' | 'unban' | 'suspend' | 'unsuspend' | 'warn' | 'clearWarnings' | 'claim' | 'restore'
 
-type KindedRemoval = DocumentRemoval & { kind: 'post' | 'reply' }
+type KindedRemoval = DocumentRemoval & { kind: string }
 const removalKey = (removal: KindedRemoval) => `${removal.kind}:${removal.documentId}`
 
 const dayLabel = (days: number) => `${days} day${days === 1 ? '' : 's'}`
+
+/** A document type a ban, suspension or warning may cite, and how its field is labelled. */
+interface Citable {
+  docType: string
+  label: string
+  placeholder: string
+  /** The input's id (social keeps the ids its e2e suite reads). */
+  inputId: string
+}
+
+/** What each contract's panel says and cites. */
+interface PanelCopy {
+  /** Who a ban or suspension bars from what. */
+  barred: string
+  /** What pays into the moderators pot. */
+  potFunding: string
+  removalsTitle: string
+  /** Each kind's name in the removal list. */
+  kindLabels: Readonly<Record<string, string>>
+  citable: Citable[]
+}
+
+const PANEL_COPY: Record<ModeratedContractKey, PanelCopy> = {
+  social: {
+    barred: 'A banned identity cannot write anything to the social contract until unbanned; a suspended one until the suspension lapses.',
+    potFunding: 'Every post and reply pays a small credit fee into this pot.',
+    removalsTitle: 'Removed posts and replies',
+    kindLabels: { post: 'Post', reply: 'Reply' },
+    citable: [
+      { docType: 'post', label: 'Posts this is about (optional, public)', placeholder: 'Post IDs, comma-separated', inputId: 'contract-moderation-cited' },
+      { docType: 'reply', label: 'Replies this is about (optional, public; at most 16 posts and replies together)', placeholder: 'Reply IDs, comma-separated', inputId: 'contract-moderation-cited-replies' },
+    ],
+  },
+  storefront: {
+    barred: 'A banned identity cannot open or edit a store, list or change items, or leave reviews until unbanned; a suspended one until the suspension lapses.',
+    potFunding: 'Every new store, listing and review pays a small credit fee into this pot.',
+    removalsTitle: 'Removed stores, listings and reviews',
+    kindLabels: { store: 'Store', storeItem: 'Listing', storeReview: 'Store review', itemReview: 'Item review' },
+    citable: [
+      { docType: 'store', label: 'Stores this is about (optional, public)', placeholder: 'Store IDs, comma-separated', inputId: 'storefront-moderation-cited-stores' },
+      { docType: 'storeItem', label: 'Listings this is about (optional, public)', placeholder: 'Item IDs, comma-separated', inputId: 'storefront-moderation-cited-items' },
+      { docType: 'storeReview', label: 'Store reviews this is about (optional, public)', placeholder: 'Review IDs, comma-separated', inputId: 'storefront-moderation-cited-store-reviews' },
+      { docType: 'itemReview', label: 'Item reviews this is about (optional, public; at most 16 documents together)', placeholder: 'Review IDs, comma-separated', inputId: 'storefront-moderation-cited-item-reviews' },
+    ],
+  },
+  blog: {
+    barred: 'A banned identity cannot create or edit a blog, publish, or comment until unbanned; a suspended one until the suspension lapses.',
+    potFunding: 'Every new blog, blog post and comment pays a small credit fee into this pot.',
+    removalsTitle: 'Removed blogs, posts and comments',
+    kindLabels: { blog: 'Blog', blogPost: 'Blog post', blogComment: 'Comment' },
+    citable: [
+      { docType: 'blog', label: 'Blogs this is about (optional, public)', placeholder: 'Blog IDs, comma-separated', inputId: 'blog-moderation-cited-blogs' },
+      { docType: 'blogPost', label: 'Blog posts this is about (optional, public)', placeholder: 'Post IDs, comma-separated', inputId: 'blog-moderation-cited-posts' },
+      { docType: 'blogComment', label: 'Comments this is about (optional, public; at most 16 documents together)', placeholder: 'Comment IDs, comma-separated', inputId: 'blog-moderation-cited-comments' },
+    ],
+  },
+}
+
+/** The removal records a contract's panel lists: social's posts and replies, every recorded type elsewhere. */
+function removalKinds(contract: ModeratedContractKey): string[] {
+  if (contract === 'social') return ['post', 'reply']
+  const declared = moderatedContract(contract)
+  return declared.deletableTypes().filter((type) => declared.keepsRecord(type))
+}
+
+/** A document a moderator came to the panel to act on: its author goes in the identity field and it is cited. */
+export interface ModerationCitation {
+  authorId: string
+  docType: string
+  documentId: string
+}
 
 /**
  * What the ban panel adds about a barred author's own posts and replies: on
@@ -58,14 +131,25 @@ function barredOwnDeleteNote(): string {
  * clear warnings too; a removal this device snapshotted can be restored within
  * its week. Removing a post or reply lives on the post menu, where the
  * moderator sees what they are removing.
+ *
+ * The same panel serves the storefront and blog contracts (`contract`), each
+ * with its own team, lists, removals and pot: their content is removed from
+ * the moderator menu beside a store, listing, review, blog, post or comment,
+ * whose "Moderate the author" lands here with `citation` filled in.
  */
-export function ContractModerationSettings() {
+export function ContractModerationSettings({ contract = 'social', citation }: { contract?: ModeratedContractKey; citation?: ModerationCitation }) {
   const { user } = useAuth()
-  const [targetId, setTargetId] = useState('')
+  const service = moderationServiceFor(contract)
+  const copy = PANEL_COPY[contract]
+  const social = contract === 'social'
+  /** A removal kind as the list names it ("Post", "Listing", "Comment"). */
+  const kindLabel = (kind: string) => copy.kindLabels[kind] ?? kind
+  /** Element ids, unique per contract's panel. */
+  const fieldId = (name: string) => (social ? `contract-moderation-${name}` : `${contract}-moderation-${name}`)
+  const [targetId, setTargetId] = useState(citation?.authorId ?? '')
   const [reason, setReason] = useState('')
-  /** Post and reply ids the ban, suspension or warning is about (`reason.documents`, at most 16 together). */
-  const [citedPosts, setCitedPosts] = useState('')
-  const [citedReplies, setCitedReplies] = useState('')
+  /** Ids of the documents the ban, suspension or warning is about, per type (`reason.documents`, at most 16 together). */
+  const [cited, setCited] = useState<Readonly<Record<string, string>>>(citation ? { [citation.docType]: citation.documentId } : {})
   const [days, setDays] = useState<number>(7)
   /** The action in flight, and for a per-row action the row it is on. */
   const [busy, setBusy] = useState<{ action: Action; id?: string } | null>(null)
@@ -75,10 +159,10 @@ export function ContractModerationSettings() {
   const [removals, setRemovals] = useState<KindedRemoval[]>([])
   /** Removal ids this device can undo, worked out once per refresh rather than on every render. */
   const [restorable, setRestorable] = useState<ReadonlySet<string>>(new Set())
-  const canWarn = moderationService.canWarn()
+  const canWarn = service.canWarn()
   /** Seated elected team: every ban, suspension and warning must cite one of its charter's reasons. */
   // The panel renders only for the moderation team; it reads on mount.
-  const seatedReasons = useSeatedReasons(true)
+  const seatedReasons = useSeatedReasons(true, contract)
   const [reasonDocumentId, setReasonDocumentId] = useState('')
   const [pot, setPot] = useState<FeePotState | null>(null)
   /** v11: counted actions per seated member since the last payout (what the action share splits by); null when not kept or unread. */
@@ -90,23 +174,20 @@ export function ContractModerationSettings() {
 
   const refresh = useCallback(async () => {
     try {
-      const [bans, suspensions, warnings, removedPosts, removedReplies, pots] = await Promise.all([
-        moderationService.listEntries('banlist'),
-        moderationService.listEntries('suspensions'),
-        moderationService.listEntries('warnings'),
-        moderationService.listRemovals('post'),
-        moderationService.listRemovals('reply'),
-        moderationService.getFeePots(),
+      const [bans, suspensions, warnings, removedByKind, pots] = await Promise.all([
+        service.listEntries('banlist'),
+        service.listEntries('suspensions'),
+        service.listEntries('warnings'),
+        Promise.all(removalKinds(contract).map(async (kind) =>
+          (await service.listRemovals(kind)).removals.map((removal): KindedRemoval => ({ ...removal, kind })))),
+        service.getFeePots(),
       ])
       setBanned(bans.entries)
       setSuspended(suspensions.entries)
       setWarned(warnings.entries)
-      const all: KindedRemoval[] = [
-        ...removedPosts.removals.map((removal) => ({ ...removal, kind: 'post' as const })),
-        ...removedReplies.removals.map((removal) => ({ ...removal, kind: 'reply' as const })),
-      ].sort((a, b) => b.removedAt - a.removedAt)
+      const all = removedByKind.flat().sort((a, b) => b.removedAt - a.removedAt)
       setRemovals(all)
-      setRestorable(new Set(all.filter((removal) => moderationService.canRestore(removal.kind, removal)).map(removalKey)))
+      setRestorable(new Set(all.filter((removal) => service.canRestore(removal.kind, removal)).map(removalKey)))
       setPot(pots?.moderators ?? null)
     } catch (error) {
       logger.error('ContractModerationSettings: refresh failed', error)
@@ -114,17 +195,17 @@ export function ContractModerationSettings() {
     }
     // The team's seats and per-member counts (v11) are extras of the pot
     // panel: a failure leaves them out, never the lists above.
-    if (!moderationService.teamDeletesSettled()) return
+    if (!service.contract.countsActions()) return
     const [counts, seated] = await Promise.all([
-      moderationService.getActionCounts(),
-      moderationService.getSeatedTeam().catch((error: unknown) => {
+      service.getActionCounts(),
+      service.getSeatedTeam().catch((error: unknown) => {
         logger.warn('ContractModerationSettings: seated team read failed', error)
         return null
       }),
     ])
     setActionCounts(counts)
     setSeatedTeam(seated)
-  }, [])
+  }, [contract, service])
 
   useEffect(() => {
     refresh().catch(() => { /* reported inside */ })
@@ -133,10 +214,11 @@ export function ContractModerationSettings() {
   const restore = async (removal: KindedRemoval) => {
     if (!user || busy) return
     setBusy({ action: 'restore', id: removalKey(removal) })
-    const result = await moderationService.restoreDocument(user.identityId, removal.kind, removal.documentId)
+    const result = await service.restoreDocument(user.identityId, removal.kind, removal.documentId)
     setBusy(null)
+    const what = kindLabel(removal.kind)
     if (result.errorCode === 'MAYBE_APPLIED') {
-      toast(`This ${removal.kind} may have been restored — the network did not confirm in time. Check again before retrying.`, { duration: 8000 })
+      toast(`This ${what.toLowerCase()} may have been restored — the network did not confirm in time. Check again before retrying.`, { duration: 8000 })
       refresh().catch(() => { /* reported inside */ })
       return
     }
@@ -144,7 +226,9 @@ export function ContractModerationSettings() {
       toast.error(result.error || 'Restore failed')
       return
     }
-    toast.success(`${removal.kind === 'reply' ? 'Reply' : 'Post'} restored`)
+    toast.success(`${what} restored`)
+    // A restored document shows and counts again: drop the cached reads that left it out.
+    forgetModeratedReads(contract)
     refresh().catch(() => { /* reported inside */ })
   }
 
@@ -157,8 +241,6 @@ export function ContractModerationSettings() {
     }
     setBusy({ action })
     const me = user.identityId
-    const cite = (ids: string, documentTypeName: 'post' | 'reply') =>
-      ids.split(/[\s,]+/).filter(Boolean).map((documentId) => ({ documentTypeName, documentId }))
     const bound = action === 'ban' || action === 'suspend' || action === 'warn'
     if (bound && (seatedReasons.loading || seatedReasons.failed)) {
       setBusy(null)
@@ -172,38 +254,39 @@ export function ContractModerationSettings() {
     }
     const why = {
       text: reason.trim(),
-      documents: [...cite(citedPosts, 'post'), ...cite(citedReplies, 'reply')],
+      documents: copy.citable.flatMap(({ docType }) =>
+        (cited[docType] ?? '').split(/[\s,]+/).filter(Boolean).map((documentId) => ({ documentTypeName: docType, documentId }))),
       ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
     }
     let result: ModerationResult
     let succeeded: string
     switch (action) {
       case 'ban':
-        result = await moderationService.ban(me, id, why)
+        result = await service.ban(me, id, why)
         succeeded = 'Identity banned'
         break
       case 'unban':
-        result = await moderationService.unban(me, id)
+        result = await service.unban(me, id)
         succeeded = 'Identity unbanned'
         break
       case 'suspend':
-        result = await moderationService.suspend(me, id, Date.now() + days * DAY_MS, why)
+        result = await service.suspend(me, id, Date.now() + days * DAY_MS, why)
         succeeded = `Identity suspended for ${dayLabel(days)}`
         break
       case 'unsuspend':
-        result = await moderationService.unsuspend(me, id)
+        result = await service.unsuspend(me, id)
         succeeded = 'Suspension lifted'
         break
       case 'warn':
-        result = await moderationService.warn(me, id, why)
+        result = await service.warn(me, id, why)
         succeeded = 'Warning recorded'
         break
       case 'clearWarnings':
-        result = await moderationService.clearWarnings(me, id)
+        result = await service.clearWarnings(me, id)
         succeeded = 'Warnings cleared'
         break
       case 'claim':
-        result = await moderationService.claimModeratorsPot(me)
+        result = await service.claimModeratorsPot(me)
         succeeded = 'Moderators pot paid out to the team'
         break
     }
@@ -228,69 +311,69 @@ export function ContractModerationSettings() {
   /** From a report: the author goes in the identity field and the reported post or reply is cited. */
   const moderateAuthor = (authorId: string, kind: ReportTargetKind, documentId: string) => {
     setTargetId(authorId)
-    setCitedPosts(kind === 'post' ? documentId : '')
-    setCitedReplies(kind === 'reply' ? documentId : '')
-    const field = document.getElementById('contract-moderation-target')
+    setCited({ [kind]: documentId })
+    const field = document.getElementById(fieldId('target'))
     field?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     field?.focus({ preventScroll: true })
     lookUp(authorId).catch(() => { /* reported inside */ })
   }
 
   /** The entered identity's standing on every list the contract keeps, warnings included. */
-  const lookUp = async (identityId: string) => {
+  const lookUp = useCallback(async (identityId: string) => {
     const id = identityId.trim()
     if (!id) return
     try {
-      setStanding({ identityId: id, standing: await moderationService.readStanding(id), error: null })
+      setStanding({ identityId: id, standing: await service.readStanding(id), error: null })
     } catch (error) {
       logger.warn('ContractModerationSettings: status check failed', error)
       setStanding({ identityId: id, standing: null, error: 'Could not read this identity\'s moderation status.' })
     }
-  }
+  }, [service])
+
+  // Arrived from a document's moderator menu: show where its author stands.
+  const citedAuthor = citation?.authorId
+  useEffect(() => {
+    if (citedAuthor) lookUp(citedAuthor).catch(() => { /* reported inside */ })
+  }, [citedAuthor, lookUp])
 
   return (
     <div className="space-y-4">
-      <ElectionStatusPanel />
-      {contractTakesReports() && <ReportQueue seatedReasons={seatedReasons} onModerateAuthor={moderateAuthor} />}
-      <TeamActionsPanel seatedReasons={seatedReasons} onChanged={() => { refresh().catch(() => { /* reported inside */ }) }} />
+      <ElectionStatusPanel contract={contract} />
+      {social && contractTakesReports() && <ReportQueue seatedReasons={seatedReasons} onModerateAuthor={moderateAuthor} />}
+      <TeamActionsPanel contract={contract} seatedReasons={seatedReasons} onChanged={() => { refresh().catch(() => { /* reported inside */ }) }} />
       <Card>
         <CardHeader>
-          <CardTitle>Contract Moderation</CardTitle>
+          <CardTitle>{social ? 'Contract Moderation' : `${moderatedContract(contract).label} Moderation`}</CardTitle>
           <CardDescription>
-            A banned identity cannot write anything to the social contract until unbanned; a suspended one until the
-            suspension lapses. Both refusals are recorded with your reason, which anyone can read. Only deleting their
-            own documents (an unlike, an unfollow) still goes through for them
-            {barredOwnDeleteNote()}
+            {copy.barred} Both refusals are recorded with your reason, which anyone can read.
+            {social && <> Only deleting their own documents (an unlike, an unfollow) still goes through for them{barredOwnDeleteNote()}</>}
             {canWarn && ' A warning bars nothing: it is a public, reasoned note, and at most 16 accumulate until cleared.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <label htmlFor="contract-moderation-target" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Identity ID</label>
-            <input id="contract-moderation-target" type="text" value={targetId} onChange={(e) => setTargetId(e.target.value)}
+            <label htmlFor={fieldId('target')} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Identity ID</label>
+            <input id={fieldId('target')} type="text" value={targetId} onChange={(e) => setTargetId(e.target.value)}
               placeholder="Base58 identity ID to moderate" className={`${INPUT} font-mono`} />
           </div>
           <div>
-            <label htmlFor="contract-moderation-reason" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Reason (public, recorded on-chain)</label>
-            <input id="contract-moderation-reason" type="text" value={reason} maxLength={1024} onChange={(e) => setReason(e.target.value)}
+            <label htmlFor={fieldId('reason')} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Reason (public, recorded on-chain)</label>
+            <input id={fieldId('reason')} type="text" value={reason} maxLength={1024} onChange={(e) => setReason(e.target.value)}
               placeholder="Why" className={INPUT} />
           </div>
           {(seatedReasons.required || seatedReasons.failed) && (
-            <CharterReasonPicker id="contract-moderation-charter-reason" state={seatedReasons} value={reasonDocumentId} onChange={setReasonDocumentId} />
+            <CharterReasonPicker id={fieldId('charter-reason')} state={seatedReasons} value={reasonDocumentId} onChange={setReasonDocumentId} />
           )}
+          {copy.citable.map(({ docType, label, placeholder, inputId }) => (
+            <div key={docType}>
+              <label htmlFor={inputId} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+              <input id={inputId} type="text" value={cited[docType] ?? ''} onChange={(e) => setCited((previous) => ({ ...previous, [docType]: e.target.value }))}
+                placeholder={placeholder} className={`${INPUT} font-mono`} />
+            </div>
+          ))}
           <div>
-            <label htmlFor="contract-moderation-cited" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Posts this is about (optional, public)</label>
-            <input id="contract-moderation-cited" type="text" value={citedPosts} onChange={(e) => setCitedPosts(e.target.value)}
-              placeholder="Post IDs, comma-separated" className={`${INPUT} font-mono`} />
-          </div>
-          <div>
-            <label htmlFor="contract-moderation-cited-replies" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Replies this is about (optional, public; at most 16 posts and replies together)</label>
-            <input id="contract-moderation-cited-replies" type="text" value={citedReplies} onChange={(e) => setCitedReplies(e.target.value)}
-              placeholder="Reply IDs, comma-separated" className={`${INPUT} font-mono`} />
-          </div>
-          <div>
-            <label htmlFor="contract-moderation-days" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Suspension length</label>
-            <select id="contract-moderation-days" value={days} onChange={(e) => setDays(Number(e.target.value))} className={INPUT}>
+            <label htmlFor={fieldId('days')} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Suspension length</label>
+            <select id={fieldId('days')} value={days} onChange={(e) => setDays(Number(e.target.value))} className={INPUT}>
               {SUSPENSION_DAYS.map((d) => <option key={d} value={d}>{dayLabel(d)}</option>)}
             </select>
           </div>
@@ -338,7 +421,7 @@ export function ContractModerationSettings() {
         <CardHeader>
           <CardTitle>Moderators Pot</CardTitle>
           <CardDescription>
-            Every post and reply pays a small credit fee into this pot. Any moderator may pay it out, once per epoch;
+            {copy.potFunding} Any moderator may pay it out, once per epoch;
             {seatedReasons.required
               ? ' it is split by the seated charter\'s reward split (leader, equal and per-action shares).'
               : ' it is split equally across the whole moderation team.'}
@@ -371,9 +454,10 @@ export function ContractModerationSettings() {
           render={(entry) => <>{entry.identityId} — {entry.warnings?.length ?? 1} warning{(entry.warnings?.length ?? 1) === 1 ? '' : 's'}{entry.reason ? `, latest: ${entry.reason}` : ''}</>}
           onPick={(entry) => setTargetId(entry.identityId)} />
       )}
-      <EntryList title="Removed posts and replies" empty="Nothing has been removed." entries={removals}
+      <EntryList title={copy.removalsTitle} empty="Nothing has been removed." entries={removals}
         render={(removal) => (
           <>
+            {!social && `${kindLabel(removal.kind)} `}
             {removal.documentId} by {removal.moderatorId.slice(0, 8)}… on {new Date(removal.removedAt).toLocaleDateString()}
             {removal.kept.tags ? ` · ${removal.kept.tags.map((tag) => `#${tag}`).join(' ')}` : ''}
             {removal.kept.createdAt !== undefined ? ` · posted ${postedOnLabel(removal.kept.createdAt)}` : ''}

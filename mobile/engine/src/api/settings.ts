@@ -24,7 +24,7 @@ const FIELDS = [
 ] as const satisfies readonly (keyof SettingsDTO)[]
 const SENSITIVE_MODES: readonly SensitiveContentMode[] = ['blur', 'show', 'hide']
 const PAY_WITH: readonly PayWith[] = ['yapp', 'credits']
-const NOTIFICATION_KEYS: readonly (keyof NotificationSettings)[] = ['likes', 'reposts', 'replies', 'follows', 'mentions', 'messages', 'blogPosts']
+const NOTIFICATION_KEYS: readonly (keyof NotificationSettings)[] = ['likes', 'reposts', 'replies', 'follows', 'mentions', 'messages', 'blogPosts', 'store']
 /** BCP 47-ish language tag, as web's feed-language select produces (`en`, `pt`, `zh`). */
 const LANGUAGE_TAG = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/
 

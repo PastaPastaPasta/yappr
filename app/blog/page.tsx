@@ -29,6 +29,8 @@ import { cn } from '@/lib/utils'
 import { blogPostDate, formatLabels, getBlogPostUrl, isBlogPostTombstone, isPublishedBlogPost } from '@/lib/blog/content-utils'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import toast from 'react-hot-toast'
+import { ModerationClosedBanner } from '@/components/moderation/moderation-closed-notice'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 
 /** How the author's dashboard badges a post. */
 const POST_STATUS = {
@@ -183,7 +185,7 @@ function BlogPageContent() {
       await refreshPosts()
     } catch (error) {
       logger.error('Failed to delete blog post:', error)
-      toast.error('Failed to delete the post. Please try again.')
+      if (!reportModerationRefusal(error, user.identityId, 'blog')) toast.error('Failed to delete the post. Please try again.')
     } finally {
       setIsDeletingPost(false)
     }
@@ -197,8 +199,8 @@ function BlogPageContent() {
       })
       toast.success('Theme updated')
       setSelectedBlog(updated)
-    } catch {
-      toast.error('Failed to update theme')
+    } catch (error) {
+      if (!reportModerationRefusal(error, user.identityId, 'blog')) toast.error('Failed to update theme')
     }
   }
 
@@ -229,6 +231,7 @@ function BlogPageContent() {
     if (!selectedBlog) {
       return (
         <div className="p-4">
+          <ModerationClosedBanner product="blog" docType="blog" className="mb-4" />
           {user && (
             <MyBlogsList
               ownerId={user?.identityId}
