@@ -180,6 +180,66 @@ describe('store notifications', () => {
     }
   })
 
+  it('keeps reading a store found late from its creation until a poll of it succeeds', async () => {
+    vi.useFakeTimers({ now: 1_000_000, toFake: ['Date'] })
+    try {
+      const stores = await service()
+      await stores.getNotifications(SELLER, SINCE, vi.fn())
+      vi.setSystemTime(1_000_000 + 5 * 60 * 1000)
+      getByOwner.mockResolvedValue({ id: STORE, createdAt: new Date(1_500) })
+      // The discovery poll's order read fails.
+      bundle.mockImplementation(async (queries: QueryDocumentsOptions[], _tolerate: boolean, failed?: (error: unknown) => void) => {
+        if (queries.some((query) => query.documentTypeName === 'storeOrder')) failed?.(new Error('quorum'))
+        return queries.map(() => [])
+      })
+      const onFailure = vi.fn()
+      await stores.getNotifications(SELLER, 3_000, onFailure)
+      expect(onFailure).toHaveBeenCalled()
+
+      const orderAfter = () => bundled(bundle.mock.calls.length - 1).find((query) => query.documentTypeName === 'storeOrder')?.where?.[1]
+      // The watermark moved on (another source), but the store is still read from its creation.
+      answer({})
+      await stores.getNotifications(SELLER, 9_000, vi.fn())
+      expect(orderAfter()).toEqual(['$createdAt', '>', 1_499])
+      // That poll succeeded: from the watermark on.
+      await stores.getNotifications(SELLER, 10_000, vi.fn())
+      expect(orderAfter()).toEqual(['$createdAt', '>', 10_000])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads the whole item list again when a read of new items stops short, and keeps its boundary when that fails', async () => {
+    getByOwner.mockResolvedValue(sellerStore)
+    const stores = await service()
+    await stores.getNotifications(SELLER, SINCE, vi.fn())
+    const storeItemAfter = () => bundled(bundle.mock.calls.length - 1).find((query) => query.documentTypeName === 'storeItem')?.where?.[1]
+
+    // 100 new items, and the read on past them fails; the full read fails too.
+    answer({ storeItem: Array.from({ length: 100 }, (_, i) => doc(`New${i}`, SELLER, 9_000 - i, { title: `New ${i}` })) })
+    paginateFetchAll.mockRejectedValue(new Error('quorum'))
+    getAllByStore.mockRejectedValueOnce(new Error('quorum'))
+    const onFailure = vi.fn()
+    await stores.getNotifications(SELLER, 5_000, onFailure)
+    expect(onFailure).toHaveBeenCalled()
+    answer({})
+    await stores.getNotifications(SELLER, 5_000, vi.fn())
+    // Nothing was folded in: the next poll looks for new items from the same point.
+    expect(storeItemAfter()).toEqual(['$createdAt', '>', 500])
+
+    // Short again, and now the full read answers: its new items' reviews are read.
+    answer({
+      storeItem: Array.from({ length: 100 }, (_, i) => doc(`New${i}`, SELLER, 9_000 - i, { title: `New ${i}` })),
+      itemReview: [doc('IRevX', BUYER, 9_500, { storeId: STORE, itemId: NEW_ITEM, rating: 4 })],
+    })
+    getAllByStore.mockResolvedValueOnce([{ id: ITEM, title: 'Blue mug', createdAt: new Date(500) }, { id: NEW_ITEM, title: 'Red mug', createdAt: new Date(8_000) }])
+    const events = await stores.getNotifications(SELLER, 5_000, vi.fn())
+    expect(events.map((event) => [event.id, event.store.itemTitle])).toEqual([['itemReview-IRevX', 'Red mug']])
+    answer({})
+    await stores.getNotifications(SELLER, 9_500, vi.fn())
+    expect(storeItemAfter()).toEqual(['$createdAt', '>', 8_000])
+  })
+
   it('splits a store with more than 100 items into `in` reads of 100', async () => {
     getAllByStore.mockResolvedValue(Array.from({ length: 150 }, (_, i) => ({ id: `item${i}`, title: `Item ${i}`, createdAt: new Date(i) })))
     getByOwner.mockResolvedValue(sellerStore)

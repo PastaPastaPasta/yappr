@@ -131,6 +131,11 @@ class StoreNotificationService {
   /** When a user was last found to have no store. */
   private checkedWithoutStore = new Map<string, number>();
   private itemsOf = new Map<string, StoreItems>();
+  /**
+   * A store found after earlier polls found none: read from its creation
+   * (those polls did not read it) until a poll reads it without a failure.
+   */
+  private backfillFrom = new Map<string, number>();
 
   /**
    * The user's store events since the watermark. A read that failed is
@@ -143,16 +148,14 @@ class StoreNotificationService {
 
     const checkedAt = this.checkedWithoutStore.get(userId);
     const lookUp = checkedAt === undefined || Date.now() - checkedAt >= STORE_RECHECK_MS;
-    const [[statusUpdates], store] = await Promise.all([
+    const [{ docs: [statusUpdates] }, store] = await Promise.all([
       this.readAll([buyerFeed], onFailure),
       lookUp ? this.storeFor(userId, onFailure) : Promise.resolve(null),
     ]);
     const buyerEvents = deriveStoreNotifications({ orders: [], storeReviews: [], itemReviews: [], statusUpdates }, new Map());
     if (!store) return buyerEvents;
-    // A store opened since an earlier poll found none: those polls did not
-    // read it, so read it from its creation (nothing on it is older).
-    const after = checkedAt === undefined ? sinceTimestamp : Math.min(sinceTimestamp, store.createdAt.getTime() - 1);
-    return [...buyerEvents, ...await this.sellerNotifications(store.id, after, null, onFailure)];
+    if (checkedAt !== undefined) this.backfillFrom.set(store.id, store.createdAt.getTime() - 1);
+    return [...buyerEvents, ...await this.sellerNotifications(store.id, sinceTimestamp, null, onFailure)];
   }
 
   /** The user's store, or null when they have none or it could not be read (reported). */
@@ -174,15 +177,22 @@ class StoreNotificationService {
   }
 
   /**
-   * The seller's events: orders and reviews after `after` (the watermark, or
-   * earlier for a store just found), plus the buyer feed when given.
+   * The seller's events since the watermark (or since a store found late
+   * opened, {@link backfillFrom}), plus the buyer feed when given.
    */
-  private async sellerNotifications(storeId: string, after: number, buyerFeed: QueryDocumentsOptions | null, onFailure: (error: unknown) => void): Promise<RawStoreNotification[]> {
-    const items = await this.storeItems(storeId).catch((error: unknown) => {
-      logger.error('Store notifications: reading your items failed:', error);
+  private async sellerNotifications(storeId: string, sinceTimestamp: number, buyerFeed: QueryDocumentsOptions | null, onFailure: (error: unknown) => void): Promise<RawStoreNotification[]> {
+    let failed = false;
+    const report = (error: unknown) => {
+      failed = true;
       onFailure(error);
+    };
+    const itemsFailed = (error: unknown) => {
+      logger.error('Store notifications: reading your items failed:', error);
+      report(error);
       return null;
-    });
+    };
+    const after = Math.min(sinceTimestamp, this.backfillFrom.get(storeId) ?? sinceTimestamp);
+    const items = await this.storeItems(storeId).catch(itemsFailed);
     const queries = [
       ...(buyerFeed ? [buyerFeed] : []),
       sinceQuery(STORE_ORDER, 'storeId', '==', storeId, after),
@@ -192,23 +202,33 @@ class StoreNotificationService {
         ...itemReviewQueries([...items.titles.keys()], after),
       ] : []),
     ];
-    const results = await this.readAll(queries, onFailure);
-    const statusUpdates = buyerFeed ? results.shift() ?? [] : [];
-    const [orders, storeReviews, newItems = [], ...itemReviewPages] = results;
+    const { docs, incomplete } = await this.readAll(queries, report);
+    const statusUpdates = buyerFeed ? docs.shift() ?? [] : [];
+    const [orders, storeReviews, newItems = [], ...itemReviewPages] = docs;
     const itemReviews = itemReviewPages.flat();
     // Items listed since the last read. The contract lets a buyer review any
     // item of a store they ordered from, so they may already have reviews:
     // none older than the item, so reading them from the watermark misses none.
-    const added = items ? this.addItems(items, newItems) : [];
-    if (added.length > 0) itemReviews.push(...(await this.readAll(itemReviewQueries(added, after), onFailure)).flat());
+    // A read of them that stopped short would move the boundary past the
+    // ones it missed: read the whole list again instead.
+    const newItemsIndex = (buyerFeed ? 1 : 0) + 2;
+    let added: string[] = [];
+    if (items && incomplete.has(newItemsIndex)) {
+      const fresh = await this.storeItems(storeId, true).catch(itemsFailed);
+      if (fresh) added = [...fresh.titles.keys()].filter(id => !items.titles.has(id));
+    } else if (items) {
+      added = this.addItems(items, newItems);
+    }
+    if (added.length > 0) itemReviews.push(...(await this.readAll(itemReviewQueries(added, after), report)).docs.flat());
 
-    return deriveStoreNotifications({ orders, storeReviews, itemReviews, statusUpdates }, items?.titles ?? new Map());
+    if (!failed) this.backfillFrom.delete(storeId);
+    return deriveStoreNotifications({ orders, storeReviews, itemReviews, statusUpdates }, this.itemsOf.get(storeId)?.titles ?? new Map());
   }
 
-  /** Every item of the store, read once a session; `storeAndTime` reads keep it current from there. */
-  private async storeItems(storeId: string): Promise<StoreItems> {
+  /** Every item of the store, read once a session (or on `refresh`); `storeAndTime` reads keep it current from there. */
+  private async storeItems(storeId: string, refresh = false): Promise<StoreItems> {
     const cached = this.itemsOf.get(storeId);
-    if (cached) return cached;
+    if (cached && !refresh) return cached;
     const all = await storeItemService.getAllByStore(storeId);
     const items = {
       titles: new Map(all.map(item => [item.id, item.title])),
@@ -233,25 +253,30 @@ class StoreNotificationService {
   /**
    * Every query's rows in one bundle; a member whose page came back full
    * reads on from its last row, so a busy window is not cut at one page.
-   * A failed member answers none and is reported.
+   * A failed member answers none and is reported. `incomplete` holds the
+   * members whose read stopped short (a failed continuation, or the cap).
    */
-  private async readAll(queries: QueryDocumentsOptions[], onFailure: (error: unknown) => void): Promise<Documents[]> {
+  private async readAll(queries: QueryDocumentsOptions[], onFailure: (error: unknown) => void): Promise<{ docs: Documents[]; incomplete: Set<number> }> {
     const firstPages = await queryDocumentBundle(queries, true, onFailure);
-    return Promise.all(queries.map(async (query, index) => {
+    const incomplete = new Set<number>();
+    const docs = await Promise.all(queries.map(async (query, index) => {
       const first = firstPages[index] ?? [];
       const last = first[first.length - 1]?.$id;
       if (first.length < PAGE || typeof last !== 'string') return first;
       try {
         const sdk = await getEvoSdk();
-        const { documents } = await paginateFetchAll(sdk, (startAfter) => ({ ...query, startAfter: startAfter ?? last }),
+        const { documents, reachedLimit } = await paginateFetchAll(sdk, (startAfter) => ({ ...query, startAfter: startAfter ?? last }),
           doc => doc, { maxResults: MAX_PER_SOURCE - first.length, inClause: query.where?.some(([, operator]) => operator === 'in') });
+        if (reachedLimit) incomplete.add(index);
         return [...first, ...documents];
       } catch (error) {
         logger.error('Store notifications: reading on past the first page failed:', error);
         onFailure(error);
+        incomplete.add(index);
         return first;
       }
     }));
+    return { docs, incomplete };
   }
 }
 
