@@ -16,6 +16,9 @@ import { readScoped, scopedKey, writeScoped } from '../storage-scope';
 import { applyLikeObservations, parseLikeSnapshot, targetsToRead, type KindObservation, type LikeBatch } from '../like-notification-snapshot';
 
 // Constants for notification queries
+/** Likers of an aggregated like whose profiles are loaded; the rest are known by id only (for the block filter). */
+const LIKER_PROFILES = 10;
+
 const NOTIFICATION_QUERY_LIMIT = 100;
 const INITIAL_FETCH_DAYS = 7;
 const INITIAL_FETCH_MS = INITIAL_FETCH_DAYS * 24 * 60 * 60 * 1000;
@@ -616,8 +619,9 @@ class NotificationService {
   ): Promise<Notification[]> {
     if (rawNotifications.length === 0) return [];
 
-    // Collect unique user IDs (every liker of an aggregated like) and post IDs
-    const userIds = Array.from(new Set(rawNotifications.flatMap(n => n.likers ?? [n.fromUserId])));
+    // Collect unique user IDs (the first few likers of an aggregated like, any
+    // of whom may be shown after a block) and post IDs
+    const userIds = Array.from(new Set(rawNotifications.flatMap(n => n.likers?.slice(0, LIKER_PROFILES) ?? [n.fromUserId])));
     const postIds = Array.from(new Set(
       rawNotifications.flatMap(n => (
         n.postId && n.type !== 'blogPost' && n.type !== 'blogComment' && n.replyContent === undefined ? [n.postId] : []

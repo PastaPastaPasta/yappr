@@ -185,3 +185,13 @@ describe('blocks during this session', () => {
     expect(store().blockedActors).toEqual([])
   })
 })
+
+describe('a large aggregated like', () => {
+  it('keeps the like while anyone in it is unblocked, however many likers came before them', () => {
+    const user = (id: string) => ({ id }) as Notification['from']
+    const likers = Array.from({ length: 11 }, (_, i) => user(`u${i}`))
+    const big: Notification = { ...notification('big', 'like', 1), from: likers[0], likers, likerCount: 11 }
+    const shown = withoutBlockedActors(big, (id) => id !== 'u10')
+    expect(shown && { from: shown.from.id, likerCount: shown.likerCount }).toEqual({ from: 'u10', likerCount: 1 })
+  })
+})

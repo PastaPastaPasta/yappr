@@ -128,6 +128,10 @@ describe('IPFS spellings', () => {
       `https://user:pass@${CID_V1}.ipfs.dweb.link/a.png`,
       `https://user@ipfs.io/ipfs/x/../${CID_V1}`,
       `https://bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy.ipfs.example@${CID_V1}.ipfs.dweb.link/a.png`,
+      // Hostname processing maps these to ASCII: `。` to `.`, fullwidth letters to their ASCII forms.
+      `https://${CID_V1}\u3002ipfs.dweb.link/a.png`,
+      `https://${CID_V1}.\uff49pfs.dweb.link/a.png`,
+      `https://ipfs\uff0eio/ipfs/${CID_V1}`,
       `https://ipfs.io/ipfs/%62${CID_V1.slice(1)}`,
       `https://ipfs.io/%69pfs/${CID_V1}`,
       `https://ipfs.io/%69pfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy`,
@@ -140,6 +144,8 @@ describe('IPFS spellings', () => {
     // An ordinary site's dot segments or encoded slashes stay ordinary (Firebase Storage paths use %2F).
     expect(imageSourceFor('https://firebasestorage.googleapis.com/v0/b/x/o/images%2Fa.jpg?alt=media').kind).toBe('proxied')
     expect(imageSourceFor('https://cdn.example/a/../b.png').kind).toBe('proxied')
+    // Non-ASCII paths are fine; only the host has to be plain ASCII.
+    expect(imageSourceFor('https://cdn.example/caf\u00e9.png').kind).toBe('proxied')
   })
 
   it('reads a subdomain gateway by its host CID, even with an /ipfs/ path', () => {

@@ -81,8 +81,12 @@ const OTHER_SUBDOMAIN_CID = /^[0-9a-z]{40,}$/i
  */
 const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
 
-/** An http(s) URL whose authority carries `user[:pass]@`. */
-const USERINFO = /^https?:\/\/[^/?#\\]*@/i
+/**
+ * An http(s) URL whose authority a pattern can't read the way a browser
+ * will: it carries `user[:pass]@`, or characters outside printable ASCII
+ * (hostname processing maps `。` to `.`, fullwidth letters to ASCII…).
+ */
+const AMBIGUOUS_AUTHORITY = /^https?:\/\/[^/?#\\]*(?:@|[^\x21-\x7e/?#\\])/i
 
 type IpfsReference = { cid: string; path: string } | 'refused'
 
@@ -95,9 +99,9 @@ type IpfsReference = { cid: string; path: string } | 'refused'
  */
 function ipfsReferenceOf(url: string): IpfsReference | null {
   const trimmed = url.trim()
-  // Userinfo (`a@b`) makes the authority ambiguous to a pattern: refuse it
-  // outright. Yappr never writes credentials into a media URL.
-  if (USERINFO.test(trimmed) || IPNS.test(trimmed)) return 'refused'
+  // Yappr never writes credentials or non-ASCII hosts into a media URL, and
+  // either can make a gateway host read differently: refuse outright.
+  if (AMBIGUOUS_AUTHORITY.test(trimmed) || IPNS.test(trimmed)) return 'refused'
   // The host's CID is the root: on a subdomain gateway `/ipfs/X/…` is a path inside it.
   const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
   if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) {
