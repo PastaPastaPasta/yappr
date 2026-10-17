@@ -56,7 +56,7 @@ export function FeedTopList({ posts, isLoading, activeTab, rankingWindow, onPost
       <div className="p-8 text-center" data-testid="feed-top-empty">
         <TrophyIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
         <p className="text-gray-500">No liked posts yet</p>
-        <p className="text-sm text-gray-400 mt-1">
+        <p className="text-sm text-gray-500 mt-1">
           {activeTab === 'following'
             ? 'The most-liked posts from people you follow will appear here'
             : 'The most-liked posts will appear here'}

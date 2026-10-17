@@ -31,7 +31,7 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
 
   const getStatusText = (entry: typeof usernames[0]) => {
     if (entry.registered && entry.isContested) {
-      return 'Registered (awaiting voting)'
+      return 'Waiting for the community vote'
     }
     if (entry.registered) {
       return 'Registered'
@@ -56,7 +56,7 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
         <p className="text-gray-600 dark:text-gray-400">
           {registeredUsernames.length} succeeded, {failedUsernames.length} failed
           {contestedRegistered.length > 0 &&
-            `, ${contestedRegistered.length} awaiting voting`}
+            `, ${contestedRegistered.length} waiting for a vote`}
         </p>
       </div>
 

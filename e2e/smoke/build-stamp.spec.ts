@@ -3,7 +3,7 @@
  *
  * next.config.js derives BOTH `NEXT_PUBLIC_GIT_COMMIT_HASH` and `generateBuildId`
  * from `git rev-parse --short HEAD`, so the build id embedded in every served
- * page is the same value the settings page prints under "Build Information".
+ * page is the same value the settings page prints under Settings > Developer > Build details.
  * The settings page itself is auth-gated (`withAuth(SettingsPage)`), so the
  * identity-free smoke project asserts the build id here and the write project
  * cross-checks the rendered settings value against it.

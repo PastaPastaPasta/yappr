@@ -22,6 +22,7 @@ import type { Post } from '@/lib/types'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { referencesMayDangle } from '@/lib/contract-topology'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 function PostDetailContent() {
   const router = useRouter()
@@ -49,6 +50,8 @@ function PostDetailContent() {
     postId,
     enabled: !!postId
   })
+  const authorName = post?.author.displayName || (post?.author.username ? `@${post.author.username}` : '')
+  useDocumentTitle(authorName ? `Post by ${authorName}` : null)
 
   const {
     sentinelRef: repliesSentinelRef,

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useId, useRef } from 'react'
+import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
@@ -11,6 +12,7 @@ import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { identityBridgeUrl } from '@/lib/identity-bridge'
 import { getConfiguredNetwork } from '@/lib/constants'
+import { COMMUNITY_RULES_HREF, MINIMUM_AGE } from '@/lib/legal'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { KeyLoginForm } from './key-login-form'
@@ -23,6 +25,16 @@ function newUserLink(): { href: string; label: string } {
   return getConfiguredNetwork() === 'mainnet'
     ? { href: DASH_WALLET_DOWNLOAD_URL, label: 'Get the Dash wallet' }
     : { href: identityBridgeUrl(), label: 'Create a Dash identity' }
+}
+
+/** A legal page opened in a new tab, so the sign-in under way is not lost. */
+function ConsentLink({ href, children }: { href: string; children: string }) {
+  return (
+    <Link href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-gray-700 dark:hover:text-gray-200">
+      {children}
+      <span className="sr-only"> (opens in new tab)</span>
+    </Link>
+  )
 }
 
 /** Wallet sign-in is offered only where App Connect is set up on this build. */
@@ -129,6 +141,11 @@ export function LoginModal() {
 
               {/* Primary: private key */}
               <KeyLoginForm onComplete={close} />
+              <p className="mt-3 text-xs text-center text-gray-600 dark:text-gray-400">
+                By continuing, you agree to the <ConsentLink href="/terms">Terms</ConsentLink> and{' '}
+                <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink> and confirm you are {MINIMUM_AGE} or
+                older. The <ConsentLink href="/privacy">Privacy Policy</ConsentLink> explains what is public.
+              </p>
 
               {/* New users */}
               <div className="mt-5 rounded-xl bg-gray-50 dark:bg-neutral-800/60 px-4 py-3 text-center">

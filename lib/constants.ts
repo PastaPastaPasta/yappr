@@ -375,10 +375,6 @@ export function pollrVoteDocType(multiChoice: boolean): string {
 // App URL (custom domain on GitHub Pages)
 export const APP_URL = 'https://yap.pr'
 
-// Previous ("v2") Yappr deployment — the old contract's content lives here.
-// Linked from empty / end-of-feed states so users can still reach pre-cutover posts.
-export const LEGACY_APP_URL = 'https://yappr-v2.thepasta.org'
-
 // Network configuration
 //
 // `AppNetwork` is what the SDK connects to; `KeyNetwork` is what address and WIF

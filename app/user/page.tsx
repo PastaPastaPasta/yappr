@@ -34,6 +34,7 @@ import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
 import { AvatarCustomization } from '@/components/settings/avatar-customization'
 import { BannerCustomization } from '@/components/settings/banner-customization'
 import { UsernameModal } from '@/components/dpns/username-modal'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { ProfileHeader, type ProfileData } from '@/components/profile/profile-header'
 import { ProfileTabs, type ProfileBlog } from '@/components/profile/profile-tabs'
 import { ImageCustomizationModal } from '@/components/profile/image-customization-modal'
@@ -129,6 +130,9 @@ function UserProfileContent() {
   const dpnsLabel = username?.replace(/\.dash$/, '')
   const displayName = (profileDocumentMissing && dpnsLabel) || profile?.displayName || (userId ? `User ${userId.slice(-6)}` : 'Unknown')
   const isDisplayNameLoading = isLoading || !profile?.displayName
+  let documentTitle: string | null = null
+  if (!isLoading) documentTitle = dpnsLabel ? `${displayName} (@${dpnsLabel})` : displayName
+  useDocumentTitle(documentTitle)
 
   useEffect(() => {
     setNsfwAcknowledged(false)

@@ -211,7 +211,6 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
 
 async function runLogoutCleanup(identityId: string): Promise<void> {
   sessionStorage.removeItem(scopedKey('yappr_dpns_username'))
-  sessionStorage.removeItem(scopedKey('yappr_skip_dpns'))
   invalidateBlockCache(identityId)
   privateFeedKeyStore.clearAllKeys()
   clearPasskeyCriticalKey(identityId)

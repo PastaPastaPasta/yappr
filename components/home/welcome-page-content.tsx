@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowRightIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
+import { LegalLinks } from '@/components/layout/legal-links'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useHomepageData } from '@/hooks/use-homepage-data'
@@ -41,7 +42,7 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
   if (!isHydrated) return <LandingSkeleton />
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
+    <div className="min-h-screen flex">
       <Sidebar />
 
       <main className="flex-1 md:max-w-[1200px] mx-auto px-4 md:px-8 overflow-x-hidden">
@@ -143,6 +144,11 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
             </Button>
           )}
         </section>
+
+        {/* From tablet width up the sidebar carries these links. */}
+        <footer className="md:hidden pb-8">
+          <LegalLinks />
+        </footer>
       </main>
     </div>
   )
@@ -150,8 +156,8 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
 
 function LandingSkeleton() {
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <div className="hidden md:block fixed h-[calc(100vh-40px)] w-[275px] px-2 py-4 top-[40px]">
+    <div className="min-h-screen flex">
+      <div className="hidden md:block fixed h-screen w-[275px] px-2 py-4 top-0">
         <div className="h-8 w-20 bg-gray-200 dark:bg-gray-800 rounded mb-6 animate-pulse" />
         <div className="space-y-2">
           {[...Array(6)].map((_, i) => (

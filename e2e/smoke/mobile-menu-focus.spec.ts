@@ -22,7 +22,7 @@ test('closed mobile menu is absent from navigation and opens with usable focus',
   await expect(sheet).not.toHaveAttribute('inert')
   await expect(closeButton).toBeFocused()
   await page.keyboard.press('Tab')
-  await expect(sheet.getByRole('link', { name: 'Store', exact: true })).toBeFocused()
+  await expect(sheet.getByRole('link', { name: /^Store( Beta)?$/ })).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('heading', { name: 'Menu', exact: true })).toHaveCount(0)
   await expect(menuButton).toBeFocused()

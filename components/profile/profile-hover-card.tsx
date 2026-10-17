@@ -65,7 +65,6 @@ export function ProfileHoverCard({
   const contentRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
   const keyboardEntryRef = useRef(false)
-  const returningFocusRef = useRef(false)
   const previewId = useId()
   const instructionsId = useId()
 
@@ -271,13 +270,6 @@ export function ProfileHoverCard({
           timerRef.current = setTimeout(() => changeOpen(true), openDelay)
         }}
         onPointerLeave={scheduleClose}
-        onFocus={() => {
-          if (returningFocusRef.current) {
-            returningFocusRef.current = false
-            return
-          }
-          changeOpen(true)
-        }}
         onBlur={(event) => {
           if (!contentRef.current?.contains(event.relatedTarget)) changeOpen(false)
         }}
@@ -292,8 +284,10 @@ export function ProfileHoverCard({
       >
         {children}
       </Popover.Anchor>
-      <span id={instructionsId} className="sr-only">
-        Press Arrow Down to access profile actions. Escape closes the preview.
+      {/* Read only as the trigger's description (aria-describedby), never in
+          the page's reading order, where it would repeat for every author link. */}
+      <span id={instructionsId} hidden>
+        Press Down Arrow to preview this profile. Escape closes the preview.
       </span>
       <Popover.Portal>
       <Popover.Content
@@ -319,10 +313,7 @@ export function ProfileHoverCard({
         }}
         onEscapeKeyDown={() => {
           changeOpen(false)
-          if (!triggerRef.current?.contains(document.activeElement)) {
-            returningFocusRef.current = true
-            triggerRef.current?.focus()
-          }
+          if (!triggerRef.current?.contains(document.activeElement)) triggerRef.current?.focus()
         }}
       >
         {isLoading && !profileData ? (

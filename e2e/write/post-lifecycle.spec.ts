@@ -13,7 +13,7 @@
  * confirmation wait times out routinely), and use reloading polls for anything
  * that has to come back out of a chain query.
  */
-import { appUrl } from '../fixtures/app'
+import { appUrl, openBuildDetails } from '../fixtures/app'
 import { expect, hasSeedPhrase, NO_SEED_REASON, test } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
 import { reloadUntilVisible } from '../fixtures/eventual'
@@ -33,15 +33,15 @@ test.describe('post lifecycle on the real testnet', () => {
     const [expected, topology] = await Promise.all([expectedSocialContractId(), expectedTopology()])
     expect(expected, 'the env file must define NEXT_PUBLIC_YAPPR_CONTRACT_ID').not.toBe('')
 
-    // /about prints the contract id and the interaction topology the bundle was
+    // Build details print the contract id and the interaction topology the bundle was
     // compiled with. A plain `npm run build` would print the production contract
     // here, and every write below would land on it — so this gates the whole
     // serial group. The topology assertion catches the other half of the same
     // mistake: a client compiled for the wrong contract SHAPE queries doctypes
     // and fields that do not exist on the contract it is pointed at.
-    await page.goto(appUrl('/about/'))
+    await openBuildDetails(page)
     await expect(page.getByText(expected, { exact: true })).toBeVisible()
-    await expect(page.getByTestId('about-topology')).toHaveText(topology)
+    await expect(page.getByTestId('build-topology')).toHaveText(topology)
   })
 
   test('the seeded session is restored', async ({ page }) => {

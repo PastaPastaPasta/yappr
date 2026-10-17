@@ -75,7 +75,7 @@ export function UsernameInputRow({
       case 'available':
         return 'Available'
       case 'contested':
-        return 'Available (contested)'
+        return 'Available · goes to a community vote'
       case 'taken':
         return 'Already taken'
       case 'invalid':
