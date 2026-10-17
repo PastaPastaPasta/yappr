@@ -109,7 +109,7 @@ async function queryAll(battery, docType, where, orderBy) {
   throw new Error(`${docType}: more than ${MAX_PAGES * PAGE} documents match one read; not cleaning from a partial list (narrow it with a later --since)`);
 }
 
-/** Every page of a read, however many: for a discovery read that `since` cannot narrow (reads only, no writes depend on a cap). */
+/** Every page of a read, however many: the leading identifier range cannot also filter by `since`. */
 async function queryEvery(battery, docType, where, orderBy) {
   const rows = [];
   for (let startAfter; ;) {
@@ -208,16 +208,10 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
   const blogs = await readEach(owners, (who) => queryAll(battery, 'blog', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]));
   // Only a blog's owner posts to it (b21), so the owners' posts are the posts on their blogs.
   const posts = await readEach(blogs, (blog) => queryAll(battery, 'blogPost', [...livePosts, ['blogId', '==', normalizeId(blog.$id)], ['$createdAt', '>=', since]], [['blogId', 'asc'], ['$createdAt', 'asc']]));
-  // blogComment keeps no owner index, so the owners' comments are found through every post author's
-  // postOwnerAndTime from `since`, then kept by owner below: an owner's comment on anyone's post, not only
-  // on the owners' own. The authors come from the whole blogPost timeline, read to the end: posts outlive a
-  // moderator's removal of their blog, so the blogs alone would miss them. (discussedRecent is a timeRange
-  // index, which document queries do not read.)
-  const authors = new Set((await queryEvery(battery, 'blogPost', [...livePosts, ['$createdAt', '>', 0]], [['$createdAt', 'asc']])).map((row) => normalizeId(row.$ownerId)));
-  // Blog owners remain discoverable even when every one of their posts is tombstoned.
-  for (const row of await queryEvery(battery, 'blog', [['$createdAt', '>', 0]], [['$createdAt', 'asc']])) authors.add(normalizeId(row.$ownerId));
-  for (const who of owners) authors.add(who.ownerId);
-  const comments = await readEach([...authors], (author) => queryAll(battery, 'blogComment', [['blogPostId.$ownerId', '==', author], ['$createdAt', '>=', since]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]));
+  // Scan the permanent postOwnerAndTime index from the lowest identifier, then
+  // filter by comment owner/time below. This still finds an owner's comments
+  // when the target author's posts are tombstoned and their blog was removed.
+  const comments = await queryEvery(battery, 'blogComment', [['blogPostId.$ownerId', '>=', bs58.encode(new Uint8Array(32))]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]);
   const follows = await readEach(owners, (who) => queryAll(battery, 'blogFollow', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['blogId', 'asc']]));
   const scope = { owners: ownerSet(owners), since };
   const targets = {

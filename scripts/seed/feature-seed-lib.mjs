@@ -181,7 +181,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
     // then checkpointed by the caller under the key); a create that threw after landing is
     // recognised by the caller's `accepted` probe, or by a value readback for a stored type.
     let id = null;
-    // Every id a priced create derived before broadcasting, one per attempt: an
+    // Every id a create derived before broadcasting, one per attempt: an
     // earlier attempt whose wait threw may land after a later one was sent.
     const derivedIds = [];
     // Unbounded in time on purpose: the pre-write probe is how a resumed run
@@ -206,7 +206,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
         const agreement = await agreementFor(docType, contract);
         const created = await actor.lock(() => create(handle.sdk, {
           contractId: contract, actor, docType, document, data, entropy, agreement, payment: actor.paysCredits ? {} : payment(tokenCost),
-          // A priced create derives its id before broadcasting: keep it, so a create whose
+          // WIF-backed creates derive their id before broadcasting: keep it, so a create whose
           // wait throws after landing is recognised by id even on a doctype with no owner index.
           onDerivedId: (derived) => { derivedIds.push(derived); },
         }));

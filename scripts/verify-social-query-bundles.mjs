@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v16)> node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v17)> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
@@ -49,7 +49,7 @@ import { socialShapes } from './social-shapes.mjs';
 
 const social = process.env.V10_CONTRACT_ID;
 if (!social) {
-  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10 to v16 cut (there is no default).');
+  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10 to v17 cut (there is no default).');
   process.exit(1);
 }
 /** A contract id from the environment or `.env.devnet`; the devnet's own, never a baked-in chain's. */
@@ -78,7 +78,7 @@ const id = bytes => typeof bytes === 'string' ? bytes : bs58.encode(bytes);
 const canonical = docs => JSON.stringify(docs.map(doc => Object.fromEntries(
   Object.entries(doc).filter(([key]) => key !== '$id').sort(([a], [b]) => a.localeCompare(b))
 )), (_, value) => typeof value === 'bigint' ? value.toString() : value);
-/** The social contract under test as published (v10 to v16): its declarations pick the reads below. */
+/** The social contract under test as published (v10 to v17): its declarations pick the reads below. */
 const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
 /**
  * v13: author post pages read `post.ownerAndTime` with `live == true` first (SOCIAL.ownerPosts).

@@ -26,6 +26,8 @@ import {
   ALREADY_CLAIMED,
   REPO_ROOT,
   RETRYABLE,
+  TRANSPORT_COLLAPSE,
+  WAIT_MAYBE_LANDED,
   STARTER_GRANT,
   YAPP_TOKEN_POSITION,
   buildDocument,
@@ -432,7 +434,11 @@ export function createBattery({ handle, contractId, socialId, agreementFor = und
     const reason = outcome.error ?? '';
     if (outcome.ok) { check(label, false, 'ACCEPTED (BAD)'); return outcome; }
     capturedErrors.push({ label, message: reason });
-    const matched = !RETRYABLE.test(reason) && pattern.test(reason);
+    // Consensus refusals can arrive inside a "failed to wait for state transition"
+    // wrapper too. Its explicit consensus code/schema error still establishes a refusal.
+    const consensus = /\bcode=[124]\d{4}\b|\bJsonSchemaError\b/i.test(reason);
+    const transient = RETRYABLE.test(reason) || TRANSPORT_COLLAPSE.test(reason) || (!consensus && WAIT_MAYBE_LANDED.test(reason));
+    const matched = !transient && pattern.test(reason);
     check(label, matched, matched ? reason.slice(0, 200) : `rejected, but NOT for the expected reason ${pattern}: ${reason.slice(0, 180)}`);
     return outcome;
   }

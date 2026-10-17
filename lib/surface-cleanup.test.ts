@@ -1,8 +1,8 @@
 import bs58 from 'bs58'
-import { ensureInitialized } from '@dashevo/evo-sdk'
+import { IdentityPublicKey, PrivateKey, ensureInitialized } from '@dashevo/evo-sdk'
 import { describe, expect, it, vi } from 'vitest'
 import { createBattery, contractFileSha256, contractTarget, recordedTestContract, testContractNetworkKey, withTestContract } from '../scripts/battery-lib.mjs'
-import { ensureTokens } from '../scripts/seed/feature-seed-lib.mjs'
+import { createDocWriter, ensureTokens } from '../scripts/seed/feature-seed-lib.mjs'
 import { parseArgs } from '../scripts/clean-test-content.mjs'
 import { blogPostTombstone, cleanBlog, cleanPollr, cleanStorefront, contentOf, createdSince, withStatus } from '../scripts/surface-cleanup.mjs'
 
@@ -65,7 +65,10 @@ describe('which documents a surface cleanup touches', () => {
 function fakeBattery(rows: Record<string, Array<Record<string, unknown>>>, { release = false } = {}) {
   const value = (v: unknown) => (v instanceof Uint8Array ? bs58.encode(v) : v)
   const matches = (row: Record<string, unknown>, where: Array<[string, string, unknown]>) => where.every(([field, op, operand]) =>
-    op === '==' ? value(row[field]) === operand : Number(row[field]) >= Number(operand))
+    op === '==' ? value(row[field]) === operand
+      : typeof operand === 'string'
+        ? Buffer.compare(bs58.decode(String(value(row[field]))), bs58.decode(operand)) >= 0
+        : Number(row[field]) >= Number(operand))
   const queryDocs = async (docType: string, { where }: { where: Array<[string, string, unknown]> }) => (rows[docType] ?? []).filter((row) => matches(row, where))
   const schemas = { blogPost: { properties: release ? { live: { const: true } } : {} }, poll: { indices: release ? [] : [{ properties: [{ $ownerId: 'asc' }] }] } };
   return {
@@ -142,6 +145,21 @@ describe('what a surface cleanup plans', () => {
     expect(report.done.blogComment).toBe(1);
   });
 
+  it('blog cleanup finds comments on tombstones even after the target blog is removed', async () => {
+    const battery = fakeBattery({
+      blogPost: [{ $id: id(2), $ownerId: id(8), $createdAt: 2000n, blogId: id(1), deleted: true }],
+      blogComment: [
+        { $id: id(3), $ownerId: id(7), $createdAt: 6000n, 'blogPostId.$ownerId': b58(8) },
+        { $id: id(4), $ownerId: id(9), $createdAt: 6000n, 'blogPostId.$ownerId': b58(8) },
+        { $id: id(5), $ownerId: id(7), $createdAt: 1000n, 'blogPostId.$ownerId': b58(8) },
+      ],
+    }, { release: true });
+    const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false });
+    expect(report.found.blogComment).toBe(1);
+    expect(report.done.blogComment).toBe(1);
+    expect(report.failed).toEqual([]);
+  });
+
   it('blog v9 pins live on both listings and preserves publishedAt on tombstones', async () => {
     const battery = fakeBattery({
       blog: [{ $id: id(1), $ownerId: id(7), $createdAt: 6000n }],
@@ -155,7 +173,7 @@ describe('what a surface cleanup plans', () => {
     };
     const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false });
     expect(report.done['blogPost (tombstone)']).toBe(1);
-    expect(listings).toBe(2);
+    expect(listings).toBe(1);
   });
 
   it('blog: tombstones live posts only, and leaves the run\'s blog up without a moderator', async () => {
@@ -253,10 +271,75 @@ describe('the cleanup CLI on the feature surfaces', () => {
 
 
 describe('battery rejection verdicts', () => {
-  it('does not count a rate limit as a schema refusal even with a broad expected pattern', () => {
+  it.each([
+    'grpc error: Some resource has been exhausted: rate limited',
+    '504 Gateway Timeout',
+    'deadline exceeded',
+    'request timed out',
+    'quorum not found',
+    'invalid quorum',
+    'no available addresses',
+    'Failed to wait for state transition result',
+  ])('does not count transport failure as a broad schema refusal: %s', (error) => {
     const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
-    battery.expectRejected('invalid schema', { ok: false, error: 'grpc error: Some resource has been exhausted: rate limited' }, /[\s\S]+/);
+    battery.expectRejected('invalid schema', { ok: false, error }, /[\s\S]+/);
     expect(battery.failures).toBe(1);
+  });
+
+  it('still accepts an actual schema refusal', () => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('invalid schema', { ok: false, error: 'JsonSchemaError: minItems' }, /[\s\S]+/);
+    expect(battery.failures).toBe(0);
+  });
+
+  it('accepts an explicit consensus refusal inside a confirmation-wait wrapper', () => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('invalid reference', { ok: false, error: 'Failed to wait for state transition result: state transition broadcast error: referenced identity not found | code=40120' }, /40120/);
+    expect(battery.failures).toBe(0);
+  });
+});
+
+describe('unpriced no-index seeder recovery', () => {
+  it('keeps the facade path for signer-only DM actors', async () => {
+    await ensureInitialized();
+    const facade = vi.fn(async () => ({ id: b58(4) }));
+    const actor = { ownerId: b58(7), identityKey: {}, signer: {}, lock: <T>(operation: () => Promise<T>) => operation() };
+    const writer = createDocWriter({
+      handle: { sdk: { documents: {
+        create: facade, get: async () => ({}), query: async () => new Map(),
+      } }, reconnect: async () => {} },
+      contractId: b58(9), entropyFor: () => id(3), paymentInfo: () => ({}), wait: async () => {},
+    });
+    const created = await writer.createDoc(actor, 'dmInvite', 'signer-only-invite', { bucket: 1 });
+    expect(created.id).toBe(b58(4));
+    expect(facade).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the ID before a landed poll create loses its confirmation, without creating another poll', async () => {
+    await ensureInitialized();
+    const key = PrivateKey.fromHex('01'.repeat(32), 'testnet');
+    const actor = {
+      ownerId: b58(7), wif: key.toWIF(),
+      identityKey: new IdentityPublicKey({ keyId: 1, purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_secp256k1', data: key.getPublicKey().toBytes() }),
+      lock: <T>(operation: () => Promise<T>) => operation(),
+    };
+    let landed = false;
+    const broadcast = vi.fn(async () => { landed = true; throw new Error('504 Gateway Timeout'); });
+    const facade = vi.fn(async () => { throw new Error('504 Gateway Timeout'); });
+    const get = vi.fn(async () => landed ? {} : null);
+    const writer = createDocWriter({
+      handle: { sdk: {
+        wasm: { getIdentityContractNonce: async () => 0n, refreshIdentityNonce: async () => {} },
+        stateTransitions: { broadcastAndWait: broadcast },
+        documents: { create: facade, get, query: async () => { throw new Error('where clause on non indexed property'); } },
+      }, reconnect: async () => {} },
+      contractId: b58(9), entropyFor: () => id(3), paymentInfo: () => ({}), wait: async () => {},
+    });
+    const created = await writer.createDoc(actor, 'poll', 'unpriced-poll', { question: 'Question?' });
+    expect(created.id).toMatch(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(facade).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledWith(b58(9), 'poll', created.id);
   });
 });
 

@@ -1142,15 +1142,16 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
 }
 
 /**
- * One create, sent whichever way its doctype demands: the facade when there is
- * nothing to agree to, and the hand-built batch above when an
- * `$actionFeeAgreement` has to ride along. Both resolve to something
+ * One create: the hand-built batch when an `$actionFeeAgreement` has to ride
+ * along or the caller needs its id before broadcast and provides a WIF;
+ * otherwise the facade (signer-only actors keep their existing path).
+ * Both resolve to something
  * `createdId` can read an id off, so a caller's acceptance logic does not care
  * which path ran. `actor` is a seeder actor: `{ ownerId, identityKey, signer,
  * wif }`.
  */
 export function createDocument(sdk, { contractId, actor, docType, document, data, entropy, agreement, payment = {}, onDerivedId }) {
-  if (!agreement) {
+  if (!agreement && (!onDerivedId || !actor.wif)) {
     return sdk.documents.create({ document, identityKey: actor.identityKey, signer: actor.signer, ...payment });
   }
   return createWithAgreement(sdk, {
