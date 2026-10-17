@@ -40,11 +40,12 @@ export function proxiedImageUrl(url: string, size: ProxyImageSize = 'full'): str
   return `${IMAGE_PROXY_ORIGIN}/?url=${encodeURIComponent(url)}&w=${PROXY_WIDTHS[size]}&we&n=-1&output=webp`
 }
 
-/** `ipfs://CID…`, a path gateway `https://host/ipfs/CID…`, a subdomain gateway `https://CID.ipfs.host…`. */
+/** `ipfs://CID…`, a subdomain gateway `https://CID.ipfs.host…`, a path gateway `https://host/ipfs/CID…`. */
 const IPFS_REFERENCES = [
   /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)([^?#]*)/i,
-  /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i,
+  // The host's CID is the root: on a subdomain gateway `/ipfs/X/…` is a path inside it.
   /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+([^?#]*)/i,
+  /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i,
 ]
 
 /**

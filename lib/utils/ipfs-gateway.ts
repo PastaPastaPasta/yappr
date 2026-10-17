@@ -119,17 +119,18 @@ export function gatewayUrlToIpfsUrl(url: string): string | null {
     const parsed = new URL(url)
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null
 
-    // Path gateway: /ipfs/<CID>[/path] on any host
-    const pathMatch = parsed.pathname.match(/^\/ipfs\/([^/]+)(\/.*)?$/)
-    if (pathMatch) {
-      return `ipfs://${pathMatch[1]}${pathMatch[2] || ''}`
-    }
-
-    // Subdomain gateway: <CID>.ipfs.<domain>
+    // Subdomain gateway: <CID>.ipfs.<domain>. Checked first: the host's CID
+    // is the root, so a `/ipfs/X` path there is a path inside it.
     const hostMatch = parsed.hostname.match(/^([^.]+)\.ipfs\./i)
     if (hostMatch) {
       const path = parsed.pathname === '/' ? '' : parsed.pathname
       return `ipfs://${hostMatch[1]}${path}`
+    }
+
+    // Path gateway: /ipfs/<CID>[/path] on any host
+    const pathMatch = parsed.pathname.match(/^\/ipfs\/([^/]+)(\/.*)?$/)
+    if (pathMatch) {
+      return `ipfs://${pathMatch[1]}${pathMatch[2] || ''}`
     }
 
     return null

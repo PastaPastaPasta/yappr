@@ -128,6 +128,16 @@ describe('IPFS spellings', () => {
     expect(imageSourceFor('https://cdn.example/a/../b.png').kind).toBe('proxied')
   })
 
+  it('reads a subdomain gateway by its host CID, even with an /ipfs/ path', () => {
+    const other = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
+    const url = `https://${CID_V1}.ipfs.dweb.link/ipfs/${other}/photo.jpg`
+    expect(ipfsCidOf(url)).toBe(CID_V1)
+    expect(scriptCid(url)).toBe(CID_V1)
+    expect(isDeniedMedia(url)).toBe(true)
+    expect(imageSourceFor(`https://${other}.ipfs.dweb.link/ipfs/x/a.png`))
+      .toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${other}/ipfs/x/a.png` })
+  })
+
   it('drops a gateway query string from the IPFS path', () => {
     const cid = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
     expect(imageSourceFor(`https://ipfs.io/ipfs/${cid}?filename=a.png`)).toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${cid}` })

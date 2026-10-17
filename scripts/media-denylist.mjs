@@ -19,8 +19,9 @@ const LIST_PATH = fileURLToPath(new URL('../lib/media/media-denylist.json', impo
 
 const IPFS_REFERENCES = [
   /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)([^?#]*)/i,
-  /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i,
+  // The host's CID is the root: on a subdomain gateway `/ipfs/X/…` is a path inside it.
   /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+([^?#]*)/i,
+  /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i,
 ]
 const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
 /** Same as ESCAPING_PATH in lib/media/remote-media.ts: a path that could leave its CID. */
