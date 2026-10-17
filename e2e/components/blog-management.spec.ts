@@ -26,3 +26,14 @@ test('retraction refreshes a paging cursor that has left the live index', async 
   await expect(page.getByText('Next article', { exact: true })).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
+
+test('retraction waits for an in-flight page before changing the live index', async ({ page }) => {
+  await page.goto('/?fixture=blog-management&scenario=slow-paged')
+  await page.getByRole('button', { name: 'Delete blog', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete blog', exact: true }).click()
+  await page.getByRole('button', { name: 'Load more posts' }).click()
+  await expect(page.getByRole('button', { name: 'Delete post', exact: true })).toBeDisabled()
+  await page.evaluate(() => window.releaseManagementPage())
+  await expect(page.getByText('Next article', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Delete post', exact: true }).first()).toBeEnabled()
+})

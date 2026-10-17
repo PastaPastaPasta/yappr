@@ -71,7 +71,7 @@ export function MyBlogPosts({ ownerId }: { ownerId: string }) {
       {posts.map((post) => (
         <div key={post.id} className="flex items-center justify-between gap-3">
           <p className="min-w-0 truncate text-sm">{post.title}</p>
-          <Button variant="outline" size="sm" onClick={() => setDeleting(post)}>Delete post</Button>
+          <Button variant="outline" size="sm" disabled={loading} onClick={() => setDeleting(post)}>Delete post</Button>
         </div>
       ))}
       {loading && <p className="text-sm text-gray-500">Loading posts...</p>}

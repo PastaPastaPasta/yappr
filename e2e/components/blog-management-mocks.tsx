@@ -1,7 +1,10 @@
 import type { Blog, BlogPost } from '@/lib/types'
 export const managedBlog: Blog = { id: 'blog', ownerId: 'owner', name: 'Retained blog', createdAt: new Date(1700000000000) }
 const post: BlogPost = { id: 'post', ownerId: 'owner', blogId: 'blog', title: 'Retained article', slug: 'retained', content: [], createdAt: new Date(1700000000000), publishedAt: 1700000000000 }
-const paged = new URLSearchParams(window.location.search).get('scenario') === 'paged'
+const scenario = new URLSearchParams(window.location.search).get('scenario')
+const paged = scenario === 'paged' || scenario === 'slow-paged'
+let releasePage: (() => void) | undefined
+export function releaseManagementPage() { releasePage?.() }
 let blogDeleted = false
 let postDeleted = false
 export const blogService = {
@@ -9,6 +12,10 @@ export const blogService = {
 }
 export const blogPostService = {
   async getOwnerPostsPage(_ownerId: string, options?: { startAfter?: string }) {
+    if (scenario === 'slow-paged' && options?.startAfter) {
+      await new Promise<void>((resolve) => { releasePage = resolve })
+      return { posts: [{ ...post, id: 'next', title: 'Next article' }] }
+    }
     if (postDeleted && options?.startAfter === post.id) throw new Error('Cursor left the live index')
     return postDeleted
       ? { posts: paged ? [{ ...post, id: 'next', title: 'Next article' }] : [] }

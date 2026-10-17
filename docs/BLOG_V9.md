@@ -113,6 +113,6 @@ The unit tests exercise blog proposal and approval writes with the blog's
 contract id, plus the v9/older-cut moderation gates and deletion cache reset.
 
 Local validation also passed lint, dead-code lint, production build,
-**3,459 unit tests across 238 files**, and **20 browser component tests**,
+**3,459 unit tests across 238 files**, and **21 browser component tests**,
 including blog deletion followed by owner retraction and paging after a
 retraction removes the cursor from the live index.
