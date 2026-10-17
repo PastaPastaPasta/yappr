@@ -145,10 +145,84 @@ Every PR goes to `staging` through the normal gates (lint, unit tests, build, de
 3. [A] Run `--plan` and record the app id and group id. **Start the maker nonce freeze.** [O] Send the app id and `https://yap.pr` to the DashPay iOS and Android brand maps.
 4. [A] Run `--dry-run` then `--signed-dry-run`. Check that the interim, windows, app id, group id and member ids match the plan.
 5. [O/A] Run `--live --journal --upto app`, read back the group (owner is the maker, no admins, name Yappr), then `--live` for the members.
-6. [A/O] **Immediately after registration**, file each Yappr charter in the next block with a proved readback, for social, blog and storefront. Then watch for rival contenders. The first charter filed wins ties and seats are permanent on protocol 14. The owner's testnet masternodes vote. Posting opens about two hours later (1 h join plus 1 h vote).
+6. [A/O] **Prepare before registration and file immediately afterward**, independently for social, blog and storefront, following the charter procedure below. Prove the submitted proposal, members' joins, and elected application in that order. Tie-break priority belongs to the **elected application**, not the submitted proposal. The owner's masternode majority decides contested elections. A sole contender seats after the 1 h join window; a contested election also takes its 1 h vote window. Posting stays closed until a team actually seats.
 7. [A] Run read-only `verify-appconnect g1,g2,g3,a1` (expect 32/0) and one proved query per index family. Snapshot the contracts and end the nonce freeze. [O] Write the anchor `appInfo` (name Yappr, url `https://yap.pr`).
 
 **Gate G4.** All ids and hashes recorded in the runbook, charters seated, the journal at mode 0600 with an off-machine backup.
+
+### Charter preparation, filing, and masternode votes
+
+`file-release-charters.mjs` accepts one manifest per target (`social`, `blog`, or `storefront`). Use the **predicted registration id** from the registration plan; never copy a Sakura id into a testnet manifest. Each target needs a leader and at least two distinct elected members; **three members plus the leader are recommended**, so losing one nonleader still leaves three signatures possible. `leader: true, approvals: 3` means three signatures **including the leader**. Later-added members cannot approve deletion of documents that predate their membership.
+
+Keep manifests, journals, and generated encryption/decryption keys in a 0700 release directory. Signing key files must be regular files owned by the operator, mode 0600 or tighter, in the same format as registration: `{ "identityId": "…", "identityKeys": [{ "id": 0, "privateKeyWif": "…" }, { "id": 1, "privateKeyWif": "…" }] }`. Never put private keys in command arguments or checked-in manifests. Each actor supplies an enabled, unbound MASTER authentication key for preparation and a CRITICAL authentication key for documents; their ids need not be 0 and 1. The tool proves each key matches the declared identity before signing. Filing reads CRITICAL document keys and the prepared bound keys; MASTER keys are opened only when preparation must add an identity key.
+
+Example manifest (`social-charter.json`; repeat with the other target names and ids):
+
+```json
+{
+  "contract": "social",
+  "targetContractId": "<predicted-social-contract-id>",
+  "expected": {
+    "ownerId": "<registration-maker-id>",
+    "joinWindow": 3600, "voteWindow": 3600, "challengeCoolDown": 2592000,
+    "interim": "notYetUsable",
+    "documentTypes": ["post", "reply", "report", "yapprProfile"]
+  },
+  "leader": {
+    "identityId": "<leader-id>",
+    "keyFile": "/private/release/leader.json", "keyId": 1,
+    "masterKeyFile": "/private/release/leader.json", "masterKeyId": 0
+  },
+  "members": [
+    { "identityId": "<member-1>", "keyFile": "/private/release/member-1.json", "keyId": 1, "masterKeyFile": "/private/release/member-1.json", "masterKeyId": 0 },
+    { "identityId": "<member-2>", "keyFile": "/private/release/member-2.json", "keyId": 1, "masterKeyFile": "/private/release/member-2.json", "masterKeyId": 0 },
+    { "identityId": "<member-3>", "keyFile": "/private/release/member-3.json", "keyId": 1, "masterKeyFile": "/private/release/member-3.json", "masterKeyId": 0 }
+  ],
+  "description": "Our proposed moderation team and policy.",
+  "reasons": [{ "code": "SPM", "label": "Spam" }, { "code": "ABU", "label": "Abuse" }],
+  "moderatorsShare": 60,
+  "rewardSplit": { "leader": 40, "equal": 30, "actions": 30 }
+}
+```
+
+1. **Fund before preparing.** Each elected application spends a **0.5 DASH contest deposit (50B credits, approximately 3,000¢)** plus key/reason/proposal/join/application gas. It is not a refundable leader bond. The CLI requires **at least 0.51 DASH per leader per application**, and at least 0.001 DASH reserve per member. For three contracts, budget **1.5 DASH in deposits plus at least 0.03 DASH in leader reserves**, with extra member and operational funding. If a leader serves multiple contracts, fund the total before starting and use separate journals. Prepare them sequentially; reasons with the same owner/code/text are reused. **When reusing any actor, pass `--prior-journal` for every other journal that has already used a shared actor during both preparation and filing** (repeat the flag for social and blog when preparing/filing storefront). These private journals must match NETWORK/devnet and have no unresolved writes. Their verified charters nonces are imported and persisted in the new journal, so a lagging read cannot reuse a nonce consumed by an earlier target. Re-import all latest journals at filing even if all teams were prepared before registration, including journals for targets prepared later than this target; their reason writes share the same nonce stream. File sequentially too: never run concurrent filers or other charters writes for the same leader or member. Use distinct teams for parallel filing. Registration costs are separate. Use asset locks, preserving the maker's registration nonce.
+2. **Review the plan and read-only preflight.** `--plan` is offline and opens no key files. `--dry-run` reads the registered target and identity balances without signing or broadcasting. Placeholder ids may be absent; `ready: false` then documents the missing prerequisites. Mainnet is refused unless `--allow-mainnet` is explicit; production broadcasts also require `--production`. `NETWORK` is mandatory in every mode.
+
+   ```sh
+   NETWORK=testnet node scripts/file-release-charters.mjs --plan --config "$PRIVATE_RELEASE_DIR/social-charter.json"
+   NETWORK=testnet node scripts/file-release-charters.mjs --dry-run --config "$PRIVATE_RELEASE_DIR/social-charter.json"
+   ```
+
+3. **Prepare each team before registering its target.** This live step creates the leader's MEDIUM DECRYPTION key bound to `moderationCharters/submittedCharter`, each member's MEDIUM ENCRYPTION key bound to `moderationCharters/joinRequest`, and the reason documents. It persists generated private keys before identity updates, then checkpoints readiness and rechecks the leader still has 0.51 DASH. The manifest fixes the proposal payload; its transition is signed locally with the current nonce only at filing, avoiding stale pre-signed proposals across the three contracts. Keep these key files: the leader needs the decryption key to read member messages. To reuse an existing bound key, place its private half in the journal directory as `<identity-id>-decryption.json` or `<identity-id>-encryption.json` in the same identity-key JSON format.
+
+   ```sh
+   NETWORK=testnet node scripts/file-release-charters.mjs --live --production --prepare \
+     --config "$PRIVATE_RELEASE_DIR/social-charter.json" --journal "$PRIVATE_RELEASE_DIR/social-charter-journal.json"
+   ```
+
+4. **Arm the prepared filer, then register the target.** Start the command below in a second terminal before the corresponding registration command. It checks the prepared state, waits up to 600 seconds for proved registration, checks the registered owner, 1h/1h windows, interim, cool-down, and moderated types against `expected`, requires no election delay, signs and submits the proposal, commits members' encrypted joins in parallel, then checks the current join phase and applies with the full elected member list. Repeat for blog and storefront, matching each id against the actual registration journal. Set `expected.documentTypes` from each target's registration plan: social uses `post`, `reply`, `report`, `yapprProfile`; blog uses `blog`, `blogPost`, `blogComment`, `report`; storefront uses `store`, `storeItem`, `storeReview`, `itemReview`, `report`. A declaration mismatch stops before proposal or deposit. The contest fund must still equal the reviewed 0.5 DASH budget. The registration batch can be stopped after an entry with `--upto`; it does not itself interleave charters.
+
+   ```sh
+   NETWORK=testnet node scripts/file-release-charters.mjs --live --production --wait-registration 600 \
+     --config "$PRIVATE_RELEASE_DIR/social-charter.json" --journal "$PRIVATE_RELEASE_DIR/social-charter-journal.json"
+   ```
+
+   Prepared proposal filing aims for the first eligible block after registration. The tool does **not guarantee H+1** under network delays: prove registration and submission inclusion heights independently in the release evidence. Journal `observedTip` is only the tip seen after a proof, not an inclusion height; do not use it to claim H+1. A full-member elected application requires the committed proposal and joins first; do not claim it landed in H+1. The election clock and tie-break priority begin with the elected application. A rival may have opened the join window already, so file promptly. Resume with the **same semantic manifest and journal** after an interrupted document create (key paths may change after a backup restore). A journaled application is proved before funding gates, so an already-paid deposit needs no second top-up. Readback retries for up to 60 seconds. Only saved signed bytes are rebroadcast; a consumed nonce without the exact document stops for reconciliation. Inspect the saved transition hash/error and prove acceptance or rejection before retrying; never delete uncertain signed bytes. An ambiguous identity update stops for manual reconciliation: if the exact saved bound key appears on the proved identity, rerun to adopt it. If absent, absence or an unchanged revision alone does not prove rejection. Establish the transition's definitive rejection with node/operator evidence before an operator clears only that key's `broadcasting` checkpoint and reruns preparation; preserve the original private journal. Never do this while a transition could still land. A stale `.lock` after a killed process must be inspected and removed only after proving that process exited. Back up the private journal and key files off-machine.
+
+For example, when preparing blog after social with shared actors, append `--prior-journal "$PRIVATE_RELEASE_DIR/social-charter-journal.json"` to blog’s preparation command. When filing any target, append all other journals that have already prepared or filed with its actors: social filing after blog/storefront preparation must import those too. For storefront preparation after social/blog, append both earlier journals. Keep all journals and their imported floors with the backup; do not omit them when restoring or starting a new target.
+
+5. **Watch all three contracts and vote.** The CLI's one-shot `--watch` reads proposals, contenders, vote tallies, join/vote deadlines, phase, and seated team without opening key files. Invoke again to refresh.
+
+   ```sh
+   NETWORK=testnet node scripts/file-release-charters.mjs --watch \
+     --targets "social=$SOCIAL_CONTRACT_ID,blog=$BLOG_CONTRACT_ID,storefront=$STOREFRONT_CONTRACT_ID"
+   ```
+
+   For masternode voting, use the existing election tooling through an adapter explicitly configured for the **current testnet** actor/voter ledger and SDK endpoints. The audit copies under `elections-fast/` are **Sakura-only** and must never be run unmodified against testnet. Map voters before signing: prove each derived voter identity and its enabled VOTING key against the current chain. The voting private key can differ from the owner key. Preserve Core's proTxHash display order when deriving the voter id.
+
+   After join closes, use the adapter's `mn-vote.mjs --target "$CONTRACT_ID" --choice "towards:$LEADER_ID" --nodes all --live` for **each** target. Use the exact poll returned by `votePollsByEndDate`, preserving its Identifier index value (`0x10`); rebuilding a Text-valued poll can address the wrong contest fund. Prove voter nonce advancement and the landed tally. Evonodes carry weight four. Each landed vote costs **2M credits (approximately 0.12¢) from the contest fund**, not an extra charge to the leader. Do not cast lock votes: moderation elections are no-locking polls. **Our masternode majority decides contested elections**; first application only wins a tie, and it is not reserved ownership.
+
+6. **Prove seating before opening the release.** After chain time crosses the deadline, read the canonical winner, `seatedCharter`, and every elected identity for all three contracts; perform a real moderated write and refresh each app gate. A sole applicant seats after join closes without needing a vote window. With `notYetUsable`, registration alone opens nothing: no application means no election clock. Protocol 14 does not implement challenges even when `seatContestable` and a 30-day cool-down are declared. `ownerProtected` protects the owner from lists; it gives no post-seat rescue authority.
 
 ### Phase 5: Cut-over configuration PR on staging [A]
 
