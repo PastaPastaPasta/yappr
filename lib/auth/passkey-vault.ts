@@ -600,7 +600,6 @@ export async function updatePasskeys(identityId: string, entryIds: readonly stri
   const ownerId = identityBytes(identityId)
   const bundle = await sessionBundle(identityId)
   let updated = 0
-  let failed = 0
   try {
     for (const entry of entries) {
       try {
@@ -608,13 +607,13 @@ export async function updatePasskeys(identityId: string, entryIds: readonly stri
         updated += 1
       } catch (error) {
         logger.warn('Passkey vault: updating a passkey failed:', error)
-        failed += 1
       }
     }
   } finally {
     wipeBundle(bundle)
   }
-  return { updated, failed }
+  // Counted over what was asked for: a selected entry this read missed (a node behind) was not updated either.
+  return { updated, failed: new Set(entryIds).size - updated }
 }
 
 /**
