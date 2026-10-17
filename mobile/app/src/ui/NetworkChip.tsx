@@ -34,10 +34,10 @@ const STATE_WORD: Record<EngineState, string> = {
   offline: 'Offline',
 };
 
-/** UX_SPEC §5.13: "Testnet. Data may be reset. Connected." */
+/** UX_SPEC §5.13: "Testnet. Connected." A devnet adds that its data may be reset; testnet's is kept. */
 function networkChipLabel(network: Exclude<ChipNetwork, 'mainnet'>, state: EngineState): string {
-  const name = network === 'devnet' ? 'Devnet' : 'Testnet';
-  return `${name}. Data may be reset. ${STATE_WORD[state]}.`;
+  const name = network === 'devnet' ? 'Devnet. Data may be reset' : 'Testnet';
+  return `${name}. ${STATE_WORD[state]}.`;
 }
 
 /** The dot's pulse: opacity 1 ↔ 0.3, a second each way. */

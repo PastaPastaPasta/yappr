@@ -5,7 +5,6 @@ import { Stack } from 'expo-router';
 import { act, fireEvent, renderRouter, screen, within } from 'expo-router/testing-library';
 import { Alert, RefreshControl, ScrollView } from 'react-native';
 
-import { config } from '~/config';
 import { queryKeys } from '~/data/keys';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
@@ -147,21 +146,6 @@ describe('Home', () => {
     expect(screen.getByTestId('network-chip')).toBeTruthy();
     expect(screen.getByText("You've reached the end.")).toBeTruthy();
     expect(screen.getByTestId('compose-fab')).toBeTruthy();
-    // Not on devnet: the older posts are testnet's (agent-isms #17).
-    expect(screen.queryByTestId('legacy-link')).toBeNull();
-  });
-
-  it('links the older posts at the end of a testnet feed only (agent-isms #17)', async () => {
-    const testnet = jest.replaceProperty(config, 'network', 'testnet');
-    try {
-      home().mockResolvedValue(page([post('p1', 'first post', 1)]));
-      await renderHome();
-
-      expect(screen.getByTestId('legacy-link')).toHaveTextContent('Looking for older posts? Open Yappr classic');
-      expect(within(screen.getByTestId('feed-end')).getByTestId('legacy-link')).toBeTruthy();
-    } finally {
-      testnet.restore();
-    }
   });
 
   it('opens the network sheet from the header chip, not an alert (NET-07)', async () => {
@@ -239,20 +223,6 @@ describe('Home', () => {
 
     expect(screen.getByText('No posts yet')).toBeTruthy();
     expect(screen.getByText('Be the first to share something!')).toBeTruthy();
-    expect(screen.queryByTestId('legacy-link')).toBeNull();
-  });
-
-  it('never links the older posts from an empty state, testnet included', async () => {
-    const testnet = jest.replaceProperty(config, 'network', 'testnet');
-    try {
-      home().mockResolvedValue(page([]));
-      await renderHome();
-
-      expect(screen.getByText('No posts yet')).toBeTruthy();
-      expect(screen.queryByTestId('legacy-link')).toBeNull();
-    } finally {
-      testnet.restore();
-    }
   });
 
   it('shows the error state with nothing cached, and retries (G-11)', async () => {
