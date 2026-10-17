@@ -4,20 +4,22 @@ Measured 2026-10-17 with Platform SDK 5.0.0-rc.3 and the committed Sakura
 `build:devnet` environment. The baseline is staging `9f0e6fb5`, rebuilt separately
 from an archive of that revision. Both exports use `/devnet` and the same contract
 pins. Sizes below include only the unique script `src` references in each route's
-exported HTML; they exclude later dynamic imports. Gzip is calculated locally per
-script, rather than assuming the deployment's compression settings.
+exported HTML; they exclude later dynamic imports. The updated size export
+includes the staging legal-page changes merged into this branch. Gzip is
+calculated locally per script, rather than assuming the deployment's compression
+settings.
 
 ## Initial JavaScript
 
 Baseline → updated, bytes raw / gzip:
 
-- `/`: 17,509,434 / 10,505,427 → 5,501,948 / 1,505,021.
-- `/feed`: 17,540,212 / 10,516,016 → 5,532,666 / 1,515,631.
-- `/post?id=…`: 17,525,231 / 10,510,944 → 5,517,751 / 1,510,534.
-- `/user?id=…`: 17,598,460 / 10,529,912 → 5,590,971 / 1,529,518.
-- `/terms`: 17,285,349 / 10,436,226 → 5,277,796 / 1,435,754.
+- `/`: 17,509,434 / 10,505,427 → 5,509,469 / 1,506,759.
+- `/feed`: 17,540,212 / 10,516,016 → 5,539,667 / 1,517,263.
+- `/post?id=…`: 17,525,231 / 10,510,944 → 5,524,752 / 1,512,166.
+- `/user?id=…`: 17,598,460 / 10,529,912 → 5,597,972 / 1,531,151.
+- `/terms`: 17,285,349 / 10,436,226 → 5,294,216 / 1,440,578.
 
-The feed's eager transfer is 85.6% smaller with gzip (68.5% smaller raw).
+The feed's eager transfer is 85.6% smaller with gzip (68.4% smaller raw).
 The WASM payload and BlockNote/Mantine are absent from those eager scripts.
 The SDK is still needed to read Platform data and starts from the existing
 provider initialization after hydration. BlockNote loads when the blog editor or
@@ -111,7 +113,7 @@ No denylist of testnet node operators or upstream SDK/node changes is included.
 
 Web lint and dead-code checks pass, with 224 unit-test files / 3,259 tests.
 The production export builds successfully. The Sakura export passes the
-per-file and eager-route size budgets; read-only smoke E2E reports 30 passed
+per-file and eager-route size budgets; read-only smoke E2E reports 33 passed
 and two skipped. Mobile engine typecheck and lint pass, as do all 522 unit
 tests and both testnet/devnet bundle builds. On the busy build host, the mobile
 module-import test hit its default five-second timeout; the full suite passed
@@ -119,5 +121,6 @@ with two workers and a 30-second test timeout. No assertion was disabled.
 
 An Opus review found and prompted fixes for partial-notification failure
 backoff, repeated WASM initialization, and an excessive SDK reconnect wait.
-A Sonnet simplification review removed redundant error wrappers and derived
-reconnect state.
+The follow-up Opus review approved the implementation with nonblocking
+suggestions. A Sonnet simplification review removed redundant error wrappers;
+the reconnect design no longer needs growing-backoff state.
