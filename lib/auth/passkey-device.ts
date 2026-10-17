@@ -64,18 +64,22 @@ export function forgetPasskeyHere(identityId: string, credentialId: string): voi
   writeScoped(DEVICE_KEY, JSON.stringify({ ...map, [identityId]: stringList(map[identityId]).filter((marker) => !marker.startsWith(`${credentialId}.`)) }))
 }
 
-/** The name the user gave a passkey in this browser, or null. */
-export function passkeyName(credentialId: string): string | null {
-  const name = readMap(NAMES_KEY)[credentialId]
+/**
+ * The name the user gave a passkey in this browser, or null. Keyed by its
+ * marker, not its public credential id, so a copy recreated under that id
+ * with another recipient key never inherits the real passkey's name.
+ */
+export function passkeyName(marker: string): string | null {
+  const name = readMap(NAMES_KEY)[marker]
   return typeof name === 'string' && name.trim() ? name : null
 }
 
-/** Names a passkey in this browser; an empty name clears it. */
-export function setPasskeyName(credentialId: string, name: string): void {
+/** Names a passkey (by its marker) in this browser; an empty name clears it. */
+export function setPasskeyName(marker: string, name: string): void {
   const map = readMap(NAMES_KEY)
   const trimmed = name.trim().slice(0, MAX_PASSKEY_NAME_LENGTH)
-  if (trimmed) map[credentialId] = trimmed
-  else delete map[credentialId]
+  if (trimmed) map[marker] = trimmed
+  else delete map[marker]
   writeScoped(NAMES_KEY, JSON.stringify(map))
 }
 

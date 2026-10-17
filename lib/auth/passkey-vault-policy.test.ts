@@ -100,6 +100,15 @@ describe('passkey vault policy: keys', () => {
     expect(entryNeedsUpdate(7, keys, NOW)).toBe(true)
     expect(entryNeedsUpdate(9, keys, NOW)).toBe(true)
   })
+
+  it('counts a wallet key with a spent budget as needing an update, but not one whose budget is unknown', () => {
+    const keys = [key({ id: 5, totalBudget: 1_000n }), key({ id: 2 })]
+    expect(entryNeedsUpdate(5, keys, NOW, new Map([[5, 0n]]))).toBe(true)
+    expect(entryNeedsUpdate(5, keys, NOW, new Map([[5, 10n]]))).toBe(false)
+    expect(entryNeedsUpdate(5, keys, NOW, new Map())).toBe(false)
+    // A budget reported for an unbudgeted key changes nothing.
+    expect(entryNeedsUpdate(2, keys, NOW, new Map([[2, 0n]]))).toBe(false)
+  })
 })
 
 describe('passkey vault policy: bundles', () => {

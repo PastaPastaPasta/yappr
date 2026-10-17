@@ -54,13 +54,21 @@ function live(key: AppConnectIdentityKey, now: number): boolean {
 
 /**
  * Whether an entry sealed for sign-in key `authKeyId` needs updating: that
- * key is gone, disabled or (a wallet key) expired. An entry whose key still
+ * key is gone, disabled or (a wallet key) expired or known to be spent. An entry whose key still
  * works stays as it is, even when this session signs with another key, so
  * nobody is asked to update passkeys that still sign in.
  */
-export function entryNeedsUpdate(authKeyId: number, keys: readonly AppConnectIdentityKey[], now: number): boolean {
+export function entryNeedsUpdate(
+  authKeyId: number,
+  keys: readonly AppConnectIdentityKey[],
+  now: number,
+  budgets: ReadonlyMap<number, bigint | undefined> = new Map(),
+): boolean {
   const key = keys.find((candidate) => candidate.id === authKeyId)
-  return !key || key.purpose !== KeyPurpose.AUTHENTICATION || !live(key, now)
+  if (!key || key.purpose !== KeyPurpose.AUTHENTICATION || !live(key, now)) return true
+  // A wallet key whose budget is known to be spent signs nothing more; an unknown budget is not a spent one.
+  const left = key.totalBudget !== undefined ? budgets.get(authKeyId) : undefined
+  return left !== undefined && left <= 0n
 }
 
 export type SignInKeyCheck =

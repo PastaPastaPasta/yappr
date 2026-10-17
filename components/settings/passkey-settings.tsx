@@ -35,7 +35,7 @@ export function PasskeySettings() {
   const [entries, setEntries] = useState<PasskeyEntryView[] | null>(null)
   const [eligibility, setEligibility] = useState<PasskeyErrorCode | null | undefined>(undefined)
   const [failed, setFailed] = useState(false)
-  const [renaming, setRenaming] = useState<{ credentialId: string; name: string } | null>(null)
+  const [renaming, setRenaming] = useState<{ marker: string; name: string } | null>(null)
   const [removing, setRemoving] = useState<PasskeyEntryView | null>(null)
 
   const identityId = user?.identityId
@@ -49,6 +49,8 @@ export function PasskeySettings() {
       const [list, check] = await Promise.all([listPasskeys(identityId), passkeyEligibility(identityId)])
       setEntries(list)
       setEligibility(check)
+      // A failed session check is a read to retry, not a reason this session can't keep passkeys.
+      if (check === 'failed') setFailed(true)
     } catch (error) {
       logger.warn('Passkeys: could not load them:', error)
       setFailed(true)
@@ -66,7 +68,7 @@ export function PasskeySettings() {
   const canAdd = eligibility === null && entries !== null && entries.length < MAX_PASSKEYS
   const saveName = () => {
     if (!renaming) return
-    setPasskeyName(renaming.credentialId, renaming.name)
+    setPasskeyName(renaming.marker, renaming.name)
     setRenaming(null)
     reload().catch(() => undefined)
   }
@@ -87,17 +89,26 @@ export function PasskeySettings() {
             <Button variant="outline" size="sm" onClick={() => { reload().catch(() => undefined) }}>Try again</Button>
           </div>
         )}
+        {failed && entries === null && (
+          <button
+            type="button"
+            className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline underline-offset-4"
+            onClick={() => open('review', identityId)}
+          >
+            Don&apos;t recognise a passkey? Remove all and start over
+          </button>
+        )}
         {entries?.length === 0 && <p className="text-sm text-gray-600 dark:text-gray-400">You haven&apos;t added a passkey yet.</p>}
         {entries?.map((entry) => (
           <div key={entry.entryId} className="rounded-xl ring-1 ring-gray-200 dark:ring-neutral-700 p-3 text-sm" data-testid="passkey-row">
-            {renaming?.credentialId === entry.credentialId ? (
+            {renaming?.marker === entry.marker ? (
               <form className="flex items-center gap-2" onSubmit={(event) => { event.preventDefault(); saveName() }}>
                 <input
                   aria-label="Passkey name"
                   autoFocus
                   maxLength={MAX_PASSKEY_NAME_LENGTH}
                   value={renaming.name}
-                  onChange={(event) => setRenaming({ credentialId: entry.credentialId, name: event.target.value })}
+                  onChange={(event) => setRenaming({ marker: entry.marker, name: event.target.value })}
                   className="flex-1 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
                 <Button type="submit" size="sm">Save</Button>
@@ -114,7 +125,7 @@ export function PasskeySettings() {
                   </div>
                 </div>
                 <div className="flex gap-1 shrink-0">
-                  <Button size="sm" variant="ghost" onClick={() => setRenaming({ credentialId: entry.credentialId, name: entry.name ?? '' })}>Rename</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setRenaming({ marker: entry.marker, name: entry.name ?? '' })}>Rename</Button>
                   <Button size="sm" variant="ghost" onClick={() => setRemoving(entry)}>Remove</Button>
                 </div>
               </div>

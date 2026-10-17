@@ -54,7 +54,7 @@ export function PasskeyPrompts() {
         open('review', identityId)
         return
       }
-      if (method !== 'passkey' && passkeysHere(identityId).length === 0 && !passkeyOfferMade()) {
+      if ((method === 'key' || method === 'wallet') && passkeysHere(identityId).length === 0 && !passkeyOfferMade()) {
         markPasskeyOfferMade()
         open('offer', identityId)
       }
@@ -309,7 +309,8 @@ function ReviewDialog({ identityId, onClose }: { identityId: string; onClose: ()
                 type="button"
                 className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline underline-offset-4 disabled:opacity-50"
                 onClick={() => setStep({ kind: 'start-over' })}
-                disabled={working || !entries || entries.length === 0}
+                // Reachable even when the list could not be read (say, a flood of planted entries): removal reads in rounds.
+                disabled={working || entries?.length === 0}
               >
                 Don&apos;t recognise one? Remove all and start over
               </button>

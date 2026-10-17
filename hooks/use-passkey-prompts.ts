@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import { passkeysOffered } from '@/lib/auth/passkey-vault'
 
-export type SignInMethod = 'key' | 'wallet' | 'passkey'
+/** How the session came about. A renewal replaces a signed-in session's wallet keys: it checks passkeys, but never offers one. */
+export type SignInMethod = 'key' | 'wallet' | 'passkey' | 'renewal'
 
 export type PasskeyDialog = { kind: 'offer' | 'enrol' | 'review'; identityId: string }
 

@@ -528,6 +528,8 @@ export async function unlockWithPasskey(): Promise<PasskeyUnlock> {
 export interface PasskeyEntryView {
   entryId: string
   credentialId: string
+  /** This passkey's credential and recipient key ({@link passkeyMarker}): what its local name is kept under. */
+  marker: string
   addedAt: number
   updatedAt: number
   /** Added or used in this browser. */
@@ -542,16 +544,33 @@ function markerOf(credentialId: Uint8Array, recipientKey: Uint8Array): string {
   return passkeyMarker(bytesToBase64Url(credentialId), bytesToHex(recipientKey))
 }
 
-function viewOf(entry: VaultEntryDocument, keys: AppConnectIdentityKey[], here: string[], now: number): PasskeyEntryView {
-  const credentialId = bytesToBase64Url(entry.credentialId)
+function viewOf(entry: VaultEntryDocument, keys: AppConnectIdentityKey[], budgets: ReadonlyMap<number, bigint | undefined>, here: string[], now: number): PasskeyEntryView {
+  const marker = markerOf(entry.credentialId, entry.recipientKey)
   return {
     entryId: entry.$id,
-    credentialId,
+    credentialId: bytesToBase64Url(entry.credentialId),
+    marker,
     addedAt: entry.$createdAt,
     updatedAt: entry.$updatedAt,
-    thisDevice: here.includes(markerOf(entry.credentialId, entry.recipientKey)),
-    needsUpdate: entryNeedsUpdate(entry.authKeyId, keys, now),
-    name: passkeyName(credentialId),
+    thisDevice: here.includes(marker),
+    needsUpdate: entryNeedsUpdate(entry.authKeyId, keys, now, budgets),
+    name: passkeyName(marker),
+  }
+}
+
+/**
+ * What budgeted entry keys have left, so a spent wallet key reads "Needs update".
+ * A failed read reports nothing: an unknown budget is not a spent one.
+ */
+async function entryKeyBudgets(identityId: string, entries: VaultEntryDocument[], keys: AppConnectIdentityKey[]): Promise<ReadonlyMap<number, bigint | undefined>> {
+  const budgeted = [...new Set(entries.map((entry) => entry.authKeyId))]
+    .filter((keyId) => keys.some((key) => key.id === keyId && key.totalBudget !== undefined && key.disabledAt === undefined))
+  if (budgeted.length === 0) return new Map()
+  try {
+    return await appConnectPlatformPort.remainingBudgets(identityId, budgeted)
+  } catch (error) {
+    logger.warn('Passkey vault: could not read wallet key budgets:', error)
+    return new Map()
   }
 }
 
@@ -560,7 +579,8 @@ export async function listPasskeys(identityId: string): Promise<PasskeyEntryView
   const [entries, keys] = await Promise.all([passkeyVaultService.list(identityId), freshKeys(identityId)])
   const here = passkeysHere(identityId)
   const now = Date.now()
-  return entries.map((entry) => viewOf(entry, keys, here, now)).sort((a, b) => a.addedAt - b.addedAt)
+  const budgets = await entryKeyBudgets(identityId, entries, keys)
+  return entries.map((entry) => viewOf(entry, keys, budgets, here, now)).sort((a, b) => a.addedAt - b.addedAt)
 }
 
 /**
@@ -621,17 +641,18 @@ export async function removePasskeys(identityId: string, entryIds: readonly stri
       logger.warn('Passkey vault: removing a passkey failed:', error)
     }
   }
-  // A delete sent without a verdict (a timeout) may still have landed: what is left on chain decides.
   // A node can lag a confirmed delete by a moment, so those get a few more reads before they count as left.
   let remaining = await passkeyVaultService.list(identityId, { partial: true })
   for (let attempt = 0; attempt < REMOVAL_REREADS && remaining.some((entry) => confirmed.has(entry.$id)); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, REMOVAL_REREAD_MS))
     remaining = await passkeyVaultService.list(identityId, { partial: true })
   }
+  // Only a confirmed delete that is gone counts as removed: a read can miss an entry a failed delete left (a node behind).
   const stillThere = new Set(remaining.map((entry) => entry.$id))
-  for (const entry of entries) if (!stillThere.has(entry.$id)) forgetPasskeyHere(identityId, bytesToBase64Url(entry.credentialId))
-  const failed = entries.filter((entry) => stillThere.has(entry.$id)).length
-  const removed = entries.length - failed
+  const gone = entries.filter((entry) => confirmed.has(entry.$id) && !stillThere.has(entry.$id))
+  for (const entry of gone) forgetPasskeyHere(identityId, bytesToBase64Url(entry.credentialId))
+  const removed = gone.length
+  const failed = entries.length - removed
   await signalRemaining(identityId, remaining)
   return { removed, failed }
 }

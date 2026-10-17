@@ -238,6 +238,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Only the signed-in identity's own renewal, and only while that session stands.
       await walletSignIn.renew(grant)
       useAppConnectStatus.getState().dismissRenewRequired()
+      // The renewal superseded the old wallet keys: passkeys still holding them need updating.
+      usePasskeyPrompts.getState().noteSignIn(grant.identityId, 'renewal')
       return
     }
     // Signed out meanwhile: the renewal signs back in, and a sign-in prompt that
