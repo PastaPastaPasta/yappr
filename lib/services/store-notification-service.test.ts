@@ -30,14 +30,16 @@ const doc = (id: string, ownerId: string, createdAt: number, fields: Doc = {}): 
 /** Answers each bundled query by its document type (an `in` read by the item ids it names). */
 function answer(rows: Partial<Record<string, Doc[]>>) {
   bundle.mockImplementation(async (queries: QueryDocumentsOptions[]) => queries.map((query) => {
-    const where = query.where ?? []
     if (query.documentTypeName === 'itemReview') {
-      const ids = where[0][2] as string[]
+      const ids = query.where?.[0][2] as string[]
       return (rows.itemReview ?? []).filter((row) => ids.includes(row.itemId as string))
     }
     return rows[query.documentTypeName] ?? []
   }))
 }
+
+const bundled = (call: number) => (bundle.mock.calls[call] as [QueryDocumentsOptions[]])[0]
+const shapes = (queries: QueryDocumentsOptions[]) => queries.map((query) => [query.documentTypeName, query.where?.[0]])
 
 async function service() {
   vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v9')
@@ -45,10 +47,12 @@ async function service() {
   return (await import('./store-notification-service')).storeNotificationService
 }
 
+const sellerStore = { id: STORE, createdAt: new Date(100) }
+
 beforeEach(() => {
   bundle.mockReset()
   getByOwner.mockReset().mockResolvedValue(null)
-  getAllByStore.mockReset().mockResolvedValue([])
+  getAllByStore.mockReset().mockResolvedValue([{ id: ITEM, title: 'Blue mug', createdAt: new Date(500) }])
   paginateFetchAll.mockReset()
   answer({})
 })
@@ -57,7 +61,7 @@ afterEach(() => {
 })
 
 describe('store notifications', () => {
-  it('tells a buyer about status changes off buyerFeed, newest first, with the seller as the actor', async () => {
+  it('tells a buyer about status changes off buyerFeed', async () => {
     answer({
       orderStatusUpdate: [
         doc('Upd1', SELLER, 5_000, { orderId: 'Order1', status: 'shipped', message: '  On its way!  ', trackingNumber: '1Z' }),
@@ -69,9 +73,11 @@ describe('store notifications', () => {
 
     const events = await stores.getNotifications(BUYER, SINCE, vi.fn())
 
-    const [queries] = bundle.mock.calls[0] as [QueryDocumentsOptions[]]
-    expect(queries).toHaveLength(1)
-    expect(queries[0]).toMatchObject({
+    expect(bundle).toHaveBeenCalledTimes(1)
+    const [feed, ...rest] = bundled(0)
+    expect(rest).toEqual([])
+    expect(getByOwner).toHaveBeenCalledWith(BUYER)
+    expect(feed).toMatchObject({
       documentTypeName: 'orderStatusUpdate',
       where: [['orderId.$ownerId', '==', BUYER], ['$createdAt', '>', SINCE]],
       orderBy: [['orderId.$ownerId', 'asc'], ['$createdAt', 'desc']],
@@ -81,11 +87,11 @@ describe('store notifications', () => {
       { id: 'orderStatus-Upd1', type: 'orderStatus', fromUserId: SELLER, createdAt: 5_000, store: { status: 'shipped', text: 'On its way!' } },
       { id: 'orderStatus-Upd2', type: 'orderStatus', fromUserId: SELLER, createdAt: 4_000, store: { status: 'payment_received' } },
     ])
+    expect(getAllByStore).not.toHaveBeenCalled()
   })
 
   it('tells a seller about orders and reviews on their store, without any of the order\'s encrypted contents', async () => {
-    getByOwner.mockResolvedValue({ id: STORE })
-    getAllByStore.mockResolvedValue([{ id: ITEM, title: 'Blue mug' }])
+    getByOwner.mockResolvedValue(sellerStore)
     answer({
       storeOrder: [doc('Ord1', BUYER, 2_000, { storeId: STORE, sellerId: SELLER, encryptedPayload: [1, 2, 3], nonce: [4] })],
       storeReview: [doc('Rev1', BUYER, 3_000, { storeId: STORE, rating: 4, title: 'Great', content: 'Fast shipping' })],
@@ -95,14 +101,21 @@ describe('store notifications', () => {
 
     const events = await stores.getNotifications(SELLER, SINCE, vi.fn())
 
-    const [queries] = bundle.mock.calls[0] as [QueryDocumentsOptions[]]
-    expect(queries.map((query) => [query.documentTypeName, query.where?.[0]])).toEqual([
-      ['orderStatusUpdate', ['orderId.$ownerId', '==', SELLER]],
+    // Found this poll: its sources are read from the same watermark, in a second bundle.
+    expect(shapes(bundled(1))).toEqual([
       ['storeOrder', ['storeId', '==', STORE]],
       ['storeReview', ['storeId', '==', STORE]],
+      ['storeItem', ['storeId', '==', STORE]],
       ['itemReview', ['itemId', 'in', [ITEM]]],
     ])
-    expect(queries.every((query) => query.orderBy?.[1]?.[1] === 'desc')).toBe(true)
+    expect(bundled(1).map((query) => query.where?.[1])).toEqual([
+      ['$createdAt', '>', SINCE], ['$createdAt', '>', SINCE], ['$createdAt', '>', 500], ['$createdAt', '>', SINCE],
+    ])
+    // Every member walks newest first, an `in` key included, as a composite requires.
+    expect(bundled(1).map((query) => query.orderBy)).toEqual([
+      [['storeId', 'asc'], ['$createdAt', 'desc']], [['storeId', 'asc'], ['$createdAt', 'desc']],
+      [['storeId', 'asc'], ['$createdAt', 'desc']], [['itemId', 'desc'], ['$createdAt', 'desc']],
+    ])
     expect(events).toEqual([
       { id: 'storeOrder-Ord1', type: 'storeOrder', fromUserId: BUYER, createdAt: 2_000, store: { storeId: STORE } },
       { id: 'storeReview-Rev1', type: 'storeReview', fromUserId: BUYER, createdAt: 3_000, store: { storeId: STORE, rating: 4, text: 'Great — Fast shipping' } },
@@ -110,33 +123,72 @@ describe('store notifications', () => {
     ])
   })
 
-  it('looks a found store up once, and a missing one again every poll', async () => {
+  it('keeps a found store and its items, so a later poll is one bundle with the buyer feed', async () => {
+    getByOwner.mockResolvedValue(sellerStore)
     const stores = await service()
     await stores.getNotifications(SELLER, SINCE, vi.fn())
-    getByOwner.mockResolvedValue({ id: STORE })
-    await stores.getNotifications(SELLER, SINCE, vi.fn())
-    await stores.getNotifications(SELLER, SINCE, vi.fn())
-    expect(getByOwner).toHaveBeenCalledTimes(2)
-    // The item titles are held between polls too.
+    bundle.mockClear()
+
+    await stores.getNotifications(SELLER, 2_000, vi.fn())
+
+    expect(bundle).toHaveBeenCalledTimes(1)
+    expect(shapes(bundled(0)).map(([type]) => type)).toEqual(['orderStatusUpdate', 'storeOrder', 'storeReview', 'storeItem', 'itemReview'])
     expect(getAllByStore).toHaveBeenCalledTimes(1)
   })
 
-  it('reads the items again when an order newer than the last item read arrives, and the reviews of the new ones', async () => {
-    getByOwner.mockResolvedValue({ id: STORE })
-    getAllByStore.mockResolvedValueOnce([{ id: ITEM, title: 'Blue mug' }])
-      .mockResolvedValueOnce([{ id: ITEM, title: 'Blue mug' }, { id: NEW_ITEM, title: 'Red mug' }])
+  it('reads the reviews of an item listed since the last read, from the same watermark, and names it', async () => {
+    getByOwner.mockResolvedValue(sellerStore)
+    const stores = await service()
+    await stores.getNotifications(SELLER, SINCE, vi.fn())
     answer({
-      storeOrder: [doc('Ord2', BUYER, Date.now(), { storeId: STORE })],
-      itemReview: [doc('IRev2', BUYER, Date.now(), { storeId: STORE, itemId: NEW_ITEM, rating: 3 })],
+      storeItem: [doc(NEW_ITEM, SELLER, 6_000, { storeId: STORE, title: 'Red mug' })],
+      itemReview: [doc('IRev2', BUYER, 7_000, { storeId: STORE, itemId: NEW_ITEM, rating: 3 })],
     })
+    bundle.mockClear()
+
+    const events = await stores.getNotifications(SELLER, 5_000, vi.fn())
+
+    expect(shapes(bundled(1))).toEqual([['itemReview', ['itemId', 'in', [NEW_ITEM]]]])
+    expect(bundled(1)[0].where?.[1]).toEqual(['$createdAt', '>', 5_000])
+    expect(events).toEqual([
+      { id: 'itemReview-IRev2', type: 'itemReview', fromUserId: BUYER, createdAt: 7_000, store: { storeId: STORE, rating: 3, itemId: NEW_ITEM, itemTitle: 'Red mug' } },
+    ])
+    // The next poll looks for items after the newest one it holds.
+    bundle.mockClear()
+    await stores.getNotifications(SELLER, 7_000, vi.fn())
+    expect(bundled(0).find((query) => query.documentTypeName === 'storeItem')?.where?.[1]).toEqual(['$createdAt', '>', 6_000])
+  })
+
+  it('looks a user without a store up again only every few minutes, and reads a store found late from its creation', async () => {
+    vi.useFakeTimers({ now: 1_000_000, toFake: ['Date'] })
+    try {
+      const stores = await service()
+      await stores.getNotifications(SELLER, SINCE, vi.fn())
+      await stores.getNotifications(SELLER, 2_000, vi.fn())
+      expect(getByOwner).toHaveBeenCalledTimes(1)
+
+      vi.setSystemTime(1_000_000 + 5 * 60 * 1000)
+      getByOwner.mockResolvedValue({ id: STORE, createdAt: new Date(1_500) })
+      bundle.mockClear()
+      await stores.getNotifications(SELLER, 3_000, vi.fn())
+
+      expect(getByOwner).toHaveBeenCalledTimes(2)
+      // The polls that found no store did not read it: from its creation, not the watermark.
+      expect(bundled(1).find((query) => query.documentTypeName === 'storeOrder')?.where?.[1]).toEqual(['$createdAt', '>', 1_499])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('splits a store with more than 100 items into `in` reads of 100', async () => {
+    getAllByStore.mockResolvedValue(Array.from({ length: 150 }, (_, i) => ({ id: `item${i}`, title: `Item ${i}`, createdAt: new Date(i) })))
+    getByOwner.mockResolvedValue(sellerStore)
     const stores = await service()
 
-    const events = await stores.getNotifications(SELLER, SINCE, vi.fn())
+    await stores.getNotifications(SELLER, SINCE, vi.fn())
 
-    expect(getAllByStore).toHaveBeenCalledTimes(2)
-    const [followUp] = bundle.mock.calls[1] as [QueryDocumentsOptions[]]
-    expect(followUp.map((query) => query.where?.[0])).toEqual([['itemId', 'in', [NEW_ITEM]]])
-    expect(events.find((event) => event.type === 'itemReview')?.store).toEqual({ storeId: STORE, rating: 3, itemId: NEW_ITEM, itemTitle: 'Red mug' })
+    const inReads = bundled(1).filter((query) => query.documentTypeName === 'itemReview')
+    expect(inReads.map((query) => (query.where?.[0][2] as string[]).length)).toEqual([100, 50])
   })
 
   it('reads on past a full first page, from its last row', async () => {
@@ -148,20 +200,37 @@ describe('store notifications', () => {
     const events = await stores.getNotifications(BUYER, SINCE, vi.fn())
 
     expect(events).toHaveLength(101)
-    const builder = paginateFetchAll.mock.calls[0][1] as (startAfter?: string) => QueryDocumentsOptions
+    const [, builder, , options] = paginateFetchAll.mock.calls[0] as [unknown, (startAfter?: string) => QueryDocumentsOptions, unknown, { maxResults: number; inClause?: boolean }]
     expect(builder().startAfter).toBe('Upd99')
     expect(builder('Later').startAfter).toBe('Later')
+    expect(options).toEqual({ maxResults: 900, inClause: false })
+  })
+
+  it('reads on an `in` read as one, whose continuation pages may come back short', async () => {
+    getByOwner.mockResolvedValue(sellerStore)
+    answer({ itemReview: Array.from({ length: 100 }, (_, i) => doc(`IRev${i}`, BUYER, 9_000 - i, { itemId: ITEM, rating: 5 })) })
+    paginateFetchAll.mockResolvedValue({ documents: [], reachedLimit: false })
+    const stores = await service()
+
+    await stores.getNotifications(SELLER, SINCE, vi.fn())
+
+    expect(paginateFetchAll.mock.calls[0][3]).toEqual({ maxResults: 900, inClause: true })
   })
 
   it('reports a failed read and still answers from the sources that read', async () => {
-    getByOwner.mockRejectedValue(new Error('quorum'))
-    answer({ orderStatusUpdate: [doc('Upd1', SELLER, 5_000, { status: 'delivered' })] })
+    getByOwner.mockResolvedValue(sellerStore)
+    answer({
+      storeOrder: [doc('Ord1', BUYER, 2_000, { storeId: STORE })],
+    })
+    getAllByStore.mockRejectedValue(new Error('quorum'))
     const onFailure = vi.fn()
     const stores = await service()
 
     const events = await stores.getNotifications(SELLER, SINCE, onFailure)
 
     expect(onFailure).toHaveBeenCalledWith(new Error('quorum'))
-    expect(events.map((event) => event.id)).toEqual(['orderStatus-Upd1'])
+    // Without the items there is nothing to read item reviews by; orders and store reviews still are.
+    expect(shapes(bundled(1)).map(([type]) => type)).toEqual(['storeOrder', 'storeReview'])
+    expect(events.map((event) => event.id)).toEqual(['storeOrder-Ord1'])
   })
 })

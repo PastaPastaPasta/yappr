@@ -122,7 +122,8 @@ export function groupNotifications(items: readonly NotificationDTO[]): Notificat
   return rows;
 }
 
-const PHRASES: Record<NotificationType, string> = {
+/** Store events carry their own phrase (`row.store.phrase`), worded by the engine as on web. */
+const PHRASES: Partial<Record<NotificationType, string>> = {
   follow: 'started following you',
   mention: 'mentioned you in a post',
   like: 'liked your post',
@@ -134,11 +135,6 @@ const PHRASES: Record<NotificationType, string> = {
   privateFeedRequest: 'requested access to your private feed',
   privateFeedApproved: 'approved your private feed request',
   privateFeedRevoked: 'revoked your private feed access',
-  // Store events carry their own phrase (`row.store.phrase`); these only stand in without it.
-  storeOrder: 'placed an order at your store',
-  storeReview: 'reviewed your store',
-  itemReview: 'reviewed one of your items',
-  orderStatus: 'updated your order',
 };
 
 /** Where the topology can tell a reply from a post, the phrase says "your reply" (web `notificationMessage`). */

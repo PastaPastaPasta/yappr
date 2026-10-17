@@ -6,10 +6,12 @@ import type { OrderStatus, StoreNotificationDetail, StoreNotificationType } from
  * that read the build env.
  */
 
-const STORE_NOTIFICATION_TYPES: readonly StoreNotificationType[] = ['storeOrder', 'storeReview', 'itemReview', 'orderStatus']
+const hasOwn = (record: object, key: string): boolean => Object.prototype.hasOwnProperty.call(record, key)
+
+const STORE_NOTIFICATION_TYPES: Record<StoreNotificationType, true> = { storeOrder: true, storeReview: true, itemReview: true, orderStatus: true }
 
 export function isStoreNotificationType(type: string): type is StoreNotificationType {
-  return (STORE_NOTIFICATION_TYPES as readonly string[]).includes(type)
+  return hasOwn(STORE_NOTIFICATION_TYPES, type)
 }
 
 /** What the seller did, said of the buyer's order ("Alice shipped your order"). */
@@ -24,13 +26,24 @@ const STATUS_PHRASES: Record<OrderStatus, string> = {
   disputed: 'marked your order as disputed',
 }
 
+export function isOrderStatus(value: unknown): value is OrderStatus {
+  return typeof value === 'string' && hasOwn(STATUS_PHRASES, value)
+}
+
+/** An item title as it fits in a sentence. */
+const MAX_TITLE = 60
+
+function shortTitle(title: string): string {
+  return title.length > MAX_TITLE ? `${title.slice(0, MAX_TITLE - 1).trimEnd()}…` : title
+}
+
 /** The sentence after the actor's name. */
 export function storeNotificationPhrase(type: StoreNotificationType, store: StoreNotificationDetail | undefined): string {
   switch (type) {
     case 'storeOrder': return 'placed an order at your store'
     case 'storeReview': return 'reviewed your store'
-    case 'itemReview': return store?.itemTitle ? `reviewed “${store.itemTitle}”` : 'reviewed one of your items'
-    case 'orderStatus': return (store?.status && STATUS_PHRASES[store.status]) || 'updated your order'
+    case 'itemReview': return store?.itemTitle ? `reviewed “${shortTitle(store.itemTitle)}”` : 'reviewed one of your items'
+    case 'orderStatus': return store?.status ? STATUS_PHRASES[store.status] : 'updated your order'
   }
 }
 
@@ -52,17 +65,11 @@ export function storeNotificationSnippet(type: StoreNotificationType, store: Sto
   return type === 'orderStatus' ? text : null
 }
 
-/** Where a tap goes: the seller's or the buyer's orders, or the reviewed store or item. */
+/** Where a tap goes: the seller's or the buyer's orders, or the reviewed item or store. */
 export function storeNotificationPath(type: StoreNotificationType, store: StoreNotificationDetail | undefined): string | null {
-  switch (type) {
-    case 'storeOrder': return '/orders/seller'
-    case 'orderStatus': return '/orders'
-    case 'itemReview':
-      if (store?.itemId) return `/item?id=${encodeURIComponent(store.itemId)}`
-      break
-    case 'storeReview':
-      break
-  }
+  if (type === 'storeOrder') return '/orders/seller'
+  if (type === 'orderStatus') return '/orders'
+  if (type === 'itemReview' && store?.itemId) return `/item?id=${encodeURIComponent(store.itemId)}`
   return store?.storeId ? `/store/view?id=${encodeURIComponent(store.storeId)}` : null
 }
 

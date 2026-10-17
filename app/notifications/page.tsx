@@ -120,6 +120,14 @@ function notificationMessage(notification: Notification): string {
   return NOTIFICATION_MESSAGES[notification.type] || 'interacted with you'
 }
 
+/** The text in the preview link: the post, or a store event's own preview. */
+function previewText(notification: Notification): string {
+  if (isStoreNotificationType(notification.type)) {
+    return storeNotificationSnippet(notification.type, notification.store) ?? storeNotificationLinkLabel(notification.type)
+  }
+  return notification.post?.content || 'View post'
+}
+
 type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'store' | 'privateFeed'
 
 const FILTER_TABS: { key: NotificationFilter; label: string; icon: JSX.Element }[] = [
@@ -447,10 +455,8 @@ function NotificationsPage() {
                             >
                               {gateSensitivePreview ? (
                                 <span className="italic text-gray-500">NSFW content</span>
-                              ) : isStoreNotificationType(notification.type) ? (
-                                storeNotificationSnippet(notification.type, notification.store) ?? storeNotificationLinkLabel(notification.type)
                               ) : (
-                                post?.content || 'View post'
+                                previewText(notification)
                               )}
                             </Link>
                           )

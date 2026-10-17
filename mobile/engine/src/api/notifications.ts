@@ -122,13 +122,19 @@ function targetKindOf(notification: Notification, post: NonNullable<Notification
   return notification.type === 'reply' ? 'post' : post.targetKind ?? 'post'
 }
 
+/** A store event's wording and link, as web shows them. */
+function storeOf({ type, store }: Notification): NotificationDTO['store'] {
+  if (!isStoreNotificationType(type)) return undefined
+  return { phrase: storeNotificationPhrase(type, store), snippet: storeNotificationSnippet(type, store), path: storeNotificationPath(type, store) }
+}
+
 async function toNotificationDTOs(notifications: Notification[]): Promise<NotificationDTO[]> {
   const ids = notifications.flatMap(notification => [notification.from.id, notification.post?.author.id ?? ''])
   // Stored avatars, so a generated one is a recipe RN renders, not lib's remote DiceBear URL. Decoration: a failed read falls back.
   const avatars = await avatarsOf(ids).catch(() => new Map<string, AuthorDTO['avatar']>())
   return notifications.map(notification => {
-    const { type } = notification
-    const isBlog = type === 'blogPost' || type === 'blogComment'
+    const isBlog = notification.type === 'blogPost' || notification.type === 'blogComment'
+    const store = storeOf(notification)
     const post = notification.post?.id && !isBlog ? notification.post : undefined
     return {
       id: notification.id,
@@ -141,9 +147,7 @@ async function toNotificationDTOs(notifications: Notification[]): Promise<Notifi
       ...(notification.blogId && notification.blogPostSlug ? { blog: { blogId: notification.blogId, slug: notification.blogPostSlug } } : {}),
       ...(notification.likerCount !== undefined && notification.likerCount > 1 ? { likers: notification.likerCount } : {}),
       ...(notification.timeless ? { noticed: true as const } : {}),
-      ...(isStoreNotificationType(type)
-        ? { store: { phrase: storeNotificationPhrase(type, notification.store), snippet: storeNotificationSnippet(type, notification.store), path: storeNotificationPath(type, notification.store) } }
-        : {}),
+      ...(store ? { store } : {}),
     }
   })
 }
