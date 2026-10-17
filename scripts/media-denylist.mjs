@@ -63,6 +63,38 @@ export function ipfsCidOf(input) {
   return pathRef ? cidIn(pathRef) : null
 }
 
+// Same as in lib/media/remote-media.ts (a test holds them together).
+/**
+ * An http(s) URL as the server ends up routing it: percent-decoded,
+ * backslashes as slashes, any `user:pass@` dropped from the authority,
+ * repeated slashes collapsed, `.` and `..` segments resolved; query and
+ * fragment dropped. Anything else is
+ * returned unchanged.
+ */
+export function effectiveDestination(url) {
+  const match = /^(https?:\/\/)([^?#]*)/i.exec(url)
+  if (!match) return url
+  // Segment by segment, so one malformed escape can't keep the others
+  // encoded; then split again, since a decoded `%2F` is a separator too.
+  const [authority, ...segments] = match[2].replace(/\\/g, '/').split('/').map(percentDecoded).join('/').replace(/\\/g, '/').split('/')
+  const host = authority.slice(authority.lastIndexOf('@') + 1)
+  const path = []
+  // Repeated slashes collapse too, as gateways clean the path (Go's path.Clean).
+  segments.forEach((segment, index) => {
+    if (segment === '..') path.pop()
+    else if (segment !== '.' && (segment !== '' || index === segments.length - 1)) path.push(segment)
+  })
+  return `${match[1]}${[host, ...path].join('/')}`
+}
+
+function percentDecoded(url) {
+  try {
+    return decodeURIComponent(url)
+  } catch {
+    return url
+  }
+}
+
 /**
  * The form of an https URL whose sha256 the denylist stores, spelled the way
  * a browser requests it, so equivalent spellings hash alike: host lowercased
@@ -242,7 +274,8 @@ function main(argv) {
   }
 
   const list = load()
-  const cid = ipfsCidOf(target)
+  // A gateway URL in an odd spelling (`/ipfs//CID`, `/x/../ipfs/CID`) is listed by the CID it reaches.
+  const cid = ipfsCidOf(target) ?? (/^https?:/i.test(target) ? ipfsCidOf(effectiveDestination(target.trim())) : null)
   const cids = cid ? cidForms(cid) : []
   const hash = cid ? null : urlSha256(target)
   const listed = cid

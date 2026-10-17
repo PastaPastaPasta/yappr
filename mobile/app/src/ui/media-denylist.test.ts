@@ -17,6 +17,7 @@ describe('the media takedown denylist on mobile', () => {
     expect(safeExternalUrl(`https://${cid}%E3%80%82ipfs.dweb.link/photo%FF.png`)).toBeNull();
     expect(safeExternalUrl(`https://\\${cid}.ipfs.dweb.link/a.png`)).toBeNull();
     expect(safeExternalUrl(`https://ipfs.io/i\tpfs/${cid}`)).toBeNull();
+    expect(safeExternalUrl(`https://ipfs.io/ipfs//${cid}/photo.jpg`)).toBeNull();
     // Other CID spellings and IPNS names can't be checked, so they are refused.
     expect(safeExternalUrl('https://ipfs.io/ipfs/uAXASIJ00OJvXLJYZ46V2uRPI2G68_2AOFWMsGCPx18olnBqo')).toBeNull();
     expect(safeExternalUrl('https://ipfs.io/ipns/example.com/')).toBeNull();

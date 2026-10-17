@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { canonicalHttpsUrl as scriptCanonical, ipfsCidOf as scriptCid, urlSha256 } from '../../scripts/media-denylist.mjs'
+import { canonicalHttpsUrl as scriptCanonical, effectiveDestination as scriptDestination, ipfsCidOf as scriptCid, urlSha256 } from '../../scripts/media-denylist.mjs'
 import {
   canonicalHttpsUrl,
   imageSourceFor,
@@ -203,6 +203,16 @@ describe('IPFS spellings', () => {
     expect(isDeniedMedia(url)).toBe(true)
     expect(imageSourceFor(`https://${other}.ipfs.dweb.link/ipfs/x/a.png`))
       .toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${other}/ipfs/x/a.png` })
+  })
+
+  it('refuses repeated slashes before a CID, which gateways collapse, and the script lists the CID they reach', () => {
+    for (const url of [`https://ipfs.io/ipfs//${CID_V1}/photo.jpg`, `https://ipfs.io//ipfs/${CID_V1}`, `https://ipfs.io/x//../ipfs/${CID_V1}`]) {
+      expect(isDeniedMedia(url)).toBe(true)
+      expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
+      expect(scriptCid(scriptDestination(url))).toBe(CID_V1)
+    }
+    // An ordinary site with a double slash stays ordinary.
+    expect(imageSourceFor('https://cdn.example//a.png').kind).toBe('proxied')
   })
 
   it('refuses a URL with a tab or newline, which browsers drop (`i\\tpfs` is `ipfs`)', () => {

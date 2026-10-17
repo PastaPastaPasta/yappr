@@ -144,8 +144,9 @@ function referenceTo(cid: string, path: string): IpfsReference {
 
 /**
  * An http(s) URL as the server ends up routing it: percent-decoded,
- * backslashes as slashes, any `user:pass@` dropped from the authority, `.`
- * and `..` segments resolved; query and fragment dropped. Anything else is
+ * backslashes as slashes, any `user:pass@` dropped from the authority,
+ * repeated slashes collapsed, `.` and `..` segments resolved; query and
+ * fragment dropped. Anything else is
  * returned unchanged.
  */
 function effectiveDestination(url: string): string {
@@ -156,10 +157,11 @@ function effectiveDestination(url: string): string {
   const [authority, ...segments] = match[2].replace(/\\/g, '/').split('/').map(percentDecoded).join('/').replace(/\\/g, '/').split('/')
   const host = authority.slice(authority.lastIndexOf('@') + 1)
   const path: string[] = []
-  for (const segment of segments) {
+  // Repeated slashes collapse too, as gateways clean the path (Go's path.Clean).
+  segments.forEach((segment, index) => {
     if (segment === '..') path.pop()
-    else if (segment !== '.') path.push(segment)
-  }
+    else if (segment !== '.' && (segment !== '' || index === segments.length - 1)) path.push(segment)
+  })
   return `${match[1]}${[host, ...path].join('/')}`
 }
 
