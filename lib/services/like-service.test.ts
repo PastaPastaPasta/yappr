@@ -713,3 +713,22 @@ describe('v12 timeless like notification reads (counter author index)', () => {
     expect(mocks.composite).not.toHaveBeenCalled()
   })
 })
+
+describe('v17 self-likes (D6)', () => {
+  it('refuses a like of one\'s own post or reply before reading or signing anything', async () => {
+    const likeService = await likeServiceOn('v17')
+    expect(await likeService.likePost(POST, VIEWER, VIEWER, 'post', { author: VIEWER, tags: [] })).toBe(false)
+    expect(await likeService.likePost(POST, VIEWER, VIEWER, 'reply')).toBe(false)
+    expect(mocks.query).not.toHaveBeenCalled()
+  })
+
+  it('reads the refusal off the cut: v17 refuses both kinds, v16 neither', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
+    const v17 = await import('../contract-topology')
+    expect([v17.selfLikesAreRefused('post'), v17.selfLikesAreRefused('reply')]).toEqual([true, true])
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v16')
+    const v16 = await import('../contract-topology')
+    expect([v16.selfLikesAreRefused('post'), v16.selfLikesAreRefused('reply')]).toEqual([false, false])
+  })
+})

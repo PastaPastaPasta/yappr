@@ -34,9 +34,14 @@ export const DECLARED_RULES = {
   },
   // Storefront v8 (5.0.0-beta.5): an order's store must be active through a `where`
   // condition on storeId (40127), so storeOrder declares no rule.
+  // Storefront v10 (docs/STOREFRONT_V10.md): an order status update seals its tracking and note
+  // (`sealed`: ciphertext and nonce together or neither), and the new `report` type carries the
+  // moderated types' report rules.
   'yappr-storefront-contract.json': {
     storeItem: ['pricedHasCurrency', 'onePrice', 'oneStock', 'optionTable', 'comboTable', 'comboStocks', 'comboSkus', 'comboWeights', 'comboImages'],
     shippingZone: ['flatRateHasCurrency', 'tieredHasTiers'],
+    orderStatusUpdate: ['sealed'],
+    report: ['oneTarget', 'otherNote', 'resolvedStatus', 'staysResolved'],
   },
   // Pollr v7 (5.0.0-beta.5): every vote rule reads the poll (`referenced`); the close is the
   // pollId `where` condition `endsAt >= $updatedAt` (40127), not a rule.
@@ -44,8 +49,13 @@ export const DECLARED_RULES = {
     poll: ['endsAfterCreation', 'endsWithin31Days'],
     vote: ['choicesAreOptions', 'choicesAreOptionsHigh', 'singleChoice'],
   },
-  // Blog v8 (5.0.0-beta.5): comments-off is a `where` condition on blogPostId (40127).
-  'yappr-blog-contract.json': { blogPost: ['chunksContiguous', 'hasBody', 'tombstoneIsBlank', 'publishedNotAhead'] },
+  // Blog v8 (5.0.0-beta.5): comments-off is a `where` condition on blogPostId (40127). Blog v9 adds
+  // the `live` marker (exactly one of deleted and live, as social v14's post) and the new `report`
+  // type; `publishedAt` is required, so every post carries one.
+  'yappr-blog-contract.json': {
+    blogPost: ['chunksContiguous', 'hasBody', 'live', 'tombstoneIsBlank', 'publishedNotAhead'],
+    report: ['oneTarget', 'otherNote', 'resolvedStatus', 'staysResolved'],
+  },
 };
 
 // ---- Base documents (valid under every rule) --------------------------------
@@ -121,15 +131,50 @@ const ballot = (choices) => ({ pollId: id(), ...(choices.length > 0 ? { choices 
  * on a real poll of that shape.
  */
 const onPoll = (multiChoice, options = 3) => ({ referenced: { pollId: { options: Array.from({ length: options }, (_, i) => `o${i}`), multiChoice } } });
-export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', slug: 'constraint-probe', data0: bytes(16) });
+/** `publishedNotAhead` judges `publishedAt` against `$updatedAt`, which the oracle sets to the clock. */
+const BLOG_NOW = Date.now();
+/** Blog v9: a live post carries `live: true` and a `publishedAt` (required by the schema). */
+export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', slug: 'constraint-probe', data0: bytes(16), live: true, publishedAt: BLOG_NOW });
 /**
  * Blog v7: an author's delete. `deleted` and comments off, every content field
  * absent; `blogId` and `slug` (and `publishedAt`, when the post had one) stay.
  * Written by a replace, so its cases are marked `replace: true`.
  */
-export const blogTombstone = (extra = {}) => ({ blogId: id(), slug: 'constraint-probe', deleted: true, commentsEnabled: false, ...extra });
-/** `publishedNotAhead` judges `publishedAt` against `$updatedAt`, which the oracle sets to the clock. */
-const BLOG_NOW = Date.now();
+export const blogTombstone = (extra = {}) => ({ blogId: id(), slug: 'constraint-probe', publishedAt: BLOG_NOW, deleted: true, commentsEnabled: false, ...extra });
+
+/** Storefront v10: a status change for an order (the seller's write); `sealed` reads the two optional sealed fields. */
+export const baseStatusUpdate = () => ({ orderId: id(), status: 'shipped' });
+/** A blog (v9) and a storefront (v10) report: a target, its owner, and reason 0 (spam). */
+export const baseBlogReport = () => ({ blogId: id(), targetOwnerId: id(), reason: 0 });
+export const baseStoreReport = () => ({ storeId: id(), targetOwnerId: id(), reason: 0 });
+
+/**
+ * Cases for a feature contract's `report` type: `oneTarget` (exactly one of the
+ * target ids), `otherNote` (reason 8 says what), `resolvedStatus` (a resolution
+ * needs a status) and `staysResolved` (a moderator never removes a status; the
+ * rule reads `$old.status`, so those cases carry the stored report). Social v15's
+ * report cases, for a type whose targets are `targets` (name -> id builder).
+ */
+const reportCases = (prefix, base, targets) => {
+  const names = Object.keys(targets);
+  const target = (name) => ({ [name]: targets[name]() });
+  const noTarget = () => drop(base(), ...names);
+  const label = (text) => `${prefix}: ${text}`;
+  return [
+    ...names.map((name) => [label(`a report of ${name} (the one target)`), 'report', { ...noTarget(), ...target(name) }, null]),
+    ...names.flatMap((a, i) => names.slice(i + 1).map((b) => [label(`naming ${a} AND ${b}`), 'report', { ...noTarget(), ...target(a), ...target(b) }, 'oneTarget'])),
+    [label(`naming all ${names.length} targets`), 'report', { ...noTarget(), ...Object.assign({}, ...names.map(target)) }, 'oneTarget'],
+    [label('naming no target'), 'report', noTarget(), 'oneTarget'],
+    [label('"something else" saying what'), 'report', { ...base(), reason: 8, note: 'constraint probe' }, null],
+    [label('"something else" with no note'), 'report', { ...base(), reason: 8 }, 'otherNote'],
+    [label('a reason past 8 needs no note'), 'report', { ...base(), reason: 9 }, null],
+    [label('handled with a status and a resolution'), 'report', { ...base(), status: 2, resolution: 'content removed' }, null, { replace: true }],
+    [label('a resolution with no status'), 'report', { ...base(), resolution: 'looked at it' }, 'resolvedStatus', { replace: true }],
+    [label('a moderator resolves an open report'), 'report', { ...base(), status: 1 }, null, { replace: true, stored: base() }],
+    [label('a moderator changes the outcome of a resolved report'), 'report', { ...base(), status: 2 }, null, { replace: true, stored: { ...base(), status: 1 } }],
+    [label('a moderator removes the status of a resolved report'), 'report', base(), 'staysResolved', { replace: true, stored: { ...base(), status: 3 } }],
+  ];
+};
 
 export const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));
 
@@ -217,6 +262,14 @@ export const CONSTRAINT_CASES = {
     ['storeItem: a digital product priced with no currency', 'storeItem', { ...baseItem(), basePrice: 1000, fulfillment: 'digital' }, 'pricedHasCurrency'],
     ['storeItem: a digital product with variants', 'storeItem', { ...variantItem(), fulfillment: 'digital' }, null],
     ['storeItem: a price at 2^53-1 with a currency', 'storeItem', { ...baseItem(), basePrice: Number.MAX_SAFE_INTEGER, currency: 'DASH' }, null],
+    // Storefront v10 (docs/STOREFRONT_V10.md): a status update seals its tracking number, carrier and
+    // note into one ciphertext and nonce (`sealed`: both or neither), and `report` is the moderated
+    // types' report type.
+    ['orderStatusUpdate: a plain status (neither ciphertext nor nonce)', 'orderStatusUpdate', baseStatusUpdate(), null],
+    ['orderStatusUpdate: a sealed note (ciphertext and nonce)', 'orderStatusUpdate', { ...baseStatusUpdate(), encryptedPayload: bytes(96), nonce: bytes(24) }, null],
+    ['orderStatusUpdate: ciphertext without its nonce', 'orderStatusUpdate', { ...baseStatusUpdate(), encryptedPayload: bytes(96) }, 'sealed'],
+    ['orderStatusUpdate: a nonce without ciphertext', 'orderStatusUpdate', { ...baseStatusUpdate(), nonce: bytes(24) }, 'sealed'],
+    ...reportCases('storeReport', baseStoreReport, { storeId: id, itemId: id, storeReviewId: id, itemReviewId: id }),
   ],
   // Pollr v7 (5.0.0-beta.5, docs/NON_SOCIAL_CONTRACTS.md). The poll's rules read
   // the poll alone; `offlineOnly` marks a case a live create cannot reproduce
@@ -259,11 +312,25 @@ export const CONSTRAINT_CASES = {
     ['blogPost: a tombstone keeping its title', 'blogPost', blogTombstone({ title: 'still here' }), 'tombstoneIsBlank', { replace: true }],
     ['blogPost: a tombstone leaving comments on', 'blogPost', blogTombstone({ commentsEnabled: true }), 'tombstoneIsBlank', { replace: true }],
     ['blogPost: a tombstone with commentsEnabled left out', 'blogPost', drop(blogTombstone(), 'commentsEnabled'), 'tombstoneIsBlank', { replace: true }],
-    ['blogPost: `deleted: false` on a live post', 'blogPost', { ...baseBlogPost(), commentsEnabled: true, deleted: false }, 'tombstoneIsBlank'],
+    ['blogPost: `deleted: false` on a post with no live marker', 'blogPost', { ...drop(baseBlogPost(), 'live'), commentsEnabled: true, deleted: false }, 'tombstoneIsBlank'],
+    // Blog v9 (docs/BLOG_V9.md): `live`, exactly one of deleted and live (countPresent), so the listings
+    // keyed on `live` skip a tombstone. A tombstone carries no live marker.
+    ['blogPost: live and not deleted (1 of 2)', 'blogPost', baseBlogPost(), null],
+    ['blogPost: a tombstone without live (1 of 2)', 'blogPost', blogTombstone(), null, { replace: true }],
+    ['blogPost: neither deleted nor live (0 of 2)', 'blogPost', drop(baseBlogPost(), 'live'), 'live'],
+    ['blogPost: a tombstone still marked live (2 of 2)', 'blogPost', blogTombstone({ live: true }), 'live', { replace: true }],
+    ['blogPost: `deleted: false` beside live (2 of 2)', 'blogPost', { ...baseBlogPost(), commentsEnabled: true, deleted: false }, 'live'],
     ['blogPost: publishedAt now', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW }, null],
     ['blogPost: publishedAt backdated (an import)', 'blogPost', { ...baseBlogPost(), publishedAt: 1e12 }, null],
     // A day ahead, so a long live run reaching b19 late still finds it ahead.
     ['blogPost: publishedAt a day ahead', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW + 86_400_000 }, 'publishedNotAhead'],
+    // The margin is 10 minutes past $updatedAt; a live run's block time drifts from this clock, so the
+    // boundary cases stay offline.
+    ['blogPost: publishedAt 9 minutes ahead (inside the margin)', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW + 9 * 60_000 }, null, { offlineOnly: true }],
+    ['blogPost: publishedAt 11 minutes ahead (past the margin)', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW + 11 * 60_000 }, 'publishedNotAhead', { offlineOnly: true }],
+    // Blog v9: the new `report` type (docs/BLOG_V9.md), as social v15's: one target, a note for
+    // "something else", a status for a resolution, and a resolved report staying resolved.
+    ...reportCases('blogReport', baseBlogReport, { blogId: id, blogPostId: id, blogCommentId: id }),
   ],
 };
 
@@ -492,6 +559,84 @@ CONSTRAINT_CASES['yappr-social-contract-v16.json'] = [
   ['post: a blank tombstone keeping its four tags', 'post', { deleted: true, tags: fourTags() }, null],
 ];
 
+// Social v17 (docs/SOCIAL_V17.md, the testnet production cut) keeps v16's rule names and changes what
+// five of them say, and adds two:
+//   - `quoteOwner` counts the quote triple: quotedPostId, quotedReplyId and quotedPostOwnerId are
+//     present 0 or 2 at a time (a quote with its owner; an owner alone, or a quote alone, is refused;
+//     both quote ids and no owner are two, which `oneQuote` then refuses);
+//   - `private` is "0 or all 4" of encryptedContent, keyGeneration, nonce and `feed` (the private
+//     feed the ciphertext was sealed to), and `blankTombstone` counts `feed` among the content paths
+//     a tombstone leaves out (a post's and a reply's);
+//   - a reply gains `live` (exactly one of deleted and live, as the post's) and `notEmpty` (text,
+//     ciphertext, media or a tombstone, as the post's).
+// The `where` bindings and the index shapes are judged by `--probes`.
+DECLARED_RULES['yappr-social-contract-v17.json'] = {
+  ...DECLARED_RULES['yappr-social-contract-v16.json'],
+  reply: [...DECLARED_RULES['yappr-social-contract-v16.json'].reply, 'live', 'notEmpty'],
+};
+/** A private write's four fields: the ciphertext triple and the feed it was sealed to. */
+const privateFieldsV17 = () => ({ ...privateFields(), feed: 1 });
+/** A v17 top-level reply: live (a reply that is not a tombstone carries the marker). */
+const v17Reply = () => ({ ...v14Reply(), live: true });
+/** A v16 case as v17 writes it: a full ciphertext triple names its feed, and a live reply carries `live`. */
+const withV17Shapes = (entry) => {
+  const [label, docType, data, ...rest] = entry;
+  let next = data;
+  if (docType === 'reply' && next.deleted === undefined && next.live === undefined) next = { ...next, live: true };
+  const fullTriple = next.encryptedContent !== undefined && next.keyGeneration !== undefined && next.nonce !== undefined;
+  if (['post', 'reply'].includes(docType) && fullTriple && next.deleted === undefined && next.feed === undefined) next = { ...next, feed: 1 };
+  return next === data ? entry : [label, docType, next, ...rest];
+};
+/** v16's generated all-or-none cases for the three-field `private` rule; v17's are generated over four fields. */
+const isV16PrivateSubsetCase = ([label]) => /^(post|reply): private with \d of 3 /.test(label);
+/** A tombstone that kept only its feed (`blankTombstone` counts it among the content paths). */
+const v17PostTombstoneFeed = () => ({ deleted: true, feed: 1 });
+CONSTRAINT_CASES['yappr-social-contract-v17.json'] = [
+  ...CONSTRAINT_CASES['yappr-social-contract-v16.json'].filter((entry) => !isV16PrivateSubsetCase(entry)).map(withV17Shapes),
+  // private: countPresent in [0, 4] over the ciphertext triple and the feed.
+  ...allOrNoneCases('post', v13Post(), 'private', privateFieldsV17()),
+  ...allOrNoneCases('reply', v17Reply(), 'private', privateFieldsV17()),
+  ['post: a private post (all four: ciphertext, key generation, nonce and feed, teaser)', 'post', { ...v13Post(), content: '🔒', ...privateFieldsV17() }, null],
+  ['post: a private post with no teaser (the four fields are content)', 'post', { live: true, ...privateFieldsV17() }, null],
+  ['post: three of the four, the ciphertext triple without its feed', 'post', { ...v13Post(), ...privateFields() }, 'private'],
+  ['post: three of the four, the feed with ciphertext and nonce but no key generation', 'post', { ...v13Post(), ...drop(privateFieldsV17(), 'keyGeneration') }, 'private'],
+  ['post: a feed alone', 'post', { ...v13Post(), feed: 1 }, 'private'],
+  ['post: a feed and a key generation', 'post', { ...v13Post(), feed: 2, keyGeneration: 1 }, 'private'],
+  ['post: a private post carrying media (all four fields)', 'post', { ...v13Post(), ...privateFieldsV17(), ...v13Media(1) }, 'privateNoMedia'],
+  ['reply: a private reply (all four fields)', 'reply', { ...v17Reply(), content: '🔒', ...privateFieldsV17() }, null],
+  ['reply: three of the four, the ciphertext triple without its feed', 'reply', { ...v17Reply(), ...privateFields() }, 'private'],
+  ['reply: a feed alone', 'reply', { ...v17Reply(), feed: 1 }, 'private'],
+  ['reply: a private reply carrying media (all four fields)', 'reply', { ...v17Reply(), ...privateFieldsV17(), ...v13Media(1) }, 'privateNoMedia'],
+  // blankTombstone: a tombstone keeps no feed (countPresent of the content paths, which now include it).
+  ['post: a tombstone keeping its feed (countPresent 1)', 'post', v17PostTombstoneFeed(), 'blankTombstone'],
+  ['reply: a tombstone keeping its feed (countPresent 1)', 'reply', { ...drop(v14Reply(), 'content'), ...v17PostTombstoneFeed() }, 'blankTombstone'],
+  ['post: a tombstone keeping all four private fields', 'post', { deleted: true, ...privateFieldsV17() }, 'blankTombstone'],
+  // quoteOwner: countPresent of quotedPostId, quotedReplyId, quotedPostOwnerId in [0, 2].
+  ['post: nothing quoted (countPresent 0)', 'post', v13Post(), null],
+  ['post: a quoted post with its owner (2)', 'post', { ...v13Post(), quotedPostId: id(), quotedPostOwnerId: id() }, null],
+  ['post: a quoted reply with its owner (2)', 'post', { ...v13Post(), quotedReplyId: id(), quotedPostOwnerId: id() }, null],
+  ['post: a quoted post with no owner (1)', 'post', { ...v13Post(), quotedPostId: id() }, 'quoteOwner'],
+  ['post: a quoted reply with no owner (1)', 'post', { ...v13Post(), quotedReplyId: id() }, 'quoteOwner'],
+  ['post: an owner and no quote (1)', 'post', { ...v13Post(), quotedPostOwnerId: id() }, 'quoteOwner'],
+  ['post: a bare owner on a post with no text (1; notEmpty is met by neither)', 'post', { live: true, quotedPostOwnerId: id() }, 'notEmpty'],
+  ['post: a post and a reply quoted with no owner (2: quoteOwner admits it, oneQuote refuses it)', 'post', { ...v13Post(), quotedPostId: id(), quotedReplyId: id() }, 'oneQuote'],
+  ['post: a post and a reply quoted with an owner (3)', 'post', { ...v13Post(), quotedPostId: id(), quotedReplyId: id(), quotedPostOwnerId: id() }, 'oneQuote'],
+  ['post: a tombstone quoting nothing', 'post', { deleted: true }, null],
+  // reply live: exactly one of deleted and live.
+  ['reply: live and not deleted (1 of 2)', 'reply', v17Reply(), null],
+  ['reply: a tombstone without live (1 of 2)', 'reply', { ...drop(v14Reply(), 'content'), deleted: true }, null],
+  ['reply: neither deleted nor live (0 of 2)', 'reply', v14Reply(), 'live'],
+  ['reply: deleted and live (2 of 2)', 'reply', { ...drop(v17Reply(), 'content'), deleted: true }, 'live'],
+  // reply notEmpty: text, or one of encryptedContent, mediaUrls, deleted.
+  ['reply: notEmpty met by text alone', 'reply', v17Reply(), null],
+  ['reply: notEmpty met by ciphertext alone (all four fields, no teaser)', 'reply', { ...drop(v17Reply(), 'content'), ...privateFieldsV17() }, null],
+  ['reply: notEmpty met by media alone', 'reply', { ...drop(v17Reply(), 'content'), ...v13Media(1) }, null],
+  ['reply: notEmpty met by a tombstone alone', 'reply', { ...drop(v14Reply(), 'content'), deleted: true }, null],
+  ['reply: nothing but the thread root and live (countPresent 0)', 'reply', drop(v17Reply(), 'content'), 'notEmpty'],
+  ['reply: an empty text and nothing else', 'reply', { ...v17Reply(), content: '' }, 'notEmpty'],
+  ['reply: only the sensitive flag and a mention', 'reply', { ...drop(v17Reply(), 'content'), sensitive: true, mentionedUserIds: [id()] }, 'notEmpty'],
+];
+
 /**
  * The `deleteConstraints` rules a contract declares (5.0.0-beta.3), keyed like
  * {@link DECLARED_RULES}: rules the STORED document must meet for its owner to
@@ -503,6 +648,10 @@ export const DECLARED_DELETE_RULES = {
   'yappr-social-contract-v14.json': { report: ['pending'] },
   'yappr-social-contract-v15.json': { report: ['pending'] },
   'yappr-social-contract-v16.json': { report: ['pending'] },
+  'yappr-social-contract-v17.json': { report: ['pending'] },
+  // The feature contracts' reports (blog v9, storefront v10): withdrawn only while no moderator has resolved them.
+  'yappr-blog-contract.json': { report: ['pending'] },
+  'yappr-storefront-contract.json': { report: ['pending'] },
 };
 
 /**
@@ -520,6 +669,15 @@ export const DELETE_CASES = {
 };
 DELETE_CASES['yappr-social-contract-v15.json'] = DELETE_CASES['yappr-social-contract-v14.json'];
 DELETE_CASES['yappr-social-contract-v16.json'] = DELETE_CASES['yappr-social-contract-v14.json'];
+DELETE_CASES['yappr-social-contract-v17.json'] = DELETE_CASES['yappr-social-contract-v14.json'];
+/** A feature contract's report withdrawal cases: open (no status) deletable, resolved (status 1-3) not. */
+const featureDeleteCases = (prefix, base) => [
+  [`${prefix}: withdrawing an open report (no status)`, 'report', base(), null],
+  ...[1, 2, 3].map((status) => [`${prefix}: withdrawing a report resolved with status ${status}`, 'report', { ...base(), status }, 'pending']),
+  [`${prefix}: withdrawing a resolved report that carries a resolution`, 'report', { ...base(), status: 2, resolution: 'content removed' }, 'pending'],
+];
+DELETE_CASES['yappr-blog-contract.json'] = featureDeleteCases('blogReport', baseBlogReport);
+DELETE_CASES['yappr-storefront-contract.json'] = featureDeleteCases('storeReport', baseStoreReport);
 
 /**
  * The 40147 refusal of an owner's delete breaking the `deleteConstraints` rule

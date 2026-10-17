@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { logger } from '@/lib/logger'
 import type { PostVisibility } from '@/lib/store'
 import type { AuthUser } from '@/contexts/auth-context'
+import { privateFeedClientSupported } from '@/lib/contract-topology'
 
 /**
  * Whether the composer may post privately, and the flow that turns a private
@@ -22,7 +23,9 @@ export function useComposePrivateFeed(isOpen: boolean, user: AuthUser | null, ap
 
   useEffect(() => {
     if (!isOpen) return
-    if (!user) {
+    // No user, or a cut this client offers no private feeds on (social v17): public only.
+    if (!user || !privateFeedClientSupported()) {
+      setHasPrivateFeed(false)
       setLoading(false)
       return
     }

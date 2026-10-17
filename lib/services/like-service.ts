@@ -7,7 +7,7 @@ import { paginateFetchAll, documentCount, groupedDocumentCount, mapLimit, queryO
 import { isFrozenBalanceError, isInsufficientTokenError, isTokenPausedError } from '../error-utils';
 import type { getEvoSdk } from './evo-sdk-service';
 import type { RecentTarget } from '../like-notification-snapshot';
-import { indexOnlyLikeShapeFor, likeIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor, inlineTags } from '../contract-topology';
+import { indexOnlyLikeShapeFor, likeIndexFor, selfLikesAreRefused, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, replyOwnerIndexOrderPrefix, replyOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor, inlineTags } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -189,6 +189,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    */
   async likePost(postId: string, ownerId: string, postOwnerId?: string, kind: TargetKind = 'post', target?: LikeTargetInfo): Promise<boolean> {
     try {
+      // v17 refuses a like of one's own post (10419) or reply (a paid 40127): never send it.
+      const author = target?.author ?? postOwnerId;
+      if (author === ownerId && selfLikesAreRefused(kind)) {
+        logger.warn(`Not liking own ${kind} ${postId}: this network refuses self-likes`);
+        return false;
+      }
       // Check if already liked
       const existing = await this.getLike(postId, ownerId, kind);
       if (existing) {
@@ -1077,8 +1083,10 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
     const { docType, field } = likeIndexFor(kind);
 
-    // A post's `ownerAndTime` starts at `live` on v13 (a reply's never does).
-    const live = kind === 'post' ? { where: postOwnerIndexPrefix(), orderBy: postOwnerIndexOrderPrefix() } : { where: [], orderBy: [] };
+    // A post's `ownerAndTime` starts at `live` from v13, a reply's from v17.
+    const live = kind === 'post'
+      ? { where: postOwnerIndexPrefix(), orderBy: postOwnerIndexOrderPrefix() }
+      : { where: replyOwnerIndexPrefix(), orderBy: replyOwnerIndexOrderPrefix() };
     const result = await sdk.documents.composite({
       dataContractId: this.contractId,
       documentType: kind,

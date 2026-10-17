@@ -281,3 +281,46 @@ describe('the published head of the post timeline (v7)', () => {
     expect(capped.nextCursor).toBe('d2');
   });
 });
+
+describe('blog v9 posts (the live marker)', () => {
+  const content = [{ type: 'paragraph', content: [{ type: 'text', text: 'hi' }] }];
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('writes live on a new post and keeps it through an edit, never on a tombstone', async () => {
+    vi.spyOn(blogPostService, 'getPostBySlug').mockResolvedValue(null);
+    const service = blogPostService as unknown as { create(ownerId: string, data: Record<string, unknown>): Promise<BlogPost> };
+    const create = vi.spyOn(service, 'create').mockResolvedValue({ id: 'new' } as BlogPost);
+    await blogPostService.createPost(ownerId, { blogId, title: 'Hello', content });
+    expect(create.mock.calls[0][1]).toMatchObject({ live: true, publishedAt: expect.any(Number) });
+    expect(replacePayload({ publishedAt: 1 })).toMatchObject({ live: true });
+    expect(replacePayload({ publishedAt: 1, deleted: true })).not.toHaveProperty('live');
+  });
+
+  it('pins live == true on the timeline and on a blog\'s listing', async () => {
+    const query = vi.spyOn(blogPostService, 'query').mockResolvedValue({ documents: [] } as never);
+    await blogPostService.getLatestPosts({ limit: 3 });
+    expect(query).toHaveBeenLastCalledWith({ where: [['live', '==', true], ['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 3, startAfter: undefined });
+    await blogPostService.getPostsByBlog(blogId, { limit: 5 });
+    expect(query).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: [['live', '==', true], ['blogId', '==', blogId]],
+      orderBy: [['live', 'asc'], ['blogId', 'asc'], ['$createdAt', 'desc']],
+    }));
+  });
+
+  it('writes no live marker below v9', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v8');
+    vi.spyOn(blogPostService, 'getPostBySlug').mockResolvedValue(null);
+    const service = blogPostService as unknown as { create(ownerId: string, data: Record<string, unknown>): Promise<BlogPost> };
+    const create = vi.spyOn(service, 'create').mockResolvedValue({ id: 'new' } as BlogPost);
+    await blogPostService.createPost(ownerId, { blogId, title: 'Hello', content });
+    expect(create.mock.calls[0][1]).not.toHaveProperty('live');
+    expect(replacePayload({ publishedAt: 1 })).not.toHaveProperty('live');
+  });
+});

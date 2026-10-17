@@ -263,7 +263,7 @@ async function cleanSocial(args, maker) {
   };
   console.log(JSON.stringify({ network: network(), contract: contractId, contractFile: file, mode: args.mode, since: args.since === null ? null : new Date(args.since).toISOString(), identities: identities.map(({ id, label }) => ({ label, id })) }));
   if (args.mode === 'plan') {
-    const survey = await surveyTimeline({ sdk, contractId, identities, others: maker ? { [maker]: 'maker' } : {}, limit: args.survey, reconnect });
+    const survey = await surveyTimeline({ sdk, contractId, contract, identities, others: maker ? { [maker]: 'maker' } : {}, limit: args.survey, reconnect });
     console.log(JSON.stringify({ newestTimelinePosts: survey }));
   }
   if (Object.keys(args.after).length > 0 && identities.length !== 1) throw new Error('--after resumes one identity\'s scan: name exactly one identity');

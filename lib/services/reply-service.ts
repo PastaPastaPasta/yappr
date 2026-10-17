@@ -17,12 +17,16 @@ import {
   hasFlatThreads,
   mentionsAreInline,
   notificationWindowFor,
+  privateFeedClientSupported,
   privateFeedKeyFields,
   replyCountFieldFor,
   replyCountNeedsRoot,
   replyLinkage,
   replyOwnersProblem,
+  replyOwnerIndexOrderPrefix,
+  replyOwnerIndexPrefix,
   replyOwnersAreDerived,
+  repliesCarryLiveMarker,
   repliesNameRootOwner,
   threadRootIdOf,
   tombstonePreservationFor,
@@ -249,6 +253,8 @@ class ReplyService extends BaseDocumentService<Reply> {
 
     // Handle encryption if provided
     if (options.encryption) {
+      // Social v17 names a feed on every private write; this client writes the single-feed shape only.
+      if (!privateFeedClientSupported()) throw new Error('Private posts are not available yet');
       const { prepareOwnerEncryption, prepareInheritedEncryption } = await import('./private-feed-service');
 
       let encryptionResult;
@@ -296,6 +302,10 @@ class ReplyService extends BaseDocumentService<Reply> {
       const { mentionFieldsFor } = await import('./post-service');
       Object.assign(data, await mentionFieldsFor(data.content as string));
     }
+
+    // v17: a reply is on its author's `ownerAndTime` while it carries `live`;
+    // the tombstone leaves it out (the `live` rule refuses anything else).
+    if (repliesCarryLiveMarker()) data.live = true;
 
     return this.create(ownerId, data);
   }
@@ -364,7 +374,9 @@ class ReplyService extends BaseDocumentService<Reply> {
 
   /**
    * Get user's replies for profile page.
-   * Uses the ownerAndTime index: [$ownerId, $createdAt]
+   * Uses the ownerAndTime index: [$ownerId, $createdAt], keyed on the live
+   * marker on v17 ([live, $ownerId, $createdAt], pinned `live == true`: the
+   * author's tombstones are not on it).
    *
    * @param userId - Identity ID of the user
    * @param options - Query options
@@ -374,10 +386,11 @@ class ReplyService extends BaseDocumentService<Reply> {
 
     const queryOptions: QueryOptions = {
       where: [
+        ...replyOwnerIndexPrefix(),
         ['$ownerId', '==', userId],
         ['$createdAt', '>', 0]
       ],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+      orderBy: [...replyOwnerIndexOrderPrefix(), ['$ownerId', 'asc'], ['$createdAt', 'desc']],
       limit: 20,
       ...queryOpts
     };

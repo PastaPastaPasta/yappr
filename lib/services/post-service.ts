@@ -8,7 +8,7 @@ import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, postListingWherePrefix, privateFeedClientSupported, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { extractMentions, indexedTags } from '@/lib/post-helpers';
 import { tagLimitProblem } from '@/lib/compose/limits';
@@ -60,12 +60,13 @@ function batchDedupeKey(targets: readonly KindedTarget[]): string {
  * `tagAndTime`: `hashtag ==` through v15; on v16 the `tags` element index,
  * pinned with `contains` (an equality on one element, which takes a cursor)
  * and ordered by `$createdAt` alone (a typed array is ordered by only under
- * `containsAny`).
+ * `containsAny`); on v17 `[live, tags, $createdAt]`, with `live == true`
+ * pinned too, so a tombstone never comes back.
  */
 export function postsTaggedQuery(tag: string): { where: DocumentWhereClause[]; orderBy: DocumentOrderByClause[] } {
   const after: DocumentWhereClause = ['$createdAt', '>', 0];
   if (inlineTags()?.isArray) {
-    return { where: [['tags', 'contains', tag], after], orderBy: [['$createdAt', 'desc']] };
+    return { where: [...postListingWherePrefix(), ['tags', 'contains', tag], after], orderBy: [['$createdAt', 'desc']] };
   }
   return { where: [['hashtag', '==', tag], after], orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']] };
 }
@@ -470,6 +471,8 @@ class PostService extends BaseDocumentService<Post> {
 
     // Handle encryption if provided
     if (options.encryption) {
+      // Social v17 names a feed on every private write; this client writes the single-feed shape only.
+      if (!privateFeedClientSupported()) throw new Error('Private posts are not available yet');
       const { prepareOwnerEncryption, prepareInheritedEncryption } = await import('./private-feed-service');
 
       let encryptionResult;
@@ -709,7 +712,9 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Count all posts on the platform via the doctype's primary-key count tree
    * (`documentsCountable`, O(1) — counts every post regardless of language).
-   * Deduplicates in-flight requests.
+   * On v17 the type keeps no such tree: the total is the live posts, the
+   * timeline's count at `live == true` (`rangeCountable`, O(1) too), so a
+   * tombstone no longer counts. Deduplicates in-flight requests.
    */
   async countAllPosts(): Promise<number> {
     // Use a constant key since this counts all posts
@@ -718,9 +723,11 @@ class PostService extends BaseDocumentService<Post> {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
 
+        const live = postListingWherePrefix();
         return await documentCount(sdk, {
           dataContractId: this.contractId,
           documentTypeName: 'post',
+          ...(live.length > 0 ? { where: live } : {}),
         });
       } catch (error) {
         logger.error('Error counting all posts:', error);

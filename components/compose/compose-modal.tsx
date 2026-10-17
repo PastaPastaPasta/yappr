@@ -20,6 +20,7 @@ import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsConfigured, pollrIsV4 } from '@/lib/constants'
+import { privateFeedClientSupported } from '@/lib/contract-topology'
 import { planPosts, publishThread, threadTagProblem } from '@/lib/compose/publish-thread'
 import { characterCount, contentOverage, firstPostMentionHints, hasVisibleContent, isOverContentLimit, mentionLimitHint } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
@@ -409,7 +410,7 @@ export function ComposeModal() {
                             <XMarkIcon className="h-5 w-5" />
                           </IconButton>
                           {user && <UserAvatar userId={user.identityId} size="sm" alt="Your avatar" />}
-                          {!(replyingTo && isPrivatePost(replyingTo)) && (
+                          {privateFeedClientSupported() && !(replyingTo && isPrivatePost(replyingTo)) && (
                             <VisibilitySelector
                               visibility={visibility}
                               onVisibilityChange={setFirstPostVisibility}
