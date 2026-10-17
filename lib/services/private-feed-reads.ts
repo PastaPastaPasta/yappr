@@ -291,8 +291,17 @@ export function activeGrants<T extends Pick<GrantDocument, 'leafIndex' | 'keyGen
 
 /** True when a rekey of `grant`'s feed revoked its leaf after it was written. */
 export async function grantIsRevoked(grant: GrantDocument): Promise<boolean> {
-  const rekeys = await fetchRekeys(grant.ownerId, grant.feed, grant.keyGeneration)
-  return rekeys.some((rekey) => rekey.revokedLeaf === grant.leafIndex)
+  return (await answeredThrough(grant)).revoked
+}
+
+/**
+ * When a grant last answered its holder's request: its writing, or the rekey
+ * that revoked it. Only a request made after that asks again.
+ */
+export async function answeredThrough(grant: GrantDocument, rekeys?: readonly RekeyDocument[]): Promise<{ at: number; revoked: boolean }> {
+  const later = (rekeys ?? await fetchRekeys(grant.ownerId, grant.feed, grant.keyGeneration))
+    .filter((rekey) => rekey.revokedLeaf === grant.leafIndex && rekey.keyGeneration > grant.keyGeneration)
+  return later.length > 0 ? { at: Math.max(grant.createdAt, ...later.map((rekey) => rekey.createdAt)), revoked: true } : { at: grant.createdAt, revoked: false }
 }
 
 const requestReads = new RequestDeduplicator<string, FollowRequestDocument | null>(0)

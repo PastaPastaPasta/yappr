@@ -130,8 +130,8 @@ function installWindow() {
 
 const ident = (n: number) => bs58.encode(new Uint8Array(32).fill(n))
 const secret = (n: number) => new Uint8Array(32).fill(n)
-const [O, F1, F2, F3, F4, F5] = [ident(1), ident(2), ident(3), ident(4), ident(5), ident(6)]
-const keys: Record<string, Uint8Array> = { [O]: secret(41), [F1]: secret(42), [F2]: secret(43), [F3]: secret(44), [F4]: secret(45), [F5]: secret(46) }
+const [O, F1, F2, F3, F4, F5, P] = [ident(1), ident(2), ident(3), ident(4), ident(5), ident(6), ident(7)]
+const keys: Record<string, Uint8Array> = { [O]: secret(41), [F1]: secret(42), [F2]: secret(43), [F3]: secret(44), [F4]: secret(45), [F5]: secret(46), [P]: secret(47) }
 
 function giveEncryptionKey(identityId: string, key: Uint8Array, id = 2, disabledKeys: Record<string, unknown>[] = []) {
   chain.identities.set(identityId, { publicKeys: [...disabledKeys, { id, type: 0, purpose: 1, securityLevel: 2, data: bytesToBase64(getPublicKey(key)) }] })
@@ -164,10 +164,10 @@ afterAll(() => {
   vi.unstubAllGlobals()
 })
 
-async function post(text: string): Promise<PrivateContent> {
-  const sealed = await s.owner.prepareOwnerEncryption(O, text, 'post', undefined, keys[O])
+async function post(text: string, owner = O): Promise<PrivateContent> {
+  const sealed = await s.owner.prepareOwnerEncryption(owner, text, 'post', undefined, keys[owner])
   if (!sealed.success) throw new Error(sealed.error)
-  return { feedOwnerId: O, feed: sealed.data.feed, keyGeneration: sealed.data.keyGeneration, nonce: sealed.data.nonce, encryptedContent: sealed.data.encryptedContent, authorId: O, kind: 'post' }
+  return { feedOwnerId: owner, feed: sealed.data.feed, keyGeneration: sealed.data.keyGeneration, nonce: sealed.data.nonce, encryptedContent: sealed.data.encryptedContent, authorId: owner, kind: 'post' }
 }
 
 async function read(viewer: string, content: PrivateContent): Promise<string> {
@@ -176,8 +176,12 @@ async function read(viewer: string, content: PrivateContent): Promise<string> {
 }
 
 async function approve(...followers: string[]) {
+  await approveBy(O, ...followers)
+}
+
+async function approveBy(owner: string, ...followers: string[]) {
   for (const follower of followers) {
-    const result = await s.owner.privateFeedService.approveFollower(O, follower, getPublicKey(keys[follower]), keys[O])
+    const result = await s.owner.privateFeedService.approveFollower(owner, follower, getPublicKey(keys[follower]), keys[owner])
     expect(result, follower).toEqual({ success: true })
   }
 }
@@ -407,5 +411,55 @@ describe('private feeds v2 end to end', () => {
     expect(await s.move.runMove(O, keys[O])).toEqual({ success: true })
     expect((await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true }))?.feed).toBe(before + 1)
     expect(grantsIn(before + 1)).toEqual(members)
+  })
+})
+
+describe('private feeds v2: every authorised path to history', () => {
+  const pPosts: Record<string, PrivateContent> = {}
+
+  it('a follower revoked in a feed still reads its later posts through a newer grant\'s history link', async () => {
+    expect(await s.owner.privateFeedService.enablePrivateFeed(P, keys[P])).toEqual({ success: true })
+    for (const follower of [F1, F2]) await s.follower.requestAccess(P, follower)
+    await approveBy(P, F1, F2)
+    pPosts.one = await post('p one', P)
+    expect(await read(F1, pPosts.one)).toBe('p one')
+    expect(await s.owner.privateFeedService.revokeFollower(P, F1, keys[P])).toEqual({ success: true })
+    const afterRemoval = await post('p two', P)
+    expect(await read(F1, afterRemoval)).toBe('<revoked>')
+    expect(await s.move.renewPrivateFeed(P, keys[P], { bringHistory: true })).toMatchObject({ success: true, historyLinked: true })
+    await s.follower.requestAccess(P, F1)
+    await approveBy(P, F1)
+    expect(await read(F1, afterRemoval)).toBe('p two')
+  })
+
+  it('a fresh start breaks one walk, not the one from an older grant kept after it', async () => {
+    const first = await post('p three', P) // feed 2
+    expect(await s.move.renewPrivateFeed(P, keys[P], { bringHistory: false })).toMatchObject({ success: true, historyLinked: false })
+    // A fresh device: F2 holds grants in feed 3 (moved) and feed 2 (kept by the fresh start), not in feed 1 (deleted by the linked move).
+    s.store.clearIdentity(F2)
+    expect(await read(F2, first)).toBe('p three')
+    s.store.clearIdentity(F2)
+    // Feed 1 is reached only from the kept feed-2 grant: feed 3 has no carry.
+    expect(await read(F2, pPosts.one)).toBe('p one')
+    const pOne = chain.docs.filter((doc) => doc.$type === 'privateFeedGrant' && doc.$ownerId === P && doc.feed === 1 && norm(doc.recipientId) === F2)
+    expect(pOne).toEqual([])
+  })
+
+  it('a request re-made before a removal does not count as asking again', async () => {
+    await s.follower.requestAccess(P, F2) // a re-request while a member (their key changed, say)
+    expect(await s.owner.privateFeedService.revokeFollower(P, F2, keys[P])).toEqual({ success: true })
+    expect((await s.owner.privateFeedService.getPendingRequests(P)).map((r) => r.$ownerId)).not.toContain(F2)
+    expect(await s.follower.getAccessStatus(P, F2)).toBe('revoked')
+    expect(await s.owner.privateFeedService.approveFollower(P, F2, getPublicKey(keys[F2]), keys[P])).toMatchObject({ success: false })
+  })
+
+  it('private posting waits for a move the chain shows unfinished, even with nothing kept on this device', async () => {
+    expect((await s.owner.privateFeedService.openFeed(P, keys[P])).success).toBe(true)
+    const { loadMove } = await import('./private-feed-move-job')
+    expect(loadMove(P)).toBeNull()
+    await expect(post('blocked', P)).rejects.toThrow(/being moved/)
+    expect(loadMove(P)).not.toBeNull()
+    expect(await s.move.runMove(P, keys[P])).toEqual({ success: true })
+    expect((await post('open', P)).feed).toBeGreaterThan(0)
   })
 })

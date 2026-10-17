@@ -24,7 +24,7 @@ import { logger } from '@/lib/logger'
 import { stateTransitionService } from './state-transition-service'
 import { privateFeedKeyStore, type OwnerFeedKeys } from './private-feed-key-store'
 import {
-  activeGrants, fetchCurrentFeed, fetchFeeds, fetchFollowRequest, fetchFollowRequestsTo, fetchGrant, fetchGrantsTo, fetchLatestKeyGeneration,
+  activeGrants, answeredThrough, fetchCurrentFeed, fetchFeeds, fetchFollowRequest, fetchFollowRequestsTo, fetchGrant, fetchGrantsTo, fetchLatestKeyGeneration,
   fetchMembers, fetchRekeys, forgetFeeds, grantIsRevoked, mainFeeds, type FollowRequestDocument, type GrantDocument, type PrivateFeedDocument,
 } from './private-feed-reads'
 import { loadMove, moveInProgress, saveMove } from './private-feed-move-job'
@@ -103,6 +103,17 @@ function grantRefusal(error: unknown): PrivateFeedResult | null {
 
 const inForceGrant = async (grant: GrantDocument) => !(await grantIsRevoked(grant))
 
+/**
+ * The PF4 write gate: a follower move this device keeps, or one the chain
+ * shows unfinished (another device's renewal, an open confirmed late), which
+ * it then keeps as its own so Settings and the next sign-in finish it.
+ */
+async function moveUnfinished(ownerId: string): Promise<boolean> {
+  if (moveInProgress(ownerId)) return true
+  const { adoptUnfinishedMove } = await import('./private-feed-move')
+  return (await adoptUnfinishedMove(ownerId)) > 0
+}
+
 const toFollower = (grant: GrantDocument): PrivateFollower => ({ recipientId: grant.recipientId, leafIndex: grant.leafIndex, grantedAt: grant.createdAt })
 
 /** A feed and this device's keys for it, synced with the chain. */
@@ -179,12 +190,15 @@ class PrivateFeedService {
   async getPendingRequests(ownerId: string): Promise<PendingRequest[]> {
     const current = await fetchCurrentFeed(ownerId)
     if (!current) return []
-    const [requests, grants] = await Promise.all([fetchFollowRequestsTo(ownerId), fetchMembers(ownerId, current.feed)])
-    const inCurrent = new Map(grants.map((grant) => [grant.recipientId, grant.createdAt]))
+    const [requests, grants, rekeys] = await Promise.all([fetchFollowRequestsTo(ownerId), fetchMembers(ownerId, current.feed), fetchRekeys(ownerId, current.feed, 1)])
+    // A grant answers its request until it was written, or until the rekey that revoked it.
+    const inCurrent = new Map(await Promise.all(grants.map(async (grant) => [grant.recipientId, (await answeredThrough(grant, rekeys)).at] as const)))
     // Requesters without a grant here may hold one in an earlier feed: one indexed read each.
-    const elsewhere = await Promise.all(requests.map(async (request) => (
-      inCurrent.has(request.$ownerId) ? null : Math.max(0, ...(await fetchGrantsTo(ownerId, request.$ownerId)).map((grant) => grant.createdAt))
-    )))
+    const elsewhere = await Promise.all(requests.map(async (request) => {
+      if (inCurrent.has(request.$ownerId)) return null
+      const held = await fetchGrantsTo(ownerId, request.$ownerId)
+      return Math.max(0, ...(await Promise.all(held.map(async (grant) => (await answeredThrough(grant)).at))))
+    }))
     return requests.flatMap((request, index): PendingRequest[] => {
       const answered = inCurrent.get(request.$ownerId) ?? elsewhere[index] ?? 0
       if (request.$createdAt <= answered) return []
@@ -399,7 +413,7 @@ class PrivateFeedService {
    */
   async approveFollower(ownerId: string, requesterId: string, requesterPublicKey: Uint8Array, encryptionPrivateKey?: Uint8Array): Promise<PrivateFeedResult> {
     try {
-      if (moveInProgress(ownerId)) return failure('MOVE_IN_PROGRESS')
+      if (await moveUnfinished(ownerId)) return failure('MOVE_IN_PROGRESS')
       const request = await fetchFollowRequest(ownerId, requesterId)
       if (!request) return failure('REQUEST_WITHDRAWN')
       const synced = await this.ownerFeedState(ownerId, encryptionPrivateKey)
@@ -407,8 +421,9 @@ class PrivateFeedService {
       const { state } = synced
       const members = await fetchMembers(ownerId, state.feed.feed)
       const existing = members.find((grant) => grant.recipientId === requesterId)
-      if (existing && request.$createdAt <= existing.createdAt) {
-        return (await inForceGrant(existing)) ? { success: true } : { success: false, error: 'You removed this person. They can ask again from your profile.' }
+      const answered = existing ? await answeredThrough(existing) : null
+      if (existing && answered && request.$createdAt <= answered.at) {
+        return answered.revoked ? { success: false, error: 'You removed this person. They can ask again from your profile.' } : { success: true }
       }
       if (existing) {
         const removed = await stateTransitionService.deleteDocument(this.contractId, DOCUMENT_TYPES.PRIVATE_FEED_GRANT, existing.$id, ownerId)
@@ -484,7 +499,12 @@ class PrivateFeedService {
         }
         return { success: false, error: written.error || 'Could not remove this follower.' }
       }
-      if (written.confirmed === false && (await fetchLatestKeyGeneration(ownerId, feed.feed)) < keyGeneration) return failure('UNCONFIRMED')
+      if (written.confirmed === false) {
+        // Not confirmed: read back the rekey at this generation. Another device's rekey of another leaf there means ours lost.
+        const landed = (await fetchRekeys(ownerId, feed.feed, keys.keyGeneration)).find((other) => other.keyGeneration === keyGeneration)
+        if (!landed) return failure('UNCONFIRMED')
+        if (landed.revokedLeaf !== leafIndex) return failure('FEED_CHANGED')
+      }
       privateFeedKeyStore.storeOwnerKeys(ownerId, feed.feed, { ...keys, keyGeneration, revokedLeaves: [...keys.revokedLeaves, leafIndex] })
       return { success: true }
     } catch (error) {
@@ -541,7 +561,12 @@ export async function prepareOwnerEncryption(
 ): Promise<PrepareEncryptionResult> {
   const tooLong = plaintextTooLong(content)
   if (tooLong) return tooLong
-  if (moveInProgress(ownerId)) return { success: false, error: MESSAGES.MOVE_IN_PROGRESS }
+  try {
+    if (await moveUnfinished(ownerId)) return { success: false, error: MESSAGES.MOVE_IN_PROGRESS }
+  } catch (error) {
+    logger.error('Error checking for an unfinished follower move:', error)
+    return { success: false, error: UNVERIFIED_ERROR }
+  }
   let synced: StateResult
   try {
     synced = await privateFeedService.ownerFeedState(ownerId, encryptionPrivateKey)

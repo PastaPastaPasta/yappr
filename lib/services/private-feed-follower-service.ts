@@ -14,7 +14,7 @@ import { logger } from '@/lib/logger'
 import { stateTransitionService } from './state-transition-service'
 import { privateFeedKeyStore, type MemberFeedKeys } from './private-feed-key-store'
 import {
-  fetchCurrentFeed, fetchFeed, fetchFollowRequest, fetchGrant, fetchGrantsHeldBy, fetchNewestGrant, fetchRekeys, grantIsRevoked,
+  fetchCurrentFeed, fetchFeed, fetchFollowRequest, fetchGrant, fetchGrantsHeldBy, fetchNewestGrant, fetchRekeys, answeredThrough,
   type GrantDocument,
 } from './private-feed-reads'
 import { identifierToBytes } from './sdk-helpers'
@@ -101,8 +101,8 @@ class PrivateFeedFollowerService {
     const [feed, grant, request] = await Promise.all([fetchCurrentFeed(ownerId), fetchNewestGrant(ownerId, myId), fetchFollowRequest(ownerId, myId)])
     if (!feed) return 'none'
     if (!grant) return request ? 'pending' : 'none'
-    const askedSince = !!request && request.$createdAt > grant.createdAt
-    if (await grantIsRevoked(grant)) return askedSince ? 'pending' : 'revoked'
+    const answered = await answeredThrough(grant)
+    if (answered.revoked) return request && request.$createdAt > answered.at ? 'pending' : 'revoked'
     if (!request) return 'none'
     if (grant.feed !== feed.feed) return 'renewing'
     const keys = privateFeedKeyStore.memberKeys(myId, ownerId, feed.feed)
