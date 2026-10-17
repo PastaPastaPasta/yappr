@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { contractPins, incidentPlan, readNetwork, schemaHash, thresholds } from './config.mjs';
+import { contractPins, contractRoles, incidentPlan, readNetwork, schemaHash, thresholds } from './config.mjs';
 import { activityFilters, checkFresh, countActivity } from './chain.mjs';
 import { lazyChunks, smokeSite } from './sites.mjs';
 
@@ -109,4 +109,14 @@ it('rejects a wrong active role even when a snapshot bundle contains the expecte
   const fetchMock = vi.fn(async url => new Response(String(url).endsWith('.js') ? id : html));
   vi.stubGlobal('fetch', fetchMock);
   await expect(smokeSite({ url: 'https://yap.pr/', buildId: 'abc1234', config: { env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }, pins: [{ id }] } })).rejects.toThrow('Active NEXT_PUBLIC_YAPPR_CONTRACT_ID: wrong-active-id');
+});
+
+it.each(['testing', 'devnet'])('exposes every configured role for the %s build, including disabled and auxiliary registrations', async name => {
+  const config = readNetwork(process.cwd(), name);
+  try {
+    vi.resetModules();
+    for (const [key, value] of Object.entries(config.env)) vi.stubEnv(key, value);
+    const { monitoringContractConfig } = await import('../../lib/monitoring-contract-config');
+    expect(contractRoles(monitoringContractConfig)).toMatchObject(contractRoles(config.env));
+  } finally { vi.unstubAllEnvs(); }
 });
