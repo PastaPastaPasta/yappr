@@ -9,13 +9,8 @@
  *   browser that set them.
  * - Whether the one-time "sign in faster with a passkey" offer has been made
  *   on this device.
- * - For this tab, whether its CRITICAL key came from a passkey (see below).
  */
-import { sha256 } from '@noble/hashes/sha2.js'
-import { readScoped, scopedKey, writeScoped } from '@/lib/storage-scope'
-import { bytesToHex } from '@/lib/bytes'
-import { getPublicKey } from '@/lib/crypto/keys'
-import { parsePrivateKey } from '@/lib/crypto/wif'
+import { readScoped, writeScoped } from '@/lib/storage-scope'
 
 const DEVICE_KEY = 'yappr_passkeys_here'
 const NAMES_KEY = 'yappr_passkey_names'
@@ -94,83 +89,4 @@ export function passkeyOfferMade(): boolean {
 
 export function markPasskeyOfferMade(): void {
   writeScoped(OFFER_KEY, '1')
-}
-
-/**
- * This tab signed in with a moderator's CRITICAL key from a passkey. Such a
- * key moderates, but never signs token transitions (the starter claim, YAPP
- * transfers): those ask for the key itself (owner decision V2). Kept for the
- * tab only, like the key.
- *
- * Marks name exact keys (a fingerprint of the public key). The auth
- * controller's commit adds one right before it stores a passkey's CRITICAL
- * key, and drops the others only once that store succeeded, so a stored
- * passkey key is never unmarked, even when a write fails half way.
- */
-const PASSKEY_CRITICAL_KEY = scopedKey('yappr_passkey_critical_')
-const passkeyCriticalMemory = new Map<string, string[]>()
-/** Stands in for a key whose fingerprint cannot be taken (it cannot sign either): marked, failing safe. */
-const UNREADABLE = '*'
-
-function fingerprintOf(wif: string): string | null {
-  try {
-    return bytesToHex(sha256(getPublicKey(parsePrivateKey(wif).privateKey)))
-  } catch {
-    return null
-  }
-}
-
-function readMarks(identityId: string): string[] {
-  const remembered = passkeyCriticalMemory.get(identityId)
-  if (remembered) return remembered
-  try {
-    const parsed = JSON.parse(sessionStorage.getItem(PASSKEY_CRITICAL_KEY + identityId) ?? '[]') as unknown
-    return Array.isArray(parsed) ? parsed.filter((mark): mark is string => typeof mark === 'string') : []
-  } catch {
-    return []
-  }
-}
-
-function writeMarks(identityId: string, marks: string[]): void {
-  passkeyCriticalMemory.set(identityId, marks)
-  try {
-    if (marks.length > 0) sessionStorage.setItem(PASSKEY_CRITICAL_KEY + identityId, JSON.stringify(marks))
-    else sessionStorage.removeItem(PASSKEY_CRITICAL_KEY + identityId)
-  } catch {
-    // Storage blocked: the in-memory marks cover this tab.
-  }
-}
-
-/** Adds a mark for `wif`, a passkey's CRITICAL key (right before it is stored). */
-export function markPasskeyCriticalKey(identityId: string, wif: string): void {
-  const fingerprint = fingerprintOf(wif) ?? UNREADABLE
-  const marks = readMarks(identityId)
-  if (!marks.includes(fingerprint)) writeMarks(identityId, [...marks, fingerprint])
-}
-
-/** Once a key is stored: keeps only the mark for `wif` (a passkey's CRITICAL key), or none for another key. */
-export function keepOnlyPasskeyCriticalKey(identityId: string, wif: string | null): void {
-  writeMarks(identityId, wif === null ? [] : [fingerprintOf(wif) ?? UNREADABLE])
-}
-
-/** Whether the stored key `wif` came from a passkey as a CRITICAL key. */
-export function isPasskeyCriticalKey(identityId: string, wif: string): boolean {
-  const fingerprint = fingerprintOf(wif)
-  return readMarks(identityId).some((mark) => mark === UNREADABLE || mark === fingerprint)
-}
-
-/**
- * After a commit stored `wif`: keeps only its mark (a passkey's CRITICAL key) or none (another key),
- * but only when the store really holds `wif` now (`stored`, read back). Storage that silently dropped the
- * write leaves the marks of the key still there as they were.
- */
-export function settlePasskeyCriticalMarks(identityId: string, wif: string, stored: string | null, critical: boolean): void {
-  const fingerprint = fingerprintOf(wif)
-  if (stored === null || fingerprint === null || fingerprintOf(stored) !== fingerprint) return
-  keepOnlyPasskeyCriticalKey(identityId, critical ? wif : null)
-}
-
-/** Forgets every mark for `identityId` (a sign-out, or another key stored). */
-export function clearPasskeyCriticalKey(identityId: string): void {
-  writeMarks(identityId, [])
 }

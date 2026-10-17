@@ -17,8 +17,7 @@ import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/sessi
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 import { createWalletSignIn, wipeGrant } from '@/lib/app-connect/wallet-sign-in'
 import { restorePasskeyMessagingKey, unlockWithPasskey, type PasskeyRenewal } from '@/lib/auth/passkey-vault'
-import { markPasskeyCriticalKey, settlePasskeyCriticalMarks } from '@/lib/auth/passkey-device'
-import { getPrivateKey } from '@/lib/secure-storage'
+import { expectPasskeyCriticalKey, settlePasskeyCriticalKey } from '@/lib/secure-storage'
 import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompts'
 
 /**
@@ -189,11 +188,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [applyIntent, controller])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
-    // A typed key is never a passkey's: the marks go once the store really holds it, never on a failed write.
-    const intent = await signInWithKey(identityId, privateKey, {
-      ...options,
-      afterStore: () => settlePasskeyCriticalMarks(identityId, privateKey, getPrivateKey(identityId), false),
-    })
+    const intent = await signInWithKey(identityId, privateKey, options)
     noteSignIn(intent, 'key', controller.sessionEpoch())
   }, [controller, signInWithKey])
 
@@ -224,14 +219,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         noteSignIn(await signInWithGrant(unlocked.grant, since), 'passkey', controller.sessionEpoch())
         return null
       case 'raw-key': {
-        // Inside the commit that stores the key: a CRITICAL key is marked right before it is stored (so it is
-        // never stored unmarked), and the marks of whatever key it replaces go only once it is stored. A
-        // sign-in that never commits, or whose store fails, leaves the stored key's marks as they were.
+        // A CRITICAL key from a passkey is stored as one tagged record (lib/secure-storage.ts), so the key never
+        // exists without its provenance. Expected only inside the commit that stores it, right before.
         const { identityId, signInWif, critical } = unlocked
         const intent = await signInWithKey(identityId, signInWif, {
           since,
-          beforeStore: () => { if (critical) markPasskeyCriticalKey(identityId, signInWif) },
-          afterStore: () => settlePasskeyCriticalMarks(identityId, signInWif, getPrivateKey(identityId), critical),
+          beforeStore: () => { if (critical) expectPasskeyCriticalKey(identityId, signInWif) },
+          afterStore: () => settlePasskeyCriticalKey(identityId),
         })
         if (unlocked.messagingWif) restorePasskeyMessagingKey(unlocked.identityId, unlocked.messagingWif)
         noteSignIn(intent, 'passkey', controller.sessionEpoch())
