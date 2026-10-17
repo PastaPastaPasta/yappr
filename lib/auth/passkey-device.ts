@@ -159,6 +159,17 @@ export function isPasskeyCriticalKey(identityId: string, wif: string): boolean {
   return readMarks(identityId).some((mark) => mark === UNREADABLE || mark === fingerprint)
 }
 
+/**
+ * After a commit stored `wif`: keeps only its mark (a passkey's CRITICAL key) or none (another key),
+ * but only when the store really holds `wif` now (`stored`, read back). Storage that silently dropped the
+ * write leaves the marks of the key still there as they were.
+ */
+export function settlePasskeyCriticalMarks(identityId: string, wif: string, stored: string | null, critical: boolean): void {
+  const fingerprint = fingerprintOf(wif)
+  if (stored === null || fingerprint === null || fingerprintOf(stored) !== fingerprint) return
+  keepOnlyPasskeyCriticalKey(identityId, critical ? wif : null)
+}
+
 /** Forgets every mark for `identityId` (a sign-out, or another key stored). */
 export function clearPasskeyCriticalKey(identityId: string): void {
   writeMarks(identityId, [])

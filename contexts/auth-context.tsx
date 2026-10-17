@@ -17,7 +17,8 @@ import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/sessi
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 import { createWalletSignIn, wipeGrant } from '@/lib/app-connect/wallet-sign-in'
 import { restorePasskeyMessagingKey, unlockWithPasskey, type PasskeyRenewal } from '@/lib/auth/passkey-vault'
-import { clearPasskeyCriticalKey, keepOnlyPasskeyCriticalKey, markPasskeyCriticalKey } from '@/lib/auth/passkey-device'
+import { markPasskeyCriticalKey, settlePasskeyCriticalMarks } from '@/lib/auth/passkey-device'
+import { getPrivateKey } from '@/lib/secure-storage'
 import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompts'
 
 /**
@@ -188,8 +189,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [applyIntent, controller])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
-    // A typed key is never a passkey's: the marks go once it is stored, and not if storing it fails.
-    const intent = await signInWithKey(identityId, privateKey, { ...options, afterStore: () => clearPasskeyCriticalKey(identityId) })
+    // A typed key is never a passkey's: the marks go once the store really holds it, never on a failed write.
+    const intent = await signInWithKey(identityId, privateKey, {
+      ...options,
+      afterStore: () => settlePasskeyCriticalMarks(identityId, privateKey, getPrivateKey(identityId), false),
+    })
     noteSignIn(intent, 'key', controller.sessionEpoch())
   }, [controller, signInWithKey])
 
@@ -227,7 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const intent = await signInWithKey(identityId, signInWif, {
           since,
           beforeStore: () => { if (critical) markPasskeyCriticalKey(identityId, signInWif) },
-          afterStore: () => keepOnlyPasskeyCriticalKey(identityId, critical ? signInWif : null),
+          afterStore: () => settlePasskeyCriticalMarks(identityId, signInWif, getPrivateKey(identityId), critical),
         })
         if (unlocked.messagingWif) restorePasskeyMessagingKey(unlocked.identityId, unlocked.messagingWif)
         noteSignIn(intent, 'passkey', controller.sessionEpoch())
