@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -11,13 +11,14 @@ import { lazyChunks, smokeSite } from './sites.mjs';
 
 const metadata = roles => `<meta name="yappr-contract-config" content="${JSON.stringify({ $network: { network: 'testnet' }, $topologies: siteTopologies(), ...roles }).replaceAll('"', '&quot;')}"/>`;
 const id = '9hZwi4W3qqNtHFygjkgDvgud4EmE3dUxQUk5NjTYsdqN';
+const groupEnv = { NEXT_PUBLIC_APP_CONNECT_APP_ID: id, NEXT_PUBLIC_APP_CONNECT_GROUP_ID: id, NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER: id };
 afterEach(() => vi.unstubAllGlobals());
 
 describe('release configuration', () => {
   it('uses App Connect versions over defaults and includes the anchor', () => {
-    const pins = contractPins({ NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID: id, NEXT_PUBLIC_APP_CONNECT_APP_ID: id, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${id}:2` });
+    const pins = contractPins({ ...groupEnv, NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID: id, NEXT_PUBLIC_APP_CONNECT_APP_ID: id, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${id}:2` });
     expect([...pins]).toEqual([[id, 2]]);
-    expect(() => contractPins({ NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${id}:0` })).toThrow();
+    expect(() => contractPins({ ...groupEnv, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${id}:0` })).toThrow();
   });
   it('skips unregistered sets without consulting other env files or process env', () => {
     const root = mkdtempSync(join(tmpdir(), 'yappr-monitor-'));
@@ -59,7 +60,7 @@ it('rejects stale proofs and old protocol data', () => {
 const reportSchema = { indices: [{ properties: [{ status: 'asc' }, { $createdAt: 'asc' }] }], properties: { status: { type: 'integer', minimum: 1, maximum: 3 } } };
 it('covers every report status and follows activity pages until the threshold is exceeded', async () => {
   expect(activityFilters({ ...reportSchema, indices: [{ properties: [{ $ownerId: 'asc' }, { $createdAt: 'asc' }] }, ...reportSchema.indices] })).toEqual(activityFilters(reportSchema));
-  expect(activityFilters(reportSchema)).toEqual([[[ 'status', '==', 1 ]], [[ 'status', '==', 2 ]], [[ 'status', '==', 3 ]]]);
+  expect(activityFilters(reportSchema)).toEqual([[[ 'status', '==', null ]], [[ 'status', '==', 1 ]], [[ 'status', '==', 2 ]], [[ 'status', '==', 3 ]]]);
   const document = n => ({ id: { toBase58: () => String(n) }, free: vi.fn() });
   const page = new Map(Array.from({ length: 100 }, (_, i) => [String(i), document(i)]));
   const query = vi.fn().mockResolvedValueOnce(page).mockResolvedValueOnce(new Map([['100', document(100)]]));
@@ -126,7 +127,7 @@ it.each(['testing', 'devnet'])('exposes every configured role for the %s build, 
 
 it('accepts canonical 32-byte identifiers with shorter Base58 encodings', () => {
   const short = '1'.repeat(31) + '2';
-  expect([...contractPins({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: short, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${short}:2` })]).toEqual([[short, 2]]);
+  expect([...contractPins({ ...groupEnv, NEXT_PUBLIC_APP_CONNECT_APP_ID: short, NEXT_PUBLIC_YAPPR_CONTRACT_ID: short, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${short}:2` })]).toEqual([[short, 2]]);
   expect(() => contractPins({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: '1'.repeat(31) })).toThrow('Invalid contract id');
 });
 
@@ -153,8 +154,8 @@ it('checks default effective query topologies against their owning browser confi
 
 it('proves and pages every group member kind; rejects expansions with unchanged contract pins', async () => {
   const metadata = { timeMs: Date.now(), protocolVersion: 14 };
-  const env = { NEXT_PUBLIC_APP_CONNECT_GROUP_ID: id, NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER: 'owner', NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${id}:2` };
-  const info = { ownerId: 'owner', adminIds: [], free: vi.fn() };
+  const env = { ...groupEnv, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${id}:2` };
+  const info = { ownerId: id, adminIds: [], free: vi.fn() };
   const membersWithProof = vi.fn(async ({ kind, startAfter }) => ({ metadata, data: { kind, [kind]: kind === 'contracts' ? (startAfter ? [] : [id]) : [], ...(kind === 'contracts' && !startAfter ? { nextStartAfter: { contractId: id } } : {}) } }));
   const sdk = { contractGroups: { infoWithProof: vi.fn(async () => ({ metadata, data: info })), membersWithProof } };
   await expect(checkAppConnectGroup(sdk, env, thresholds({}))).resolves.toContain('1 exact pinned members');
@@ -166,10 +167,36 @@ it('proves and pages every group member kind; rejects expansions with unchanged 
   }
   info.ownerId = 'other';
   await expect(checkAppConnectGroup(sdk, env, thresholds({}))).rejects.toThrow('owner-mismatch');
-  info.ownerId = 'owner'; info.adminIds = ['admin'];
+  info.ownerId = id; info.adminIds = ['admin'];
   await expect(checkAppConnectGroup(sdk, env, thresholds({}))).rejects.toThrow('admins-mismatch');
   info.adminIds = [];
   membersWithProof.mockImplementation(async ({ kind }) => ({ metadata, data: { kind, [kind]: [] } }));
   await expect(checkAppConnectGroup(sdk, env, thresholds({}))).rejects.toThrow('missing-members');
   expect(info.free).toHaveBeenCalledTimes(7);
+});
+
+it('uses the actual v16 report schema to count unresolved and resolved reports', async () => {
+  const schema = JSON.parse(readFileSync(new URL('../../contracts/yappr-social-contract-v16.json', import.meta.url), 'utf8')).documentSchemas.report;
+  expect(activityFilters(schema)).toEqual([null, 1, 2, 3].map(status => [['status', '==', status]]));
+  const document = n => ({ id: { toBase58: () => String(n) }, free: vi.fn() });
+  const documents = Array.from({ length: 102 }, (_, n) => ({ status: n === 101 ? 1 : null, document: document(n) }));
+  const query = vi.fn(async ({ where, startAfter }) => {
+    const status = where[0][2];
+    const selected = documents.filter(entry => entry.status === status && (!startAfter || Number(entry.document.id.toBase58()) > Number(startAfter))).slice(0, 100);
+    return new Map(selected.map(entry => [entry.document.id.toBase58(), entry.document]));
+  });
+  await expect(countActivity({ documents: { query } }, id, 'report', schema, 1000, 100)).rejects.toThrow('at least 101');
+  await expect(countActivity({ documents: { query } }, id, 'report', schema, 1000, 200)).resolves.toContain('102 retained');
+  const index = schema.indices.find(index => index.name === 'byStatus');
+  index.skipIfAbsent = true;
+  expect(() => activityFilters(schema)).toThrow('No usable bounded time index');
+});
+
+it('rejects App Connect pins rejected by browser login before probing any group', async () => {
+  const env = { ...groupEnv, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${id},${id}:2` };
+  expect(() => contractPins(env)).toThrow('Invalid App Connect pins');
+  await expect(checkAppConnectGroup({}, env, thresholds({}))).rejects.toThrow('Invalid App Connect pins');
+  env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS = '1'.repeat(31) + '2';
+  expect(() => contractPins(env)).toThrow('anchor among members');
+  await expect(checkAppConnectGroup({}, env, thresholds({}))).rejects.toThrow('anchor among members');
 });

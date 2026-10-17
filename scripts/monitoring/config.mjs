@@ -1,4 +1,5 @@
 import bs58 from 'bs58';
+import { parseAppConnectPins } from '../../lib/app-connect/pins.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,16 +18,21 @@ function isIdentifier(id) {
   try { return bs58.decode(id).length === 32; } catch { return false; }
 }
 
+export function appConnectConfig(env) {
+  const configured = { appId: env.NEXT_PUBLIC_APP_CONNECT_APP_ID, groupId: env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID, groupOwner: env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER, members: env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS };
+  if (!Object.values(configured).some(value => value?.trim())) return null;
+  const pins = parseAppConnectPins(configured);
+  if (!pins) throw new Error('Invalid App Connect pins: require valid app/group/owner ids, unique members, positive versions and the anchor among members');
+  return pins;
+}
+
 export function contractPins(env) {
   const pins = new Map();
   for (const [key, value] of Object.entries(env)) {
     if (key.startsWith('NEXT_PUBLIC_') && (key.endsWith('_CONTRACT_ID') || key === 'NEXT_PUBLIC_APP_CONNECT_APP_ID') && value) pins.set(value, undefined);
   }
-  for (const pin of (env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS ?? '').split(',').filter(Boolean)) {
-    const match = /^([1-9A-HJ-NP-Za-km-z]+)(?::([1-9][0-9]*))?$/.exec(pin.trim());
-    if (!match || !isIdentifier(match[1]) || !Number.isSafeInteger(Number(match[2] ?? 1))) throw new Error(`Invalid App Connect pin: ${pin}`);
-    pins.set(match[1], Number(match[2] ?? 1));
-  }
+  const group = appConnectConfig(env);
+  for (const member of group?.members ?? []) pins.set(member.contractId, member.version);
   for (const id of pins.keys()) if (!isIdentifier(id)) throw new Error(`Invalid contract id: ${id}`);
   return pins;
 }

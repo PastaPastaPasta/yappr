@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expectations } from './manifest.mjs';
-import { schemaHash, thresholds } from './config.mjs';
+import { appConnectConfig, schemaHash, thresholds } from './config.mjs';
 import { fetchText } from './sites.mjs';
 
 const CHARTERS = 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88';
@@ -41,7 +41,11 @@ export function activityFilters(schema) {
     const property = schema.properties[field];
     const boundedIntegers = property?.type === 'integer' && Number.isInteger(property.minimum) && Number.isInteger(property.maximum) && property.maximum >= property.minimum && property.maximum - property.minimum <= 20;
     const values = property?.enum ?? (property?.const !== undefined ? [property.const] : boundedIntegers ? Array.from({ length: property.maximum - property.minimum + 1 }, (_, i) => property.minimum + i) : null);
-    if (values?.length) return values.map(value => [[field, '==', value]]);
+    if (!values?.length) continue;
+    const optional = !schema.required?.includes(field);
+    // An index that drops an optional field cannot establish a complete count.
+    if (optional && index.skipIfAbsent) continue;
+    return [...new Set([...(optional ? [null] : []), ...values])].map(value => [[field, '==', value]]);
   }
   throw new Error('No usable bounded time index for activity signal');
 }
@@ -67,10 +71,10 @@ export async function countActivity(sdk, id, type, schema, since, max) {
 }
 
 export async function checkAppConnectGroup(sdk, env, limits) {
-  const groupId = env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID;
-  const ownerId = env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER;
-  const pinned = (env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS ?? '').split(',').map(value => value.trim()).filter(Boolean).map(value => ({ kind: 'contract', contractId: value.split(':')[0] }));
-  if (!groupId || !ownerId || !pinned.length) throw new Error('Incomplete App Connect group pins (id, owner, members required)');
+  const pins = appConnectConfig(env);
+  if (!pins) throw new Error('No App Connect group configured');
+  const { groupId, groupOwner: ownerId } = pins;
+  const pinned = pins.members.map(member => ({ kind: 'contract', contractId: member.contractId }));
   const response = await sdk.contractGroups.infoWithProof(groupId);
   checkFresh(response.metadata, limits);
   const info = response.data;
