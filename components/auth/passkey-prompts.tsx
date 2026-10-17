@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { CheckCircleIcon, KeyIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
+import { bytesToBase64Url } from '@/lib/bytes'
 import { useAuth } from '@/contexts/auth-context'
 import { usePasskeyPrompts } from '@/hooks/use-passkey-prompts'
 import { useUsernameModal } from '@/hooks/use-username-modal'
@@ -27,6 +28,12 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { enrolErrorCopy, lockOutCopy, passkeyDetails, passkeyLabel } from './passkey-copy'
+
+/** Whether a pending enrolment's passkey is still remembered here (its marker goes with a confirmed removal). */
+function pendingStillHere(pending: PendingPasskey): boolean {
+  const prefix = `${bytesToBase64Url(pending.credentialId)}.`
+  return passkeysHere(pending.identityId).some((marker) => marker.startsWith(prefix))
+}
 
 /** Resolves once the username prompt (opened by a sign-in without a Dash username) is closed. */
 function usernamePromptClosed(): Promise<void> {
@@ -127,8 +134,19 @@ const ENROL_BUTTON: Partial<Record<EnrolStep['kind'], string>> = { creating: 'Wa
 
 function EnrolDialog({ identityId, username, offer, onClose }: { identityId: string; username?: string; offer: boolean; onClose: () => void }) {
   const { changed, setPendingEnrolment } = usePasskeyPrompts()
-  const resumed = usePasskeyPrompts((state) => (state.pendingEnrolment?.identityId === identityId ? state.pendingEnrolment : null))
-  const [step, setStep] = useState<EnrolStep>(() => (resumed ? { kind: 'pending', pending: resumed, checking: false } : { kind: 'intro' }))
+  const [step, setStep] = useState<EnrolStep>(() => {
+    const pending = usePasskeyPrompts.getState().pendingEnrolment
+    // A confirmed removal forgets the passkey's marker (Settings, or "Remove all"): its enrolment is over.
+    return pending && pending.identityId === identityId && pendingStillHere(pending)
+      ? { kind: 'pending', pending, checking: false }
+      : { kind: 'intro' }
+  })
+
+  // Forget a pending enrolment whose passkey was removed since, so it never comes back.
+  useEffect(() => {
+    const pending = usePasskeyPrompts.getState().pendingEnrolment
+    if (pending && pending.identityId === identityId && !pendingStillHere(pending)) setPendingEnrolment(null)
+  }, [identityId, setPendingEnrolment])
   const busy = step.kind === 'creating' || step.kind === 'saving' || (step.kind === 'pending' && step.checking)
 
   const fail = useCallback((error: unknown, back: EnrolStep) => {
