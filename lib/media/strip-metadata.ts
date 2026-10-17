@@ -301,11 +301,9 @@ function readExifOrientation(tiff: Uint8Array): number {
   return 1
 }
 
-/** A big-endian Exif APP1 segment whose IFD0 holds only the Orientation tag. */
-function exifOrientationSegment(orientation: number): Uint8Array {
-  return Uint8Array.from([
-    0xff, APP1, 0x00, 34,
-    ...EXIF_HEADER,
+/** A big-endian TIFF (Exif) block whose IFD0 holds only the Orientation tag. */
+function orientationTiff(orientation: number): number[] {
+  return [
     // TIFF header: big-endian, magic 42, IFD0 at offset 8.
     0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08,
     // One entry: Orientation, SHORT, count 1, value.
@@ -313,7 +311,17 @@ function exifOrientationSegment(orientation: number): Uint8Array {
     0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, orientation, 0x00, 0x00,
     // No next IFD.
     0x00, 0x00, 0x00, 0x00,
-  ])
+  ]
+}
+
+/** A big-endian Exif APP1 segment whose IFD0 holds only the Orientation tag. */
+function exifOrientationSegment(orientation: number): Uint8Array {
+  return Uint8Array.from([0xff, APP1, 0x00, 34, ...EXIF_HEADER, ...orientationTiff(orientation)])
+}
+
+/** Orientation from a PNG eXIf or WebP EXIF payload: raw TIFF, or (as some writers do) prefixed `Exif\0\0`. */
+function payloadOrientation(payload: Uint8Array): number {
+  return readExifOrientation(startsWith(payload, EXIF_HEADER) ? payload.subarray(EXIF_HEADER.length) : payload)
 }
 
 // --- PNG --------------------------------------------------------------------
@@ -330,11 +338,28 @@ const PNG_KEPT_ANCILLARY = new Set([
   'bKGD', 'hIST', 'pHYs', 'sPLT', 'acTL', 'fcTL', 'fdAT',
 ])
 
+const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, n) => {
+  let c = n
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+  return c >>> 0
+})
+
+/** A PNG chunk: length, type, data and CRC-32 over type and data. */
+function pngChunk(type: string, data: number[]): number[] {
+  const typeAndData = [...asciiBytes(type), ...data]
+  let crc = 0xffffffff
+  for (const byte of typeAndData) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+  crc = (crc ^ 0xffffffff) >>> 0
+  const u32 = (value: number) => [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]
+  return [...u32(data.length), ...typeAndData, ...u32(crc)]
+}
+
 function stripPng(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   const out = new ByteSink()
   out.push(bytes.subarray(0, PNG_SIGNATURE.length))
   let pos = PNG_SIGNATURE.length
   let first = true
+  let sawExif = false
 
   for (;;) {
     if (pos + 12 > bytes.length) corrupt()
@@ -347,6 +372,12 @@ function stripPng(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 
     const critical = type.charCodeAt(0) < 0x61
     if (critical || PNG_KEPT_ANCILLARY.has(type)) out.push(bytes.subarray(pos, end))
+    else if (type === 'eXIf' && !sawExif) {
+      // Keep only the orientation, where the eXIf was (before IDAT), so the picture still shows upright.
+      sawExif = true
+      const orientation = payloadOrientation(bytes.subarray(pos + 8, pos + 8 + length))
+      if (orientation !== 1) out.push(pngChunk('eXIf', orientationTiff(orientation)))
+    }
     pos = end
     // Anything after IEND is not part of the image.
     if (type === 'IEND') break
@@ -366,6 +397,8 @@ function stripWebp(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   if (riffEnd > bytes.length || riffEnd < 12) corrupt()
   const chunks: Uint8Array[] = []
   let pos = 12
+  let vp8x: Uint8Array | null = null
+  let orientation: number | null = null
 
   while (pos < riffEnd) {
     if (pos + 8 > riffEnd) corrupt()
@@ -381,12 +414,21 @@ function stripWebp(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
       if (fourcc === 'VP8X') {
         if (size < 10) corrupt()
         chunk[8] &= ~(VP8X_EXIF_FLAG | VP8X_XMP_FLAG)
+        vp8x = chunk
       }
       chunks.push(chunk)
+    } else if (fourcc === 'EXIF' && orientation === null) {
+      orientation = payloadOrientation(bytes.subarray(pos + 8, pos + 8 + size))
     }
     pos = chunkEnd
   }
   if (chunks.length === 0) corrupt()
+  // Keep only the orientation (an extended WebP's EXIF chunk goes last), so the picture still shows upright.
+  if (vp8x && orientation !== null && orientation !== 1) {
+    const tiff = orientationTiff(orientation)
+    chunks.push(Uint8Array.from([...asciiBytes('EXIF'), tiff.length, 0, 0, 0, ...tiff]))
+    vp8x[8] |= VP8X_EXIF_FLAG
+  }
 
   const body = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
   const riffSize = 4 + body

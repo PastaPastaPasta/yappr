@@ -258,6 +258,18 @@ describe('stripImageMetadata: PNG', () => {
     expect(stripImageMetadata(out)).toEqual(out)
   })
 
+  it('keeps a non-default orientation in an orientation-only eXIf where the eXIf was', () => {
+    const oriented = bytes(
+      PNG_SIGNATURE, ihdr,
+      pngChunk('eXIf', bytes('MM', [0, 42, 0, 0, 0, 8, 0, 2, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0x88, 0x25, 0, 4, 0, 0, 0, 1, 0, 0, 0, 38, 0, 0, 0, 0])),
+      idat, pngChunk('IEND', ''),
+    )
+    const out = stripImageMetadata(oriented)
+    expect(pngChunks(out)).toEqual(['IHDR', 'eXIf', 'IDAT', 'IEND'].map((type) => ({ type, crcValid: true })))
+    expect(out).toEqual(bytes(PNG_SIGNATURE, ihdr, pngChunk('eXIf', exifWithOrientation(6).subarray(6)), idat, pngChunk('IEND', '')))
+    expect(stripImageMetadata(out)).toEqual(out)
+  })
+
   it('rejects a PNG without IHDR first or cut short', () => {
     expect(() => stripImageMetadata(bytes(PNG_SIGNATURE, idat, pngChunk('IEND', '')))).toThrow(ImageMetadataError)
     expect(() => stripImageMetadata(png.subarray(0, 60))).toThrow(ImageMetadataError)
@@ -302,6 +314,15 @@ describe('stripImageMetadata: WebP', () => {
     expect(out).toEqual(riff(vp8x(0x20), iccp, vp8l))
     expect(out[20]).toBe(0x20)
     expect(out[4] | (out[5] << 8) | (out[6] << 16) | (out[7] << 24)).toBe(out.length - 8)
+    expect(indexOf(out, 'GPS')).toBe(-1)
+    expect(stripImageMetadata(out)).toEqual(out)
+  })
+
+  it('keeps a non-default orientation in an orientation-only EXIF chunk, flagged in VP8X', () => {
+    const oriented = riff(vp8x(0x2c), iccp, vp8l, riffChunk('EXIF', bytes(exifWithOrientation(8), 'GPS 40.7N')), riffChunk('XMP ', '<x:xmpmeta>GPS</x:xmpmeta>'))
+    const out = stripImageMetadata(oriented)
+    expect(webpChunks(out)).toEqual(['VP8X', 'ICCP', 'VP8L', 'EXIF'])
+    expect(out).toEqual(riff(vp8x(0x28), iccp, vp8l, riffChunk('EXIF', exifWithOrientation(8).subarray(6))))
     expect(indexOf(out, 'GPS')).toBe(-1)
     expect(stripImageMetadata(out)).toEqual(out)
   })
