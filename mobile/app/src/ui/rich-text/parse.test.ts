@@ -9,6 +9,7 @@ import {
   stripFirstUrlAndTrim,
   stripLink,
   stripTrailingPunctuation,
+  tagTarget,
 } from './parse';
 
 describe('parseContent (web PostContent parity)', () => {
@@ -64,8 +65,37 @@ describe('parseContent (web PostContent parity)', () => {
     expect(parseContent(cashtag)).toEqual([{ type: 'cashtag', value: cashtag }]);
   });
 
+  it.each(['#café', '#naïve', '#straße', '#cafe\u0301', '#日本', '#abc日本', '$DASHé'])(
+    'leaves %s as plain text, never a shorter ASCII tag (D7)',
+    (word) => {
+      expect(parseContent(`a ${word} b`)).toEqual([{ type: 'text', value: `a ${word} b` }]);
+    },
+  );
+
+  it('ends a tag at punctuation and emoji, as web does', () => {
+    expect(
+      parseContent('#ok! #fine🙂 (#paren)')
+        .filter((p) => p.type === 'hashtag')
+        .map((p) => p.value),
+    ).toEqual(['#ok', '#fine', '#paren']);
+  });
+
   it('allows hyphens in mentions, as DPNS labels do', () => {
     expect(parseContent('@my-name')).toEqual([{ type: 'mention', value: '@my-name' }]);
+  });
+});
+
+describe('tagTarget', () => {
+  it('gives the storage form of a tag that fits, else null', () => {
+    expect(tagTarget('#Dash', 61)).toBe('dash');
+    expect(tagTarget('$DASH', 61)).toBe('dash_cashtag');
+    expect(tagTarget(`#${'a'.repeat(61)}`, 61)).toBe('a'.repeat(61));
+    expect(tagTarget(`#${'a'.repeat(62)}`, 61)).toBeNull();
+    expect(tagTarget(`$${'A'.repeat(54)}`, 61)).toBeNull();
+  });
+
+  it('links every tag when no ceiling is known', () => {
+    expect(tagTarget(`#${'a'.repeat(200)}`, undefined)).toBe('a'.repeat(200));
   });
 });
 
@@ -108,6 +138,12 @@ describe('web text stripping parity', () => {
       '#tag',
       'https://x.org',
     ]);
+  });
+
+  it('lists no tag too long to index, nor a non-ASCII word', () => {
+    const long = `#${'a'.repeat(62)}`;
+    expect(inlineTargets(`#ok ${long} #café $DASH`, 61).map((t) => t.value)).toEqual(['#ok', '$DASH']);
+    expect(inlineTargets(`#ok ${long}`).map((t) => t.value)).toEqual(['#ok', long]);
   });
 });
 

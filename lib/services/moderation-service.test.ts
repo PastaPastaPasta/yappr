@@ -46,7 +46,18 @@ const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
 // The nonce lock reads Platform's nonce; these tests are about moderation, so it just runs the write.
-vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (...args: [string, string, () => Promise<unknown>]) => args[2]() }))
+const sdkSignedWrites = vi.hoisted(() => ({ count: 0, locked: false }))
+vi.mock('./identity-nonce', () => ({
+  withSdkSignedWrite: async (...args: [string, string, () => Promise<unknown>]) => {
+    sdkSignedWrites.count++
+    sdkSignedWrites.locked = true
+    try {
+      return await args[2]()
+    } finally {
+      sdkSignedWrites.locked = false
+    }
+  },
+}))
 vi.mock('./sdk-helpers', () => ({ identifierToBase58: (value: unknown) => String(value) }))
 vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))
@@ -370,6 +381,11 @@ describe('remove then restore', () => {
     const contract = { id: 'C' }
     sdk.contracts.fetch.mockResolvedValue(contract)
     sdk.documents.get.mockResolvedValue({ toBytes: (c: unknown) => { expect(c).toBe(contract); return bytes } })
+    // Under the write lock with the deletion, so a restore from another tab cannot land in between.
+    sdk.documents.get.mockImplementationOnce(async () => {
+      expect(sdkSignedWrites.locked).toBe(true)
+      return { toBytes: (c: unknown) => { expect(c).toBe(contract); return bytes } }
+    })
     sdk.contracts.moderatorDeleteDocument.mockResolvedValue({})
     const result = await moderationService.removeDocument(MODERATOR, 'post', 'D1', 'spam')
     expect(result).toMatchObject({ success: true, snapshotSaved: true })
@@ -505,6 +521,7 @@ describe('dismissing reports', () => {
     withReports()
     sdk.contracts.moderatorDeleteDocument.mockResolvedValue({})
     const seen: string[] = []
+    sdkSignedWrites.count = 0
     const result = await moderationService.dismissReports(MODERATOR, ['R1', 'R2'], reason, (id) => seen.push(id))
     expect(result).toMatchObject({ success: true, dismissed: ['R1', 'R2'] })
     expect(seen).toEqual(['R1', 'R2'])
@@ -512,6 +529,8 @@ describe('dismissing reports', () => {
       ['report', 'R1', reason],
       ['report', 'R2', reason],
     ])
+    // One nonce reservation per transition: a batch is not one write.
+    expect(sdkSignedWrites.count).toBe(2)
     expect(sdk.documents.get).not.toHaveBeenCalled()
     expect(storage.size).toBe(0)
   })
@@ -923,7 +942,7 @@ describe('refusals and unverified answers seen live on sakura (QA 2026-10-01)', 
     ['ban', () => moderationService.ban(MODERATOR, TARGET, '\u00e9'.repeat(600))],
     ['remove', () => moderationService.removeDocument(MODERATOR, 'post', 'D1', '\u00e9'.repeat(600))],
   ] as const)('refuses a %s reason over 1024 bytes before taking the write lock or a signer', async (_label, run) => {
-    // Inside the lock, a local refusal carries no verdict and would hold every later write back for 15 minutes.
+    // Inside the lock, a local refusal carries no verdict and would hold every later write back until it expires.
     const result = await run()
     expect(result).toMatchObject({ success: false, errorCode: 'REASON_TOO_LONG' })
     expect(sdk.identities.fetch).not.toHaveBeenCalled()

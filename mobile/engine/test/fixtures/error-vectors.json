@@ -336,7 +336,7 @@
     {
       "name": "earlier write still pending (lib PENDING_WRITE_ERROR)",
       "error": {
-        "message": "An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again."
+        "message": "Your last change is still going through, so this one was not sent. Try again in a moment."
       },
       "expect": {
         "code": "PENDING_WRITE",
@@ -344,7 +344,7 @@
         "outcome": "not-sent",
         "retryable": true,
         "state": "failed",
-        "userMessage": "An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again."
+        "userMessage": "Your last change is still going through, so this one was not sent. Try again in a moment."
       }
     },
     {

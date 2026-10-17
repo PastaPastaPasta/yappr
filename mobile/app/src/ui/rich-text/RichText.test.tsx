@@ -30,11 +30,22 @@ describe('RichText', () => {
     expect(onLinkPress).toHaveBeenCalledWith('https://www.dash.org');
   });
 
-  it('cuts tags to the contract ceiling when one is given', () => {
+  it('leaves a tag longer than the contract ceiling as plain text', () => {
     const onHashtagPress = jest.fn();
-    render(<RichText text="#abcdefghij" tagMaxLength={4} onHashtagPress={onHashtagPress} />);
-    fireEvent.press(screen.getByText('#abcdefghij'));
+    render(<RichText text="#abcd #abcdefghij" tagMaxLength={4} onHashtagPress={onHashtagPress} />);
+    fireEvent.press(screen.getByText('#abcd'));
     expect(onHashtagPress).toHaveBeenCalledWith('abcd');
+    expect(screen.queryByText('#abcdefghij')).toBeNull();
+    expect(screen.getByText(/#abcdefghij/)).toBeTruthy();
+  });
+
+  it('leaves a tag with a non-ASCII letter as plain text (D7)', () => {
+    const onHashtagPress = jest.fn();
+    render(<RichText text="#café #ok" tagMaxLength={61} onHashtagPress={onHashtagPress} />);
+    expect(screen.queryByText('#caf')).toBeNull();
+    fireEvent.press(screen.getByText('#ok'));
+    expect(onHashtagPress).toHaveBeenCalledTimes(1);
+    expect(onHashtagPress).toHaveBeenCalledWith('ok');
   });
 
   it('leaves the previewed link out but keeps its punctuation', () => {
@@ -88,12 +99,12 @@ describe('RichText', () => {
     });
   });
 
-  it('links an over-long tag whole and opens the page it was indexed under', () => {
+  it('shows an over-long tag whole as plain text, as it is never indexed', () => {
     const onHashtagPress = jest.fn();
     const tag = `#longtag${'x'.repeat(58)}`;
     render(<RichText text={`see ${tag} now`} tagMaxLength={61} onHashtagPress={onHashtagPress} />);
-    fireEvent.press(screen.getByText(tag));
-    expect(onHashtagPress).toHaveBeenCalledWith(tag.slice(1, 62));
+    fireEvent.press(screen.getByText(`see ${tag} now`));
+    expect(onHashtagPress).not.toHaveBeenCalled();
   });
 
   it('fits several direction blocks in numberOfLines and reports every line', () => {

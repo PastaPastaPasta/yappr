@@ -637,7 +637,7 @@ scope (`pollr-vote:<pollId>`, an optional field on the nonce reservation), so a
 pending write on one poll does not hold back another; an entry with no scope (a
 poll create, or one stored before scopes) counts for every poll. Before
 anything, the replaces Platform shows landed are released
-(`settlePendingPollrReplaces`, over `settleSupersededReplaces`); `createPoll`
+(`settlePendingPollrReplaces`, over `settlePendingWrites`); `createPoll`
 runs that too.
 
 While `pending`, the card shows the results read-only with "Confirming your

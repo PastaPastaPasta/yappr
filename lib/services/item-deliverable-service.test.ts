@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { randomBytes } from '@noble/hashes/utils.js'
 
-const { query, updateDocument, settleSupersededReplaces } = vi.hoisted(() => ({ query: vi.fn(), updateDocument: vi.fn(), settleSupersededReplaces: vi.fn() }))
+const { query, updateDocument, settlePendingWrites } = vi.hoisted(() => ({ query: vi.fn(), updateDocument: vi.fn(), settlePendingWrites: vi.fn() }))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }))
-vi.mock('./identity-nonce', () => ({ settleSupersededReplaces }))
+vi.mock('./identity-nonce', () => ({ settlePendingWrites }))
 import { itemDeliverableService, KitWriteUncertainError } from './item-deliverable-service'
 import { encryptForSelf } from '../crypto/digital-delivery'
 import { encodeKit } from './digital-delivery-plan'
@@ -25,8 +25,8 @@ beforeEach(() => {
   vi.useFakeTimers()
   query.mockReset()
   updateDocument.mockReset()
-  settleSupersededReplaces.mockReset()
-  settleSupersededReplaces.mockResolvedValue(1)
+  settlePendingWrites.mockReset()
+  settlePendingWrites.mockResolvedValue(1)
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -68,17 +68,17 @@ describe('saveKit', () => {
   it('settles the pending SDK nonce of a replace it found landed, so the next write is not held back', async () => {
     const attempt = failingReplace('gateway timeout')
     query.mockImplementation(async () => [{ ...(await onChain(5, kit)), encryptedPayload: attempt.bytes }])
-    settleSupersededReplaces.mockResolvedValueOnce(0).mockResolvedValueOnce(1)
+    settlePendingWrites.mockResolvedValueOnce(0).mockResolvedValueOnce(1)
     await save()
-    expect(settleSupersededReplaces).toHaveBeenCalledTimes(2)
-    expect(settleSupersededReplaces.mock.calls[0][0]).toBe(seller)
+    expect(settlePendingWrites).toHaveBeenCalledTimes(2)
+    expect(settlePendingWrites.mock.calls[0][0]).toBe(seller)
   })
 
   it('does not settle anything for a write that was refused', async () => {
     failingReplace('stale revision')
     query.mockResolvedValue([await onChain(5, kit)])
     await expect(save()).rejects.toThrow('stale revision')
-    expect(settleSupersededReplaces).not.toHaveBeenCalled()
+    expect(settlePendingWrites).not.toHaveBeenCalled()
   })
 
   it('does not take another tab\'s identical reservation for its own', async () => {

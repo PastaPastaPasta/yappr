@@ -417,7 +417,7 @@ export const PostItem = memo(function PostItem({
       canBookmark={capabilities?.bookmarkable[post.kind] ?? true}
       // Signed out, the sign-in sheet comes first: the marks don't matter.
       marksLoading={marksLoading && viewerId !== null}
-      // A tag opens the page it was indexed under: its first 61 characters on dev, 63 elsewhere.
+      // A tag longer than the contract stores (61 characters on dev, 63 elsewhere) shows as plain text.
       tagMaxLength={tagMaxLength(capabilities?.hashtagsInline === true)}
       poll={poll}
       repostQuoteCounts={repostQuoteCounts}

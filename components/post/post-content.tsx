@@ -11,8 +11,8 @@ import { useLinkPreview } from '@/hooks/use-link-preview'
 import { extractFirstUrl, stripFirstUrlAndTrim, stripTrailingPunctuation } from '@/lib/link-preview/urls'
 import { useYapprPostReference } from '@/hooks/use-yappr-post-reference'
 import { useSettingsStore } from '@/lib/store'
-import { URL_PATTERN, cashtagDisplayToStorage, hashtagDisplayToStorage, normalizeDpnsUsername } from '@/lib/post-helpers'
-import { HASHTAG_MAX_LENGTH, hashtagsAreInline } from '@/lib/contract-topology'
+import { CASHTAG_PATTERN, HASHTAG_PATTERN, URL_PATTERN, normalizeDpnsUsername, tagStorage } from '@/lib/post-helpers'
+import { tagMaxLength } from '@/lib/contract-topology'
 import { MentionLink } from './mention-link'
 import { cn, isEmojiOnly } from '@/lib/utils'
 import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
@@ -103,10 +103,10 @@ export function PostContent({
       // URLs: http://, https://, ipfs://, or www. prefixed
       // (shared with the tag extraction, so a tag inside a link is never indexed)
       { regex: URL_PATTERN, type: 'url' },
-      // Hashtags: # followed by alphanumeric/underscore (1-63 chars)
-      { regex: /#([a-zA-Z0-9_]{1,63})/g, type: 'hashtag' },
-      // Cashtags: $ followed by letter then alphanumeric/underscore (1-63 chars total)
-      { regex: /\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g, type: 'cashtag' },
+      // Hashtags and cashtags: a whole ASCII word (shared with the tag
+      // extraction); one too long to index renders as plain text below
+      { regex: HASHTAG_PATTERN, type: 'hashtag' },
+      { regex: CASHTAG_PATTERN, type: 'cashtag' },
       // Include hyphens in DPNS labels so rendering matches mention indexing.
       { regex: /@([a-zA-Z0-9_-]{1,100}(?:\.dash)?)/gi, type: 'mention' },
     ]
@@ -306,11 +306,12 @@ export function PostContent({
       )
     }
 
-    if (part.type === 'hashtag') {
-      // v9 indexes a tag cut to the contract ceiling; link to that page.
-      const tag = hashtagDisplayToStorage(part.value, hashtagsAreInline() ? HASHTAG_MAX_LENGTH : undefined)
-      const validationStatus = hashtagValidations?.get(tag)
-      const isFailed = validationStatus === 'invalid'
+    if (part.type === 'hashtag' || part.type === 'cashtag') {
+      const tag = tagStorage(part.value, tagMaxLength())
+      // A tag longer than the contract stores is no tag: plain text, as it is never indexed.
+      if (tag === null) return <Fragment key={key}>{part.value}</Fragment>
+      const isCashtag = part.type === 'cashtag'
+      const isFailed = hashtagValidations?.get(tag) === 'invalid'
 
       return (
         <span key={key} className="inline-flex items-center">
@@ -319,7 +320,7 @@ export function PostContent({
             onClick={(e) => e.stopPropagation()}
             className={`text-yappr-500 hover:underline ${isFailed ? 'opacity-70' : ''}`}
           >
-            {part.value}
+            {isCashtag ? '$' + part.value.slice(1).toUpperCase() : part.value}
           </Link>
           {isFailed && onFailedHashtagClick && (
             <button
@@ -329,39 +330,7 @@ export function PostContent({
                 onFailedHashtagClick(tag)
               }}
               className="ml-0.5 text-amber-500 hover:text-amber-600 transition-colors"
-              title="Hashtag not registered - click to fix"
-            >
-              <ExclamationTriangleIcon className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </span>
-      )
-    }
-
-    if (part.type === 'cashtag') {
-      const storageTag = cashtagDisplayToStorage(part.value, hashtagsAreInline() ? HASHTAG_MAX_LENGTH : undefined)
-      const validationStatus = hashtagValidations?.get(storageTag)
-      const isFailed = validationStatus === 'invalid'
-      const displayValue = '$' + part.value.slice(1).toUpperCase()
-
-      return (
-        <span key={key} className="inline-flex items-center">
-          <Link
-            href={`/hashtag?tag=${encodeURIComponent(storageTag)}`}
-            onClick={(e) => e.stopPropagation()}
-            className={`text-yappr-500 hover:underline ${isFailed ? 'opacity-70' : ''}`}
-          >
-            {displayValue}
-          </Link>
-          {isFailed && onFailedHashtagClick && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                e.preventDefault()
-                onFailedHashtagClick(storageTag)
-              }}
-              className="ml-0.5 text-amber-500 hover:text-amber-600 transition-colors"
-              title="Cashtag not registered - click to fix"
+              title={isCashtag ? 'Cashtag not registered - click to fix' : 'Hashtag not registered - click to fix'}
             >
               <ExclamationTriangleIcon className="h-3.5 w-3.5" />
             </button>

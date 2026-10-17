@@ -4,10 +4,8 @@ import { ArrowPathIcon, EllipsisHorizontalIcon } from 'react-native-heroicons/ou
 import { LockClosedIcon } from 'react-native-heroicons/solid';
 
 import {
-  cashtagDisplayToStorage,
   cn,
   formatNumber,
-  hashtagDisplayToStorage,
   normalizeDpnsUsername,
   truncateId,
 } from '~/lib-allowlist';
@@ -25,7 +23,7 @@ import { Text } from '../Text';
 import { hitSlopFor, monoFont, tw, useColors, useLargeText } from '../tokens';
 import { useMediaUrls } from '../media-url';
 import { RelativeTime } from '../RelativeTime';
-import { displayText, inlineTargets, splitUrl, stripLink, type InlinePart } from '../rich-text/parse';
+import { displayText, inlineTargets, splitUrl, stripLink, tagTarget, type InlinePart } from '../rich-text/parse';
 import { WriteStatus, writeStatusLinks, type WriteStatusProps } from '../WriteStatus';
 import { useRipple } from '../ripple';
 import { useRelativeTime } from '../use-relative-time';
@@ -323,9 +321,12 @@ function pressInline(
     case 'mention':
       return actions.onMentionPress?.(normalizeDpnsUsername(target.value.slice(1)));
     case 'hashtag':
-      return actions.onHashtagPress?.(hashtagDisplayToStorage(target.value, tagMaxLength));
-    case 'cashtag':
-      return actions.onCashtagPress?.(cashtagDisplayToStorage(target.value, tagMaxLength));
+    case 'cashtag': {
+      // inlineTargets leaves out a tag too long to index, so this always has one.
+      const tag = tagTarget(target.value, tagMaxLength);
+      if (tag === null) return undefined;
+      return target.type === 'hashtag' ? actions.onHashtagPress?.(tag) : actions.onCashtagPress?.(tag);
+    }
     case 'url': {
       const url = external(splitUrl(target.value).href);
       return url ? actions.onLinkPress?.(url) : undefined;
@@ -565,7 +566,7 @@ export const PostCard = memo(function PostCard({
       a11yActions.push({ name: 'showMedia', label: 'Show media', run: onRevealMedia });
     // Everything tappable inside the card, which VoiceOver can't reach on its own.
     if (!post.deleted && !post.encrypted) {
-      for (const target of inlineTargets(displayText(content, previewShown))) {
+      for (const target of inlineTargets(displayText(content, previewShown), tagMaxLength)) {
         const label = `Open ${target.type === 'url' ? splitUrl(target.value).display : target.value}`;
         if (!a11yActions.some((a) => a.name === label)) {
           a11yActions.push({

@@ -5,7 +5,7 @@ import type { Conv } from '@/lib/services/dm-v5/conversation'
 import { GroupError } from '@/lib/services/dm-v5/groups'
 import { YAPPR_DM_V5_CONTRACT_ID } from '@/lib/constants'
 import { isTimeoutError } from '@/lib/error-utils'
-import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
+import { settlePendingWrites } from '@/lib/services/identity-nonce'
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
 import { RpcError } from '../protocol/envelope'
@@ -770,11 +770,11 @@ export function createV5Backend(options: V5BackendOptions) {
       const turn = (lanes.get(running) ?? Promise.resolve()).then(async () => {
         // Given up while it waited behind an earlier send: never started.
         if (current.abandoned) throw gaveUp()
-        // An SDK-signed replace (a roster or self-state save) whose answer was lost but which the
-        // DM engine has since seen land stops holding writes back: lib keeps it pending for 15
-        // minutes otherwise, and every DM write in between fails PENDING_WRITE. It waits for the
-        // account's write lock, which a write in progress holds through its confirmation.
-        await settleSupersededReplaces(identityId, YAPPR_DM_V5_CONTRACT_ID)
+        // An SDK-signed replace (a roster or self-state save) whose answer was lost stops holding
+        // writes back once Platform shows it landed; until then every DM write fails PENDING_WRITE.
+        // It waits for the account's write lock, which a write in progress holds through its
+        // confirmation.
+        await settlePendingWrites(identityId, YAPPR_DM_V5_CONTRACT_ID)
           .catch(error => logger.debug('DM: could not settle pending replaces:', error))
         // Given up while it waited for the lock: never sent.
         if (current.abandoned) throw gaveUp()

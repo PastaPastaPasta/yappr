@@ -10,7 +10,7 @@ import { getEncryptionKey, getPrivateKey, storeEncryptionKey, storeEncryptionKey
 import { getDmEngine, MAX_GROUP_MEMBERS, stopDmEngine } from '@/lib/services/dm-v5'
 import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
-import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
+import { settlePendingWrites } from '@/lib/services/identity-nonce'
 import { identityService } from '@/lib/services/identity-service'
 import { KeyRetiredError } from '@/lib/services/identity-update-builder'
 import { draftMessagingKey, MessagingAlreadySetUpError, messagingKeyHandOffUri } from '@/lib/services/messaging-key-service'
@@ -342,17 +342,17 @@ export function createDmModule(options: DmModuleOptions) {
   /**
    * Ticket runs refuse while stopped (a retry must never send on an outgoing
    * account), and ask for a missing key. Before a v5 write, an SDK-signed
-   * replace (a roster or self-state save) whose answer was lost but which the
-   * DM engine has since seen land stops holding writes back: lib keeps it
-   * pending for 15 minutes otherwise, and every DM write in between fails
-   * PENDING_WRITE (`settleSupersededReplaces`). A send settles them itself
+   * replace (a roster or self-state save) whose answer was lost but which
+   * Platform shows landed is dropped from lib's pending writes
+   * (`settlePendingWrites`); until then every DM write fails PENDING_WRITE.
+   * A send settles them itself
    * (`settle: false`), inside its own time budget: the settle waits for the
    * account's write lock, which a stalled write holds.
    */
   async function running<T>(identityId: string, work: () => Promise<T>, { settle = true }: { settle?: boolean } = {}): Promise<T> {
     if (halted) throw new NotSentError(new RpcError('Messages are stopped while the account changes', 'RESTART_REQUIRED'))
     if (settle && backend.kind === 'v5') {
-      await settleSupersededReplaces(identityId, YAPPR_DM_V5_CONTRACT_ID)
+      await settlePendingWrites(identityId, YAPPR_DM_V5_CONTRACT_ID)
         .catch(error => logger.debug('DM: could not settle pending replaces:', error))
     }
     try {

@@ -1,19 +1,22 @@
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Text as RNText, View, type TextLayoutEvent } from 'react-native';
 
-import {
-  cashtagDisplayToStorage,
-  cn,
-  hashtagDisplayToStorage,
-  isEmojiOnly,
-  normalizeDpnsUsername,
-} from '~/lib-allowlist';
+import { cn, isEmojiOnly, normalizeDpnsUsername } from '~/lib-allowlist';
 
 import { useMediaUrls } from '../media-url';
 import { Text } from '../Text';
 import { monoFont, tones } from '../tokens';
 import { blockLineCaps, directionRuns, directionStyle, type Direction } from './direction';
-import { displayText, lineText, parseContent, splitLines, splitUrl, type ContentPart, type InlinePart } from './parse';
+import {
+  displayText,
+  lineText,
+  parseContent,
+  splitLines,
+  splitUrl,
+  tagTarget,
+  type ContentPart,
+  type InlinePart,
+} from './parse';
 
 export interface RichTextHandlers {
   /** The DPNS label, normalized (lowercase, no `.dash`). */
@@ -34,7 +37,7 @@ export interface RichTextProps extends RichTextHandlers {
    * below shows it as a link preview or quote, as web does.
    */
   hideFirstUrl?: boolean;
-  /** The contract's tag ceiling (engine capabilities), so a long tag opens the page it was indexed under. */
+  /** The contract's tag ceiling (engine capabilities): a longer tag is never indexed, so it shows as plain text. */
   tagMaxLength?: number;
   /** The rendered line count, every paragraph included, once laid out. */
   onLineCount?: (lines: number) => void;
@@ -166,27 +169,16 @@ export const RichText = memo(function RichText({
         ];
       }
       case 'hashtag':
+      case 'cashtag': {
+        const tag = tagTarget(part.value, tagMaxLength);
+        if (tag === null) return part.value;
+        const onPress = part.type === 'hashtag' ? onHashtagPress : onCashtagPress;
         return (
-          <LinkSpan
-            key={key}
-            onPress={
-              onHashtagPress && (() => onHashtagPress(hashtagDisplayToStorage(part.value, tagMaxLength)))
-            }
-          >
-            {part.value}
+          <LinkSpan key={key} onPress={onPress && (() => onPress(tag))}>
+            {part.type === 'hashtag' ? part.value : `$${part.value.slice(1).toUpperCase()}`}
           </LinkSpan>
         );
-      case 'cashtag':
-        return (
-          <LinkSpan
-            key={key}
-            onPress={
-              onCashtagPress && (() => onCashtagPress(cashtagDisplayToStorage(part.value, tagMaxLength)))
-            }
-          >
-            {`$${part.value.slice(1).toUpperCase()}`}
-          </LinkSpan>
-        );
+      }
       case 'mention':
         return (
           <LinkSpan

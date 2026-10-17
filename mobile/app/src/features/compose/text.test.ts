@@ -13,6 +13,10 @@ describe('tokenize', () => {
   it('keeps the earlier match where two overlap', () => {
     expect(tokenize('https://x.io/#frag').map((t) => t.kind)).toEqual(['url']);
   });
+
+  it('finds no tag in a word with a non-ASCII letter, digit or mark (D7)', () => {
+    expect(tokenize('#café #naïve #cafe\u0301 #日本 #ok').map((t) => t.value)).toEqual(['#ok']);
+  });
 });
 
 describe('editorSpans', () => {
@@ -26,6 +30,13 @@ describe('editorSpans', () => {
     ]);
     // Where the contract indexes tags that long (63), it is a link.
     expect(editorSpans(long, 63, null)).toEqual([{ text: long, style: 'link', over: false }]);
+    // A cashtag counts its `_cashtag` suffix against the ceiling.
+    const cashtag = `$${'A'.repeat(54)}`;
+    expect(editorSpans(cashtag, 61, null)).toEqual([{ text: cashtag, style: 'plain', over: false }]);
+  });
+
+  it('leaves a word with a non-ASCII letter plain (D7)', () => {
+    expect(editorSpans('#café', 61, null)).toEqual([{ text: '#café', style: 'plain', over: false }]);
   });
 
   it('marks everything from the overflow on, splitting a token', () => {
@@ -98,8 +109,15 @@ describe('tagLimitProblem', () => {
     expect(tagLimitProblem(`${tags(4)} #TAG0 #tag1`, 61, 4)).toBeNull();
     expect(tagLimitProblem(tags(5), 61, 4)).toBe('A post can have at most 4 tags. Remove 1 tag.');
     expect(tagLimitProblem(`${tags(5)} $DASH`, 61, 4)).toBe('A post can have at most 4 tags. Remove 2 tags.');
-    // Two spellings past the ceiling are one indexed tag.
-    expect(tagLimitProblem(`${tags(3)} #${'a'.repeat(70)} #${'a'.repeat(61)}`, 61, 4)).toBeNull();
+    // A tag past the ceiling is plain text, so it is no fifth tag.
+    expect(tagLimitProblem(`${tags(4)} #${'a'.repeat(62)}`, 61, 4)).toBeNull();
+    expect(tagLimitProblem(`${tags(4)} #${'a'.repeat(61)}`, 61, 4)).toBe('A post can have at most 4 tags. Remove 1 tag.');
+    // So is a cashtag whose storage form (`_cashtag` included) is past it.
+    expect(tagLimitProblem(`${tags(4)} $${'A'.repeat(54)}`, 61, 4)).toBeNull();
+  });
+
+  it('counts no word with a non-ASCII letter as a tag (D7)', () => {
+    expect(tagLimitProblem(`${tags(4)} #café #日本 #cafe\u0301 $DASHé`, 61, 4)).toBeNull();
   });
 
   it('counts no tag inside a link', () => {

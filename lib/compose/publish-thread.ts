@@ -10,7 +10,7 @@ import { hasVisibleContent, tagLimitProblem } from '@/lib/compose/limits'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
-import { hashtagsAreInline, mentionsAreInline, repliesNameRootOwner, replyLinkageTo, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
+import { hashtagsAreInline, mentionsAreInline, repliesNameRootOwner, replyLinkageTo, tagMaxLength, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
 import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { dispatchFieldRegistered } from '@/lib/services/post-field-validation'
@@ -329,7 +329,7 @@ function wasConfirmed(doc: unknown): boolean {
 /** Fire-and-forget hashtag and mention index documents for a public post. */
 function registerIndexes(postId: string, authorId: string, content: string, index: number): void {
   // The inline-hashtag topology (v9) carries the tag on the post itself.
-  const hashtags = hashtagsAreInline() ? [] : extractAllTags(content)
+  const hashtags = hashtagsAreInline() ? [] : extractAllTags(content, tagMaxLength())
   if (hashtags.length > 0) {
     hashtagService
       .createPostHashtags(postId, authorId, hashtags)

@@ -4,7 +4,7 @@ import { hashtagService } from './hashtag-service'
 import { mentionService } from './mention-service'
 import { dpnsService } from './dpns-service'
 import { extractAllTags, extractMentions, normalizeDpnsUsername } from '../post-helpers'
-import { hashtagsAreInline, mentionsAreInline } from '../contract-topology'
+import { hashtagsAreInline, mentionsAreInline, tagMaxLength } from '../contract-topology'
 
 export type FieldValidationStatus = 'pending' | 'valid' | 'invalid'
 
@@ -131,7 +131,7 @@ export class PostFieldValidator {
 
 export const hashtagValidation = new PostFieldValidator({
   kind: 'hashtag',
-  extract: extractAllTags,
+  extract: (content) => extractAllTags(content, tagMaxLength()),
   // v9: the post's single hashtag is written atomically with the post, so
   // there is no "registration failed" state and nothing to recover.
   isInline: hashtagsAreInline,

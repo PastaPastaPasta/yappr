@@ -431,8 +431,8 @@ class PollrVoteService {
     if (typeof poll.endsAt !== 'number') return refusedSet('This poll has no close time');
     if (pollIsClosed(poll)) return refusedSet('This poll has closed', true);
 
-    // Release the reservations of earlier replaces that landed, or this write
-    // is held back behind them (see settlePendingPollrReplaces). Then refuse to
+    // Drop the reservations of earlier writes that landed (see
+    // settlePendingPollrReplaces). Then refuse to
     // plan while any earlier write could still execute — even a plan of no
     // writes, which would otherwise report as recorded a selection that a late
     // create could still change.

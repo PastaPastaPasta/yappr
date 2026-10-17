@@ -15,7 +15,7 @@ vi.mock('./state-transition-service', () => ({
 }));
 vi.mock('./identity-nonce', async (load) => ({
   ...(await load<typeof import('./identity-nonce')>()),
-  settleSupersededReplaces: mocks.settle,
+  settlePendingWrites: mocks.settle,
 }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { count: mocks.count, get: mocks.get } }) }));
 
