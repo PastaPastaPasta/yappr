@@ -74,6 +74,7 @@ const SETTINGS: SettingsDTO = {
     mentions: true,
     messages: true,
     blogPosts: true,
+    store: true,
   },
   payWith: 'credits',
   feedLanguage: 'en',

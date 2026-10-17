@@ -567,3 +567,39 @@ describe('blog comment notifications', () => {
     expect(notifications.map((n) => n.postId)).toEqual(['live'])
   })
 })
+
+describe('store notifications', () => {
+  async function serviceWithStoreEvents(topology: string, events: unknown[]) {
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology)
+    const { notificationService } = await import('./notification-service')
+    const { storeNotificationService } = await import('./store-notification-service')
+    const { loadIdentityBatch } = await import('./identity-batch')
+    vi.mocked(loadIdentityBatch).mockResolvedValue({ usernames: new Map([['seller', 'shop']]), profiles: [], avatars: new Map() } as never)
+    vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
+    vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
+    for (const reader of ['getLikeNotifications', 'getRepostNotifications', 'getReplyNotifications'] as const) {
+      vi.spyOn(notificationService, reader).mockResolvedValue([])
+    }
+    const read = vi.spyOn(storeNotificationService, 'getNotifications').mockResolvedValue(events as never)
+    return { notificationService, read }
+  }
+
+  it('lists a store event with its detail and moves the watermark to it', async () => {
+    const shipped = { id: 'orderStatus-u1', type: 'orderStatus', fromUserId: 'seller', createdAt: 5_000, store: { status: 'shipped' } }
+    const { notificationService, read } = await serviceWithStoreEvents('v9', [shipped])
+
+    const result = await notificationService.pollNewNotifications('buyer', 1_000)
+
+    expect(read).toHaveBeenCalledWith('buyer', 1_000, expect.any(Function))
+    expect(result.latestTimestamp).toBe(5_000)
+    expect(result.notifications).toMatchObject([
+      { id: 'orderStatus-u1', type: 'orderStatus', from: { id: 'seller', username: 'shop' }, store: { status: 'shipped' }, post: undefined },
+    ])
+  })
+
+  it('reads none before storefront v6, which has no buyer feed', async () => {
+    const { notificationService, read } = await serviceWithStoreEvents('v5', [])
+    await notificationService.pollNewNotifications('buyer', 1_000)
+    expect(read).not.toHaveBeenCalled()
+  })
+})

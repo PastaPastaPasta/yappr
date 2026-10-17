@@ -78,6 +78,7 @@ export interface NotificationRowModel {
   target: NotificationDTO['target'];
   preview: PostDTO | null;
   blog?: NotificationDTO['blog'];
+  store?: NotificationDTO['store'];
 }
 
 /**
@@ -113,6 +114,7 @@ export function groupNotifications(items: readonly NotificationDTO[]): Notificat
       target: item.target,
       preview: item.preview,
       ...(item.blog ? { blog: item.blog } : {}),
+      ...(item.store ? { store: item.store } : {}),
     };
     if (groupKey) likeGroups.set(groupKey, row);
     rows.push(row);
@@ -120,7 +122,8 @@ export function groupNotifications(items: readonly NotificationDTO[]): Notificat
   return rows;
 }
 
-const PHRASES: Record<NotificationType, string> = {
+/** Store events carry their own phrase (`row.store.phrase`), worded by the engine as on web. */
+const PHRASES: Partial<Record<NotificationType, string>> = {
   follow: 'started following you',
   mention: 'mentioned you in a post',
   like: 'liked your post',
@@ -143,7 +146,8 @@ const REPLY_PHRASES: Partial<Record<NotificationType, string>> = {
 };
 
 /** The sentence after the actor's name: "liked your post", "and 2 others liked your reply". */
-export function phraseOf(row: Pick<NotificationRowModel, 'type' | 'target' | 'total'>): string {
+export function phraseOf(row: Pick<NotificationRowModel, 'type' | 'target' | 'total' | 'store'>): string {
+  if (row.store) return row.store.phrase;
   const base =
     (row.target?.kind === 'reply' ? REPLY_PHRASES[row.type] : undefined) ??
     PHRASES[row.type] ??
@@ -153,7 +157,7 @@ export function phraseOf(row: Pick<NotificationRowModel, 'type' | 'target' | 'to
   return `and ${others} ${others === 1 ? 'other' : 'others'} ${base}`;
 }
 
-/** The two-line snippet under a post notification, or null (NOTIF-01). */
+/** The two-line snippet under a post notification, or null (NOTIF-01). A store event brings its own (`row.store.snippet`). */
 export function snippetOf(
   preview: PostDTO | null,
   mode: SensitiveMode | undefined,
@@ -178,9 +182,11 @@ export type Destination =
  * Where a tap goes (NOTIF-01): follows and private-feed events open the
  * actor's profile; likes and reposts the liked post; replies, quotes and
  * mentions the new post (its thread shows the context); blog events the
- * blog post on the web (no blogs in 1.0).
+ * blog post, and store events the order, store or item, on the web (no
+ * blogs or store in 1.0).
  */
 export function destinationOf(row: NotificationRowModel): Destination {
+  if (row.store) return row.store.path ? { kind: 'web', path: row.store.path } : null;
   if (row.type === 'blogPost' || row.type === 'blogComment') {
     if (!row.blog) return null;
     return {

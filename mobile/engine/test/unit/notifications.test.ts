@@ -37,6 +37,7 @@ vi.mock('@/lib/services/unified-profile-service', async (load) => ({
 }))
 
 const { createNotificationsModule } = await import('../../src/api/notifications')
+const { validate, page: pageOf, notificationDTO } = await import('../../src/dto/validate')
 
 const actor: User = { id: 'actor', username: 'actor', displayName: 'Actor', avatar: '', followers: 0, following: 0, joinedAt: new Date(0) }
 const follow = (id: string, at: number): Notification => ({ id, type: 'follow', from: actor, createdAt: new Date(at), read: false })
@@ -83,5 +84,35 @@ describe('notifications.list (NEW-R-vi-002)', () => {
   it('still answers an empty list when every source answered', async () => {
     m.getInitialNotifications.mockResolvedValueOnce({ notifications: [], latestTimestamp: 1_000 })
     expect((await notifications.api.list()).items).toEqual([])
+  })
+})
+
+describe('store notifications', () => {
+  let notifications: ReturnType<typeof createNotificationsModule>
+  beforeEach(() => {
+    vi.clearAllMocks()
+    m.viewer = 'viewer'
+    notifications = createNotificationsModule(() => undefined)
+  })
+
+  it('word a store event as web does, open it on the web, and list it under the Store filter', async () => {
+    const seller: User = { ...actor, id: '7sGmWnXr4iaMvzKTsqbJFMmMyDeBHJ4zqCYv7Bg94134' }
+    const shipped: Notification = {
+      id: 'orderStatus-u1', type: 'orderStatus', from: seller, createdAt: new Date(3_000), read: false,
+      store: { status: 'shipped', text: 'On its way' },
+    }
+    const review: Notification = {
+      id: 'storeReview-r1', type: 'storeReview', from: seller, createdAt: new Date(2_000), read: false,
+      store: { storeId: 'S', rating: 4 },
+    }
+    m.getInitialNotifications.mockResolvedValueOnce({ notifications: [shipped, review, follow('f1', 1_000)], latestTimestamp: 3_000 })
+
+    const page = await notifications.api.list({ filter: 'store' })
+
+    expect(page.items.map(item => [item.id, item.target, item.store])).toEqual([
+      ['orderStatus-u1', null, { phrase: 'shipped your order', snippet: 'On its way', path: '/orders' }],
+      ['storeReview-r1', null, { phrase: 'reviewed your store', snippet: '★★★★☆', path: '/store/view?id=S' }],
+    ])
+    expect(validate(pageOf(notificationDTO), page)).toEqual([])
   })
 })
