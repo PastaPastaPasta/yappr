@@ -44,7 +44,7 @@ const FEATURES: Feature[] = [
   { title: 'Private Feeds', desc: 'Encrypted posts for the followers you approve', href: '/about/private-feeds', icon: LockClosedIcon },
   { title: 'Store', desc: 'Create a storefront, list items, and get paid directly', href: '/store', icon: ShoppingBagIcon },
   { title: 'Blog', desc: 'Write long-form posts with your own blog', href: '/blog', icon: BookOpenIcon },
-  { title: 'Tips', desc: 'Tip people straight to the payment addresses they list', icon: CurrencyDollarIcon },
+  { title: 'Tips', desc: 'Send tips straight to the people you appreciate', icon: CurrencyDollarIcon },
   { title: 'Notifications', desc: 'Tabbed alerts with unread indicators and preferences', icon: BellIcon },
   { title: 'Bookmarks', desc: 'Save posts to revisit later (bookmarks are public)' },
   { title: 'Blocking & Reporting', desc: 'Control what you see, and report what breaks the rules', icon: FlagIcon },

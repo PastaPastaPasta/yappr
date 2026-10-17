@@ -580,6 +580,10 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 </li>
                 <li className="flex gap-2">
                   <span className="text-yappr-500">•</span>
+                  Attached images are not encrypted: anyone with an image&apos;s address can see it
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-yappr-500">•</span>
                   Your encryption key is needed to manage your private feed
                 </li>
               </ul>

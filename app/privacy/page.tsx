@@ -163,6 +163,11 @@ export default function PrivacyPage() {
               whatever they could already read.
             </p>
             <p className="mt-2">
+              <strong>Images are not encrypted.</strong> A private post&apos;s text and the link to its image are encrypted, but the
+              image file itself is uploaded as is. The upload service, IPFS gateways, and anyone who finds its address can see it, so
+              don&apos;t attach anything you need to keep private.
+            </p>
+            <p className="mt-2">
               <strong>Reports open private posts to moderators.</strong> If someone reports one of your private posts, the report gives
               the moderators the key to read it. That key also opens your other private posts from the same period and all earlier
               ones.

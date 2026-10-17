@@ -220,7 +220,10 @@ export default function TermsPage() {
               </li>
             )}
           </BulletList>
-          <p>Tips work the same way: they go straight from your wallet to the address the person lists.</p>
+          <p>
+            Tips go straight to the person: credits or YAPP, where offered, move from your identity to theirs, and other
+            cryptocurrencies go from your own wallet to the address they list. Yappr never holds them.
+          </p>
         </Prose>
       </InfoSection>
 
