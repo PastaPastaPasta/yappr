@@ -30,6 +30,7 @@ import { hostViewAbove } from '~/ui/testing/native-parent';
 import { useToastStore } from '~/ui/toast';
 
 import { Composer } from './Composer';
+import { ConversationRow } from './ConversationRow';
 import { ConversationScreen } from './ConversationScreen';
 import { GroupInfoScreen } from './GroupInfoScreen';
 import { MessageSettingsScreen } from './MessageSettingsScreen';
@@ -2303,5 +2304,13 @@ describe('Message settings (DM-12)', () => {
     expect(screen.getByTestId('dm-blocked-empty')).toHaveTextContent(
       'No blocked accountsMessages and group invites from people you block are ignored.',
     );
+  });
+});
+
+
+describe('empty group activity (#708)', () => {
+  it('shows no message timestamp for an empty group', () => {
+    render(<ConversationRow conversation={conversation({ kind: 'group', name: 'Quiet', peer: null, lastMessage: null, lastActivity: new Date() })} onPress={jest.fn()} />);
+    expect(screen.getByTestId('conversation-d:alice-bob').props.accessibilityLabel).not.toMatch(/ago|now|second/);
   });
 });

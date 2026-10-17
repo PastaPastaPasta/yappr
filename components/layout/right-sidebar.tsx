@@ -1,7 +1,7 @@
 'use client'
 
-import Link from 'next/link'
 import Image from 'next/image'
+import { publicAsset } from '@/lib/public-asset'
 import { useEffect, useState } from 'react'
 import { SearchInput } from '@/components/search/search-input'
 import { FeedStats } from './feed-stats'
@@ -20,7 +20,7 @@ export function RightSidebar() {
   if (!visible) return null
 
   return (
-    <div className="hidden lg:block w-[350px] shrink-0 px-4 py-4 space-y-4 h-[calc(100vh-40px)] sticky top-[40px] overflow-y-auto scrollbar-hide">
+    <div className="hidden lg:block w-[350px] shrink-0 px-4 py-4 space-y-4 h-screen sticky top-0 overflow-y-auto scrollbar-hide">
       <SearchInput />
       <TrendingHashtags />
 
@@ -33,7 +33,7 @@ export function RightSidebar() {
           rel="noopener noreferrer"
         >
           <Image
-            src="/pbde-light.png"
+            src={publicAsset('/pbde-light.png')}
             alt="Powered by Dash Evolution"
             width={140}
             height={47}
@@ -41,7 +41,7 @@ export function RightSidebar() {
             style={{ width: 'auto', height: 'auto' }}
           />
           <Image
-            src="/pbde-dark.png"
+            src={publicAsset('/pbde-dark.png')}
             alt="Powered by Dash Evolution"
             width={140}
             height={47}
@@ -49,13 +49,6 @@ export function RightSidebar() {
             style={{ width: 'auto', height: 'auto' }}
           />
         </a>
-      </div>
-
-      <div className="px-4 py-2 text-xs text-gray-500 space-x-2 text-center">
-        <Link href="/terms" className="hover:underline">Terms</Link>
-        <Link href="/privacy" className="hover:underline">Privacy</Link>
-        <Link href="/cookies" className="hover:underline">Cookies</Link>
-        <Link href="/about" className="hover:underline">About</Link>
       </div>
     </div>
   )

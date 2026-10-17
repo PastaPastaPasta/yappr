@@ -35,6 +35,8 @@ const { keyNetwork } = await import('@/lib/constants')
 const { currentDmEngine } = await import('@/lib/services/dm-v5')
 const { createDmModule } = await import('../../src/api/dm')
 const { createTicketStore } = await import('../../src/writes/tickets')
+const { dispatchLifecycle, installVisibilityOverride } = await import('../../src/shims/lifecycle')
+installVisibilityOverride()
 
 const alice = bs58.encode(ALICE_ID)
 const storage = new Map<string, string>()
@@ -55,6 +57,30 @@ const dm = createDmModule({
 afterAll(() => dm.hooks.stop())
 
 describe('dm over lib\'s DM v5 registry', () => {
+  it('shares one catch-up across the WebView DOM dispatcher and mobile lifecycle adapter', async () => {
+    storeEncryptionKey(alice, privateKeyToWif(ALICE_PRIV, keyNetwork(), true))
+    dm.hooks.sessionChanged({ session: { identityId: alice, network: 'testnet', username: null, credits: 0n, hasEncryptionKey: true, method: 'key' }, reason: 'signed-in' })
+    await vi.waitFor(async () => expect((await dm.api.status()).ready).toBe(true))
+    const engine = currentDmEngine(alice)
+    if (!engine) throw new Error('no engine')
+    dispatchLifecycle('background')
+    await dm.hooks.lifecycle('background')
+    const reads = vi.spyOn(engine.ctx.chain, 'invitesSince')
+    const resume = vi.spyOn(engine, 'resume')
+    // createEngineApi awaits the DOM runtime hook before invoking dm.hooks.lifecycle.
+    dispatchLifecycle('active')
+    await Promise.resolve()
+    await dm.hooks.lifecycle('active')
+    expect(resume).toHaveBeenCalledTimes(2)
+    expect(resume.mock.results[1].value).toBe(resume.mock.results[0].value)
+    await resume.mock.results[0].value
+    expect(reads).toHaveBeenCalledTimes(1)
+    // A duplicate active signal after the catch-up finishes also does not poll.
+    await dm.hooks.lifecycle('active')
+    expect(reads).toHaveBeenCalledTimes(1)
+    await dm.hooks.stop()
+  })
+
   it('keeps the engine lib made for a new key, instead of stopping it and making another on every call', async () => {
     storeEncryptionKey(alice, privateKeyToWif(ALICE_PRIV, keyNetwork(), true))
     dm.hooks.sessionChanged({ session: { identityId: alice, network: 'testnet', username: null, credits: 0n, hasEncryptionKey: true, method: 'key' }, reason: 'signed-in' })

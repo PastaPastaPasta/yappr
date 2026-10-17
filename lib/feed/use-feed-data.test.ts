@@ -7,6 +7,7 @@ type Update = Post[] | null | ((current: Post[] | null) => Post[] | null);
 const mocks = vi.hoisted(() => ({
   effects: [] as EffectCallback[], state: [] as unknown[], slot: 0, refs: [] as { current: unknown }[], refSlot: 0,
   cached: vi.fn(), cacheSet: vi.fn(), enrich: vi.fn(), load: vi.fn(), setData: vi.fn(), setLoading: vi.fn(),
+  polling: vi.fn(), followingIds: vi.fn(), queryFollowing: vi.fn(),
 }));
 // Exercise the real hook's callbacks with deterministic deferred service results.
 // React state rendering is separate; capture effects, observe the data setter and
@@ -45,9 +46,10 @@ vi.mock('@/hooks/use-progressive-enrichment', () => ({ useProgressiveEnrichment:
 vi.mock('@/lib/feed/enrich-posts', () => ({ enrichPostsWithRepostsAndQuotes: mocks.enrich }));
 vi.mock('@/lib/feed/load-for-you-feed', () => ({ loadForYouFeed: mocks.load }));
 vi.mock('@/lib/feed/load-following-feed', () => ({ loadFollowingFeed: vi.fn() }));
-vi.mock('@/lib/services', () => ({ followService: {}, postService: {} }));
-vi.mock('@/lib/services/document-service', () => ({ queryPostsByOwnersSince: vi.fn(), queryPostsSince: vi.fn() }));
-import { useFeedData } from '@/hooks/use-feed-data';
+vi.mock('@/lib/services', () => ({ followService: { getFollowingIdsCached: mocks.followingIds }, postService: {} }));
+vi.mock('@/lib/services/document-service', () => ({ queryPostsByOwnersSince: mocks.queryFollowing, queryPostsSince: vi.fn() }));
+vi.mock('@/lib/poll-scheduling', () => ({ startVisibilityPolling: mocks.polling }));
+import { useFeedData, type FeedTab } from '@/hooks/use-feed-data';
 import { transformRawPost } from './transform-raw-post';
 
 const cachedPost = transformRawPost({ $id: 'post00000001', $ownerId: 'owner0000001', $createdAt: 1000, content: 'cached' });
@@ -60,16 +62,16 @@ let current: Post[] | null;
 let complete: (posts: Post[]) => void;
 let cleanups: (() => void)[];
 
-function render(enabled = true) {
+function render(enabled = true, activeTab: FeedTab = 'forYou') {
   let feed!: ReturnType<typeof useFeedData>;
-  function Probe() { feed = useFeedData({ activeTab: 'forYou', enabled }); return null; }
+  function Probe() { feed = useFeedData({ activeTab, enabled }); return null; }
   mocks.slot = 0;
   mocks.refSlot = 0;
   renderToString(createElement(Probe));
   return feed;
 }
-function mount(enabled = true) {
-  const feed = render(enabled);
+function mount(enabled = true, activeTab: FeedTab = 'forYou') {
+  const feed = render(enabled, activeTab);
   cleanups = mocks.effects.map(effect => effect()).filter((cleanup): cleanup is () => void => typeof cleanup === 'function');
   return feed;
 }
@@ -97,8 +99,40 @@ beforeEach(() => {
   complete = (posts) => resolvers[0](posts);
   mocks.enrich.mockImplementation(() => new Promise<Post[]>(resolve => { resolvers.push(resolve); }));
   mocks.load.mockResolvedValue({ posts: [freshPost], preloaded: undefined, hasMore: false, cursor: freshPost.id });
+  mocks.polling.mockReturnValue(() => {});
+  mocks.followingIds.mockResolvedValue(['followed']);
 });
 afterEach(() => { cleanups.forEach(cleanup => cleanup()); vi.unstubAllGlobals(); });
+
+describe('following-feed poll failures', () => {
+  it('keeps partial posts and the retry watermark while rejecting to the backoff scheduler', async () => {
+    const cached = { ...cachedPost, createdAt: new Date(100_000) };
+    mocks.cached.mockReturnValue({ posts: [cached], cursor: cached.id, hasMore: false });
+    mount(true, 'following');
+    // The cached mount sets the timestamp; React's next render arms the poll.
+    mocks.effects.length = 0;
+    render(true, 'following');
+    for (const effect of mocks.effects) {
+      const cleanup = effect();
+      if (typeof cleanup === 'function') cleanups.push(cleanup);
+    }
+    const poll = mocks.polling.mock.calls[0][0] as () => Promise<void>;
+    const failure = new Error('continuation refused');
+    mocks.queryFollowing.mockResolvedValueOnce({
+      posts: [{ $id: 'post00000003', $ownerId: 'owner0000003', $createdAt: 110_000, content: 'new' }],
+      complete: false, failure,
+    });
+    await expect(poll()).rejects.toBe(failure);
+    const partial = render(true, 'following');
+    expect(partial.pendingNewPosts.map(post => post.id)).toEqual(['post00000003']);
+    // Showing partial results must not skip the unread stretch on the next poll.
+    partial.showNewPosts();
+    render(true, 'following');
+    mocks.queryFollowing.mockResolvedValueOnce({ posts: [], complete: true });
+    await expect(poll()).resolves.toBeUndefined();
+    expect(mocks.queryFollowing.mock.calls.map(call => call[1])).toEqual([98_000, 98_000]);
+  });
+});
 
 describe('cached feed enrichment lifetime', () => {
   it('ignores enrichment completing after a refresh replaced the cached page', async () => {

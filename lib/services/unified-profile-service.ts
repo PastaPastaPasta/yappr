@@ -837,39 +837,43 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   // ==================== Profile CRUD ====================
 
   /**
-   * Get profile by owner ID
+   * Get profile by owner ID; null when there is none or it could not be read.
    */
   async getProfile(ownerId: string, cachedUsername?: string): Promise<User | null> {
     try {
-      // Check cache first
-      const cached = cacheManager.get<User>(this.PROFILE_CACHE, ownerId);
-      if (cached) {
-        if (cachedUsername && cached.username !== cachedUsername) {
-          cached.username = cachedUsername;
-        }
-        return cached;
-      }
-
-      const doc = await this.loadProfileDoc(ownerId);
-      if (!doc) {
-        return null;
-      }
-
-      const profile = this.transformDocument(
-        doc as unknown as Record<string, unknown>,
-        cachedUsername ? { cachedUsername } : undefined
-      );
-
-      cacheManager.set(this.PROFILE_CACHE, ownerId, profile, {
-        ttl: 300000,
-        tags: ['profile', `user:${ownerId}`]
-      });
-
-      return profile;
+      return await this.readProfile(ownerId, cachedUsername);
     } catch (error) {
       logger.error('UnifiedProfileService: Error getting profile:', error);
       return null;
     }
+  }
+
+  /** The profile (cached for 5 minutes), null when the identity has none; rejects when the read failed. */
+  private async readProfile(ownerId: string, cachedUsername?: string): Promise<User | null> {
+    const cached = cacheManager.get<User>(this.PROFILE_CACHE, ownerId);
+    if (cached) {
+      if (cachedUsername && cached.username !== cachedUsername) {
+        cached.username = cachedUsername;
+      }
+      return cached;
+    }
+
+    const doc = await this.loadProfileDoc(ownerId);
+    if (!doc) {
+      return null;
+    }
+
+    const profile = this.transformDocument(
+      doc as unknown as Record<string, unknown>,
+      cachedUsername ? { cachedUsername } : undefined
+    );
+
+    cacheManager.set(this.PROFILE_CACHE, ownerId, profile, {
+      ttl: 300000,
+      tags: ['profile', `user:${ownerId}`]
+    });
+
+    return profile;
   }
 
   /**
@@ -890,10 +894,12 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   }
 
   /**
-   * Get payment URIs for a user (filtered to approved schemes)
+   * Get payment URIs for a user (filtered to approved schemes): empty when the
+   * identity has no profile or no addresses. Rejects when the profile could
+   * not be read, so callers never mistake a failed lookup for "none".
    */
   async getPaymentUris(ownerId: string): Promise<ParsedPaymentUri[]> {
-    const profile = await this.getProfile(ownerId);
+    const profile = await this.readProfile(ownerId);
     return profile?.paymentUris || [];
   }
 

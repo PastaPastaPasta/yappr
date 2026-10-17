@@ -31,8 +31,11 @@ import {
   EnvelopeIcon as EnvelopeIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
+import { BetaPill } from '@/components/ui/beta-pill'
+import type { BetaProduct } from '@/lib/feature-flags'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import * as Tooltip from '@radix-ui/react-tooltip'
+import { LegalLinks } from './legal-links'
 
 export function MobileBottomNav() {
   const pathname = usePathname()
@@ -101,9 +104,9 @@ export function MobileBottomNav() {
   ]
 
   // More menu items - Store first for prominence, then user-specific items
-  const moreMenuItems = [
-    { name: 'Store', href: '/store', icon: BuildingStorefrontIcon },
-    { name: 'Blog', href: '/blog', icon: BookOpenIcon },
+  const moreMenuItems: Array<{ name: string; href: string; icon: typeof HomeIcon; badge?: number; beta?: BetaProduct }> = [
+    { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, beta: 'store' },
+    { name: 'Blog', href: '/blog', icon: BookOpenIcon, beta: 'blog' },
     ...(user ? [
       { name: 'Profile', href: `/user?id=${user.identityId}`, icon: UserIcon },
       { name: 'Notifications', href: '/notifications', icon: BellIcon, badge: isHydrated && unreadNotificationCount > 0 ? unreadNotificationCount : undefined },
@@ -129,7 +132,7 @@ export function MobileBottomNav() {
       {/* More Menu Sheet */}
       {/* React 18 emits inert only as a string, while the DOM typings declare it boolean. */}
       <div id="mobile-more-menu" aria-hidden={!moreMenuOpen} inert={moreMenuOpen ? undefined : ('' as unknown as boolean)} className={cn(
-        "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
+        "fixed bottom-14 left-0 right-0 z-40 md:hidden max-h-[calc(100dvh-3.5rem)] overflow-y-auto bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
         moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
       )}>
         <div className="p-4">
@@ -169,6 +172,7 @@ export function MobileBottomNav() {
                     )}
                   </div>
                   <span className="text-xs mt-1 text-center">{item.name}</span>
+                  {item.beta && <BetaPill product={item.beta} className="mt-1" />}
                 </Link>
               )
             })}
@@ -204,6 +208,8 @@ export function MobileBottomNav() {
               </button>
             </div>
           )}
+
+          <LegalLinks className="mt-4" onNavigate={() => setMoreMenuOpen(false)} />
         </div>
       </div>
 

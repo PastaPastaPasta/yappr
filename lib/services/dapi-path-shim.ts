@@ -15,7 +15,7 @@
  *
  * The shim wraps `globalThis.fetch` and rewrites only requests that match both
  * of these:
- * - the origin is one of the configured DAPI addresses;
+ * - the origin is configured explicitly, or uses HTTPS on a standard DAPI port (443 or 1443);
  * - the path starts with `//org.dash.platform.`.
  * It collapses that leading `//` to `/`. Every other request, including the
  * quorum-service prefetch and any request to another host, goes through
@@ -53,7 +53,8 @@ export function rewriteDapiUrl(url: string, origins: ReadonlySet<string>): strin
   } catch {
     return null;
   }
-  if (!origins.has(parsed.origin) || !parsed.pathname.startsWith(DOUBLE_SLASH_PREFIX)) return null;
+  const dapiOrigin = origins.has(parsed.origin) || (parsed.protocol === 'https:' && (parsed.port === '1443' || parsed.port === ''));
+  if (!dapiOrigin || !parsed.pathname.startsWith(DOUBLE_SLASH_PREFIX)) return null;
   return `${parsed.origin}${parsed.pathname.slice(1)}${parsed.search}${parsed.hash}`;
 }
 
@@ -91,12 +92,11 @@ async function retarget(request: Request, url: string): Promise<Request> {
 /**
  * Installs the rewrite for `addresses`. Call it before the SDK connects. It is
  * idempotent: later calls only add their origins to the installed wrapper. A
- * no-op when `fetch` is missing or no address parses.
+ * no-op when `fetch` is missing. Discovered HTTPS nodes on ports 443 and 1443 are always covered.
  */
-export function installDapiPathShim(addresses: readonly string[]): void {
+export function installDapiPathShim(addresses: readonly string[] = []): void {
   if (typeof globalThis.fetch !== 'function') return;
   const origins = addresses.map(originOf).filter((origin): origin is string => origin !== null);
-  if (origins.length === 0) return;
 
   const installed = (globalThis.fetch as ShimmedFetch)[SHIM_ORIGINS];
   if (installed) {

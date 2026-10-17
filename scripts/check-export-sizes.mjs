@@ -6,12 +6,15 @@
  *
  *   npm run build && node scripts/check-export-sizes.mjs [--dir out] [--limit-bytes 26214400]
  *
+ * Public routes also enforce an 8 MiB raw eager-JavaScript budget
+ * (override with --max-eager-bytes) to catch SDK/editor hydration regressions.
  * Always prints the largest files so a creeping chunk is visible before it
  * crosses the limit. Exit code 1 when any file is over, 2 when the export
  * directory is missing.
  */
-import { readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { gzipSync } from 'node:zlib'
 
 const PAGES_FILE_LIMIT_BYTES = 25 * 1024 * 1024
 const SHOW_LARGEST = 8
@@ -23,6 +26,11 @@ function argValue(name, fallback) {
 
 const dir = argValue('--dir', 'out')
 const limit = Number(argValue('--limit-bytes', PAGES_FILE_LIMIT_BYTES))
+const eagerLimit = Number(argValue('--max-eager-bytes', 8 * 1024 * 1024))
+if (!Number.isFinite(eagerLimit) || eagerLimit <= 0) {
+  console.error('--max-eager-bytes must be a positive number')
+  process.exit(2)
+}
 if (!Number.isFinite(limit) || limit <= 0) {
   console.error(`--limit-bytes must be a positive number, got "${argValue('--limit-bytes')}"`)
   process.exit(2)
@@ -64,3 +72,25 @@ if (tooLarge.length > 0) {
   process.exit(1)
 }
 console.log(`OK: ${files.length} files, none over the limit.`)
+
+// Measure scripts required to hydrate each public route, excluding later dynamic imports.
+// Strip the deployment base path: exports always store assets under out/_next.
+for (const route of ['/', '/feed', '/post', '/user', '/terms', '/blog/compose']) {
+  const htmlFile = path.join(dir, route, 'index.html')
+  let html
+  try { html = readFileSync(htmlFile, 'utf8') } catch { continue }
+  const scripts = new Set([...html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/g)].map(match => match[1]))
+  let raw = 0
+  let gzip = 0
+  for (const src of scripts) {
+    const local = src.slice(src.indexOf('/_next/') + 1)
+    const bytes = readFileSync(path.join(dir, local))
+    raw += bytes.length
+    gzip += gzipSync(bytes).length
+  }
+  console.log(`Route ${route}: ${scripts.size} eager scripts, ${raw} B raw, ${gzip} B gzip`)
+  if (raw > eagerLimit) {
+    console.error(`::error file=${htmlFile}::${route} eagerly loads ${raw} B of JavaScript (limit ${eagerLimit} B). Check for SDK or editor imports in shared components.`)
+    process.exitCode = 1
+  }
+}

@@ -58,9 +58,9 @@ function messageFor(item: GroupedInventoryItem, message: string): string {
 }
 
 /** The price a product preview shows: one price, or the lowest to the highest. */
-function previewPrice(item: GroupedInventoryItem, currency: string): string {
-  if (!item.variants) return formatPrice(item.basePrice, currency)
-  return formatPriceRange(priceRange(item.variants), currency)
+function previewPrice(item: GroupedInventoryItem): string {
+  if (!item.variants) return formatPrice(item.basePrice, item.currency)
+  return formatPriceRange(priceRange(item.variants), item.currency)
 }
 
 /** The stock a product preview shows: the units in all, or "Not tracked". */
@@ -302,11 +302,12 @@ export function InventoryUploadModal({
                 <p>Your CSV should include these columns:</p>
                 <ul className="list-disc list-inside space-y-1 pl-2">
                   <li><strong>Item Name</strong> (required) - Product title</li>
-                  <li><strong>Price</strong> (required) - Price in {currency} (e.g., 9.99)</li>
+                  <li><strong>Price</strong> (required) - Price in the row’s Currency, or {currency} when blank (e.g., 9.99)</li>
                   <li><strong>Group</strong> - Rows with the same group become one product, one row per combination of options</li>
                   <li><strong>Option1 Name / Option1 Value</strong> (up to Option5) - Option types and their options (e.g., Color: Red, Size: Large). A Variant column works too, such as &quot;Color: Red · Size: Large&quot;</li>
                   <li><strong>Quantity</strong> - Stock count or formula (e.g., &quot;(SKU-NAME)*5&quot;). Leave it empty on every row to not track stock</li>
-                  <li><strong>SKU, Category, Tags, Weight, Image1, Image URL</strong> - Optional fields</li>
+                  <li><strong>SKU</strong> - SKU for this combination; <strong>Item SKU</strong> identifies the whole product</li>
+                  <li><strong>Currency, Category, Tags, Weight, Image1, Image URL</strong> - Optional fields</li>
                 </ul>
               </div>
             </div>
@@ -420,7 +421,7 @@ export function InventoryUploadModal({
                                   </div>
                                 ))}
                               </td>
-                              <td className="px-3 py-2 text-right whitespace-nowrap">{previewPrice(item, currency)}</td>
+                              <td className="px-3 py-2 text-right whitespace-nowrap">{previewPrice(item)}</td>
                               <td className="px-3 py-2 text-right whitespace-nowrap">{previewStock(item)}</td>
                             </tr>
                           ))}

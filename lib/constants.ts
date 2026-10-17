@@ -392,10 +392,6 @@ export function pollrVoteDocType(multiChoice: boolean): string {
 // App URL (custom domain on GitHub Pages)
 export const APP_URL = 'https://yap.pr'
 
-// Previous ("v2") Yappr deployment — the old contract's content lives here.
-// Linked from empty / end-of-feed states so users can still reach pre-cutover posts.
-export const LEGACY_APP_URL = 'https://yappr-v2.thepasta.org'
-
 // Network configuration
 //
 // `AppNetwork` is what the SDK connects to; `KeyNetwork` is what address and WIF
@@ -554,6 +550,7 @@ export function getContractTopology(): ContractTopology {
 // moutai — point NEXT_PUBLIC_QUORUM_URL at a service exposing /quorums,
 // /previous and /masternodes instead.
 export const DEVNET_NAME = process.env.NEXT_PUBLIC_DEVNET_NAME || 'moutai'
+/** Trusted quorum service override for the network selected by this build (all networks). */
 export const DEVNET_QUORUM_URL = process.env.NEXT_PUBLIC_QUORUM_URL || ''
 export const DAPI_ADDRESSES: readonly string[] = (process.env.NEXT_PUBLIC_DAPI_ADDRESSES || '')
   .split(',')

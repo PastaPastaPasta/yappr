@@ -22,7 +22,7 @@ vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (...args: [string, stri
 vi.mock('./signer-service', () => ({ signerService: { createSignerFromWasmKey: () => ({ signer: true, identityKey: true }) } }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true, key: {} }) }))
 vi.mock('../contract-topology', () => ({ starterGrantAmount: () => BigInt(100), yappIsLocked: () => topology.locked }))
-vi.mock('@dashevo/evo-sdk', () => ({ Identifier: class { constructor(readonly value: string) {} } }))
+vi.mock('@dashevo/wasm-sdk', () => ({ Identifier: class { constructor(readonly value: string) {} } }))
 
 import { tokenService } from './token-service'
 

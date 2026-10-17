@@ -526,7 +526,7 @@ Map of react-hot-toast in `app/layout.tsx`:
 
 - Height 20, horizontal padding 8, `radius.full`, `network.chip` colors, `chip` text "DEVNET" / "TESTNET". A 6 pt dot before the label: steady black when the engine is ready, pulsing while booting, hollow when unavailable.
 - Placement: Home navigation bar (leading on iOS next to the title, trailing on Android before the overflow), and the Settings footer.
-- Tap → network sheet (4.34). a11y: "Testnet. Data may be reset. Connected." (state varies: "Connecting." / "Can't connect."; the dot carries the state, so the label must too).
+- Tap → network sheet (4.34). a11y: "Testnet. Connected." (a devnet: "Devnet. Data may be reset. Connected."; state varies: "Connecting." / "Can't connect."; the dot carries the state, so the label must too).
 
 ### 2.18 Banners
 
@@ -1529,7 +1529,6 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | home.signedOut.following | See posts from people you follow / Sign in to see posts from people you follow. |
 | home.newPosts | Show {N} new posts / Show 1 new post **(web)** |
 | list.end | You've reached the end. **(web)** |
-| list.legacy | Looking for older posts? Open Yappr classic ↗ (testnet feed ends only) |
 | list.loadMore | Load more |
 | post.reposted | {name} reposted / You reposted |
 

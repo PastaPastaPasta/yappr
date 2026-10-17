@@ -1348,7 +1348,7 @@ export function categorizeError(error: unknown, action = 'create post'): string 
     return 'Someone else got there first, so this can\'t be completed.'
   }
   if (isReferencedRuleReadInvalidError(error)) {
-    return 'This isn\'t available on this network right now. Try again later.'
+    return 'This isn\'t available right now. Try again later.'
   }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'

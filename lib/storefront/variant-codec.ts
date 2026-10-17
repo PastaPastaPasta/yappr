@@ -351,6 +351,7 @@ export function variantProblems(variants: ItemVariants, { imageCount, legacy = f
       if (legacy) add('Per-combination weights are not available for this store.')
       else if (!Number.isSafeInteger(combination.weight) || combination.weight < 0 || combination.weight > limits.maxWeight) add('Weights must be a whole number of grams.')
     }
+    if (capped && combination.imageUrl) add('Add each option’s own photo to the product images and select it again before saving.')
     const imageLimit = capped ? Math.min(imageCount, limits.maxImageIndex) : imageCount
     if (combination.image !== undefined && (!Number.isInteger(combination.image) || combination.image < 1 || combination.image > imageLimit)) {
       add('A combination shows an image the listing no longer has. Pick its image again.')

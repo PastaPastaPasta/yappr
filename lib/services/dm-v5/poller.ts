@@ -357,8 +357,8 @@ function advance(ctx: DmContext, st: StreamState, want: Want, last: number): voi
   st.resume = null
 }
 
-/** Ask for every wanted tag in one pass, then drain each hit, oldest first per stream. */
-export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<void> {
+/** Ask for every wanted tag, then drain each hit. Return the first drain failure after healthy streams settle. */
+export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<Error | undefined> {
   if (wants.length === 0) return
   const byTag = new Map<string, Want>()
   for (const want of wants) byTag.set(hexId(messageTag(want.st.key, want.w, want.j)), want)
@@ -375,6 +375,7 @@ export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<void> {
   const hitWants = new Set(hitList.map((hit) => hit.want))
   const hits = groupBy(hitList, (hit) => hit.want.st)
   const failed = new Set<StreamState>()
+  let failure: Error | undefined
 
   for (const [st, list] of Array.from(hits.entries())) {
     list.sort((a, b) => byWeekThenIndex(a.want, b.want))
@@ -384,6 +385,7 @@ export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<void> {
         advance(ctx, st, want, last)
       } catch (error) {
         failed.add(st)
+        failure ??= error instanceof Error ? error : new Error('DM stream continuation failed')
         logger.warn('DM v5: draining a stream failed:', error)
       }
     }
@@ -403,9 +405,10 @@ export async function fetchWants(ctx: DmContext, wants: Want[]): Promise<void> {
     if (want.kind === 'resume') want.st.resume = null
     if (want.kind === 'week' && want.w < settled) want.st.probed.add(want.w)
   }
+  return failure
 }
 
-/** One stream round: every wanted tag, drained. `only` limits it to one conversation. */
-export async function pollStreams(ctx: DmContext, only?: Conv): Promise<void> {
-  await fetchWants(ctx, collectWants(ctx, only))
+/** One stream round, returning its first drain failure. `only` limits it to one conversation. */
+export async function pollStreams(ctx: DmContext, only?: Conv): Promise<Error | undefined> {
+  return fetchWants(ctx, collectWants(ctx, only))
 }

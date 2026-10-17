@@ -28,7 +28,7 @@ function getStatusText(status: UsernameStatus): string {
     case 'available':
       return 'Available'
     case 'contested':
-      return 'Contested'
+      return 'Goes to a vote'
     case 'taken':
       return 'Taken'
     case 'invalid':
@@ -107,7 +107,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
                       </span>
                       {entry.status === 'contested' && (
                         <span
-                          title="Contested usernames require masternode voting and pay a contest fund into the vote, priced by the network before you sign. Your username won't appear on Yappr until voting completes."
+                          title="Short names are popular, so the Dash community votes on who gets them. Entering the vote costs a fee, which is charged when you register. The name appears on Yappr once the vote is decided."
                           className="cursor-help"
                         >
                           <Info className="w-4 h-4 text-orange-400" />
@@ -128,18 +128,16 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
             <AlertTriangle className="w-6 h-6 text-orange-500 flex-shrink-0 mt-0.5" />
             <div>
               <h3 className="font-semibold text-orange-800 dark:text-orange-200">
-                Contested Username{contestedUsernames.length > 1 ? 's' : ''} Only
+                {contestedUsernames.length > 1 ? 'These names go' : 'This name goes'} to a community vote
               </h3>
               <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
-                All of your usernames are <strong>contested</strong>, which means they require
-                masternode voting before they can be granted to you. Entering a vote pays a contest
-                fund from your identity&apos;s credits; the network sets the price, which is read
-                just before you sign.
+                Short names are popular, so the Dash community votes on who gets them. Entering
+                the vote costs a fee, which is charged from your balance when you register.
               </p>
               <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
-                <strong>Until voting completes, your username will not appear on Yappr</strong> and
-                your identity ID will be shown instead. Consider adding a non-contested username
-                (20+ characters, or containing digits 2-9) if you want your name visible right away.
+                <strong>Until the vote is decided, people will see your account without a username.</strong>{' '}
+                To be known by a name right away, add one with a number in it (like alex2) or one
+                that&apos;s 20 characters or longer.
               </p>
             </div>
           </div>
@@ -152,7 +150,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
               className="w-4 h-4 rounded border-orange-400 text-orange-600 focus:ring-orange-500"
             />
             <span className="text-sm text-orange-800 dark:text-orange-200">
-              I understand my username won&apos;t be available until voting completes
+              I understand my username won&apos;t show until the vote is decided
             </span>
           </label>
         </div>

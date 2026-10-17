@@ -1,4 +1,7 @@
+import type { Metadata } from 'next'
 import { APP_RETURN_SCRIPT } from '@/lib/app-connect/callback-channel'
+
+export const metadata: Metadata = { title: 'Wallet sign-in' }
 
 /**
  * The wallet's return page. A request the Yappr app made goes straight back

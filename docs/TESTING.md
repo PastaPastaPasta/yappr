@@ -216,8 +216,8 @@ localStorage.setItem('testing:yappr_session', JSON.stringify({
 // JSON.stringify(wif) — a bare WIF string will not load.
 localStorage.setItem('testing:yappr_secure_pk_<identityId>', JSON.stringify(wif))
 
-// sessionStorage
-sessionStorage.setItem('testing:yappr_skip_dpns', 'true')
+// "Skip choosing a username", remembered per identity (lib/username-skip.ts)
+localStorage.setItem('testing:yappr_skip_dpns:<identityId>', '1')
 ```
 
 Notes:
@@ -501,7 +501,7 @@ was set, so a user object without a DPNS username got pushed to
 `options.optional` is true.
 
 Non-optional pages still redirect, so keep seeding
-`testing:yappr_skip_dpns = "true"` for identities without a DPNS name whenever a
+`testing:yappr_skip_dpns:<identityId> = "1"` (localStorage) for identities without a DPNS name whenever a
 test touches one of those pages.
 
 ### Playwright `baseURL` drops the base path

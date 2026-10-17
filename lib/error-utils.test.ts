@@ -448,7 +448,7 @@ describe('4.2.0-beta.4 rejections', () => {
       expect(isDocumentPropertyRuleError(error)).toBe(false)
       expect(brokenPropertyRule(error)).toBeNull()
       expect(isPermanentProtocol14Error(error)).toBe(true)
-      expect(categorizeError(error)).toMatch(/isn't available on this network/i)
+      expect(categorizeError(error)).toMatch(/isn't available right now/i)
     }
   })
 

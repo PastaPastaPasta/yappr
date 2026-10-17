@@ -48,7 +48,7 @@ export interface ReportInput {
 export function reportInputShapeProblem(input: Pick<ReportInput, 'kind' | 'targetId' | 'targetOwnerId' | 'box'>): string | null {
   const { profiles, boxMaxBytes } = reportShape();
   if (input.kind === 'profile') {
-    if (!profiles) return 'Profiles cannot be reported on this network';
+    if (!profiles) return 'Profiles can\'t be reported yet';
     if (input.targetId !== input.targetOwnerId) return 'A profile report names the reported identity as its target';
     if (input.box) return 'A profile report carries no box';
   }

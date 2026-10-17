@@ -177,7 +177,7 @@ function InventoryPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
+      <div className="min-h-screen flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
           <main className="w-full max-w-[900px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
@@ -198,7 +198,7 @@ function InventoryPage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
+    <div className="min-h-screen flex">
       <Sidebar />
 
       <div className="flex-1 flex justify-center min-w-0">

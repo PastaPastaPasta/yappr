@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('@dashevo/evo-sdk', () => ({
   EvoSDK: class {
+    static testnetTrusted(options: object) { return new this({ ...options, network: 'testnet' }); }
+    static mainnetTrusted(options: object) { return new this({ ...options, network: 'mainnet' }); }
     connect = mocks.connect;
     contracts = { getMany: async () => new Map([['contract', {}]]) };
     identities = { fetch: mocks.fetch };
@@ -59,6 +61,7 @@ const settle = () => vi.advanceTimersByTimeAsync(0);
 beforeEach(() => {
   vi.resetModules();
   vi.useFakeTimers();
+  vi.spyOn(Math, 'random').mockReturnValue(0);
   mocks.instances.length = 0;
   mocks.connect.mockReset().mockResolvedValue(undefined);
   mocks.broadcast.mockReset().mockResolvedValue(undefined);
@@ -66,6 +69,12 @@ beforeEach(() => {
 });
 
 describe('connection recovery', () => {
+  it.each(['testnet', 'mainnet'] as const)('honors an explicit quorum service on %s', async (network) => {
+    const sdkService = await service();
+    await sdkService.initialize({ network, contractId: 'contract', quorumUrl: 'https://quorums.example' });
+    expect(mocks.instances[0].options).toMatchObject({ network, quorumUrl: 'https://quorums.example' });
+  });
+
   it('rejects the failed call immediately and rebuilds in the background with the same options', async () => {
     const sdkService = await service();
     await sdkService.initialize(config);
@@ -286,6 +295,7 @@ describe('restoreConnection', () => {
     mocks.connect.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { fail = reject; }));
     const initial = sdkService.initialize(config);
     const restored = sdkService.restoreConnection();
+    await settle();
     expect(mocks.instances).toHaveLength(1);
     const offline = new Error('offline initialization');
     fail(offline);

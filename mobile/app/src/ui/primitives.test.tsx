@@ -449,9 +449,9 @@ describe('badges and chips', () => {
     const { rerender } = render(<NetworkChip network="devnet" state="booting" onPress={jest.fn()} />);
     expect(screen.getByRole('button', { name: 'Devnet. Data may be reset. Connecting.' })).toBeTruthy();
     rerender(<NetworkChip network="testnet" state="ready" onPress={jest.fn()} />);
-    expect(screen.getByRole('button', { name: 'Testnet. Data may be reset. Connected.' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Testnet. Connected.' })).toBeTruthy();
     rerender(<NetworkChip network="testnet" state="unavailable" onPress={jest.fn()} />);
-    expect(screen.getByRole('button', { name: "Testnet. Data may be reset. Can't connect." })).toBeTruthy();
+    expect(screen.getByRole('button', { name: "Testnet. Can't connect." })).toBeTruthy();
     rerender(<NetworkChip network="devnet" state="offline" onPress={jest.fn()} />);
     expect(screen.getByRole('button', { name: 'Devnet. Data may be reset. Offline.' })).toBeTruthy();
     rerender(<NetworkChip network="devnet" state="booting" onPress={jest.fn()} />);
@@ -849,5 +849,24 @@ describe('nextLabelChangeAt', () => {
     const now = 1_000_000_000_000;
     expect(nextLabelChangeAt(now + 5_000, now)).toBe(now + 1_000);
     expect(nextLabelChangeAt(now + 3_600_000, now)).toBe(now + 3_540_000);
+  });
+});
+
+
+describe('text field timer cleanup (#709)', () => {
+  it('cancels a pending focus handoff when the field unmounts', () => {
+    jest.useFakeTimers();
+    try {
+      const field = createRef<TextResetHandle>();
+      const app = render(<TextField ref={field} label="Search" value="" onChangeText={jest.fn()} />);
+      const baseline = jest.getTimerCount();
+      fireEvent(screen.getByLabelText('Search'), 'focus');
+      act(() => field.current?.reset('query'));
+      expect(jest.getTimerCount()).toBe(baseline + 1);
+      app.unmount();
+      expect(jest.getTimerCount()).toBe(baseline);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

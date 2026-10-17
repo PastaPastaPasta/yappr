@@ -86,7 +86,7 @@ export function StarterGrantModal() {
     }
     if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
       setNeedsCritical(true)
-      toast.error(result.error ?? 'A CRITICAL key is needed')
+      toast.error('Claiming needs your account\'s highest-security key')
       return
     }
     toast.error(result.error ?? 'Claim failed')
@@ -102,10 +102,10 @@ export function StarterGrantModal() {
         </ModalTitle>
         <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
           {paused
-            ? 'YAPP can\'t be spent, bought or transferred on this network. Posts, replies, likes and reposts are paid in credits instead.'
+            ? 'YAPP can\'t be spent right now, so posts, replies, likes and reposts are paid in credits instead.'
             : claimState === 'claimed'
-              ? 'You don\'t have enough YAPP for this, and your starter YAPP is already claimed. YAPP can\'t be bought on this network, so try again to pay with credits instead.'
-              : 'You don\'t have enough YAPP for this. YAPP can\'t be bought on this network, so try again to pay with credits instead.'}
+              ? 'You\'ve used up your starter YAPP. Try again to pay with credits instead.'
+              : 'You don\'t have enough YAPP for this. Try again to pay with credits instead.'}
         </Dialog.Description>
         <Button data-testid="starter-grant-dismiss" onClick={close} className="w-full bg-yappr-500 hover:bg-yappr-600 text-white">
           OK
@@ -124,13 +124,13 @@ export function StarterGrantModal() {
       </ModalTitle>
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
         {paused
-          ? `Every identity may claim ${amount.toString()} YAPP once. YAPP can't be spent, bought or transferred on this network, so posts, replies, likes and reposts are paid in credits.`
-          : `Every identity may claim ${amount.toString()} YAPP once. Posts, replies, likes and reposts paid in YAPP have their network fee covered by Yappr while the grant lasts; after that you can keep posting on credits${locked ? '.' : ' or buy more YAPP.'}`}
+          ? `Every account can claim ${amount.toString()} YAPP once. YAPP can't be spent right now, so posts, replies, likes and reposts are paid in credits.`
+          : `Every account can claim ${amount.toString()} YAPP once. Posts, replies, likes and reposts paid in YAPP have their network fee covered by Yappr while the grant lasts; after that you can keep posting on credits${locked ? '.' : ' or buy more YAPP.'}`}
       </Dialog.Description>
       {needsCritical && (
         <div className="mb-4">
           <label htmlFor="starter-grant-wif" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            CRITICAL authentication key (WIF)
+            Highest-security private key
           </label>
           <input
             id="starter-grant-wif"
@@ -140,7 +140,7 @@ export function StarterGrantModal() {
             autoComplete="off"
             className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
           />
-          <p className="mt-1 text-xs text-gray-500">Token claims must be signed with a CRITICAL key. It is used once and never stored.</p>
+          <p className="mt-1 text-xs text-gray-500">Claiming needs your account&apos;s highest-security key. It&apos;s used once and never saved.</p>
         </div>
       )}
       <div className="flex flex-col gap-3">

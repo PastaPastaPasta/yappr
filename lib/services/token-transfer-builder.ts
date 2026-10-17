@@ -7,7 +7,7 @@
  * token-transition-builder.ts.
  */
 
-import { TokenTransferTransition } from '@dashevo/evo-sdk';
+import { TokenTransferTransition } from '@dashevo/wasm-sdk';
 import { yappIsTransferable } from '../contract-topology';
 import { buildUnsignedTokenBatch, type WalletTransitionRequest } from './token-transition-builder';
 
@@ -28,7 +28,7 @@ export function buildUnsignedYappTipTransition(
   amount: bigint,
   publicNote?: string
 ): Promise<WalletTransitionRequest> {
-  if (!yappIsTransferable()) return Promise.reject(new Error('YAPP cannot be transferred on this network'));
+  if (!yappIsTransferable()) return Promise.reject(new Error('YAPP can\'t be sent to other accounts'));
   return buildUnsignedTokenBatch('TokenTransferBuilder', senderId, (base) =>
     new TokenTransferTransition({
       base,

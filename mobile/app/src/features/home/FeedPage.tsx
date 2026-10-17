@@ -3,12 +3,9 @@ import type { FeedTab } from '@engine/api/feed';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { router } from 'expo-router';
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
-import { Pressable, RefreshControl, View } from 'react-native';
-import { ArrowTopRightOnSquareIcon } from 'react-native-heroicons/outline';
+import { RefreshControl, View } from 'react-native';
 import { useReducedMotion } from 'react-native-reanimated';
 
-import { config } from '~/config';
-import { openExternal } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
 import { engineSupervisor } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
@@ -20,7 +17,7 @@ import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 import { useColors } from '~/ui/tokens';
 
-import { LEGACY_APP_URL, readErrorMessage, UNAVAILABLE_MESSAGE } from './feed-data';
+import { readErrorMessage, UNAVAILABLE_MESSAGE } from './feed-data';
 import type { FeedSort } from './home-prefs';
 import { NewPostsPill } from './NewPostsPill';
 import { unpinOwnPosts, usePinnedPosts } from './own-posts';
@@ -74,36 +71,12 @@ function itemType(post: PostDTO): string {
   return post.media.length > 0 ? 'media' : 'text';
 }
 
-/**
- * The older posts web's previous deployment holds (testnet only): the end of
- * a feed links to it. Mainnet and devnet never show it, nor do empty states.
- */
-function LegacyLink() {
-  const c = useColors();
-  if (config.network !== 'testnet') return null;
-  return (
-    <Pressable
-      accessibilityRole="link"
-      onPress={() => openExternal(LEGACY_APP_URL)}
-      hitSlop={8}
-      testID="legacy-link"
-      className="min-h-11 flex-row items-center justify-center gap-1.5 px-4"
-    >
-      <Text variant="subhead" tone="link" className="text-center">
-        Looking for older posts? Open Yappr classic
-      </Text>
-      <ArrowTopRightOnSquareIcon size={16} color={c.link} />
-    </Pressable>
-  );
-}
-
 function ListEnd() {
   return (
     <View className="items-center gap-2 p-6" testID="feed-end">
       <Text variant="subhead" tone="secondary">
         You&apos;ve reached the end.
       </Text>
-      <LegacyLink />
     </View>
   );
 }

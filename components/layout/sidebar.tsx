@@ -34,6 +34,7 @@ import {
   BookOpenIcon as BookOpenIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn, truncateId } from '@/lib/utils'
+import { BetaPill } from '@/components/ui/beta-pill'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/lib/store'
 import { useVisibleUnreadNotificationCount } from '@/hooks/use-visible-unread-notification-count'
@@ -45,16 +46,18 @@ import { useAuth } from '@/contexts/auth-context'
 import { notificationService } from '@/lib/services'
 import { directMessageService } from '@/lib/services/direct-message-service'
 import { useDmV5Badge } from '@/components/messages/use-dm-engine'
+import { startVisibilityPolling } from '@/lib/poll-scheduling'
 import { dmIsV5 } from '@/lib/constants'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { LegalLinks } from './legal-links'
 
 const getNavigation = (isLoggedIn: boolean, userId?: string) => {
   if (!isLoggedIn) {
     return [
       { name: 'Home', href: '/', icon: HomeIcon, activeIcon: HomeIconSolid },
       { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
-      { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
-      { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid },
+      { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid, beta: 'store' as const },
+      { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid, beta: 'blog' as const },
     ]
   }
 
@@ -63,8 +66,8 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
     { name: 'Following', href: '/following', icon: UserGroupIcon, activeIcon: UserGroupIconSolid },
     { name: 'Followers', href: '/followers', icon: UsersIcon, activeIcon: UsersIconSolid },
     { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
-    { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
-    { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid },
+    { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid, beta: 'store' as const },
+    { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid, beta: 'blog' as const },
     { name: 'Notifications', href: '/notifications', icon: BellIcon, activeIcon: BellIconSolid },
     { name: 'Messages', href: '/messages', icon: EnvelopeIcon, activeIcon: EnvelopeIconSolid },
     { name: 'Bookmarks', href: '/bookmarks', icon: BookmarkIcon, activeIcon: BookmarkIconSolid },
@@ -142,17 +145,10 @@ export function Sidebar() {
     }
 
     const userId = user.identityId
-    let timeoutId: NodeJS.Timeout | null = null
     let cancelled = false
 
-    async function fetchAndSchedule(isInitial: boolean): Promise<void> {
+    async function fetchNotifications(isInitial: boolean): Promise<void> {
       if (cancelled) return
-
-      // Skip poll if page is hidden (but still schedule next poll)
-      if (!isInitial && document.hidden) {
-        timeoutId = setTimeout(() => fetchAndSchedule(false), NOTIFICATION_POLL_INTERVAL)
-        return
-      }
 
       const store = useNotificationStore.getState()
 
@@ -193,25 +189,28 @@ export function Sidebar() {
         // a block made on another device): re-check what is already shown.
         const blocked = await notificationService.blockedAmongHeld(userId, useNotificationStore.getState().notifications)
         if (!cancelled && blocked) useNotificationStore.getState().pruneBlocked(blocked, userId)
-      } catch (error) {
-        logger.error('Notification fetch error:', error)
+        // A partial source failure keeps its watermark; it must also slow retries.
+        if (result.failure !== undefined) throw result.failure
       } finally {
         if (isInitial && !cancelled) {
           store.setLoading(false)
           store.setHasFetchedOnce(true)
         }
       }
-
-      if (!cancelled) {
-        timeoutId = setTimeout(() => fetchAndSchedule(false), NOTIFICATION_POLL_INTERVAL)
-      }
     }
 
-    fetchAndSchedule(true).catch((err) => logger.error('Notification fetch failed:', err))
+    let initial = true
+    const stopPolling = startVisibilityPolling(async () => {
+      try {
+        await fetchNotifications(initial)
+      } finally {
+        initial = false
+      }
+    }, NOTIFICATION_POLL_INTERVAL, (error) => logger.error('Notification fetch failed:', error), true)
 
     return () => {
       cancelled = true
-      if (timeoutId) clearTimeout(timeoutId)
+      stopPolling()
     }
   }, [user?.identityId, dmV5])
   
@@ -222,7 +221,7 @@ export function Sidebar() {
   const formatIdentityId = (id: string) => truncateId(id, 6, 4)
 
   return (
-    <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-2 sticky top-[40px]">
+    <div className="hidden md:flex h-screen w-[275px] shrink-0 flex-col px-2 sticky top-0">
       <div className="flex-1 space-y-1 py-4 overflow-y-auto scrollbar-hide">
         <Link href="/welcome" className="flex items-center px-3 py-4 mb-2 group">
           <div className="text-2xl font-bold text-gradient">Yappr</div>
@@ -258,6 +257,7 @@ export function Sidebar() {
                   )}
                 </div>
                 <span>{item.name}</span>
+                {item.beta && <BetaPill product={item.beta} />}
               </Link>
             )
           })}
@@ -376,6 +376,7 @@ export function Sidebar() {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         )}
+        <LegalLinks className="px-3" />
       </div>
     </div>
   )

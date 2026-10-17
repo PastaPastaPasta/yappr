@@ -112,7 +112,10 @@ beforeAll(() => {
   notifyManager.setScheduler((callback) => callback());
   queryClient.setDefaultOptions({ queries: { ...queryClient.getDefaultOptions().queries, retry: false } });
 });
-afterEach(() => {
+afterEach(async () => {
+  // A cancelled in-flight query schedules GC in its finally block. Let it
+  // settle before clear() destroys its timer, including the 7-day persisted GC.
+  await queryClient.cancelQueries();
   queryClient.clear();
   withoutRetry();
   jest.useRealTimers();

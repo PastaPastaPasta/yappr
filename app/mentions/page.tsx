@@ -191,7 +191,7 @@ function MentionsPageContent() {
 export default function MentionsPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <Spinner size="md" />
       </div>
     }>

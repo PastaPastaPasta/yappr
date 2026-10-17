@@ -1,7 +1,8 @@
 'use client'
 
 import { logger } from '@/lib/logger'
-import { scopedKey } from '@/lib/storage-scope'
+import { hasSkippedUsername } from '@/lib/username-skip'
+import { signInDestination } from '@/lib/auth/intent-destination'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { usePathname, useRouter } from 'next/navigation'
@@ -143,19 +144,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [controller])
 
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
-    switch (intent.kind) {
-      case 'username-required':
-        useUsernameModal.getState().open(intent.identityId)
-        return
-      // The controller's profile gate is off, so `profile-required` never comes.
-      case 'profile-required':
-      case 'ready':
-        router.push('/feed')
-        return
-      case 'logged-out':
-        router.push('/login')
-        return
-    }
+    const next = signInDestination(intent)
+    if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
+    else router.push(next.href)
   }, [router])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
@@ -264,8 +255,7 @@ export function withAuth<P extends object>(
     const router = useRouter()
     const pathname = usePathname()
 
-    const skipDPNS = typeof window !== 'undefined'
-      && sessionStorage.getItem(scopedKey('yappr_skip_dpns')) === 'true'
+    const skipDPNS = user ? hasSkippedUsername(user.identityId) : false
     const needsUsername = Boolean(user && !user.dpnsUsername && !skipDPNS && !options?.optional)
 
     useEffect(() => {

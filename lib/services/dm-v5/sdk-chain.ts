@@ -11,7 +11,7 @@
  */
 
 import bs58 from 'bs58'
-import { Identifier } from '@dashevo/evo-sdk'
+import { Identifier } from '@dashevo/wasm-sdk'
 import { logger } from '@/lib/logger'
 import { YAPPR_DM_V5_CONTRACT_ID } from '@/lib/constants'
 import { normalizeBytes } from '@/lib/bytes'

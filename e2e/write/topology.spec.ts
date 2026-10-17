@@ -35,7 +35,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Browser, Locator, Page } from '@playwright/test'
-import { appUrl } from '../fixtures/app'
+import { appUrl, openBuildDetails } from '../fixtures/app'
 import { expect, hasSeedPhrase, NO_SEED_REASON, otherBotIdentity, seedContext, test, type BotIdentity } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
 import { reloadUntilVisible } from '../fixtures/eventual'
@@ -257,10 +257,10 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     expect(DEVNET_TOPOLOGIES, `the devnet env file must set NEXT_PUBLIC_CONTRACT_TOPOLOGY to a devnet cut`).toContain(topology)
     expect(topology, 'sync and async topology reads must agree').toBe(SPEC_TOPOLOGY)
 
-    await page.goto(appUrl('/about/'))
+    await openBuildDetails(page)
     await expect(page.getByText(contractId, { exact: true })).toBeVisible()
-    // /about prints the compiled-in descriptor value — the build's own claim.
-    await expect(page.getByTestId('about-topology')).toHaveText(topology)
+    // Build details print the compiled-in descriptor value — the build's own claim.
+    await expect(page.getByTestId('build-topology')).toHaveText(topology)
   })
 
   test('a root post and a reply to it are created', async ({ page, bot }) => {
