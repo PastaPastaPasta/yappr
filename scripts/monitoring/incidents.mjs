@@ -2,7 +2,7 @@
 // GitHub issue writes only; no Dash SDK, keys, or chain operations.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { incidentPlan } from './config.mjs';
+import { incidentPlan } from './incident-plan.mjs';
 
 const repo = process.env.GITHUB_REPOSITORY;
 if (!/^[\w.-]+\/[\w.-]+$/.test(repo ?? '')) throw new Error('Set GITHUB_REPOSITORY=owner/repo');

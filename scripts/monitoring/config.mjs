@@ -65,14 +65,6 @@ export function thresholds(env = process.env) {
   return values;
 }
 
-export function incidentPlan(results, existing) {
-  // Skipped checks are unknown; they must never resolve an existing incident.
-  return results.filter(result => result.status !== 'skip').map(result => {
-    const title = `[monitoring] ${result.key}`;
-    const issues = existing.filter(issue => issue.title === title);
-    return { title, result, issues, action: result.status === 'fail' ? (issues.length ? 'update' : 'open') : 'close' };
-  });
-}
 
 export function contractRoles(env) {
   return Object.fromEntries(Object.entries(env).filter(([key]) => key.endsWith('_CONTRACT_ID') || ['NEXT_PUBLIC_APP_CONNECT_APP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS'].includes(key)).map(([key, value]) => [key, key.endsWith('_GROUP_MEMBERS') ? value.split(',').map(pin => pin.trim()).filter(Boolean).sort().join(',') : value]));

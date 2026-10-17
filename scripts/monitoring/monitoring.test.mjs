@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { contractPins, contractRoles, incidentPlan, readNetwork, schemaHash, siteNetwork, thresholds } from './config.mjs';
+import { contractPins, contractRoles, readNetwork, schemaHash, siteNetwork, thresholds } from './config.mjs';
+import { incidentPlan } from './incident-plan.mjs';
 import { activityFilters, checkFresh, countActivity } from './chain.mjs';
 import { lazyChunks, smokeSite } from './sites.mjs';
 

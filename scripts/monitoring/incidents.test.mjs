@@ -1,13 +1,16 @@
 import { expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-it('deduplicates real issue API writes and closes only explicit recovery (offline gh fixture)', () => {
+it('runs without npm packages, reports missing results, and deduplicates recovery (offline gh fixture)', () => {
   const root = mkdtempSync(join(tmpdir(), 'yappr-incident-'));
   try {
+    // Resolve imports from an isolated directory with no node_modules ancestors.
+    for (const name of ['incidents.mjs', 'incident-plan.mjs']) copyFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), join(root, name));
+    const reporter = join(root, 'incidents.mjs');
     const statePath = join(root, 'state.json');
     const reportPath = join(root, 'report.json');
     writeFileSync(statePath, JSON.stringify({ issues: [], next: 1, labels: [] }));
@@ -34,7 +37,7 @@ fs.writeFileSync(path, JSON.stringify(state)); console.log(JSON.stringify(result
     chmodSync(gh, 0o700);
     const run = (status, key = 'site/production') => {
       writeFileSync(reportPath, JSON.stringify({ checkedAt: '2026-10-17T00:00:00Z', results: [{ key, status, detail: status }] }));
-      execFileSync(process.execPath, [fileURLToPath(new URL('./incidents.mjs', import.meta.url)), reportPath], { env: { ...process.env, GITHUB_REPOSITORY: 'fixture/repo', PATH: `${root}:${process.env.PATH}`, MONITOR_FIXTURE_STATE: statePath }, encoding: 'utf8' });
+      execFileSync(process.execPath, [reporter, reportPath], { env: { ...process.env, GITHUB_REPOSITORY: 'fixture/repo', PATH: `${root}:${process.env.PATH}`, MONITOR_FIXTURE_STATE: statePath }, encoding: 'utf8' });
       return JSON.parse(readFileSync(statePath, 'utf8'));
     };
     expect(run('fail').issues).toHaveLength(1);
@@ -43,5 +46,8 @@ fs.writeFileSync(path, JSON.stringify(state)); console.log(JSON.stringify(result
     expect(run('pass', 'site/mirror').issues[0].state).toBe('open');
     expect(run('pass').issues[0].state).toBe('closed');
     expect(JSON.parse(readFileSync(statePath, 'utf8')).labels).toEqual(['incident']);
+    unlinkSync(reportPath);
+    execFileSync(process.execPath, [reporter, reportPath], { cwd: root, env: { GITHUB_REPOSITORY: 'fixture/repo', PATH: `${root}:${process.env.PATH}`, MONITOR_FIXTURE_STATE: statePath }, encoding: 'utf8' });
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).issues.at(-1)).toMatchObject({ title: '[monitoring] monitor/execution', state: 'open' });
   } finally { rmSync(root, { recursive: true }); }
 }, 30000);
