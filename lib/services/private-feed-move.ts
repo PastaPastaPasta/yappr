@@ -33,6 +33,7 @@ import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { normalizeBytes } from '@/lib/bytes'
 import { scopedKey } from '@/lib/storage-scope'
+import { isDuplicateUniqueIndexError } from '@/lib/error-utils'
 import { cekAt, DEFAULT_FEED_CAPS, historyKey, MAX_TREE_CAPACITY, type CarriedFeed } from '@/lib/private-feed/crypto'
 
 /** Measured on sakura (docs/SOCIAL_V17.md): a grant 51–76M credits, a new feed 24–39M. Estimates sit at the upper middle. */
@@ -104,9 +105,9 @@ export type MoveListener = (progress: { done: number; total: number }) => void
 export async function renewPrivateFeed(
   ownerId: string, encryptionPrivateKey: Uint8Array, options: { bringHistory: boolean }, onProgress?: MoveListener,
 ): Promise<PrivateFeedResult & { historyLinked?: boolean }> {
-  // A move still open here, or one left unfinished on the chain (an open that was confirmed late, another device).
-  if (loadMove(ownerId) || (await adoptUnfinishedMove(ownerId)) > 0) return { success: false, error: 'Your followers are still being moved. Continue that first.' }
   try {
+    // A move still open here, or one left unfinished on the chain (an open that was confirmed late, another device).
+    if (loadMove(ownerId) || (await adoptUnfinishedMove(ownerId)) > 0) return { success: false, error: 'Your followers are still being moved. Continue that first.' }
     const current = await currentMainFeed(ownerId)
     let carryFrom: CarriedFeed | undefined
     if (options.bringHistory) {
@@ -217,7 +218,7 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
      */
     const settleGranted = async (recipientId: string, moved: GrantDocument): Promise<PrivateFeedResult | null> => {
       const source = await fetchGrant(ownerId, job.from, recipientId)
-      const removed = source !== null && (blocked.has(recipientId) || (await grantIsRevoked(source)))
+      const removed = blocked.has(recipientId) || (source !== null && (await grantIsRevoked(source)))
       if (!removed) {
         settle('done', recipientId)
         return null
@@ -229,14 +230,13 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       settle('skipped', recipientId)
       return null
     }
-    /** The grant just written, once queryable: the removal check needs it visible to every device. */
-    const landed = async (recipientId: string): Promise<GrantDocument | null> => {
-      for (let attempt = 0; attempt < 5; attempt++) {
+    /** The grant just written, once queryable (a device removing them meanwhile reads the new feed to take it back). */
+    const landed = async (recipientId: string, attempts: number): Promise<GrantDocument | null> => {
+      for (let attempt = 1; ; attempt++) {
         const grant = await fetchGrant(ownerId, job.to, recipientId)
-        if (grant) return grant
+        if (grant || attempt >= attempts) return grant
         await new Promise((resolve) => setTimeout(resolve, 2000))
       }
-      return null
     }
     for (const [planned, recipientId] of job.recipients.entries()) {
       mergeSkipped()
@@ -261,7 +261,8 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
           if (outcome.errorCode === 'REQUEST_WITHDRAWN') settle('skipped', recipientId)
           else {
             // Written now, or by another device running this move: check it once it is visible.
-            const written = await landed(recipientId)
+            // Poll only for a write that may still be landing; a refusal needs one look for another device's grant.
+            const written = await landed(recipientId, outcome.success || isDuplicateUniqueIndexError(outcome.error) ? 5 : 1)
             if (!written) return pause(outcome.success ? 'Waiting for the network to confirm a follower\'s access. Continue in a moment.' : outcome.error ?? 'The move paused.')
             const paused = await settleGranted(recipientId, written)
             if (paused) return paused
