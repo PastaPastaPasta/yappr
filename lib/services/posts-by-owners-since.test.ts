@@ -79,6 +79,7 @@ describe('queryPostsByOwnersSince', () => {
     expect(partial.posts).toHaveLength(100)
     // The caller must not treat the scan as covering everything up to its newest post.
     expect(partial.complete).toBe(false)
+    expect(partial.failure?.message).toBe('continuation refused')
 
     query.mockRejectedValue(new Error('offline'))
     await expect(queryPostsByOwnersSince(owners, 5_000, 500, 'contract')).rejects.toThrow('offline')
@@ -93,6 +94,7 @@ describe('queryPostsByOwnersSince', () => {
     })
     const result = await queryPostsByOwnersSince([owner(0)], 5_000, 50, 'contract')
     expect(result.complete).toBe(false)
+    expect(result.failure).toBeUndefined()
     expect(result.posts).toHaveLength(50)
   })
 

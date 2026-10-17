@@ -6,7 +6,7 @@
  * lives in token-transition-builder.ts.
  */
 
-import { TokenDirectPurchaseTransition } from '@dashevo/evo-sdk';
+import { TokenDirectPurchaseTransition } from '@dashevo/wasm-sdk';
 import { buildUnsignedTokenBatch, type WalletTransitionRequest } from './token-transition-builder';
 
 /**

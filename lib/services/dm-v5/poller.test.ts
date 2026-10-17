@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { weekOf, weekStart } from '@/lib/dm/kdf'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV } from '@/lib/dm/test-fixtures'
 import { encryptMessage } from '@/lib/dm/stream'
@@ -41,6 +41,30 @@ async function writeRaw(chain: MemoryChain, conv: DirectConv, w: number, j: numb
 }
 
 describe('POLL and DRAIN', () => {
+  it('reports a failed drain after preserving the first hit and leaves its cursor retryable', async () => {
+    const { alice, bob, aliceConv } = await setup()
+    await sendContent(alice.ctx, aliceConv, { type: 'text', text: 'first' })
+    await pollOnce(bob.ctx)
+    await sendContent(alice.ctx, aliceConv, { type: 'text', text: 'second' })
+    await sendContent(alice.ctx, aliceConv, { type: 'text', text: 'third' })
+    const conv = directConv(bob.ctx, ALICE_ID)
+    if (!conv) throw new Error('no conversation')
+    const st = stream(conv, ALICE_ID, { b: 0, r: 0 })
+    if (!st?.cur) throw new Error('no stream cursor')
+    const cursor = { ...st.cur }
+    const query = bob.chain.messagesByTags.bind(bob.chain)
+    const failure = new Error('drain refused')
+    vi.spyOn(bob.chain, 'messagesByTags')
+      .mockImplementationOnce(query)
+      .mockRejectedValueOnce(failure)
+    await expect(pollOnce(bob.ctx)).rejects.toBe(failure)
+    expect(texts(bob.ctx, ALICE_ID)).toEqual(['first', 'second'])
+    expect(st.cur).toEqual(cursor)
+    await pollOnce(bob.ctx)
+    expect(texts(bob.ctx, ALICE_ID)).toEqual(['first', 'second', 'third'])
+    expect(st.cur?.j).toBe(2)
+  })
+
   it('asks for one next tag per stream once caught up, and drains a whole week on a hit', async () => {
     const { ledger, alice, bob, aliceConv } = await setup()
     for (const text of ['1', '2', '3']) await sendContent(alice.ctx, aliceConv, { type: 'text', text })

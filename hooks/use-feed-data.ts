@@ -1,3 +1,4 @@
+import { startVisibilityPolling } from '@/lib/poll-scheduling';
 import { logger } from '@/lib/logger';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/auth-context';
@@ -427,54 +428,51 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     if (!newestPostTimestamp || isLoading) return;
     const generation = loadGenerationRef.current;
 
-    try {
-      // Read from where this view's checks have read without a gap (the
-      // newest post on screen before the first check), so each check reads
-      // only what is newer and a partial one is read again.
-      const scannedThrough = newPostsCheckFrom(newestPostTimestamp, newPostsMarkRef.current, generation);
-      logger.debug('Feed: Checking for new posts since', new Date(scannedThrough).toISOString());
-      const OVERLAP_MS = 2000;
-      const sinceTimestamp = Math.max(0, scannedThrough - OVERLAP_MS);
+    // Read from where this view's checks have read without a gap (the
+    // newest post on screen before the first check), so each check reads
+    // only what is newer and a partial one is read again.
+    const scannedThrough = newPostsCheckFrom(newestPostTimestamp, newPostsMarkRef.current, generation);
+    logger.debug('Feed: Checking for new posts since', new Date(scannedThrough).toISOString());
+    const OVERLAP_MS = 2000;
+    const sinceTimestamp = Math.max(0, scannedThrough - OVERLAP_MS);
 
-      let newPosts: Array<Record<string, unknown>> = [];
-      let complete = true;
+    let newPosts: Array<Record<string, unknown>> = [];
+    let complete = true;
+    let failure: Error | undefined;
 
-      if (activeTab === 'following' && user?.identityId) {
-        // Held a minute: the whole following list is not re-read every 15 s.
-        const followingIds = await followService.getFollowingIdsCached(user.identityId);
+    if (activeTab === 'following' && user?.identityId) {
+      // Held a minute: the whole following list is not re-read on every poll.
+      const followingIds = await followService.getFollowingIdsCached(user.identityId);
 
-        if (followingIds.length > 0) {
-          ({ posts: newPosts, complete } = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50));
-        }
-      } else {
-        newPosts = await queryPostsSince(sinceTimestamp, 50, feedLanguage || 'en');
+      if (followingIds.length > 0) {
+        ({ posts: newPosts, complete, failure } = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50));
       }
-
-      if (generation !== loadGenerationRef.current) return;
-      // A partial scan may have missed posts older than its newest: the mark stays at its start.
-      newPostsMarkRef.current = markAfterCheck(generation, scannedThrough, { posts: newPosts, complete });
-      if (newPosts.length === 0) return;
-
-      logger.debug(`Feed: Found ${newPosts.length} new posts`);
-
-      // v11: a post deleted since it was written is still listed, blank.
-      const transformedPosts = withoutHiddenTombstones(newPosts.map((doc) => transformRawPost(doc)));
-      sortFeedByTimestamp(transformedPosts);
-
-      const existingIds = new Set([
-        ...(posts || []).map((item) => item.id),
-        ...pendingNewPosts.map((item) => item.id),
-      ]);
-
-      const uniqueNewPosts = transformedPosts.filter((post) => !existingIds.has(post.id));
-
-      if (uniqueNewPosts.length > 0) {
-        logger.debug(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
-        setPendingNewPosts((prev) => generation === loadGenerationRef.current ? mergeFeedItems(uniqueNewPosts, prev) : prev);
-      }
-    } catch (error) {
-      logger.error('Feed: Error checking for new posts:', error);
+    } else {
+      newPosts = await queryPostsSince(sinceTimestamp, 50, feedLanguage || 'en');
     }
+
+    if (generation !== loadGenerationRef.current) return;
+    // A partial scan may have missed posts older than its newest: the mark stays at its start.
+    newPostsMarkRef.current = markAfterCheck(generation, scannedThrough, { posts: newPosts, complete });
+    if (newPosts.length > 0) logger.debug(`Feed: Found ${newPosts.length} new posts`);
+
+    // v11: a post deleted since it was written is still listed, blank.
+    const transformedPosts = withoutHiddenTombstones(newPosts.map((doc) => transformRawPost(doc)));
+    sortFeedByTimestamp(transformedPosts);
+
+    const existingIds = new Set([
+      ...(posts || []).map((item) => item.id),
+      ...pendingNewPosts.map((item) => item.id),
+    ]);
+
+    const uniqueNewPosts = transformedPosts.filter((post) => !existingIds.has(post.id));
+
+    if (uniqueNewPosts.length > 0) {
+      logger.debug(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
+      setPendingNewPosts((prev) => generation === loadGenerationRef.current ? mergeFeedItems(uniqueNewPosts, prev) : prev);
+    }
+    // Preserve useful partial data and its retry watermark, then slow failed reads.
+    if (failure !== undefined) throw failure;
   }, [activeTab, feedLanguage, isLoading, newestPostTimestamp, pendingNewPosts, posts, user?.identityId]);
 
   const showNewPosts = useCallback(() => {
@@ -499,15 +497,18 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     await loadPosts(true);
   }, [invalidateFeedLoads, loadPosts, resetEnrichment]);
 
+  // Keep the timer (and failure history) stable as enrichment or pending posts change.
+  const checkForNewPostsRef = useRef(checkForNewPosts);
+  checkForNewPostsRef.current = checkForNewPosts;
+  const canPoll = enabled && Boolean(newestPostTimestamp);
   useEffect(() => {
-    if (!enabled || !newestPostTimestamp) return;
-
-    const intervalId = setInterval(() => {
-      checkForNewPosts().catch((error) => logger.error('Failed to check for new posts:', error));
-    }, 15000);
-
-    return () => clearInterval(intervalId);
-  }, [enabled, checkForNewPosts, newestPostTimestamp]);
+    if (!canPoll) return;
+    return startVisibilityPolling(
+      () => checkForNewPostsRef.current(),
+      30_000,
+      (error) => logger.error('Failed to check for new posts:', error),
+    );
+  }, [canPoll]);
 
   useEffect(() => {
     if (!enabled) return;

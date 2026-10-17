@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import { publicAsset } from '@/lib/public-asset'
 import { useEffect, useState } from 'react'
 import { SearchInput } from '@/components/search/search-input'
 import { FeedStats } from './feed-stats'
@@ -32,7 +33,7 @@ export function RightSidebar() {
           rel="noopener noreferrer"
         >
           <Image
-            src="/pbde-light.png"
+            src={publicAsset('/pbde-light.png')}
             alt="Powered by Dash Evolution"
             width={140}
             height={47}
@@ -40,7 +41,7 @@ export function RightSidebar() {
             style={{ width: 'auto', height: 'auto' }}
           />
           <Image
-            src="/pbde-dark.png"
+            src={publicAsset('/pbde-dark.png')}
             alt="Powered by Dash Evolution"
             width={140}
             height={47}

@@ -26,7 +26,7 @@ import {
   PrivateKey,
   Identifier,
   TokenPaymentInfo,
-} from '@dashevo/evo-sdk';
+} from '@dashevo/wasm-sdk';
 import type { TokenPaymentInfoOptions } from '@dashevo/wasm-sdk';
 
 

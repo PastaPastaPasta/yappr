@@ -344,3 +344,13 @@ describe('the whole-transition size budget', () => {
     expect(v7).toBeLessThan(v6 / 2)
   })
 })
+
+
+describe('legacy combination photos (#720)', () => {
+  it('requires a gallery choice before saving a legacy URL in a typed table', () => {
+    const variants = shirt()
+    variants.combinations[0].imageUrl = 'https://x.test/own.jpg'
+    expect(variantProblems(variants, { imageCount: 0 })).toContain('Add each option’s own photo to the product images and select it again before saving.')
+    expect(variantProblems(variants, { imageCount: 0, legacy: true })).toEqual([])
+  })
+})

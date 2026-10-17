@@ -24,7 +24,7 @@ import {
   type PrivateKey,
   type StateTransition,
   type TokenPaymentInfo,
-} from '@dashevo/evo-sdk'
+} from '@dashevo/wasm-sdk'
 
 export interface ManualCreateInput {
   /** The document to create, carrying its entropy; its id is re-derived from the nonce. */

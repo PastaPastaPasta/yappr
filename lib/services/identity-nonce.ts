@@ -34,7 +34,7 @@
  * the SDK signs itself (document replace and delete, token and moderation
  * transitions) go through {@link withSdkSignedWrite}.
  */
-import { Identifier } from '@dashevo/evo-sdk';
+import { Identifier } from '@dashevo/wasm-sdk';
 import { logger } from '@/lib/logger';
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';

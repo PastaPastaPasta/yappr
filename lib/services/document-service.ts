@@ -64,17 +64,19 @@ export function newestDistinctDocuments(
  * failed, or it reached NEW_POSTS_BATCH_CAP) and kept only the posts read
  * before that: owners later in that batch may have newer posts than some
  * returned, so a caller must not treat the scan as covering everything up
- * to the newest post it got.
+ * to the newest post it got. `failure` distinguishes a failed continuation
+ * from the intentional batch cap, so callers can back off without losing posts.
  */
 export async function queryPostsByOwnersSince(
   ownerIds: string[],
   sinceTimestamp: number,
   limit = 50,
   contractId = YAPPR_CONTRACT_ID
-): Promise<{ posts: Record<string, unknown>[]; complete: boolean }> {
+): Promise<{ posts: Record<string, unknown>[]; complete: boolean; failure?: Error }> {
   const owners = Array.from(new Set(ownerIds.filter(Boolean)));
   if (owners.length === 0) return { posts: [], complete: true };
   let complete = true;
+  let failure: Error | undefined;
 
   const sdk = await getEvoSdk();
   const batches = await mapLimit(chunk(owners, MAX_IN_CLAUSE_VALUES), 3, async (batch) => {
@@ -102,12 +104,13 @@ export async function queryPostsByOwnersSince(
     } catch (error) {
       if (read.length === 0) throw error;
       complete = false;
+      failure ??= error instanceof Error ? error : new Error('Following-feed continuation failed');
       logger.warn('queryPostsByOwnersSince: a continuation page failed; keeping the posts read so far', error);
     }
     return read;
   });
 
-  return { posts: newestDistinctDocuments(batches.flat(), limit), complete };
+  return { posts: newestDistinctDocuments(batches.flat(), limit), complete, ...(failure ? { failure } : {}) };
 }
 
 /**

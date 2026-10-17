@@ -851,3 +851,22 @@ describe('nextLabelChangeAt', () => {
     expect(nextLabelChangeAt(now + 3_600_000, now)).toBe(now + 3_540_000);
   });
 });
+
+
+describe('text field timer cleanup (#709)', () => {
+  it('cancels a pending focus handoff when the field unmounts', () => {
+    jest.useFakeTimers();
+    try {
+      const field = createRef<TextResetHandle>();
+      const app = render(<TextField ref={field} label="Search" value="" onChangeText={jest.fn()} />);
+      const baseline = jest.getTimerCount();
+      fireEvent(screen.getByLabelText('Search'), 'focus');
+      act(() => field.current?.reset('query'));
+      expect(jest.getTimerCount()).toBe(baseline + 1);
+      app.unmount();
+      expect(jest.getTimerCount()).toBe(baseline);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

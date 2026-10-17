@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const sdk = vi.hoisted(() => ({ identities: { contractNonce: vi.fn() } }))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
 vi.mock('./token-service', () => ({ tokenService: { getTokenId: async () => 'token' } }))
-vi.mock('@dashevo/evo-sdk', () => ({
+vi.mock('@dashevo/wasm-sdk', () => ({
   Identifier: class { constructor(readonly id: string) {} },
   TokenBaseTransition: class { constructor(readonly options: unknown) {} },
   TokenTransition: class { constructor(readonly inner: unknown) {} },
@@ -27,7 +27,7 @@ vi.stubGlobal('localStorage', {
   removeItem: (key: string) => { storage.delete(key) },
 })
 
-import { TokenTransferTransition } from '@dashevo/evo-sdk'
+import { TokenTransferTransition } from '@dashevo/wasm-sdk'
 import { YAPPR_CONTRACT_ID } from '../constants'
 import { withIdentityWriteLock } from '@/lib/identity-write-lock'
 import { loadReservation } from './identity-nonce'

@@ -1,4 +1,4 @@
-import bs58 from 'bs58'
+import { parseAppConnectPins as parsePins } from './pins.mjs'
 import { DASHPAY_CONTRACT_ID } from '@/lib/constants'
 
 /**
@@ -60,45 +60,16 @@ export interface AppConnectPins {
   members: PinnedMemberContract[]
 }
 
-/** Every member is registered at version 1; an update could widen what group keys sign for. */
-export const APP_CONNECT_DEFAULT_MEMBER_VERSION = 1
+export { APP_CONNECT_DEFAULT_MEMBER_VERSION } from './pins.mjs'
 
-function isIdentifier(value: string): boolean {
-  try {
-    return bs58.decode(value).length === 32
-  } catch {
-    return false
-  }
-}
-
-/**
- * The pinned anchor, group, owner and members, or null when any is missing or
- * malformed (App Connect is then unavailable on this build). Members are
- * comma-separated contract ids, each optionally `id:version`; a bare id expects
- * version 1. The anchor must be pinned as a member, and no member twice.
- */
+/** The owning parser is shared with read-only release monitoring. */
 export function parseAppConnectPins(env: {
   appId?: string
   groupId?: string
   groupOwner?: string
   members?: string
 }): AppConnectPins | null {
-  const appId = env.appId?.trim() ?? ''
-  const groupId = env.groupId?.trim() ?? ''
-  const groupOwner = env.groupOwner?.trim() ?? ''
-  if (![appId, groupId, groupOwner].every(isIdentifier)) return null
-
-  const members: PinnedMemberContract[] = []
-  for (const entry of (env.members ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
-    const [contractId, versionText, extra] = entry.split(':')
-    if (extra !== undefined || !isIdentifier(contractId)) return null
-    const version = versionText === undefined ? APP_CONNECT_DEFAULT_MEMBER_VERSION : Number(versionText)
-    if (!Number.isSafeInteger(version) || version < 1) return null
-    if (members.some((member) => member.contractId === contractId)) return null
-    members.push({ contractId, version })
-  }
-  if (!members.some((member) => member.contractId === appId)) return null
-  return { appId, groupId, groupOwner, members }
+  return parsePins(env)
 }
 
 export function appConnectPins(): AppConnectPins | null {

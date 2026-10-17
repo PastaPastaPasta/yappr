@@ -11,7 +11,7 @@
 import { logger } from '@/lib/logger';
 import { tokenService } from './token-service';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
-import { TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/evo-sdk';
+import { TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/wasm-sdk';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { allocateNonce, awaitNonce, releaseNonce, reserveNonce } from './identity-nonce';
 

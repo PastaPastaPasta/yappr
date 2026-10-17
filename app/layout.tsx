@@ -5,6 +5,7 @@ import { Providers } from '@/components/providers'
 import ErrorBoundary from '@/components/error-boundary'
 import { AppShell } from '@/components/layout/app-shell'
 import { APP_URL } from '@/lib/constants'
+import { monitoringContractConfig } from '@/lib/monitoring-contract-config'
 import { IMG_SRC, MEDIA_SRC } from '@/lib/media/media-csp'
 
 const basePath = process.env.BASE_PATH || ''
@@ -53,6 +54,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full" suppressHydrationWarning>
       <head>
+        <meta name="yappr-contract-config" content={JSON.stringify(monitoringContractConfig)} />
         <meta
           httpEquiv="Content-Security-Policy"
           content={`default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src ${IMG_SRC}; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https: wss: https://44.240.98.102:1443; worker-src 'self' blob:; child-src 'self' blob:; media-src ${MEDIA_SRC}; frame-src 'self' blob: https://www.youtube-nocookie.com https://www.youtube.com`}

@@ -1856,8 +1856,25 @@ describe('dm on DM v5: groups', () => {
     // Joined during that poll (block time; the join's own save moves the ledger on after it).
     expect(group?.lastActivity?.getTime()).toBeGreaterThanOrEqual(before)
     expect(group?.lastActivity?.getTime()).toBeLessThanOrEqual(ledger.time)
-    // The owner's is dated by its creation, as before.
-    expect((await a.dm.conversations()).find(conv => conv.key === key)?.lastActivity).toBeInstanceOf(Date)
+    // Without a recorded join time, the owner's empty group has no activity.
+    expect((await a.dm.conversations()).find(conv => conv.key === key)?.lastActivity).toBeNull()
+  })
+
+  it('does not turn an empty group read position into fresh activity (#708)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    const b = await ready(userOn(ledger, bob))
+    const { key } = await a.engine().createGroup('Quiet', [bob])
+    await b.engine().tick()
+    const initial = (await b.dm.conversations()).find(conv => conv.key === key)?.lastActivity
+    const conv = b.engine().ctx.convs.get(key)
+    if (!conv) throw new Error('missing group')
+    ledger.time += 60_000
+    b.engine().ctx.store.touch(conv.entry, { readAt: ledger.time })
+    await b.engine().tick()
+    const refreshed = (await b.dm.conversations()).find(conv => conv.key === key)
+    expect(refreshed?.lastMessage).toBeNull()
+    expect(refreshed?.lastActivity).toEqual(initial)
   })
 
   it('reports a failed group write on its ticket', async () => {

@@ -9,6 +9,10 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: '@', replacement: path.resolve(__dirname) },
+      {
+        find: /^@dashevo\/wasm-sdk$/,
+        replacement: path.resolve(__dirname, 'node_modules/@dashevo/wasm-sdk/dist/raw/wasm_sdk.no_url.js'),
+      },
       // Same substitution as next.config.js: evo-sdk's published entry inlines its own
       // copy of wasm-sdk, so resolve the unbundled build to run what ships (one shared
       // wasm instance with the direct @dashevo/wasm-sdk imports).
