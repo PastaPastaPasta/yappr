@@ -101,19 +101,21 @@ describe('store notifications', () => {
 
     const events = await stores.getNotifications(SELLER, SINCE, vi.fn())
 
-    // Found this poll: its sources are read from the same watermark, in a second bundle.
-    expect(shapes(bundled(1))).toEqual([
+    // One bundle: the buyer feed and the seller's sources, from the watermark.
+    expect(bundle).toHaveBeenCalledTimes(1)
+    expect(shapes(bundled(0))).toEqual([
+      ['orderStatusUpdate', ['orderId.$ownerId', '==', SELLER]],
       ['storeOrder', ['storeId', '==', STORE]],
       ['storeReview', ['storeId', '==', STORE]],
       ['storeItem', ['storeId', '==', STORE]],
       ['itemReview', ['itemId', 'in', [ITEM]]],
     ])
-    expect(bundled(1).map((query) => query.where?.[1])).toEqual([
-      ['$createdAt', '>', SINCE], ['$createdAt', '>', SINCE], ['$createdAt', '>', 500], ['$createdAt', '>', SINCE],
+    expect(bundled(0).map((query) => query.where?.[1])).toEqual([
+      ['$createdAt', '>', SINCE], ['$createdAt', '>', SINCE], ['$createdAt', '>', SINCE], ['$createdAt', '>', 500], ['$createdAt', '>', SINCE],
     ])
     // Every member walks newest first, an `in` key included, as a composite requires.
-    expect(bundled(1).map((query) => query.orderBy)).toEqual([
-      [['storeId', 'asc'], ['$createdAt', 'desc']], [['storeId', 'asc'], ['$createdAt', 'desc']],
+    expect(bundled(0).map((query) => query.orderBy)).toEqual([
+      [['orderId.$ownerId', 'asc'], ['$createdAt', 'desc']], [['storeId', 'asc'], ['$createdAt', 'desc']], [['storeId', 'asc'], ['$createdAt', 'desc']],
       [['storeId', 'asc'], ['$createdAt', 'desc']], [['itemId', 'desc'], ['$createdAt', 'desc']],
     ])
     expect(events).toEqual([
@@ -174,7 +176,7 @@ describe('store notifications', () => {
 
       expect(getByOwner).toHaveBeenCalledTimes(2)
       // The polls that found no store did not read it: from its creation, not the watermark.
-      expect(bundled(1).find((query) => query.documentTypeName === 'storeOrder')?.where?.[1]).toEqual(['$createdAt', '>', 1_499])
+      expect(bundled(0).find((query) => query.documentTypeName === 'storeOrder')?.where?.[1]).toEqual(['$createdAt', '>', 1_499])
     } finally {
       vi.useRealTimers()
     }
@@ -240,6 +242,30 @@ describe('store notifications', () => {
     expect(storeItemAfter()).toEqual(['$createdAt', '>', 8_000])
   })
 
+  it('follows a store a moderator removed to its replacement, read from the replacement\'s creation', async () => {
+    vi.useFakeTimers({ now: 1_000_000, toFake: ['Date'] })
+    try {
+      getByOwner.mockResolvedValue(sellerStore)
+      const stores = await service()
+      await stores.getNotifications(SELLER, SINCE, vi.fn())
+      const REPLACEMENT = NEW_ITEM
+      getByOwner.mockResolvedValue({ id: REPLACEMENT, createdAt: new Date(4_000) })
+      answer({ storeOrder: [doc('OrdB', BUYER, 4_500, { storeId: REPLACEMENT })] })
+      // Within the re-check interval the cached store is still read.
+      await stores.getNotifications(SELLER, 6_000, vi.fn())
+      expect(getByOwner).toHaveBeenCalledTimes(1)
+
+      vi.setSystemTime(1_000_000 + 5 * 60 * 1000)
+      bundle.mockClear()
+      const events = await stores.getNotifications(SELLER, 6_000, vi.fn())
+
+      expect(bundled(0).find((query) => query.documentTypeName === 'storeOrder')?.where).toEqual([['storeId', '==', REPLACEMENT], ['$createdAt', '>', 3_999]])
+      expect(events.map((event) => event.id)).toEqual(['storeOrder-OrdB'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('splits a store with more than 100 items into `in` reads of 100', async () => {
     getAllByStore.mockResolvedValue(Array.from({ length: 150 }, (_, i) => ({ id: `item${i}`, title: `Item ${i}`, createdAt: new Date(i) })))
     getByOwner.mockResolvedValue(sellerStore)
@@ -247,7 +273,7 @@ describe('store notifications', () => {
 
     await stores.getNotifications(SELLER, SINCE, vi.fn())
 
-    const inReads = bundled(1).filter((query) => query.documentTypeName === 'itemReview')
+    const inReads = bundled(0).filter((query) => query.documentTypeName === 'itemReview')
     expect(inReads.map((query) => (query.where?.[0][2] as string[]).length)).toEqual([100, 50])
   })
 
@@ -290,7 +316,7 @@ describe('store notifications', () => {
 
     expect(onFailure).toHaveBeenCalledWith(new Error('quorum'))
     // Without the items there is nothing to read item reviews by; orders and store reviews still are.
-    expect(shapes(bundled(1)).map(([type]) => type)).toEqual(['storeOrder', 'storeReview'])
+    expect(shapes(bundled(0)).map(([type]) => type)).toEqual(['orderStatusUpdate', 'storeOrder', 'storeReview'])
     expect(events.map((event) => event.id)).toEqual(['storeOrder-Ord1'])
   })
 })

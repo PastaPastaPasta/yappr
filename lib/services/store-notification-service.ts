@@ -121,20 +121,21 @@ interface StoreItems {
  * - for a buyer, status changes on their orders (`buyerFeed
  *   [orderId.$ownerId, $createdAt]`).
  * One bundle a poll (the buyer feed, and a seller's sources); a full page
- * reads on to the end of the window. A user without a store is looked up
- * again every few minutes: the store's single-key `owner` index cannot ride
- * a composite, and a store found late is read from its creation, so none of
- * its events is skipped.
+ * reads on to the end of the window. Who owns which store is looked up
+ * apart, every few minutes (the store's single-key `owner` index cannot
+ * ride a composite): a store that is new since the last look (just opened,
+ * or a replacement for one a moderator removed) is read from its creation,
+ * so none of its events is skipped.
  */
 class StoreNotificationService {
-  /** A seller's store, kept for the session once found (one store per owner, until a moderator removes it). */
-  private storeOf = new Map<string, string>();
-  /** When a user was last found to have no store. */
-  private checkedWithoutStore = new Map<string, number>();
+  /** Each user's store as last looked up (null: none); one store per owner at a time. */
+  private storeOf = new Map<string, string | null>();
+  /** When each user's store was last looked up. */
+  private lookedUpAt = new Map<string, number>();
   private itemsOf = new Map<string, StoreItems>();
   /**
-   * A store found after earlier polls found none: read from its creation
-   * (those polls did not read it) until a poll reads it without a failure.
+   * A store new since an earlier look: read from its creation (the polls
+   * before did not read it) until a poll reads it without a failure.
    */
   private backfillFrom = new Map<string, number>();
 
@@ -143,37 +144,28 @@ class StoreNotificationService {
    * reported to `onFailure` and answers none; the rest still notify.
    */
   async getNotifications(userId: string, sinceTimestamp: number, onFailure: (error: unknown) => void): Promise<RawStoreNotification[]> {
-    const buyerFeed = sinceQuery(ORDER_STATUS_UPDATE, 'orderId.$ownerId', '==', userId, sinceTimestamp);
-    const known = this.storeOf.get(userId);
-    if (known) return this.sellerNotifications(known, sinceTimestamp, buyerFeed, onFailure);
+    const lookedUpAt = this.lookedUpAt.get(userId);
+    if (lookedUpAt === undefined || Date.now() - lookedUpAt >= STORE_RECHECK_MS) await this.lookUpStore(userId, onFailure);
 
-    const checkedAt = this.checkedWithoutStore.get(userId);
-    const lookUp = checkedAt === undefined || Date.now() - checkedAt >= STORE_RECHECK_MS;
-    const [{ docs: [statusUpdates] }, store] = await Promise.all([
-      this.readAll([buyerFeed], onFailure),
-      lookUp ? this.storeFor(userId, onFailure) : Promise.resolve(null),
-    ]);
-    const buyerEvents = deriveStoreNotifications({ orders: [], storeReviews: [], itemReviews: [], statusUpdates }, new Map());
-    if (!store) return buyerEvents;
-    if (checkedAt !== undefined) this.backfillFrom.set(store.id, store.createdAt.getTime() - 1);
-    return [...buyerEvents, ...await this.sellerNotifications(store.id, sinceTimestamp, null, onFailure)];
+    const buyerFeed = sinceQuery(ORDER_STATUS_UPDATE, 'orderId.$ownerId', '==', userId, sinceTimestamp);
+    const storeId = this.storeOf.get(userId);
+    if (storeId) return this.sellerNotifications(storeId, sinceTimestamp, buyerFeed, onFailure);
+    const { docs: [statusUpdates] } = await this.readAll([buyerFeed], onFailure);
+    return deriveStoreNotifications({ orders: [], storeReviews: [], itemReviews: [], statusUpdates }, new Map());
   }
 
-  /** The user's store, or null when they have none or it could not be read (reported). */
-  private async storeFor(userId: string, onFailure: (error: unknown) => void): Promise<{ id: string; createdAt: Date } | null> {
+  /** Looks the user's store up; a failed read is reported and keeps what was known. */
+  private async lookUpStore(userId: string, onFailure: (error: unknown) => void): Promise<void> {
     try {
       const store = await storeService.getByOwner(userId);
-      if (!store) {
-        this.checkedWithoutStore.set(userId, Date.now());
-        return null;
-      }
-      this.storeOf.set(userId, store.id);
-      this.checkedWithoutStore.delete(userId);
-      return store;
+      const lookedBefore = this.lookedUpAt.has(userId);
+      const previous = this.storeOf.get(userId);
+      this.storeOf.set(userId, store?.id ?? null);
+      this.lookedUpAt.set(userId, Date.now());
+      if (store && lookedBefore && store.id !== previous) this.backfillFrom.set(store.id, store.createdAt.getTime() - 1);
     } catch (error) {
       logger.error('Store notifications: reading your store failed:', error);
       onFailure(error);
-      return null;
     }
   }
 
