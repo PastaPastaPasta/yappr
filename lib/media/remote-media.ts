@@ -77,9 +77,20 @@ function ipfsReferenceOf(url: string): IpfsReference | null {
     const match = pattern.exec(trimmed)
     if (!match) continue
     if (CANONICAL_CID.test(match[1])) return ESCAPING_PATH.test(match[2]) ? 'refused' : { cid: match[1], path: match[2] }
-    if (/^ipfs:/i.test(trimmed) || OTHER_CID.test(match[1])) return 'refused'
+    if (/^ipfs:/i.test(trimmed) || OTHER_CID.test(match[1]) || match[1].includes('%')) return 'refused'
   }
-  return null
+  // A gateway decodes the path before routing it, so `/%69pfs/CID` or
+  // `/ipfs/%62afy…` reaches IPFS content too. Yappr never writes those.
+  const decoded = percentDecoded(trimmed)
+  return decoded !== trimmed && ipfsReferenceOf(decoded) !== null ? 'refused' : null
+}
+
+function percentDecoded(url: string): string {
+  try {
+    return decodeURIComponent(url)
+  } catch {
+    return url
+  }
 }
 
 /** The CID an IPFS reference names, in a spelling the denylist can match; null otherwise. */

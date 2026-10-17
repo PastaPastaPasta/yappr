@@ -118,8 +118,21 @@ export const useNotificationStore = create<NotificationState>()(
 
       removeFromActor: (actorId) => {
         const state = get();
-        if (!state.notifications.some(n => n.from.id === actorId)) return;
-        set({ notifications: state.notifications.filter(n => n.from.id !== actorId) });
+        let changed = false;
+        const notifications = state.notifications.flatMap((n): Notification[] => {
+          // An aggregated like loses just this liker, and goes only when none is left.
+          if (n.likers?.some(liker => liker.id === actorId)) {
+            changed = true;
+            const kept = n.likers.filter(liker => liker.id !== actorId);
+            if (kept.length === 0) return [];
+            const likerCount = Math.max(kept.length, (n.likerCount ?? n.likers.length) - 1);
+            return [{ ...n, from: kept[0], likers: kept, likerCount }];
+          }
+          if (n.from.id !== actorId) return [n];
+          changed = true;
+          return [];
+        });
+        if (changed) set({ notifications });
       },
 
       setFilter: (filter) => set({ filter }),

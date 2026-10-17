@@ -35,6 +35,7 @@ import { extractYouTubeVideoId } from '@/lib/link-preview/urls'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { YouTubeThumbnail } from '@/components/ui/youtube-thumbnail'
+import { isDeniedMedia } from '@/lib/media/remote-media'
 import { extractInlineText } from '@/lib/blog/content-utils'
 
 const CODE_LANGUAGES = ['javascript', 'typescript', 'python', 'rust', 'bash', 'json', 'html', 'css', 'go', 'solidity'] as const
@@ -355,6 +356,11 @@ function VideoEmbedPlayer({ url }: { url: string }) {
   useEffect(() => {
     setIsPlaying(false)
   }, [youtubeVideoId])
+
+  // A video on the takedown denylist shows neither its thumbnail nor its player.
+  if (isDeniedMedia(url)) {
+    return <p className="text-sm text-gray-400">This video isn&apos;t available.</p>
+  }
 
   if (!embedUrl) {
     return <p className="text-sm text-gray-400">Add a supported video URL to preview embed.</p>

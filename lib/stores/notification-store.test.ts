@@ -97,4 +97,18 @@ describe('removeFromActor', () => {
     store().removeFromActor('from-a')
     expect(store().notifications.map(n => n.id)).toEqual(['b'])
   })
+
+  it('takes just the blocked liker out of an aggregated like, and the like only when no liker is left', () => {
+    const user = (id: string) => ({ id }) as Notification['from']
+    const batch = (id: string, likers: string[], likerCount: number): Notification => ({
+      ...notification(id, 'like', 1), from: user(likers[0]), likers: likers.map(user), likerCount, timeless: true,
+    })
+    useNotificationStore.setState({ notifications: [], readIds: [] })
+    store().setNotifications([batch('both', ['alice', 'bob'], 3), batch('alone', ['alice'], 1)])
+
+    store().removeFromActor('alice')
+
+    expect(store().notifications.map(({ id, from, likers, likerCount }) => ({ id, from: from.id, likers: likers?.map(l => l.id), likerCount })))
+      .toEqual([{ id: 'both', from: 'bob', likers: ['bob'], likerCount: 2 }])
+  })
 })

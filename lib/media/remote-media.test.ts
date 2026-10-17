@@ -105,6 +105,19 @@ describe('IPFS spellings', () => {
     expect(imageSourceFor(`ipfs://${other}/a..b/c.png`)).toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${other}/a..b/c.png` })
   })
 
+  it('refuses a percent-encoded IPFS reference, which a gateway would decode to listed content', () => {
+    for (const url of [
+      `https://ipfs.io/ipfs/%62${CID_V1.slice(1)}`,
+      `https://ipfs.io/%69pfs/${CID_V1}`,
+      `https://ipfs.io/%69pfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy`,
+    ]) {
+      expect(isDeniedMedia(url)).toBe(true)
+      expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
+      expect(scriptCid(url)).toBeNull()
+    }
+    expect(imageSourceFor('https://cdn.example/a%20b.png').kind).toBe('proxied')
+  })
+
   it('drops a gateway query string from the IPFS path', () => {
     const cid = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
     expect(imageSourceFor(`https://ipfs.io/ipfs/${cid}?filename=a.png`)).toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${cid}` })

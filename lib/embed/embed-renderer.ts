@@ -1,6 +1,6 @@
 import type { EmbedBlock, EmbedRenderOptions } from './embed-types'
 import { FORBIDDEN_CSS_PATTERN } from '@/lib/blog/theme-types'
-import { imageSourceFor } from '@/lib/media/remote-media'
+import { imageSourceFor, isDeniedMedia } from '@/lib/media/remote-media'
 
 // Keep in sync with the first path-format entry of IPFS_GATEWAYS
 // (lib/utils/ipfs-gateway.ts) - ipfs.io rate-limits image bursts with 403s.
@@ -201,7 +201,7 @@ function renderBlock(block: EmbedBlock, options?: EmbedRenderOptions): string {
 
   if (type === 'video' || type === 'videoEmbed') {
     const url = sanitizeUrl(ensureString(props?.url), options)
-    if (!url) return ''
+    if (!url || isDeniedMedia(ensureString(props?.url))) return ''
     const label = ensureString(props?.caption) || ensureString(props?.name) || 'Watch video'
     return `<p><a href="${escapeHtml(url)}" target="_top" rel="noopener noreferrer">${escapeHtml(label)}</a></p>`
   }

@@ -602,8 +602,8 @@ class NotificationService {
   ): Promise<Notification[]> {
     if (rawNotifications.length === 0) return [];
 
-    // Collect unique user IDs and post IDs
-    const userIds = Array.from(new Set(rawNotifications.map(n => n.fromUserId)));
+    // Collect unique user IDs (every liker of an aggregated like) and post IDs
+    const userIds = Array.from(new Set(rawNotifications.flatMap(n => n.likers ?? [n.fromUserId])));
     const postIds = Array.from(new Set(
       rawNotifications.flatMap(n => (
         n.postId && n.type !== 'blogPost' && n.type !== 'blogComment' && n.replyContent === undefined ? [n.postId] : []
@@ -634,22 +634,24 @@ class NotificationService {
 
     const { unifiedProfileService } = await import('./unified-profile-service');
 
-    // Transform to Notification type
-    return rawNotifications.map(raw => {
-      const profile = profiles.find((p: { $ownerId: string }) => p.$ownerId === raw.fromUserId);
-      const username = usernameMap.get(raw.fromUserId);
-      const avatarUrl = avatarUrls.get(raw.fromUserId);
-
-      const user: User = {
-        id: raw.fromUserId,
+    const userOf = (id: string): User => {
+      const profile = profiles.find((p: { $ownerId: string }) => p.$ownerId === id);
+      const username = usernameMap.get(id);
+      return {
+        id,
         username: username || '',
-        displayName: profile?.displayName || username || this.truncateId(raw.fromUserId),
-        avatar: avatarUrl || unifiedProfileService.getDefaultAvatarUrl(raw.fromUserId),
+        displayName: profile?.displayName || username || this.truncateId(id),
+        avatar: avatarUrls.get(id) || unifiedProfileService.getDefaultAvatarUrl(id),
         bio: profile?.bio,
         followers: 0,
         following: 0,
         joinedAt: new Date()
       };
+    };
+
+    // Transform to Notification type
+    return rawNotifications.map(raw => {
+      const user = userOf(raw.fromUserId);
 
       // For reply notifications (and v10 mentions made in a reply), use
       // pre-fetched data and ensure parentId is set for navigation
@@ -709,6 +711,7 @@ class NotificationService {
         blogPostSlug: raw.blogPostSlug,
         targetKind: raw.targetKind,
         ...(raw.likerCount !== undefined ? { likerCount: raw.likerCount } : {}),
+        ...(raw.likers ? { likers: raw.likers.map(userOf) } : {}),
         ...(raw.timeless ? { timeless: true } : {}),
       };
     });
