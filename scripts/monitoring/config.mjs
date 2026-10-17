@@ -65,9 +65,8 @@ export function thresholds(env = process.env) {
   return values;
 }
 
-
 export function contractRoles(env) {
-  return Object.fromEntries(Object.entries(env).filter(([key]) => key.endsWith('_CONTRACT_ID') || ['NEXT_PUBLIC_APP_CONNECT_APP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS'].includes(key)).map(([key, value]) => [key, key.endsWith('_GROUP_MEMBERS') ? value.split(',').map(pin => pin.trim()).filter(Boolean).sort().join(',') : value]));
+  return Object.fromEntries(Object.entries(env).filter(([key]) => key.endsWith('_CONTRACT_ID') || ['NEXT_PUBLIC_APP_CONNECT_APP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER', 'NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS'].includes(key)).map(([key, value]) => [key, key.endsWith('_GROUP_MEMBERS') ? value.split(',').map(pin => pin.trim()).filter(Boolean).sort().join(',') : value]));
 }
 
 // Expected browser connection settings for this deployment's intended network.
@@ -77,4 +76,11 @@ export function siteNetwork(env, network = 'testnet') {
     addresses: (env.NEXT_PUBLIC_DAPI_ADDRESSES || '').split(',').map(address => address.trim()).filter(Boolean),
     quorumUrl: env.NEXT_PUBLIC_QUORUM_URL || '',
   } : {}) };
+}
+
+// Defaults match the owning browser configuration functions. Explicit settings
+// are compared verbatim so an unsupported/misapplied selection cannot pass.
+export function siteTopologies(env = {}) {
+  const defaults = { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v2', NEXT_PUBLIC_DM_TOPOLOGY: 'v3', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v1', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v1', NEXT_PUBLIC_PROFILE_TOPOLOGY: 'v1', NEXT_PUBLIC_POLLR_TOPOLOGY: 'v3' };
+  return Object.fromEntries(Object.entries(defaults).map(([key, fallback]) => [key, env[key] || fallback]));
 }

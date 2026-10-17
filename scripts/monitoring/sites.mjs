@@ -1,4 +1,4 @@
-import { SITES, contractRoles, siteNetwork, schemaHash } from './config.mjs';
+import { SITES, contractRoles, siteNetwork, siteTopologies, schemaHash } from './config.mjs';
 
 export async function fetchText(url, signal) {
   const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000), headers: { 'cache-control': 'no-cache' } });
@@ -28,6 +28,8 @@ export async function smokeSite(expected) {
     const actual = JSON.parse(encoded.replace(/&quot;|&amp;|&lt;|&gt;|&#x27;/g, entity => entities[entity]));
     const network = siteNetwork(expected.config?.env ?? {}, expected.config?.network ?? 'testnet');
     if (schemaHash(actual.$network ?? null) !== schemaHash(network)) throw new Error(`Active network settings ${JSON.stringify(actual.$network)}; expected ${JSON.stringify(network)}`);
+    const topologies = siteTopologies(expected.config?.env ?? {});
+    if (schemaHash(actual.$topologies ?? null) !== schemaHash(topologies)) throw new Error(`Active query topologies ${JSON.stringify(actual.$topologies)}; expected ${JSON.stringify(topologies)}`);
     const roles = contractRoles(actual);
     for (const [role, value] of Object.entries(contractRoles(expected.config?.env ?? {}))) {
       if (roles[role] !== value) throw new Error(`Active ${role}: ${roles[role] ?? 'missing'}; expected ${value}`);

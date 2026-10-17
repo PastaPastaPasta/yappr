@@ -4,12 +4,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { contractPins, contractRoles, readNetwork, schemaHash, siteNetwork, thresholds } from './config.mjs';
+import { contractPins, contractRoles, readNetwork, schemaHash, siteNetwork, siteTopologies, thresholds } from './config.mjs';
 import { incidentPlan } from './incident-plan.mjs';
-import { activityFilters, checkFresh, countActivity } from './chain.mjs';
+import { activityFilters, checkFresh, checkAppConnectGroup, countActivity } from './chain.mjs';
 import { lazyChunks, smokeSite } from './sites.mjs';
 
-const metadata = roles => `<meta name="yappr-contract-config" content="${JSON.stringify({ $network: { network: 'testnet' }, ...roles }).replaceAll('"', '&quot;')}"/>`;
+const metadata = roles => `<meta name="yappr-contract-config" content="${JSON.stringify({ $network: { network: 'testnet' }, $topologies: siteTopologies(), ...roles }).replaceAll('"', '&quot;')}"/>`;
 const id = '9hZwi4W3qqNtHFygjkgDvgud4EmE3dUxQUk5NjTYsdqN';
 afterEach(() => vi.unstubAllGlobals());
 
@@ -118,6 +118,7 @@ it.each(['testing', 'devnet'])('exposes every configured role for the %s build, 
     vi.resetModules();
     for (const [key, value] of Object.entries(config.env)) vi.stubEnv(key, value);
     const { monitoringContractConfig } = await import('../../lib/monitoring-contract-config');
+    expect(monitoringContractConfig.$topologies).toEqual(siteTopologies(config.env));
     expect(monitoringContractConfig.$network).toEqual(siteNetwork(config.env, config.network));
     expect(contractRoles(monitoringContractConfig)).toMatchObject(contractRoles(config.env));
   } finally { vi.unstubAllEnvs(); }
@@ -133,4 +134,42 @@ it('rejects a wrong browser network with matching roles and bundles', async () =
   const html = metadata({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: id, $network: { network: 'mainnet' } }) + '<script src="/_next/static/chunks/app.js"></script><script>"buildId":"abc1234"</script>';
   vi.stubGlobal('fetch', vi.fn(async url => new Response(String(url).endsWith('.js') ? id : html)));
   await expect(smokeSite({ url: 'https://yap.pr/', buildId: 'abc1234', config: { network: 'testnet', env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }, pins: [{ id }] } })).rejects.toThrow('Active network settings');
+});
+
+it('rejects different valid query topologies with matching IDs and browser network', async () => {
+  const html = metadata({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }) + '<script src="/_next/static/chunks/app.js"></script><script>"buildId":"abc1234"</script>';
+  vi.stubGlobal('fetch', vi.fn(async url => new Response(String(url).endsWith('.js') ? id : html)));
+  await expect(smokeSite({ url: 'https://yap.pr/', buildId: 'abc1234', config: { network: 'testnet', env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v16' }, pins: [{ id }] } })).rejects.toThrow('Active query topologies');
+});
+
+it('checks default effective query topologies against their owning browser configuration', async () => {
+  try {
+    vi.resetModules();
+    for (const key of Object.keys(siteTopologies())) vi.stubEnv(key, '');
+    const { monitoringContractConfig } = await import('../../lib/monitoring-contract-config');
+    expect(monitoringContractConfig.$topologies).toEqual(siteTopologies());
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it('proves and pages every group member kind; rejects expansions with unchanged contract pins', async () => {
+  const metadata = { timeMs: Date.now(), protocolVersion: 14 };
+  const env = { NEXT_PUBLIC_APP_CONNECT_GROUP_ID: id, NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER: 'owner', NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${id}:2` };
+  const info = { ownerId: 'owner', adminIds: [], free: vi.fn() };
+  const membersWithProof = vi.fn(async ({ kind, startAfter }) => ({ metadata, data: { kind, [kind]: kind === 'contracts' ? (startAfter ? [] : [id]) : [], ...(kind === 'contracts' && !startAfter ? { nextStartAfter: { contractId: id } } : {}) } }));
+  const sdk = { contractGroups: { infoWithProof: vi.fn(async () => ({ metadata, data: info })), membersWithProof } };
+  await expect(checkAppConnectGroup(sdk, env, thresholds({}))).resolves.toContain('1 exact pinned members');
+  expect(membersWithProof.mock.calls.map(([query]) => query.kind)).toEqual(['contracts', 'contracts', 'documentTypes', 'tokens']);
+  expect(membersWithProof.mock.calls[1][0].startAfter).toEqual({ contractId: id });
+  for (const [kind, extra] of [['contracts', 'extra-contract'], ['documentTypes', { contractId: id, documentTypeName: 'post' }], ['tokens', { contractId: id, tokenPosition: 0 }]]) {
+    membersWithProof.mockImplementation(async query => ({ metadata, data: { kind: query.kind, [query.kind]: query.kind === 'contracts' ? [id, ...(kind === 'contracts' ? [extra] : [])] : query.kind === kind ? [extra] : [] } }));
+    await expect(checkAppConnectGroup(sdk, env, thresholds({}))).rejects.toThrow('unexpected-members');
+  }
+  info.ownerId = 'other';
+  await expect(checkAppConnectGroup(sdk, env, thresholds({}))).rejects.toThrow('owner-mismatch');
+  info.ownerId = 'owner'; info.adminIds = ['admin'];
+  await expect(checkAppConnectGroup(sdk, env, thresholds({}))).rejects.toThrow('admins-mismatch');
+  info.adminIds = [];
+  membersWithProof.mockImplementation(async ({ kind }) => ({ metadata, data: { kind, [kind]: [] } }));
+  await expect(checkAppConnectGroup(sdk, env, thresholds({}))).rejects.toThrow('missing-members');
+  expect(info.free).toHaveBeenCalledTimes(7);
 });

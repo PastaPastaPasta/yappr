@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // This worker contains only proved reads. No keys, signers or transitions.
 import { EvoSDK, PlatformVersion } from '@dashevo/evo-sdk';
+import { checkAppConnectGroupTrust } from 'platform-auth';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -65,6 +66,42 @@ export async function countActivity(sdk, id, type, schema, since, max) {
   return `${type}: ${count} retained documents in window (threshold ${max})`;
 }
 
+export async function checkAppConnectGroup(sdk, env, limits) {
+  const groupId = env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID;
+  const ownerId = env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER;
+  const pinned = (env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS ?? '').split(',').map(value => value.trim()).filter(Boolean).map(value => ({ kind: 'contract', contractId: value.split(':')[0] }));
+  if (!groupId || !ownerId || !pinned.length) throw new Error('Incomplete App Connect group pins (id, owner, members required)');
+  const response = await sdk.contractGroups.infoWithProof(groupId);
+  checkFresh(response.metadata, limits);
+  const info = response.data;
+  if (!info) throw new Error('App Connect group-not-found');
+  try {
+    const members = [];
+    for (const kind of ['contracts', 'documentTypes', 'tokens']) {
+      let startAfter;
+      const seen = new Set();
+      for (let pages = 0; ; pages++) {
+        if (pages >= 100) throw new Error(`App Connect ${kind} membership exceeds monitoring page limit`);
+        const result = await sdk.contractGroups.membersWithProof({ contractGroupId: groupId, kind, limit: 100, ...(startAfter ? { startAfter } : {}) });
+        checkFresh(result.metadata, limits);
+        const page = result.data;
+        if (page.kind !== kind) throw new Error('App Connect membership kind mismatch');
+        members.push(...(page.contracts ?? []).map(contractId => ({ kind: 'contract', contractId })),
+          ...(page.documentTypes ?? []).map(member => ({ kind: 'documentType', ...member })),
+          ...(page.tokens ?? []).map(member => ({ kind: 'token', contractId: member.contractId, position: member.tokenPosition })));
+        if (!page.nextStartAfter) break;
+        const cursor = schemaHash(page.nextStartAfter);
+        if (seen.has(cursor)) throw new Error('App Connect membership pagination made no progress');
+        seen.add(cursor);
+        startAfter = page.nextStartAfter;
+      }
+    }
+    const trust = await checkAppConnectGroupTrust({ groupInfo: async () => ({ ownerId: info.ownerId, adminIds: info.adminIds, members }) }, { groupId, ownerId, adminIds: [], members: pinned });
+    if (!trust.ok) throw new Error(`App Connect ${trust.reason}${trust.members ? `: ${JSON.stringify(trust.members)}` : ''}`);
+    return `Owner ${ownerId}; no admins; ${members.length} exact pinned members across all kinds (proved)`;
+  } finally { info.free(); }
+}
+
 async function main() {
   const name = process.argv[2];
   const limits = thresholds();
@@ -126,6 +163,11 @@ async function main() {
   if (!sdk) return;
   const pv = PlatformVersion.latest();
   const owners = new Set();
+  if (env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID || env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER || env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS) {
+    await record('app-connect/group', () => checkAppConnectGroup(sdk, env, limits));
+  } else {
+    console.log(JSON.stringify({ key: `chain/${name}/app-connect/group`, status: 'skip', detail: 'No App Connect group configured' }));
+  }
 
   for (const pin of config.pins) {
     let json;
