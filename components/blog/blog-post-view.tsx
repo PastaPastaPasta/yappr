@@ -30,6 +30,7 @@ import { useBlogFollow } from '@/hooks/use-blog-follow'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { APP_URL } from '@/lib/constants'
 import { useRouter } from 'next/navigation'
+import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { blogPostService } from '@/lib/services'
@@ -236,6 +237,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
                 {isFollowing ? 'Following' : 'Follow'}
               </button>
             )}
+            <ContractReportButton contract="blog" docType="blogPost" targetId={post.id} ownerId={post.ownerId} />
             <ModeratorContentMenu
               target={documentRemovalTarget('blog', 'blogPost', 'blog post', post, post.title)}
               ownerId={post.ownerId}

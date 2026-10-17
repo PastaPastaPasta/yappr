@@ -1,5 +1,7 @@
 'use client'
 
+import { LimitedInput } from '@/components/ui/limited-text'
+
 import { useState } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { APPROVED_PAYMENT_SCHEMES } from '@/lib/services/unified-profile-service'
@@ -150,7 +152,7 @@ export function PaymentUriInput({
       {/* Add new URI */}
       {uris.length < maxUris && (
         <div className="flex gap-2">
-          <input
+          <LimitedInput contract="social" document="yapprProfile" field="paymentUris[]"
             type="text"
             value={newUri}
             onChange={(e) => {

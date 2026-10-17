@@ -13,6 +13,7 @@ import {
 } from '@/lib/services/unified-profile-service'
 import { Button } from '@/components/ui/button'
 import { avatarSeedMaxLength } from '@/lib/profile/v10-profile'
+import { fieldLimits } from '@/lib/field-limits'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { ArrowPathIcon, SparklesIcon, PhotoIcon } from '@heroicons/react/24/outline'
@@ -292,7 +293,7 @@ export function AvatarCustomization({ onSave, compact = false }: AvatarCustomiza
       ) : (
         /* Custom Image Tab */
         <div className="space-y-4">
-          <ProfileImageUpload
+          <ProfileImageUpload urlLimits={fieldLimits('social', 'yapprProfile', 'avatar')}
             currentUrl={customUrl || undefined}
             onUpload={handleCustomImageUpload}
             onClear={handleClearCustomImage}

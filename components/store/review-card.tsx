@@ -8,6 +8,7 @@ import { CheckBadgeIcon } from '@heroicons/react/24/solid'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { RatingStars } from './rating-stars'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
+import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { formatDate } from '@/lib/utils/format'
@@ -124,6 +125,7 @@ export function ReviewCard({ review, index = 0, onRemoved }: ReviewCardProps) {
                 Ordered
               </span>
             )}
+            <ContractReportButton contract="storefront" docType="storeReview" targetId={review.id} ownerId={review.reviewerId} />
             {onRemoved && (
               <ModeratorContentMenu
                 className="ml-auto"

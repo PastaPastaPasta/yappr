@@ -1,10 +1,12 @@
 'use client'
 
+import { fieldLimits } from '@/lib/field-limits'
+import { LimitedInput } from '@/components/ui/limited-text'
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { scopedKey } from '@/lib/storage-scope'
 import { XMarkIcon, Cog6ToothIcon, PhotoIcon, LinkIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { IpfsImage } from '@/components/ui/ipfs-image'
@@ -85,6 +87,9 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
 
   const [title, setTitle] = useState(editPost?.title ?? savedDraft?.title ?? '')
   const [summary, setSummary] = useState(editDecoded.text || savedDraft?.subtitle || '')
+  // A hidden summary is stored with one leading zero-width space (three UTF-8 bytes).
+  const subtitle = fieldLimits('blog', 'blogPost', 'subtitle')
+  const subtitleLimits = { maxLength: (subtitle.maxLength ?? 256) - 1, maxBytes: (subtitle.maxBytes ?? 768) - 3 }
   const [summaryHidden, setSummaryHidden] = useState(editDecoded.hidden || savedDraft?.summaryHidden || false)
   const [coverImage, setCoverImage] = useState(editPost?.coverImage ?? savedDraft?.coverImage ?? '')
   const [labels, setLabels] = useState<string[]>(editPost?.labels ?? decodeLabelList(savedDraft?.labels))
@@ -427,11 +432,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                 </div>
               )}
               <div className="flex gap-2">
-                <Input
+                <LimitedInput contract="blog" document="blogPost" field="labels[]"
                   ref={labelInputRef}
                   value={customLabel}
                   onChange={(e) => setCustomLabel(e.target.value)}
-                  maxLength={40}
                   placeholder="Add a label..."
                   className="h-8 text-xs"
                   onKeyDown={(event) => {
@@ -507,7 +511,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
             <div className="flex min-h-[44px] items-center gap-2">
               {showCoverUrlInput ? (
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                  <input
+                  <LimitedInput contract="blog" document="blogPost" field="coverImage"
                     type="url"
                     value={coverUrlInput}
                     onChange={(e) => setCoverUrlInput(e.target.value)}
@@ -536,11 +540,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                   </button>
                 </div>
               ) : (
-                <input
+                <LimitedInput contract="blog" document="blogPost" field="title"
                   type="text"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  maxLength={128}
                   placeholder="Title"
                   className="min-w-0 flex-1 bg-transparent text-[32px] font-bold leading-tight text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-gray-600 focus:outline-none"
                 />
@@ -586,11 +589,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
 
             {/* Summary */}
             <div className="mt-3 flex items-center gap-2">
-              <input
+              <LimitedInput contract="blog" document="blogPost" field="subtitle" limits={subtitleLimits}
                 type="text"
                 value={summary}
                 onChange={(e) => setSummary(e.target.value)}
-                maxLength={255}
                 placeholder="Add a summary..."
                 className="min-w-0 flex-1 bg-transparent text-lg text-gray-600 dark:text-gray-400 placeholder:text-gray-500 dark:placeholder:text-gray-600 focus:outline-none"
               />

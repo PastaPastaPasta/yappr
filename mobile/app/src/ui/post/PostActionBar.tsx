@@ -190,6 +190,7 @@ export interface PostActionBarProps {
   /** The viewer's repost is their own quote with text (`viewer.ownQuoteId`, not bare). */
   quoted?: boolean;
   bookmarked?: boolean;
+  canLike?: boolean;
   /** Private posts take no replies or quotes (PRD POST-08). */
   canReply?: boolean;
   /** From engine capabilities for the post's kind (`canRepost(kind)`). */
@@ -233,6 +234,7 @@ export function PostActionBar({
   reposted = false,
   quoted = false,
   bookmarked = false,
+  canLike = true,
   canReply = true,
   canRepost = true,
   canBookmark = true,
@@ -285,6 +287,7 @@ export function PostActionBar({
           count={likes}
           showCount={showCount}
           label={`${liked ? 'Unlike' : 'Like'}, ${plural(likes, 'like', 'likes')}`}
+          disabled={!canLike}
           onPress={withLikeHaptic(liked, onLike)}
           busy={marksLoading}
           testID={`like-btn-${postId}`}

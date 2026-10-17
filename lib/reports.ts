@@ -24,6 +24,8 @@
  * A report is public: anyone can read who reported what, and why, and how the
  * moderators resolved it.
  */
+import { fieldLimits } from './field-limits'
+import { fitsText } from './text-limits'
 import { declaredActionFee, reportShape, reportsWithdrawOnlyWhilePending, type TargetKind } from './contract-topology'
 import { categorizeError, extractErrorMessage, hasConsensusCode, isDeleteConstraintError, isReferenceNotFoundError } from './error-utils'
 import { normalizeBytes } from './bytes'
@@ -115,7 +117,7 @@ export function reportInputProblem(reason: number | null, note: string): string 
   if (reason === null || !reportReasonsOffered().some((known) => known.code === reason)) return 'Choose why you are reporting this'
   const trimmed = note.trim()
   if (reason === OTHER_REASON_CODE && trimmed.length === 0) return 'Say what is wrong with it'
-  if (trimmed.length > REPORT_NOTE_MAX_LENGTH) return `Keep the details to ${REPORT_NOTE_MAX_LENGTH} characters`
+  if (!fitsText(trimmed, { ...fieldLimits('social', 'report', 'note'), maxLength: REPORT_NOTE_MAX_LENGTH })) return `Shorten the details to fit the ${REPORT_NOTE_MAX_LENGTH}-character size limit`
   return null
 }
 
@@ -203,7 +205,7 @@ function isReportStatus(value: unknown): value is ReportStatus {
  */
 export function resolutionInputProblem(status: number | null, resolution: string): string | null {
   if (!isReportStatus(status)) return 'Choose how the report was resolved'
-  if (resolution.trim().length > REPORT_RESOLUTION_MAX_LENGTH) return `Keep the resolution to ${REPORT_RESOLUTION_MAX_LENGTH} characters`
+  if (!fitsText(resolution.trim(), { ...fieldLimits('social', 'report', 'resolution'), maxLength: REPORT_RESOLUTION_MAX_LENGTH })) return `Shorten the resolution (up to ${REPORT_RESOLUTION_MAX_LENGTH} characters)`
   return null
 }
 

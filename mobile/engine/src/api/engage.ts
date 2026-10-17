@@ -10,7 +10,7 @@ import { repostService } from '@/lib/services/repost-service'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, enrichToDTOs, notSupported, quoteTargetIds, requireViewer, rereadQuotedPosts, viewerId, withLoadingAuthor } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
-import { assertTarget, relationProbe, settleTarget, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
+import { assertTarget, badRequest, relationProbe, settleTarget, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { fromBoolean, fromDeleteBoolean, wasConfirmed } from '../writes/lib-results'
 import { likeExists, ownQuoteStrict, repostExists } from '../writes/strict-reads'
 import type { TicketStore, WriteResult } from '../writes/tickets'
@@ -124,6 +124,7 @@ export function createEngageWrites(tickets: TicketStore) {
   tickets.register<TargetArgs>('like', {
     persistArgs: true,
     async run({ target }, ctx) {
+      if (target.ownerId === signer(ctx)) throw badRequest('You cannot like your own post')
       await settleTarget(ctx, target.id)
       // The target's author is agreement-bound on v9/v10 likes; its tag lib reads itself.
       return fromBoolean(await likeService.likePost(target.id, signer(ctx), target.ownerId, target.kind, { author: target.ownerId }))
@@ -179,7 +180,8 @@ export function createEngageWrites(tickets: TicketStore) {
 
   function submit(op: WriteOp, target: TargetRef, what: string, gate?: (kind: TargetRef['kind']) => boolean): WriteTicket {
     assertTarget(target)
-    requireViewer(what)
+    const viewer = requireViewer(what)
+    if (op === 'like' && target.ownerId === viewer) throw badRequest("You cannot like your own post")
     if (gate && !gate(target.kind)) throw notSupported(`${what} a ${target.kind}`)
     return tickets.submit<TargetArgs>({ op, args: { target }, target })
   }
