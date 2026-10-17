@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { logger } from '@/lib/logger'
 import { moderatedContract } from '@/lib/moderated-contracts'
+import { forgetStorefrontReads } from '@/lib/storefront/moderation-refresh'
 import { countedSigners, moderationServiceFor, type RemovalRoute, type TeamAction } from '@/lib/services/moderation-service'
 import { CharterReasonPicker, useSeatedReasons } from './charter-reason-picker'
 
@@ -113,6 +114,12 @@ export function ModeratorRemoveModal() {
     setRouteFailed(false)
   }, [isOpen, loadRoute])
 
+  /** The document is gone: storefront reads that counted or showed it are dropped before the view updates. */
+  const afterRemoval = () => {
+    if (contract === 'storefront') forgetStorefrontReads()
+    onRemoved?.()
+  }
+
   const reset = () => {
     setReason('')
     setReasonDocumentId('')
@@ -166,7 +173,7 @@ export function ModeratorRemoveModal() {
       // Already removed (by another moderator, or an earlier attempt whose
       // answer was lost): what was asked for holds.
       toast(result.error ?? `This ${noun} is already gone`, { duration: 6000 })
-      onRemoved?.()
+      afterRemoval()
       reset()
       close()
       return
@@ -179,7 +186,7 @@ export function ModeratorRemoveModal() {
     toast.success(result.snapshotSaved
       ? `${removed}. A copy is kept on this device for a week, so it can be restored from the moderation settings.`
       : `${removed}. No copy could be kept on this device, so it cannot be restored.`)
-    onRemoved?.()
+    afterRemoval()
     reset()
     close()
   }
@@ -214,7 +221,7 @@ export function ModeratorRemoveModal() {
     }
     if (result.status === 'closed') {
       toast.success(`${Noun} removed by the team. A team removal cannot be undone.`)
-      onRemoved?.()
+      afterRemoval()
     } else {
       const more = route.needed - 1
       toast.success(`Team removal proposed. It needs ${more} more approval${more === 1 ? '' : 's'}${route.leaderRequired && !route.viewerIsLeader ? ', the leader\'s among them' : ''}; members approve it from the moderation settings.`, { duration: 8000 })
@@ -236,7 +243,7 @@ export function ModeratorRemoveModal() {
       return
     } else if (result.status === 'closed') {
       toast.success(`${Noun} removed by the team. A team removal cannot be undone.`)
-      onRemoved?.()
+      afterRemoval()
     } else {
       toast.success('Approved. The removal runs once the rest of the team approves it.')
     }

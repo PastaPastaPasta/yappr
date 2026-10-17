@@ -17,7 +17,6 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
-import { clearStoreViewCache } from '@/lib/caches/store-view-cache'
 import { ImageGallery, QuantityControl, MobileCartFab, RatingStars, ItemReviewList, BlockedOwnerBanner } from '@/components/store'
 import { formatPrice, formatPriceRange } from '@/lib/utils/format'
 import { useAuth } from '@/contexts/auth-context'
@@ -310,8 +309,6 @@ function ItemDetailContent() {
                 ownerId={item.ownerId}
                 onRemoved={() => {
                   storeItemService.clearCache(item.id)
-                  // The store page restores its saved view on a back navigation; it must not bring the listing back.
-                  clearStoreViewCache(item.storeId)
                   router.push(store ? `/store/view?id=${store.id}` : '/store')
                 }}
               />
@@ -496,8 +493,7 @@ function ItemDetailContent() {
                 <ItemReviewList
                   itemId={item.id}
                   onReviewRemoved={() => {
-                    // The average and count came from the proved rating tree, which the removal changed.
-                    storeStatsService.invalidateItem(item.id)
+                    // The average and count come from the proved rating tree, which the removal changed.
                     storeStatsService.getItemRatingSummary(item.id, item.storeId)
                       .then(setRating)
                       .catch((error) => logger.warn('Failed to refresh the item rating:', error))
