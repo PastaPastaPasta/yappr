@@ -62,7 +62,7 @@ describe('which documents a surface cleanup touches', () => {
  * clauses off canned rows (a derived property such as `blogPostId.$ownerId` is a plain field
  * here), `countBy` counts them. A plan never writes, so nothing else is needed.
  */
-function fakeBattery(rows: Record<string, Array<Record<string, unknown>>>, { release = false } = {}) {
+function fakeBattery(rows: Record<string, Array<Record<string, unknown>>>, { release = false, deletableBlogs = false } = {}) {
   const value = (v: unknown) => (v instanceof Uint8Array ? bs58.encode(v) : v)
   const matches = (row: Record<string, unknown>, where: Array<[string, string, unknown]>) => where.every(([field, op, operand]) =>
     op === '==' ? value(row[field]) === operand
@@ -70,7 +70,7 @@ function fakeBattery(rows: Record<string, Array<Record<string, unknown>>>, { rel
         ? Buffer.compare(bs58.decode(String(value(row[field]))), bs58.decode(operand)) >= 0
         : Number(row[field]) >= Number(operand))
   const queryDocs = async (docType: string, { where }: { where: Array<[string, string, unknown]> }) => (rows[docType] ?? []).filter((row) => matches(row, where))
-  const schemas = { blogPost: { properties: release ? { live: { const: true } } : {} }, poll: { indices: release ? [] : [{ properties: [{ $ownerId: 'asc' }] }] } };
+  const schemas = { blog: { canBeDeleted: deletableBlogs }, blogComment: { indices: deletableBlogs ? [{ properties: [{ $ownerId: 'asc' }] }] : [] }, blogPost: { required: deletableBlogs ? [] : ['blogId'], properties: release ? { live: { const: true } } : {} }, poll: { indices: release ? [] : [{ properties: [{ $ownerId: 'asc' }] }] } };
   return {
     readback: async <T>(fn: () => Promise<T>) => fn(),
     sdk: { contracts: { fetch: async () => ({ toJSON: () => ({ documentSchemas: schemas }) }) } },
@@ -175,6 +175,27 @@ describe('what a surface cleanup plans', () => {
     expect(report.done['blogPost (tombstone)']).toBe(1);
     expect(listings).toBe(1);
   });
+  it('blog v9: deletes our comment on a third party whose only post is a tombstone', async () => {
+    const battery = fakeBattery({
+      blogPost: [{ $id: id(2), $ownerId: id(99), $createdAt: 6000n, deleted: true }],
+      blogComment: [{ $id: id(4), $ownerId: id(7), $createdAt: 6000n, 'blogPostId.$ownerId': id(99) }],
+    }, { release: true, deletableBlogs: true })
+    const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false })
+    expect(report.found.blogComment).toBe(1)
+    expect(report.done.blogComment).toBe(1)
+    expect(report.leftovers).toEqual([])
+  })
+
+  it('blog v9: finds an orphaned post and plans owner deletion of a surviving blog', async () => {
+    const battery = fakeBattery({
+      blog: [{ $id: id(1), $ownerId: id(7), $createdAt: 6000n, name: 'Surviving blog' }],
+      blogPost: [{ $id: id(2), $ownerId: id(7), $createdAt: 6000n, blogId: id(99), slug: 'orphan', live: true }],
+    }, { release: true, deletableBlogs: true })
+    const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false })
+    expect(report.found.blogPost).toBe(1)
+    expect(report.done).toEqual({ 'blogPost (tombstone)': 1, blog: 1 })
+    expect(report.leftovers).toEqual([])
+  })
 
   it('blog: tombstones live posts only, and leaves the run\'s blog up without a moderator', async () => {
     const rows = {

@@ -266,7 +266,13 @@ const SOCIAL: ModeratedContract = {
 }
 
 const STOREFRONT = declaredContract('storefront', 'Storefront', YAPPR_STOREFRONT_CONTRACT_ID, storefrontContract, storefrontIsV6, { report: storefrontIsV10 })
-const BLOG = declaredContract('blog', 'Blogs', YAPPR_BLOG_CONTRACT_ID, blogContract, blogIsV7, { report: blogIsV9 })
+const BLOG_DECLARED = declaredContract('blog', 'Blogs', YAPPR_BLOG_CONTRACT_ID, blogContract, blogIsV7, { report: blogIsV9 })
+const BLOG: ModeratedContract = {
+  ...BLOG_DECLARED,
+  settledDeletionFor: (docType) => blogIsV9() ? BLOG_DECLARED.settledDeletionFor(docType) : null,
+  deleteWindowSeconds: (docType) => blogIsV9() ? BLOG_DECLARED.deleteWindowSeconds(docType) : null,
+  authorsDelete: (docType) => docType === 'blog' ? blogIsV9() : BLOG_DECLARED.authorsDelete(docType),
+}
 
 const CONTRACTS: Readonly<Record<ModeratedContractKey, ModeratedContract>> = { social: SOCIAL, storefront: STOREFRONT, blog: BLOG }
 

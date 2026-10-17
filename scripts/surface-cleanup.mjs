@@ -204,14 +204,17 @@ const notTombstone = (row) => row.deleted !== true;
 export async function cleanBlog({ battery, contractId, owners, since, moderator = null, live }) {
   const schemas = (await battery.readback(() => battery.sdk.contracts.fetch(contractId))).toJSON().documentSchemas;
   const livePosts = schemas.blogPost.properties.live ? [['live', '==', true]] : [];
+  const v9 = livePosts.length > 0;
   const report = newReport('blog', live);
   const blogs = await readEach(owners, (who) => queryAll(battery, 'blog', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]));
-  // Only a blog's owner posts to it (b21), so the owners' posts are the posts on their blogs.
-  const posts = await readEach(blogs, (blog) => queryAll(battery, 'blogPost', [...livePosts, ['blogId', '==', normalizeId(blog.$id)], ['$createdAt', '>=', since]], [['blogId', 'asc'], ['$createdAt', 'asc']]));
-  // Scan the permanent postOwnerAndTime index from the lowest identifier, then
-  // filter by comment owner/time below. This still finds an owner's comments
-  // when the target author's posts are tombstoned and their blog was removed.
-  const comments = await queryEvery(battery, 'blogComment', [['blogPostId.$ownerId', '>=', bs58.encode(new Uint8Array(32))]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]);
+  // A deleted parent blog must not hide an author's surviving posts.
+  const posts = await queryEvery(battery, 'blogPost', [...livePosts, ['$createdAt', '>', 0]], [...(v9 ? [['live', 'asc']] : []), ['$createdAt', 'asc']]);
+  const commentOwnerIndex = (schemas.blogComment?.indices ?? []).some((index) => Object.keys(index.properties[0])[0] === '$ownerId');
+  // Amended v9 has its own comment-owner index. Earlier cuts still need the
+  // permanent postOwnerAndTime scan, independent of surviving blogs or posts.
+  const comments = commentOwnerIndex
+    ? await readEach(owners, (who) => queryAll(battery, 'blogComment', [['$ownerId', '==', who.ownerId], ['$createdAt', '>=', since]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]))
+    : await queryEvery(battery, 'blogComment', [['blogPostId.$ownerId', '>=', bs58.encode(new Uint8Array(32))]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]);
   const follows = await readEach(owners, (who) => queryAll(battery, 'blogFollow', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['blogId', 'asc']]));
   const scope = { owners: ownerSet(owners), since };
   const targets = {
@@ -223,8 +226,12 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
   report.found = countsOf(targets);
 
   await deleteEach({ report, live, battery, owners, targets, types: ['blogComment', 'blogFollow'] });
-  await applyEach(report, live, targets.blogPost, 'blogPost (tombstone)', (row, id) => battery.attemptReplace(ownerOf(owners, row), 'blogPost', id, blogPostTombstone(row), row.$revision));
-  if (!moderator) {
+  await applyEach(report, live, targets.blogPost, 'blogPost (tombstone)', (row, id) => {
+    const tombstone = blogPostTombstone(row);
+    if (!schemas.blogPost.required.includes('blogId') && !blogs.some((blog) => normalizeId(blog.$id) === normalizeId(row.blogId))) delete tombstone.blogId;
+    return battery.attemptReplace(ownerOf(owners, row), 'blogPost', id, tombstone, row.$revision);
+  });
+  if (!moderator && !schemas.blog.canBeDeleted) {
     for (const row of targets.blog) report.leftovers.push({ type: 'blog', id: normalizeId(row.$id), name: row.name, why: 'a blog cannot be deleted by its owner; run with a moderator to remove it' });
     return report;
   }
@@ -234,6 +241,10 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
   const removable = targets.blog.filter((row) => !blogsWithFailedPosts.has(normalizeId(row.$id)));
   for (const row of targets.blog.filter((blog) => !removable.includes(blog))) {
     report.failed.push({ label: 'blog (kept: a post failed)', id: normalizeId(row.$id), error: 'a post on it was not tombstoned; re-run to finish' });
+  }
+  if (schemas.blog.canBeDeleted) {
+    await deleteEach({ report, live, battery, owners, targets: { blog: removable }, types: ['blog'] });
+    return report;
   }
   await applyEach(report, live, removable, `blog (removed by ${moderator.label})`, (row) => moderatorRemove(battery, { contractId, moderator, docType: 'blog', id: normalizeId(row.$id), reason: 'test fixture of the blog battery' }));
   return report;

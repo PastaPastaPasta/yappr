@@ -324,3 +324,24 @@ describe('blog v9 posts (the live marker)', () => {
     expect(replacePayload({ publishedAt: 1 })).not.toHaveProperty('live');
   });
 });
+
+
+describe('parent-independent owner management', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it('pages live posts directly by owner even when their blog is gone', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9');
+    const service = blogPostService as unknown as { query(options: unknown): Promise<{ documents: BlogPost[] }> };
+    const orphan = { id: 'orphan', ownerId, blogId: 'deleted-blog', title: 'Still retractable' } as BlogPost;
+    const query = vi.spyOn(service, 'query').mockResolvedValue({ documents: [orphan] });
+    await expect(blogPostService.getOwnerPostsPage(ownerId, { limit: 1, startAfter: 'previous' }))
+      .resolves.toEqual({ posts: [orphan], nextCursor: 'orphan' });
+    expect(query).toHaveBeenCalledWith({
+      where: [['$ownerId', '==', ownerId], ['live', '==', true]],
+      orderBy: [['$ownerId', 'asc'], ['live', 'asc'], ['$createdAt', 'desc']],
+      limit: 1, startAfter: 'previous',
+    });
+    tombstones.tombstoneDocument.mockResolvedValue(true);
+    await expect(blogPostService.deletePost(orphan.id, ownerId)).resolves.toBe(true);
+    expect(tombstones.tombstoneDocument).toHaveBeenCalledWith(expect.objectContaining({ documentId: 'orphan', clearableReferences: ['blogId'] }));
+  });
+});

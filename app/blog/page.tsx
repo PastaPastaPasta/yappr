@@ -89,7 +89,9 @@ function BlogPageContent() {
         const blog = await blogService.getBlog(blogIdParam)
         if (!blog) {
           if (cancelled) return
-          setError('Blog not found')
+          setViewBlog(null)
+          setViewPost(null)
+          setError('This blog is no longer available')
           return
         }
 
@@ -157,6 +159,7 @@ function BlogPageContent() {
   }, [selectedBlog, user?.identityId])
 
   const deselectBlog = () => {
+    setOwnerPosts([])
     setSelectedBlog(null)
     setEditingPost(null)
     setActiveTab('posts')
@@ -426,6 +429,7 @@ function BlogPageContent() {
               blog={selectedBlog}
               ownerId={user.identityId}
               onUpdated={(updated) => setSelectedBlog(updated)}
+              onDeleted={deselectBlog}
             />
           )}
 
