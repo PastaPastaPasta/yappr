@@ -447,12 +447,12 @@ class PrivateFeedService {
       if (!grant) return held.length > 0 ? { success: true } : { success: false, error: 'This person is not a private follower.' }
       const job = loadMove(ownerId)
       if (job && !job.skipped.includes(followerId) && !job.done.includes(followerId)) saveMove({ ...job, skipped: [...job.skipped, followerId] })
-      if (grant.feed === current.feed) return await this.revokeLeaf(ownerId, current, grant.leafIndex, encryptionPrivateKey)
-      const revoked = await this.revokeLeaf(ownerId, previous as PrivateFeedDocument, grant.leafIndex, encryptionPrivateKey)
+      if (grant.feed === current.feed) return await this.revokeLeaf(ownerId, current, grant.leafIndex, grant.keyGeneration, encryptionPrivateKey)
+      const revoked = await this.revokeLeaf(ownerId, previous as PrivateFeedDocument, grant.leafIndex, grant.keyGeneration, encryptionPrivateKey)
       if (!revoked.success) return revoked
       // A move on another device may have granted them into the current feed meanwhile: take that back too.
       const moved = await fetchGrant(ownerId, current.feed, followerId)
-      return moved && (await inForceGrant(moved)) ? await this.revokeLeaf(ownerId, current, moved.leafIndex, encryptionPrivateKey) : revoked
+      return moved && (await inForceGrant(moved)) ? await this.revokeLeaf(ownerId, current, moved.leafIndex, moved.keyGeneration, encryptionPrivateKey) : revoked
     } catch (error) {
       logger.error('Error revoking follower:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Could not remove this follower.' }
@@ -460,11 +460,12 @@ class PrivateFeedService {
   }
 
   /**
-   * Rekey `leafIndex` of `feed` to the next generation (design §7.3). When
-   * another device took that generation with a rekey of the same leaf, the
-   * leaf is revoked all the same: that is success.
+   * Rekey `leafIndex` of `feed` to the next generation (design §7.3), revoking
+   * the grant written there at `grantGeneration`. When another device took
+   * that generation with a rekey of the same leaf after that grant, it is
+   * revoked all the same: that is success.
    */
-  async revokeLeaf(ownerId: string, feed: PrivateFeedDocument, leafIndex: number, encryptionPrivateKey?: Uint8Array): Promise<PrivateFeedResult> {
+  async revokeLeaf(ownerId: string, feed: PrivateFeedDocument, leafIndex: number, grantGeneration: number, encryptionPrivateKey?: Uint8Array): Promise<PrivateFeedResult> {
     try {
       const synced = await this.feedState(ownerId, feed, encryptionPrivateKey)
       if (!synced.success) return synced
@@ -479,7 +480,7 @@ class PrivateFeedService {
         // Another device rekeyed at this generation first: fine if it revoked this leaf, else these keys were behind.
         if (isDuplicateUniqueIndexError(written.error)) {
           const sinceThen = await fetchRekeys(ownerId, feed.feed, keys.keyGeneration)
-          return sinceThen.some((other) => other.revokedLeaf === leafIndex) ? { success: true } : failure('FEED_CHANGED')
+          return sinceThen.some((other) => other.revokedLeaf === leafIndex && other.keyGeneration > grantGeneration) ? { success: true } : failure('FEED_CHANGED')
         }
         return { success: false, error: written.error || 'Could not remove this follower.' }
       }

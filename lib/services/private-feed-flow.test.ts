@@ -26,6 +26,9 @@ const chain = vi.hoisted(() => ({
   dropNextCreate: false,
   /** Runs once after the next grant lands (another device acting in the middle of a move). */
   afterGrant: null as null | (() => Promise<void>),
+  /** The next create lands but stays invisible to reads (and comes back unconfirmed) until `hidden` is cleared. */
+  lateNextCreate: false,
+  hidden: new Set<string>(),
 }))
 
 const UNIQUE: Record<string, string[][]> = {
@@ -39,7 +42,7 @@ const norm = (value: unknown) => (value instanceof Uint8Array ? bs58.encode(valu
 const field = (doc: Record<string, unknown>, name: string) => norm(doc[name])
 
 function query(q: { documentTypeName: string; where?: [string, string, unknown][]; orderBy?: [string, 'asc' | 'desc'][]; limit?: number; startAfter?: string }) {
-  let rows = chain.docs.filter((doc) => doc.$type === q.documentTypeName && (q.where ?? []).every(([name, op, value]) => {
+  let rows = chain.docs.filter((doc) => !chain.hidden.has(doc.$id as string) && doc.$type === q.documentTypeName && (q.where ?? []).every(([name, op, value]) => {
     const actual = field(doc, name) as number | string
     if (op === '==') return actual === value
     if (op === '>') return Number(actual) > Number(value)
@@ -84,6 +87,11 @@ async function createDocument(_contract: string, type: string, ownerId: string, 
   }
   chain.docs.push(doc)
   chain.writes.push(type)
+  if (chain.lateNextCreate) {
+    chain.lateNextCreate = false
+    chain.hidden.add(doc.$id)
+    return { success: true, confirmed: false, document: doc }
+  }
   if (type === 'privateFeedGrant' && chain.afterGrant) {
     const run = chain.afterGrant
     chain.afterGrant = null
@@ -379,12 +387,25 @@ describe('private feeds v2 end to end', () => {
       const source = chain.docs.find((doc) => doc.$type === 'privateFeedGrant' && doc.feed === before && norm(doc.recipientId) === removed) as Record<string, unknown>
       const oldFeed = await fetchFeed(O, before)
       if (!oldFeed) throw new Error('old feed missing')
-      expect((await s.owner.privateFeedService.revokeLeaf(O, oldFeed, source.leafIndex as number, keys[O])).success).toBe(true)
+      expect((await s.owner.privateFeedService.revokeLeaf(O, oldFeed, source.leafIndex as number, source.keyGeneration as number, keys[O])).success).toBe(true)
     }
     expect(await s.move.runMove(O, keys[O])).toEqual({ success: true })
     expect(removed).not.toBe('')
     const now = (await s.owner.privateFeedService.getPrivateFollowers(O)).map((f) => f.recipientId)
     expect(now).not.toContain(removed)
     expect(await s.follower.getAccessStatus(O, removed)).toBe('revoked')
+  })
+
+  it('a renewal confirmed late is finished, not renewed past, when the owner tries again', async () => {
+    const before = (await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true }))?.feed as number
+    const members = (await s.owner.privateFeedService.getPrivateFollowers(O)).map((f) => NAMES[f.recipientId]).sort()
+    expect(members.length).toBeGreaterThan(0)
+    chain.lateNextCreate = true
+    expect(await s.move.renewPrivateFeed(O, keys[O], { bringHistory: true })).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+    chain.hidden.clear()
+    expect(await s.move.renewPrivateFeed(O, keys[O], { bringHistory: true })).toMatchObject({ success: false, error: expect.stringMatching(/still being moved/) })
+    expect(await s.move.runMove(O, keys[O])).toEqual({ success: true })
+    expect((await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true }))?.feed).toBe(before + 1)
+    expect(grantsIn(before + 1)).toEqual(members)
   })
 })

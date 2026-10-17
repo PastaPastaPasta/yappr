@@ -25,7 +25,7 @@ import { logger } from '@/lib/logger'
 import { privateFeedService, type PrivateFeedResult } from './private-feed-service'
 import {
   activeGrants, fetchCurrentFeed, fetchFeeds, fetchFollowRequestsTo, fetchGrant, fetchMembers, fetchRekeys, grantIsRevoked, mainFeeds,
-  type PrivateFeedDocument,
+  type GrantDocument, type PrivateFeedDocument,
 } from './private-feed-reads'
 import { clearMove, loadMove, moveProgress, saveMove, type MoveJob } from './private-feed-move-job'
 import { identityService } from './identity-service'
@@ -104,7 +104,8 @@ export type MoveListener = (progress: { done: number; total: number }) => void
 export async function renewPrivateFeed(
   ownerId: string, encryptionPrivateKey: Uint8Array, options: { bringHistory: boolean }, onProgress?: MoveListener,
 ): Promise<PrivateFeedResult & { historyLinked?: boolean }> {
-  if (loadMove(ownerId)) return { success: false, error: 'Your followers are still being moved. Continue that first.' }
+  // A move still open here, or one left unfinished on the chain (an open that was confirmed late, another device).
+  if (loadMove(ownerId) || (await adoptUnfinishedMove(ownerId)) > 0) return { success: false, error: 'Your followers are still being moved. Continue that first.' }
   try {
     const current = await currentMainFeed(ownerId)
     let carryFrom: CarriedFeed | undefined
@@ -209,18 +210,42 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       for (let candidate = 0; isTaken(leaf) && candidate < capacity; candidate++) leaf = candidate
       return isTaken(leaf) ? null : leaf
     }
+    /**
+     * Settle a follower who holds `moved` in the new feed: kept while their old
+     * grant is in force and they are not blocked; otherwise (removed on any
+     * device meanwhile) exactly that grant is revoked, or the move pauses.
+     */
+    const settleGranted = async (recipientId: string, moved: GrantDocument): Promise<PrivateFeedResult | null> => {
+      const source = await fetchGrant(ownerId, job.from, recipientId)
+      const removed = source !== null && (blocked.has(recipientId) || (await grantIsRevoked(source)))
+      if (!removed) {
+        settle('done', recipientId)
+        return null
+      }
+      if (!(await grantIsRevoked(moved))) {
+        const back = await privateFeedService.revokeLeaf(ownerId, synced.state.feed, moved.leafIndex, moved.keyGeneration, encryptionPrivateKey)
+        if (!back.success) return pause(back.error ?? 'The move paused.')
+      }
+      settle('skipped', recipientId)
+      return null
+    }
+    /** The grant just written, once queryable: the removal check needs it visible to every device. */
+    const landed = async (recipientId: string): Promise<GrantDocument | null> => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const grant = await fetchGrant(ownerId, job.to, recipientId)
+        if (grant) return grant
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+      }
+      return null
+    }
     for (const [planned, recipientId] of job.recipients.entries()) {
       mergeSkipped()
       if (job.done.includes(recipientId) || job.skipped.includes(recipientId)) continue
       const already = grantedTo.get(recipientId)
       if (already) {
-        // Granted by an earlier run (or device): removed from the old feed since, the new grant goes back.
-        const source = await fetchGrant(ownerId, job.from, recipientId)
-        if (source && (await grantIsRevoked(source)) && !(await grantIsRevoked(already))) {
-          const back = await privateFeedService.revokeLeaf(ownerId, synced.state.feed, already.leafIndex, encryptionPrivateKey)
-          if (!back.success) return pause(back.error ?? 'The move paused.')
-          settle('skipped', recipientId)
-        } else settle('done', recipientId)
+        // Granted by an earlier run (or device).
+        const paused = await settleGranted(recipientId, already)
+        if (paused) return paused
       } else {
         // Re-read their old grant and its revocations now: removed since the plan, on any device, they stay behind.
         const source = await fetchGrant(ownerId, job.from, recipientId)
@@ -232,17 +257,15 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
         else if (leafIndex === null) return pause('Your renewed private feed is full.')
         else {
           const outcome = await privateFeedService.writeGrant(ownerId, synced.state, recipientId, key, leafIndex)
-          if (outcome.success) {
-            taken.add(leafIndex)
-            // Removed while their grant was being written: revoke exactly the grant just written, or pause (a later run re-checks).
-            if (source && (await grantIsRevoked(source))) {
-              const back = await privateFeedService.revokeLeaf(ownerId, synced.state.feed, leafIndex, encryptionPrivateKey)
-              if (!back.success) return pause(back.error ?? 'The move paused.')
-              settle('skipped', recipientId)
-            } else settle('done', recipientId)
-          } else if (outcome.errorCode === 'REQUEST_WITHDRAWN') settle('skipped', recipientId)
-          else if (await fetchGrant(ownerId, job.to, recipientId)) settle('done', recipientId)
-          else return pause(outcome.error ?? 'The move paused.')
+          if (outcome.success) taken.add(leafIndex)
+          if (outcome.errorCode === 'REQUEST_WITHDRAWN') settle('skipped', recipientId)
+          else {
+            // Written now, or by another device running this move: check it once it is visible.
+            const written = await landed(recipientId)
+            if (!written) return pause(outcome.success ? 'Waiting for the network to confirm a follower\'s access. Continue in a moment.' : outcome.error ?? 'The move paused.')
+            const paused = await settleGranted(recipientId, written)
+            if (paused) return paused
+          }
         }
       }
       mergeSkipped()
