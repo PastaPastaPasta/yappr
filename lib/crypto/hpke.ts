@@ -75,6 +75,7 @@ function dh(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Array {
   return shared
 }
 
+/** Wipes `dhOutput` once used: callers must not reuse it. */
 function extractAndExpand(dhOutput: Uint8Array, kemContext: Uint8Array): Uint8Array {
   const prk = labeledExtract(SUITE_KEM, EMPTY, 'eae_prk', dhOutput)
   try {
@@ -90,7 +91,7 @@ interface KeySchedule {
   baseNonce: Uint8Array
 }
 
-/** RFC 9180 §5.1 KeySchedule, base mode (no PSK). */
+/** RFC 9180 §5.1 KeySchedule, base mode (no PSK). Wipes `sharedSecret` once used. */
 function keySchedule(sharedSecret: Uint8Array, info: Uint8Array): KeySchedule {
   const pskIdHash = labeledExtract(SUITE_HPKE, EMPTY, 'psk_id_hash', EMPTY)
   const infoHash = labeledExtract(SUITE_HPKE, EMPTY, 'info_hash', info)
@@ -107,7 +108,7 @@ function keySchedule(sharedSecret: Uint8Array, info: Uint8Array): KeySchedule {
   }
 }
 
-export interface HpkeSealed {
+interface HpkeSealed {
   /** The encapsulated ephemeral public key (32 bytes). */
   enc: Uint8Array
   /** Ciphertext plus the 16-byte Poly1305 tag. */

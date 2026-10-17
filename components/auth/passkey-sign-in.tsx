@@ -1,11 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { KeyIcon } from '@heroicons/react/24/outline'
-import type { AppConnectGrant } from 'platform-auth'
 import { logger } from '@/lib/logger'
-import { useAuth, type PasskeyRenewal } from '@/contexts/auth-context'
-import { passkeysOffered } from '@/lib/auth/passkey-vault'
+import { useAuth } from '@/contexts/auth-context'
+import type { PasskeyRenewal } from '@/lib/auth/passkey-vault'
+import { usePasskeysOffered } from '@/hooks/use-passkey-prompts'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
@@ -20,13 +20,10 @@ import { RENEW_COPY, signInErrorCopy } from './passkey-copy'
  */
 export function PasskeySignIn({ onComplete }: { onComplete: () => void }) {
   const { loginWithPasskey, loginWithAppConnect } = useAuth()
-  const [offered, setOffered] = useState(false)
+  const offered = usePasskeysOffered()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [renewal, setRenewal] = useState<PasskeyRenewal | null>(null)
-
-  // Decided after mount: it reads the page's host, which the static export does not know.
-  useEffect(() => setOffered(passkeysOffered()), [])
 
   const signIn = useCallback(() => {
     setBusy(true)
@@ -43,17 +40,13 @@ export function PasskeySignIn({ onComplete }: { onComplete: () => void }) {
       .finally(() => setBusy(false))
   }, [loginWithPasskey, onComplete])
 
-  const renewWithGrant = useCallback(async (grant: AppConnectGrant) => {
-    await loginWithAppConnect(grant)
-  }, [loginWithAppConnect])
-
   if (!offered) return null
 
   if (renewal) {
     return (
       <div className="flex flex-col gap-3" data-testid="passkey-renew">
         <p className="text-sm text-center text-gray-600 dark:text-gray-400">{RENEW_COPY[renewal.reason]}</p>
-        <AppConnectLoginPanel identityHint={renewal.identityId} onGrant={renewWithGrant} onComplete={onComplete} />
+        <AppConnectLoginPanel identityHint={renewal.identityId} onGrant={loginWithAppConnect} onComplete={onComplete} />
         <Button variant="ghost" className="w-full" onClick={() => setRenewal(null)}>Back</Button>
       </div>
     )

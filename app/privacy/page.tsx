@@ -20,6 +20,7 @@ const PUBLIC_DATA = [
   'Your blogs, blog posts and comments, and the blogs you follow',
   'Your store and items, the reviews you write, and that you ordered from a store and when',
   'Standing for a moderation team, and votes in its election',
+  'If you add passkeys: how many you have and when you added them, and your sign-in keys, encrypted so only that passkey can open them',
   'The time of every action',
 ]
 
@@ -97,7 +98,7 @@ export default function PrivacyPage() {
             <li>Almost everything you do on Yappr is public and permanent, because it is written to Dash Platform.</li>
             <li>Messages, private-feed posts, what you order and shipping addresses are encrypted, but some facts about them are still visible.</li>
             <li>We have no accounts database, no ads, and we don&apos;t sell or share your data.</li>
-            <li>Your keys stay on your device. We never receive them.</li>
+            <li>Your keys stay on your device, or, if you add a passkey, on the network encrypted so only that passkey can open them. We never receive them.</li>
             <li>We use Cloudflare Web Analytics to count visits. It sets no cookies.</li>
           </BulletList>
         </Prose>

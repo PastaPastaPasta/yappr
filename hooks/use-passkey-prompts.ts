@@ -1,30 +1,37 @@
+import { useEffect, useState } from 'react'
 import { create } from 'zustand'
+import { passkeysOffered } from '@/lib/auth/passkey-vault'
 
 export type SignInMethod = 'key' | 'wallet' | 'passkey'
+
+export type PasskeyDialog = { kind: 'offer' | 'enrol' | 'review'; identityId: string }
 
 interface PasskeyPromptsState {
   /** The last sign-in this tab made (not a restored session), for the one-time offer and the update check. */
   signedIn: { identityId: string; method: SignInMethod; at: number } | null
-  /** Open dialogs, by the identity they are for. */
-  offer: string | null
-  enrol: string | null
-  review: string | null
+  /** The open passkey dialog, if any (components/auth/passkey-prompts.tsx). */
+  dialog: PasskeyDialog | null
+  /** Bumped whenever passkeys were added, updated or removed, so lists read them again. */
+  revision: number
   noteSignIn: (identityId: string, method: SignInMethod) => void
-  openOffer: (identityId: string) => void
-  openEnrol: (identityId: string) => void
-  openReview: (identityId: string) => void
+  open: (kind: PasskeyDialog['kind'], identityId: string) => void
   close: () => void
+  changed: () => void
 }
 
-/** The passkey offer, enrolment and update-review dialogs (components/auth/passkey-prompts.tsx). */
 export const usePasskeyPrompts = create<PasskeyPromptsState>((set) => ({
   signedIn: null,
-  offer: null,
-  enrol: null,
-  review: null,
+  dialog: null,
+  revision: 0,
   noteSignIn: (identityId, method) => set({ signedIn: { identityId, method, at: Date.now() } }),
-  openOffer: (identityId) => set({ offer: identityId, enrol: null, review: null }),
-  openEnrol: (identityId) => set({ offer: null, enrol: identityId, review: null }),
-  openReview: (identityId) => set({ offer: null, enrol: null, review: identityId }),
-  close: () => set({ offer: null, enrol: null, review: null }),
+  open: (kind, identityId) => set({ dialog: { kind, identityId } }),
+  close: () => set({ dialog: null }),
+  changed: () => set((state) => ({ revision: state.revision + 1 })),
 }))
+
+/** Whether this page offers passkeys, decided after mount: it reads the page's host, which the static export does not know. */
+export function usePasskeysOffered(): boolean {
+  const [offered, setOffered] = useState(false)
+  useEffect(() => setOffered(passkeysOffered()), [])
+  return offered
+}

@@ -9,6 +9,7 @@
  *   browser that set them.
  * - Whether the one-time "sign in faster with a passkey" offer has been made
  *   on this device.
+ * - For this tab, whether its CRITICAL key came from a passkey (see below).
  */
 import { readScoped, scopedKey, writeScoped } from '@/lib/storage-scope'
 
@@ -16,7 +17,7 @@ const DEVICE_KEY = 'yappr_passkeys_here'
 const NAMES_KEY = 'yappr_passkey_names'
 const OFFER_KEY = 'yappr_passkey_offered'
 
-const MAX_NAME_LENGTH = 40
+export const MAX_PASSKEY_NAME_LENGTH = 40
 
 function readMap(key: string): Record<string, unknown> {
   const raw = readScoped(key)
@@ -59,11 +60,10 @@ export function passkeyName(credentialId: string): string | null {
 /** Names a passkey in this browser; an empty name clears it. */
 export function setPasskeyName(credentialId: string, name: string): void {
   const map = readMap(NAMES_KEY)
-  const trimmed = name.trim().slice(0, MAX_NAME_LENGTH)
-  const next = { ...map }
-  if (trimmed) next[credentialId] = trimmed
-  else delete next[credentialId]
-  writeScoped(NAMES_KEY, JSON.stringify(next))
+  const trimmed = name.trim().slice(0, MAX_PASSKEY_NAME_LENGTH)
+  if (trimmed) map[credentialId] = trimmed
+  else delete map[credentialId]
+  writeScoped(NAMES_KEY, JSON.stringify(map))
 }
 
 /** Whether this browser has already been offered a passkey after a sign-in (it is offered once, ever). */

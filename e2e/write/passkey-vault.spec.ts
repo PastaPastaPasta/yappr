@@ -33,7 +33,7 @@ const PERSONA = Number(process.env.E2E_APP_CONNECT_PERSONA ?? 92)
 const APP_ID = process.env.E2E_APP_CONNECT_APP_ID?.trim() ?? ''
 const FEES_IDENTITY = process.env.E2E_PASSKEY_FEES_IDENTITY?.trim()
 
-test.setTimeout(420_000)
+test.setTimeout(900_000)
 
 /** A platform authenticator with PRF, user verification and resident keys, that approves every prompt. */
 interface Authenticator {
@@ -42,6 +42,8 @@ interface Authenticator {
 }
 
 async function addAuthenticator(page: Page): Promise<Authenticator> {
+  // The app's own passkey warnings (no key material), so a failed step says why.
+  page.on('console', (message) => { if (/passkey/i.test(message.text())) console.log(`browser: ${message.text()}`) })
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('WebAuthn.enable', { enableUI: false })
   const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
@@ -69,8 +71,21 @@ interface Balances {
 async function balances(): Promise<Balances> {
   if (!FEES_IDENTITY) return { read: async () => null }
   const { connectSdk } = await import('../../scripts/sdk-env.mjs') as { connectSdk: () => Promise<{ identities: { balance: (id: string) => Promise<bigint | number | null> } }> }
-  const sdk = await connectSdk()
-  return { read: async () => BigInt((await sdk.identities.balance(FEES_IDENTITY)) ?? 0) }
+  // Optional: a read that fails only leaves that step unmeasured, never fails the test.
+  const sdk = await connectSdk().catch((error: unknown) => {
+    console.log('FEE probe unavailable:', String(error))
+    return null
+  })
+  return {
+    read: async () => {
+      if (!sdk) return null
+      try {
+        return BigInt((await sdk.identities.balance(FEES_IDENTITY)) ?? 0)
+      } catch {
+        return null
+      }
+    },
+  }
 }
 
 async function measure(label: string, probe: Balances, step: () => Promise<void>): Promise<void> {
@@ -81,7 +96,7 @@ async function measure(label: string, probe: Balances, step: () => Promise<void>
   let after = before
   for (let i = 0; i < 20; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2000))
-    const now: bigint = (await probe.read()) ?? before
+    const now: bigint = (await probe.read()) ?? after
     if (now !== before && now === after) break
     after = now
   }
@@ -105,11 +120,24 @@ async function walletApproves(scope: Locator): Promise<void> {
   await responder('/respond', { uri: await link.getAttribute('href'), persona: PERSONA })
 }
 
+/**
+ * Adds a passkey from what the app shows right after sign-in: the one-time offer or,
+ * when passkeys an earlier interrupted run left can no longer sign in, the update
+ * review, through "Remove all and start over" and then "Add a passkey".
+ */
 async function addPasskeyFromOffer(page: Page): Promise<void> {
   const offer = page.getByRole('dialog', { name: 'Sign in faster with a passkey' })
-  await expect(offer).toBeVisible({ timeout: 90_000 })
-  await offer.getByTestId('passkey-add').click()
-  await offer.getByTestId('passkey-confirm').click()
+  const review = page.getByRole('dialog', { name: 'Update your passkeys' })
+  await expect(offer.or(review)).toBeVisible({ timeout: 90_000 })
+  let enrol = offer
+  if (await review.isVisible()) {
+    await review.getByRole('button', { name: /Remove all and start over/ }).click()
+    await review.getByRole('button', { name: 'Remove all passkeys' }).click()
+    await review.getByRole('button', { name: 'Add a passkey' }).click({ timeout: 180_000 })
+    enrol = page.getByRole('dialog', { name: 'Add a passkey' })
+  }
+  await enrol.getByTestId('passkey-add').click()
+  await enrol.getByTestId('passkey-confirm').click()
   await expect(page.getByRole('dialog', { name: 'Passkey added' })).toBeVisible({ timeout: 120_000 })
   await page.getByRole('dialog', { name: 'Passkey added' }).getByRole('button', { name: 'Done' }).click()
 }
@@ -126,14 +154,27 @@ async function signInWithPasskey(page: Page): Promise<void> {
   await dialog.getByTestId('passkey-sign-in').click()
 }
 
+/**
+ * Waits for `check` to pass on a Settings card. A rate-limited devnet read shows the
+ * card's "Try again", as it would to a user: tap it and look again.
+ */
+async function untilLoaded(card: Locator, check: () => Promise<void>): Promise<void> {
+  await expect(async () => {
+    const retry = card.getByRole('button', { name: 'Try again' })
+    if (await retry.isVisible()) await retry.click()
+    await check()
+  }).toPass({ timeout: 120_000, intervals: [5_000] })
+}
+
 async function removeOnlyPasskey(page: Page): Promise<void> {
   await page.goto(appUrl('/settings/?section=privacy'))
   const settings = page.getByTestId('passkey-settings')
   const row = settings.getByTestId('passkey-row').filter({ hasText: 'This device' })
-  await expect(row).toHaveCount(1, { timeout: 60_000 })
+  await untilLoaded(settings, () => expect(row).toHaveCount(1, { timeout: 10_000 }))
   await row.getByRole('button', { name: 'Remove' }).click()
   await page.getByTestId('passkey-remove-confirm').click()
-  await expect(settings.getByTestId('passkey-row')).toHaveCount(0, { timeout: 120_000 })
+  // Entries an earlier, interrupted run left on the identity may remain: only this device's must go.
+  await expect(row).toHaveCount(0, { timeout: 120_000 })
 }
 
 test.describe('passkey vault', () => {
@@ -157,7 +198,7 @@ test.describe('passkey vault', () => {
 
     await signOut(page)
     await signInWithPasskey(page)
-    await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 90_000 })
+    await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 240_000 })
     // A key sign-in from a passkey keeps the HIGH key like a typed one: it survives a reload.
     await page.reload()
     await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 60_000 })
@@ -196,30 +237,38 @@ test.describe('passkey vault', () => {
 
     await signOut(page)
     await signInWithPasskey(page)
-    await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 90_000 })
+    await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 240_000 })
     // The wallet's key ring came back: Settings shows this browser's wallet connection.
     await page.goto(appUrl('/settings/?section=privacy'))
-    await expect(page.getByTestId('wallet-connections').getByText('This browser').first()).toBeVisible({ timeout: 60_000 })
+    const connections = page.getByTestId('wallet-connections')
+    await untilLoaded(connections.locator('..'), () => expect(connections.getByText('This browser').first()).toBeVisible({ timeout: 10_000 }))
 
     // The wallet turns Yappr off: the passkey's keys stop working, and signing in with it asks the wallet again.
     await signOut(page)
     await responder('/revoke', { persona: PERSONA, appId: APP_ID })
     await signInWithPasskey(page)
     const renew = page.getByTestId('passkey-renew')
-    await expect(renew).toBeVisible({ timeout: 90_000 })
+    await expect(renew).toBeVisible({ timeout: 240_000 })
     await walletApproves(renew)
     await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 180_000 })
     // The new wallet keys are not in the passkey yet: the review asks to update it.
     const review = page.getByRole('dialog', { name: 'Update your passkeys' })
     await expect(review).toBeVisible({ timeout: 90_000 })
-    await expect(review.getByText('Needs update')).toBeVisible()
+    await expect(review.getByText(/This device · Needs update/)).toBeVisible()
+    // Only this device's passkey starts ticked: one from elsewhere could have been planted.
+    await expect(review.getByTestId('passkey-update')).toHaveText('Update 1 passkey')
     await measure('update a passkey (wallet key, re-seal)', probe, async () => {
       await review.getByTestId('passkey-update').click()
-      await expect(review).toHaveCount(0, { timeout: 120_000 })
+      // Entries an interrupted earlier run left cannot sign in any more: the review offers to remove them.
+      const leftover = review.getByRole('button', { name: 'Remove', exact: true })
+      await expect(async () => {
+        if (await leftover.isVisible()) await leftover.click()
+        await expect(review).toHaveCount(0, { timeout: 5_000 })
+      }).toPass({ timeout: 180_000, intervals: [2_000] })
     })
     await signOut(page)
     await signInWithPasskey(page)
-    await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 90_000 })
+    await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 240_000 })
 
     await measure('remove a passkey (wallet key)', probe, () => removeOnlyPasskey(page))
     await expect.poll(() => authenticator.credentialCount(), { timeout: 30_000 }).toBe(0)

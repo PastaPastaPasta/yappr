@@ -123,8 +123,6 @@ async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
  * keep the key as they always have (the mobile engine's secure area relies on it).
  */
 async function storeRawLoginKey(identityId: string, wif: string): Promise<void> {
-  // A passkey sign-in marks its CRITICAL key again once it has stored it; any other key starts unmarked.
-  clearPasskeyCriticalKey(identityId)
   if (!isAppConnectBuild()) {
     storePrivateKey(identityId, wif)
     return

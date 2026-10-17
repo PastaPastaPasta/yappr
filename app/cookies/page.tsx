@@ -72,6 +72,11 @@ export default function CookiesPage() {
       howLong: 'until you clear site data',
     },
     {
+      name: 'Passkeys',
+      what: 'Which of your passkeys were added or used in this browser, the names you gave them, and whether Yappr has offered you one. No passkey or key is kept here.',
+      howLong: 'until you clear site data',
+    },
+    {
       name: 'Upload service details',
       what: 'If you connect Storacha or Pinata to upload media, the details needed to use your account.',
       howLong: 'until you disconnect the service',

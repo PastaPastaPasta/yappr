@@ -7,9 +7,11 @@ import { BundleFormat } from '@/lib/crypto/passkey-vault'
 import {
   checkSignInKey,
   entryNeedsUpdate,
+  identityOfUserHandle,
   keyRingBundle,
   passkeyDisplayName,
   passkeyRpId,
+  passkeyUserHandle,
   privateKeyMatches,
   rawKeyBundle,
   slotFor,
@@ -42,6 +44,22 @@ describe('passkey vault policy: where passkeys are offered', () => {
   })
 })
 
+describe('passkey vault policy: user handle', () => {
+  const identity = H('identity')
+  const production = H('production vault')
+  const testing = H('testing vault')
+
+  it('carries the identity and this deployment\'s vault, and names the identity only for that vault', () => {
+    const handle = passkeyUserHandle(identity, production)
+    expect(handle).toHaveLength(64)
+    expect(identityOfUserHandle(handle, production)).toEqual(identity)
+    expect(identityOfUserHandle(handle, testing)).toBeNull()
+    expect(identityOfUserHandle(identity, production)).toBeNull()
+    expect(identityOfUserHandle(null, production)).toBeNull()
+    expect(() => passkeyUserHandle(identity.slice(0, 31), production)).toThrow()
+  })
+})
+
 describe('passkey vault policy: keys', () => {
   it('matches a private key to a full point or its hash160', () => {
     expect(privateKeyMatches(HIGH_KEY, { type: 0, data: getPublicKey(HIGH_KEY) })).toBe(true)
@@ -56,6 +74,9 @@ describe('passkey vault policy: keys', () => {
     expect(checkSignInKey(slotFor(keys[1], CRITICAL_KEY), keys, NOW)).toMatchObject({ ok: true, needsModerator: true })
     const bound = key({ id: 3, securityLevel: 1, data: getPublicKey(CRITICAL_KEY), bounds: { kind: 'contractGroup', groupId: 'g' } })
     expect(checkSignInKey(slotFor(bound, CRITICAL_KEY), [bound], NOW)).toMatchObject({ ok: true, needsModerator: false })
+    // Only a group bound exempts a CRITICAL key: one bound to a single contract still needs the moderator check.
+    const single = { ...bound, bounds: { kind: 'singleContract' as const, contractId: 'c' } }
+    expect(checkSignInKey(slotFor(single, CRITICAL_KEY), [single], NOW)).toMatchObject({ ok: true, needsModerator: true })
   })
 
   it('refuses a disabled, expiring, mislabelled, wrong-level or mismatched sign-in key', () => {

@@ -1,5 +1,6 @@
 import { bytesEqual, concatBytes } from '@/lib/bytes'
 import { deriveKeyPair, openBase, sealBase, type HpkeKeyPair } from './hpke'
+import { KeyPurpose as Purpose, KeyType, SecurityLevel as Level } from './identity-keys'
 
 /**
  * The passkey vault's crypto, v1 (docs/PASSKEY_VAULT.md, "Crypto").
@@ -29,10 +30,6 @@ export const BundleFormat = {
 } as const
 export type BundleFormat = (typeof BundleFormat)[keyof typeof BundleFormat]
 
-/** Platform's encodings (KeyPurpose, SecurityLevel, KeyType). */
-const Purpose = { AUTHENTICATION: 0, ENCRYPTION: 1, DECRYPTION: 2 } as const
-const Level = { CRITICAL: 1, HIGH: 2, MEDIUM: 3 } as const
-const KeyType = { ECDSA_SECP256K1: 0, ECDSA_HASH160: 2 } as const
 
 const SLOT_LENGTH = 39
 /** Bundles pad to a fixed length per format, so the ciphertext says nothing about how many keys it holds. */
@@ -41,8 +38,8 @@ const LAYOUT: Record<BundleFormat, { length: number; maxKeys: number }> = {
   [BundleFormat.KEY_RING]: { length: 160, maxKeys: 4 },
 }
 
-export const MIN_CREDENTIAL_ID_LENGTH = 16
-export const MAX_CREDENTIAL_ID_LENGTH = 255
+const MIN_CREDENTIAL_ID_LENGTH = 16
+const MAX_CREDENTIAL_ID_LENGTH = 255
 
 export interface VaultKey {
   purpose: number
@@ -212,7 +209,7 @@ export function wipeBundle(bundle: VaultBundle): void {
   for (const key of bundle.keys) key.privateKey.fill(0)
 }
 
-export interface SealEntryInput {
+interface SealEntryInput {
   contractId: Uint8Array
   ownerId: Uint8Array
   credentialId: Uint8Array
@@ -239,7 +236,7 @@ export function sealEntry(input: SealEntryInput): SealedVaultEntry {
   }
 }
 
-export interface OpenEntryInput {
+interface OpenEntryInput {
   contractId: Uint8Array
   ownerId: Uint8Array
   entry: SealedVaultEntry

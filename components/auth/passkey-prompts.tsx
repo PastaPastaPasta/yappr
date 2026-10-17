@@ -23,13 +23,10 @@ import {
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { enrolErrorCopy, formatPasskeyDate, passkeyLabel } from './passkey-copy'
+import { enrolErrorCopy, lockOutCopy, passkeyDetails, passkeyLabel } from './passkey-copy'
 
-/** Fired on `window` after passkeys were added, updated or removed, so lists re-read them. */
-export const PASSKEYS_CHANGED_EVENT = 'yappr-passkeys-changed'
-
-function announceChange(): void {
-  window.dispatchEvent(new Event(PASSKEYS_CHANGED_EVENT))
+function InlineError({ children }: { children: React.ReactNode }) {
+  return <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-4">{children}</p>
 }
 
 /**
@@ -40,8 +37,7 @@ function announceChange(): void {
  */
 export function PasskeyPrompts() {
   const { user } = useAuth()
-  const signedIn = usePasskeyPrompts((state) => state.signedIn)
-  const { offer, enrol, review, openOffer, openReview, close } = usePasskeyPrompts()
+  const { signedIn, dialog, open, close } = usePasskeyPrompts()
   const signedInUser = user?.identityId
   /** The sign-in last checked: each is checked once, whatever else re-renders. */
   const checkedAt = useRef<number | null>(null)
@@ -55,27 +51,21 @@ export function PasskeyPrompts() {
       // Another sign-in (or a sign-out) since this one: its own check decides.
       if (eligibility !== null || usePasskeyPrompts.getState().signedIn?.at !== signedIn.at) return
       if (entries.some((entry) => entry.needsUpdate)) {
-        openReview(identityId)
+        open('review', identityId)
         return
       }
       if (method !== 'passkey' && passkeysHere(identityId).length === 0 && !passkeyOfferMade()) {
         markPasskeyOfferMade()
-        openOffer(identityId)
+        open('offer', identityId)
       }
     }
     check().catch((error: unknown) => logger.warn('Passkeys: the after-sign-in check failed:', error))
-  }, [openOffer, openReview, signedIn, signedInUser])
+  }, [open, signedIn, signedInUser])
 
-  const identityId = offer ?? enrol ?? review
   // A dialog for an identity that is no longer signed in here has nothing to do.
-  if (!identityId || user?.identityId !== identityId) return null
-
-  return (
-    <>
-      {(offer || enrol) && <EnrolDialog identityId={identityId} username={user.dpnsUsername} offer={Boolean(offer)} onClose={close} />}
-      {review && <ReviewDialog identityId={identityId} onClose={close} />}
-    </>
-  )
+  if (!dialog || !user || user.identityId !== dialog.identityId) return null
+  if (dialog.kind === 'review') return <ReviewDialog identityId={dialog.identityId} onClose={close} />
+  return <EnrolDialog identityId={dialog.identityId} username={user.dpnsUsername} offer={dialog.kind === 'offer'} onClose={close} />
 }
 
 type EnrolStep =
@@ -86,7 +76,10 @@ type EnrolStep =
   | { kind: 'done' }
   | { kind: 'error'; message: string }
 
+const ENROL_BUTTON: Partial<Record<EnrolStep['kind'], string>> = { creating: 'Waiting for your passkey…', saving: 'Saving…' }
+
 function EnrolDialog({ identityId, username, offer, onClose }: { identityId: string; username?: string; offer: boolean; onClose: () => void }) {
+  const changed = usePasskeyPrompts((state) => state.changed)
   const [step, setStep] = useState<EnrolStep>({ kind: 'intro' })
   const busy = step.kind === 'creating' || step.kind === 'saving'
 
@@ -107,14 +100,14 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
     setStep({ kind: 'saving' })
     finishPasskeyEnrolment(pending)
       .then(() => {
-        announceChange()
+        changed()
         setStep({ kind: 'done' })
       })
       .catch((error: unknown) => fail(error, { kind: 'confirm', pending }))
-  }, [fail])
+  }, [changed, fail])
 
   return (
-    <Modal open onOpenChange={(open) => { if (!open && !busy) onClose() }} className="w-[440px] max-w-[92vw]">
+    <Modal open onOpenChange={(next) => { if (!next && !busy) onClose() }} className="w-[440px] max-w-[92vw]">
       {step.kind === 'done' ? (
         <>
           <ModalTitle><CheckCircleIcon className="h-6 w-6 text-green-500" />Passkey added</ModalTitle>
@@ -134,14 +127,14 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           ) : (
             <p className="text-sm text-gray-500 mb-5">Saving it costs less than 3¢ from your balance.</p>
           )}
-          {step.kind === 'error' && <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-4">{step.message}</p>}
+          {step.kind === 'error' && <InlineError>{step.message}</InlineError>}
           <div className="flex flex-col gap-3">
             {step.kind === 'confirm' ? (
               <Button className="w-full" onClick={() => confirm(step.pending)} data-testid="passkey-confirm">Confirm</Button>
             ) : (
               <Button className="w-full gap-2" onClick={create} disabled={busy} data-testid="passkey-add">
                 {busy && <Spinner size="sm" />}
-                {step.kind === 'saving' ? 'Saving…' : step.kind === 'creating' ? 'Waiting for your passkey…' : 'Add a passkey'}
+                {ENROL_BUTTON[step.kind] ?? 'Add a passkey'}
               </Button>
             )}
             <Button variant="outline" className="w-full" onClick={onClose} disabled={busy}>Not now</Button>
@@ -161,13 +154,15 @@ type ReviewStep =
   | { kind: 'error'; message: string }
 
 /**
- * The mandatory review before passkeys are updated (owner decision V1): any
- * signed-in device can re-seal every passkey, so the user sees every one,
- * picks which to update, and can remove them all and start over if one is
- * not theirs.
+ * The mandatory review before passkeys are updated (owner decision V1). Any
+ * signed-in device can re-seal every passkey, and anyone who once held this
+ * identity's keys can plant an entry that looks like a passkey from another
+ * device. So only this device's passkeys start ticked; another device's must
+ * be ticked by hand, and the user is steered to "Remove all and start over"
+ * when one is not theirs.
  */
 function ReviewDialog({ identityId, onClose }: { identityId: string; onClose: () => void }) {
-  const openEnrol = usePasskeyPrompts((state) => state.openEnrol)
+  const { open, changed } = usePasskeyPrompts()
   const [entries, setEntries] = useState<PasskeyEntryView[] | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [step, setStep] = useState<ReviewStep>({ kind: 'list' })
@@ -179,7 +174,7 @@ function ReviewDialog({ identityId, onClose }: { identityId: string; onClose: ()
       .then((list) => {
         if (cancelled) return
         setEntries(list)
-        setChecked(new Set(list.filter((entry) => entry.needsUpdate).map((entry) => entry.entryId)))
+        setChecked(new Set(list.filter((entry) => entry.needsUpdate && entry.thisDevice).map((entry) => entry.entryId)))
       })
       .catch((error: unknown) => {
         logger.warn('Passkeys: could not read them for the review:', error)
@@ -197,11 +192,10 @@ function ReviewDialog({ identityId, onClose }: { identityId: string; onClose: ()
 
   const update = useCallback(() => {
     if (!entries) return
-    const ids = [...checked]
     setStep({ kind: 'working' })
-    updatePasskeys(identityId, ids)
+    updatePasskeys(identityId, [...checked])
       .then(({ failed }) => {
-        announceChange()
+        changed()
         if (failed > 0) {
           setStep({ kind: 'error', message: 'Some passkeys couldn\'t be updated. Please try again.' })
           return
@@ -214,115 +208,121 @@ function ReviewDialog({ identityId, onClose }: { identityId: string; onClose: ()
         logger.warn('Passkeys: updating failed:', error)
         setStep({ kind: 'error', message: enrolErrorCopy(error) ?? 'Your passkeys couldn\'t be updated. Please try again.' })
       })
-  }, [checked, entries, identityId, onClose])
+  }, [changed, checked, entries, identityId, onClose])
 
-  const remove = useCallback((all: boolean, ids: string[]) => {
+  const remove = useCallback((ids: string[] | 'all') => {
     setStep({ kind: 'working' })
-    const removal = all ? removeAllPasskeys(identityId) : removePasskeys(identityId, ids)
+    const removal = ids === 'all' ? removeAllPasskeys(identityId) : removePasskeys(identityId, ids)
     removal
       .then(({ failed }) => {
-        announceChange()
+        changed()
         if (failed > 0) setStep({ kind: 'error', message: 'Some passkeys couldn\'t be removed. Please try again.' })
-        else if (all) setStep({ kind: 'started-over' })
+        else if (ids === 'all') setStep({ kind: 'started-over' })
         else onClose()
       })
       .catch((error: unknown) => {
         logger.warn('Passkeys: removing failed:', error)
         setStep({ kind: 'error', message: 'Your passkeys couldn\'t be removed. Please try again.' })
       })
-  }, [identityId, onClose])
+  }, [changed, identityId, onClose])
 
   const working = step.kind === 'working'
 
-  return (
-    <Modal open onOpenChange={(open) => { if (!open && !working) onClose() }} className="w-[480px] max-w-[94vw]">
-      <ModalTitle><KeyIcon className="h-6 w-6 text-yappr-500" />Update your passkeys</ModalTitle>
-      {step.kind === 'started-over' ? (
-        <>
-          <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-5">
-            Your passkeys were removed. Add a new one for this device to keep signing in with a passkey.
-          </Dialog.Description>
-          <div className="flex flex-col gap-3">
-            <Button className="w-full" onClick={() => openEnrol(identityId)}>Add a passkey</Button>
-            <Button variant="outline" className="w-full" onClick={onClose}>Not now</Button>
-          </div>
-        </>
-      ) : step.kind === 'start-over' ? (
-        <>
-          <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-3">
-            Remove every passkey, including any you don&apos;t recognise? None of them will sign you in to Yappr any more. You can add yours again straight after.
-          </Dialog.Description>
-          <p className="text-sm text-gray-500 mb-5">
-            {wallet
-              ? 'If you think someone else signed in as you, also turn off Yappr in your Dash wallet. Copies saved earlier stay on the network until you do.'
-              : 'If you think someone else has your key, also change it in your Dash wallet. Copies saved earlier stay on the network until you do.'}
-          </p>
-          <div className="flex flex-col gap-3">
-            <Button className="w-full bg-red-600 hover:bg-red-700 text-white" onClick={() => remove(true, [])}>Remove all passkeys</Button>
-            <Button variant="outline" className="w-full" onClick={() => setStep({ kind: 'list' })}>Back</Button>
-          </div>
-        </>
-      ) : step.kind === 'leftover' ? (
-        <>
-          <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-5">
-            {step.ids.length === 1 ? 'One passkey wasn\'t updated and can\'t sign you in. Remove it?' : `${step.ids.length} passkeys weren't updated and can't sign you in. Remove them?`}
-          </Dialog.Description>
-          <div className="flex flex-col gap-3">
-            <Button className="w-full" onClick={() => remove(false, step.ids)}>Remove</Button>
-            <Button variant="outline" className="w-full" onClick={onClose}>Keep</Button>
-          </div>
-        </>
-      ) : (
-        <>
-          <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-            Your sign-in changed, so some passkeys need updating to keep signing you in. Check that you recognise each one.
-          </Dialog.Description>
-          {entries === null && step.kind !== 'error' && <div className="py-4 flex justify-center"><Spinner size="sm" /></div>}
-          {entries && (
-            <ul className="space-y-2 mb-4" data-testid="passkey-review-list">
-              {entries.map((entry) => (
-                <li key={entry.entryId}>
-                  <label className="flex items-start gap-3 rounded-xl ring-1 ring-gray-200 dark:ring-neutral-700 p-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-1 h-4 w-4 accent-yappr-500"
-                      checked={checked.has(entry.entryId)}
-                      onChange={() => toggle(entry.entryId)}
-                      disabled={working}
-                    />
-                    <span className="flex-1 text-sm">
-                      <span className="font-medium text-gray-900 dark:text-white">{passkeyLabel(entry)}</span>
-                      <span className="block text-gray-500">
-                        {entry.name ? `Added ${formatPasskeyDate(entry.addedAt)}` : null}
-                        {entry.name && (entry.thisDevice || entry.needsUpdate) ? ' · ' : null}
-                        {entry.thisDevice ? 'This device' : null}
-                        {entry.thisDevice && entry.needsUpdate ? ' · ' : null}
-                        {entry.needsUpdate ? 'Needs update' : null}
+  const body = (() => {
+    switch (step.kind) {
+      case 'started-over':
+        return (
+          <>
+            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-5">
+              Your passkeys were removed. Add a new one for this device to keep signing in with a passkey.
+            </Dialog.Description>
+            <div className="flex flex-col gap-3">
+              <Button className="w-full" onClick={() => open('enrol', identityId)}>Add a passkey</Button>
+              <Button variant="outline" className="w-full" onClick={onClose}>Not now</Button>
+            </div>
+          </>
+        )
+      case 'start-over':
+        return (
+          <>
+            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-3">
+              Remove every passkey, including any you don&apos;t recognise? None of them will sign you in to Yappr any more. You can add yours again straight after.
+            </Dialog.Description>
+            <p className="text-sm text-gray-500 mb-5">{lockOutCopy(wallet)}</p>
+            <div className="flex flex-col gap-3">
+              <Button variant="destructive" className="w-full" onClick={() => remove('all')}>Remove all passkeys</Button>
+              <Button variant="outline" className="w-full" onClick={() => setStep({ kind: 'list' })}>Back</Button>
+            </div>
+          </>
+        )
+      case 'leftover':
+        return (
+          <>
+            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-5">
+              {step.ids.length === 1 ? 'One passkey wasn\'t updated and can\'t sign you in. Remove it?' : `${step.ids.length} passkeys weren't updated and can't sign you in. Remove them?`}
+            </Dialog.Description>
+            <div className="flex flex-col gap-3">
+              <Button className="w-full" onClick={() => remove(step.ids)}>Remove</Button>
+              <Button variant="outline" className="w-full" onClick={onClose}>Keep</Button>
+            </div>
+          </>
+        )
+      default:
+        return (
+          <>
+            <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-2">
+              Your sign-in changed, so some passkeys need updating to keep signing you in. Tick only the passkeys you recognise.
+            </Dialog.Description>
+            <p className="text-sm text-gray-500 mb-4">
+              If you turned Yappr off or changed your key because someone else had access, don&apos;t update: remove them all and start over.
+            </p>
+            {entries === null && step.kind !== 'error' && <div className="py-4 flex justify-center"><Spinner size="sm" /></div>}
+            {entries && (
+              <ul className="space-y-2 mb-4" data-testid="passkey-review-list">
+                {entries.map((entry) => (
+                  <li key={entry.entryId}>
+                    <label className="flex items-start gap-3 rounded-xl ring-1 ring-gray-200 dark:ring-neutral-700 p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-1 h-4 w-4 accent-yappr-500"
+                        checked={checked.has(entry.entryId)}
+                        onChange={() => toggle(entry.entryId)}
+                        disabled={working}
+                      />
+                      <span className="flex-1 text-sm">
+                        <span className="font-medium text-gray-900 dark:text-white">{passkeyLabel(entry)}</span>
+                        <span className="block text-gray-500">{passkeyDetails(entry)}</span>
                       </span>
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          )}
-          {step.kind === 'error' && <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-4">{step.message}</p>}
-          <div className="flex flex-col gap-3">
-            <Button className="w-full gap-2" onClick={update} disabled={working || !entries || checked.size === 0} data-testid="passkey-update">
-              {working && <Spinner size="sm" />}
-              {checked.size === 1 ? 'Update 1 passkey' : `Update ${checked.size} passkeys`}
-            </Button>
-            <Button variant="outline" className="w-full" onClick={onClose} disabled={working}>Later</Button>
-            <button
-              type="button"
-              className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline underline-offset-4 disabled:opacity-50"
-              onClick={() => setStep({ kind: 'start-over' })}
-              disabled={working || !entries || entries.length === 0}
-            >
-              Don&apos;t recognise one? Remove all and start over
-            </button>
-          </div>
-        </>
-      )}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {step.kind === 'error' && <InlineError>{step.message}</InlineError>}
+            <div className="flex flex-col gap-3">
+              <Button className="w-full gap-2" onClick={update} disabled={working || !entries || checked.size === 0} data-testid="passkey-update">
+                {working && <Spinner size="sm" />}
+                {checked.size === 1 ? 'Update 1 passkey' : `Update ${checked.size} passkeys`}
+              </Button>
+              <Button variant="outline" className="w-full" onClick={onClose} disabled={working}>Later</Button>
+              <button
+                type="button"
+                className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline underline-offset-4 disabled:opacity-50"
+                onClick={() => setStep({ kind: 'start-over' })}
+                disabled={working || !entries || entries.length === 0}
+              >
+                Don&apos;t recognise one? Remove all and start over
+              </button>
+            </div>
+          </>
+        )
+    }
+  })()
+
+  return (
+    <Modal open onOpenChange={(next) => { if (!next && !working) onClose() }} className="w-[480px] max-w-[94vw]">
+      <ModalTitle><KeyIcon className="h-6 w-6 text-yappr-500" />Update your passkeys</ModalTitle>
+      {body}
     </Modal>
   )
 }

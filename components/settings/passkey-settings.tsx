@@ -4,30 +4,23 @@ import { useCallback, useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
-import { usePasskeyPrompts } from '@/hooks/use-passkey-prompts'
+import { usePasskeyPrompts, usePasskeysOffered } from '@/hooks/use-passkey-prompts'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
-import { setPasskeyName } from '@/lib/auth/passkey-device'
+import { MAX_PASSKEY_NAME_LENGTH, setPasskeyName } from '@/lib/auth/passkey-device'
 import { MAX_PASSKEYS } from '@/lib/auth/passkey-vault-policy'
 import {
   listPasskeys,
   passkeyEligibility,
-  passkeysOffered,
   removePasskeys,
   walletPasskeysPossible,
   type PasskeyEntryView,
   type PasskeyErrorCode,
 } from '@/lib/auth/passkey-vault'
-import { PASSKEYS_CHANGED_EVENT } from '@/components/auth/passkey-prompts'
-import { formatPasskeyDate, passkeyLabel } from '@/components/auth/passkey-copy'
+import { NOT_ELIGIBLE_COPY, formatPasskeyDate, lockOutCopy, passkeyLabel } from '@/components/auth/passkey-copy'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-
-const NOT_ELIGIBLE_COPY: Partial<Record<PasskeyErrorCode, string>> = {
-  'not-eligible': 'To add a passkey, sign in with your Dash wallet or your everyday sign-in key.',
-  'renew-first': 'Renew Yappr in your Dash wallet to add or update passkeys.',
-}
 
 /**
  * Settings → Privacy & Security → Passkeys: the identity's passkeys, with
@@ -37,8 +30,8 @@ const NOT_ELIGIBLE_COPY: Partial<Record<PasskeyErrorCode, string>> = {
  */
 export function PasskeySettings() {
   const { user } = useAuth()
-  const { openEnrol, openReview } = usePasskeyPrompts()
-  const [offered, setOffered] = useState(false)
+  const { open, revision } = usePasskeyPrompts()
+  const offered = usePasskeysOffered()
   const [entries, setEntries] = useState<PasskeyEntryView[] | null>(null)
   const [eligibility, setEligibility] = useState<PasskeyErrorCode | null | undefined>(undefined)
   const [failed, setFailed] = useState(false)
@@ -48,9 +41,8 @@ export function PasskeySettings() {
   const identityId = user?.identityId
   const wallet = identityId ? hasAppConnectSession(identityId) : false
 
-  useEffect(() => setOffered(passkeysOffered()), [])
-
-  const load = useCallback(async () => {
+  /** Reads the passkeys again; never rejects (a failure shows "Try again"). */
+  const reload = useCallback(async () => {
     if (!identityId) return
     setFailed(false)
     try {
@@ -64,12 +56,9 @@ export function PasskeySettings() {
   }, [identityId])
 
   useEffect(() => {
-    if (!offered) return
-    const reload = () => { load().catch(() => undefined) }
-    reload()
-    window.addEventListener(PASSKEYS_CHANGED_EVENT, reload)
-    return () => window.removeEventListener(PASSKEYS_CHANGED_EVENT, reload)
-  }, [load, offered])
+    if (offered) reload().catch(() => undefined)
+    // `revision` changes whenever a dialog added, updated or removed passkeys.
+  }, [offered, reload, revision])
 
   // A wallet sign-in on a build whose wallet keys cannot write passkeys has nothing to manage here.
   if (!identityId || !offered || (wallet && !walletPasskeysPossible())) return null
@@ -79,7 +68,7 @@ export function PasskeySettings() {
     if (!renaming) return
     setPasskeyName(renaming.credentialId, renaming.name)
     setRenaming(null)
-    load().catch(() => undefined)
+    reload().catch(() => undefined)
   }
 
   return (
@@ -95,7 +84,7 @@ export function PasskeySettings() {
         {failed && (
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm text-gray-600 dark:text-gray-400">Couldn&apos;t load your passkeys.</p>
-            <Button variant="outline" size="sm" onClick={() => { load().catch(() => undefined) }}>Try again</Button>
+            <Button variant="outline" size="sm" onClick={() => { reload().catch(() => undefined) }}>Try again</Button>
           </div>
         )}
         {entries?.length === 0 && <p className="text-sm text-gray-600 dark:text-gray-400">You haven&apos;t added a passkey yet.</p>}
@@ -106,7 +95,7 @@ export function PasskeySettings() {
                 <input
                   aria-label="Passkey name"
                   autoFocus
-                  maxLength={40}
+                  maxLength={MAX_PASSKEY_NAME_LENGTH}
                   value={renaming.name}
                   onChange={(event) => setRenaming({ credentialId: entry.credentialId, name: event.target.value })}
                   className="flex-1 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -136,9 +125,9 @@ export function PasskeySettings() {
           <p className="text-sm text-gray-600 dark:text-gray-400">{NOT_ELIGIBLE_COPY[eligibility]}</p>
         )}
         <div className="flex flex-wrap gap-2 pt-1">
-          {canAdd && <Button onClick={() => openEnrol(identityId)} data-testid="passkey-settings-add">Add a passkey</Button>}
+          {canAdd && <Button onClick={() => open('enrol', identityId)} data-testid="passkey-settings-add">Add a passkey</Button>}
           {eligibility === null && entries && entries.length > 0 && (
-            <Button variant="outline" onClick={() => openReview(identityId)}>Update passkeys</Button>
+            <Button variant="outline" onClick={() => open('review', identityId)}>Update passkeys</Button>
           )}
         </div>
         {entries !== null && entries.length >= MAX_PASSKEYS && (
@@ -157,7 +146,7 @@ export function PasskeySettings() {
           onClose={() => setRemoving(null)}
           onRemoved={() => {
             setRemoving(null)
-            load().catch(() => undefined)
+            reload().catch(() => undefined)
           }}
         />
       )}
@@ -188,19 +177,15 @@ function RemovePasskeyDialog({ identityId, entry, wallet, onClose, onRemoved }: 
   }
 
   return (
-    <Modal open onOpenChange={(open) => { if (!open && !busy) onClose() }} className="w-[440px] max-w-[92vw]">
+    <Modal open onOpenChange={(next) => { if (!next && !busy) onClose() }} className="w-[440px] max-w-[92vw]">
       <ModalTitle>Remove this passkey?</ModalTitle>
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-3">
         It won&apos;t sign you in to Yappr any more. You can also delete it from your passwords app.
       </Dialog.Description>
-      <p className="text-sm text-gray-500 mb-5">
-        {wallet
-          ? 'If you think someone else has this passkey, also turn off Yappr in your Dash wallet: copies saved earlier stay on the network, and only that locks them out.'
-          : 'If you think someone else has this passkey, also change your key in your Dash wallet: copies saved earlier stay on the network, and only a new key locks them out.'}
-      </p>
+      <p className="text-sm text-gray-500 mb-5">{lockOutCopy(wallet)}</p>
       {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-4">{error}</p>}
       <div className="flex flex-col gap-3">
-        <Button className="w-full bg-red-600 hover:bg-red-700 text-white gap-2" onClick={remove} disabled={busy} data-testid="passkey-remove-confirm">
+        <Button variant="destructive" className="w-full gap-2" onClick={remove} disabled={busy} data-testid="passkey-remove-confirm">
           {busy && <Spinner size="sm" />}
           Remove passkey
         </Button>

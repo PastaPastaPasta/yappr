@@ -15,7 +15,8 @@ export interface WalletSignInSessions {
   current(identityId: string): AppConnectSession | null
 }
 
-function wipeGrant(grant: AppConnectGrant): void {
+/** Overwrites every private key a grant carries. */
+export function wipeGrant(grant: AppConnectGrant): void {
   for (const key of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
 }
 

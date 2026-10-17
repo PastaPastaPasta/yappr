@@ -132,7 +132,7 @@ export async function verifyAppConnectCandidate(input: VerifyAppConnectCandidate
     return reject(new Rejection(error instanceof AppConnectPayloadError ? error.code : 'decrypt'))
   }
 
-  return verifyKeys({ ...input, ownerId: candidate.ownerId }, slots)
+  return verifyKeys({ request, ownerId: candidate.ownerId, identity: input.identity, now: input.now, expiryMarginMs: input.expiryMarginMs }, slots)
 }
 
 /** What a grant is checked against, whether its keys came from a wallet's answer or were kept from one. */
