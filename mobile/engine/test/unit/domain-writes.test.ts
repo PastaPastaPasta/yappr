@@ -110,7 +110,7 @@ vi.mock('@/lib/services/unified-profile-service', async (load) => {
     },
   }
 })
-vi.mock('@/lib/services/identity-nonce', async (load) => ({ ...await load<object>(), settleSupersededReplaces: m.settleReplaces }))
+vi.mock('@/lib/services/identity-nonce', async (load) => ({ ...await load<object>(), settlePendingWrites: m.settleReplaces }))
 vi.mock('@/lib/services/identity-batch', () => ({ loadIdentityBatch: async () => ({ usernames: new Map(), profiles: [], avatars: new Map() }) }))
 
 const { ABSENCE_AFTER_MS, createTicketStore } = await import('../../src/writes/tickets')

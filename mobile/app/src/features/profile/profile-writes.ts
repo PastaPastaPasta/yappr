@@ -46,9 +46,9 @@ export function profileChangeOf({ patch, avatar }: ProfileUpdateVars): ProfileCh
 /**
  * Another change from the account may still land (lib holds the save back,
  * `PENDING_WRITE`): nothing was sent, and Save works again once it has, or
- * at the latest once lib stops waiting for it (15 minutes after it was sent).
+ * at the latest once lib stops waiting for it (a minute after it was sent).
  */
-export const STILL_SAVING_MESSAGE = 'Your last change is still saving. Try again in a few minutes.';
+export const STILL_SAVING_MESSAGE = 'Your last change is still saving. Try again in a moment.';
 
 /**
  * A dev save whose second document (the Yappr profile) failed after the

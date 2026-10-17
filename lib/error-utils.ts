@@ -240,9 +240,11 @@ export const CREATE_NOT_RECORDED_ERROR = 'This was not saved: the network used i
 /**
  * Why a write was not sent at all: a transition this browser signed earlier
  * has not been confirmed or refused, and could still take the nonce this one
- * would carry (QA D-01, `lib/services/identity-nonce.ts`).
+ * would carry (QA D-01, `lib/services/identity-nonce.ts`). Trying again is
+ * the way to check: the next attempt reads the chain and goes ahead as soon as
+ * that transition shows landed or can no longer land (#644).
  */
-export const PENDING_WRITE_ERROR = 'An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.'
+export const PENDING_WRITE_ERROR = 'Your last change is still going through, so this one was not sent. Try again in a moment.'
 
 /**
  * Why a write was not sent at all: this browser's storage would not record

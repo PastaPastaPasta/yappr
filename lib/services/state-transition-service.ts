@@ -19,7 +19,7 @@ import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 import { documentIdForCreate, identityContractNonceConsumed } from '@/lib/document-id';
 import { buildSignedCreateTransition } from '@/lib/manual-batch';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { allocateNonce, loadReservation, releaseNonce, reserveNonce, settleSupersededReplaces, withSdkSignedWrite, type PendingTransition } from './identity-nonce';
+import { allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce';
 import {
   DocumentActionFeeAgreement,
   StateTransition,
@@ -461,8 +461,7 @@ class StateTransitionService {
    *
    * This is the typed write path: `documentData` should already use `Uint8Array` for binary
    * fields before it is wrapped in a `Document`. It may be a function of the document's id
-   * for data that must commit to the id before the document exists (the auth vault binds
-   * its ciphertext to the vault id as AEAD associated data): the function is called once,
+   * for data that must commit to the id before the document exists: the function is called once,
    * with the id the create transition WILL carry, and the same nonce is then used for the
    * broadcast, so the id the data was built against is the id Platform stores.
    *
@@ -588,15 +587,23 @@ class StateTransitionService {
       // DIP-30: nonce is u64 where lower 40 bits = sequence number,
       // upper 24 bits = missing revision bitset. Only increment the sequence part,
       // and go past every nonce this browser signed, executed or not.
-      const currentNonce = await sdk.identities.contractNonce(ownerId, contractId);
-      const reservation = loadReservation(ownerId, contractId);
-      const newNonce = allocateNonce(currentNonce, reservation);
-      logger.debug(`Nonce: current=${currentNonce}, reserved=${reservation?.mark ?? 'none'}, using=${newNonce ?? 'none (pending)'}`);
-      if (newNonce === null) return { success: false, error: PENDING_WRITE_ERROR };
+      // A write whose answer was lost stops holding this one back as soon as
+      // Platform shows it landed (awaitNonce re-reads the tip for a few seconds).
+      let nonceRead: { current: bigint | undefined; value: bigint };
+      try {
+        nonceRead = await awaitNonce(ownerId, contractId, allocateNonce);
+      } catch (error) {
+        if (extractErrorMessage(error) === PENDING_WRITE_ERROR) return { success: false, error: PENDING_WRITE_ERROR };
+        throw error;
+      }
+      const { current: currentNonce, value: newNonce } = nonceRead;
+      logger.debug(`Nonce: current=${currentNonce}, using=${newNonce}`);
       let pendingEntry: PendingTransition | null = null;
-      // A verdict on this transition (confirmed, refused, or settled by proof): it will not execute later.
-      const decided = (result: StateTransitionResult): StateTransitionResult => {
-        if (pendingEntry) releaseNonce(ownerId, contractId, pendingEntry);
+      // A verdict on this transition (confirmed, refused, or settled by proof):
+      // it will not execute later. `spent` is false only for a refusal at
+      // broadcast, which never took the nonce.
+      const decided = (result: StateTransitionResult, spent = true): StateTransitionResult => {
+        if (pendingEntry) releaseNonce(ownerId, contractId, pendingEntry, spent ? newNonce : undefined);
         return result;
       };
       // Platform refused it for its nonce: taken by another write, or by this
@@ -740,7 +747,7 @@ class StateTransitionService {
 
       // Reserved before the broadcast: a broadcast that errors may still have
       // gone out, and skipping a nonce that did not only leaves a gap Drive fills.
-      pendingEntry = reserveNonce(ownerId, contractId, newNonce, currentNonce, undefined, options?.reservationScope);
+      pendingEntry = reserveNonce(ownerId, contractId, newNonce, currentNonce, options?.reservationScope);
       try {
         await sdk.stateTransitions.broadcastStateTransition(stateTransition);
         logger.debug('Broadcast succeeded, waiting for confirmation...');
@@ -748,7 +755,7 @@ class StateTransitionService {
         if (isIdentityNonceConflictError(broadcastErr)) return await nonceRefused(broadcastErr);
         // Refused: it never executes, and nothing was written.
         if (isConsensusRefusal(broadcastErr)) {
-          decided({ success: false });
+          decided({ success: false }, false);
           throw broadcastErr;
         }
         // "Already in mempool/chain": these very bytes went out on an earlier
@@ -919,10 +926,6 @@ class StateTransitionService {
       await withSdkSignedWrite(ownerId, contractId, () => {
         sent = true;
         return sdk.documents.replace({ document, identityKey: signingKey, signer });
-      }, {
-        documentType,
-        documentId,
-        revision: newRevision,
       }, reservationScope);
       logger.debug('Document update submitted successfully');
       reportSigningSuccess(ownerId);
@@ -943,9 +946,9 @@ class StateTransitionService {
       // not be checked, a transport failure): it may have landed. It stays a
       // failure, never a success read off the revision alone, which another
       // device's replace can have reached; its message tells the user to check
-      // (categorizeError). Its pending entry is released once the chain proves
-      // it can no longer execute.
-      if (sent && sentWriteOutcomeUnknown(error)) await settleSupersededReplaces(ownerId, contractId).catch(() => 0);
+      // (categorizeError). The next write starts once the chain shows its
+      // nonce consumed (identity-nonce).
+      if (sent && sentWriteOutcomeUnknown(error)) logger.warn(`Replace of ${documentType} ${documentId} sent without a verdict:`, extractErrorMessage(error));
       logger.error('Error updating document:', error);
       return this.refused(ownerId, key, error);
     }
@@ -990,7 +993,7 @@ class StateTransitionService {
       await withSdkSignedWrite(ownerId, contractId, () => {
         sent = true;
         return sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
-      }, undefined, undefined, precondition);
+      }, undefined, precondition);
       logger.debug('Document deletion submitted successfully');
       reportSigningSuccess(ownerId);
 

@@ -11,9 +11,8 @@
  * `new DocumentCreateTransition({ document, identityContractNonce })`
  * re-derives it and writes it back onto `document.id`. Yappr no longer carries
  * its own copy of the hash; {@link documentIdForCreate} is a thin wrapper over
- * the wasm derivation for the one caller that needs the id before the
- * transition exists (data that commits to the id — the auth vault's AEAD
- * associated data).
+ * the wasm derivation for a caller that needs the id before the transition
+ * exists (data that commits to the id).
  *
  * Consequences the callers live with:
  *  - the id exists only once the nonce is assigned, and changes if the

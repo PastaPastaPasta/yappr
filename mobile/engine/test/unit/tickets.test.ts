@@ -145,7 +145,7 @@ describe('retry: never blindly', () => {
     store.register('follow', handler)
     store.submit({ op: 'follow', args: { target: 'bob' } })
     await settle()
-    runs[0].reject(new Error('An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.'))
+    runs[0].reject(new Error('Your last change is still going through, so this one was not sent. Try again in a moment.'))
     await settle()
     expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'PENDING_WRITE', outcome: 'not-sent' } })
     const retried = await store.retry('t1')
@@ -168,7 +168,7 @@ describe('retry: never blindly', () => {
     store.submit({ op: 'profile.update', args: {} })
     await settle()
     runs[0].ctx.progress(1, 2)
-    runs[0].reject(new Error('An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.'))
+    runs[0].reject(new Error('Your last change is still going through, so this one was not sent. Try again in a moment.'))
     await settle()
     expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, progress: { done: 1, total: 2 } })
     expect((await store.retry('t1')).progress).toBeNull()
@@ -249,7 +249,7 @@ describe('safety', () => {
     const verdicts: [op: 'like' | 'unlike' | 'follow' | 'unfollow' | 'block', error: unknown, code: string][] = [
       ['like', { name: 'Protocol', message: 'Failed to broadcast: Protocol error: invalid revision', code: 40106 }, 'UNKNOWN'],
       ['unlike', new Error('This was not saved: the network used its place without recording it. Check, then try again.'), 'NOT_RECORDED'],
-      ['follow', new Error('An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.'), 'PENDING_WRITE'],
+      ['follow', new Error('Your last change is still going through, so this one was not sent. Try again in a moment.'), 'PENDING_WRITE'],
       ['unfollow', new Error('Private key not found. Please log in again.'), 'NO_KEY'],
       ['block', Object.assign(new Error('The post you replied to is not confirmed yet'), { code: 'PARENT_UNCONFIRMED' }), 'PARENT_UNCONFIRMED'],
     ]

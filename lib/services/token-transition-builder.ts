@@ -9,13 +9,11 @@
  */
 
 import { logger } from '@/lib/logger';
-import { getEvoSdk } from './evo-sdk-service';
 import { tokenService } from './token-service';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
 import { TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/evo-sdk';
-import { PENDING_WRITE_ERROR } from '@/lib/error-utils';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { allocateNonce, loadReservation, releaseNonce, reserveNonce } from './identity-nonce';
+import { allocateNonce, awaitNonce, releaseNonce, reserveNonce } from './identity-nonce';
 
 /**
  * An unsigned transition for a wallet, and the way to take it back. The bytes
@@ -48,7 +46,6 @@ export async function buildUnsignedTokenBatch(
   ownerId: string,
   build: (base: TokenBaseTransition) => ConstructorParameters<typeof TokenTransition>[0]
 ): Promise<WalletTransitionRequest> {
-  const sdk = await getEvoSdk();
   const tokenId = await tokenService.getTokenId();
 
   // The wallet broadcasts later, so the lock cannot cover that; taking the
@@ -57,9 +54,7 @@ export async function buildUnsignedTokenBatch(
   // is gone), keeps any later write from signing the same one (QA D-01). It is
   // reserved only once the bytes exist, so a failed build holds nothing.
   return withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
-    const rawNonce = await sdk.identities.contractNonce(ownerId, YAPPR_CONTRACT_ID);
-    const nonce = allocateNonce(rawNonce, loadReservation(ownerId, YAPPR_CONTRACT_ID));
-    if (nonce === null) throw new Error(PENDING_WRITE_ERROR);
+    const { current: rawNonce, value: nonce } = await awaitNonce(ownerId, YAPPR_CONTRACT_ID, allocateNonce);
     logger.debug(`${label}: nonce raw=${rawNonce} using=${nonce}`);
 
     const base = new TokenBaseTransition({
@@ -75,6 +70,7 @@ export async function buildUnsignedTokenBatch(
     logger.debug(`${label}: unsigned transition bytes length: ${bytes.length}`);
 
     const entry = reserveNonce(ownerId, YAPPR_CONTRACT_ID, nonce, rawNonce);
+    // Never shown to a wallet, so never signed: its nonce was not taken.
     const discard = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry));
     return { bytes, discard };
   });

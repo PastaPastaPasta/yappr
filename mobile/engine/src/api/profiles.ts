@@ -17,7 +17,7 @@ import { replyService } from '@/lib/services/reply-service'
 import { repostService } from '@/lib/services/repost-service'
 import { loadUserStats } from '@/lib/services/social-stats-service'
 import { avatarSeedMaxLength, profileSources, profileTextLimits } from '@/lib/profile/v10-profile'
-import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
+import { settlePendingWrites } from '@/lib/services/identity-nonce'
 import { DICEBEAR_STYLES, unifiedProfileService, type DiceBearStyle, type UpdateUnifiedProfileData } from '@/lib/services/unified-profile-service'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Post } from '@/lib/types'
@@ -338,16 +338,16 @@ async function profileShows(ownerId: string, update: UpdateUnifiedProfileData): 
 /**
  * An earlier profile save of `ownerId` whose answer was lost (its wait timed
  * out) but which has since landed stops holding writes back. lib keeps such
- * an SDK-signed replace pending for 15 minutes (`PENDING_LIFETIME_MS`): until
- * then the next save, and on v10 every write to the social contract that holds
- * `yapprProfile`, fails PENDING_WRITE. `settleSupersededReplaces` releases it
- * only once Platform shows the document at the revision it wrote and its
- * nonce consumed, so a save that has not landed yet still holds them back
- * (as does one this could not read: a failure proves nothing).
+ * an SDK-signed replace pending until Platform shows the nonce it took
+ * consumed: until then the next save, and on v10 every write to the social
+ * contract that holds `yapprProfile`, fails PENDING_WRITE.
+ * `settlePendingWrites` drops it once Platform does, so a save that has not
+ * landed yet still holds them back (as does one this could not read: a
+ * failure proves nothing).
  */
 function settleLandedProfileSaves(ownerId: string): Promise<number[]> {
   const contracts = [...new Set(profileSources().map(({ source }) => source.contractId))]
-  return Promise.all(contracts.map(contractId => settleSupersededReplaces(ownerId, contractId)))
+  return Promise.all(contracts.map(contractId => settlePendingWrites(ownerId, contractId)))
 }
 
 /** Whether the stored profile shows the edit (`profileShows`), proved twice for an absence. */

@@ -10,7 +10,7 @@ import { logger } from '@/lib/logger';
 
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { settleSupersededReplaces } from './identity-nonce';
+import { settlePendingWrites } from './identity-nonce';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
@@ -162,17 +162,17 @@ class ItemDeliverableService extends BaseDocumentService<ItemDeliverable> {
   }
 
   /**
-   * Release the pending entry of a replace seen landed, by the proofs
-   * `settleSupersededReplaces` requires (the document at its revision, the
-   * nonce consumed). A node a moment behind may not show the nonce yet, so it
-   * is tried a few times; an entry that cannot be settled stays pending, and
-   * the next write reports that plainly rather than risk a nonce clash.
+   * Release the pending entry of a replace seen landed, once Platform shows
+   * its nonce consumed (`settlePendingWrites`). A node a moment behind may
+   * not show it yet, so it is tried a few times; an entry that cannot be
+   * settled stays pending, and the next write waits for it briefly before it
+   * reports that plainly rather than risk a nonce clash.
    */
   private async settleLandedReplace(ownerId: string): Promise<void> {
     for (let attempt = 0; attempt < RECONCILE_ATTEMPTS; attempt++) {
       if (attempt > 0) await sleep(RECONCILE_DELAY_MS);
       try {
-        if ((await settleSupersededReplaces(ownerId, this.contractId)) > 0) return;
+        if ((await settlePendingWrites(ownerId, this.contractId)) > 0) return;
       } catch (error) {
         logger.warn('Could not settle a landed delivery-content replace:', error);
       }
