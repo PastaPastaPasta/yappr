@@ -30,7 +30,6 @@ import {
   createPasskeyWithPrf,
   getPasskeyPrf,
   passkeysAvailable,
-  signalAcceptedPasskeys,
   signalUnknownPasskey,
   verifyAppConnectKeys,
   type AppConnectGrant,
@@ -618,15 +617,15 @@ export async function updatePasskeys(identityId: string, entryIds: readonly stri
   return { updated, failed }
 }
 
-/** Tells the provider which of this deployment's passkeys still work, so it hides the removed ones. */
-async function signalRemaining(identityId: string, remaining: VaultEntryDocument[]): Promise<void> {
+/**
+ * Tells the provider these passkeys no longer work here, so it can hide them.
+ * Only passkeys whose removal was confirmed: a list of what remains could come
+ * from a node behind and hide a passkey nobody touched.
+ */
+async function signalRemoved(credentialIds: Uint8Array[]): Promise<void> {
   const found = setup()
   if (!found) return
-  try {
-    await signalAcceptedPasskeys(found.rp.id, passkeyUserHandle(identityBytes(identityId), found.contractId), remaining.map((entry) => entry.credentialId))
-  } catch (error) {
-    logger.debug('Passkey vault: could not tell the passkey provider what remains:', error)
-  }
+  for (const credentialId of credentialIds) await signalUnknownPasskey(found.rp.id, credentialId)
 }
 
 const REMOVAL_REREADS = 3
@@ -642,7 +641,7 @@ export async function removePasskeys(identityId: string, entryIds: readonly stri
   return { removed: gone.length, failed }
 }
 
-/** Deletes `entryIds`; the ids confirmed gone, and how many are not. Tells the provider only when nothing is uncertain. */
+/** Deletes `entryIds`; the ids confirmed gone, and how many are not. Tells the provider about the confirmed ones only. */
 async function removeEntries(identityId: string, entryIds: readonly string[]): Promise<{ gone: string[]; failed: number }> {
   const entries = (await passkeyVaultService.list(identityId, { partial: true })).filter((entry) => entryIds.includes(entry.$id))
   const confirmed = new Set<string>()
@@ -666,8 +665,7 @@ async function removeEntries(identityId: string, entryIds: readonly string[]): P
   for (const entry of gone) forgetPasskeyHere(identityId, bytesToBase64Url(entry.credentialId))
   // Counted over what was asked for: a requested entry this read missed (a node behind) is not known gone either.
   const failed = new Set(entryIds).size - gone.length
-  // An unconfirmed delete leaves the list uncertain: the provider is only told what remains when everything is known.
-  if (failed === 0) await signalRemaining(identityId, remaining)
+  await signalRemoved(gone.map((entry) => entry.credentialId))
   return { gone: gone.map((entry) => entry.$id), failed }
 }
 
