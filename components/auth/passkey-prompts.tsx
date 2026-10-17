@@ -12,6 +12,7 @@ import { markPasskeyOfferMade, passkeyOfferMade, passkeysHere } from '@/lib/auth
 import {
   PasskeyVaultError,
   finishPasskeyEnrolment,
+  forgetPendingEnrolments,
   listPasskeys,
   passkeySaved,
   pendingEnrolmentFor,
@@ -66,7 +67,9 @@ export function PasskeyPrompts() {
   // Signing out (by hand, or after the wallet revoked) ends that session's checks and dialogs:
   // a check still reading sees its sign-in gone, and no dialog survives to the next sign-in.
   useEffect(() => {
-    if (!signedInUser) usePasskeyPrompts.getState().reset()
+    if (signedInUser) return
+    usePasskeyPrompts.getState().reset()
+    forgetPendingEnrolments()
   }, [signedInUser])
 
   useEffect(() => {

@@ -17,7 +17,7 @@ import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/sessi
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 import { createWalletSignIn, wipeGrant } from '@/lib/app-connect/wallet-sign-in'
 import { restorePasskeyMessagingKey, unlockWithPasskey, type PasskeyRenewal } from '@/lib/auth/passkey-vault'
-import { clearPasskeyCriticalKey, markPasskeyCriticalKey, unmarkPasskeyCriticalKey } from '@/lib/auth/passkey-device'
+import { clearPasskeyCriticalKey, markPasskeyCriticalKey } from '@/lib/auth/passkey-device'
 import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompts'
 
 /**
@@ -172,21 +172,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * `since`: the session epoch the sign-in began on; any sign-in or sign-out
    * after it supersedes this one. Defaults to now.
    */
-  const signInWithKey = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean; since?: number } = {}): Promise<PlatformAuthIntent> => {
+  const signInWithKey = useCallback(async (
+    identityId: string,
+    privateKey: string,
+    options: { skipUsernameCheck?: boolean; since?: number; beforeStore?: () => void } = {},
+  ): Promise<PlatformAuthIntent> => {
     // Taken before the key check: a sign-in or sign-out while it runs supersedes this one.
     const since = options.since ?? controller.sessionEpoch()
     // The same rule restore and signing apply, on keys read fresh: a disabled or wrong-level key never starts a session.
     const check = await keyValidationService.validatePrivateKey(privateKey, identityId, keyNetwork(), { fresh: true })
     if (!check.isValid) throw new Error(check.error ?? 'This key cannot sign in to this account')
-    const result = await controller.loginWithAuthKey(identityId, privateKey, { skipUsernameCheck: options.skipUsernameCheck, since })
+    const result = await controller.loginWithAuthKey(identityId, privateKey, { skipUsernameCheck: options.skipUsernameCheck, since, beforeStore: options.beforeStore })
     await applyIntent(result.intent)
     return result.intent
   }, [applyIntent, controller])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
-    const intent = await signInWithKey(identityId, privateKey, options)
-    // Cleared only once the typed key is the session's: a failed sign-in leaves a passkey's CRITICAL key marked.
-    clearPasskeyCriticalKey(identityId)
+    // A typed key is never a passkey's: the marks go in the same commit that stores it, and only then.
+    const intent = await signInWithKey(identityId, privateKey, { ...options, beforeStore: () => clearPasskeyCriticalKey(identityId) })
     noteSignIn(intent, 'key', controller.sessionEpoch())
   }, [controller, signInWithKey])
 
@@ -217,21 +220,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         noteSignIn(await signInWithGrant(unlocked.grant, since), 'passkey', controller.sessionEpoch())
         return null
       case 'raw-key': {
-        // Marked (for this exact key) before it is stored, so it never signs unmarked. A HIGH key clears
-        // the marks only once it is the session's.
-        const mark = unlocked.critical ? markPasskeyCriticalKey(unlocked.identityId, unlocked.signInWif) : null
-        let intent: PlatformAuthIntent
-        try {
-          intent = await signInWithKey(unlocked.identityId, unlocked.signInWif, { since })
-        } catch (error) {
-          // Superseded before its commit, this sign-in stored nothing: its own mark goes, and any winner's stays.
-          // After a commit the key may be stored, so the mark stays.
-          if (mark && (error instanceof SupersededSignInError || controller.getState().user?.identityId !== unlocked.identityId)) {
-            unmarkPasskeyCriticalKey(unlocked.identityId, mark)
-          }
-          throw error
-        }
-        if (!unlocked.critical) clearPasskeyCriticalKey(unlocked.identityId)
+        // The mark is set (a CRITICAL key, for that exact key) or cleared (a HIGH one) inside the commit that
+        // stores the key, right before it: a sign-in that never commits changes no session's marks, and a
+        // passkey's CRITICAL key is never stored unmarked.
+        const { identityId, signInWif, critical } = unlocked
+        const intent = await signInWithKey(identityId, signInWif, {
+          since,
+          beforeStore: () => {
+            clearPasskeyCriticalKey(identityId)
+            if (critical) markPasskeyCriticalKey(identityId, signInWif)
+          },
+        })
         if (unlocked.messagingWif) restorePasskeyMessagingKey(unlocked.identityId, unlocked.messagingWif)
         noteSignIn(intent, 'passkey', controller.sessionEpoch())
         return null
