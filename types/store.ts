@@ -409,6 +409,9 @@ export interface OrderStatusUpdateDocument {
   trackingNumber?: string
   trackingCarrier?: string
   message?: string
+  /** v10: tracking and message sealed to the order, in place of the plaintext fields. */
+  encryptedPayload?: Uint8Array | number[]
+  nonce?: Uint8Array | number[]
 }
 
 // Parsed order status update for UI
@@ -423,6 +426,8 @@ export interface OrderStatusUpdate {
   trackingNumber?: string
   trackingCarrier?: string
   message?: string
+  /** v10: the sealed tracking and message, kept until the viewer opens them (`openStatusNote`). */
+  sealedNote?: { encryptedPayload: Uint8Array; nonce: Uint8Array }
 }
 
 // Store review document (from platform)

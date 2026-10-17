@@ -29,7 +29,7 @@ import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
 import { usePostEngagement } from '@/hooks/use-post-engagement'
 import { isSensitivePost, shouldGateSensitive } from '@/lib/sensitive-content'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
-import { authorDeletesLeaveHoles, contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, repostsAreQuotes, targetKindOf, tombstonesAreHidden, type TargetKind } from '@/lib/contract-topology'
+import { authorDeletesLeaveHoles, contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, repostsAreQuotes, selfLikesAreRefused, targetKindOf, tombstonesAreHidden, type TargetKind } from '@/lib/contract-topology'
 import { quoteTargetOf } from '@/lib/feed/quote-targets'
 import { isBareRepost, type OwnQuote } from '@/lib/feed/quote-reposts'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
@@ -737,7 +737,7 @@ function PostCardView({
               undoLabel: ownQuote && !ownQuote.bare ? 'Delete your quote' : undefined,
               onClick: handleRepost,
             }}
-            like={{ count: engagement.likes, active: engagement.liked, loading: engagement.likeLoading, onClick: handleLike }}
+            like={{ count: engagement.likes, active: engagement.liked, loading: engagement.likeLoading, allowed: hideAvatar || !(isOwnPost && selfLikesAreRefused(targetKind)), onClick: handleLike }}
             bookmark={bookmarkable ? bookmarkAction ?? { active: engagement.bookmarked, loading: engagement.bookmarkLoading, onClick: handleBookmark } : undefined}
             onQuote={handleQuote}
             // v10's one slot: a bare repost is undone from the Repost item (no

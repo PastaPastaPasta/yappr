@@ -19,11 +19,11 @@ import { formatDate } from '@/lib/utils/format'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeOrderService } from '@/lib/services/store-order-service'
-import { orderStatusService } from '@/lib/services/order-status-service'
+import { orderStatusService, openStatusNotesAsBuyer } from '@/lib/services/order-status-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
 import { storeStatsService } from '@/lib/services/store-stats-service'
-import { storefrontIsV2, storefrontSupportsDigital } from '@/lib/constants'
+import { storefrontIsV2, storefrontStatusIsSealed, storefrontSupportsDigital } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
@@ -32,6 +32,21 @@ import type { StoreOrder, OrderStatusUpdate, Store, OrderPayload, OrderDelivery 
 /** A seller's encryption public key, which both order and delivery decryption need. */
 async function sellerEncryptionPublicKey(sellerId: string): Promise<Uint8Array | null> {
   return resolveEncryptionPublicKey(sellerId, async () => (await identityService.getIdentity(sellerId))?.publicKeys ?? null)
+}
+
+/**
+ * v10 seals a status's tracking and message to its order. Open them with the
+ * buyer's view of the order key; a note that cannot be opened stays sealed,
+ * which the order card shows as no tracking at all.
+ */
+function readableStatuses(
+  statuses: Map<string, OrderStatusUpdate>,
+  orders: readonly StoreOrder[],
+  buyerId: string,
+  sellerKeys: ReadonlyMap<string, Uint8Array>
+): Map<string, OrderStatusUpdate> {
+  const buyerPrivateKey = storefrontStatusIsSealed() ? getEncryptionKeyBytes(buyerId) : null
+  return buyerPrivateKey ? openStatusNotesAsBuyer(statuses, orders, buyerPrivateKey, sellerKeys) : statuses
 }
 
 /**
@@ -121,9 +136,14 @@ function OrdersPage() {
   // Refresh just the order statuses (one `in` query per 100 orders).
   // Merges new statuses into the existing map to preserve data on transient failures.
   const refreshStatuses = useCallback(async (orderList: StoreOrder[]) => {
-    if (orderList.length === 0) return
+    if (orderList.length === 0 || !user?.identityId) return
     try {
-      const latest = await orderStatusService.getLatestStatuses(orderList.map((order) => order.id))
+      const latest = readableStatuses(
+        await orderStatusService.getLatestStatuses(orderList.map((order) => order.id)),
+        orderList,
+        user.identityId,
+        sellerKeysRef.current
+      )
       setOrderStatuses(prev => {
         const merged = new Map(prev)
         for (const [orderId, status] of latest) merged.set(orderId, status)
@@ -132,7 +152,7 @@ function OrdersPage() {
     } catch (e) {
       logger.warn('Failed to refresh order statuses:', e)
     }
-  }, [])
+  }, [user?.identityId])
 
   // Load orders
   useEffect(() => {
@@ -219,7 +239,7 @@ function OrdersPage() {
         )
 
         setOrderPayloads(payloadMap)
-        setOrderStatuses(statusMap)
+        setOrderStatuses(readableStatuses(statusMap, userOrders, user.identityId, sellerKeysRef.current))
         setStores(storeMap)
         setReviewedOrders(reviewedSet)
         await refreshDeliveries(userOrders)

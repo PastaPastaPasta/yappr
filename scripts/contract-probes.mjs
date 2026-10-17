@@ -121,6 +121,7 @@ const SIGNATURE_ALLOWANCE = 100;
  * pinned by hash. The wasm-sdk parse does not run it; wasm-dpp2 does, and this
  * ajv pass names the failing path more precisely. The property type shorthands
  * never reach it: the node expands them first, and so does `metaSchemaProblems`.
+ * The wasm-dpp2 5.0.0-rc.3 build embeds this same document (compared as JSON), so the pin stands.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
 const META_SCHEMA_SHA256 = '742f99130f75940a3ba2962f243713fb745be0689093cd48d496f5026afc0d15';
@@ -705,6 +706,7 @@ const SOCIAL_V13 = 'contracts/yappr-social-contract-v13.json';
 const SOCIAL_V14 = 'contracts/yappr-social-contract-v14.json';
 const SOCIAL_V15 = 'contracts/yappr-social-contract-v15.json';
 const SOCIAL_V16 = 'contracts/yappr-social-contract-v16.json';
+const SOCIAL_V17 = 'contracts/yappr-social-contract-v17.json';
 const BLOCKS = 'contracts/yappr-blocks-contract.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
@@ -751,9 +753,15 @@ const referencedTypes = (source) => Object.values(types(source)).flatMap((schema
 const PROBES = [
   { label: 'control: social v10 as committed', file: SOCIAL_V10, mutate: () => {}, expect: 'accepted' },
   { label: 'control: social v11 as committed', file: SOCIAL_V11, mutate: () => {}, expect: 'accepted' },
-  { label: 'control: storefront as committed', file: STOREFRONT, mutate: () => {}, expect: 'accepted' },
-  { label: 'control: blog as committed', file: BLOG, mutate: () => {}, expect: 'accepted' },
-  { label: 'control: pollr as committed', file: POLLR, mutate: () => {}, expect: 'accepted' },
+  // The three feature contracts are re-cut in place at the testnet production cut (storefront v10,
+  // blog v9, pollr v8): their controls read the committed file and assert the cut's shapes, and the
+  // mainnet renderings register them with the elected interim notYetUsable.
+  { label: 'control: storefront v10 as committed (devnet: interim contractOwner)', file: STOREFRONT, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
+  { label: 'control: storefront v10 as mainnet registers it (interim notYetUsable)', file: STOREFRONT, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
+  { label: 'control: blog v9 as committed (devnet: interim contractOwner)', file: BLOG, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
+  { label: 'control: blog v9 as mainnet registers it (interim notYetUsable)', file: BLOG, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
+  { label: 'control: pollr v8 as committed', file: POLLR, mutate: () => {}, expect: 'accepted' },
+  { label: 'control: pollr v8 as mainnet registers it (no moderation, so the same)', file: POLLR, network: 'mainnet', mutate: () => {}, expect: 'accepted' },
   { label: 'control: profile (testnet profile topology v2) as committed', file: PROFILE, mutate: () => {}, expect: 'accepted' },
   // The beta.6 grammar no longer parses anywhere from beta.7 on (#5197): social v9 is readable
   // by a beta.6 SDK only, and a beta.7 or later node would not load it.
@@ -1249,6 +1257,203 @@ const PROBES = [
     types(s).post.properties.quotedPostId.refersTo.where.tags = 'embedDocType';
   } },
   { label: 'social v16: preallocated byHashtagPost when the removal record does not keep the tags', file: SOCIAL_V16, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsFields = ['$createdAt']; } },
+  // Social v17 (docs/SOCIAL_V17.md, the testnet production cut): v16 with the live marker on the
+  // post timeline, the tag listing and the reply owner listing, the quote-triple count, no
+  // self-likes, https|ipfs links, byte caps, a locked YAPP and several write-once private feeds per
+  // identity. Each read-back runs off the PARSED contract where it can, so a keyword the parser
+  // dropped fails here; the negative probes record the layer that refuses each broken shape.
+  { label: 'control: social v17 as committed (devnet: interim contractOwner)', file: SOCIAL_V17, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
+  { label: 'control: social v17 as mainnet registers it (interim notYetUsable)', file: SOCIAL_V17, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
+  { label: 'social v17: the post timeline and tag listing are keyed on the live marker (skipIfAbsent), the timeline range-counts live posts and the type-wide count tree is gone', file: SOCIAL_V17, mutate: () => {}, expect: 'accepted', holds: (_s, parsed) => {
+    const post = parsed.schemas.post;
+    const named = (name) => post.indices.find((i) => i.name === name);
+    const keys = (index) => JSON.stringify(index?.properties?.map((p) => Object.keys(p)[0]));
+    const [timeline, tags, owner] = [named('timeline'), named('tagAndTime'), named('ownerAndTime')];
+    return keys(timeline) === '["live","$createdAt"]' && timeline.skipIfAbsent === true && timeline.rangeCountable === true
+      && keys(tags) === '["live","tags","$createdAt"]' && tags.skipIfAbsent === true
+      && keys(owner) === '["live","$ownerId","$createdAt"]' && owner.skipIfAbsent === true
+      && post.documentsCountable === undefined && post.properties.live?.const === true;
+  } },
+  { label: 'social v17: the reply carries live (const true, frozen unless tombstoned), its ownerAndTime is keyed on it, and a reply says something', file: SOCIAL_V17, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const reply = parsed.schemas.reply;
+    const owner = reply.indices.find((i) => i.name === 'ownerAndTime');
+    const frozen = parsed.documentTypeImmutableProperties('reply').immutableWhen ?? {};
+    const rules = types(s).reply.propertyConstraints;
+    return reply.properties.live?.const === true && Number(reply.properties.live.position) === 12
+      && JSON.stringify(owner.properties.map((p) => Object.keys(p)[0])) === '["live","$ownerId","$createdAt"]' && owner.skipIfAbsent === true
+      && JSON.stringify(frozen.live) === JSON.stringify({ absent: 'deleted' })
+      && JSON.stringify(rules.live) === '{"equal":[{"countPresent":["deleted","live"]},1]}'
+      && JSON.stringify(rules.notEmpty) === '{"anyOf":[{"greaterThan":[{"length":"content"},0]},{"greaterThanOrEqual":[{"countPresent":["encryptedContent","mediaUrls","deleted"]},1]}]}';
+  } },
+  { label: 'social v17: post quoteOwner counts the quote triple (0 or 2), and a private write is 0 or all 4 of ciphertext, key generation, nonce and feed (a tombstone keeps none)', file: SOCIAL_V17, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const { post, reply } = types(s);
+    const triple = '{"in":[{"countPresent":["quotedPostId","quotedReplyId","quotedPostOwnerId"]},[0,2]]}';
+    const four = '{"in":[{"countPresent":["encryptedContent","keyGeneration","nonce","feed"]},[0,4]]}';
+    const tombstoneCounts = (schema) => JSON.stringify(schema.propertyConstraints.blankTombstone).includes('"nonce"') && JSON.stringify(schema.propertyConstraints.blankTombstone).includes('"feed"]');
+    return JSON.stringify(post.propertyConstraints.quoteOwner) === triple
+      && JSON.stringify(post.propertyConstraints.private) === four && JSON.stringify(reply.propertyConstraints.private) === four
+      && tombstoneCounts(post) && tombstoneCounts(reply)
+      && post.properties.feed?.position === 18 && reply.properties.feed?.position === 13
+      && [post, reply].every((schema) => schema.properties.feed.minimum === 1 && schema.properties.feed.maximum === 65535 && schema.properties.keyGeneration.maximum === 65535
+        && schema.immutable.some((entry) => entry.property === 'feed' && entry.when?.absent === 'deleted'));
+  } },
+  { label: 'social v17: a like refuses its own post (postAuthor distinctFrom $ownerId) and a reply like refuses its own reply (the reference\'s $ownerId notEqual $ownerId), read back off the parse', file: SOCIAL_V17, mutate: () => {}, expect: 'accepted', holds: (_s, parsed) => {
+    const reply = parsed.documentTypeReferences('likeReply').find((r) => r.path === 'replyId');
+    return parsed.schemas.like.properties.postAuthor.distinctFrom === '$ownerId'
+      && JSON.stringify(reply?.where) === '{"$ownerId":{"notEqual":"$ownerId"}}';
+  } },
+  { label: 'social v17: links are https or ipfs (a website https), strings carry byte caps, the report reason runs to 31', file: SOCIAL_V17, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const { post, reply, report, yapprProfile } = types(s);
+    const media = '^(https|ipfs)://.+$';
+    return post.properties.mediaUrls.items.pattern === media && reply.properties.mediaUrls.items.pattern === media
+      && yapprProfile.properties.bannerUri.pattern === media && yapprProfile.properties.website.pattern === '^https://.+$'
+      && yapprProfile.properties.avatar.pattern === '^(\\{.+\\}|(https|ipfs)://.+)$'
+      && post.properties.embedDocType.maxBytes === 64 && report.properties.note.maxBytes === 1500 && report.properties.resolution.maxBytes === 600
+      && yapprProfile.properties.location.maxBytes === 150 && yapprProfile.properties.website.maxBytes === 200
+      && yapprProfile.properties.bannerUri.maxBytes === 512 && yapprProfile.properties.pronouns.maxBytes === 60 && yapprProfile.properties.avatar.maxBytes === 384
+      && Number(report.properties.reason.maximum) === 31;
+  } },
+  { label: 'social v17: YAPP is locked (mint, burn, freeze, unfreeze and destroy-frozen-funds all noOne, and nobody can change that), still non-transferable and unpriced', file: SOCIAL_V17, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const yapp = s.tokens['0'];
+    const locked = ['manualMintingRules', 'manualBurningRules', 'freezeRules', 'unfreezeRules', 'destroyFrozenFundsRules'].every((rule) => {
+      const r = yapp[rule];
+      return r.authorizedToMakeChange.$type === 'noOne' && r.adminActionTakers.$type === 'noOne'
+        && r.changingAuthorizedActionTakersToNoOneAllowed === false && r.changingAdminActionTakersToNoOneAllowed === false && r.selfChangingAdminActionTakersAllowed === false;
+    });
+    return locked && parsed.tokens[0].transferable === false && yapp.baseSupply === 0 && yapp.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
+      && yapp.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne';
+  } },
+  { label: 'social v17: privateFeedState is replaced by privateFeed (unique per [owner, feed]), grants and rekeys name their feed through ownerRefersTo findBy and capacity caps, a rekey cannot be deleted', file: SOCIAL_V17, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const { privateFeed, privateFeedGrant, privateFeedRekey, privateFeedState } = types(s);
+    const gate = (type, where) => {
+      const owner = parsed.documentTypeReferences(type).find((r) => r.path === '$ownerId');
+      return owner?.type === 'permanentDocument' && owner.documentType === 'privateFeed' && JSON.stringify(owner.findBy) === '{"$ownerId":".","feed":"feed"}'
+        && JSON.stringify(Object.fromEntries(Object.entries(owner.where).sort())) === JSON.stringify(Object.fromEntries(Object.entries(where).sort()));
+    };
+    const feed = parsed.schemas.privateFeed;
+    return privateFeedState === undefined && privateFeed && feed.canBeDeleted === false && feed.documentsMutable === false
+      && JSON.stringify(feed.indices.map((i) => [i.name, i.unique, i.properties.map((p) => Object.keys(p)[0])])) === '[["feed",true,["$ownerId","feed"]]]'
+      && gate('privateFeedGrant', { treeCapacity: { greaterThan: 'leafIndex' }, maxKeyGeneration: { greaterThanOrEqual: 'keyGeneration' } })
+      && gate('privateFeedRekey', { treeCapacity: { greaterThan: 'revokedLeaf' }, maxKeyGeneration: { greaterThanOrEqual: 'keyGeneration' } })
+      && privateFeedRekey.canBeDeleted === false && privateFeedGrant.canBeDeleted !== false
+      && privateFeedGrant.indices.every((i) => i.unique === true && i.properties.some((p) => 'feed' in p));
+  } },
+
+  // v17 negative probes. `why` pins the rule that speaks; each was first recorded off the rc.3 wasm.
+  { label: 'v17: live required (the timeline\'s skipIfAbsent could never skip a tombstone)', file: SOCIAL_V17, expect: 'wasm', why: /none of its properties is optional/i, mutate: (s) => { types(s).post.required.push('live'); } },
+  { label: 'v17: reply live required (ownerAndTime could never skip a tombstone)', file: SOCIAL_V17, expect: 'wasm', why: /none of its properties is optional/i, mutate: (s) => { types(s).reply.required.push('live'); } },
+  { label: 'v17: reply ownerAndTime keyed on live without skipIfAbsent: legal (a tombstone would enter it), so the skip is the cut\'s choice', file: SOCIAL_V17, expect: 'accepted', mutate: (s) => { delete namedIndex(s, 'reply', 'ownerAndTime').skipIfAbsent; } },
+  { label: 'v17: tagAndTime with the tags first ([tags, live, $createdAt]): legal, so live-first is the cut\'s choice', file: SOCIAL_V17, expect: 'accepted', mutate: (s) => { namedIndex(s, 'post', 'tagAndTime').properties = [{ tags: 'asc' }, { live: 'asc' }, { $createdAt: 'asc' }]; } },
+  { label: 'v17: post still declares documentsCountable beside the live timeline: legal (v16\'s type-wide tree), so dropping it is the cut\'s choice', file: SOCIAL_V17, expect: 'accepted', mutate: (s) => { types(s).post.documentsCountable = true; } },
+  { label: 'v17: the reply\'s live no longer frozen: legal (the listing key could change under a document), so the freeze is the cut\'s choice', file: SOCIAL_V17, expect: 'accepted', mutate: (s) => { types(s).reply.immutable = types(s).reply.immutable.filter((entry) => entry.property !== 'live'); } },
+  { label: 'v17: tagAndTime on the tags array alone, skipping (v16\'s probe: with no live in the key, tags is the only skip property)', file: SOCIAL_V17, expect: 'wasm', node: '10231', why: /skip/i, mutate: (s) => { namedIndex(s, 'post', 'tagAndTime').properties = [{ tags: 'asc' }, { $createdAt: 'asc' }]; } },
+  { label: 'v17: quoteOwner counting a path post does not have', file: SOCIAL_V17, expect: 'wasm', mutate: (s) => { types(s).post.propertyConstraints.quoteOwner.in[0].countPresent[2] = 'quotedOwnerId'; } },
+  { label: 'v17: reply notEmpty reading a property reply does not have', file: SOCIAL_V17, expect: 'wasm', mutate: (s) => { types(s).reply.propertyConstraints.notEmpty.anyOf[1].greaterThanOrEqual[0].countPresent[0] = 'ciphertext'; } },
+  { label: 'v17: like.postAuthor distinctFrom a property like does not have', file: SOCIAL_V17, expect: 'wasm', mutate: (s) => { types(s).like.properties.postAuthor.distinctFrom = 'nope'; } },
+  { label: 'v17: the reply-like where comparing $ownerId with a property likeReply does not have', file: SOCIAL_V17, expect: 'audit', node: '40126', why: /nope/, mutate: (s) => { types(s).likeReply.properties.replyId.refersTo.where.$ownerId = { notEqual: 'nope' }; } },
+  { label: 'v17: YAPP minting left to the contract owner again (legal; the lock is the cut\'s choice)', file: SOCIAL_V17, expect: 'accepted', mutate: (s) => { s.tokens['0'].manualMintingRules.authorizedToMakeChange = { $type: 'contractOwner' }; } },
+  { label: 'v17: privateFeedGrant findBy naming a non-unique privateFeed index', file: SOCIAL_V17, expect: 'wasm', mutate: (s) => { delete namedIndex(s, 'privateFeed', 'feed').unique; } },
+  { label: 'v17: privateFeedGrant findBy naming only the owner of the unique [owner, feed] index', file: SOCIAL_V17, expect: 'wasm', mutate: (s) => { types(s).privateFeedGrant.ownerRefersTo.findBy = { $ownerId: '.' }; } },
+  { label: 'v17: privateFeedRekey findBy naming a feed property the rekey does not have', file: SOCIAL_V17, expect: 'wasm', mutate: (s) => { types(s).privateFeedRekey.ownerRefersTo.findBy.feed = 'nope'; } },
+  { label: 'v17: a grant cap comparing a 32-bit leafIndex with the u16 treeCapacity: legal (the node compares integers by value; no size mismatch is refused)', file: SOCIAL_V17, expect: 'accepted', mutate: (s) => { types(s).privateFeedGrant.properties.leafIndex.maximum = 4_294_967_295; } },
+  { label: 'v17: a grant cap comparing treeCapacity with the byte-array payload', file: SOCIAL_V17, expect: 'audit', node: '40126', mutate: (s) => { types(s).privateFeedGrant.ownerRefersTo.where.treeCapacity = { greaterThan: 'encryptedPayload' }; } },
+  { label: 'v17: a grant cap naming a privateFeed property that does not exist', file: SOCIAL_V17, expect: 'audit', node: '40126', why: /does not have/, mutate: (s) => { types(s).privateFeedGrant.ownerRefersTo.where.capacity = { greaterThan: 'leafIndex' }; delete types(s).privateFeedGrant.ownerRefersTo.where.treeCapacity; } },
+  { label: 'v17: permanentDocument owner gate at a deletable privateFeed', file: SOCIAL_V17, expect: 'audit', node: '40122', mutate: (s) => { types(s).privateFeed.canBeDeleted = true; } },
+  { label: 'v17: the owner gate\'s findBy names feed, which a mutable privateFeed could change by a replace', file: SOCIAL_V17, expect: 'wasm', why: /a replace can change/i, mutate: (s) => { types(s).privateFeed.documentsMutable = true; } },
+  { label: 'v17: a deletable privateFeedRekey (legal; its permanence is the cut\'s choice)', file: SOCIAL_V17, expect: 'accepted', mutate: (s) => { delete types(s).privateFeedRekey.canBeDeleted; } },
+  { label: 'v17: post.feed with a maximum of 65536: legal, only the schema bounds the value', file: SOCIAL_V17, expect: 'accepted', mutate: (s) => { types(s).post.properties.feed.maximum = 65_536; } },
+  { label: 'v17: 5 tags under the 24h byTrendHashtagPost window (4 max under a window, as v16)', file: SOCIAL_V17, expect: 'dpp2', auditToo: true, node: '10205', why: /maxItems|under a window/i, mutate: (s) => {
+    for (const type of ['post', 'like']) types(s)[type].properties.tags.maxItems = 5;
+  } },
+  // Updates: a v17 registered on testnet can take additive changes, but not these.
+  { label: 'v17 update: version 2 changing nothing (control)', file: SOCIAL_V17, expect: 'accepted', update: () => {} },
+  { label: 'v17 update: the timeline back to v16\'s [$createdAt]', file: SOCIAL_V17, expect: 'update', node: '10217', why: /changed index 'timeline'/i, update: (s) => {
+    const index = namedIndex(s, 'post', 'timeline');
+    index.properties = [{ $createdAt: 'asc' }]; delete index.skipIfAbsent;
+  } },
+  { label: 'v17 update: quoteOwner relaxed (rules are fixed)', file: SOCIAL_V17, expect: 'update', node: '10246', why: /propertyConstraints/i, update: (s) => { types(s).post.propertyConstraints.quoteOwner = { in: [{ countPresent: ['quotedPostId', 'quotedReplyId', 'quotedPostOwnerId'] }, [0, 3]] }; } },
+  { label: 'v17 update: the reply notEmpty rule removed (rules are fixed)', file: SOCIAL_V17, expect: 'update', node: '10246', why: /propertyConstraints/i, update: (s) => { delete types(s).reply.propertyConstraints.notEmpty; } },
+  { label: 'v17 update: a new optional report property: accepted', file: SOCIAL_V17, expect: 'accepted', update: (s) => { types(s).report.properties.probe = { type: 'integer', minimum: 1, maximum: 3, position: Math.max(...Object.values(types(s).report.properties).map((p) => p.position)) + 1 }; } },
+
+  // Blog v9 (docs/BLOG_V9.md), in place: a live marker on blogPost (const true, frozen unless tombstoned),
+  // publishedAt required, the listings keyed on live, byte caps, https|ipfs links, and a report type.
+  { label: 'blog v9: blogPost carries live (const true, rule live, frozen unless tombstoned), requires publishedAt, and its listings are keyed on live', file: BLOG, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const post = parsed.schemas.blogPost;
+    const keys = (index) => JSON.stringify(index?.properties?.map((p) => Object.keys(p)[0]));
+    const named = (name) => post.indices.find((i) => i.name === name);
+    const frozen = parsed.documentTypeImmutableProperties('blogPost').immutableWhen ?? {};
+    return post.properties.live?.const === true && Number(post.properties.live.position) === 13
+      && JSON.stringify(types(s).blogPost.propertyConstraints.live) === '{"equal":[{"countPresent":["deleted","live"]},1]}'
+      && types(s).blogPost.required.includes('publishedAt') && JSON.stringify(frozen.live) === JSON.stringify({ absent: 'deleted' })
+      && keys(named('blogAndTime')) === '["live","blogId","$createdAt"]' && named('blogAndTime').skipIfAbsent === true
+      && keys(named('timeline')) === '["live","$createdAt"]' && named('timeline').skipIfAbsent === true
+      && named('blogAndSlug').unique === true && keys(named('blogAndSlug')) === '["blogId","slug"]'
+      && types(s).blogPost.propertyConstraints.publishedNotAhead !== undefined;
+  } },
+  { label: 'blog v9: the report type (one of blog, post, comment per report, a withdrawal only while pending, moderators resolve it, 90-day ttl) in the moderated set', file: BLOG, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const report = parsed.schemas.report;
+    const rules = types(s).report.propertyConstraints;
+    return JSON.stringify(Object.keys(rules).sort()) === '["oneTarget","otherNote","resolvedStatus","staysResolved"]'
+      && JSON.stringify(rules.oneTarget) === '{"equal":[{"countPresent":["blogId","blogPostId","blogCommentId"]},1]}'
+      && JSON.stringify(report.deleteConstraints) === '{"pending":{"absent":"status"}}' && Number(report.ttl) === 7_776_000 && report.documentsMutable === false
+      && JSON.stringify(types(s).report.moderatorAbilities.changeFields) === '["status","resolution"]'
+      && JSON.stringify(elected(s).moderatedDocumentTypes.report) === '["deleteDocuments","changeDocumentFields"]'
+      && report.properties.targetOwnerId.distinctFrom === '$ownerId' && Number(report.properties.reason.maximum) === 31
+      && report.indices.filter((i) => i.unique).length === 3;
+  } },
+  { label: 'blog v9: the live marker required on blogPost (the listings\' skipIfAbsent could never skip a tombstone)', file: BLOG, expect: 'wasm', why: /none of its properties is optional/i, mutate: (s) => { types(s).blogPost.required.push('live'); } },
+  { label: 'blog v9: blogAndTime keyed on live without skipIfAbsent: legal (a tombstone enters the listing)', file: BLOG, expect: 'accepted', mutate: (s) => { delete namedIndex(s, 'blogPost', 'blogAndTime').skipIfAbsent; } },
+  { label: 'blog v9: the report type missing from the moderated set (changeFields without changeDocumentFields)', file: BLOG, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.report = ['deleteDocuments']; } },
+  { label: 'blog v9: oneTarget counting a target report does not have', file: BLOG, expect: 'wasm', mutate: (s) => { types(s).report.propertyConstraints.oneTarget.equal[0].countPresent[2] = 'commentId'; } },
+  { label: 'blog v9: a report target\'s where naming a property the target lacks', file: BLOG, expect: 'audit', node: '40126', why: /does not have/, mutate: (s) => { types(s).report.properties.blogPostId.refersTo.where = { authorId: 'targetOwnerId' }; } },
+  { label: 'blog v9: reports without a ttl (ttl is optional: legal)', file: BLOG, expect: 'accepted', mutate: (s) => { delete types(s).report.ttl; } },
+  { label: 'blog v9 update: blogPost.timeline back to [$createdAt] (an index is frozen once registered)', file: BLOG, expect: 'update', node: '10217', why: /changed index 'timeline'/i, update: (s) => {
+    const index = namedIndex(s, 'blogPost', 'timeline');
+    index.properties = [{ $createdAt: 'asc' }]; delete index.skipIfAbsent;
+  } },
+
+  // Storefront v10 (docs/STOREFRONT_V10.md), in place: a sealed order status update (the tracking and
+  // note leave the clear), storeItem.storeStatusAndTime, https|ipfs images, byte caps and a report type.
+  { label: 'storefront v10: orderStatusUpdate carries no plaintext tracking or message, only an optional sealed payload with its nonce (rule sealed)', file: STOREFRONT, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const update = parsed.schemas.orderStatusUpdate;
+    return ['trackingNumber', 'trackingCarrier', 'message'].every((name) => update.properties[name] === undefined)
+      && update.properties.encryptedPayload?.byteArray === true && Number(update.properties.encryptedPayload.maxItems) === 2560 && Number(update.properties.nonce?.size) === 24
+      && !update.required.includes('encryptedPayload') && !update.required.includes('nonce')
+      && JSON.stringify(types(s).orderStatusUpdate.propertyConstraints) === '{"sealed":{"in":[{"countPresent":["encryptedPayload","nonce"]},[0,2]]}}';
+  } },
+  { label: 'storefront v10: storeItem lists a store\'s items by [storeId, status, $createdAt] beside storeAndTime, images are https or ipfs', file: STOREFRONT, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const item = parsed.schemas.storeItem;
+    const named = (name) => item.indices.find((i) => i.name === name);
+    return JSON.stringify(named('storeStatusAndTime')?.properties) === '[{"storeId":"asc"},{"status":"asc"},{"$createdAt":"asc"}]' && named('storeAndTime') !== undefined
+      && types(s).storeItem.properties.imageUrls.items.pattern === '^(https|ipfs)://.+$';
+  } },
+  { label: 'storefront v10: the report type (one of store, item, store review, item review per report, a withdrawal only while pending, moderators resolve it, 90-day ttl) in the moderated set', file: STOREFRONT, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const report = parsed.schemas.report;
+    const rules = types(s).report.propertyConstraints;
+    return JSON.stringify(Object.keys(rules).sort()) === '["oneTarget","otherNote","resolvedStatus","staysResolved"]'
+      && JSON.stringify(rules.oneTarget) === '{"equal":[{"countPresent":["storeId","itemId","storeReviewId","itemReviewId"]},1]}'
+      && JSON.stringify(report.deleteConstraints) === '{"pending":{"absent":"status"}}' && Number(report.ttl) === 7_776_000 && report.documentsMutable === false
+      && JSON.stringify(elected(s).moderatedDocumentTypes.report) === '["deleteDocuments","changeDocumentFields"]'
+      && report.properties.targetOwnerId.distinctFrom === '$ownerId' && Number(report.properties.reason.maximum) === 31
+      && report.indices.filter((i) => i.unique).length === 4;
+  } },
+  { label: 'storefront v10: sealed counting a path orderStatusUpdate does not have (the removed plaintext message)', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).orderStatusUpdate.propertyConstraints.sealed.in[0].countPresent[0] = 'message'; } },
+  { label: 'storefront v10: the plaintext tracking number back beside the sealed payload: legal, so its removal is the cut\'s choice', file: STOREFRONT, expect: 'accepted', mutate: (s) => { types(s).orderStatusUpdate.properties.trackingNumber = { type: 'string', maxLength: 64, position: 4 }; } },
+  { label: 'storefront v10: the report type missing from the moderated set', file: STOREFRONT, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.report = ['deleteDocuments']; } },
+  { label: 'storefront v10: a report target\'s where naming a property the target lacks', file: STOREFRONT, expect: 'audit', node: '40126', why: /does not have/, mutate: (s) => { types(s).report.properties.itemId.refersTo.where = { sellerId: 'targetOwnerId' }; } },
+  { label: 'storefront v10: an https-only image pattern would refuse an ipfs link (a pattern is plain text to the parse: accepted)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { types(s).storeItem.properties.imageUrls.items.pattern = '^https://.+$'; } },
+  { label: 'storefront v10 update: orderStatusUpdate sealed relaxed (rules are fixed)', file: STOREFRONT, expect: 'update', node: '10246', why: /propertyConstraints/i, update: (s) => { types(s).orderStatusUpdate.propertyConstraints.sealed = { in: [{ countPresent: ['encryptedPayload', 'nonce'] }, [0, 1]] }; } },
+
+  // Pollr v8, in place: poll carries no indexes (a poll is read by id; the votes keep their own).
+  { label: 'pollr v8: poll declares no indexes, vote keeps byPoll, byPollChoice and its ownerAndPoll lookup, and its rules are v7\'s', file: POLLR, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const names = (type) => (parsed.schemas[type].indices ?? []).map((i) => i.name);
+    return names('poll').length === 0 && types(s).poll.indices === undefined
+      && names('vote').includes('byPoll') && names('vote').includes('byPollChoice')
+      && JSON.stringify(Object.keys(types(s).poll.propertyConstraints).sort()) === '["endsAfterCreation","endsWithin31Days"]'
+      && JSON.stringify(Object.keys(types(s).vote.propertyConstraints).sort()) === '["choicesAreOptions","choicesAreOptionsHigh","singleChoice"]';
+  } },
+  { label: 'pollr v8: an index on poll again (byCreatedAt): legal, so its absence is the cut\'s choice', file: POLLR, expect: 'accepted', mutate: (s) => { types(s).poll.indices = [{ name: 'byCreatedAt', properties: [{ $createdAt: 'asc' }] }]; } },
+  { label: 'pollr v8: an index on a poll property that does not exist', file: POLLR, expect: 'dpp2', auditToo: true, node: '10209', mutate: (s) => { types(s).poll.indices = [{ name: 'probe', properties: [{ nope: 'asc' }] }]; } },
 ];
 
 /**
@@ -1305,6 +1510,19 @@ const WHERE_CASES = [
   ['v16: an untagged like of an untagged post (both lists left out)', SOCIAL_V16, 'like', 'postId', { postAuthor: 'alice' }, { $ownerId: 'alice' }, null],
   ['v16: a tagged like of an untagged post', SOCIAL_V16, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice' }, { $ownerId: 'alice' }, '40127'],
   ['v16: an untagged like of a tagged post', SOCIAL_V16, 'like', 'postId', { postAuthor: 'alice' }, { $ownerId: 'alice', tags: ['dash'] }, '40127'],
+  // Social v17: the like's tag binding is v16's; a reply like names no author, so its reference
+  // refuses a reply the liker owns; a grant or rekey writes into a feed with room left (the owner
+  // gate reads the owner's privateFeed: the leaf below treeCapacity, the generation at most maxKeyGeneration).
+  ['v17: a like carrying its post\'s two tags', SOCIAL_V17, 'like', 'postId', { tags: ['dash', 'news'], postAuthor: 'alice' }, { $ownerId: 'alice', tags: ['dash', 'news'] }, null],
+  ['v17: a like carrying one of its post\'s two tags', SOCIAL_V17, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice' }, { $ownerId: 'alice', tags: ['dash', 'news'] }, '40127'],
+  ['v17: a like of someone else\'s reply', SOCIAL_V17, 'likeReply', 'replyId', { $ownerId: 'bob' }, { $ownerId: 'alice' }, null],
+  ['v17: a like of one\'s own reply', SOCIAL_V17, 'likeReply', 'replyId', { $ownerId: 'alice' }, { $ownerId: 'alice' }, '40127'],
+  ['v17: a grant to the last leaf of a 64-leaf feed (leaf 63)', SOCIAL_V17, 'privateFeedGrant', '$ownerId', { leafIndex: 63, keyGeneration: 2 }, { treeCapacity: 64, maxKeyGeneration: 2 }, null],
+  ['v17: a grant to a leaf past the feed\'s capacity (leaf 64 of 64)', SOCIAL_V17, 'privateFeedGrant', '$ownerId', { leafIndex: 64, keyGeneration: 2 }, { treeCapacity: 64, maxKeyGeneration: 2 }, '40127'],
+  ['v17: a grant sealed to a key generation the feed cannot reach (3 of at most 2)', SOCIAL_V17, 'privateFeedGrant', '$ownerId', { leafIndex: 0, keyGeneration: 3 }, { treeCapacity: 64, maxKeyGeneration: 2 }, '40127'],
+  ['v17: a rekey revoking an in-range leaf into the last generation', SOCIAL_V17, 'privateFeedRekey', '$ownerId', { revokedLeaf: 63, keyGeneration: 2 }, { treeCapacity: 64, maxKeyGeneration: 2 }, null],
+  ['v17: a rekey revoking a leaf outside the feed (leaf 64 of 64)', SOCIAL_V17, 'privateFeedRekey', '$ownerId', { revokedLeaf: 64, keyGeneration: 2 }, { treeCapacity: 64, maxKeyGeneration: 2 }, '40127'],
+  ['v17: a rekey past the feed\'s last generation (3 of at most 2)', SOCIAL_V17, 'privateFeedRekey', '$ownerId', { revokedLeaf: 0, keyGeneration: 3 }, { treeCapacity: 64, maxKeyGeneration: 2 }, '40127'],
 ];
 
 /**
@@ -1352,8 +1570,9 @@ function runWhereCases({ loadContractSource, parseContract }) {
     }
     const { contract, source } = parsed.get(file);
     const reference = contract.documentTypeReferences(type).find((r) => r.path === path);
-    // Conditions come off the file: the parse reports them in a shape of its own.
-    const declared = source.documentSchemas[type]?.properties?.[path]?.refersTo?.where ?? {};
+    // Conditions come off the file: the parse reports them in a shape of its own. An owner gate
+    // (path `$ownerId`) is the type's `ownerRefersTo`.
+    const declared = (path === '$ownerId' ? source.documentSchemas[type]?.ownerRefersTo : source.documentSchemas[type]?.properties?.[path]?.refersTo)?.where ?? {};
     const where = {
       ...Object.fromEntries(Object.entries(reference?.where ?? {}).filter(([, mine]) => typeof mine === 'string')),
       ...Object.fromEntries(Object.entries(declared).filter(([, condition]) => typeof condition !== 'string')),

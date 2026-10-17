@@ -216,3 +216,16 @@ describe('v14 replies: no stored owner, two derived notification windows', () =>
     vi.unstubAllEnvs()
   })
 })
+
+describe('profile replies on v17 (the live marker)', () => {
+  it('pins live == true on the author index', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
+    const { replyService: v17Replies } = await import('./reply-service')
+    query.mockResolvedValueOnce([])
+    await v17Replies.getUserReplies('111111111', { limit: 20, skipEnrichment: true })
+    expect(query.mock.calls[0][0].where).toEqual([['live', '==', true], ['$ownerId', '==', '111111111'], ['$createdAt', '>', 0]])
+    expect(query.mock.calls[0][0].orderBy).toEqual([['live', 'asc'], ['$ownerId', 'asc'], ['$createdAt', 'desc']])
+    vi.unstubAllEnvs()
+  })
+})

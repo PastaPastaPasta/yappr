@@ -502,13 +502,24 @@ function selfTestV7() {
   const indexNames = (docType) => (SCHEMAS[docType].indices ?? []).map((entry) => entry.name);
   const moderators = CONTRACT.config?.moderation?.moderators ?? {};
   const fee = (docType) => actionFeeFor(docType, SCHEMAS)?.moderators;
-  return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v8)`, [
+  return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v9)`, [
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (comments cost no YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['blog and blogPost creates declare an 80M moderators fee', fee('blog') === 80_000_000n && fee('blogPost') === 80_000_000n],
     ['blogComment creates declare a 16M moderators fee', fee('blogComment') === 16_000_000n],
     ['follows are unpriced', actionFeeFor('blogFollow', SCHEMAS) === null],
-    ['blog.timeline and blogPost.timeline index [$createdAt]', ['blog', 'blogPost'].every((t) => JSON.stringify(index(t, 'timeline')?.properties) === '[{"$createdAt":"asc"}]')],
+    ['blog.timeline indexes [$createdAt]; blogPost.timeline and blogAndTime are keyed on live first and skip a tombstone (v9)',
+      JSON.stringify(index('blog', 'timeline')?.properties) === '[{"$createdAt":"asc"}]'
+      && JSON.stringify(index('blogPost', 'timeline')?.properties) === '[{"live":"asc"},{"$createdAt":"asc"}]' && index('blogPost', 'timeline').skipIfAbsent === true
+      && JSON.stringify(index('blogPost', 'blogAndTime')?.properties) === '[{"live":"asc"},{"blogId":"asc"},{"$createdAt":"asc"}]' && index('blogPost', 'blogAndTime').skipIfAbsent === true],
+    ['blogPost requires publishedAt (a draft stays on the device) and carries live: const true, frozen unless tombstoned (v9)',
+      SCHEMAS.blogPost.required.includes('publishedAt') && SCHEMAS.blogPost.properties.live?.const === true && !SCHEMAS.blogPost.required.includes('live')
+      && SCHEMAS.blogPost.immutable.some((entry) => entry.property === 'live' && JSON.stringify(entry.when) === '{"absent":"deleted"}')],
+    ['report is a moderated type: one target, a note for "something else", withdrawn only while pending, resolved through status/resolution, a 50M moderators action fee (v9)',
+      Object.keys(SCHEMAS.report?.propertyConstraints ?? {}).sort().join() === DECLARED_RULES[CONTRACT_FILE].report.slice().sort().join()
+      && JSON.stringify(SCHEMAS.report.deleteConstraints) === '{"pending":{"absent":"status"}}' && SCHEMAS.report.ttl === 7_776_000 && fee('report') === 50_000_000n
+      && JSON.stringify(SCHEMAS.report.moderatorAbilities?.changeFields) === '["status","resolution"]'
+      && JSON.stringify(moderators.moderatedDocumentTypes?.report) === '["deleteDocuments","changeDocumentFields"]'],
     ['the dropped indexes are gone (blogPost/blogComment ownerAndTime, blogFollow following, the count-only twins)',
       !indexNames('blogPost').includes('ownerAndTime') && !indexNames('blogComment').includes('ownerAndTime') && !indexNames('blogComment').includes('commentCount')
       && !indexNames('blogFollow').includes('following') && !indexNames('blogFollow').includes('followerCount') && !indexNames('blogFollow').includes('followersByDay')],
@@ -544,8 +555,11 @@ await runBattery({
     // b19: content chunks are contiguous (beta.5).
     // b21: only the blog's owner posts to it (beta.6 v5).
     // b22: `deleted` is frozen once set (v7), like publishedAt.
-    blogPost: { where: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId'], immutableWhen: { publishedAt: { present: '$old.publishedAt' }, deleted: { present: '$old.deleted' } }, moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
+    // v9: publishedAt is required, so it is frozen outright; `live` is frozen unless tombstoned.
+    blogPost: { where: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId', 'publishedAt'], immutableWhen: { deleted: { present: '$old.deleted' }, live: { absent: 'deleted' } }, moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
     blog: { moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 64, maxLength: 40 } } },
+    // v9: reports are purged by the moderators and withdrawn only while pending (deleteConstraints).
+    report: { moderatorDeletable: true, constraints: DECLARED_RULES[CONTRACT_FILE].report, deleteConstraints: { pending: { absent: 'status' } } },
   }, { moderation: { banlist: true, suspensions: true, warnings: true } })),
   // Every create of a priced type (blog, blogPost, blogComment) carries the declared agreement,
   // unless a case opts out (`noAgreement`, b3c) or names its own (`agreement`, b9).

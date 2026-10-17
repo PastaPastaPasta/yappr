@@ -123,6 +123,14 @@
  *   - x1t's target names A; x1tb2 adding B is 40128, and x1tc2 a tombstone
  *     keeping the mentions is 10422 blankTombstone.
  *
+ * **v17** (`--contract-file contracts/yappr-social-contract-v17.json`,
+ * docs/SOCIAL_V17.md, the testnet production cut) is offline-ready only: `--self-test` and
+ * `--dry-run` pin its schema (the live-keyed timeline, tag listing and reply owner listing, the
+ * reply's `live`, the quote-triple `quoteOwner`, the four-field `private` rule and the `feed` it
+ * names, no self-likes, `privateFeed` in place of `privateFeedState`, a locked YAPP) and build
+ * every write through SOCIAL. The live cases below still assume v16: running them on v17 needs the
+ * adaptations listed in the work package's report (x2l, p1, y1, x1t's late like, the private posts).
+ *
  * Its 5.0.0-beta.6 successor **v16** (`--contract-file
  * contracts/yappr-social-contract-v16.json`, docs/SOCIAL_V16.md) keeps every
  * v15 case; only the tags change (read off `post.tags`). A post is indexed
@@ -436,6 +444,8 @@ const YAPP_STATE = YAPP_PAUSED ? 'paused' : 'unpaused';
  * the total supply shrinks by the cost.
  */
 const YAPP_TRANSFERABLE = V10.tokens['0'].transferable !== false;
+/** v17: nobody can mint, burn, freeze, unfreeze or destroy frozen YAPP (the five rules are `noOne`), so the owner-mint YAPP top-up of battery-lib.mjs (and provision-seed-identities.mjs) is refused. */
+const YAPP_LOCKED = V10.tokens['0'].manualMintingRules?.authorizedToMakeChange?.$type === 'noOne';
 /** v15 (5.0.0-beta.5): a post or reply names up to eight mentions in the typed array `mentionedUserIds`. */
 const MENTION_ARRAY = SOCIAL.cut.mentionArray;
 /**
@@ -445,6 +455,15 @@ const MENTION_ARRAY = SOCIAL.cut.mentionArray;
 const TAG_ARRAY = SOCIAL.cut.tagArray;
 /** What a check label calls the post's tag fields: `the hashtag` up to v15, `the tag list` on v16. */
 const TAG_NOUN = TAG_ARRAY ? 'the tag list' : 'the hashtag';
+/**
+ * v17 (docs/SOCIAL_V17.md): the global timeline and the tag listing are keyed on `live` first, a
+ * reply carries `live` too, and a private write names its `feed` (`privateFeed` replaces
+ * `privateFeedState`; grants and rekeys are keyed by it).
+ */
+const LIVE_LISTINGS = SOCIAL.cut.liveTimeline;
+const PRIVATE_FEEDS = SOCIAL.cut.privateFeeds;
+/** The type a feed owner opens: `privateFeed` (v17), `privateFeedState` before. */
+const FEED_TYPE = PRIVATE_FEEDS ? 'privateFeed' : 'privateFeedState';
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
 // r2 (post-seat): a member of the SEATED team, and a `reason` document its proposal lists (41203).
 const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
@@ -616,9 +635,10 @@ const replyData = ({ content = 'v10 battery reply', rootPostId, rootOwnerId, rep
 });
 const blockData = ({ blockedId }) => ({ blockedId });
 const followRequestData = ({ targetId }) => ({ targetId });
-const feedStateData = () => ({ treeCapacity: 1024, maxKeyGeneration: 2000, encryptedSeed: randomIdBytes() });
-const grantData = ({ recipientId, leafIndex = 0, keyGeneration = 1 }) => ({ recipientId, leafIndex, keyGeneration, encryptedPayload: crypto.getRandomValues(new Uint8Array(96)) });
-const rekeyData = ({ keyGeneration = 2, revokedLeaf = 0 } = {}) => ({ keyGeneration, revokedLeaf, packets: crypto.getRandomValues(new Uint8Array(64)), encryptedCEK: crypto.getRandomValues(new Uint8Array(48)) });
+// v17 keys a feed by a number (1-65535) the grants and rekeys name; before, an owner had one privateFeedState.
+const feedStateData = ({ feed = 1 } = {}) => ({ ...(PRIVATE_FEEDS ? { feed, keyId: 0 } : {}), treeCapacity: 1024, maxKeyGeneration: 2000, encryptedSeed: randomIdBytes() });
+const grantData = ({ recipientId, leafIndex = 0, keyGeneration = 1, feed = 1 }) => ({ ...(PRIVATE_FEEDS ? { feed } : {}), recipientId, leafIndex, keyGeneration, encryptedPayload: crypto.getRandomValues(new Uint8Array(96)) });
+const rekeyData = ({ keyGeneration = 2, revokedLeaf = 0, feed = 1 } = {}) => ({ ...(PRIVATE_FEEDS ? { feed } : {}), keyGeneration, revokedLeaf, packets: crypto.getRandomValues(new Uint8Array(64)), encryptedCEK: crypto.getRandomValues(new Uint8Array(48)) });
 /** A report names exactly one of `postId` / `replyId` (v13: or `about: 1`, the profile); reason 8 ("something else") must carry a note. */
 const reportData = (fields = {}) => SOCIAL.report(fields);
 /** A typed identifier array is a list of 32-byte ids — never one packed byte array. */
@@ -2741,9 +2761,10 @@ function selfTestCounters({ expect, index, shape }) {
     expect('v12 likeReply byAuthorReply [replyAuthor, replyId] is an unranked counter of byReply (n2e)',
       counter('likeReply', 'byAuthorReply', { source: 'byReply', properties: 'replyAuthor,replyId', rankedAt: undefined }) && index('likeReply', 'byAuthorReply').rankedCountable === undefined);
   } else {
-    expect('v13 likeReply is { replyId } on byReply alone: no replyAuthor, no byAuthorReply counter, no where on replyId (o2, n2e)',
+    // v17 binds only that the liker is not the reply's owner ($ownerId notEqual $ownerId); no author is agreed.
+    expect(`v13 likeReply is { replyId } on byReply alone: no replyAuthor, no byAuthorReply counter, ${PRIVATE_FEEDS ? 'a where that refuses the liker\'s own reply (v17)' : 'no where on replyId'} (o2, n2e)`,
       JSON.stringify(Object.keys(V10.documentSchemas.likeReply.properties)) === '["replyId"]' && !index('likeReply', 'byAuthorReply')
-        && V10.documentSchemas.likeReply.properties.replyId.refersTo?.where === undefined);
+        && (PRIVATE_FEEDS ? JSON.stringify(V10.documentSchemas.likeReply.properties.replyId.refersTo?.where) === '{"$ownerId":{"notEqual":"$ownerId"}}' : V10.documentSchemas.likeReply.properties.replyId.refersTo?.where === undefined));
   }
   expect('v12 the counters\' sources keep every like once: byPost / byReply keep entries (terminal $ownerId), skip nothing, outlive nothing',
     [['like', 'byPost'], ['likeReply', 'byReply']].every(([type, name]) => index(type, name).terminal === '$ownerId' && !index(type, name).skipIfAbsent && !index(type, name).outlivesDelete));
@@ -2768,13 +2789,51 @@ function selfTestTagList(schemas, { expect, index, shape }) {
   }
   expect('v16: post.tags is frozen whole, live or tombstoned (immutable without a condition), and the tombstone rule leaves it alone (x1td–x1tg)',
     schemas.post.immutable.includes('tags') && !JSON.stringify(schemas.post.propertyConstraints[BLANK_TOMBSTONE]).includes('"tags"'));
-  expect('v16: post tagAndTime [tags, $createdAt] is permanent (no window), one entry per tag, with no skipIfAbsent (an empty list is never entered)',
-    shape('post', 'tagAndTime') === 'tags,$createdAt' && index('post', 'tagAndTime').skipIfAbsent === undefined && index('post', 'tagAndTime').timeRange === undefined);
+  if (LIVE_LISTINGS) {
+    // v17 keys the listing on live first so a tombstone leaves it; live is the skip property (tags is in the skip set anyway).
+    expect('v17: post tagAndTime [live, tags, $createdAt] is permanent (no window), one entry per tag, skipIfAbsent on live (a tombstone, and an empty list, are never entered)',
+      shape('post', 'tagAndTime') === 'live,tags,$createdAt' && index('post', 'tagAndTime').skipIfAbsent === true && index('post', 'tagAndTime').timeRange === undefined);
+  } else {
+    expect('v16: post tagAndTime [tags, $createdAt] is permanent (no window), one entry per tag, with no skipIfAbsent (an empty list is never entered)',
+      shape('post', 'tagAndTime') === 'tags,$createdAt' && index('post', 'tagAndTime').skipIfAbsent === undefined && index('post', 'tagAndTime').timeRange === undefined);
+  }
   const trend = index('like', 'byTrendHashtagPost');
   expect('v16: like byTrendHashtagPost [$createdAt, tags, postId] terminal $ownerId, 24h windows every 6h kept a week, outlives deletes, ranked at [tags, postId], no skipIfAbsent (t2c, t2s, t2t)',
     shape('like', 'byTrendHashtagPost') === '$createdAt,tags,postId' && trend.terminal === '$ownerId' && trend.rangeCountable === true
       && JSON.stringify(trend.timeRange) === JSON.stringify({ on: '$createdAt', range: 86_400, step: 21_600, ttl: 604_800 }) && trend.outlivesDelete === true
       && JSON.stringify(trend.rankedCountable?.at) === JSON.stringify(['tags', 'postId']) && trend.skipIfAbsent === undefined);
+}
+
+/**
+ * v17's pins (docs/SOCIAL_V17.md): the quote triple count, the four-field `private` rule and the
+ * feed a private write names, the live reply and its listing, no self-likes, and the private feed
+ * types (`privateFeed` replaces `privateFeedState`; a grant and a rekey are keyed by the feed and
+ * capped by its capacity; a rekey is permanent). The live cases that exercise them are a later
+ * work package; this pins that the file still declares what they will assert.
+ */
+function selfTestV17(schemas, { expect, index, shape }) {
+  const { post, reply, like, likeReply, privateFeed, privateFeedGrant, privateFeedRekey } = schemas;
+  const rule = (schema, name) => JSON.stringify(schema.propertyConstraints?.[name]);
+  expect('v17: quoteOwner counts the quote triple, 0 or 2 (q1)', rule(post, 'quoteOwner') === '{"in":[{"countPresent":["quotedPostId","quotedReplyId","quotedPostOwnerId"]},[0,2]]}');
+  expect('v17: a private write is all four or none of ciphertext, key generation, nonce and feed, on a post and a reply, and a tombstone keeps none (c1, p2)',
+    ['post', 'reply'].every((type) => rule(schemas[type], 'private') === '{"in":[{"countPresent":["encryptedContent","keyGeneration","nonce","feed"]},[0,4]]}'
+      && rule(schemas[type], BLANK_TOMBSTONE).includes('"feed"')
+      && schemas[type].properties.feed?.type === 'integer' && schemas[type].properties.feed.minimum === 1 && schemas[type].properties.feed.maximum === 65535
+      && schemas[type].properties.keyGeneration.maximum === 65535
+      && schemas[type].immutable.some((entry) => entry.property === 'feed' && JSON.stringify(entry.when) === '{"absent":"deleted"}')));
+  expect('v17: a reply is live unless tombstoned (`live` const true, optional, the live rule, frozen unless tombstoned), says something (notEmpty), and ownerAndTime skips a tombstone',
+    reply.properties.live?.const === true && !reply.required.includes('live') && rule(reply, 'live') === '{"equal":[{"countPresent":["deleted","live"]},1]}'
+      && reply.immutable.some((entry) => entry.property === 'live' && JSON.stringify(entry.when) === '{"absent":"deleted"}')
+      && shape('reply', 'ownerAndTime') === 'live,$ownerId,$createdAt' && index('reply', 'ownerAndTime').skipIfAbsent === true
+      && rule(reply, 'notEmpty') === '{"anyOf":[{"greaterThan":[{"length":"content"},0]},{"greaterThanOrEqual":[{"countPresent":["encryptedContent","mediaUrls","deleted"]},1]}]}');
+  expect('v17: a like refuses its own post (postAuthor distinctFrom $ownerId) and a reply like its own reply (the reference where $ownerId notEqual $ownerId)',
+    like.properties.postAuthor.distinctFrom === '$ownerId' && JSON.stringify(likeReply.properties.replyId.refersTo?.where) === '{"$ownerId":{"notEqual":"$ownerId"}}');
+  expect('v17: privateFeedState is gone; privateFeed is permanent, write-once and unique per [owner, feed]; grants and rekeys name the feed and cap by its capacity, and a rekey cannot be deleted (p1)',
+    schemas.privateFeedState === undefined && privateFeed.canBeDeleted === false && privateFeed.documentsMutable === false
+      && JSON.stringify(privateFeed.indices.map((i) => [i.unique, i.properties.map((p) => Object.keys(p)[0]).join(',')])) === '[[true,"$ownerId,feed"]]'
+      && JSON.stringify(privateFeedGrant.ownerRefersTo.where) === '{"treeCapacity":{"greaterThan":"leafIndex"},"maxKeyGeneration":{"greaterThanOrEqual":"keyGeneration"}}'
+      && JSON.stringify(privateFeedRekey.ownerRefersTo.where) === '{"treeCapacity":{"greaterThan":"revokedLeaf"},"maxKeyGeneration":{"greaterThanOrEqual":"keyGeneration"}}'
+      && privateFeedRekey.canBeDeleted === false && privateFeedGrant.canBeDeleted !== false);
 }
 
 function selfTest() {
@@ -2799,9 +2858,10 @@ function selfTest() {
     expect('v13: no block type is left in social, and the blocks contract keeps ownerAndBlocked but not ownerBlocks', BLOCK_TYPES.every((type) => !schemas[type])
       && BLOCKS_SCHEMAS.block.indices.some((i) => i.name === 'ownerAndBlocked') && !BLOCKS_SCHEMAS.block.indices.some((i) => i.name === 'ownerBlocks'));
   }
-  expect('grant and rekey gate the writer on privateFeedState (p1a, p1b)', ['privateFeedGrant', 'privateFeedRekey'].every((t) => schemas[t].ownerRefersTo?.documentType === 'privateFeedState' && schemas[t].ownerRefersTo?.findBy?.$ownerId === '.'));
+  expect(`grant and rekey gate the writer on ${FEED_TYPE}${PRIVATE_FEEDS ? ', by the feed they name' : ''} (p1a, p1b)`, ['privateFeedGrant', 'privateFeedRekey'].every((t) => schemas[t].ownerRefersTo?.documentType === FEED_TYPE && schemas[t].ownerRefersTo?.findBy?.$ownerId === '.'
+    && (!PRIVATE_FEEDS || schemas[t].ownerRefersTo.findBy.feed === 'feed')));
   expect('grant.recipientId needs a followRequest found by (targetId, $ownerId) (p1d)', JSON.stringify(schemas.privateFeedGrant.properties.recipientId.refersTo?.findBy) === JSON.stringify({ targetId: '$ownerId', $ownerId: '.' }));
-  expect('the private feed counts key generations (p1)', schemas.privateFeedRekey.properties.keyGeneration && schemas.privateFeedGrant.properties.keyGeneration && schemas.privateFeedState.properties.maxKeyGeneration && !schemas.post.properties.epoch);
+  expect('the private feed counts key generations (p1)', schemas.privateFeedRekey.properties.keyGeneration && schemas.privateFeedGrant.properties.keyGeneration && schemas[FEED_TYPE].properties.maxKeyGeneration && !schemas.post.properties.epoch);
   const blockers = schemaOf('blockFollow').properties.followedBlockers;
   expect('followedBlockers is a typed identity array with distinct, owner-excluded items (b1)', blockers.items?.refersTo?.type === 'identity' && blockers.items?.distinctFrom === '$ownerId' && blockers.uniqueItems === true);
   expect('the post action fee is 80M credits to the moderators (fixtures)', POST_ACTION_FEE?.moderators === 80_000_000n);
@@ -2960,7 +3020,9 @@ function selfTest() {
       expect(`${type} media hash and fingerprint are required with mediaUrl, and only with it (x2a–x2d)`, JSON.stringify(schemas[type].dependentRequired) === JSON.stringify({ mediaUrl: ['mediaHash', 'mediaFingerprint'], mediaHash: ['mediaUrl'], mediaFingerprint: ['mediaUrl'] }));
     }
   }
-  expect('post has no language and a global timeline (x2k, x2l)', !schemas.post.properties.language && schemas.post.indices.some((i) => i.name === 'timeline' && JSON.stringify(i.properties) === '[{"$createdAt":"asc"}]'));
+  expect(`post has no language and a global timeline ${LIVE_LISTINGS ? '[live, $createdAt] that range-counts the live posts (v17)' : '[$createdAt]'} (x2k, x2l)`, !schemas.post.properties.language && schemas.post.indices.some((i) => i.name === 'timeline'
+    && JSON.stringify(i.properties) === (LIVE_LISTINGS ? '[{"live":"asc"},{"$createdAt":"asc"}]' : '[{"$createdAt":"asc"}]')
+    && (!LIVE_LISTINGS || (i.skipIfAbsent === true && i.rangeCountable === true && schemas.post.documentsCountable === undefined))));
   expect('yapprProfile needs a DashPay profile (x3a)', JSON.stringify(schemas.yapprProfile.ownerRefersTo) === JSON.stringify({ type: 'deletableDocument', contractId: DASHPAY_CONTRACT_ID, documentType: 'profile', findBy: { $ownerId: '.' } }));
   expect('yapprProfile is one per owner, non-empty and moderator-deletable (x3d–x3f)', schemas.yapprProfile.indices.some((i) => i.unique && JSON.stringify(i.properties) === '[{"$ownerId":"asc"}]') && schemas.yapprProfile.minProperties === 1 && schemas.yapprProfile.moderatorAbilities?.delete === true && moderators.moderatedDocumentTypes.yapprProfile?.includes('deleteDocuments'));
   const window = (name) => schemas.like.indices.find((i) => i.name === name)?.timeRange;
@@ -2970,13 +3032,14 @@ function selfTest() {
       && window('byTrendPost')?.range === 259_200 && window('byTrendPost')?.step === 86_400
       && !schemas.like.indices.some((i) => /^byDay/.test(i.name)));
   if (TAG_ARRAY) selfTestTagList(schemas, { expect, index, shape });
+  if (PRIVATE_FEEDS) selfTestV17(schemas, { expect, index, shape });
   expect('a report expires 90 days after it is filed', schemas.report.ttl === 7_776_000 && schemas.report.required.includes('$createdAt'));
   expect('reports are resolved through changeFields status/resolution and purged without a record (r1)', JSON.stringify(schemas.report.moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsRecord: false, changeFields: ['status', 'resolution'] }) && JSON.stringify(moderators.moderatedDocumentTypes.report) === '["deleteDocuments","changeDocumentFields"]');
   expect('reports index byStatus and byModerator (r1m, r1n)', ['byStatus', 'byModerator'].every((n) => schemas.report.indices.some((i) => i.name === n)));
   if (SOCIAL.cut.profileReports) {
     expect('v13: one report per reporter and target: unique byPost [postId, $ownerId], byReply [replyId, $ownerId], byTarget [targetOwnerId, about, $ownerId], each skipped when absent; no byTime (r1b, r1z3, r1z4)',
       [['byPost', 'postId,$ownerId'], ['byReply', 'replyId,$ownerId'], ['byTarget', 'targetOwnerId,about,$ownerId']].every(([n, properties]) => shape('report', n) === properties && index('report', n).unique === true && index('report', n).skipIfAbsent === true)
-        && !index('report', 'byTime') && schemas.report.properties.about?.maximum === 1 && schemas.report.properties.reason.maximum === 9);
+        && !index('report', 'byTime') && schemas.report.properties.about?.maximum === 1 && schemas.report.properties.reason.maximum === (PRIVATE_FEEDS ? 31 : 9));
   } else {
     expect('one report per reporter and post, and per reporter and reply (r1b)', ['postId', 'replyId'].every((p) => schemas.report.indices.some((i) => i.unique && JSON.stringify(i.properties) === JSON.stringify([{ $ownerId: 'asc' }, { [p]: 'asc' }]))));
   }
@@ -2984,8 +3047,15 @@ function selfTest() {
   const token = V10.tokens['0'];
   expect(YAPP_PAUSED
     ? 'YAPP starts paused, nobody can unpause it or price it, and the owner may mint to anyone (y1)'
-    : 'v14: YAPP starts unpaused, nobody can ever pause it or price it, and the owner may mint to anyone (y1a, y1d, y1h, k1c)',
-  token.startAsPaused === YAPP_PAUSED && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne' && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne' && token.manualMintingRules.authorizedToMakeChange.$type === 'contractOwner' && token.distributionRules.mintingAllowChoosingDestination === true);
+    : YAPP_LOCKED
+      ? 'v17: YAPP starts unpaused, nobody can ever pause it, price it, mint it, burn it, freeze it or unfreeze it (the five manual rules are noOne, and nobody can change that) (y1a, y1d, y1h, k1c)'
+      : 'v14: YAPP starts unpaused, nobody can ever pause it or price it, and the owner may mint to anyone (y1a, y1d, y1h, k1c)',
+  token.startAsPaused === YAPP_PAUSED && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne' && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne'
+    && (YAPP_LOCKED
+      ? ['manualMintingRules', 'manualBurningRules', 'freezeRules', 'unfreezeRules', 'destroyFrozenFundsRules'].every((rule) => token[rule].authorizedToMakeChange.$type === 'noOne' && token[rule].adminActionTakers.$type === 'noOne'
+        && token[rule].changingAuthorizedActionTakersToNoOneAllowed === false && token[rule].changingAdminActionTakersToNoOneAllowed === false && token[rule].selfChangingAdminActionTakersAllowed === false)
+      : token.manualMintingRules.authorizedToMakeChange.$type === 'contractOwner')
+    && token.distributionRules.mintingAllowChoosingDestination === true);
   expect('the starter grant is 100 once per identity (y1f)', token.distributionRules.oncePerIdentityDistribution?.amount === 100);
   const costs = ['post', 'reply', 'like', 'likeReply'].map((type) => schemas[type].tokenCost?.create);
   if (YAPP_TRANSFERABLE) {
@@ -3025,7 +3095,7 @@ const SHAPES = [
   ['follow (self: refused)', 'follow', followData({ followingId: someId() })],
   ['block', 'block', blockData({ blockedId: someId() })],
   ['followRequest', 'followRequest', followRequestData({ targetId: someId() })],
-  ['privateFeedState', 'privateFeedState', feedStateData()],
+  [FEED_TYPE, FEED_TYPE, feedStateData()],
   ['privateFeedGrant', 'privateFeedGrant', grantData({ recipientId: someId() })],
   ['privateFeedRekey', 'privateFeedRekey', rekeyData()],
   ['blockFollow (typed ids)', 'blockFollow', blockFollowData([someId(), someId()])],
@@ -3047,6 +3117,10 @@ const SHAPES = [
     ['post (four tags)', 'post', postData({ content: 'four tags', tags: ['v16a', 'v16b', 'v16c', 'v16d'] })],
     ['like (the two-tag post\'s list, o1k, t2p)', 'like', likeData({ postId: someId(), ...SOCIAL.tags(['v16a', 'v16b']), postAuthor: someId() })],
     ['post tombstone (two tags kept, x1tf)', 'post', SOCIAL.post({ deleted: true, ...SOCIAL.tags(['v16a', 'v16b']) })],
+  ] : []),
+  ...(PRIVATE_FEEDS ? [
+    ['post (private: ciphertext, key generation, nonce and feed, v17)', 'post', SOCIAL.post({ content: '🔒', ...SOCIAL.privateFields({ encryptedContent: crypto.getRandomValues(new Uint8Array(48)), keyGeneration: 1, nonce: crypto.getRandomValues(new Uint8Array(24)), feed: 2 }) })],
+    ['reply (private, sealed to a feed, v17)', 'reply', SOCIAL.reply({ content: '🔒', rootPostId: someId(), ...SOCIAL.privateFields({ encryptedContent: crypto.getRandomValues(new Uint8Array(48)), keyGeneration: 1, nonce: crypto.getRandomValues(new Uint8Array(24)), feed: 2 }) })],
   ] : []),
   ['likeReply', 'likeReply', SOCIAL.likeReply({ replyId: someId(), replyAuthor: someId() })],
   ['post (bare repost: a quote, no content)', 'post', repostOf({ postId: someId(), ownerId: someId() })],

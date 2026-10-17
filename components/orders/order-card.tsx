@@ -173,6 +173,10 @@ export function OrderCard({
         </div>
       )}
 
+      {status?.sealedNote && !status.trackingNumber && !status.trackingCarrier && !status.message && (
+        <p className="mt-3 text-sm text-gray-500">The seller sent tracking details privately. They can&apos;t be shown on this device.</p>
+      )}
+
       {status?.message && (
         <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
           <p className="text-sm text-blue-700 dark:text-blue-300">

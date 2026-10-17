@@ -70,15 +70,15 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 | Nonce | Entry | File | sha256 | Signed create | Env |
 | ---: | --- | --- | --- | ---: | --- |
 | N | `app` (registers the group) | `yappr-app-contract.json` | `d3acd888…` | 707 B | `NEXT_PUBLIC_APP_CONNECT_APP_ID` |
-| N+1 | `social` (v16) | `yappr-social-contract-v16.json` | `63dcfa91…` | ~16,497 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
+| N+1 | `social` (v17) | `yappr-social-contract-v17.json` | `b21d61f7…` | ~18,019 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
 | N+2 | `blocks` | `yappr-blocks-contract.json` | `ba0ef67a…` | 1,258 B | `NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID` |
 | N+3 | `dmV5` | `yappr-dm-contract-v5.json` | `4fe2b3f4…` | 3,557 B | `NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID` |
-| N+4 | `blog` (v8) | `yappr-blog-contract.json` | `79c8a462…` | ~6,657 B | `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` |
-| N+5 | `pollr` (v7) | `pollr-contract.json` | `4b660df8…` | ~3,704 B | `NEXT_PUBLIC_POLLR_CONTRACT_ID` |
-| N+6 | `storefront` (v8) | `yappr-storefront-contract.json` | `8f0feeeb…` | ~16,314 B | `NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID` |
-| N+7 | `authVault` | `yappr-auth-vault-contract.json` | `cecf0ccc…` | 2,029 B | `NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID` |
+| N+4 | `blog` (v9) | `yappr-blog-contract.json` | `3c024b21…` | ~8,852 B | `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` |
+| N+5 | `pollr` (v8) | `pollr-contract.json` | `a77afe5f…` | ~3,568 B | `NEXT_PUBLIC_POLLR_CONTRACT_ID` |
+| N+6 | `storefront` (v10) | `yappr-storefront-contract.json` | `581122bb…` | ~18,704 B | `NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID` |
 
-- Signed sizes are the PV14 version 1 creates with the membership. A membership adds about 33 B to a create.
+- This is the **testnet release set** (social v17, blog v9, pollr v8, storefront v10; [SOCIAL_V17.md](SOCIAL_V17.md)). The password-era `authVault` is out (R-M6, D10): the passkey vault (`yappr-passkey-vault-contract.json`, its own PR) joins as the next member. Sakura's beta.6 genesis registered the previous set (social v16 at N+1, blog v8, pollr v7, storefront v8 and `authVault` at N+7; the ids below).
+- Signed sizes are the PV14 version 1 creates with the membership. A membership adds about 33 B to a create. The release cut's `~` sizes are `validate-contract-offline.mjs`'s estimates on the 5.0.0-rc.3 wasm-sdk.
 - Every file passes rs-dpp's full validation at PV14 (5.0.0-beta.5 `b5val` for the four beta.5 re-cuts, 5.0.0-beta.4 `b4val` for the others), the two 5.0.0-beta.5 wasm full parses, meta-schema v3 at beta.5 and the node-rule audit. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
 - The `~` sizes of the beta.5 re-cuts are the publisher's estimates (`--plan`) less its 100 B signature allowance, plus a 65 B signature. Social v16's is the same arithmetic on `validate-contract-offline.mjs`'s estimate from the 5.0.0-beta.6 wasm-sdk, plus the membership; it passes the two 5.0.0-beta.6 wasm full parses and the node-rule audit, devnet and mainnet renderings alike.
 - None embeds another contract's id. The publisher refuses a `SOCIAL_CONTRACT_ID` placeholder, so the order inside the set only fixes the ids.

@@ -163,3 +163,79 @@ export function decryptOrderDelivery(
 ): Uint8Array {
   return xchacha20poly1305(deliveryKey, nonce, deliveryAad(orderId)).decrypt(encryptedPayload)
 }
+
+// ---------------------------------------------------------------------------
+// Order status notes (storefront v10: tracking and message sealed to the order)
+// ---------------------------------------------------------------------------
+
+/** Domain label of a status note: the HKDF info of its subkey and the head of its AAD. */
+export const ORDER_STATUS_NOTE_LABEL = 'yappr/order-status/v1'
+/** Bytes a sealed status note adds to its plaintext, for sizing against the contract's payload cap. */
+export const STATUS_NOTE_CIPHERTEXT_OVERHEAD = TAG_SIZE
+
+/**
+ * What a seller tells the buyer alongside a status. Version 1 of the plaintext
+ * is JSON, `{ v: 1, trackingNumber?, trackingCarrier?, message? }`.
+ */
+export interface OrderStatusNote {
+  trackingNumber?: string
+  trackingCarrier?: string
+  message?: string
+}
+
+const NOTE_FIELDS = ['trackingNumber', 'trackingCarrier', 'message'] as const
+
+export function encodeOrderStatusNote(note: OrderStatusNote): Uint8Array {
+  const body: Record<string, string | number> = { v: 1 }
+  for (const field of NOTE_FIELDS) {
+    const value = note[field]
+    if (value) body[field] = value
+  }
+  return utf8(JSON.stringify(body))
+}
+
+/** Parse a status note's plaintext. Unknown keys and non-string values are ignored; throws for anything that is not a version 1 note. */
+export function decodeOrderStatusNote(plaintext: Uint8Array): OrderStatusNote {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plaintext))
+  } catch {
+    throw new Error('Status note is not valid')
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('Status note is not valid')
+  const record = parsed as Record<string, unknown>
+  if (record.v !== 1) throw new Error('Status note has an unsupported version')
+  const note: OrderStatusNote = {}
+  for (const field of NOTE_FIELDS) {
+    const value = record[field]
+    if (typeof value === 'string' && value) note[field] = value
+  }
+  return note
+}
+
+/** A subkey and AAD of their own, so a status note can never be opened as (or mistaken for) a delivery. */
+function statusNoteKey(orderKey: Uint8Array, orderId: string): Uint8Array {
+  return hkdf(sha256, orderKey, utf8(orderId), utf8(ORDER_STATUS_NOTE_LABEL), KEY_SIZE)
+}
+
+const statusNoteAad = (orderId: string) => utf8(`${ORDER_STATUS_NOTE_LABEL}:${orderId}`)
+
+/** Seal a status note under the order's key (from {@link sellerOrderDeliveryKey}) with a fresh random nonce. */
+export function encryptOrderStatusNote(
+  plaintext: Uint8Array,
+  orderKey: Uint8Array,
+  orderId: string
+): { encryptedPayload: Uint8Array; nonce: Uint8Array } {
+  const nonce = randomBytes(NONCE_SIZE)
+  return { encryptedPayload: xchacha20poly1305(statusNoteKey(orderKey, orderId), nonce, statusNoteAad(orderId)).encrypt(plaintext), nonce }
+}
+
+/** Open a sealed status note. Throws if the key, order id or bytes are wrong. */
+export function decryptOrderStatusNote(
+  encryptedPayload: Uint8Array,
+  nonce: Uint8Array,
+  orderKey: Uint8Array,
+  orderId: string
+): Uint8Array {
+  return xchacha20poly1305(statusNoteKey(orderKey, orderId), nonce, statusNoteAad(orderId)).decrypt(encryptedPayload)
+}

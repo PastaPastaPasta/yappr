@@ -232,6 +232,10 @@ const CENTS_PER_CREDIT = 60 * 100 / 1e11;
  * for a media URL, 30 for a v16 tag), so the media rows overstate an ipfs://
  * link. The tagged rows price `hashtag` (8 characters) up to v15 and the
  * `tags` list on v16, one row per spelling: each skips the cuts without it.
+ * v17 marks a reply `live` as a post (`live?`) and names a private write's feed
+ * (`feed?`, the fourth field of the `private` rule), and replaces
+ * `privateFeedState` with `privateFeed`: the private-feed rows (open, grant,
+ * rekey) price the v17 types and skip every earlier cut.
  */
 const SOCIAL_WRITES = [
   ['post, 140 characters', 'post', { content: 140, 'live?': 0 }],
@@ -240,12 +244,13 @@ const SOCIAL_WRITES = [
   ['post, 140 characters, four tags', 'post', { content: 140, tags: 4, 'live?': 0 }],
   ['post, one image', 'post', { content: 140, 'live?': 0, mediaUrls: 1, mediaDigests: 40, mediaKinds: 1 }],
   ['post, four images', 'post', { content: 140, 'live?': 0, mediaUrls: 4, mediaDigests: 160, mediaKinds: 4 }],
-  ['private post (300 B ciphertext)', 'post', { encryptedContent: 300, keyGeneration: 0, nonce: 0, 'live?': 0 }],
+  ['private post (300 B ciphertext)', 'post', { encryptedContent: 300, keyGeneration: 0, nonce: 0, 'feed?': 0, 'live?': 0 }],
   ['quote', 'post', { content: 140, quotedPostId: 0, quotedPostOwnerId: 0, 'live?': 0 }],
   ['repost (a bare quote)', 'post', { quotedPostId: 0, quotedPostOwnerId: 0, 'live?': 0 }],
-  ['reply, 140 characters', 'reply', { content: 140 }],
-  ['reply to a reply', 'reply', { content: 140, replyToReplyId: 0 }],
-  ['reply, one image', 'reply', { content: 140, mediaUrls: 1, mediaDigests: 40, mediaKinds: 1 }],
+  ['reply, 140 characters', 'reply', { content: 140, 'live?': 0 }],
+  ['reply to a reply', 'reply', { content: 140, replyToReplyId: 0, 'live?': 0 }],
+  ['reply, one image', 'reply', { content: 140, mediaUrls: 1, mediaDigests: 40, mediaKinds: 1, 'live?': 0 }],
+  ['private reply (300 B ciphertext)', 'reply', { encryptedContent: 300, keyGeneration: 0, nonce: 0, 'feed?': 0, 'live?': 0 }],
   ['like', 'like', {}],
   ['like, tagged post', 'like', { hashtag: 8 }],
   ['like, post with one tag', 'like', { tags: 1 }],
@@ -260,6 +265,12 @@ const SOCIAL_WRITES = [
   ['follow', 'follow', {}],
   ['block', 'block', {}],
   ['block filter (one 1 KB bloom filter)', 'blockFilter', { filterData: 1024, itemCount: 0, version: 0 }],
+  // v17's private feeds: the open (its required fields), the open with its optional carry, audience
+  // and label, a grant (one recipient's leaf and wrapped key) and a rekey (the revoking packets).
+  ['private feed, open (seed only)', 'privateFeed', {}],
+  ['private feed, open (with carry, audience and label)', 'privateFeed', { carry: 512, audience: 0, label: 64 }],
+  ['private feed grant (one recipient)', 'privateFeedGrant', {}],
+  ['private feed rekey (one revocation)', 'privateFeedRekey', {}],
 ];
 
 /**

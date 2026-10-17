@@ -192,7 +192,8 @@ function estimatesFor(contract, source) {
   const plainPost = { content: { length: 140 } };
   // v13: every post carries `live` and every reply `rootOwnerId`, so neither is priced as absent.
   // v14's reply declares no parentOwnerId, so the reply row below keeps only what the file has.
-  const always = { post: cut.liveMarker ? ['live'] : [], reply: cut.rootOwner ? ['rootOwnerId'] : [] };
+  // v17: a reply carries `live` too (priced present, as a post's).
+  const always = { post: cut.liveMarker ? ['live'] : [], reply: [...(cut.rootOwner ? ['rootOwnerId'] : []), ...(cut.replyLiveMarker ? ['live'] : [])] };
   const absent = (type, keep) => Object.fromEntries(Object.keys(source.documentSchemas[type].properties).filter((p) => !keep.includes(p) && !(always[type] ?? []).includes(p)).map((p) => [p, { present: false }]));
   /**
    * null for a shape the installed SDK cannot price, so a live run keeps its measurements:

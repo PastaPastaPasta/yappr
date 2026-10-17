@@ -1,7 +1,7 @@
 /**
  * The social documents the Node scripts write, built for the cut a contract
- * file declares (docs/SOCIAL_V10.md to docs/SOCIAL_V16.md). Every switch reads
- * the schemas, never the file's name, so one builder serves v10 to v16 and a
+ * file declares (docs/SOCIAL_V10.md to docs/SOCIAL_V17.md). Every switch reads
+ * the schemas, never the file's name, so one builder serves v10 to v17 and a
  * v10–v12 document comes out exactly as the scripts wrote it before v13:
  *
  *   - `live` (v13): every post that is not a tombstone carries `live: true`, a
@@ -31,6 +31,14 @@
  *     exactly (`where { "tags": "tags" }`, same elements in the same order,
  *     5.0.0-beta.6). `tagAndTime` and the like tag indexes enter a document
  *     once per tag, so a read pins one tag with `contains`, never `==`.
+ *   - the live listings (v17): `post.timeline` and `post.tagAndTime` are keyed on
+ *     `live` first (skipIfAbsent), so a tombstone leaves the global timeline and
+ *     the tag pages, and their reads pin `live == true` first like
+ *     `ownerAndTime`; a reply carries `live: true` too (`reply.ownerAndTime` is
+ *     `[live, $ownerId, $createdAt]`);
+ *   - private feeds (v17): a private post or reply names the `feed` it was sealed
+ *     to beside its ciphertext, key generation and nonce (the `private` rule is
+ *     all four or none); `privateFeedState` is replaced by `privateFeed`.
  *
  * Pure: no network, no SDK. `node scripts/social-shapes.mjs --self-test`
  * builds every write against each social cut and judges it with the pure
@@ -131,6 +139,12 @@ export function reportRecoveryWhere(data, ownerId) {
   throw new Error('A report names a post, a reply or a profile');
 }
 
+/** Whether `type`'s index `name` is keyed on `live` first (v17's timeline and tag listing). */
+function indexStartsWithLive(schemas, type, name) {
+  const index = schemas[type]?.indices?.find((i) => i.name === name);
+  return index !== undefined && Object.keys(index.properties[0])[0] === 'live';
+}
+
 /**
  * The builders, query prefixes and checker for one social cut. `contract` is a
  * contract JSON (`{ documentSchemas }`) or its `documentSchemas`.
@@ -149,6 +163,10 @@ export function socialShapes(contract) {
     blocksInSocial: schemas.block !== undefined,
     mentionArray: declares('post', 'mentionedUserIds'),
     tagArray: declares('post', 'tags'),
+    replyLiveMarker: declares('reply', 'live'),
+    privateFeeds: declares('post', 'feed'),
+    liveTimeline: indexStartsWithLive(schemas, 'post', 'timeline'),
+    liveTagIndex: indexStartsWithLive(schemas, 'post', 'tagAndTime'),
   });
 
   /** The post and like property naming a post's tags: `hashtag` up to v15, the typed array `tags` on v16. */
@@ -160,6 +178,8 @@ export function socialShapes(contract) {
 
   /** A post create or replace: `live: true` unless it is a tombstone (`deleted` present). */
   const post = (data) => (cut.liveMarker && data.deleted === undefined && data.live === undefined ? { ...data, live: true } : data);
+  /** A reply create or replace on v17: `live: true` unless it is a tombstone, as a post's. */
+  const liveReply = (data) => (cut.replyLiveMarker && data.deleted === undefined && data.live === undefined ? { ...data, live: true } : data);
 
   /**
    * A reply's linkage. A top-level reply answers its root post, so its
@@ -168,8 +188,10 @@ export function socialShapes(contract) {
    * `parentOwnerId` and, on v13, the root post's owner in `rootOwnerId`. A
    * forged pair (a refusal probe) is passed through as given. On v14 a reply
    * stores no owner: both are dropped, so a caller written for any cut works.
+   * From v17 a reply that is not a tombstone carries `live: true`.
    */
-  const reply = ({ rootPostId, rootOwnerId, replyToReplyId, parentOwnerId, ...rest }) => {
+  const reply = (fields) => liveReply(replyLinkage(fields));
+  const replyLinkage = ({ rootPostId, rootOwnerId, replyToReplyId, parentOwnerId, ...rest }) => {
     if (!cut.storedReplyOwners) return { ...rest, ...defined({ rootPostId, replyToReplyId }) };
     const topLevel = replyToReplyId === undefined || replyToReplyId === null;
     const parent = parentOwnerId ?? (topLevel ? rootOwnerId : undefined);
@@ -292,6 +314,27 @@ export function socialShapes(contract) {
   };
 
   /**
+   * The fields of a private post or reply: `encryptedContent`, `keyGeneration`
+   * and `nonce`, plus (v17) the `feed` it was sealed to, all four or none
+   * (`private`). Up to v16 there is no feed and the one passed is dropped, so
+   * a caller written for any cut works; on v17 it must name one (1-65535).
+   */
+  const privateFields = ({ encryptedContent, keyGeneration, nonce, feed }) => {
+    if (!cut.privateFeeds) return { encryptedContent, keyGeneration, nonce };
+    if (feed === undefined || feed === null) throw new Error('a private write names its feed (feed) on this cut');
+    return { encryptedContent, keyGeneration, nonce, feed };
+  };
+
+  /**
+   * The `where` of a read on `post.tagAndTime` or `post.timeline` when the
+   * index is keyed on `live` first (v17): `live == true` ahead of the caller's
+   * conditions, so a tombstone is not listed. Otherwise the conditions as given.
+   */
+  const livePinned = (keyedOnLive, where) => (keyedOnLive ? [['live', '==', true], ...where] : where);
+  /** A whole `{ where, orderBy, … }` query on the global `post.timeline` (`[live, $createdAt]` from v17, `[$createdAt]` before). */
+  const timelinePosts = (query) => ({ ...query, where: livePinned(cut.liveTimeline, query.where ?? []) });
+
+  /**
    * The `where` clause pinning one tag on `post.tagAndTime` or the like tag
    * indexes (`byHashtagPost`, `byTrendHashtagPost`): `hashtag ==` up to v15;
    * on v16 `tags contains`, which the node keys as an equality on one element
@@ -303,10 +346,12 @@ export function socialShapes(contract) {
    * The `where` and `orderBy` walking the posts tagged `tag` after `since` on
    * `post.tagAndTime`, in `direction`: `hashtag ==` up to v15; on v16 one
    * element of `tags` with `contains`, ordered by `$createdAt` alone, since a
-   * typed array is ordered by only under `containsAny`.
+   * typed array is ordered by only under `containsAny`; on v17 `live == true`
+   * first (the index is `[live, tags, $createdAt]`), which leaves the
+   * tombstones out.
    */
   const taggedPosts = (tag, since = 0, direction = 'desc') => (cut.tagArray
-    ? { where: [tagPin(tag), ['$createdAt', '>', since]], orderBy: [['$createdAt', direction]] }
+    ? { where: livePinned(cut.liveTagIndex, [tagPin(tag), ['$createdAt', '>', since]]), orderBy: [['$createdAt', direction]] }
     : { where: [tagPin(tag), ['$createdAt', '>', since]], orderBy: [['hashtag', 'asc'], ['$createdAt', direction]] });
 
   /**
@@ -353,6 +398,13 @@ export function socialShapes(contract) {
   const ownerPostsOrderBy = (orderBy) => (cut.liveMarker && orderBy?.[0]?.[0] === '$ownerId' ? [['live', 'asc'], ...orderBy] : orderBy);
   /** A whole `{ where, orderBy, … }` query on `post.ownerAndTime`. */
   const ownerPosts = (query) => ({ ...query, where: ownerPostsWhere(query.where), ...(query.orderBy ? { orderBy: ownerPostsOrderBy(query.orderBy) } : {}) });
+
+  /** A whole `{ where, orderBy, … }` query on `reply.ownerAndTime`: `live == true` first from v17, where a tombstone is no longer indexed. */
+  const ownerReplies = (query) => ({
+    ...query,
+    where: livePinned(cut.replyLiveMarker, query.where ?? []),
+    ...(query.orderBy ? { orderBy: cut.replyLiveMarker && query.orderBy[0]?.[0] === '$ownerId' ? [['live', 'asc'], ...query.orderBy] : query.orderBy } : {}),
+  });
 
   /** The contract `docType` lives in: the blocks types moved out of social on v13. */
   const contractFor = (docType, { social, blocks }) => {
@@ -402,6 +454,18 @@ export function socialShapes(contract) {
       if (data.deleted !== undefined && data.live !== undefined) problems.push('a post tombstone carries live');
       if (data.deleted === undefined && data.live !== true) problems.push('a post that is not a tombstone lacks live: true');
     }
+    if (docType === 'reply' && cut.replyLiveMarker) {
+      if (data.deleted !== undefined && data.live !== undefined) problems.push('a reply tombstone carries live (live)');
+      if (data.deleted === undefined && data.live !== true) problems.push('a reply that is not a tombstone lacks live: true (live)');
+    }
+    if (docType === 'reply' && schema.propertyConstraints?.notEmpty) {
+      // v17: a reply says something (notEmpty): text, ciphertext, media or a tombstone.
+      if (!(data.content?.length > 0) && data.encryptedContent === undefined && data.mediaUrls === undefined && data.deleted === undefined) problems.push('a reply carries no text, ciphertext or media (notEmpty)');
+    }
+    if ((docType === 'post' || docType === 'reply') && cut.privateFeeds) {
+      const sealed = ['encryptedContent', 'keyGeneration', 'nonce', 'feed'].filter((key) => data[key] !== undefined).length;
+      if (sealed !== 0 && sealed !== 4) problems.push(`${docType} carries ${sealed} of the 4 private fields: ciphertext, key generation, nonce and feed (private)`);
+    }
     if (docType === 'post' || docType === 'reply') {
       if (cut.mediaArrays) {
         const urls = data.mediaUrls?.length ?? 0;
@@ -449,9 +513,9 @@ export function socialShapes(contract) {
   };
 
   return Object.freeze({
-    schemas, cut, post, reply, likeReply, media, mentions, mentionsOf, report, fit, tombstone,
-    tagField, tagMax, tags, storedTags, contentTags, tagPin, taggedPosts, tagRanking, tagLikesWhere,
-    ownerPostsWhere, ownerPostsOrderBy, ownerPosts, contractFor, check,
+    schemas, cut, post, reply, likeReply, media, mentions, mentionsOf, report, fit, tombstone, privateFields,
+    tagField, tagMax, tags, storedTags, contentTags, tagPin, taggedPosts, tagRanking, tagLikesWhere, timelinePosts,
+    ownerPostsWhere, ownerPostsOrderBy, ownerPosts, ownerReplies, contractFor, check,
     actionFee: (docType) => actionFeeOf(schemas, docType),
   });
 }
@@ -462,7 +526,7 @@ export const BLOCK_TYPES = ['block', 'blockFilter', 'blockFollow'];
 // ---- Self-test ------------------------------------------------------------------
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16'];
+const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17'];
 
 /** The cut flags each social cut declares. */
 function expectedCut(version) {
@@ -477,6 +541,10 @@ function expectedCut(version) {
     blocksInSocial: !from('v13'),
     mentionArray: from('v15'),
     tagArray: from('v16'),
+    replyLiveMarker: from('v17'),
+    privateFeeds: from('v17'),
+    liveTimeline: from('v17'),
+    liveTagIndex: from('v17'),
   };
 }
 const readContract = (file) => JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
@@ -563,6 +631,30 @@ function writesFor(shapes) {
       ['post tombstone (four tags kept)', 'post', shapes.post({ deleted: true, ...shapes.tags(four) }), null],
     );
   }
+  {
+    // A private write names the feed it was sealed to from v17 (privateFields drops it before).
+    const sealed = shapes.privateFields({ encryptedContent: bytes(48, 5), keyGeneration: 1, nonce: bytes(24, 6), feed: 3 });
+    writes.push(
+      ['private post (teaser, sealed fields)', 'post', shapes.post({ content: '🔒', ...sealed }), null],
+      ['private post (no teaser)', 'post', shapes.post({ ...sealed }), null],
+      ['private reply (teaser, sealed fields)', 'reply', shapes.reply({ content: '🔒', rootPostId: root, parentOwnerId: author, ...sealed }), null],
+    );
+  }
+  if (cut.privateFeeds) {
+    const { feed, ...triple } = shapes.privateFields({ encryptedContent: bytes(48, 5), keyGeneration: 1, nonce: bytes(24, 6), feed: 3 });
+    writes.push(
+      ['private post without its feed', 'post', shapes.post({ content: '🔒', ...triple }), 'private'],
+      ['private reply without its feed', 'reply', shapes.reply({ content: '🔒', rootPostId: root, parentOwnerId: author, ...triple }), 'private'],
+      ['a feed alone on a post', 'post', shapes.post({ content: 'x', feed }), 'private'],
+    );
+  }
+  if (cut.replyLiveMarker) {
+    writes.push(
+      ['reply without live', 'reply', { content: 'no live', rootPostId: root }, 'live'],
+      ['reply tombstone still live', 'reply', { deleted: true, live: true, rootPostId: root }, 'live'],
+      ['reply with nothing to say', 'reply', shapes.reply({ rootPostId: root }), 'notEmpty'],
+    );
+  }
   if (cut.rootOwner) {
     writes.push(['reply (forged: top-level parent other than the root owner)', 'reply', shapes.reply({ content: 'forged', rootPostId: root, rootOwnerId: author, parentOwnerId: liker }), 'parentIsRoot']);
   }
@@ -582,8 +674,8 @@ function builderExpectations(shapes, version) {
   const { cut } = shapes;
   const id = new Uint8Array(32).fill(6);
   const throws = (fn) => { try { fn(); return false; } catch { return true; } };
-  // v14 keeps every v13 shape but its replies; v15 keeps every v14 shape, v16 every v15 one but the tags.
-  const v14 = ['v14', 'v15', 'v16'].includes(version);
+  // v14 keeps every v13 shape but its replies; v15 keeps every v14 shape, v16 every v15 one but the tags, v17 every v16 one.
+  const v14 = ['v14', 'v15', 'v16', 'v17'].includes(version);
   const fromV13 = version === 'v13' || v14;
   const item = { url: 'ipfs://bafy', sha256: new Uint8Array(32), fingerprint: new Uint8Array(8) };
   return [
@@ -601,6 +693,11 @@ function builderExpectations(shapes, version) {
     ['the author timeline pins live first from v13',
       JSON.stringify(shapes.ownerPosts({ where: [['$ownerId', '==', 'A']], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }))
         === JSON.stringify(fromV13
+          ? { where: [['live', '==', true], ['$ownerId', '==', 'A']], orderBy: [['live', 'asc'], ['$ownerId', 'asc'], ['$createdAt', 'desc']] }
+          : { where: [['$ownerId', '==', 'A']], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] })],
+    ['the author reply read pins live == true first from v17, as it is before',
+      JSON.stringify(shapes.ownerReplies({ where: [['$ownerId', '==', 'A']], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }))
+        === JSON.stringify(cut.replyLiveMarker
           ? { where: [['live', '==', true], ['$ownerId', '==', 'A']], orderBy: [['live', 'asc'], ['$ownerId', 'asc'], ['$createdAt', 'desc']] }
           : { where: [['$ownerId', '==', 'A']], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] })],
     ['an order on $createdAt alone is left as it is', JSON.stringify(shapes.ownerPostsOrderBy([['$createdAt', 'asc']])) === '[["$createdAt","asc"]]'],
@@ -643,11 +740,24 @@ function builderExpectations(shapes, version) {
       !cut.tagArray || [['a', 'a'], [], ['a', 'b', 'c', 'd', 'e'], ['UPPER'], ['x'.repeat(62)]]
         .every((list) => shapes.check('post', shapes.post({ content: 'x', tags: list })).some((problem) => problem.startsWith('post.tags')))],
     ['the tag pin is contains on v16, == before', JSON.stringify(shapes.tagPin('t')) === (cut.tagArray ? '["tags","contains","t"]' : '["hashtag","==","t"]')],
-    ['the tagged-post read orders by $createdAt alone on v16, by the tag first before',
+    ['the tagged-post read orders by $createdAt alone on v16 (live == true first on v17), by the tag first before',
       JSON.stringify(shapes.taggedPosts('t', 5))
         === JSON.stringify(cut.tagArray
-          ? { where: [['tags', 'contains', 't'], ['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']] }
+          ? { where: [...(cut.liveTagIndex ? [['live', '==', true]] : []), ['tags', 'contains', 't'], ['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']] }
           : { where: [['hashtag', '==', 't'], ['$createdAt', '>', 5]], orderBy: [['hashtag', 'asc'], ['$createdAt', 'desc']] })],
+    ['the global timeline read pins live == true first from v17, and is as given before',
+      JSON.stringify(shapes.timelinePosts({ where: [['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']], limit: 20 }))
+        === JSON.stringify({ where: [...(cut.liveTimeline ? [['live', '==', true]] : []), ['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']], limit: 20 })
+        && JSON.stringify(shapes.timelinePosts({ orderBy: [['$createdAt', 'desc']] }).where) === JSON.stringify(cut.liveTimeline ? [['live', '==', true]] : [])],
+    ['a reply carries live: true from v17 and a tombstone never does',
+      (shapes.reply({ rootPostId: id, parentOwnerId: id, content: 'x' }).live === true) === cut.replyLiveMarker
+        && shapes.reply({ deleted: true, rootPostId: id, parentOwnerId: id }).live === undefined
+        && shapes.reply({ rootPostId: id, parentOwnerId: id, live: true }).live === true],
+    ['a private write names its feed from v17 (a missing one throws) and drops it before',
+      throws(() => shapes.privateFields({ encryptedContent: id, keyGeneration: 1, nonce: id })) === cut.privateFeeds
+        && JSON.stringify(Object.keys(shapes.privateFields({ encryptedContent: id, keyGeneration: 1, nonce: id, feed: 2 }))) === (cut.privateFeeds ? '["encryptedContent","keyGeneration","nonce","feed"]' : '["encryptedContent","keyGeneration","nonce"]')],
+    ['the checker calls a private write with three of the four fields wrong from v17',
+      !cut.privateFeeds || shapes.check('post', shapes.post({ content: 'x', encryptedContent: id, keyGeneration: 1, nonce: id })).some((problem) => problem.includes('(private)'))],
     ['a tag ranking groups its posts under the pin, the trending tags by the tag property with no where',
       JSON.stringify(shapes.tagRanking('t')) === JSON.stringify({ groupBy: 'postId', where: [shapes.tagPin('t')] })
         && JSON.stringify(shapes.tagRanking()) === JSON.stringify({ groupBy: shapes.tagField })],
