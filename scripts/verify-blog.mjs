@@ -113,6 +113,9 @@ const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({ blogI
 // `postCommentsEnabled` either; the blogPostId reference checks the post's flag.
 const commentData = ({ blogPostId, content }) => ({ blogPostId, content });
 
+/** Bind a constraint probe's reference without restoring a deliberately omitted field. */
+const withFixtureBlog = (data, blogId) => ({ ...data, ...(Object.hasOwn(data, 'blogId') ? { blogId: id32(blogId) } : {}) });
+
 // ---- Cases ------------------------------------------------------------------
 
 async function caseB1Fixtures(ctx) {
@@ -398,7 +401,7 @@ async function caseB19PropertyConstraints(ctx) {
   // Under b1's fixture blog, or (for `--only b19`) a fresh one; b1b/b1c (one chunk each) are the accepted side.
   if (!(await ensureFixtureBlog(ctx, 'b19'))) return;
   for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, 'blogPost')) {
-    await battery.probeCreate(`b19 ${label} is refused (10422 ${rule})`, constraintViolation(rule), author, 'blogPost', { ...data, blogId: id32(ctx.blogId), slug: `gap-${run}-${Date.now()}` });
+    await battery.probeCreate(`b19 ${label} is refused (10422 ${rule})`, constraintViolation(rule), author, 'blogPost', { ...withFixtureBlog(data, ctx.blogId), slug: `gap-${run}-${Date.now()}` });
   }
 }
 
@@ -528,7 +531,11 @@ function selfTestV7() {
   const indexNames = (docType) => (SCHEMAS[docType].indices ?? []).map((entry) => entry.name);
   const moderators = CONTRACT.config?.moderation?.moderators ?? {};
   const fee = (docType) => actionFeeFor(docType, SCHEMAS)?.moderators;
+  const missingBlog = refusedCreates(CONTRACT_FILE, 'blogPost').find(([label]) => label === 'blogPost: live post requires a blog')?.[1];
+  const fixtureId = new Uint8Array(32).fill(7);
   return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v9)`, [
+    ['constraint fixture binding keeps the missing-blog refusal intact', missingBlog !== undefined && !Object.hasOwn(withFixtureBlog(missingBlog, bs58.encode(fixtureId)), 'blogId')],
+    ['constraint fixture binding replaces an existing blog reference', JSON.stringify(withFixtureBlog({ blogId: new Uint8Array(32) }, bs58.encode(fixtureId)).blogId) === JSON.stringify(fixtureId)],
     ['author management and cleanup have independent owner indexes', JSON.stringify(index('blogPost', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"live":"asc"},{"$createdAt":"asc"}]' && JSON.stringify(index('blogComment', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"$createdAt":"asc"}]'],
     ['only tombstones may omit blogId after parent deletion', !SCHEMAS.blogPost.required.includes('blogId') && SCHEMAS.blogPost.propertyConstraints.hasBody.anyOf[1].allOf.some((rule) => rule.present === 'blogId')],
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
