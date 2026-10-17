@@ -45,10 +45,13 @@ export function RenewPrivateFeedDialog({ open, onOpenChange, ownerId, reason = '
   // 'no' only when the old feed's secret is out of reach for good (PF5); otherwise the renewal finds out.
   const [canLink, setCanLink] = useState<'yes' | 'no' | 'unknown' | null>(null)
   const [bringHistory, setBringHistory] = useState(true)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     if (!open) return
     let cancelled = false
+    setLoadFailed(false)
     setEstimate(null)
     setCanLink(null)
     setBringHistory(true)
@@ -61,11 +64,14 @@ export function RenewPrivateFeedDialog({ open, onOpenChange, ownerId, reason = '
       setCanLink(link)
       setBringHistory(link !== 'no')
     }
-    load().catch((error) => logger.error('Could not prepare the private feed renewal:', error))
+    load().catch((error) => {
+      logger.error('Could not prepare the private feed renewal:', error)
+      if (!cancelled) setLoadFailed(true)
+    })
     return () => {
       cancelled = true
     }
-  }, [open, ownerId])
+  }, [open, ownerId, attempt])
 
   const ready = estimate !== null && canLink !== null
 
@@ -85,7 +91,12 @@ export function RenewPrivateFeedDialog({ open, onOpenChange, ownerId, reason = '
       </ModalTitle>
       <Dialog.Description className="text-sm text-gray-600 dark:text-gray-400 mb-4">{INTRO[reason]}</Dialog.Description>
 
-      {!ready ? (
+      {loadFailed ? (
+        <div className="space-y-3 text-sm text-gray-700 dark:text-gray-300" data-testid="renew-load-failed">
+          <p>We couldn&apos;t work out what renewing costs right now.</p>
+          <Button variant="outline" size="sm" onClick={() => setAttempt((n) => n + 1)}>Try again</Button>
+        </div>
+      ) : !ready ? (
         <div className="space-y-3" data-testid="renew-loading">
           <div className="h-16 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse" />
           <div className="h-10 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse" />

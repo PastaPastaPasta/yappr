@@ -221,6 +221,8 @@ class PrivateFeedFollowerService {
         let result = held ? await this.catchUp(grant.ownerId, grant.feed, viewerId) : await this.recoverFromGrant(grant, viewerId, key as Uint8Array)
         // Re-approved since these keys were kept: the new grant replaces them.
         if (!result.success && key && result.error.startsWith('RECOVERY_NEEDED:')) result = await this.recoverFromGrant(grant, viewerId, key)
+        // A grant the owner revoked is kept as their answer: nothing to sync, nothing failed.
+        if (!result.success && result.error.startsWith('REVOKED:')) continue
         if (!result.success) failed.push(label)
         else if (before !== undefined && privateFeedKeyStore.memberKeys(viewerId, grant.ownerId, grant.feed)?.keyGeneration === before) upToDate.push(label)
         else synced.push(label)

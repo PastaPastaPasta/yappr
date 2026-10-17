@@ -137,11 +137,11 @@ function walkBack(viewerId: string, ownerId: string, feeds: readonly PrivateFeed
  */
 async function recoverThisFeed(viewerId: string, ownerId: string, feed: number, encryptionPrivateKey?: Uint8Array): Promise<'recovered' | LockReason | null> {
   if (viewerId === ownerId) {
-    if (!encryptionPrivateKey) return null
+    // The seed may be here already (behind the chain's generation), or open with the key.
     const doc = (await fetchFeeds(ownerId)).find((candidate) => candidate.feed === feed)
     if (!doc) return null
     const { privateFeedService } = await import('./private-feed-service')
-    return (await privateFeedService.recoverOwnerFeed(ownerId, doc, encryptionPrivateKey)).success ? 'recovered' : null
+    return (await privateFeedService.feedState(ownerId, doc, encryptionPrivateKey)).success ? 'recovered' : null
   }
   if (privateFeedKeyStore.memberKeys(viewerId, ownerId, feed)) return null
   const grant = await fetchGrant(ownerId, feed, viewerId)
@@ -173,6 +173,8 @@ export async function contentKeyFor(
     if (start === undefined) {
       const recovered = await recoverNewest(viewerId, ownerId, encryptionPrivateKey)
       if (recovered !== 'recovered') return { reason: recovered }
+      const now = await directKey(viewerId, ownerId, feed, keyGeneration, encryptionPrivateKey)
+      if (now) return now
       start = later.find((candidate) => heldHistoryKey(viewerId, ownerId, candidate) !== null)
       // Nothing held at or after this feed: it is newer than this viewer's access, not lost history.
       if (start === undefined) return { reason: viewerId !== ownerId && (privateFeedKeyStore.newestMemberFeed(viewerId, ownerId) ?? 0) < feed ? 'no-access' : 'history-unavailable' }

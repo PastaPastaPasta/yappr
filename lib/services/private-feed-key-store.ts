@@ -22,6 +22,8 @@ const PREFIX = scopedKey('yappr:pf:')
 /** The owner's own keys of one feed. */
 export interface OwnerFeedKeys {
   seed: Uint8Array
+  /** The feed document's `encryptedSeed` this seed came with: keys for another document under the same number are not these. */
+  sealedSeed: Uint8Array
   /** The feed's current key generation (1 + its revocations). */
   keyGeneration: number
   /** Revoked leaves, in revocation order: they fix every node's version. */
@@ -125,6 +127,7 @@ class PrivateFeedKeyStore {
   ownerKeys(ownerId: string, feed: number): OwnerFeedKeys | null {
     return read(ownerKey(ownerId, feed), (raw) => ({
       seed: unb64(raw.seed),
+      sealedSeed: unb64(raw.sealed),
       keyGeneration: Number(raw.gen),
       revokedLeaves: (raw.revoked as number[]).map(Number),
       treeCapacity: Number(raw.cap),
@@ -134,7 +137,7 @@ class PrivateFeedKeyStore {
 
   storeOwnerKeys(ownerId: string, feed: number, keys: OwnerFeedKeys): void {
     write(ownerKey(ownerId, feed), {
-      seed: b64(keys.seed), gen: keys.keyGeneration, revoked: keys.revokedLeaves, cap: keys.treeCapacity, max: keys.maxKeyGeneration,
+      seed: b64(keys.seed), sealed: b64(keys.sealedSeed), gen: keys.keyGeneration, revoked: keys.revokedLeaves, cap: keys.treeCapacity, max: keys.maxKeyGeneration,
     })
     this.changed()
   }

@@ -14,7 +14,7 @@ import { readNotificationWindow } from './notification-windows';
 import { mentionsOfUserQuery } from './mention-service';
 import { readScoped, scopedKey, writeScoped } from '../storage-scope';
 import { applyLikeObservations, parseLikeSnapshot, targetsToRead, type KindObservation, type LikeBatch } from '../like-notification-snapshot';
-import { diffAccess, parseAccessSnapshot } from '../private-feed/access-snapshot';
+import { diffAccess, newestPerOwner, ownersToCheck, parseAccessSnapshot } from '../private-feed/access-snapshot';
 
 // Constants for notification queries
 /** Likers of an aggregated like whose profiles are loaded; the rest are known by id only (for the block filter). */
@@ -285,12 +285,20 @@ class NotificationService {
    */
   async getPrivateFeedAccessNotifications(userId: string): Promise<RawNotification[]> {
     if (!privateFeedClientSupported()) return [];
-    const { fetchGrantsHeldBy } = await import('./private-feed-reads');
+    const { fetchGrantsHeldBy, grantIsRevoked } = await import('./private-feed-reads');
     const grants = await fetchGrantsHeldBy(userId);
     const key = accessSnapshotKey(userId);
-    const diff = diffAccess(parseAccessSnapshot(readScoped(key)), grants);
-    if (!writeScoped(key, JSON.stringify(diff.snapshot))) return [];
+    const previous = parseAccessSnapshot(readScoped(key));
+    const newest = newestPerOwner(grants.map((grant) => ({ ownerId: grant.ownerId, feed: grant.feed, grantId: grant.$id })));
     const now = Date.now();
+    // A removal keeps its grant: it shows as a rekey of the grant's leaf, read per owner only when due.
+    const byOwner = new Map(grants.map((grant) => [grant.$id, grant]));
+    const checks = await Promise.all(ownersToCheck(previous, newest, now).map(async (ownerId) => {
+      const grant = byOwner.get(newest.get(ownerId)?.grantId ?? '');
+      return [ownerId, grant ? await grantIsRevoked(grant) : false] as const;
+    }));
+    const diff = diffAccess(previous, newest, new Map(checks), now);
+    if (!writeScoped(key, JSON.stringify(diff.snapshot))) return [];
     return [
       ...diff.approved.map(({ ownerId, feed }) => ({ id: `pf-approved:${ownerId}:${feed}`, type: 'privateFeedApproved' as const, fromUserId: ownerId, createdAt: now, timeless: true })),
       ...diff.removed.map((ownerId) => ({ id: `pf-removed:${ownerId}:${now}`, type: 'privateFeedRevoked' as const, fromUserId: ownerId, createdAt: now, timeless: true })),

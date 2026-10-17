@@ -159,7 +159,7 @@ export function cekAt(seed: Uint8Array, maxKeyGeneration: number, keyGeneration:
   return hashBack(chainTop(seed, maxKeyGeneration), maxKeyGeneration, keyGeneration)
 }
 
-/** A feed's history key: it opens the successor feed's `carry`, never anything newer. */
+/** A feed's history key: it opens that feed's own `carry` (its predecessor's keys), never anything newer. */
 export function historyKey(seed: Uint8Array): Uint8Array {
   return derive(seed, LABEL.history)
 }

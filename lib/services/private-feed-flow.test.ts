@@ -24,6 +24,8 @@ const chain = vi.hoisted(() => ({
   writes: [] as string[],
   /** The next create is sent but never lands, and comes back unconfirmed (a timed-out wait). */
   dropNextCreate: false,
+  /** Runs once after the next grant lands (another device acting in the middle of a move). */
+  afterGrant: null as null | (() => Promise<void>),
 }))
 
 const UNIQUE: Record<string, string[][]> = {
@@ -82,6 +84,11 @@ async function createDocument(_contract: string, type: string, ownerId: string, 
   }
   chain.docs.push(doc)
   chain.writes.push(type)
+  if (type === 'privateFeedGrant' && chain.afterGrant) {
+    const run = chain.afterGrant
+    chain.afterGrant = null
+    await run()
+  }
   return { success: true, document: doc }
 }
 
@@ -332,5 +339,28 @@ describe('private feeds v2 end to end', () => {
   it('leaving shows as nothing to the follower, and the owner stops carrying them', async () => {
     expect(await s.follower.leave(O, F1)).toEqual({ success: true })
     expect(await s.follower.getAccessStatus(O, F1)).toBe('none')
+  })
+
+  it('a follower removed on another device in the middle of a move is not carried over', async () => {
+    for (const follower of [F2, F3, F5]) {
+      expect(await s.follower.requestAccess(O, follower)).toEqual({ success: true })
+      await approve(follower)
+    }
+    const before = (await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true }))?.feed as number
+    expect((await s.owner.privateFeedService.openFeed(O, keys[O])).success).toBe(true)
+    expect(await s.move.adoptUnfinishedMove(O)).toBeGreaterThanOrEqual(2)
+    const { loadMove, saveMove } = await import('./private-feed-move-job')
+    const last = (loadMove(O)?.recipients ?? []).at(-1) as string
+    chain.afterGrant = async () => {
+      expect(await s.owner.privateFeedService.revokeFollower(O, last, keys[O])).toEqual({ success: true })
+      // The other device's skip never reaches this one's job.
+      const job = loadMove(O)
+      if (job) saveMove({ ...job, skipped: job.skipped.filter((id) => id !== last) })
+    }
+    expect(await s.move.runMove(O, keys[O])).toEqual({ success: true })
+    const moved = (await s.owner.privateFeedService.getPrivateFollowers(O)).map((f) => f.recipientId)
+    expect(moved).not.toContain(last)
+    expect(moved.length).toBeGreaterThan(0)
+    expect(grantsIn(before + 1)).not.toContain(NAMES[last])
   })
 })

@@ -76,7 +76,7 @@ async function moderatorKeys(): Promise<{ keys: Uint8Array[]; missing: number }>
 async function feedOwnerOf(target: Post): Promise<string | null> {
   // The root may come from a cache, and so may the CEK below. Neither needs a
   // fresh read: the key is sealed only after it decrypts the target itself
-  // ({@link opensTarget}), so a stale answer can only leave the box out.
+  // ({@link openTarget}), so a stale answer can only leave the box out.
   if (targetKindOf(target) !== 'reply') return target.author.id
   const rootId = target.rootPostId
   if (!rootId) return null
