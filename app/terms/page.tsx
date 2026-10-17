@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { DocumentTextIcon } from '@heroicons/react/24/outline'
 import { InfoPage, InfoSection, Prose, BulletList, NetworkNotice, testNetwork } from '@/components/layout/info-page'
@@ -12,8 +13,10 @@ import {
   tokenCostFor,
   yappIsLocked,
   yappIsTransferable,
-  type ElectedModerationDeclaration,
 } from '@/lib/contract-topology'
+import { useSdk } from '@/contexts/sdk-context'
+import { logger } from '@/lib/logger'
+import { moderationService, type InterimKind } from '@/lib/services/moderation-service'
 
 const COMMUNITY_RULES = [
   { title: 'Nothing illegal', body: 'Don’t post, sell or link to anything that is illegal where you or the people you share it with live.' },
@@ -34,13 +37,33 @@ const COMMUNITY_RULES = [
   { title: 'Respect other people’s rights', body: 'Only post what you have the right to share, including other people’s photos, writing and trademarks.' },
 ]
 
-/** Who moderates before a team is seated, as the configured social contract declares it. */
-const INTERIM_COPY: Record<ElectedModerationDeclaration['interim'] | 'none', string> = {
+/** Who moderates before a team is seated, per the social contract's interim. */
+const INTERIM_COPY: Record<InterimKind, string> = {
   notYetUsable: 'Until a team is elected and seated, the parts of Yappr it moderates (such as posting) stay closed.',
   contractOwner: 'Until a team is elected and seated, the contract’s owner moderates in its place.',
   appointedModerators: 'Until a team is elected and seated, moderators appointed by the contract’s owner moderate in its place.',
   noModeration: 'Until a team is elected and seated, nobody moderates.',
-  none: '',
+}
+
+/**
+ * The interim the REGISTERED social contract declares, which can differ from
+ * the committed JSON (testnet registers `notYetUsable`); null off an elected
+ * contract, while it is read, or when the read fails, so nothing is claimed.
+ */
+function useRegisteredInterim(): InterimKind | null {
+  const { isReady } = useSdk()
+  const [interim, setInterim] = useState<InterimKind | null>(null)
+  useEffect(() => {
+    if (!isReady || !electedModeration()) return
+    let cancelled = false
+    moderationService.getInterim().then((kind) => {
+      if (!cancelled) setInterim(kind)
+    }).catch((error: unknown) => logger.warn('Terms: could not read the registered interim', error))
+    return () => {
+      cancelled = true
+    }
+  }, [isReady])
+  return interim
 }
 
 /** What YAPP costs and is, as the configured contract declares it. */
@@ -62,6 +85,7 @@ function yappCostCopy(): string {
 
 export default function TermsPage() {
   const network = testNetwork()
+  const interim = useRegisteredInterim()
   return (
     <InfoPage icon={DocumentTextIcon} title="Terms of Use" subtitle="The rules for using Yappr, in plain words" updated={LEGAL_UPDATED}>
       <NetworkNotice>
@@ -169,7 +193,7 @@ export default function TermsPage() {
             that is more than a week old needs the team&apos;s leader and two more moderators to agree.
           </p>
           <p>
-            {INTERIM_COPY[electedModeration()?.interim ?? 'none']} We can also stop
+            {interim && `${INTERIM_COPY[interim]} `}We can also stop
             showing content or media in the apps we publish when it breaks these rules or the law, but we can&apos;t remove anything
             from Dash Platform ourselves.
           </p>
