@@ -275,12 +275,11 @@ function toMessageDTO(view: MessageView): MessageDTO {
 
 /**
  * When a conversation last changed, for the inbox order (PRD DM-01). lib
- * counts a group with no message from its read position, which is 0 for one
- * joined but never opened; such a group is placed by when this device joined
- * it, instead of with no time at all.
+ * exposes read positions as activity even for empty groups. A read position
+ * can advance during recovery, so an empty group uses its stable join time.
  */
 function lastActivityOf(view: ConversationView, conv: Conv | undefined): Date | null {
-  if (view.lastActivity > 0) return new Date(view.lastActivity)
+  if ((view.kind !== 'group' || view.lastMessage) && view.lastActivity > 0) return new Date(view.lastActivity)
   const joinedAt = conv?.kind === 'group' ? conv.entry.anchorChangedAt : 0
   return joinedAt > 0 ? new Date(joinedAt) : null
 }

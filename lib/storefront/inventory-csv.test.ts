@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ItemVariants, StoreItem } from '@/lib/types'
 import { parseInventoryCSV, toStoreItemData } from '@/lib/upload/inventory-parser'
 import { inventoryCsvTemplate, inventoryToCsv, optionTypesSummary } from './inventory-csv'
@@ -41,9 +41,9 @@ function shapeOf(variants: ItemVariants | undefined) {
 describe('inventory CSV export', () => {
   it('writes one row per combination with Shopify-style option columns', () => {
     const [header, first, second] = inventoryToCsv([toy()], 'USD').csv.split('\n')
-    expect(header).toBe('Group,Title,Description,Section,Category,Subcategory,Tags,SKU,Price,Quantity,Weight,Option1 Name,Option1 Value,Option2 Name,Option2 Value,Image1,Image2,Image3,Image URL')
+    expect(header).toBe('Group,Title,Description,Section,Category,Subcategory,Tags,SKU,Price,Quantity,Weight,Currency,Item SKU,Option1 Name,Option1 Value,Option2 Name,Option2 Value,Image1,Image2,Image3,Image URL')
     expect(first).toBe('toyId,Squishy toy,"Soft, ""squishy"", and')
-    expect(second).toBe('washable",,Toys,,"toy, soft",TOY-0-0,1.00,0,120,Primary color,Red,Pack Size,Single Piece,https://x.test/toy.jpg,https://x.test/red.jpg,https://x.test/blue.jpg,https://x.test/red.jpg')
+    expect(second).toBe('washable",,Toys,,"toy, soft",TOY-0-0,1.00,0,120,USD,,Primary color,Red,Pack Size,Single Piece,https://x.test/toy.jpg,https://x.test/red.jpg,https://x.test/blue.jpg,https://x.test/red.jpg')
   })
 
   it('uploads again to the same products', () => {
@@ -107,4 +107,79 @@ describe('optionTypesSummary', () => {
     expect(optionTypesSummary(defined(toy().variants))).toBe('Primary color (3) × Pack Size (2) — 5 combinations')
     expect(optionTypesSummary(defined(variantsFromRows(['Size'], [{ optionNames: ['M'], price: 1 }]).variants))).toBe('Size (1) — 1 combination')
   })
+})
+
+describe('lossless CSV fields (#720)', () => {
+  it('keeps mixed currencies even when importing into a store with another default', () => {
+    const originals = [
+      storeItem({ id: 'dash', title: 'Dash', currency: 'DASH', basePrice: 12345678 }),
+      storeItem({ id: 'eur', title: 'Euro', currency: 'EUR', basePrice: 123 }),
+    ]
+    const result = parseInventoryCSV(inventoryToCsv(originals, 'USD').csv, 'BTC')
+    expect(result.errors).toEqual([])
+    expect(result.items.map(({ currency, basePrice }) => ({ currency, basePrice }))).toEqual([
+      { currency: 'DASH', basePrice: 12345678 }, { currency: 'EUR', basePrice: 123 },
+    ])
+  })
+
+  it('keeps an item SKU independently of its combination SKUs', () => {
+    const item = { ...toy(), sku: 'TOY-FAMILY' }
+    const result = parseInventoryCSV(inventoryToCsv([item], 'USD').csv)
+    expect(toStoreItemData(result.items[0]).sku).toBe('TOY-FAMILY')
+    expect(shapeOf(result.items[0].variants)).toEqual(shapeOf(item.variants))
+  })
+
+  it('keeps legacy combination photos attached to the same options', () => {
+    const item = toy()
+    const variants = defined(item.variants)
+    variants.combinations[0] = { ...variants.combinations[0], image: undefined, imageUrl: 'https://x.test/own.jpg' }
+    const result = parseInventoryCSV(inventoryToCsv([item], 'USD').csv)
+    const back = result.items[0]
+    const first = defined(back.variants).combinations[0]
+    expect(back.imageUrls[(first.image ?? 0) - 1] ?? first.imageUrl).toBe('https://x.test/own.jpg')
+    expect(back.imageUrls.slice(0, 3)).toEqual(IMAGES)
+  })
+})
+
+
+it('keeps currency, both SKU levels and legacy photos on typed storefronts (#720)', async () => {
+  vi.resetModules()
+  vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v9')
+  try {
+    const { inventoryToCsv: exportCsv } = await import('./inventory-csv')
+    const { parseInventoryCSV: importCsv, toStoreItemData: dataOf } = await import('@/lib/upload/inventory-parser')
+    const item = { ...toy(), currency: 'DASH', sku: 'TOY-FAMILY' }
+    defined(item.variants).combinations[0].image = undefined
+    defined(item.variants).combinations[0].imageUrl = 'https://x.test/own.jpg'
+    const result = importCsv(exportCsv([item], 'USD').csv, 'EUR')
+    expect(result.errors).toEqual([])
+    const back = result.items[0]
+    expect(back.errors).toEqual([])
+    expect(dataOf(back)).toMatchObject({ currency: 'DASH', sku: 'TOY-FAMILY' })
+    const first = defined(back.variants).combinations[0]
+    expect(first).toMatchObject({ sku: 'TOY-0-0', price: 100, image: 4 })
+    expect(back.imageUrls).toEqual([...IMAGES, 'https://x.test/own.jpg'])
+  } finally {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  }
+})
+
+it('refuses mixed currencies or item SKUs inside one CSV product (#720)', () => {
+  const content = 'Group,Title,Option1 Name,Option1 Value,Price,Currency,Item SKU\n' +
+    'a,Toy,Color,Red,1.00,USD,RED\n' + 'a,Toy,Color,Blue,1.00,EUR,BLUE'
+  const [item] = parseInventoryCSV(content).items
+  expect(item.errors).toEqual([
+    '"Toy": its rows use different currencies. Use one currency per product.',
+    '"Toy": its rows use different item SKUs. Use one item SKU per product.',
+  ])
+})
+
+it('places gallery images before combination-only photos from any row (#720)', () => {
+  const content = 'Group,Title,Option1 Name,Option1 Value,Price,Image1,Image URL\n' +
+    'a,Toy,Color,Red,1.00,https://x.test/main.jpg,https://x.test/own.jpg\n' +
+    'a,Toy,Color,Blue,1.00,https://x.test/blue.jpg,'
+  const [item] = parseInventoryCSV(content).items
+  expect(item.imageUrls).toEqual(['https://x.test/main.jpg', 'https://x.test/blue.jpg', 'https://x.test/own.jpg'])
+  expect(defined(item.variants).combinations[0].image).toBe(3)
 })

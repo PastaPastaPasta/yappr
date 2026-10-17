@@ -21,7 +21,7 @@ import { readZoneCell } from '../storefront/item-zones'
 
 /** The single-valued columns the parser reads, by internal name. */
 type Column =
-  | 'group' | 'section' | 'category' | 'subcategory' | 'itemName' | 'description' | 'sku' | 'tags'
+  | 'currency' | 'itemSku' | 'group' | 'section' | 'category' | 'subcategory' | 'itemName' | 'description' | 'sku' | 'tags'
   | 'variant' | 'subVariant' | 'price' | 'quantity' | 'shippingCost' | 'combine' | 'weight' | 'image' | 'shippingZones'
 
 // Parsed inventory row before grouping
@@ -33,6 +33,8 @@ interface ParsedInventoryRow {
   itemName: string
   description?: string
   sku?: string
+  itemSku?: string
+  currency: string
   tags: string[]
   variant?: string
   subVariant?: string
@@ -66,7 +68,7 @@ export interface GroupedInventoryItem {
   imageUrls: string[]
   basePrice: number       // Lowest combination price, or the single price
   currency: string
-  sku?: string            // SKU of an item without variants
+  sku?: string            // Item SKU, independent of combination SKUs
   stockQuantity?: number  // Stock for an item without variants
   weight?: number
   variants?: ItemVariants // Populated if the item has variants
@@ -95,6 +97,8 @@ export interface InventoryParseResult {
 
 // Column headers, matched case-insensitively
 const COLUMN_ALIASES: Record<Column, string[]> = {
+  currency: ['currency', 'currency code'],
+  itemSku: ['item sku'],
   group: ['group', 'group_id', 'groupid', 'listing_id', 'listingid', 'handle'],
   section: ['section'],
   category: ['category', 'cat'],
@@ -640,8 +644,8 @@ function planAxes(rows: ParsedInventoryRow[], columns: ColumnMap, title: string)
 function collectImages(rows: ParsedInventoryRow[]): { images: string[]; tooLong: string[] } {
   const images: string[] = []
   const tooLong: string[] = []
-  for (const row of rows) {
-    for (const url of [...row.imageUrls, row.image]) {
+  for (const urls of [rows.flatMap((row) => row.imageUrls), rows.map((row) => row.image)]) {
+    for (const url of urls) {
       if (!url || images.includes(url) || tooLong.includes(url)) continue
       if (galleryTakes(url)) images.push(url)
       else tooLong.push(url)
@@ -660,7 +664,7 @@ function fitSku(sku: string): string {
 }
 
 /** Build one product from its rows. */
-function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], columns: ColumnMap, currency: string, zones: readonly ImportZone[]): GroupedInventoryItem {
+function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], columns: ColumnMap, zones: readonly ImportZone[]): GroupedInventoryItem {
   const firstRow = rows[0]
   const title = firstRow.itemName
   const errors: string[] = []
@@ -688,10 +692,18 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
     tags,
     imageUrls,
     basePrice: firstRow.price,
-    currency,
+    currency: firstRow.currency,
+    sku: firstRow.itemSku,
     shippingZoneIds: resolveZones(rows, zones, title, errors, warnings),
     errors,
     warnings,
+  }
+
+  if (rows.some((row) => row.currency !== firstRow.currency)) {
+    errors.push(`"${title}": its rows use different currencies. Use one currency per product.`)
+  }
+  if (rows.some((row) => row.itemSku !== firstRow.itemSku)) {
+    errors.push(`"${title}": its rows use different item SKUs. Use one item SKU per product.`)
   }
 
   // v1–v3 keep the image addresses and tags as JSON strings, each capped as a whole.
@@ -717,7 +729,7 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
       errors.push(`"${title}" has ${rows.length} rows but no options to tell them apart. Give each row its own option, or its own group.`)
       return item
     }
-    item.sku = firstRow.sku
+    item.sku = firstRow.itemSku ?? firstRow.sku
     item.stockQuantity = firstRow.quantity
     if (firstRow.quantity !== undefined && firstRow.quantity > itemStockCap()) errors.push(`"${title}": stock can be at most ${itemStockCap().toLocaleString()}.`)
     item.weight = firstRow.weight
@@ -791,7 +803,7 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
 /**
  * Group parsed rows into inventory items based on group ID
  */
-function groupRows(rows: ParsedInventoryRow[], columns: ColumnMap, currency: string, zones: readonly ImportZone[]): GroupedInventoryItem[] {
+function groupRows(rows: ParsedInventoryRow[], columns: ColumnMap, zones: readonly ImportZone[]): GroupedInventoryItem[] {
   const groups = new Map<string, ParsedInventoryRow[]>()
   let ungroupedIndex = 0
 
@@ -803,7 +815,7 @@ function groupRows(rows: ParsedInventoryRow[], columns: ColumnMap, currency: str
   }
 
   return Array.from(groups, ([groupId, groupRowsArr]) =>
-    buildItem(groupId.startsWith('__ungrouped_') ? undefined : groupId, groupRowsArr, columns, currency, zones))
+    buildItem(groupId.startsWith('__ungrouped_') ? undefined : groupId, groupRowsArr, columns, zones))
 }
 
 /**
@@ -865,15 +877,20 @@ export function parseInventoryCSV(content: string, currency = 'USD', zones: read
     }
     if (group && !groupTitles.has(group)) groupTitles.set(group, itemName)
 
+    const rowCurrency = getValue('currency').toUpperCase() || currency
+    if (!/^[A-Z]{3,8}$/.test(rowCurrency)) {
+      errors.push({ row: rowNumber, column: 'currency', message: `Invalid currency: "${rowCurrency}"` })
+      continue
+    }
     const priceStr = getValue('price')
-    const price = parsePrice(priceStr, currency)
+    const price = parsePrice(priceStr, rowCurrency)
     if (price === null) {
       errors.push({ row: rowNumber, column: 'price', message: `Invalid price: "${priceStr}"` })
       continue
     }
 
     const quantityResult = parseQuantity(getValue('quantity'))
-    const combineResult = parseCombineShipping(getValue('combine'), currency)
+    const combineResult = parseCombineShipping(getValue('combine'), rowCurrency)
 
     const tagsStr = getValue('tags')
     const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(t => t) : []
@@ -886,7 +903,7 @@ export function parseInventoryCSV(content: string, currency = 'USD', zones: read
     const weight = grams !== undefined && Number.isSafeInteger(grams) ? grams : undefined
 
     const shippingCostStr = getValue('shippingCost')
-    const shippingCost = shippingCostStr ? parsePrice(shippingCostStr, currency) : undefined
+    const shippingCost = shippingCostStr ? parsePrice(shippingCostStr, rowCurrency) : undefined
 
     const options = columns.options.map((pair) => ({
       name: cell(pair.name) || undefined,
@@ -901,6 +918,8 @@ export function parseInventoryCSV(content: string, currency = 'USD', zones: read
       itemName,
       description: getValue('description') || undefined,
       sku: getValue('sku') || undefined,
+      itemSku: getValue('itemSku') || undefined,
+      currency: rowCurrency,
       tags,
       variant: getValue('variant') || undefined,
       subVariant: getValue('subVariant') || undefined,
@@ -922,7 +941,7 @@ export function parseInventoryCSV(content: string, currency = 'USD', zones: read
   // Formulas resolve across the whole file, before rows become combinations.
   evaluateQuantityFormulas(parsedRows)
 
-  const items = groupRows(parsedRows, columns, currency, zones ?? [])
+  const items = groupRows(parsedRows, columns, zones ?? [])
 
   // The merged tag list must fit what storefront v4 stores (32 tags of at most
   // 64 characters). Trim to fit and say so, rather than build a save the
@@ -979,7 +998,7 @@ export function toStoreItemData(item: GroupedInventoryItem): {
     status: 'active',
     weight: item.weight,
     stockQuantity: single ? item.stockQuantity : undefined,
-    sku: single ? item.sku : undefined,
+    sku: item.sku,
     variants: item.variants,
     shippingZoneIds: item.shippingZoneIds
   }

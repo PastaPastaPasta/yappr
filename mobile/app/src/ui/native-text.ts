@@ -99,6 +99,11 @@ function createField(value: string | undefined, autoFocus: boolean, resetToken: 
    */
   let behind: { text: string; at: number }[] = [];
   const listeners = new Set<() => void>();
+  let retireTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancelRetirement = () => {
+    if (retireTimer !== null) clearTimeout(retireTimer);
+    retireTimer = null;
+  };
   const publish = (next: Mount) => {
     mount = next;
     listeners.forEach((listener) => listener());
@@ -123,6 +128,7 @@ function createField(value: string | undefined, autoFocus: boolean, resetToken: 
    * retiring, and the newest input takes the focus from it.
    */
   const swap = (next: string) => {
+    cancelRetirement();
     text = next;
     behind = [];
     const handoff = mount.retiring !== null && !mount.focused ? mount.retiring : null;
@@ -134,7 +140,8 @@ function createField(value: string | undefined, autoFocus: boolean, resetToken: 
     publish({ initial: next, generation, refocus, focused: false, retiring });
     // The new input may never say it took the focus (the app went to the background).
     if (retiring) {
-      setTimeout(() => {
+      retireTimer = setTimeout(() => {
+        retireTimer = null;
         if (mount.generation === generation && mount.retiring) publish({ ...mount, retiring: null });
       }, RETIRE_MS);
     }
@@ -144,6 +151,7 @@ function createField(value: string | undefined, autoFocus: boolean, resetToken: 
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
+        if (listeners.size === 0) cancelRetirement();
       };
     },
     mount: () => mount,
@@ -171,7 +179,10 @@ function createField(value: string | undefined, autoFocus: boolean, resetToken: 
       if (generation !== mount.generation) return false;
       focusExpected = false;
       // The new input has the focus: the one it replaced can go now, without the keyboard closing.
-      if (focused && mount.retiring) publish({ ...mount, focused, retiring: null });
+      if (focused && mount.retiring) {
+        cancelRetirement();
+        publish({ ...mount, focused, retiring: null });
+      }
       else if (mount.focused !== focused) publish({ ...mount, focused });
       return true;
     },

@@ -41,6 +41,15 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('conversation query bundles', () => {
+  it('does not query legacy DMs without a contract id (#741)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_NETWORK', 'devnet');
+    vi.stubEnv('NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID', '');
+    const { directMessageService } = await import('./direct-message-service');
+    expect(await directMessageService.getConversations(viewer)).toEqual([]);
+    expect(mocks.query).not.toHaveBeenCalled();
+    expect(mocks.composite).not.toHaveBeenCalled();
+  });
+
   it('preserves busy and quiet previews, viewer receipt decoding, and unread counts', async () => {
     const { directMessageService } = await import('./direct-message-service');
     const result = await directMessageService.getConversations(viewer, { includeParticipantInfo: false });
