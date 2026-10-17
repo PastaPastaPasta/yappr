@@ -13,6 +13,8 @@ describe('the media takedown denylist on mobile', () => {
       expect(resolveMediaUrl(url)).toBeNull();
     }
     expect(safeExternalUrl(`ipfs://${cid}`)).toBeNull();
+    // A valid unlisted CID in the userinfo can't stand in for the listed host.
+    expect(safeExternalUrl(`https://bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va.ipfs.x@${cid}.ipfs.dweb.link/`)).toBeNull();
     expect(resolveMediaUrl('ipfs://bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va')).not.toBeNull();
   });
 });

@@ -113,6 +113,7 @@ describe('IPFS spellings', () => {
       `https://@${CID_V1}.ipfs.dweb.link/a.png`,
       `https://user:pass@${CID_V1}.ipfs.dweb.link/a.png`,
       `https://user@ipfs.io/ipfs/x/../${CID_V1}`,
+      `https://bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy.ipfs.example@${CID_V1}.ipfs.dweb.link/a.png`,
       `https://ipfs.io/ipfs/%62${CID_V1.slice(1)}`,
       `https://ipfs.io/%69pfs/${CID_V1}`,
       `https://ipfs.io/%69pfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy`,

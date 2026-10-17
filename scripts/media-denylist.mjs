@@ -34,6 +34,8 @@ const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
 export function ipfsCidOf(input) {
   const trimmed = input.trim()
   if (CANONICAL_CID.test(trimmed)) return trimmed
+  // Credential-bearing URLs are refused by the apps outright.
+  if (/^https?:\/\/[^/?#\\]*@/i.test(trimmed)) return null
   for (const pattern of IPFS_REFERENCES) {
     const match = pattern.exec(trimmed)
     if (match && CANONICAL_CID.test(match[1])) return ESCAPING_PATH.test(match[2]) ? null : match[1]

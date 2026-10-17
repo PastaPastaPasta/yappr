@@ -62,6 +62,9 @@ const OTHER_CID = /^[0-9a-z]{40,}$/i
  */
 const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
 
+/** An http(s) URL whose authority carries `user[:pass]@`. */
+const USERINFO = /^https?:\/\/[^/?#\\]*@/i
+
 type IpfsReference = { cid: string; path: string } | 'refused'
 
 /**
@@ -73,6 +76,9 @@ type IpfsReference = { cid: string; path: string } | 'refused'
  */
 function ipfsReferenceOf(url: string): IpfsReference | null {
   const trimmed = url.trim()
+  // Userinfo (`a@b`) makes the authority ambiguous to a pattern: refuse it
+  // outright. Yappr never writes credentials into a media URL.
+  if (USERINFO.test(trimmed)) return 'refused'
   for (const pattern of IPFS_REFERENCES) {
     const match = pattern.exec(trimmed)
     if (!match) continue

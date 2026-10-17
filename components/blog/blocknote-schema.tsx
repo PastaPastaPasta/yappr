@@ -35,7 +35,8 @@ import { extractYouTubeVideoId } from '@/lib/link-preview/urls'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { YouTubeThumbnail } from '@/components/ui/youtube-thumbnail'
-import { isDeniedMedia } from '@/lib/media/remote-media'
+import { imageSourceFor, isDeniedMedia } from '@/lib/media/remote-media'
+import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { isSafeCssValue } from '@/lib/blog/theme-types'
 import { extractInlineText } from '@/lib/blog/content-utils'
 
@@ -466,6 +467,62 @@ const videoBlock = createReactBlockSpec(
   }
 )
 
+/**
+ * Audio by the media rules: IPFS audio plays from the gateway; audio hosted
+ * anywhere else is never fetched by the reader's browser (there is no proxy
+ * for it), so it shows as a link; denied or unusable URLs show nothing to play.
+ */
+function AudioPlayer({ url, caption }: { url: string; caption: string }) {
+  const source = imageSourceFor(url)
+  if (source.kind === 'ipfs') {
+    return <audio controls preload="metadata" src={ipfsToGatewayUrl(source.ipfsUrl)} className="w-full" />
+  }
+  if (source.kind === 'proxied') {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer nofollow" className="text-sm text-yappr-400 underline">
+        {caption || 'Listen to audio'}
+      </a>
+    )
+  }
+  return <p className="text-sm text-gray-400">{url ? 'This audio isn\u2019t available.' : 'Add an IPFS or https audio URL.'}</p>
+}
+
+// Replaces BlockNote's default audio block, whose <audio> would load any URL directly.
+const audioBlock = createReactBlockSpec(
+  {
+    type: 'audio' as const,
+    propSchema: {
+      ...defaultProps,
+      name: { default: '' },
+      url: { default: '' },
+      caption: { default: '' },
+      showPreview: { default: true },
+    },
+    content: 'none',
+  },
+  {
+    render: ({ block, editor }) => {
+      const editable = Boolean((editor as { isEditable?: boolean }).isEditable)
+      const url = String(block.props.url || '')
+
+      return (
+        <div className="w-full space-y-2 rounded-lg border border-gray-700 bg-black/20 p-3">
+          {editable && (
+            <input
+              type="url"
+              value={url}
+              onChange={(event) => updateBlockProps(editor, block, { url: event.target.value })}
+              placeholder="ipfs:// or https:// audio URL"
+              className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+            />
+          )}
+          <AudioPlayer url={url} caption={String(block.props.caption || '')} />
+        </div>
+      )
+    },
+  }
+)
+
 const videoEmbedBlock = createReactBlockSpec(
   {
     type: 'videoEmbed',
@@ -748,6 +805,7 @@ export const blogBlockNoteSchema = BlockNoteSchema.create({
     ...defaultBlockSpecs,
     image: imageBlock(),
     video: videoBlock(),
+    audio: audioBlock(),
     backgroundSection: backgroundSectionBlock(),
     callout: calloutBlock(),
     divider: dividerBlock(),
