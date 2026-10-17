@@ -167,8 +167,7 @@ function referenceTo(cid: string, path: string): IpfsReference {
 function effectiveDestination(url: string): string {
   const match = /^(https?:\/\/)([^?#]*)/i.exec(url)
   if (!match) return url
-  // Segment by segment, so one malformed escape can't keep the others
-  // encoded; then split again, since a decoded `%2F` is a separator too.
+  // Decoded, then split again, since a decoded `%2F` is a separator too.
   const [authority, ...segments] = match[2].replace(/\\/g, '/').split('/').map(percentDecoded).join('/').replace(/\\/g, '/').split('/')
   const host = authority.slice(authority.lastIndexOf('@') + 1)
   const path: string[] = []
@@ -180,12 +179,14 @@ function effectiveDestination(url: string): string {
   return `${match[1]}${[host, ...path].join('/')}`
 }
 
+/**
+ * Every `%XX` as the byte it names, as a server's unescaping does (Go's
+ * included), whether or not the bytes are valid UTF-8: one malformed
+ * sequence can't keep the escapes around it (`%2F`) encoded. Bytes above
+ * 0x7F come out as Latin-1 characters, which no URL pattern here matches.
+ */
 function percentDecoded(url: string): string {
-  try {
-    return decodeURIComponent(url)
-  } catch {
-    return url
-  }
+  return url.replace(/%([0-9a-f]{2})/gi, (escape, hex) => String.fromCharCode(parseInt(hex, 16)))
 }
 
 /** The CID an IPFS reference names, in a spelling the denylist can match; null otherwise. */

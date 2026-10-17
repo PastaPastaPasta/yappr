@@ -173,6 +173,8 @@ describe('IPFS spellings', () => {
       `https://${CID_V1}%E3%80%82ipfs.dweb.link/photo%FF.png`,
       `https://ipfs.io/%69pfs/${CID_V1}/photo%FF.png`,
       `https://ipfs.io/x%2F..%2Fipfs/${CID_V1}/photo%FF.png`,
+      // A non-UTF-8 byte inside the same segment as the encoded separators.
+      `https://ipfs.io/ipfs%2Fx%FF%2F..%2F${CID_V1}/photo.jpg`,
       // Backslashes or extra slashes before the host: browsers skip them and start the host after.
       `https://\\${CID_V1}.ipfs.dweb.link/a.png`,
       `https:///${CID_V1}.ipfs.dweb.link/a.png`,

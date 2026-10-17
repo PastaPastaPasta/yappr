@@ -75,8 +75,7 @@ export function ipfsCidOf(input) {
 export function effectiveDestination(url) {
   const match = /^(https?:\/\/)([^?#]*)/i.exec(url)
   if (!match) return url
-  // Segment by segment, so one malformed escape can't keep the others
-  // encoded; then split again, since a decoded `%2F` is a separator too.
+  // Decoded, then split again, since a decoded `%2F` is a separator too.
   const [authority, ...segments] = match[2].replace(/\\/g, '/').split('/').map(percentDecoded).join('/').replace(/\\/g, '/').split('/')
   const host = authority.slice(authority.lastIndexOf('@') + 1)
   const path = []
@@ -89,11 +88,7 @@ export function effectiveDestination(url) {
 }
 
 function percentDecoded(url) {
-  try {
-    return decodeURIComponent(url)
-  } catch {
-    return url
-  }
+  return url.replace(/%([0-9a-f]{2})/gi, (escape, hex) => String.fromCharCode(parseInt(hex, 16)))
 }
 
 /**
