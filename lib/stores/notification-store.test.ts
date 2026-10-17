@@ -195,3 +195,28 @@ describe('a large aggregated like', () => {
     expect(shown && { from: shown.from.id, likerCount: shown.likerCount }).toEqual({ from: 'u10', likerCount: 1 })
   })
 })
+
+describe('pruneBlocked', () => {
+  it('drops held notifications of actors blocked by any route, per liker, without recording them as session blocks', () => {
+    const user = (id: string) => ({ id }) as Notification['from']
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'viewer' })
+    store().setNotifications([
+      notification('x', 'follow', 3),
+      { ...notification('batch', 'like', 2), from: user('listed'), likers: [user('listed'), user('bob')], likerCount: 2 },
+      notification('y', 'follow', 1),
+    ])
+
+    store().pruneBlocked(new Set(['from-x', 'listed']), 'viewer')
+
+    expect(store().notifications.map(({ id, from, likerCount }) => ({ id, from: from.id, likerCount })))
+      .toEqual([{ id: 'batch', from: 'bob', likerCount: 1 }, { id: 'y', from: 'from-y', likerCount: undefined }])
+    expect(store().blockedActors).toEqual([])
+  })
+
+  it('ignores a re-check that finishes after another account signed in', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'account-b' })
+    store().setNotifications([notification('x', 'follow', 1)])
+    store().pruneBlocked(new Set(['from-x']), 'account-a')
+    expect(store().notifications.map(n => n.id)).toEqual(['x'])
+  })
+})

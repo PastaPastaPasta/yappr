@@ -42,6 +42,8 @@ describe('link-preview fetching', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     expect(canFetchPreview(DENIED)).toBe(false)
+    expect(canFetchPreview(`${DENIED}#a\u2028b`)).toBe(false)
+    await expect(fetchPreviewContent(`${DENIED}#a\u2029b`)).rejects.toThrow()
     await expect(fetchPreviewContent(DENIED)).rejects.toThrow()
     expect(fetchMock).not.toHaveBeenCalled()
     expect(canFetchPreview('https://raw.githubusercontent.com/owner/repo/main/kept')).toBe(true)

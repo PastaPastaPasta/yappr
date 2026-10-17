@@ -188,6 +188,11 @@ export function Sidebar() {
           store.addNotifications(result.notifications)
         }
         store.setLastFetchTimestamp(result.latestTimestamp)
+
+        // Blocks change without a new notification (following a block list,
+        // a block made on another device): re-check what is already shown.
+        const blocked = await notificationService.blockedAmongHeld(userId, useNotificationStore.getState().notifications)
+        if (!cancelled && blocked) useNotificationStore.getState().pruneBlocked(blocked, userId)
       } catch (error) {
         logger.error('Notification fetch error:', error)
       } finally {

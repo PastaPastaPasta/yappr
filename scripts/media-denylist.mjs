@@ -168,7 +168,7 @@ function percentDecoded(url) {
  */
 export function canonicalHttpsUrl(url) {
   // Browsers drop tabs and newlines anywhere in a URL.
-  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?][^#]*)?(?:#.*)?$/i.exec(url.trim().replace(/[\t\n\r]/g, ''))
+  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?][^#]*)?(?:#[\s\S]*)?$/i.exec(url.trim().replace(/[\t\n\r]/g, ''))
   if (!match) return null
   const host = match[1].toLowerCase().replace(/\.$/, '')
   const port = match[2] !== undefined && Number(match[2]) !== 443 ? `:${Number(match[2])}` : ''

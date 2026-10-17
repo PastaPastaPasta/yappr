@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { QueryDocumentsOptions } from './sdk-helpers'
+import type { Notification } from '@/lib/types'
 
 const { bundle, checkBlockedBatch } = vi.hoisted(() => ({ bundle: vi.fn(), checkBlockedBatch: vi.fn() }))
 vi.mock('./document-query-bundle', () => ({ queryDocumentBundle: bundle }))
@@ -652,6 +653,21 @@ describe('blocked actors', () => {
     expect(polled.notifications.map((n) => n.from.id).sort()).toEqual(['bob', 'carol'])
     expect(polled.failure).toBeUndefined()
     expect(warn).toHaveBeenCalled()
+  })
+
+  it('finds which held notifications are blocked now, every liker included, and fails soft', async () => {
+    const { notificationService } = await import('./notification-service')
+    const user = (id: string) => ({ id }) as Notification['from']
+    const held = [
+      { id: 'f', type: 'follow', from: user('carol'), createdAt: new Date(1), read: false },
+      { id: 'l', type: 'like', from: user('alice'), likers: [user('alice'), user('listed')], likerCount: 2, createdAt: new Date(1), read: false },
+    ] as Notification[]
+    checkBlockedBatch.mockImplementation(blocking('listed'))
+    expect(await notificationService.blockedAmongHeld('viewer', held)).toEqual(new Set(['listed']))
+    expect(checkBlockedBatch).toHaveBeenCalledWith('viewer', ['carol', 'alice', 'listed'])
+
+    checkBlockedBatch.mockRejectedValue(new Error('blocks unavailable'))
+    expect(await notificationService.blockedAmongHeld('viewer', held)).toBeNull()
   })
 
   it('looks nothing up when there are no notifications', async () => {

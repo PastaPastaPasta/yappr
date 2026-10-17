@@ -921,6 +921,25 @@ class NotificationService {
   }
 
   /**
+   * The actors among `held` that `viewerId` blocks now (own blocks and
+   * followed block lists), every liker of an aggregated like included: what
+   * to prune from notifications already on screen when blocks change. Null
+   * when the lookup fails (keep what is shown, as feeds fail soft).
+   */
+  async blockedAmongHeld(viewerId: string, held: Notification[]): Promise<Set<string> | null> {
+    const actors = Array.from(new Set(held.flatMap(n => n.likers?.map(liker => liker.id) ?? [n.from.id])));
+    if (actors.length === 0) return new Set();
+    try {
+      const { blockService } = await import('./block-service');
+      const blocked = await blockService.checkBlockedBatch(viewerId, actors);
+      return new Set(actors.filter(id => blocked.get(id) === true));
+    } catch (error) {
+      logger.warn('Notification block re-check failed; keeping what is shown:', error);
+      return null;
+    }
+  }
+
+  /**
    * Get initial notifications (last 7 days)
    * Used on page load
    */

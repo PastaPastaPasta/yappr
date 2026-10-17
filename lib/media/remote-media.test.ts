@@ -90,6 +90,12 @@ describe('the denylist', () => {
     expect(isDeniedMedia('https://1.1.1.1/pixel.png')).toBe(false)
     expect(isDeniedMedia('https://tracker.example/pixel.png?id=2')).toBe(false)
     expect(isDeniedMedia('https://tracker.example/pixel.png?id=1&x')).toBe(false)
+    // A fragment is never requested, whatever it holds (line separators included).
+    for (const fragment of ['#a\u2028b', '#a\u2029b']) {
+      expect(canonicalHttpsUrl(`https://tracker.example/pixel.png?id=1${fragment}`)).toBe(listed)
+      expect(isDeniedMedia(`https://tracker.example/pixel.png?id=1${fragment}`)).toBe(true)
+      expect(scriptCanonical(`https://tracker.example/pixel.png?id=1${fragment}`)).toBe(listed)
+    }
   })
 
   it('has a script that hashes exactly as the renderers do', () => {

@@ -271,7 +271,7 @@ function canonicalCid(cid: string): string {
  */
 export function canonicalHttpsUrl(url: string): string | null {
   // Browsers drop tabs and newlines anywhere in a URL.
-  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?][^#]*)?(?:#.*)?$/i.exec(url.trim().replace(/[\t\n\r]/g, ''))
+  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?][^#]*)?(?:#[\s\S]*)?$/i.exec(url.trim().replace(/[\t\n\r]/g, ''))
   if (!match) return null
   const host = match[1].toLowerCase().replace(/\.$/, '')
   const port = match[2] !== undefined && Number(match[2]) !== 443 ? `:${Number(match[2])}` : ''
@@ -344,7 +344,9 @@ export function isDeniedMedia(url: string): boolean {
   if (reference) return deniedCids.has(canonicalCid(reference.cid))
   if (deniedUrlHashes.size === 0) return false
   const canonical = canonicalHttpsUrl(url)
-  return canonical !== null && deniedUrlHashes.has(sha256Hex(canonical))
+  // An https URL that can't be put in canonical form can't be checked: fail closed.
+  if (canonical === null) return /^\s*https:/i.test(url)
+  return deniedUrlHashes.has(sha256Hex(canonical))
 }
 
 export type ImageSource =

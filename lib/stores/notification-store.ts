@@ -94,6 +94,11 @@ interface NotificationState {
   removeFromActor: (actorId: string, viewerId: string) => void;
   /** `viewerId` unblocked this actor: their new notifications show again. Ignored for another account. */
   allowActor: (actorId: string, viewerId: string) => void;
+  /**
+   * Drop the held notifications of actors `viewerId` blocks now, by any route
+   * (own block or a followed block list), per liker. Ignored for another account.
+   */
+  pruneBlocked: (blockedIds: ReadonlySet<string>, viewerId: string) => void;
   /** The account signed in now (null when signed out); another account's session blocks are forgotten. */
   setViewer: (viewerId: string | null) => void;
   setFilter: (filter: NotificationFilter) => void;
@@ -170,6 +175,15 @@ export const useNotificationStore = create<NotificationState>()(
 
       setViewer: (viewerId) => {
         if (get().viewerId !== viewerId) set({ viewerId, blockedActors: [] });
+      },
+
+      pruneBlocked: (blockedIds, viewerId) => {
+        const state = get();
+        if (state.viewerId !== viewerId || blockedIds.size === 0) return;
+        const notifications = state.notifications.flatMap(n => withoutBlockedActors(n, id => blockedIds.has(id)) ?? []);
+        if (notifications.length !== state.notifications.length || notifications.some((n, i) => n !== state.notifications[i])) {
+          set({ notifications });
+        }
       },
 
       allowActor: (actorId, viewerId) => {
