@@ -33,5 +33,7 @@ export {
 export { formatTime } from '@/lib/utils/common';
 // Stored-tag display (`dash_cashtag` → `$DASH`), from the same import-free module.
 export { cashtagStorageToDisplay, isCashtagStorage } from '@/lib/post-helpers';
+// Which media may load and from where (takedown denylist, IPFS, the wsrv.nl image proxy). Pure: regexes and a bundled JSON list, no env.
+export { imageSourceFor, isDeniedMedia } from '@/lib/media/remote-media';
 // Post-text tag matching (a whole ASCII word, so `#café` is no tag) and the over-long check, from the same import-free module.
 export { CASHTAG_PATTERN, HASHTAG_PATTERN, tagStorage } from '@/lib/post-helpers';

@@ -272,7 +272,7 @@ class ModerationElectionService {
    * A failed vote-state read THROWS; a failed end-time read leaves `endsAtMs`
    * null and is reported in `endTimeFailed`.
    */
-  async getContest(targetContractId = YAPPR_CONTRACT_ID): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
+  async getContest(targetContractId = YAPPR_CONTRACT_ID, declaration = electedModeration()): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
     const sdk = await getEvoSdk();
     const state = await sdk.voting.contestedResourceVoteState({
       ...contestVotePoll(targetContractId),
@@ -281,7 +281,7 @@ class ModerationElectionService {
       limit: 100,
     });
     let endTimeFailed = false;
-    const endsAtMs = await this.contestEnd(sdk, targetContractId).catch((error: unknown) => {
+    const endsAtMs = await this.contestEnd(sdk, targetContractId, declaration).catch((error: unknown) => {
       logger.warn('moderationElection: vote poll end-date read failed', error);
       endTimeFailed = true;
       return null;
@@ -306,8 +306,7 @@ class ModerationElectionService {
    * poll whose end has passed but that a stalled chain has not yet closed is
    * still this contract's contest.
    */
-  private async contestEnd(sdk: EvoSDK, targetContractId: string): Promise<number | null> {
-    const declaration = electedModeration();
+  private async contestEnd(sdk: EvoSDK, targetContractId: string, declaration: ElectedModerationDeclaration | null): Promise<number | null> {
     const upper = declaration
       ? {
         endTimeMs: Date.now() + (declaration.joinWindowSeconds + declaration.voteWindowSeconds) * 1000 + END_DATE_SLACK_MS,
@@ -346,9 +345,11 @@ class ModerationElectionService {
     return null;
   }
 
-  /** Everything the election status view shows, or null when the contract is not elected. */
-  async getStatus(targetContractId = YAPPR_CONTRACT_ID): Promise<ElectionStatus | null> {
-    const declaration = electedModeration();
+  /**
+   * Everything the election status view shows, or null when the contract is not
+   * elected. `declaration` is the target contract's (social by default).
+   */
+  async getStatus(targetContractId = YAPPR_CONTRACT_ID, declaration = electedModeration()): Promise<ElectionStatus | null> {
     if (!declaration) return null;
     const failures: ElectionReadFailure[] = [];
     /** A read whose failure is recorded (and logged) and whose fallback stands in as "unknown". */
@@ -360,7 +361,7 @@ class ModerationElectionService {
       });
     const [proposals, contestRead, seated] = await Promise.all([
       attempt('proposals', this.getProposals(targetContractId), [] as CharterProposal[]),
-      attempt('contest', this.getContest(targetContractId), { contest: null, endTimeFailed: false }),
+      attempt('contest', this.getContest(targetContractId, declaration), { contest: null, endTimeFailed: false }),
       attempt('seatedTeam', this.getSeatedTeam(targetContractId), null as SeatedTeam | null),
     ]);
     if (contestRead.endTimeFailed) failures.push('contestEnd');

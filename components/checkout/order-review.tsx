@@ -48,13 +48,17 @@ export function OrderReview({
         {items.map((item) => (
           <div key={cartLineKey(item)} className="p-3 flex items-center gap-3">
             <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
-              {item.imageUrl ? (
-                <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <BuildingStorefrontIcon className="h-6 w-6 text-gray-300" />
-                </div>
-              )}
+              <IpfsImage
+                src={item.imageUrl ?? ''}
+                size="thumbnail"
+                alt={item.title}
+                className="w-full h-full object-cover"
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center">
+                    <BuildingStorefrontIcon className="h-6 w-6 text-gray-300" />
+                  </div>
+                }
+              />
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-medium truncate">{item.title}</p>

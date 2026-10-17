@@ -4,7 +4,6 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { useImageUpload } from '@/hooks/use-image-upload'
-import { isIpfsProtocol, ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { Button } from '@/components/ui/button'
 import { invalidateBannerCache } from '@/components/ui/banner-image'
@@ -72,13 +71,9 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
     loadBanner().catch((error) => logger.error(error))
   }, [user?.identityId, initialBannerUrl])
 
-  // Track image loading for IPFS URLs
+  // Track image loading for the saved banner
   useEffect(() => {
-    if (bannerUrl && isIpfsProtocol(bannerUrl)) {
-      setImageLoading(true)
-    } else {
-      setImageLoading(false)
-    }
+    setImageLoading(Boolean(bannerUrl))
   }, [bannerUrl])
 
   const hasChanges = bannerUrl !== originalUrl
@@ -152,12 +147,7 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
     }
   }
 
-  // Convert IPFS URL to gateway URL for display
-  const displayUrl = bannerUrl && isIpfsProtocol(bannerUrl)
-    ? ipfsToGatewayUrl(bannerUrl)
-    : bannerUrl
-
-  const hasImage = previewUrl || displayUrl
+  const hasImage = previewUrl || bannerUrl
 
   if (loading) {
     return (
@@ -203,8 +193,8 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
 
       {/* Main banner area - shows image or upload prompt */}
       <div className="relative aspect-[3/1] rounded-xl overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-900">
-        {/* IPFS image - render when we have an IPFS URL so it can load */}
-        {bannerUrl && isIpfsProtocol(bannerUrl) && (
+        {/* Saved banner: IPFS through the gateways, other https through the image proxy */}
+        {bannerUrl && (
           <IpfsImage
             src={bannerUrl}
             alt="Banner"
@@ -214,15 +204,6 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
               setPreviewUrl(null) // Clear preview once IPFS image loads
             }}
             onError={() => setImageLoading(false)}
-          />
-        )}
-
-        {/* Regular URL image */}
-        {displayUrl && !isIpfsProtocol(bannerUrl || '') && (
-          <img
-            src={displayUrl}
-            alt="Banner"
-            className={`absolute inset-0 w-full h-full object-cover ${isUploading ? 'opacity-50' : ''}`}
           />
         )}
 

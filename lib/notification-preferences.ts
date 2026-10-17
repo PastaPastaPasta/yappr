@@ -12,6 +12,10 @@ const NOTIFICATION_TYPE_TO_SETTING: Record<Notification['type'], keyof Notificat
   mention: 'mentions',
   blogPost: 'blogPosts',
   blogComment: 'blogPosts',
+  storeOrder: 'store',
+  storeReview: 'store',
+  itemReview: 'store',
+  orderStatus: 'store',
   // Private feed events have no preference and are always visible.
   privateFeedRequest: null,
   privateFeedApproved: null,

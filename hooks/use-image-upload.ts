@@ -4,9 +4,13 @@ import { useState, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { isUploadException, getUploadErrorMessage, cacheLocalImage, getUploadProvider } from '@/lib/upload'
 import type { UploadResult } from '@/lib/upload'
+import { cleanImageForUpload } from '@/lib/upload/clean-image'
+
+/** The largest image any provider accepts (each provider still applies its own limit). */
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024
 
 export interface UseImageUploadResult {
-  /** Upload a file and return the result with CID and URL */
+  /** Upload an image with its metadata stripped and return the result with CID and URL */
   upload: (file: File) => Promise<UploadResult>
   /** Whether an upload is currently in progress */
   isUploading: boolean
@@ -88,13 +92,16 @@ export function useImageUpload(): UseImageUploadResult {
         throw new Error('No storage provider connected. Please connect a provider in Settings.')
       }
 
-      const result = await provider.uploadImage(file, {
+      // Cleaned here so the cached bytes are the uploaded ones; the provider's
+      // own pass returns this same file.
+      const cleaned = await cleanImageForUpload(file, MAX_IMAGE_BYTES)
+      const result = await provider.uploadImage(cleaned, {
         onProgress: (p) => setProgress(p)
       })
 
       // Public gateways can take minutes to serve a fresh CID; keep the local
-      // bytes around so the uploader sees the image immediately.
-      cacheLocalImage(result.cid, file)
+      // bytes (the uploaded ones) around so the uploader sees the image immediately.
+      cacheLocalImage(result.cid, cleaned)
 
       setProgress(100)
       setIsProviderConnected(true)

@@ -268,7 +268,7 @@ function Pager({ post, start }: { post: PostDTO; start: number }) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const reduceMotion = useReducedMotion();
-  const { media: resolve } = useMediaUrls();
+  const { external } = useMediaUrls();
   const items = post.media;
   const count = items.length;
 
@@ -431,7 +431,8 @@ function Pager({ post, start }: { post: PostDTO; start: number }) {
   const current = items[index];
   const liked = post.viewer?.liked === true;
   const likes = post.stats.likes;
-  const shareUrl = current ? resolve(current.url) : undefined;
+  // The item's own link (IPFS via the gateway), not the image-proxy copy shown here.
+  const shareUrl = current ? external(current.url) : null;
 
   const share = () => {
     if (!shareUrl) return;

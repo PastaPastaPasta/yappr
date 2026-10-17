@@ -78,7 +78,9 @@ export interface UploadProvider {
   getStatus(): ProviderStatus
 
   /**
-   * Upload an image file to the provider.
+   * Upload an image file to the provider. Its metadata (Exif, GPS, XMP...) is
+   * stripped first (`cleanImageForUpload`), so the CID is that of the cleaned
+   * bytes; pass an already-cleaned file to digest exactly what is uploaded.
    * @param file The image file to upload
    * @param options Optional upload configuration
    * @returns Promise resolving to upload result with CID and URL

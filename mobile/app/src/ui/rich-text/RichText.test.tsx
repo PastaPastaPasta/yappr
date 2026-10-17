@@ -61,9 +61,9 @@ describe('RichText', () => {
 
   it('hands out only safe link targets', () => {
     const onLinkPress = jest.fn();
-    render(<RichText text="ipfs://bafyabc/pic.png" onLinkPress={onLinkPress} />);
-    fireEvent.press(screen.getByText('ipfs://bafyabc/pic.png'));
-    expect(onLinkPress).toHaveBeenCalledWith('https://ipfs.io/ipfs/bafyabc/pic.png');
+    render(<RichText text="ipfs://bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy/pic.png" onLinkPress={onLinkPress} />);
+    fireEvent.press(screen.getByText('ipfs://bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy/pic.png'));
+    expect(onLinkPress).toHaveBeenCalledWith('https://ipfs.io/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy/pic.png');
   });
 
   it('right-aligns each Arabic or Hebrew paragraph and keeps its links tappable (PRD G-9)', () => {

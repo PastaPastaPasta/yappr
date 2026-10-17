@@ -21,8 +21,10 @@ import { parseCountInput } from '@/lib/storefront/variant-editor-model'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { storefrontVariantsAreTyped } from '@/lib/constants'
 import { StaleRevisionError } from '@/lib/services/document-service'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 import { combinationStockCap, itemStockCap } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 /** What a stock edit changed on an item, for the page to merge into its copy. */
 /** What a save changed, with the revision it wrote (the next variant save must start from it). */
@@ -210,6 +212,7 @@ export function InventoryTable({
     setIsDeleting(true)
     setBulkDeleteProgress({ current: 0, total })
     const failedIds: string[] = []
+    let refused = false
 
     for (let i = 0; i < idsToDelete.length; i++) {
       const itemId = idsToDelete[i]
@@ -220,12 +223,24 @@ export function InventoryTable({
       } catch (err) {
         failedIds.push(itemId)
         logger.error(`Failed to delete item ${itemId}:`, err)
+        // Closed until the storefront's moderators are elected, or the seller
+        // barred: every later item would be refused the same way, each refusal
+        // paid, so the run stops here and says why.
+        if (reportModerationRefusal(err, ownerId, 'storefront')) {
+          failedIds.push(...idsToDelete.slice(i + 1))
+          refused = true
+          break
+        }
       }
     }
 
     setSelectedItems(new Set(failedIds))
     setBulkDeleteProgress(null)
     setIsDeleting(false)
+    if (refused) {
+      setShowBulkDeleteDialog(false)
+      return
+    }
     if (failedIds.length > 0) {
       toast.error(`Failed to delete ${failedIds.length} item${failedIds.length === 1 ? '' : 's'}. Please try again.`)
     } else {
@@ -307,7 +322,7 @@ export function InventoryTable({
       toast.success('Stock saved')
     } catch (err) {
       logger.error('Failed to update stock:', err)
-      toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
+      if (!reportModerationRefusal(err, ownerId, 'storefront')) toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
     } finally {
       setSavingItemId(null)
     }
@@ -340,7 +355,7 @@ export function InventoryTable({
       onItemUpdated?.(item.id, { stockQuantity, $revision: updated.$revision })
     } catch (err) {
       logger.error('Failed to update stock:', err)
-      toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
+      if (!reportModerationRefusal(err, ownerId, 'storefront')) toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
     }
   }, [editingStock, items, ownerId, storeId, onItemUpdated, setStockDraft])
 
@@ -354,7 +369,7 @@ export function InventoryTable({
       setDeleteItemId(null)
     } catch (err) {
       logger.error('Failed to delete item:', err)
-      toast.error('Failed to delete item. Please try again.')
+      if (!reportModerationRefusal(err, ownerId, 'storefront')) toast.error('Failed to delete item. Please try again.')
     } finally {
       setIsDeleting(false)
     }
@@ -553,15 +568,13 @@ export function InventoryTable({
                         <td className="px-3 py-2"></td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-3 pl-6">
-                            {thumbnail ? (
-                              <img
-                                src={thumbnail}
-                                alt={label}
-                                className="w-8 h-8 object-cover rounded"
-                              />
-                            ) : (
-                              <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded" />
-                            )}
+                            <IpfsImage
+                              src={thumbnail ?? ''}
+                              size="thumbnail"
+                              alt={label}
+                              className="w-8 h-8 object-cover rounded"
+                              fallback={<div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded" />}
+                            />
                             <span className="text-gray-600 dark:text-gray-400">
                               {label}
                             </span>
@@ -610,17 +623,17 @@ export function InventoryTable({
                       </td>
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-3">
-                          {item.imageUrls?.[0] ? (
-                            <img
-                              src={item.imageUrls[0]}
-                              alt={item.title}
-                              className="w-10 h-10 object-cover rounded"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded flex items-center justify-center">
-                              <CubeIcon className="h-5 w-5 text-gray-400" />
-                            </div>
-                          )}
+                          <IpfsImage
+                            src={item.imageUrls?.[0] ?? ''}
+                            size="thumbnail"
+                            alt={item.title}
+                            className="w-10 h-10 object-cover rounded"
+                            fallback={
+                              <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded flex items-center justify-center">
+                                <CubeIcon className="h-5 w-5 text-gray-400" />
+                              </div>
+                            }
+                          />
                           <div>
                             <div className="font-medium">{item.title}</div>
                             {item.category && (

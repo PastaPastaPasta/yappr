@@ -25,6 +25,7 @@ import { storeCategoryLabel } from '@/lib/storefront/storefront-contract'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import type { Store, StoreRatingSummary } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
+import { ModerationClosedBanner } from '@/components/moderation/moderation-closed-notice'
 
 type StoreSort = 'newest' | 'topRated' | 'mostOrdered'
 const SORT_OPTIONS: ReadonlyArray<[StoreSort, string]> = [['newest', 'Newest'], ['topRated', 'Top rated'], ['mostOrdered', 'Most ordered']]
@@ -265,6 +266,8 @@ export default function StoreBrowsePage() {
             </div>
           </PageHeader>
 
+          <ModerationClosedBanner product="storefront" docType="store" className="m-4" />
+
           {/* Store List */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
             {isLoading || isBlockCheckPending ? (
@@ -324,17 +327,17 @@ export default function StoreBrowsePage() {
                     <div className="flex gap-4">
                       {/* Store Logo */}
                       <div className="flex-shrink-0 w-16 h-16 rounded-lg bg-gray-200 dark:bg-gray-800 overflow-hidden">
-                        {store.logoUrl ? (
-                          <IpfsImage
-                            src={store.logoUrl}
-                            alt={store.name}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <BuildingStorefrontIcon className="h-8 w-8 text-gray-400" />
-                          </div>
-                        )}
+                        <IpfsImage
+                          src={store.logoUrl ?? ''}
+                          size="avatar"
+                          alt={store.name}
+                          className="w-full h-full object-cover"
+                          fallback={
+                            <div className="w-full h-full flex items-center justify-center">
+                              <BuildingStorefrontIcon className="h-8 w-8 text-gray-400" />
+                            </div>
+                          }
+                        />
                       </div>
 
                       {/* Store Info */}
