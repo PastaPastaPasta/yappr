@@ -65,7 +65,7 @@ export function BlockedUsersSettings() {
       if (result.success) {
         // Remove from local state
         setBlockedUsers(prev => prev.filter(u => u.id !== blockedUserId))
-        useNotificationStore.getState().allowActor(blockedUserId)
+        useNotificationStore.getState().allowActor(blockedUserId, authedUser.identityId)
         toast.success('User unblocked')
       } else {
         throw new Error(result.error || 'Failed to unblock user')

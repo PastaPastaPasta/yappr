@@ -39,7 +39,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
       const { blockService } = await import('@/lib/services/block-service')
       const result = await blockService.blockUser(viewerId, subjectId, message)
       // Their notifications already held disappear now, not at the next reload.
-      if (result.success) useNotificationStore.getState().removeFromActor(subjectId)
+      if (result.success) useNotificationStore.getState().removeFromActor(subjectId, viewerId)
       return result
     },
     turnOff: async (viewerId, subjectId) => {
@@ -53,7 +53,7 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
         return null
       })
       if (after?.isBlocked) return { success: false, error: STILL_BLOCKED_BY_LIST }
-      useNotificationStore.getState().allowActor(subjectId)
+      useNotificationStore.getState().allowActor(subjectId, viewerId)
       return result
     },
     onMessage: (result) => (result.autoRevoked ? 'User blocked and private feed access revoked' : 'User blocked'),
@@ -126,7 +126,7 @@ export function useBlockProvenance(targetUserId: string | undefined): UseBlockPr
       const { blockService } = await import('@/lib/services/block-service')
       const result = await blockService.unblockUser(viewerId, targetUserId)
       if (!result.success) throw new Error(result.error || 'Failed to unblock user')
-      if (inheritedFrom === null) useNotificationStore.getState().allowActor(targetUserId)
+      if (inheritedFrom === null) useNotificationStore.getState().allowActor(targetUserId, viewerId)
     } catch (error) {
       logger.error('useBlockProvenance: unblock failed:', error)
       toast.error('Failed to update block status')

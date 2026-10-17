@@ -89,13 +89,15 @@ function ipfsReferenceOf(url: string): IpfsReference | null {
 
 /**
  * An http(s) URL as the server ends up routing it: percent-decoded,
- * backslashes as slashes, `.` and `..` segments resolved; query and
- * fragment dropped. Anything else is returned unchanged.
+ * backslashes as slashes, any `user:pass@` dropped from the authority, `.`
+ * and `..` segments resolved; query and fragment dropped. Anything else is
+ * returned unchanged.
  */
 function effectiveDestination(url: string): string {
   const match = /^(https?:\/\/)([^?#]*)/i.exec(url)
   if (!match) return url
-  const [host, ...segments] = percentDecoded(match[2]).replace(/\\/g, '/').split('/')
+  const [authority, ...segments] = percentDecoded(match[2]).replace(/\\/g, '/').split('/')
+  const host = authority.slice(authority.lastIndexOf('@') + 1)
   const path: string[] = []
   for (const segment of segments) {
     if (segment === '..') path.pop()

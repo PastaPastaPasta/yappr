@@ -93,8 +93,9 @@ describe('markAllAsRead', () => {
 describe('removeFromActor', () => {
   it('drops one actor\'s notifications and keeps the rest', () => {
     useNotificationStore.setState({ notifications: [], readIds: [] })
+    useNotificationStore.setState({ viewerId: 'viewer', blockedActors: [] })
     store().setNotifications([notification('a', 'like', 3), notification('b', 'follow', 2)])
-    store().removeFromActor('from-a')
+    store().removeFromActor('from-a', 'viewer')
     expect(store().notifications.map(n => n.id)).toEqual(['b'])
   })
 
@@ -103,10 +104,10 @@ describe('removeFromActor', () => {
     const batch = (id: string, likers: string[], likerCount: number): Notification => ({
       ...notification(id, 'like', 1), from: user(likers[0]), likers: likers.map(user), likerCount, timeless: true,
     })
-    useNotificationStore.setState({ notifications: [], readIds: [] })
+    useNotificationStore.setState({ notifications: [], readIds: [], viewerId: 'viewer', blockedActors: [] })
     store().setNotifications([batch('both', ['alice', 'bob'], 3), batch('alone', ['alice'], 1)])
 
-    store().removeFromActor('alice')
+    store().removeFromActor('alice', 'viewer')
 
     expect(store().notifications.map(({ id, from, likers, likerCount }) => ({ id, from: from.id, likers: likers?.map(l => l.id), likerCount })))
       .toEqual([{ id: 'both', from: 'bob', likers: ['bob'], likerCount: 2 }])
@@ -130,14 +131,14 @@ describe('withoutBlockedActors', () => {
 
 describe('blocks during this session', () => {
   it('keep a fetch that was already running from bringing a blocked actor back, until they are unblocked', () => {
-    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [] })
-    store().removeFromActor('from-a')
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'viewer' })
+    store().removeFromActor('from-a', 'viewer')
 
     store().setNotifications([notification('a', 'follow', 2), notification('b', 'follow', 1)])
     store().addNotifications([{ ...notification('a2', 'like', 3), from: { id: 'from-a' } as Notification['from'] }])
     expect(store().notifications.map(n => n.id)).toEqual(['b'])
 
-    store().allowActor('from-a')
+    store().allowActor('from-a', 'viewer')
     store().addNotifications([notification('a', 'follow', 2)])
     expect(store().notifications.map(n => n.id)).toEqual(['a', 'b'])
   })
@@ -145,7 +146,7 @@ describe('blocks during this session', () => {
   it('belong to the account that made them: another account signing in sees that actor again', () => {
     useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: null })
     store().setViewer('account-a')
-    store().removeFromActor('from-x')
+    store().removeFromActor('from-x', 'account-a')
 
     store().setViewer(null)
     store().setViewer('account-b')
@@ -156,14 +157,30 @@ describe('blocks during this session', () => {
   it('stay while the same account is signed in', () => {
     useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: null })
     store().setViewer('account-a')
-    store().removeFromActor('from-x')
+    store().removeFromActor('from-x', 'account-a')
     store().setViewer('account-a')
     store().setNotifications([notification('x', 'follow', 1)])
     expect(store().notifications).toEqual([])
   })
 
+  it('ignore a block or unblock that finishes after another account signed in', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: null })
+    store().setViewer('account-b')
+    store().setNotifications([notification('x', 'follow', 1)])
+
+    // account-a's block request was still running when account-b signed in.
+    store().removeFromActor('from-x', 'account-a')
+    expect(store().notifications.map(n => n.id)).toEqual(['x'])
+    expect(store().blockedActors).toEqual([])
+
+    store().removeFromActor('from-x', 'account-b')
+    store().allowActor('from-x', 'account-a')
+    expect(store().blockedActors).toEqual(['from-x'])
+  })
+
   it('are forgotten when the store is cleared', () => {
-    store().removeFromActor('from-a')
+    useNotificationStore.setState({ viewerId: 'viewer' })
+    store().removeFromActor('from-a', 'viewer')
     store().clearNotifications()
     expect(store().blockedActors).toEqual([])
   })

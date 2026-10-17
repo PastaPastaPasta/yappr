@@ -86,10 +86,14 @@ interface NotificationState {
   // Actions
   setNotifications: (notifications: Notification[]) => void;
   addNotifications: (notifications: Notification[]) => void;
-  /** Drop the held notifications from one actor, and keep them out of fetches still running (the viewer just blocked them). */
-  removeFromActor: (actorId: string) => void;
-  /** The viewer unblocked this actor: their new notifications show again. */
-  allowActor: (actorId: string) => void;
+  /**
+   * `viewerId` just blocked this actor: drop their held notifications and keep
+   * them out of fetches still running. Ignored when another account is
+   * signed in by now (a block that finished after a switch).
+   */
+  removeFromActor: (actorId: string, viewerId: string) => void;
+  /** `viewerId` unblocked this actor: their new notifications show again. Ignored for another account. */
+  allowActor: (actorId: string, viewerId: string) => void;
   /** The account signed in now (null when signed out); another account's session blocks are forgotten. */
   setViewer: (viewerId: string | null) => void;
   setFilter: (filter: NotificationFilter) => void;
@@ -155,8 +159,9 @@ export const useNotificationStore = create<NotificationState>()(
         set({ notifications: merged });
       },
 
-      removeFromActor: (actorId) => {
+      removeFromActor: (actorId, viewerId) => {
         const state = get();
+        if (state.viewerId !== viewerId) return;
         set({
           notifications: withoutSessionBlocks(state.notifications, [actorId]),
           blockedActors: state.blockedActors.includes(actorId) ? state.blockedActors : [...state.blockedActors, actorId],
@@ -167,9 +172,9 @@ export const useNotificationStore = create<NotificationState>()(
         if (get().viewerId !== viewerId) set({ viewerId, blockedActors: [] });
       },
 
-      allowActor: (actorId) => {
-        const { blockedActors } = get();
-        if (blockedActors.includes(actorId)) set({ blockedActors: blockedActors.filter(id => id !== actorId) });
+      allowActor: (actorId, viewerId) => {
+        const { blockedActors, viewerId: current } = get();
+        if (current === viewerId && blockedActors.includes(actorId)) set({ blockedActors: blockedActors.filter(id => id !== actorId) });
       },
 
       setFilter: (filter) => set({ filter }),
