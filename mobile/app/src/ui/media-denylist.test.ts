@@ -13,6 +13,8 @@ describe('the media takedown denylist on mobile', () => {
       expect(resolveMediaUrl(url)).toBeNull();
     }
     expect(safeExternalUrl(`ipfs://${cid}`)).toBeNull();
+    // Escaped or non-ASCII hosts are refused, however the rest of the URL is spelled.
+    expect(safeExternalUrl(`https://${cid}%E3%80%82ipfs.dweb.link/photo%FF.png`)).toBeNull();
     // Other CID spellings and IPNS names can't be checked, so they are refused.
     expect(safeExternalUrl('https://ipfs.io/ipfs/uAXASIJ00OJvXLJYZ46V2uRPI2G68_2AOFWMsGCPx18olnBqo')).toBeNull();
     expect(safeExternalUrl('https://ipfs.io/ipns/example.com/')).toBeNull();

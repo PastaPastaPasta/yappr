@@ -83,10 +83,11 @@ const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
 
 /**
  * An http(s) URL whose authority a pattern can't read the way a browser
- * will: it carries `user[:pass]@`, or characters outside printable ASCII
- * (hostname processing maps `。` to `.`, fullwidth letters to ASCII…).
+ * will: it carries `user[:pass]@`, a percent-escape, or characters outside
+ * printable ASCII (hostname processing decodes escapes and maps `。` to `.`,
+ * fullwidth letters to ASCII…).
  */
-const AMBIGUOUS_AUTHORITY = /^https?:\/\/[^/?#\\]*(?:@|[^\x21-\x7e/?#\\])/i
+const AMBIGUOUS_AUTHORITY = /^https?:\/\/[^/?#\\]*(?:[@%]|[^\x21-\x7e/?#\\])/i
 
 type IpfsReference = { cid: string; path: string } | 'refused'
 
@@ -133,7 +134,9 @@ function referenceTo(cid: string, path: string): IpfsReference {
 function effectiveDestination(url: string): string {
   const match = /^(https?:\/\/)([^?#]*)/i.exec(url)
   if (!match) return url
-  const [authority, ...segments] = percentDecoded(match[2]).replace(/\\/g, '/').split('/')
+  // Segment by segment, so one malformed escape can't keep the others
+  // encoded; then split again, since a decoded `%2F` is a separator too.
+  const [authority, ...segments] = match[2].replace(/\\/g, '/').split('/').map(percentDecoded).join('/').replace(/\\/g, '/').split('/')
   const host = authority.slice(authority.lastIndexOf('@') + 1)
   const path: string[] = []
   for (const segment of segments) {

@@ -132,6 +132,10 @@ describe('IPFS spellings', () => {
       `https://${CID_V1}\u3002ipfs.dweb.link/a.png`,
       `https://${CID_V1}.\uff49pfs.dweb.link/a.png`,
       `https://ipfs\uff0eio/ipfs/${CID_V1}`,
+      // An escaped authority, with a malformed path escape that would stop whole-URL decoding.
+      `https://${CID_V1}%E3%80%82ipfs.dweb.link/photo%FF.png`,
+      `https://ipfs.io/%69pfs/${CID_V1}/photo%FF.png`,
+      `https://ipfs.io/x%2F..%2Fipfs/${CID_V1}/photo%FF.png`,
       `https://ipfs.io/ipfs/%62${CID_V1.slice(1)}`,
       `https://ipfs.io/%69pfs/${CID_V1}`,
       `https://ipfs.io/%69pfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy`,
