@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { KeyRound, LogOut } from 'lucide-react'
 import { clearSensitiveBytes, type AppConnectGrant } from 'platform-auth'
@@ -9,6 +9,7 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAppConnectStatus, type RenewReason } from '@/lib/app-connect/session-manager'
 import type { RenewSoonReason } from '@/lib/app-connect/session-health'
+import { pendingWork } from '@/lib/app-connect/pending-work'
 import { APP_CONNECT_RENEWED_EVENT, useRenewModal } from '@/hooks/use-renew-modal'
 import { identityService } from '@/lib/services/identity-service'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -48,10 +49,11 @@ export function AppConnectSessionNotices() {
    * The sign-out that would follow waits for the renewal (auth-context.tsx),
    * including a grant still being stored after the dialog closed.
    */
-  const adopting = useRef<Promise<void> | null>(null)
+  // Every accepted renewal still being stored: a dialog closed and reopened can have more than one.
+  const adoptions = useMemo(pendingWork, [])
   const endRenewal = useCallback(() => {
-    if (!adopting.current) setRenewing(null)
-  }, [setRenewing])
+    if (!adoptions.busy) setRenewing(null)
+  }, [adoptions, setRenewing])
   useEffect(() => {
     if (!wantsRenew) {
       if (renewing !== null) endRenewal()
@@ -86,13 +88,12 @@ export function AppConnectSessionNotices() {
     }
     // Renews the keys, or signs the identity back in if a revocation signed it out meanwhile.
     // Until it is stored, the renewal stays under way even if the dialog closes.
-    const adoption = renewWithAppConnect(grant)
-    adopting.current = adoption
+    const release = adoptions.start()
     try {
-      await adoption
+      await renewWithAppConnect(grant)
     } finally {
-      adopting.current = null
-      if (!useRenewModal.getState().isOpen && useAppConnectStatus.getState().renewRequired === null) setRenewing(null)
+      release()
+      if (!adoptions.busy && !useRenewModal.getState().isOpen && useAppConnectStatus.getState().renewRequired === null) setRenewing(null)
     }
     // Side effects of a landed renewal run here, not when the panel finishes,
     // so dismissing the dialog during its success state loses none of them.
@@ -100,7 +101,7 @@ export function AppConnectSessionNotices() {
     identityService.clearCache(grant.identityId)
     onRenewed?.()
     window.dispatchEvent(new CustomEvent(APP_CONNECT_RENEWED_EVENT))
-  }, [renewWithAppConnect, renewing, setRenewing])
+  }, [adoptions, renewWithAppConnect, renewing, setRenewing])
 
   return (
     <>
