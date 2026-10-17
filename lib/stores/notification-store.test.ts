@@ -24,7 +24,7 @@ function persistedReadIds(): string[] {
 
 const enabled: NotificationSettings = {
   likes: true, reposts: true, replies: true, follows: true,
-  mentions: true, messages: true, blogPosts: true,
+  mentions: true, messages: true, blogPosts: true, store: true,
 }
 
 function notification(id: string, type: Notification['type'], createdAt: number): Notification {

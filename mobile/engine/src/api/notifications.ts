@@ -3,6 +3,7 @@ import { blockService } from '@/lib/services/block-service'
 import { notificationService } from '@/lib/services/notification-service'
 import { useSettingsStore } from '@/lib/store'
 import { useNotificationStore, withoutBlockedActors } from '@/lib/stores/notification-store'
+import { isStoreNotificationType, storeNotificationPath, storeNotificationPhrase, storeNotificationSnippet } from '@/lib/storefront/store-notification-copy'
 import type { Notification } from '@/lib/types'
 import { truncateId } from '@/lib/utils/common'
 import { RpcError } from '../protocol/envelope'
@@ -22,7 +23,7 @@ import { toPostDTO, toUserSummaryDTO, type AuthorDTO, type Page, type PostDTO } 
  */
 
 /** `app/notifications/page.tsx`'s tabs. */
-export type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'privateFeed'
+export type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'store' | 'privateFeed'
 
 export interface NotificationDTO {
   id: string
@@ -45,13 +46,20 @@ export interface NotificationDTO {
   likers?: number
   /** v11 like: `at` is when this device first noticed it, not an on-chain time: for ordering only, never shown. */
   noticed?: true
+  /**
+   * Store events (a new order or review for the seller, a status change for
+   * the buyer), worded as on web: the sentence after the actor's name, the
+   * preview (a review's stars and text, the seller's note; never an order's
+   * encrypted contents), and the web path a tap opens (no store in 1.0).
+   */
+  store?: { phrase: string; snippet: string | null; path: string | null }
 }
 
 export interface NotificationCountEvent {
   unread: number
 }
 
-const FILTERS: readonly NotificationFilter[] = ['all', 'follow', 'mention', 'like', 'repost', 'reply', 'blogPost', 'privateFeed']
+const FILTERS: readonly NotificationFilter[] = ['all', 'follow', 'mention', 'like', 'repost', 'reply', 'blogPost', 'store', 'privateFeed']
 const PAGE = 30
 
 /** `app/notifications/page.tsx` `getFilteredByTab`. */
@@ -62,6 +70,7 @@ function inTab(notification: Notification, filter: NotificationFilter): boolean 
     // The Blog tab covers new posts and comments on yours; v10 quotes share the Reposts tab (one slot on chain).
     case 'blogPost': return notification.type === 'blogPost' || notification.type === 'blogComment'
     case 'repost': return notification.type === 'repost' || notification.type === 'quote'
+    case 'store': return isStoreNotificationType(notification.type)
     default: return notification.type === filter
   }
 }
@@ -117,12 +126,19 @@ function targetKindOf(notification: Notification, post: NonNullable<Notification
   return notification.type === 'reply' ? 'post' : post.targetKind ?? 'post'
 }
 
+/** A store event's wording and link, as web shows them. */
+function storeOf({ type, store }: Notification): NotificationDTO['store'] {
+  if (!isStoreNotificationType(type)) return undefined
+  return { phrase: storeNotificationPhrase(type, store), snippet: storeNotificationSnippet(type, store), path: storeNotificationPath(type, store) }
+}
+
 async function toNotificationDTOs(notifications: Notification[]): Promise<NotificationDTO[]> {
   const ids = notifications.flatMap(notification => [notification.from.id, notification.post?.author.id ?? ''])
   // Stored avatars, so a generated one is a recipe RN renders, not lib's generated data: URI. Decoration: a failed read falls back.
   const avatars = await avatarsOf(ids).catch(() => new Map<string, AuthorDTO['avatar']>())
   return notifications.map(notification => {
     const isBlog = notification.type === 'blogPost' || notification.type === 'blogComment'
+    const store = storeOf(notification)
     const post = notification.post?.id && !isBlog ? notification.post : undefined
     return {
       id: notification.id,
@@ -135,6 +151,7 @@ async function toNotificationDTOs(notifications: Notification[]): Promise<Notifi
       ...(notification.blogId && notification.blogPostSlug ? { blog: { blogId: notification.blogId, slug: notification.blogPostSlug } } : {}),
       ...(notification.likerCount !== undefined && notification.likerCount > 1 ? { likers: notification.likerCount } : {}),
       ...(notification.timeless ? { noticed: true as const } : {}),
+      ...(store ? { store } : {}),
     }
   })
 }

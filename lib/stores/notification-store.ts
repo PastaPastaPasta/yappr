@@ -26,7 +26,7 @@ export function withoutBlockedActors(notification: Notification, isBlocked: (id:
   return { ...notification, from: kept[0], likers: kept, likerCount };
 }
 
-type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'privateFeed';
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'store' | 'privateFeed';
 
 /**
  * Add IDs to read set and prune if exceeds limit

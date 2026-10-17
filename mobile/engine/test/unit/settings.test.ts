@@ -14,7 +14,7 @@ describe('settings', () => {
       gateMediaFromNonFollowed: true,
       sendReadReceipts: true,
       sensitiveContentMode: 'hide',
-      notificationSettings: { likes: true, reposts: true, replies: true, follows: true, mentions: true, messages: true, blogPosts: true },
+      notificationSettings: { likes: true, reposts: true, replies: true, follows: true, mentions: true, messages: true, blogPosts: true, store: true },
       payWith: 'yapp',
       feedLanguage: 'de',
     })

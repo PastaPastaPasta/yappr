@@ -81,7 +81,7 @@ const SENSITIVE_CONTENT_OPTIONS: Array<{ value: SensitiveContentMode; label: str
   { value: 'hide', label: 'Hide', description: 'Remove NSFW posts from your feeds' },
 ]
 
-const NOTIFICATION_KEYS = ['likes', 'reposts', 'replies', 'follows', 'mentions', 'blogPosts'] as const
+const NOTIFICATION_KEYS = ['likes', 'reposts', 'replies', 'follows', 'mentions', 'blogPosts', 'store'] as const
 
 const NOTIFICATION_LABELS: Record<string, string> = {
   likes: 'Likes',
@@ -90,6 +90,7 @@ const NOTIFICATION_LABELS: Record<string, string> = {
   follows: 'Follows',
   mentions: 'Mentions',
   blogPosts: 'Blog posts',
+  store: 'Store',
 }
 
 const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
@@ -99,6 +100,7 @@ const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
   follows: 'When someone follows you',
   mentions: 'When someone mentions you',
   blogPosts: 'When a blog you follow publishes a new post',
+  store: 'New orders and reviews for your store, and updates on your orders',
 }
 
 function SettingsPage() {
