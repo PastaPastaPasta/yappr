@@ -31,7 +31,7 @@ import * as RadioGroup from '@radix-ui/react-radio-group'
 import { SettingsSwitch } from '@/components/settings/settings-switch'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
+import { EncryptionKeySettings } from '@/components/settings/encryption-key-settings'
 import { WalletConnectionsSettings } from '@/components/settings/wallet-connections-settings'
 import { useWalletSession } from '@/components/auth/wallet-encryption-key-prompt'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
@@ -394,10 +394,10 @@ function SettingsPage() {
 
   const renderPrivacySettings = () => (
     <div className="p-6 space-y-6">
-      {/* Key Backup Section: a wallet sign-in manages its keys in the wallet instead */}
+      {/* A wallet sign-in manages its keys in the wallet instead */}
       {walletSession
         ? <WalletConnectionsSettings />
-        : <KeyBackupSettings onEncryptionKeyChanged={handleEncryptionKeyChanged} />}
+        : <EncryptionKeySettings onEncryptionKeyChanged={handleEncryptionKeyChanged} />}
 
       <div>
         <h3 className="font-semibold mb-4">Privacy</h3>

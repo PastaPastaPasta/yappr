@@ -33,7 +33,7 @@ export function useDmEngine(identityId: string | undefined): { engine: DmEngine 
     if (!identityId) return
     getDmEngine(identityId)?.start().catch((error) => logger.warn('DM v5 engine failed to start:', error))
   }, [identityId, attempt])
-  // A stored key confirmed later (e.g. a vault key checked against the anchor) can start the engine then.
+  // A stored key confirmed later (checked against the anchor) can start the engine then.
   useEffect(() => {
     if (!identityId) return
     return onAnchorKeyRemembered((confirmed) => {

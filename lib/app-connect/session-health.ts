@@ -5,32 +5,38 @@ import {
   type AppConnectSession,
   type AppConnectSessionKey,
 } from 'platform-auth'
-import { APP_CONNECT_RENEW_BUDGET_SHARE, APP_CONNECT_RENEW_WITHIN_MS } from './config'
+import { APP_CONNECT_RENEW_BUDGET_FLOOR, APP_CONNECT_RENEW_BUDGET_SHARE, APP_CONNECT_RENEW_WITHIN_MS } from './config'
 
 /**
- * `ok`: nothing to say. `renew-soon`: the banner (under 20% of the allowance
- * or under 14 days left). `renew-required`: writes stop until the user renews
- * in their wallet; reads continue.
+ * `ok`: nothing to say. `renew-soon`: the banner (under 20% of the allowance,
+ * under the budget floor, or under 14 days left). `renew-required`: writes
+ * stop until the user renews in their wallet; reads continue.
  */
 export type AppConnectHealth = 'ok' | 'renew-soon' | 'renew-required'
+
+/** What `renew-soon` is about, so the banner names it: the allowance running low, or the time left. */
+export type RenewSoonReason = 'allowance' | 'expiry'
 
 /** The session's group key: the primary grant every Yappr write but the DashPay profile goes through. */
 export function primaryGroupKey(session: AppConnectSession): AppConnectSessionKey | undefined {
   return session.authKeys.find((key) => key.bounds?.kind === 'contractGroup' && key.bounds.groupId === session.groupId)
 }
 
-export function appConnectHealth(session: AppConnectSession, now: number): AppConnectHealth {
+/** The session's health and, when it is `renew-soon`, why. */
+export function appConnectStanding(session: AppConnectSession, now: number): { health: AppConnectHealth; renewSoon: RenewSoonReason | null } {
   const key = primaryGroupKey(session)
-  if (!key || key.disabled) return 'renew-required'
-  if (key.expiresAt !== undefined && key.expiresAt - now <= APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS) return 'renew-required'
+  if (!key || key.disabled) return { health: 'renew-required', renewSoon: null }
+  if (key.expiresAt !== undefined && key.expiresAt - now <= APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS) return { health: 'renew-required', renewSoon: null }
   if (key.totalBudget !== undefined) {
-    if (key.remainingBudget === undefined) return 'ok'
-    if (key.remainingBudget <= 0n) return 'renew-required'
+    // Until the first read a grant is as the wallet gave it: all of its budget left.
+    const remaining = key.remainingBudget ?? key.totalBudget
+    if (remaining <= 0n) return { health: 'renew-required', renewSoon: null }
     // remaining / total < share, in integers: remaining * 100 < total * share * 100.
-    if (key.remainingBudget * 100n < key.totalBudget * BigInt(Math.round(APP_CONNECT_RENEW_BUDGET_SHARE * 100))) return 'renew-soon'
+    const lowShare = remaining * 100n < key.totalBudget * BigInt(Math.round(APP_CONNECT_RENEW_BUDGET_SHARE * 100))
+    if (lowShare || remaining < APP_CONNECT_RENEW_BUDGET_FLOOR) return { health: 'renew-soon', renewSoon: 'allowance' }
   }
-  if (key.expiresAt !== undefined && key.expiresAt - now <= APP_CONNECT_RENEW_WITHIN_MS) return 'renew-soon'
-  return 'ok'
+  if (key.expiresAt !== undefined && key.expiresAt - now <= APP_CONNECT_RENEW_WITHIN_MS) return { health: 'renew-soon', renewSoon: 'expiry' }
+  return { health: 'ok', renewSoon: null }
 }
 
 /**

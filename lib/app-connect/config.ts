@@ -44,6 +44,8 @@ export const APP_CONNECT_PROFILE_LIFETIME_MS = 90 * DAY_MS
 /** The renewal banner shows below this share of the budget or this much time left. */
 export const APP_CONNECT_RENEW_BUDGET_SHARE = 0.2
 export const APP_CONNECT_RENEW_WITHIN_MS = 14 * DAY_MS
+/** Or below this many credits left (about 60¢, a few dozen writes), whatever the grant's size. */
+export const APP_CONNECT_RENEW_BUDGET_FLOOR = 1_000_000_000n
 
 /** A pinned member contract and the version the app expects it at. */
 export interface PinnedMemberContract {

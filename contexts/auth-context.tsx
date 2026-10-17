@@ -2,16 +2,19 @@
 
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
-import { base64ToBytes } from '@/lib/bytes'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { usePathname, useRouter } from 'next/navigation'
-import { PlatformAuthController, clearSensitiveBytes, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
+import { PlatformAuthController, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { currentRoute, dpnsRegisterHref } from '@/lib/auth/return-to'
-import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
+import { keyNetwork } from '@/lib/constants'
+import { keyValidationService } from '@/lib/services/key-validation-service'
 import { useUsernameModal } from '@/hooks/use-username-modal'
+import { useLoginModal } from '@/hooks/use-login-modal'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
+import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
+import { createWalletSignIn } from '@/lib/app-connect/wallet-sign-in'
 
 export interface AuthUser {
   identityId: string
@@ -34,26 +37,12 @@ interface AuthContextType {
   isLoading: boolean
   isAuthRestoring: boolean
   error: string | null
+  /** Signs in with a typed-in key; refuses one that is not an enabled CRITICAL or HIGH authentication key of the identity. */
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean }) => Promise<void>
-  loginWithPassword: (username: string, password: string) => Promise<void>
-  loginWithPasskey: (identityOrUsername?: string) => Promise<void>
-  /** Resolves with the post-login intent so the caller can tell a fully set-up account from one still needing a username. */
-  loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number) => Promise<PlatformAuthIntent>
   /** Signs in with a verified App Connect grant (the user already confirmed the identity). Wipes the grant's keys. */
   loginWithAppConnect: (grant: AppConnectGrant) => Promise<PlatformAuthIntent>
   /** Replaces the signed-in identity's App Connect keys with a renewed grant from the same identity. */
   renewWithAppConnect: (grant: AppConnectGrant) => Promise<void>
-  createOrUpdateUnifiedVaultFromLoginKey: (identityId: string, loginKey: Uint8Array) => Promise<void>
-  createOrUpdateUnifiedVaultFromAuthKey: (identityId: string, authKeyWif: string) => Promise<void>
-  addPasskeyWrapper: (label?: string) => Promise<void>
-  addPasswordWrapper: (password: string, iterations: number) => Promise<void>
-  mergeSecretsIntoAuthVault: (identityId: string, partialSecrets: {
-    loginKey?: Uint8Array | string
-    authKeyWif?: string
-    encryptionKeyWif?: string
-    transferKeyWif?: string
-    source?: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
-  }) => Promise<void>
   logout: () => Promise<void>
   updateDPNSUsername: (username: string) => void
   refreshDpnsUsernames: () => Promise<void>
@@ -81,32 +70,6 @@ function toExternalUser(user: PlatformAuthUser | null): AuthUser | null {
   }
 }
 
-function toFriendlyVaultWriteError(error: unknown, methodLabel: 'passkey' | 'password'): Error {
-  const message = extractErrorMessage(error)
-  const normalized = message.toLowerCase()
-
-  if (isAlreadyExistsError(error)) {
-    if (methodLabel === 'passkey') {
-      return new Error('This passkey is already registered for this account on this site.')
-    }
-    return new Error('A password unlock method is already configured for this account.')
-  }
-
-  if (normalized.includes('unknown contract')) {
-    return new Error('The auth vault contract is still propagating across Dash Platform. Please try again in a moment.')
-  }
-
-  if (
-    normalized.includes('grpc error') ||
-    normalized.includes('transport error') ||
-    normalized.includes('missing response message')
-  ) {
-    return new Error(`Dash Platform could not save your ${methodLabel} unlock method right now. Please try again in a moment.`)
-  }
-
-  return error instanceof Error ? error : new Error(message)
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const controller = useMemo(() => new PlatformAuthController(createYapprPlatformAuthDependencies()), [])
@@ -117,23 +80,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */
   const revokeLogout = useRef<Promise<void> | null>(null)
 
+  /** Wallet sign-ins and renewals, one at a time and bound to the session they began on (#734). */
+  const walletSignIn = useMemo(() => createWalletSignIn({
+    controller,
+    sessions: appConnectSessions,
+    settled: async () => { await revokeLogout.current },
+  }), [controller])
+  /**
+   * A revoke a renewal under way held back, with the session it was found on;
+   * settled once that renewal ends, and dropped if another session replaced that one.
+   */
+  const deferredRevoke = useRef<HeldRevoke | null>(null)
+
   // The wallet revoked this browser's App Connect keys: end the session here too,
   // if this tab is still signed in as that identity.
-  useEffect(() => {
-    appConnectSessions.onSignedOut((identityId) => {
-      if (controller.getState().user?.identityId !== identityId) return
-      // A newer grant for this identity became active while the old one was
-      // being signed out (another tab renewed): it stands, so nothing ends here.
-      if (appConnectSessions.current(identityId)) {
-        useAppConnectStatus.getState().dismissSignedOut()
-        return
-      }
-      revokeLogout.current = controller.logout()
-        .then(() => router.push('/'))
-        .catch((error) => logger.error('Auth: sign-out after a wallet revoke failed:', error))
-    })
-    return () => appConnectSessions.onSignedOut(null)
+  const signOutRevoked = useCallback((identityId: string) => {
+    if (controller.getState().user?.identityId !== identityId) return
+    // A newer grant for this identity became active while the old one was
+    // being signed out (another tab renewed, or the renewal here landed): it stands.
+    if (appConnectSessions.current(identityId)) {
+      useAppConnectStatus.getState().dismissSignedOut()
+      return
+    }
+    // The wallet disables the old keys before the renewal's grant arrives, so a
+    // revoke found while this identity renews is that renewal: its outcome decides (#738).
+    if (useAppConnectStatus.getState().renewing === identityId) {
+      deferredRevoke.current = { identityId, epoch: controller.sessionEpoch() }
+      return
+    }
+    revokeLogout.current = controller.logout()
+      .then(() => router.push('/'))
+      .catch((error) => logger.error('Auth: sign-out after a wallet revoke failed:', error))
   }, [controller, router])
+
+  useEffect(() => {
+    appConnectSessions.onSignedOut(signOutRevoked)
+    // The renewal a revoke waited for ended, with a new grant or abandoned: settle the revoke now.
+    const unsubscribe = useAppConnectStatus.subscribe((state, previous) => {
+      const held = deferredRevoke.current
+      if (!held) return
+      const outcome = settleHeldRevoke(held, previous.renewing, state.renewing, controller.sessionEpoch())
+      if (outcome === 'wait') return
+      deferredRevoke.current = null
+      if (outcome === 'sign-out') signOutRevoked(held.identityId)
+      // A sign-in (say, with a typed key) or a sign-out since the revoke: its notice is out of date too.
+      else useAppConnectStatus.getState().dismissSignedOut()
+    })
+    return () => {
+      appConnectSessions.onSignedOut(null)
+      unsubscribe()
+    }
+  }, [controller, signOutRevoked])
 
   useEffect(() => {
     controller.restoreSession().catch((error) => {
@@ -162,110 +159,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [router])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
-    const result = await controller.loginWithAuthKey(identityId, privateKey, options)
+    // Taken before the key check: a sign-in or sign-out while it runs supersedes this one.
+    const since = controller.sessionEpoch()
+    // The same rule restore and signing apply, on keys read fresh: a disabled or wrong-level key never starts a session.
+    const check = await keyValidationService.validatePrivateKey(privateKey, identityId, keyNetwork(), { fresh: true })
+    if (!check.isValid) throw new Error(check.error ?? 'This key cannot sign in to this account')
+    const result = await controller.loginWithAuthKey(identityId, privateKey, { ...options, since })
     await applyIntent(result.intent)
-  }, [applyIntent, controller])
-
-  const loginWithPassword = useCallback(async (username: string, password: string) => {
-    const result = await controller.loginWithPassword(username, password)
-    await applyIntent(result.intent)
-  }, [applyIntent, controller])
-
-  const loginWithPasskey = useCallback(async (identityOrUsername?: string) => {
-    const result = await controller.loginWithPasskey(identityOrUsername)
-    await applyIntent(result.intent)
-  }, [applyIntent, controller])
-
-  const loginWithKeyExchange = useCallback(async (identityId: string, loginKey: Uint8Array, keyIndex: number) => {
-    const result = await controller.loginWithLoginKey(identityId, loginKey, keyIndex)
-    await applyIntent(result.intent)
-    return result.intent
   }, [applyIntent, controller])
 
   const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
-    await revokeLogout.current
-    const session = await appConnectSessions.adopt(grant)
-    try {
-      const result = await controller.loginWithKeyRing(session.identityId)
-      // A logout while the controller read the identity ended this session:
-      // undo the sign-in it just stored rather than show a user with no keys.
-      if (!appConnectSessions.current(session.identityId)) {
-        await controller.logout()
-        throw new Error('Signed out while the wallet was connecting')
-      }
-      await applyIntent(result.intent)
-      return result.intent
-    } catch (error) {
-      await appConnectSessions.discard(session)
-      throw error
-    }
-  }, [applyIntent, controller])
+    const result = await walletSignIn.signIn(grant)
+    await applyIntent(result.intent)
+    return result.intent
+  }, [applyIntent, walletSignIn])
 
   const renewWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
     // A revocation sign-out may still be running: let it finish first, so it
     // cannot clear the grant adopted here.
     await revokeLogout.current
-    const identityId = controller.getState().user?.identityId
-    if (identityId === grant.identityId) {
-      await appConnectSessions.adopt(grant)
+    if (controller.getState().user) {
+      // Only the signed-in identity's own renewal, and only while that session stands.
+      await walletSignIn.renew(grant)
       useAppConnectStatus.getState().dismissRenewRequired()
       return
     }
-    if (identityId) {
-      for (const key of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
-      throw new Error('The renewal came from another account')
-    }
-    // Signed out meanwhile (the wallet disabled the old keys first): the renewal signs back in.
+    // Signed out meanwhile: the renewal signs back in, and a sign-in prompt that
+    // sign-out opened has nothing left to ask.
     await loginWithAppConnect(grant)
     useAppConnectStatus.getState().dismissSignedOut()
-  }, [controller, loginWithAppConnect])
-
-  const createOrUpdateUnifiedVaultFromLoginKey = useCallback(async (identityId: string, loginKey: Uint8Array) => {
-    await controller.createOrUpdateVaultFromLoginKey(identityId, loginKey)
-  }, [controller])
-
-  const createOrUpdateUnifiedVaultFromAuthKey = useCallback(async (identityId: string, authKeyWif: string) => {
-    await controller.createOrUpdateVaultFromAuthKey(identityId, authKeyWif)
-  }, [controller])
-
-  const mergeSecretsIntoAuthVault = useCallback(async (
-    identityId: string,
-    partialSecrets: {
-      loginKey?: Uint8Array | string
-      authKeyWif?: string
-      encryptionKeyWif?: string
-      transferKeyWif?: string
-      source?: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
-    },
-  ) => {
-    await controller.mergeSecretsIntoVault(identityId, {
-      loginKey: partialSecrets.loginKey
-        ? partialSecrets.loginKey instanceof Uint8Array
-          ? partialSecrets.loginKey
-          : base64ToBytes(partialSecrets.loginKey)
-        : undefined,
-      authKeyWif: partialSecrets.authKeyWif,
-      encryptionKeyWif: partialSecrets.encryptionKeyWif,
-      transferKeyWif: partialSecrets.transferKeyWif,
-      source: partialSecrets.source,
-    })
-  }, [controller])
-
-  const addPasswordWrapper = useCallback(async (password: string, iterations: number) => {
-    try {
-      await controller.addPasswordAccess(password, iterations)
-    } catch (error) {
-      throw toFriendlyVaultWriteError(error, 'password')
-    }
-  }, [controller])
-
-  const addPasskeyWrapper = useCallback(async (label = 'Current device') => {
-    try {
-      await controller.addPasskeyAccess(label)
-    } catch (error) {
-      throw toFriendlyVaultWriteError(error, 'passkey')
-    }
-  }, [controller])
+    useLoginModal.getState().close()
+  }, [controller, loginWithAppConnect, walletSignIn])
 
   const logout = useCallback(async () => {
     const result = await controller.logout()
@@ -293,37 +217,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAuthRestoring: controllerState.isAuthRestoring,
     error: controllerState.error,
     login,
-    loginWithPassword,
-    loginWithPasskey,
-    loginWithKeyExchange,
     loginWithAppConnect,
     renewWithAppConnect,
-    createOrUpdateUnifiedVaultFromLoginKey,
-    createOrUpdateUnifiedVaultFromAuthKey,
-    addPasskeyWrapper,
-    addPasswordWrapper,
-    mergeSecretsIntoAuthVault,
     logout,
     updateDPNSUsername,
     refreshDpnsUsernames,
     refreshBalance,
   }), [
-    addPasskeyWrapper,
-    addPasswordWrapper,
     controller,
     controllerState.error,
     controllerState.isAuthRestoring,
     controllerState.isLoading,
     controllerState.user,
-    createOrUpdateUnifiedVaultFromAuthKey,
-    createOrUpdateUnifiedVaultFromLoginKey,
     login,
     loginWithAppConnect,
-    loginWithKeyExchange,
-    loginWithPasskey,
-    loginWithPassword,
     logout,
-    mergeSecretsIntoAuthVault,
     refreshBalance,
     refreshDpnsUsernames,
     renewWithAppConnect,

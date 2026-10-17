@@ -4,10 +4,6 @@ import { scopedKey, SESSION_STORAGE_KEY } from '@/lib/storage-scope'
 import type {
   AuthSessionSnapshot,
   AuthUser,
-  AuthVaultBundle,
-  AuthVaultStatus,
-  AuthVaultUnlockResult,
-  PasskeyAccess,
   PlatformAuthDependencies,
   PlatformAuthEvent,
 } from 'platform-auth'
@@ -16,19 +12,16 @@ import { logger } from '@/lib/logger'
 import { KEY_EXCHANGE_CONTRACT_ID, YAPPR_CONTRACT_ID, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import {
-  clearAuthVaultDek,
   clearEncryptionKey,
   clearEncryptionKeyType,
   clearLoginKey,
   clearPrivateKey,
   clearTransferKey,
-  getAuthVaultDekBytes,
   getEncryptionKey,
   getLoginKeyBytes,
   getPrivateKey,
   getTransferKey,
   hasEncryptionKey,
-  storeAuthVaultDek,
   storeEncryptionKey,
   storeEncryptionKeyType,
   storeLoginKey,
@@ -43,18 +36,6 @@ import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { identityService } from '@/lib/services/identity-service'
 import { storedKeyBelongsToIdentity } from '@/lib/auth/session-key'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { authVaultService } from '@/lib/services/auth-vault-service'
-import { authVaultAccessService } from '@/lib/services/auth-vault-access-service'
-import { encryptedKeyService } from '@/lib/services/encrypted-key-service'
-import { vaultService } from '@/lib/services/vault-service'
-import {
-  createPasskeyWithPrf,
-  getDefaultRpId,
-  getPrfAssertionForCredentials,
-  selectDiscoverablePasskey,
-} from '@/lib/webauthn/passkey-prf'
-import { wrapDekWithPassword, wrapDekWithPrf } from '@/lib/crypto/auth-vault'
-import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
 import { deriveEncryptionKey, deriveLoginEncryptionKey } from '@/lib/crypto/derive-encryption-key'
 import { validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
 import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
@@ -67,19 +48,6 @@ import {
   buildUnsignedKeyRegistrationTransition,
   checkKeysRegistered,
 } from '@/lib/services/identity-update-builder'
-
-type LegacyAuthVaultBundle = {
-  version: 1
-  identityId: string
-  network: 'testnet' | 'mainnet'
-  secretKind: 'login-key' | 'auth-key'
-  loginKey?: string
-  authKeyWif?: string
-  encryptionKeyWif?: string
-  transferKeyWif?: string
-  source: 'wallet-derived' | 'direct-key' | 'password-migrated' | 'mixed'
-  updatedAt: number
-}
 
 async function ensureSdk(): Promise<void> {
   await evoSdkService.initialize({
@@ -146,11 +114,12 @@ async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
 }
 
 /**
- * On App Connect builds a raw key typed in by hand is a one-key session, and a
- * CRITICAL one (or one whose level cannot be told) is kept for this tab only.
- * The session user, with the identity's keys, is saved just before this runs.
- * The raw key replaces this tab's wallet grant for the identity, so writes
- * sign with the key the user just entered.
+ * On App Connect builds (the release builds) a raw key typed in by hand is a
+ * one-key session, and a CRITICAL one (or one whose level cannot be told) is
+ * kept for this tab only. The session user, with the identity's keys, is saved
+ * just before this runs. The raw key replaces this tab's wallet grant for the
+ * identity, so writes sign with the key the user just entered. Other builds
+ * keep the key as they always have (the mobile engine's secure area relies on it).
  */
 async function storeRawLoginKey(identityId: string, wif: string): Promise<void> {
   if (!isAppConnectBuild()) {
@@ -187,62 +156,6 @@ function toStoredSession(snapshot: AuthSessionSnapshot): Record<string, unknown>
       publicKeys: snapshot.user.publicKeys,
     },
     timestamp: snapshot.timestamp,
-  }
-}
-
-function fromLegacyBundle(bundle: LegacyAuthVaultBundle): AuthVaultBundle {
-  return {
-    version: bundle.version,
-    identityId: bundle.identityId,
-    network: bundle.network,
-    secretKind: bundle.secretKind,
-    loginKey: bundle.loginKey ? base64ToBytes(bundle.loginKey) : undefined,
-    authKeyWif: bundle.authKeyWif,
-    encryptionKeyWif: bundle.encryptionKeyWif,
-    transferKeyWif: bundle.transferKeyWif,
-    source: bundle.source,
-    updatedAt: bundle.updatedAt,
-  }
-}
-
-function toLegacyBundle(bundle: AuthVaultBundle): LegacyAuthVaultBundle {
-  return {
-    version: 1,
-    identityId: bundle.identityId,
-    network: bundle.network,
-    secretKind: bundle.secretKind,
-    loginKey: bundle.loginKey ? bytesToBase64(bundle.loginKey) : undefined,
-    authKeyWif: bundle.authKeyWif,
-    encryptionKeyWif: bundle.encryptionKeyWif,
-    transferKeyWif: bundle.transferKeyWif,
-    source: bundle.source,
-    updatedAt: bundle.updatedAt,
-  }
-}
-
-function fromUnlockResult(result: {
-  identityId: string
-  vault: { $id: string }
-  bundle: LegacyAuthVaultBundle
-  dek: Uint8Array
-}): AuthVaultUnlockResult {
-  return {
-    identityId: result.identityId,
-    vault: { $id: result.vault.$id },
-    bundle: fromLegacyBundle(result.bundle),
-    dek: result.dek,
-  }
-}
-
-function toPasskeyAccess(access: Awaited<ReturnType<typeof authVaultAccessService.getPasskeyAccesses>>[number]): PasskeyAccess {
-  return {
-    $id: access.$id,
-    $ownerId: access.$ownerId,
-    label: access.label,
-    credentialId: access.credentialId,
-    credentialIdHash: access.credentialIdHash,
-    prfInput: access.prfInput,
-    rpId: access.rpId,
   }
 }
 
@@ -296,7 +209,6 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
 async function runLogoutCleanup(identityId: string): Promise<void> {
   sessionStorage.removeItem(scopedKey('yappr_dpns_username'))
   sessionStorage.removeItem(scopedKey('yappr_skip_dpns'))
-  sessionStorage.removeItem(scopedKey('yappr_backup_prompt_shown'))
   invalidateBlockCache(identityId)
   privateFeedKeyStore.clearAllKeys()
 }
@@ -335,7 +247,7 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       },
       storeEncryptionKey: (identityId, encryptionKey) => {
         storeEncryptionKey(identityId, encryptionKey)
-        // App Connect builds: a stored key (say, restored from a password vault) counts once it matches the anchor key.
+        // App Connect builds: a stored key counts once it matches the anchor key.
         if (!isAppConnectBuild()) return
         import('@/lib/services/messaging-key-service')
           .then(({ confirmStoredEncryptionKey }) => confirmStoredEncryptionKey(identityId))
@@ -359,11 +271,6 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       getLoginKey: async (identityId) => getLoginKeyBytes(identityId),
       clearLoginKey: async (identityId) => {
         clearLoginKey(identityId)
-      },
-      storeAuthVaultDek,
-      getAuthVaultDek: async (identityId) => getAuthVaultDekBytes(identityId),
-      clearAuthVaultDek: async (identityId) => {
-        clearAuthVaultDek(identityId)
       },
     },
     identity: {
@@ -437,127 +344,6 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
         return checkKeysRegistered(identityId, authPublicKey, encryptionPublicKey)
       },
     },
-    vault: {
-      isConfigured() {
-        return authVaultService.isConfigured()
-      },
-      async getStatus(identityId): Promise<AuthVaultStatus> {
-        await ensureSdk()
-        return authVaultService.getStatus(identityId)
-      },
-      async hasVault(identityId) {
-        await ensureSdk()
-        return authVaultService.hasVault(identityId)
-      },
-      async resolveIdentityId(identityOrUsername) {
-        await ensureSdk()
-        return authVaultService.resolveIdentityId(identityOrUsername)
-      },
-      async createOrUpdateVaultBundle(identityId, bundle, dek) {
-        await ensureSdk()
-        const created = await authVaultService.createOrUpdateVaultBundle(identityId, toLegacyBundle(bundle), dek)
-        return fromUnlockResult(created)
-      },
-      async mergeSecrets(identityId, dek, partialSecrets) {
-        await ensureSdk()
-        const merged = await authVaultService.mergeSecrets(identityId, dek, {
-          loginKey: partialSecrets.loginKey,
-          authKeyWif: partialSecrets.authKeyWif,
-          encryptionKeyWif: partialSecrets.encryptionKeyWif,
-          transferKeyWif: partialSecrets.transferKeyWif,
-          source: partialSecrets.source,
-        })
-        return merged ? fromUnlockResult(merged) : null
-      },
-      async unlockWithPassword(identityOrUsername, password) {
-        await ensureSdk()
-        const unlocked = await authVaultService.unlockWithPassword(identityOrUsername, password)
-        return fromUnlockResult(unlocked)
-      },
-      async unlockWithPrf(identityId, access, prfOutput) {
-        await ensureSdk()
-        const accesses = await authVaultAccessService.getPasskeyAccesses(identityId)
-        const matchingAccess = accesses.find((entry) => entry.$id === access.$id)
-        if (!matchingAccess) {
-          throw new Error('Selected passkey is not registered for this site')
-        }
-        const unlocked = await authVaultService.unlockWithPrf(identityId, matchingAccess, prfOutput)
-        return fromUnlockResult(unlocked)
-      },
-      async getPasskeyAccesses(identityId) {
-        await ensureSdk()
-        const accesses = await authVaultAccessService.getPasskeyAccesses(identityId)
-        return accesses.map(toPasskeyAccess)
-      },
-      async addPasswordAccess(identityId, input) {
-        await ensureSdk()
-        const wrapped = await wrapDekWithPassword(input.dek, input.password, input.iterations, identityId, input.vaultId)
-        await authVaultAccessService.upsertPasswordAccess(identityId, {
-          vaultId: input.vaultId,
-          label: input.label,
-          wrappedDek: wrapped.wrappedDek,
-          iv: wrapped.iv,
-          pbkdf2Salt: wrapped.pbkdf2Salt,
-          pbkdf2Iterations: input.iterations,
-        })
-      },
-      async addPasskeyAccess(identityId, input) {
-        await ensureSdk()
-        const wrapped = await wrapDekWithPrf(input.dek, input.passkey.prfOutput, identityId, input.vaultId, input.passkey.rpId)
-        try {
-          await authVaultAccessService.createPasskeyAccess(identityId, {
-            vaultId: input.vaultId,
-            label: input.passkey.label,
-            wrappedDek: wrapped.wrappedDek,
-            iv: wrapped.iv,
-            credentialId: input.passkey.credentialId,
-            credentialIdHash: input.passkey.credentialIdHash,
-            prfInput: input.passkey.prfInput,
-            rpId: input.passkey.rpId,
-          })
-        } catch (error) {
-          const existing = await authVaultAccessService.getPasskeyAccesses(identityId).catch(() => [])
-          if (existing.some((entry) =>
-            entry.credentialIdHash &&
-            input.passkey.credentialIdHash.length === entry.credentialIdHash.length &&
-            input.passkey.credentialIdHash.every((byte, index) => byte === entry.credentialIdHash?.[index]),
-          )) {
-            return
-          }
-          throw error
-        }
-      },
-    },
-    passkeys: {
-      getDefaultRpId,
-      createPasskeyWithPrf,
-      getPrfAssertionForCredentials,
-      selectDiscoverablePasskey,
-    },
-    legacyPasswordLogins: [
-      {
-        kind: 'vault',
-        isConfigured() {
-          return vaultService.isConfigured()
-        },
-        async loginWithPassword(identityOrUsername, password) {
-          return vaultService.loginWithPassword(identityOrUsername, password)
-        },
-      },
-      {
-        kind: 'encrypted-key-backup',
-        isConfigured() {
-          return encryptedKeyService.isConfigured()
-        },
-        async loginWithPassword(identityOrUsername, password) {
-          const result = await encryptedKeyService.loginWithPassword(identityOrUsername, password)
-          return {
-            identityId: result.identityId,
-            privateKey: result.privateKey,
-          }
-        },
-      },
-    ],
     logger,
     onEvent(event: PlatformAuthEvent) {
       if (event.type === 'background-error') {

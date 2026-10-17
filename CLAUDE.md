@@ -147,7 +147,7 @@ Singleton service classes handle all Dash Platform operations:
 ### Authentication System
 - `contexts/auth-context.tsx` manages user sessions and exposes the `withAuth` HOC
 - It delegates to the vendored `platform-auth` controller (`vendor/platform-auth`) through the adapters in `lib/auth/platform-auth-adapters.ts`
-- Private keys live in the browser secret store built in `lib/secure-storage.ts` (localStorage, keys prefixed `yappr_secure_`); passkey/PRF unlock is in `lib/webauthn/passkey-prf.ts`
+- Private keys live in the browser secret store built in `lib/secure-storage.ts` (localStorage, keys prefixed `yappr_secure_`). Sign-in is App Connect (wallet) or a typed-in private key (`lib/auth/login-key.ts`); a CRITICAL key typed in on an App Connect build stays in the tab only. There is no password or passkey sign-in: the passkey vault is being redesigned (DECISIONS D10)
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure
@@ -164,7 +164,7 @@ Not in this contract:
 - Notifications are derived client-side from other document types, not stored
 - `list` / `listMember` / `mute` were dropped when the v2 contract was cut (never implemented; `block` covers muting)
 
-Additional contracts back specific features: storefront (7 types), DM, blog, vault/auth-vault, key exchange, encrypted key backup, and the externally-owned Pollr contract. The standalone hashtag, mention, and block contracts are gone — those doctypes moved into the social contract, and `lib/constants.ts` no longer carries their contract IDs.
+Additional contracts back specific features: storefront (7 types), DM, blog, the App Connect anchor, and the externally-owned Pollr contract. The legacy vault, auth vault, encrypted key backup and key-exchange contracts are not part of the release (DECISIONS D9); the app no longer reads the first three. The standalone hashtag, mention, and block contracts are gone — those doctypes moved into the social contract, and `lib/constants.ts` no longer carries their contract IDs.
 
 **IMPORTANT**: Documents use `$ownerId` (platform system field), NOT custom `authorId`/`userId` fields. When creating documents, only include content fields - ownership is automatic.
 

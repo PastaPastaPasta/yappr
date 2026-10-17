@@ -6,14 +6,16 @@
  * same-device fallback. Read-only: generating the request writes nothing.
  */
 import { expect, test } from '@playwright/test'
-import { appUrl } from '../fixtures/app'
+import { appUrl, isAppConnectBuild } from '../fixtures/app'
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
 
 test('touch login reveals Copy link after an attempted wallet launch', async ({ page }) => {
+  test.skip(!isAppConnectBuild(), 'wallet sign-in is offered on App Connect builds only')
   await page.goto(appUrl('/login/'))
 
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
+  await dialog.getByRole('button', { name: 'Sign in with a Dash wallet app' }).click()
   const openWallet = dialog.getByRole('link', { name: 'Open in wallet app' })
   await expect(openWallet).toHaveAttribute('href', /^dash-key:/)
   await expect(dialog.getByText('Open in a wallet on this device')).toBeVisible()

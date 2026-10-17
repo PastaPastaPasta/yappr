@@ -32,7 +32,7 @@ interface PrivateFeedSettingsProps {
  */
 export function PrivateFeedSettings({ openReset = false, onResetOpened }: PrivateFeedSettingsProps) {
   const encryptionKeyId = useId()
-  const { user, mergeSecretsIntoAuthVault } = useAuth()
+  const { user } = useAuth()
   // A wallet sign-in's messaging key lives in its key ring; nothing here stores or backs it up.
   const walletSession = useWalletSession()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
@@ -221,13 +221,6 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
             // Resubmitting the key that was already stored keeps its existing type label.
             if (!priorKeyBytes || !bytesEqual(priorKeyBytes, validation.privateKey)) {
               storeEncryptionKeyType(user.identityId, 'external')
-            }
-
-            try {
-              await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
-            } catch (error) {
-              logger.error('Failed to back up encryption key after enabling private feed:', error)
-              toast.error('Private feed enabled, but key backup failed. Your key is available for this session.')
             }
           } catch (error) {
             logger.error('Failed to store encryption key after enabling private feed:', error)

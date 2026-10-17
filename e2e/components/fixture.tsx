@@ -31,7 +31,7 @@ createRoot(root).render(
     <LiveThreadStatusFixture answers={[false, null, true]} />
   ) : (
     <>
-      <h1>Isolated private-feed regression fixture (mocked chain and vault)</h1>
+      <h1>Isolated private-feed regression fixture (mocked chain)</h1>
       <PrivateFeedSettings />
       <Toaster toastOptions={{ duration: Infinity }} />
     </>

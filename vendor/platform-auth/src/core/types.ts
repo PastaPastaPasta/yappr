@@ -4,14 +4,6 @@ export type NetworkName = 'testnet' | 'mainnet'
 
 export type EncryptionKeyType = 'derived' | 'external'
 
-export type VaultSource =
-  | 'wallet-derived'
-  | 'direct-key'
-  | 'password-migrated'
-  | 'mixed'
-
-export type VaultSecretKind = 'login-key' | 'auth-key'
-
 export interface AuthPublicKey {
   id: number
   type: number
@@ -38,51 +30,6 @@ export interface AuthUser {
 export interface AuthSessionSnapshot {
   user: AuthUser
   timestamp: number
-}
-
-export interface AuthVaultBundle {
-  version: number
-  identityId: string
-  network: NetworkName
-  secretKind: VaultSecretKind
-  loginKey?: Uint8Array
-  authKeyWif?: string
-  encryptionKeyWif?: string
-  transferKeyWif?: string
-  source: VaultSource
-  updatedAt: number
-}
-
-export interface AuthVaultDocumentRef {
-  $id: string
-}
-
-export interface AuthVaultStatus {
-  configured: boolean
-  hasVault: boolean
-  secretKind?: VaultSecretKind
-  hasPasswordAccess: boolean
-  passkeyCount: number
-  hasEncryptionKey: boolean
-  hasTransferKey: boolean
-  updatedAt?: number
-}
-
-export interface AuthVaultUnlockResult {
-  identityId: string
-  vault: AuthVaultDocumentRef
-  bundle: AuthVaultBundle
-  dek: Uint8Array
-}
-
-export interface PasskeyAccess {
-  $id: string
-  $ownerId: string
-  label: string
-  credentialId?: Uint8Array
-  credentialIdHash?: Uint8Array
-  prfInput?: Uint8Array
-  rpId?: string
 }
 
 export interface PasskeyCredentialDescriptor {
@@ -142,10 +89,6 @@ export interface SecretStore {
   storeLoginKey(identityId: string, loginKey: Uint8Array): MaybePromise<void>
   getLoginKey(identityId: string): MaybePromise<Uint8Array | null>
   clearLoginKey(identityId: string): MaybePromise<void>
-
-  storeAuthVaultDek(identityId: string, dek: Uint8Array): MaybePromise<void>
-  getAuthVaultDek(identityId: string): MaybePromise<Uint8Array | null>
-  clearAuthVaultDek(identityId: string): MaybePromise<void>
 }
 
 export interface IdentityPort {
@@ -172,19 +115,6 @@ export interface ClientIdentityPort {
 export interface SideEffectsPort {
   runPostLogin(identityId: string, context: { delayMs: number; isSessionActive: () => boolean }): MaybePromise<void>
   runLogoutCleanup?(identityId: string): MaybePromise<void>
-}
-
-export interface LegacyPasswordLoginPort {
-  kind: string
-  isConfigured(): boolean
-  loginWithPassword(identityOrUsername: string, password: string): Promise<{ identityId: string; privateKey: string }>
-}
-
-export interface PasskeyPort {
-  getDefaultRpId(): string
-  createPasskeyWithPrf(options: EnrollPasskeyOptions): Promise<PasskeyPrfAssertionResult & { label: string }>
-  getPrfAssertionForCredentials(credentials: PasskeyCredentialDescriptor[]): Promise<PasskeyPrfAssertionResult>
-  selectDiscoverablePasskey(rpId?: string): Promise<DiscoverablePasskeySelectionResult>
 }
 
 export interface PlatformAuthCryptoPort {
@@ -264,54 +194,10 @@ export interface YapprKeyExchangePort {
   ): Promise<boolean>
 }
 
-export interface UnifiedVaultPort {
-  isConfigured(): boolean
-  getStatus(identityId: string): Promise<AuthVaultStatus>
-  hasVault(identityId: string): Promise<boolean>
-  resolveIdentityId(identityOrUsername: string): Promise<string | null>
-  createOrUpdateVaultBundle(identityId: string, bundle: AuthVaultBundle, dek?: Uint8Array): Promise<AuthVaultUnlockResult>
-  mergeSecrets(
-    identityId: string,
-    dek: Uint8Array,
-    partialSecrets: {
-      loginKey?: Uint8Array
-      authKeyWif?: string
-      encryptionKeyWif?: string
-      transferKeyWif?: string
-      source?: VaultSource
-    }
-  ): Promise<AuthVaultUnlockResult | null>
-  unlockWithPassword(identityOrUsername: string, password: string): Promise<AuthVaultUnlockResult>
-  unlockWithPrf(identityId: string, access: PasskeyAccess, prfOutput: Uint8Array): Promise<AuthVaultUnlockResult>
-  getPasskeyAccesses(identityId: string): Promise<PasskeyAccess[]>
-  addPasswordAccess(
-    identityId: string,
-    input: {
-      vaultId: string
-      dek: Uint8Array
-      password: string
-      iterations: number
-      label: string
-    }
-  ): Promise<void>
-  addPasskeyAccess(
-    identityId: string,
-    input: {
-      vaultId: string
-      dek: Uint8Array
-      passkey: PasskeyPrfAssertionResult & { label: string }
-    }
-  ): Promise<void>
-}
-
 export interface PlatformAuthFeatures {
   usernameGate: boolean
   profileGate: boolean
-  passwordLogin: boolean
-  passkeyLogin: boolean
   keyExchangeLogin: boolean
-  authVault: boolean
-  legacyPasswordLogin: boolean
   autoDeriveEncryptionKey: boolean
   postLoginTasks: boolean
   balanceRefresh: boolean
@@ -361,9 +247,6 @@ export interface PlatformAuthDependencies {
   crypto?: PlatformAuthCryptoPort
   yapprKeyExchange?: YapprKeyExchangePort
   yapprKeyExchangeConfig?: Partial<YapprKeyExchangeConfig>
-  vault?: UnifiedVaultPort
-  passkeys?: PasskeyPort
-  legacyPasswordLogins?: LegacyPasswordLoginPort[]
   features?: Partial<PlatformAuthFeatures>
   balanceRefreshMs?: number
   now?: () => number

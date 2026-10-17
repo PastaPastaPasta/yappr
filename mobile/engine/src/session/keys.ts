@@ -52,7 +52,7 @@ const KEY_MISMATCH = 'Private key does not match this identity'
  * Why a key that matches the identity may not sign in. A key of another
  * purpose gets PRD AUTH-08's "Private key does not match this identity", not
  * lib's "(it's a ENCRYPTION key)" (D-L1i-007); a MASTER or low-level
- * authentication key keeps lib's wording (key-validation-service).
+ * authentication key keeps lib's wording (lib/auth/login-key.ts).
  */
 function rejectionMessage(match: KeyMatchResult): string {
   if (match.purpose !== KeyPurpose.AUTHENTICATION) return KEY_MISMATCH
@@ -64,9 +64,8 @@ function rejectionMessage(match: KeyMatchResult): string {
 /**
  * Find the identity for a typed key and check the key may sign in for it:
  * one of the identity's ENABLED AUTHENTICATION keys at CRITICAL or HIGH,
- * matched with `matchIdentityKey`, the matcher session restore uses. (lib's
- * `keyValidationService.validatePrivateKey` ignores `disabledAt`; web bug
- * #616.) Throws KEY_INVALID, KEY_WRONG_NETWORK, IDENTITY_NOT_FOUND ("No
+ * matched with `matchIdentityKey`, the matcher session restore and web's
+ * key sign-in use. Throws KEY_INVALID, KEY_WRONG_NETWORK, IDENTITY_NOT_FOUND ("No
  * identity uses this key") or KEY_NOT_ON_IDENTITY (with lib's reason).
  */
 export async function verifySignInKey(input: string): Promise<VerifiedKey> {
