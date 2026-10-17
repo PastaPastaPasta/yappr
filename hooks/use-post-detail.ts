@@ -8,7 +8,7 @@ import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { isBareRepost, quotedTargetIdOf } from '@/lib/feed/quote-reposts'
 import { hasFlatThreads, referencesMayDangle, repliesOutliveTheirParent, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
 import { deletedReplyStubs, unloadedReplyParents } from '@/lib/feed/deleted-reply-stubs'
-import { assembleFlatThread, buildReplyTree } from '@/lib/feed/reply-thread'
+import { assembleFlatThread, buildReplyTree, byCreatedAtAsc, MAX_NESTED_DEPTH } from '@/lib/feed/reply-thread'
 import { provenAbsent } from '@/lib/feed/prove-absent'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
@@ -72,8 +72,6 @@ interface UsePostDetailResult {
   /** Update a specific reply */
   updateReply: (replyId: string, updates: Partial<Reply>) => void
 }
-
-const byCreatedAtAsc = (a: Reply, b: Reply) => a.createdAt.getTime() - b.createdAt.getTime()
 
 /**
  * Insert `newThread` under the reply with id `parentId`, at any rendered depth.

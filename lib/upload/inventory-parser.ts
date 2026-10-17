@@ -644,12 +644,10 @@ function planAxes(rows: ParsedInventoryRow[], columns: ColumnMap, title: string)
 function collectImages(rows: ParsedInventoryRow[]): { images: string[]; tooLong: string[] } {
   const images: string[] = []
   const tooLong: string[] = []
-  for (const urls of [rows.flatMap((row) => row.imageUrls), rows.map((row) => row.image)]) {
-    for (const url of urls) {
-      if (!url || images.includes(url) || tooLong.includes(url)) continue
-      if (galleryTakes(url)) images.push(url)
-      else tooLong.push(url)
-    }
+  for (const url of [...rows.flatMap((row) => row.imageUrls), ...rows.map((row) => row.image)]) {
+    if (!url || images.includes(url) || tooLong.includes(url)) continue
+    if (galleryTakes(url)) images.push(url)
+    else tooLong.push(url)
   }
   return { images, tooLong }
 }

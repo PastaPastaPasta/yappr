@@ -182,8 +182,7 @@ function createField(value: string | undefined, autoFocus: boolean, resetToken: 
       if (focused && mount.retiring) {
         cancelRetirement();
         publish({ ...mount, focused, retiring: null });
-      }
-      else if (mount.focused !== focused) publish({ ...mount, focused });
+      } else if (mount.focused !== focused) publish({ ...mount, focused });
       return true;
     },
     /** The caller's `value` as a committed render shows it, with its reset token. */

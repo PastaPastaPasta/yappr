@@ -2,14 +2,14 @@ import type { Post, Reply, ReplyThread } from '@/lib/types'
 import { targetKindOf } from '@/lib/contract-topology'
 import { pruneHiddenTombstones } from './hidden-tombstones'
 
-const byCreatedAtAsc = (a: Reply, b: Reply) => a.createdAt.getTime() - b.createdAt.getTime()
+export const byCreatedAtAsc = (a: Reply, b: Reply) => a.createdAt.getTime() - b.createdAt.getTime()
 
 /**
  * Nesting levels rendered inline below a top-level reply. Its children (level 1)
  * indent once and level 2 renders flattened at that same indent; anything deeper
  * is reachable through the "Continue thread" row instead of being rendered.
  */
-const MAX_NESTED_DEPTH = 2
+export const MAX_NESTED_DEPTH = 2
 
 /**
  * Count the descendants of a reply that the tree will not render, so the
