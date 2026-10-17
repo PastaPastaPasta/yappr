@@ -19,13 +19,16 @@ import { isRateLimitedError } from '@/lib/error-utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { useFileDrop } from '@/hooks/use-file-drop'
 import type { Blog, BlogPost } from '@/lib/types'
-import { BlogEditor } from './blog-editor'
+import dynamic from 'next/dynamic'
+
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import toast from 'react-hot-toast'
 import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
 import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
+
+const BlogEditor = dynamic(() => import('./blog-editor').then((module) => module.BlogEditor), { ssr: false })
 
 interface ComposePostProps {
   blog: Blog

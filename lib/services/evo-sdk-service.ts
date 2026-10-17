@@ -1,5 +1,5 @@
 import { logger } from '@/lib/logger';
-import { DataContract, EvoSDK, PlatformVersion } from '@dashevo/evo-sdk';
+import type { EvoSDK } from '@dashevo/evo-sdk';
 import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
 import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
@@ -13,9 +13,10 @@ import { installReadRetry } from './sdk-read-retry';
 export interface EvoSdkConfig {
   network: AppNetwork;
   contractId: string;
-  /** Devnet only; defaults to the NEXT_PUBLIC_* values in lib/constants. */
+  /** Explicit devnet topology; defaults to NEXT_PUBLIC_* values in lib/constants. */
   devnetName?: string;
   addresses?: readonly string[];
+  /** Trusted quorum service override on any network. */
   quorumUrl?: string;
 }
 
@@ -121,8 +122,11 @@ class EvoSdkService {
     }
 
     try {
+      const { EvoSDK } = await import('@dashevo/evo-sdk');
+      installDapiPathShim(this.config.addresses ?? DAPI_ADDRESSES);
       logger.debug('EvoSdkService: Creating EvoSDK instance...');
 
+      const quorumUrl = this.config.quorumUrl ?? DEVNET_QUORUM_URL;
       // Create SDK with trusted mode based on network
       if (this.config.network === 'devnet') {
         // Devnets have no public masternode discovery, so the address pool is
@@ -136,7 +140,6 @@ class EvoSdkService {
         // a quorum service. Configure it with NEXT_PUBLIC_QUORUM_URL.
         const devnetName = this.config.devnetName ?? DEVNET_NAME;
         const addresses = [...(this.config.addresses ?? DAPI_ADDRESSES)];
-        const quorumUrl = this.config.quorumUrl ?? DEVNET_QUORUM_URL;
         if (addresses.length === 0) {
           throw new Error(
             'Devnet requires an explicit DAPI address pool — set NEXT_PUBLIC_DAPI_ADDRESSES'
@@ -145,7 +148,6 @@ class EvoSdkService {
         logger.debug(`EvoSdkService: Building devnet (${devnetName}) SDK with ${addresses.length} addresses...`);
         // The wasm transport requests `<address>//org.dash.platform…`, which a
         // gateway without merge_slashes refuses; see dapi-path-shim.ts.
-        installDapiPathShim(addresses);
         this.sdk = new EvoSDK({
           network: 'devnet',
           devnetName,
@@ -159,6 +161,7 @@ class EvoSdkService {
       } else if (this.config.network === 'testnet') {
         logger.debug('EvoSdkService: Building testnet SDK in trusted mode...');
         this.sdk = EvoSDK.testnetTrusted({
+          ...(quorumUrl ? { quorumUrl } : {}),
           settings: {
             timeoutMs: 8000,
           }
@@ -166,6 +169,7 @@ class EvoSdkService {
       } else {
         logger.debug('EvoSdkService: Building mainnet SDK in trusted mode...');
         this.sdk = EvoSDK.mainnetTrusted({
+          ...(quorumUrl ? { quorumUrl } : {}),
           settings: {
             timeoutMs: 8000,
           }
@@ -315,6 +319,7 @@ class EvoSdkService {
     const seeded = new Set<string>();
     const bundle = await this._bundle();
     if (!bundle) return seeded;
+    const { DataContract, PlatformVersion } = await import('@dashevo/evo-sdk');
     const platformVersion = PlatformVersion.latest();
     for (const id of ids) {
       const entry = bundle.contracts[id];
@@ -416,7 +421,7 @@ class EvoSdkService {
     const config = this.config;
     if (!config) throw new Error('SDK not configured. Call initialize() first.');
 
-    const wait = this.lastRebuildAt + MIN_REBUILD_INTERVAL_MS - Date.now();
+    const wait = this.lastRebuildAt + MIN_REBUILD_INTERVAL_MS * (1 + Math.random() * 0.2) - Date.now();
     if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
     this.lastRebuildAt = Date.now();
 

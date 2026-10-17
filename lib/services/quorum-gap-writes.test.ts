@@ -16,7 +16,7 @@ const sdk = vi.hoisted(() => ({
 }))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
-vi.mock('@dashevo/evo-sdk', () => ({
+vi.mock('@dashevo/wasm-sdk', () => ({
   Identifier: class { constructor(readonly id: string) {} },
   PrivateKey: { fromWIF: () => ({}) },
   StateTransition: { fromBytes: () => ({}) },

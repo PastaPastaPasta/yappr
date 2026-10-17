@@ -1,5 +1,5 @@
 import { logger } from '@/lib/logger';
-import { Document, PlatformVersion } from '@dashevo/evo-sdk';
+import { Document, PlatformVersion } from '@dashevo/wasm-sdk';
 import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { keyNetwork } from '@/lib/constants';

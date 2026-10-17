@@ -40,8 +40,14 @@ function attachFlush(engine: DmEngine): () => void {
     engine.flush().catch(() => undefined)
   }
   const onVisibility = () => {
-    if (document.visibilityState === 'hidden') flush()
+    if (document.hidden) {
+      engine.pause()
+      flush()
+    } else {
+      engine.resume().catch(() => undefined)
+    }
   }
+  if (document.hidden) engine.pause()
   document.addEventListener('visibilitychange', onVisibility)
   window.addEventListener('pagehide', flush)
   return () => {

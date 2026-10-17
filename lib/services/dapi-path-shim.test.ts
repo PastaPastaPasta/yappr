@@ -18,9 +18,16 @@ describe('rewriteDapiUrl', () => {
     expect(rewriteDapiUrl(`${NODE}/${METHOD}`, ORIGINS)).toBeNull()
   })
 
-  it('leaves other hosts alone, even with the same doubled path', () => {
-    expect(rewriteDapiUrl(`https://68.67.122.225:1443//${METHOD}`, ORIGINS)).toBeNull()
-    expect(rewriteDapiUrl(`https://68.67.122.224:443//${METHOD}`, ORIGINS)).toBeNull()
+  it('covers discovered testnet nodes without an explicit address list', () => {
+    expect(rewriteDapiUrl(`https://68.67.122.225:1443//${METHOD}`, new Set())).toBe(`https://68.67.122.225:1443/${METHOD}`)
+  })
+
+  it('covers discovered mainnet nodes on the default HTTPS port', () => {
+    expect(rewriteDapiUrl(`https://mainnet.example:443//${METHOD}`, new Set())).toBe(`https://mainnet.example/${METHOD}`)
+  })
+
+  it('leaves other protocols and ports alone', () => {
+    expect(rewriteDapiUrl(`https://68.67.122.224:8443//${METHOD}`, ORIGINS)).toBeNull()
     expect(rewriteDapiUrl(`http://68.67.122.224:1443//${METHOD}`, ORIGINS)).toBeNull()
   })
 
@@ -110,9 +117,9 @@ describe('installDapiPathShim', () => {
     expect(calls[0].url).toBe(`https://68.67.122.242:1443/${METHOD}`)
   })
 
-  it('does nothing without a usable address', () => {
-    const before = globalThis.fetch
-    installDapiPathShim(['', 'not a url'])
-    expect(globalThis.fetch).toBe(before)
+  it('installs without configured addresses for networks using discovery', async () => {
+    installDapiPathShim()
+    await fetch(`https://68.67.122.225:1443//${METHOD}`)
+    expect(calls[0].url).toBe(`https://68.67.122.225:1443/${METHOD}`)
   })
 })

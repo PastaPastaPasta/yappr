@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-import { Identifier } from '@dashevo/evo-sdk';
+import { Identifier } from '@dashevo/wasm-sdk';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';

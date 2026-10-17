@@ -46,6 +46,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { notificationService } from '@/lib/services'
 import { directMessageService } from '@/lib/services/direct-message-service'
 import { useDmV5Badge } from '@/components/messages/use-dm-engine'
+import { startVisibilityPolling } from '@/lib/poll-scheduling'
 import { dmIsV5 } from '@/lib/constants'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { LegalLinks } from './legal-links'
@@ -144,17 +145,10 @@ export function Sidebar() {
     }
 
     const userId = user.identityId
-    let timeoutId: NodeJS.Timeout | null = null
     let cancelled = false
 
-    async function fetchAndSchedule(isInitial: boolean): Promise<void> {
+    async function fetchNotifications(isInitial: boolean): Promise<void> {
       if (cancelled) return
-
-      // Skip poll if page is hidden (but still schedule next poll)
-      if (!isInitial && document.hidden) {
-        timeoutId = setTimeout(() => fetchAndSchedule(false), NOTIFICATION_POLL_INTERVAL)
-        return
-      }
 
       const store = useNotificationStore.getState()
 
@@ -195,25 +189,28 @@ export function Sidebar() {
         // a block made on another device): re-check what is already shown.
         const blocked = await notificationService.blockedAmongHeld(userId, useNotificationStore.getState().notifications)
         if (!cancelled && blocked) useNotificationStore.getState().pruneBlocked(blocked, userId)
-      } catch (error) {
-        logger.error('Notification fetch error:', error)
+        // A partial source failure keeps its watermark; it must also slow retries.
+        if (result.failure !== undefined) throw result.failure
       } finally {
         if (isInitial && !cancelled) {
           store.setLoading(false)
           store.setHasFetchedOnce(true)
         }
       }
-
-      if (!cancelled) {
-        timeoutId = setTimeout(() => fetchAndSchedule(false), NOTIFICATION_POLL_INTERVAL)
-      }
     }
 
-    fetchAndSchedule(true).catch((err) => logger.error('Notification fetch failed:', err))
+    let initial = true
+    const stopPolling = startVisibilityPolling(async () => {
+      try {
+        await fetchNotifications(initial)
+      } finally {
+        initial = false
+      }
+    }, NOTIFICATION_POLL_INTERVAL, (error) => logger.error('Notification fetch failed:', error), true)
 
     return () => {
       cancelled = true
-      if (timeoutId) clearTimeout(timeoutId)
+      stopPolling()
     }
   }, [user?.identityId, dmV5])
   

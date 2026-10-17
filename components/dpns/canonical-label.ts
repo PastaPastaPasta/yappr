@@ -1,4 +1,4 @@
-import { WasmSdk } from '@dashevo/evo-sdk'
+import { WasmSdk } from '@dashevo/wasm-sdk'
 
 /**
  * The label DPNS compares on: homograph-safe, so case, o/0 and i/l/1 all fold

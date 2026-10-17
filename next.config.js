@@ -39,30 +39,16 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  webpack: (config, { isServer }) => {
-    // Optimize EvoSDK bundle size
-    if (!isServer) {
-      config.optimization = {
-        ...config.optimization,
-        splitChunks: {
-          chunks: 'all',
-          cacheGroups: {
-            dashevo: {
-              test: /[\\/]node_modules[\\/]@dashevo[\\/]/,
-              name: 'evo-sdk',
-              priority: 10,
-              reuseExistingChunk: true,
-            },
-          },
-        },
-      }
-    }
-
+  webpack: (config) => {
+    // Keep Next's chunk splitting: merging every @dashevo module into one
+    // chunk pulls the async WASM initializer into the eager class imports.
     // @dashevo/evo-sdk's published entry is a webpack bundle that inlines its own
     // copy of @dashevo/wasm-sdk (glue + gzip/base64 wasm). Resolve the unbundled
     // ESM build instead so evo-sdk and our direct wasm-sdk imports share one copy.
     config.resolve.alias = {
       ...config.resolve.alias,
+      // Class-only imports need the shared glue, never the uncompressed inline initializer.
+      '@dashevo/wasm-sdk$': path.resolve(__dirname, 'node_modules/@dashevo/wasm-sdk/dist/raw/wasm_sdk.no_url.js'),
       '@dashevo/evo-sdk$': path.resolve(__dirname, 'node_modules/@dashevo/evo-sdk/dist/sdk.js'),
     }
     // Handle WASM files (required for @dashevo/evo-sdk)

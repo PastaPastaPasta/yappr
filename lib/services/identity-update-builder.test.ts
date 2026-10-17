@@ -5,7 +5,6 @@ const ANCHOR = bs58.encode(new Uint8Array(32).fill(1))
 const IDENTITY = bs58.encode(new Uint8Array(32).fill(7))
 
 const mocks = vi.hoisted(() => ({ publicKeys: [] as unknown[] }))
-vi.mock('@dashevo/wasm-sdk/compressed', () => ({ default: async () => undefined }))
 vi.mock('./evo-sdk-service', () => ({
   getEvoSdk: async () => ({
     identities: {

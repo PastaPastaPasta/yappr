@@ -64,7 +64,7 @@ vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))
 const walletSession = vi.hoisted(() => ({ active: false }))
 vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => walletSession.active }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true }) }))
-vi.mock('@dashevo/evo-sdk', () => ({
+vi.mock('@dashevo/wasm-sdk', () => ({
   Document: { fromBytes },
   PlatformVersion: { latest: () => 'latest' },
 }))

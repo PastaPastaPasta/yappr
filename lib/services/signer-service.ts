@@ -4,12 +4,11 @@
  * This service provides utilities for creating signers and identity public keys
  * for use with the new typed state transition APIs in @dashevo/evo-sdk
  *
- * IMPORTANT: We import WASM types from @dashevo/evo-sdk which re-exports them from
- * @dashevo/wasm-sdk. By calling getEvoSdk() first, we ensure the shared WASM module
+ * IMPORTANT: WASM classes come from @dashevo/wasm-sdk; evo-sdk uses the same glue module. By calling getEvoSdk() first, we ensure the shared WASM module
  * is initialized before creating any WASM objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import { IdentitySigner } from '@dashevo/evo-sdk';
+import { IdentitySigner } from '@dashevo/wasm-sdk';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { toCompressedWif } from '@/lib/crypto/wif';
 
