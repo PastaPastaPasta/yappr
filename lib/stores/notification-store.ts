@@ -9,7 +9,44 @@ import type { NotificationSettings } from '@/lib/store';
 // At ~44 chars per base58 ID, 1000 IDs ≈ 44KB, well under localStorage limits
 const MAX_READ_IDS = 1000;
 
-type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'privateFeed';
+/**
+ * A held notification as the viewer may see it, given who they block: an
+ * aggregated like loses just its blocked likers (the one shown and the count
+ * follow) and goes only when none is left; anything else goes when its actor
+ * is blocked. Null when nothing is left. Shared by the web store and the
+ * mobile engine's live block filter.
+ */
+export function withoutBlockedActors(notification: Notification, isBlocked: (id: string) => boolean): Notification | null {
+  const { likers } = notification;
+  if (!likers) return isBlocked(notification.from.id) ? null : notification;
+  const kept = likers.filter(liker => !isBlocked(liker.id));
+  if (kept.length === likers.length) return notification;
+  if (kept.length === 0) return null;
+  const likerCount = Math.max(kept.length, (notification.likerCount ?? likers.length) - (likers.length - kept.length));
+  return { ...notification, from: kept[0], likers: kept, likerCount };
+}
+
+/**
+ * How long a block made here keeps a fetch that was already running from
+ * bringing the actor back. Longer than any notification fetch takes; after
+ * that the service's own block filter (which also sees blocks lifted on other
+ * devices) and the held re-check decide.
+ */
+const SESSION_EXCLUSION_MS = 5 * 60 * 1000;
+
+interface SessionBlock {
+  actorId: string;
+  until: number;
+}
+
+function withoutSessionBlocks(notifications: Notification[], blockedActors: SessionBlock[]): Notification[] {
+  const now = Date.now();
+  const blocked = new Set(blockedActors.filter(block => block.until > now).map(block => block.actorId));
+  if (blocked.size === 0) return notifications;
+  return notifications.flatMap(n => withoutBlockedActors(n, id => blocked.has(id)) ?? []);
+}
+
+type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'store' | 'privateFeed';
 
 /**
  * Add IDs to read set and prune if exceeds limit
@@ -50,9 +87,35 @@ interface NotificationState {
   // Read state (persisted)
   readIds: string[];
 
+  /** The signed-in account the session state below belongs to. */
+  viewerId: string | null;
+  /**
+   * Actors `viewerId` just blocked here. A fetch that was already running when
+   * the block landed must not bring them back, so every ingest filters them
+   * (per liker, as {@link withoutBlockedActors}) until `until`. Not persisted
+   * and short-lived: each fetch filters blocks itself; this only covers the
+   * ones in flight, so a block lifted elsewhere isn't held here.
+   */
+  blockedActors: SessionBlock[];
+
   // Actions
   setNotifications: (notifications: Notification[]) => void;
   addNotifications: (notifications: Notification[]) => void;
+  /**
+   * `viewerId` just blocked this actor: drop their held notifications and keep
+   * them out of fetches still running. Ignored when another account is
+   * signed in by now (a block that finished after a switch).
+   */
+  removeFromActor: (actorId: string, viewerId: string) => void;
+  /** `viewerId` unblocked this actor: their new notifications show again. Ignored for another account. */
+  allowActor: (actorId: string, viewerId: string) => void;
+  /**
+   * Drop the held notifications of actors `viewerId` blocks now, by any route
+   * (own block or a followed block list), per liker. Ignored for another account.
+   */
+  pruneBlocked: (blockedIds: ReadonlySet<string>, viewerId: string) => void;
+  /** The account signed in now (null when signed out); another account's session blocks are forgotten. */
+  setViewer: (viewerId: string | null) => void;
   setFilter: (filter: NotificationFilter) => void;
   markAsRead: (id: string) => void;
   /**
@@ -80,12 +143,14 @@ export const useNotificationStore = create<NotificationState>()(
       isLoading: false,
       hasFetchedOnce: false,
       readIds: [],
+      viewerId: null,
+      blockedActors: [],
       dmUnreadCount: 0,
 
       // Actions
       setNotifications: (notifications) => {
         const readIdsSet = new Set(get().readIds);
-        const withReadStatus = notifications.map(n => ({
+        const withReadStatus = withoutSessionBlocks(notifications, get().blockedActors).map(n => ({
           ...n,
           read: readIdsSet.has(n.id)
         }));
@@ -98,7 +163,7 @@ export const useNotificationStore = create<NotificationState>()(
         const readIdsSet = new Set(state.readIds);
 
         // Filter out duplicates and set read status
-        const uniqueNew = newNotifications
+        const uniqueNew = withoutSessionBlocks(newNotifications, state.blockedActors)
           .filter(n => !existingIds.has(n.id))
           .map(n => ({
             ...n,
@@ -112,6 +177,36 @@ export const useNotificationStore = create<NotificationState>()(
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
         set({ notifications: merged });
+      },
+
+      removeFromActor: (actorId, viewerId) => {
+        const state = get();
+        if (state.viewerId !== viewerId) return;
+        const until = Date.now() + SESSION_EXCLUSION_MS;
+        set({
+          notifications: withoutSessionBlocks(state.notifications, [{ actorId, until }]),
+          blockedActors: [...state.blockedActors.filter(block => block.actorId !== actorId && block.until > Date.now()), { actorId, until }],
+        });
+      },
+
+      setViewer: (viewerId) => {
+        if (get().viewerId !== viewerId) set({ viewerId, blockedActors: [] });
+      },
+
+      pruneBlocked: (blockedIds, viewerId) => {
+        const state = get();
+        if (state.viewerId !== viewerId || blockedIds.size === 0) return;
+        const notifications = state.notifications.flatMap(n => withoutBlockedActors(n, id => blockedIds.has(id)) ?? []);
+        if (notifications.length !== state.notifications.length || notifications.some((n, i) => n !== state.notifications[i])) {
+          set({ notifications });
+        }
+      },
+
+      allowActor: (actorId, viewerId) => {
+        const { blockedActors, viewerId: current } = get();
+        if (current === viewerId && blockedActors.some(block => block.actorId === actorId)) {
+          set({ blockedActors: blockedActors.filter(block => block.actorId !== actorId) });
+        }
       },
 
       setFilter: (filter) => set({ filter }),
@@ -155,6 +250,7 @@ export const useNotificationStore = create<NotificationState>()(
       clearNotifications: () => set({
         notifications: [],
         lastFetchTimestamp: 0,
+        blockedActors: [],
         dmUnreadCount: 0
       }),
 

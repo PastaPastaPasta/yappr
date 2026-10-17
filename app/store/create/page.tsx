@@ -16,6 +16,9 @@ import { parseStorePolicies, serializeStorePolicies, isPoliciesWithinLimit } fro
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { extractErrorMessage } from '@/lib/error-utils'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
+import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import { storefrontIsV6 } from '@/lib/constants'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { STORE_CATEGORY_MAX_LENGTH, isStoreImageUrl, normalizeStoreCategory, storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
@@ -36,6 +39,8 @@ function CreateStorePage() {
   const [isLoading, setIsLoading] = useState(isEditMode)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Testnet registers the storefront `notYetUsable`: stores open with its first seated team (41200 before).
+  const storesOpen = useModeratedTypeOpen('store', true, 'storefront')
 
   // Form state
   const [name, setName] = useState('')
@@ -179,7 +184,9 @@ function CreateStorePage() {
       }
     } catch (err) {
       logger.error(`Failed to ${isEditMode ? 'update' : 'create'} store:`, err)
-      if (!isEditMode && /duplicate unique properties/i.test(extractErrorMessage(err))) {
+      if (reportModerationRefusal(err, user.identityId, 'storefront')) {
+        setError(null)
+      } else if (!isEditMode && /duplicate unique properties/i.test(extractErrorMessage(err))) {
         setError(ONE_STORE_MESSAGE)
       } else {
         setError(err instanceof Error ? err.message : `Failed to ${isEditMode ? 'update' : 'create'} store`)
@@ -210,6 +217,7 @@ function CreateStorePage() {
             </div>
           ) : (
           <form onSubmit={handleSubmit} className="p-4 space-y-6">
+            {!storesOpen && <ModerationClosedNotice product="storefront" />}
             {/* Store Icon */}
             <div className="flex justify-center">
               <div className="w-24 h-24 rounded-xl bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
@@ -388,7 +396,7 @@ function CreateStorePage() {
             <div className="pt-4">
               <Button
                 type="submit"
-                disabled={isSubmitting || !name.trim()}
+                disabled={isSubmitting || !name.trim() || !storesOpen}
                 className="w-full"
               >
                 {isSubmitting

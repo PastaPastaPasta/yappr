@@ -15,6 +15,9 @@ import { STOREFRONT_YAPP_TOKEN_COSTS, storefrontIsV2 } from '@/lib/constants'
 import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import toast from 'react-hot-toast'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
+import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import type { StoreOrder, Store, OrderPayload } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 
@@ -60,6 +63,8 @@ export function ReviewModal({
   const [content, setContent] = useState('')
   const [itemRatings, setItemRatings] = useState<Record<string, number>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // Testnet registers the storefront `notYetUsable`: reviews open with its first seated team (41200 before).
+  const reviewsOpen = useModeratedTypeOpen('storeReview', isOpen, 'storefront')
 
   // One entry per distinct purchased item (variants collapse onto the item).
   // Item reviews only exist on the v2 contract.
@@ -69,7 +74,7 @@ export function ReviewModal({
   const ratedItems = Object.entries(itemRatings).filter(([, value]) => value > 0)
   const costLabel = reviewCostLabel(ratedItems.length)
 
-  const canSubmit = rating >= 1 && rating <= 5 && !isSubmitting
+  const canSubmit = reviewsOpen && rating >= 1 && rating <= 5 && !isSubmitting
 
   const handleSubmit = async () => {
     if (!canSubmit) return
@@ -100,7 +105,11 @@ export function ReviewModal({
           })
         } catch (error) {
           logger.error(`Failed to submit item review for ${itemId}:`, error)
-          if (handleInsufficientYapp(error, 'You ran out of YAPP before every item review was posted.')) {
+          // Out of YAPP, or refused by the storefront's moderation (closed, or the buyer
+          // barred): every later rating would fail the same way, and a refusal is paid.
+          const stop = reportModerationRefusal(error, order.buyerId, 'storefront')
+            || handleInsufficientYapp(error, 'You ran out of YAPP before every item review was posted.')
+          if (stop) {
             // Nothing after this one was attempted either.
             failedItems.push(...ratedItems.slice(index).map(([id]) => id))
             break
@@ -119,7 +128,7 @@ export function ReviewModal({
     } catch (error) {
       logger.error('Failed to submit review:', error)
       // Only a v2–v5 review pays YAPP, so on v6 this is never an insufficient-YAPP refusal.
-      if (!handleInsufficientYapp(error, `A review costs ${costLabel}.`)) {
+      if (!reportModerationRefusal(error, order.buyerId, 'storefront') && !handleInsufficientYapp(error, `A review costs ${costLabel}.`)) {
         toast.error('Failed to submit review. Please try again.')
       }
     } finally {
@@ -149,18 +158,17 @@ export function ReviewModal({
 
                     {/* Content */}
                     <div className="p-4 space-y-4">
+                      {!reviewsOpen && <ModerationClosedNotice product="storefront" />}
                       {/* Store Info */}
                       <div className="flex items-center gap-3 pb-4 border-b border-gray-100 dark:border-gray-800">
                         <div className="w-12 h-12 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
-                          {store.logoUrl ? (
-                            <IpfsImage
-                              src={store.logoUrl}
-                              alt={store.name}
-                              className="w-full h-full rounded-lg object-cover"
-                            />
-                          ) : (
-                            <BuildingStorefrontIcon className="h-6 w-6 text-gray-400" />
-                          )}
+                          <IpfsImage
+                            src={store.logoUrl ?? ''}
+                            size="avatar"
+                            alt={store.name}
+                            className="w-full h-full rounded-lg object-cover"
+                            fallback={<BuildingStorefrontIcon className="h-6 w-6 text-gray-400" />}
+                          />
                         </div>
                         <div>
                           <p className="font-medium">{store.name}</p>

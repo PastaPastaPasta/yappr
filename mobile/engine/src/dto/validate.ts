@@ -178,14 +178,14 @@ export const blockedUserDTO = object({ ...authorKeys, message: nullable(nonEmpty
 export const notificationDTO = object(
   {
     id: nonEmpty,
-    type: literal('follow', 'mention', 'like', 'repost', 'quote', 'reply', 'privateFeedRequest', 'privateFeedApproved', 'privateFeedRevoked', 'blogPost', 'blogComment'),
+    type: literal('follow', 'mention', 'like', 'repost', 'quote', 'reply', 'privateFeedRequest', 'privateFeedApproved', 'privateFeedRevoked', 'blogPost', 'blogComment', 'storeOrder', 'storeReview', 'itemReview', 'orderStatus'),
     actor: authorDTO,
     at: date,
     read: bool,
     target: nullable(object({ id, kind: literal('post', 'reply') })),
     preview: nullable(postDTO),
   },
-  { blog: object({ blogId: nonEmpty, slug: nonEmpty }), likers: count, noticed: bool },
+  { blog: object({ blogId: nonEmpty, slug: nonEmpty }), likers: count, noticed: bool, store: object({ phrase: nonEmpty, snippet: nullable(str), path: nullable(nonEmpty) }) },
 )
 
 /** Every problem with `value`, as `path: message` lines; empty when it is valid. */

@@ -9,8 +9,9 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { logger } from '@/lib/logger'
-import { moderatorDeleteWindowSeconds, targetKindOf } from '@/lib/contract-topology'
-import { countedSigners, moderationService, type RemovalRoute, type TeamAction } from '@/lib/services/moderation-service'
+import { moderatedContract } from '@/lib/moderated-contracts'
+import { forgetModeratedReads } from '@/lib/moderation-refresh'
+import { countedSigners, moderationServiceFor, type RemovalRoute, type TeamAction } from '@/lib/services/moderation-service'
 import { CharterReasonPicker, useSeatedReasons } from './charter-reason-picker'
 
 /** "7 days" for a window of 604800 seconds; hours below a day. */
@@ -22,10 +23,11 @@ function windowLabel(seconds: number | null): string {
 }
 
 /**
- * A moderator's takedown of a post or reply. Unlike the owner's tombstone,
- * this DELETES the document: it stops resolving everywhere, every reference
- * at it dangles, and a removal record with the reason stays under the
- * contract for anyone to read.
+ * A moderator's takedown of a document on any moderated contract: a post or
+ * reply, a store, listing or review, a blog, blog post or comment. Unlike the
+ * owner's own delete, this DELETES the document: it stops resolving
+ * everywhere, every reference at it dangles, and a removal record with the
+ * reason stays under its contract for anyone to read.
  *
  * On v11 a post or reply settles a week after it was written: past that no
  * moderator removes it alone (41116). A member of the seated team proposes a
@@ -35,15 +37,17 @@ function windowLabel(seconds: number | null): string {
  */
 export function ModeratorRemoveModal() {
   const { user } = useAuth()
-  const { isOpen, post, onRemoved, close } = useModeratorRemoveModal()
+  const { isOpen, target, onRemoved, close } = useModeratorRemoveModal()
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
+  const contract = target?.contract ?? 'social'
+  const service = moderationServiceFor(contract)
   /**
    * A seated elected team must cite one of its charter's reasons on every
    * deletion (41203). Read only while the modal is open (only moderators can
    * open it), and again on every open, so a team seated mid-session is seen.
    */
-  const seatedReasons = useSeatedReasons(isOpen)
+  const seatedReasons = useSeatedReasons(isOpen, contract)
   const [reasonDocumentId, setReasonDocumentId] = useState('')
   /** How this viewer may remove the post: null while it is being worked out (a settled post reads the seated team). */
   const [route, setRoute] = useState<RemovalRoute | null>(null)
@@ -56,13 +60,15 @@ export function ModeratorRemoveModal() {
   const [existing, setExisting] = useState<(TeamAction & { approvals: number; viewerSigned: boolean }) | null>(null)
   /** Bumped on every open and reroute, so a late answer for an earlier post or route is dropped. */
   const routeRequest = useRef(0)
-  const kind = post ? targetKindOf(post) : 'post'
-  const noun = kind === 'reply' ? 'reply' : 'post'
+  const kind = target?.docType ?? 'post'
+  const noun = target?.noun ?? 'post'
+  const Noun = noun.charAt(0).toUpperCase() + noun.slice(1)
   const viewerId = user?.identityId
-  const postId = post?.id
-  const createdAtMs = post?.createdAt ? new Date(post.createdAt).getTime() : Number.NaN
-  /** No deletion window (v2, v9, v10): always the single removal, known without reading anything. */
-  const windowless = moderatorDeleteWindowSeconds(kind) === null
+  const postId = target?.documentId
+  const createdAtMs = target?.createdAt ?? Number.NaN
+  /** No deletion window (social v2-v10, storefront, blog): always the single removal, known without reading anything. */
+  const windowSeconds = moderatedContract(contract).deleteWindowSeconds(kind)
+  const windowless = windowSeconds === null
 
   /**
    * Works out the route (and, for the team route, any proposal already
@@ -77,10 +83,10 @@ export function ModeratorRemoveModal() {
     setExisting(null)
     // A post whose time is unknown is routed as written at 0 once the node says it settled.
     const createdAt = now !== undefined && !Number.isFinite(createdAtMs) ? 0 : createdAtMs
-    moderationService.removalRoute(viewerId, kind, createdAt, now).then(async (next) => {
-      const proposed = next.route === 'team' ? await moderationService.findActiveTeamAction(postId) : null
+    service.removalRoute(viewerId, kind, createdAt, now).then(async (next) => {
+      const proposed = next.route === 'team' ? await service.findActiveTeamAction(postId) : null
       const [signers, seated] = proposed
-        ? await Promise.all([moderationService.teamActionSigners(proposed.actionId, 'active'), moderationService.getSeatedTeam()])
+        ? await Promise.all([service.teamActionSigners(proposed.actionId, 'active'), service.getSeatedTeam()])
         : [[], null]
       if (routeRequest.current !== request) return
       setExisting(proposed && {
@@ -93,7 +99,7 @@ export function ModeratorRemoveModal() {
       logger.warn('ModeratorRemoveModal: could not read the seated team or its actions', error)
       if (routeRequest.current === request) setRouteFailed(true)
     })
-  }, [postId, viewerId, kind, createdAtMs, windowless])
+  }, [service, postId, viewerId, kind, createdAtMs, windowless])
 
   useEffect(() => {
     if (isOpen) {
@@ -107,6 +113,12 @@ export function ModeratorRemoveModal() {
     setExisting(null)
     setRouteFailed(false)
   }, [isOpen, loadRoute])
+
+  /** The document is gone: cached reads that counted or showed it are dropped before the view updates. */
+  const afterRemoval = () => {
+    forgetModeratedReads(contract)
+    onRemoved?.()
+  }
 
   const reset = () => {
     setReason('')
@@ -134,9 +146,9 @@ export function ModeratorRemoveModal() {
   }
 
   const handleRemove = async () => {
-    if (!post || !user || busy || !reasonReady()) return
+    if (!target || !user || busy || !reasonReady()) return
     setBusy(true)
-    const result = await moderationService.removeDocument(user.identityId, kind, post.id, {
+    const result = await service.removeDocument(user.identityId, kind, target.documentId, {
       text: reason.trim(),
       ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
     })
@@ -161,7 +173,7 @@ export function ModeratorRemoveModal() {
       // Already removed (by another moderator, or an earlier attempt whose
       // answer was lost): what was asked for holds.
       toast(result.error ?? `This ${noun} is already gone`, { duration: 6000 })
-      onRemoved?.()
+      afterRemoval()
       reset()
       close()
       return
@@ -170,23 +182,23 @@ export function ModeratorRemoveModal() {
       toast.error(result.error || 'Removal failed')
       return
     }
-    const removed = `${noun === 'reply' ? 'Reply' : 'Post'} removed`
+    const removed = `${Noun} removed`
     toast.success(result.snapshotSaved
       ? `${removed}. A copy is kept on this device for a week, so it can be restored from the moderation settings.`
       : `${removed}. No copy could be kept on this device, so it cannot be restored.`)
-    onRemoved?.()
+    afterRemoval()
     reset()
     close()
   }
 
   const handlePropose = async () => {
-    if (!post || !user || busy || route?.route !== 'team' || !route.reachable || !reasonReady()) return
+    if (!target || !user || busy || route?.route !== 'team' || !route.reachable || !reasonReady()) return
     if (!reasonDocumentId) {
       toast.error('Choose the charter reason this removal is taken on')
       return
     }
     setBusy(true)
-    const result = await moderationService.proposeSettledDeletion(user.identityId, kind, post.id, { text: reason.trim(), reasonDocumentId })
+    const result = await service.proposeSettledDeletion(user.identityId, kind, target.documentId, { text: reason.trim(), reasonDocumentId })
     setBusy(false)
     if (result.errorCode === 'MAYBE_APPLIED') {
       toast(result.error ?? 'The proposal may have gone through. Check the team actions before proposing again.', { duration: 8000 })
@@ -208,8 +220,8 @@ export function ModeratorRemoveModal() {
       return
     }
     if (result.status === 'closed') {
-      toast.success(`${noun === 'reply' ? 'Reply' : 'Post'} removed by the team. A team removal cannot be undone.`)
-      onRemoved?.()
+      toast.success(`${Noun} removed by the team. A team removal cannot be undone.`)
+      afterRemoval()
     } else {
       const more = route.needed - 1
       toast.success(`Team removal proposed. It needs ${more} more approval${more === 1 ? '' : 's'}${route.leaderRequired && !route.viewerIsLeader ? ', the leader\'s among them' : ''}; members approve it from the moderation settings.`, { duration: 8000 })
@@ -222,7 +234,7 @@ export function ModeratorRemoveModal() {
   const handleApproveExisting = async () => {
     if (!user || busy || !existing || existing.viewerSigned) return
     setBusy(true)
-    const result = await moderationService.approveTeamAction(user.identityId, existing.actionId)
+    const result = await service.approveTeamAction(user.identityId, existing.actionId)
     setBusy(false)
     if (result.errorCode === 'MAYBE_APPLIED') {
       toast(result.error ?? 'Your approval may have gone through. Check again before retrying.', { duration: 8000 })
@@ -230,8 +242,8 @@ export function ModeratorRemoveModal() {
       toast.error(result.error || 'Approval failed')
       return
     } else if (result.status === 'closed') {
-      toast.success(`${noun === 'reply' ? 'Reply' : 'Post'} removed by the team. A team removal cannot be undone.`)
-      onRemoved?.()
+      toast.success(`${Noun} removed by the team. A team removal cannot be undone.`)
+      afterRemoval()
     } else {
       toast.success('Approved. The removal runs once the rest of the team approves it.')
     }
@@ -239,7 +251,7 @@ export function ModeratorRemoveModal() {
     close()
   }
 
-  const windowText = windowLabel(moderatorDeleteWindowSeconds(kind))
+  const windowText = windowLabel(windowSeconds)
   const effectiveRoute: RemovalRoute | null = windowless ? { route: 'single', closing: false } : route
   const team = effectiveRoute?.route === 'team' ? effectiveRoute : null
   const blocked = effectiveRoute?.route === 'none' ? effectiveRoute : null
@@ -260,7 +272,7 @@ export function ModeratorRemoveModal() {
             {!team.reachable && (
               <span data-testid="moderator-remove-unreachable" className="block mt-2 text-red-600 dark:text-red-400">
                 The team has fewer people than the {team.needed} approvals a team removal needs, so a proposal could never
-                run. The team must add a member before it can remove settled posts.
+                run. The team must add a member before it can remove anything that has settled.
               </span>
             )}
             {existing && (
@@ -291,9 +303,9 @@ export function ModeratorRemoveModal() {
           </>
         )}
       </Dialog.Description>
-      {post && (
+      {target?.preview && (
         <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">{post.content}</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">{target.preview}</p>
         </div>
       )}
       {routeFailed && (

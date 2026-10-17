@@ -11,6 +11,9 @@ import {
   LockClosedIcon,
   LockOpenIcon,
   ShieldExclamationIcon,
+  ShoppingBagIcon,
+  StarIcon,
+  TruckIcon,
   UserPlusIcon,
 } from 'react-native-heroicons/outline';
 
@@ -42,6 +45,10 @@ const ICONS: Record<NotificationType, { Icon: IconComponent; color: string }> = 
   privateFeedRequest: { Icon: LockClosedIcon, color: BLUE_500 },
   privateFeedApproved: { Icon: LockOpenIcon, color: colors.green500 },
   privateFeedRevoked: { Icon: ShieldExclamationIcon, color: colors.red500 },
+  storeOrder: { Icon: ShoppingBagIcon, color: colors.green500 },
+  storeReview: { Icon: StarIcon, color: colors.amber500 },
+  itemReview: { Icon: StarIcon, color: colors.amber500 },
+  orderStatus: { Icon: TruckIcon, color: colors.green500 },
 };
 const FALLBACK_ICON = { Icon: BellIcon, color: colors.gray500 };
 

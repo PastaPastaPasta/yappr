@@ -3,8 +3,8 @@ import { queryDocumentBundle } from './document-query-bundle';
 import { getEvoSdk } from './evo-sdk-service';
 import { loadIdentityBatch } from './identity-batch';
 import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk-helpers';
-import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
-import { Notification, User, Post } from '../../types';
+import { YAPPR_CONTRACT_ID, blogIsV2, storefrontIsV6 } from '../constants';
+import { Notification, User, Post, StoreNotificationDetail, StoreNotificationType } from '../../types';
 import { truncateId } from '../utils';
 import { isBlogPostTombstone, isPublishedBlogPost } from '../blog/content-utils';
 import { likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
@@ -16,6 +16,9 @@ import { readScoped, scopedKey, writeScoped } from '../storage-scope';
 import { applyLikeObservations, parseLikeSnapshot, targetsToRead, type KindObservation, type LikeBatch } from '../like-notification-snapshot';
 
 // Constants for notification queries
+/** Likers of an aggregated like whose profiles are loaded; the rest are known by id only (for the block filter). */
+const LIKER_PROFILES = 10;
+
 const NOTIFICATION_QUERY_LIMIT = 100;
 const INITIAL_FETCH_DAYS = 7;
 const INITIAL_FETCH_MS = INITIAL_FETCH_DAYS * 24 * 60 * 60 * 1000;
@@ -43,7 +46,7 @@ type BlogNotificationType = 'blogPost' | 'blogComment';
  */
 interface RawNotification {
   id: string;
-  type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType | BlogNotificationType;
+  type: 'follow' | 'mention' | PrivateFeedNotificationType | EngagementNotificationType | BlogNotificationType | StoreNotificationType;
   fromUserId: string;
   postId?: string;
   /**
@@ -65,11 +68,15 @@ interface RawNotification {
   blogCommentContent?: string;
   /** v11 aggregated like: how many new likers the notification stands for (`fromUserId` is the first). */
   likerCount?: number;
+  /** v11 aggregated like: the new likers read so far (some of `likerCount`), for the block filter. */
+  likers?: string[];
   /**
    * v11 like: `createdAt` is when this device noticed the likes, not an
    * on-chain time, so it never moves the poll watermark and is not shown.
    */
   timeless?: boolean;
+  /** Store notifications: what the order or review is about (store-notification-service). */
+  store?: StoreNotificationDetail;
   createdAt: number;
 }
 
@@ -325,6 +332,7 @@ class NotificationService {
           postId: batch.targetId,
           targetKind: batch.kind,
           likerCount: batch.total,
+          likers: batch.likers,
           timeless: true,
           createdAt: batch.firstSeenMs,
         }));
@@ -590,6 +598,18 @@ class NotificationService {
   }
 
   /**
+   * Storefront events: new orders and reviews for a seller, status changes on
+   * a buyer's orders (lib/services/store-notification-service.ts). A failed
+   * read is reported to `onFailure`; the rest still notify.
+   */
+  async getStoreNotifications(userId: string, sinceTimestamp: number, onFailure: (error: unknown) => void): Promise<RawNotification[]> {
+    // Before v6 there is no buyer feed: nothing to read, and no reason to load the storefront services.
+    if (!storefrontIsV6()) return [];
+    const { storeNotificationService } = await import('./store-notification-service');
+    return storeNotificationService.getNotifications(userId, sinceTimestamp, onFailure);
+  }
+
+  /**
    * Enrich raw notifications with user profiles and post data.
    * Uses Promise.allSettled for fault tolerance - partial failures don't block other notifications.
    */
@@ -599,8 +619,9 @@ class NotificationService {
   ): Promise<Notification[]> {
     if (rawNotifications.length === 0) return [];
 
-    // Collect unique user IDs and post IDs
-    const userIds = Array.from(new Set(rawNotifications.map(n => n.fromUserId)));
+    // Collect unique user IDs (the first few likers of an aggregated like, any
+    // of whom may be shown after a block) and post IDs
+    const userIds = Array.from(new Set(rawNotifications.flatMap(n => n.likers?.slice(0, LIKER_PROFILES) ?? [n.fromUserId])));
     const postIds = Array.from(new Set(
       rawNotifications.flatMap(n => (
         n.postId && n.type !== 'blogPost' && n.type !== 'blogComment' && n.replyContent === undefined ? [n.postId] : []
@@ -629,22 +650,26 @@ class NotificationService {
       }
     });
 
-    // Transform to Notification type
-    return rawNotifications.map(raw => {
-      const profile = profiles.find((p: { $ownerId: string }) => p.$ownerId === raw.fromUserId);
-      const username = usernameMap.get(raw.fromUserId);
-      const avatarUrl = avatarUrls.get(raw.fromUserId);
+    const { unifiedProfileService } = await import('./unified-profile-service');
 
-      const user: User = {
-        id: raw.fromUserId,
+    const userOf = (id: string): User => {
+      const profile = profiles.find((p: { $ownerId: string }) => p.$ownerId === id);
+      const username = usernameMap.get(id);
+      return {
+        id,
         username: username || '',
-        displayName: profile?.displayName || username || this.truncateId(raw.fromUserId),
-        avatar: avatarUrl || `https://api.dicebear.com/7.x/shapes/svg?seed=${raw.fromUserId}`,
+        displayName: profile?.displayName || username || this.truncateId(id),
+        avatar: avatarUrls.get(id) || unifiedProfileService.getDefaultAvatarUrl(id),
         bio: profile?.bio,
         followers: 0,
         following: 0,
         joinedAt: new Date()
       };
+    };
+
+    // Transform to Notification type
+    return rawNotifications.map(raw => {
+      const user = userOf(raw.fromUserId);
 
       // For reply notifications (and v10 mentions made in a reply), use
       // pre-fetched data and ensure parentId is set for navigation
@@ -704,7 +729,9 @@ class NotificationService {
         blogPostSlug: raw.blogPostSlug,
         targetKind: raw.targetKind,
         ...(raw.likerCount !== undefined ? { likerCount: raw.likerCount } : {}),
+        ...(raw.likers ? { likers: raw.likers.map(userOf) } : {}),
         ...(raw.timeless ? { timeless: true } : {}),
+        ...(raw.store ? { store: raw.store } : {}),
       };
     });
   }
@@ -742,6 +769,7 @@ class NotificationService {
         };
         return queryDocuments(sdk, options);
       });
+      const { unifiedProfileService } = await import('./unified-profile-service');
       const postResponses = await Promise.all(postQueryPromises);
       const postDocuments = postResponses.flat();
       const foundPostIds = new Set<string>();
@@ -761,7 +789,7 @@ class NotificationService {
             id: ownerId,
             username: '',
             displayName: this.truncateId(ownerId),
-            avatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${ownerId}`,
+            avatar: unifiedProfileService.getDefaultAvatarUrl(ownerId),
             followers: 0,
             following: 0,
             joinedAt: new Date()
@@ -829,7 +857,7 @@ class NotificationService {
               id: ownerId,
               username: '',
               displayName: this.truncateId(ownerId),
-              avatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${ownerId}`,
+              avatar: unifiedProfileService.getDefaultAvatarUrl(ownerId),
               followers: 0,
               following: 0,
               joinedAt: new Date()
@@ -863,6 +891,52 @@ class NotificationService {
    */
   private truncateId(id: string): string {
     return truncateId(id, 6, 4);
+  }
+
+  /**
+   * `raw` without the notifications of actors the viewer blocks (own blocks and
+   * followed block lists: `blockService.checkBlockedBatch`, one lookup for the
+   * distinct actors). An aggregated like loses only its blocked likers, and
+   * goes only when none is left. Fails soft like feeds: when the lookup
+   * throws, everything is kept.
+   */
+  private async withoutBlockedActors(viewerId: string, raw: RawNotification[]): Promise<RawNotification[]> {
+    if (raw.length === 0) return raw;
+    try {
+      const { blockService } = await import('./block-service');
+      const actors = new Set(raw.flatMap(n => n.likers ?? [n.fromUserId]));
+      const blocked = await blockService.checkBlockedBatch(viewerId, Array.from(actors));
+      const isBlocked = (id: string) => blocked.get(id) === true;
+      return raw.flatMap((n): RawNotification[] => {
+        if (!n.likers) return isBlocked(n.fromUserId) ? [] : [n];
+        const kept = n.likers.filter(id => !isBlocked(id));
+        if (kept.length === 0) return [];
+        const removed = n.likers.length - kept.length;
+        return [{ ...n, fromUserId: kept[0], likers: kept, likerCount: (n.likerCount ?? n.likers.length) - removed }];
+      });
+    } catch (error) {
+      logger.warn('Notification block lookup failed; showing notifications unfiltered:', error);
+      return raw;
+    }
+  }
+
+  /**
+   * The actors among `held` that `viewerId` blocks now (own blocks and
+   * followed block lists), every liker of an aggregated like included: what
+   * to prune from notifications already on screen when blocks change. Null
+   * when the lookup fails (keep what is shown, as feeds fail soft).
+   */
+  async blockedAmongHeld(viewerId: string, held: Notification[]): Promise<Set<string> | null> {
+    const actors = Array.from(new Set(held.flatMap(n => n.likers?.map(liker => liker.id) ?? [n.from.id])));
+    if (actors.length === 0) return new Set();
+    try {
+      const { blockService } = await import('./block-service');
+      const blocked = await blockService.checkBlockedBatch(viewerId, actors);
+      return new Set(actors.filter(id => blocked.get(id) === true));
+    } catch (error) {
+      logger.warn('Notification block re-check failed; keeping what is shown:', error);
+      return null;
+    }
   }
 
   /**
@@ -901,21 +975,25 @@ class NotificationService {
     fallbackTimestamp: number
   ): Promise<NotificationResult> {
     const failures = new SourceFailures();
-    const [sourced, blogPosts, blogComments] = await Promise.all([
+    const [sourced, blogPosts, blogComments, storeEvents] = await Promise.all([
       notificationsAreWindowed()
         ? this.fetchWindowedSources(userId, sinceTimestamp, failures)
         : this.fetchBundledSources(userId, sinceTimestamp, failures),
       failures.source('Error fetching blog post notifications:', this.getBlogPostNotifications(userId, sinceTimestamp, failures.tolerated)),
       failures.source('Error fetching blog comment notifications:', this.getBlogCommentNotifications(userId, sinceTimestamp)),
+      failures.source('Error fetching store notifications:', this.getStoreNotifications(userId, sinceTimestamp, failures.tolerated)),
     ]);
 
-    const allRaw = [...sourced, ...blogPosts, ...blogComments];
+    const allRaw = [...sourced, ...blogPosts, ...blogComments, ...storeEvents];
 
     // Drop self-notifications across every type (liking/reposting/replying to your
     // own content, mentioning yourself, your own posts in a blog you follow).
     // Newest first. On v10 the windowed sources come back in index order, so
     // this client-side sort is the only time ordering they get.
-    const rawNotifications = allRaw.filter(n => n.fromUserId !== userId);
+    // Then drop everything from identities the viewer blocks, their own blocks
+    // and those of followed block lists, as feeds do. The watermark below still
+    // moves past them, so they are not re-fetched on every poll.
+    const rawNotifications = await this.withoutBlockedActors(userId, allRaw.filter(n => n.fromUserId !== userId));
     rawNotifications.sort((a, b) => b.createdAt - a.createdAt);
 
     const notifications = await this.enrichNotifications(rawNotifications, readIds);

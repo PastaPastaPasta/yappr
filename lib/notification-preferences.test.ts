@@ -5,14 +5,15 @@ import type { Notification } from './types'
 
 const enabled: NotificationSettings = {
   likes: true, reposts: true, replies: true, follows: true,
-  mentions: true, messages: true, blogPosts: true,
+  mentions: true, messages: true, blogPosts: true, store: true,
 }
 
 describe('notification visibility and unread counts', () => {
   it.each([
     ['like', 'likes'], ['repost', 'reposts'], ['quote', 'reposts'], ['reply', 'replies'],
     ['follow', 'follows'], ['mention', 'mentions'], ['blogPost', 'blogPosts'],
-    ['blogComment', 'blogPosts'],
+    ['blogComment', 'blogPosts'], ['storeOrder', 'store'], ['storeReview', 'store'],
+    ['itemReview', 'store'], ['orderStatus', 'store'],
   ] as const)('excludes disabled %s notifications from the unread count', (type, setting) => {
     const notification = { type, read: false }
     expect(getVisibleUnreadNotificationCount([notification], enabled)).toBe(1)

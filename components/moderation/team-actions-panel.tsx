@@ -9,8 +9,8 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { authorDeletesLeaveHoles } from '@/lib/contract-topology'
-import { countedSigners, moderationService, teamCanApprove, type SeatedTeamSeats, type TeamAction, type TeamActionTargetState } from '@/lib/services/moderation-service'
+import { documentNoun, moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
+import { countedSigners, moderationServiceFor, teamCanApprove, type ModerationService, type SeatedTeamSeats, type TeamAction, type TeamActionTargetState } from '@/lib/services/moderation-service'
 import type { SeatedReasonsState } from './charter-reason-picker'
 
 const shortId = (id: string) => `${id.slice(0, 8)}…`
@@ -42,9 +42,9 @@ interface TeamActionsState {
 }
 
 /** The shown actions that can never run; an action whose document could not be read is not claimed dead. */
-async function deadActions(actions: readonly TeamAction[]): Promise<Map<string, Exclude<TeamActionTargetState, 'live'>>> {
+async function deadActions(service: ModerationService, actions: readonly TeamAction[]): Promise<Map<string, Exclude<TeamActionTargetState, 'live'>>> {
   const dead = new Map<string, Exclude<TeamActionTargetState, 'live'>>()
-  for (const [actionId, state] of await moderationService.readTeamActionTargets(actions)) {
+  for (const [actionId, state] of await service.readTeamActionTargets(actions)) {
     if (state !== 'live') dead.set(actionId, state)
   }
   return dead
@@ -58,11 +58,14 @@ async function deadActions(actions: readonly TeamAction[]): Promise<Map<string, 
  * (`min(approvals, seats)`), who signed, the document and the reason; a
  * member who has not signed may approve. A team removal is never undone
  * (41209), so there is no restore here. Recently closed actions follow.
- * Renders nothing where no type is deleted by the team.
+ * Renders nothing where no type is deleted by the team. Each contract's seated
+ * team has its own queue (`contract`, social by default).
  */
-export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: SeatedReasonsState; onChanged?: () => void }) {
+export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social' }: { seatedReasons: SeatedReasonsState; onChanged?: () => void; contract?: ModeratedContractKey }) {
   const { user } = useAuth()
-  const enabled = moderationService.teamDeletesSettled()
+  const service = moderationServiceFor(contract)
+  const social = contract === 'social'
+  const enabled = service.teamDeletesSettled()
   const [state, setState] = useState<TeamActionsState | null>(null)
   const [names, setNames] = useState<ReadonlyMap<string, string | null>>(new Map())
   const [loading, setLoading] = useState(false)
@@ -74,9 +77,9 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
     setFailed(false)
     try {
       const [active, closed, seated] = await Promise.all([
-        moderationService.listTeamActions('active'),
-        moderationService.listTeamActions('closed', { max: CLOSED_READ }),
-        moderationService.getSeatedTeam(),
+        service.listTeamActions('active'),
+        service.listTeamActions('closed', { max: CLOSED_READ }),
+        service.getSeatedTeam(),
       ])
       const shown = [...active.actions].sort((a, b) => b.proposedAt - a.proposedAt).slice(0, ACTIVE_SHOWN)
       // The exact approvals of an active action are its signers still on the
@@ -85,13 +88,13 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
       const [signerPairs, dead] = await Promise.all([
         Promise.all(shown.map(async (action) => {
           try {
-            return [action.actionId, await moderationService.teamActionSigners(action.actionId, 'active')] as const
+            return [action.actionId, await service.teamActionSigners(action.actionId, 'active')] as const
           } catch (error) {
             logger.warn('TeamActionsPanel: signers read failed', error)
             return null
           }
         })),
-        deadActions(shown),
+        deadActions(service, shown),
       ])
       const signers = new Map(signerPairs.filter((pair) => pair !== null))
       const recentClosed = [...closed.actions].sort((a, b) => b.proposedAt - a.proposedAt).slice(0, CLOSED_SHOWN)
@@ -116,7 +119,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [service])
 
   useEffect(() => {
     if (enabled) refresh().catch(() => { /* reported inside */ })
@@ -140,7 +143,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
   const approve = async (action: TeamAction) => {
     if (!me || approving) return
     setApproving(action.actionId)
-    const result = await moderationService.approveTeamAction(me, action.actionId)
+    const result = await service.approveTeamAction(me, action.actionId)
     setApproving(null)
     if (result.errorCode === 'MAYBE_APPLIED') {
       toast(result.error ?? 'Your approval may have gone through. Check again before retrying.', { duration: 8000 })
@@ -153,7 +156,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
       toast.error(result.error || 'Approval failed')
     } else {
       toast.success(result.status === 'closed'
-        ? `Approved: the team removed the ${action.documentTypeName}. A team removal cannot be undone.`
+        ? `Approved: the team removed the ${documentNoun(action.documentTypeName)}. A team removal cannot be undone.`
         : 'Approved')
       // A removal that ran shows in the removal records and the pot counts.
       if (result.status === 'closed') onChanged?.()
@@ -166,9 +169,10 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><UserGroupIcon className="h-5 w-5" /> Team removals</CardTitle>
         <CardDescription>
-          A week after it was written a post or reply settles: no moderator removes it alone. A member of the seated team
-          proposes its removal from the post menu, and it runs once the leader and enough members approve it here. A team
-          removal cannot be undone.
+          {social
+            ? 'A week after it was written a post or reply settles: no moderator removes it alone. A member of the seated team proposes its removal from the post menu,'
+            : 'Past its removal window a document settles: no moderator removes it alone. A member of the seated team proposes its removal from the moderator menu beside it,'}
+          {' and it runs once the leader and enough members approve it here. A team removal cannot be undone.'}
           {seated && ` The team is the leader and ${seated.members.length} member${seated.members.length === 1 ? '' : 's'}${seated.seats === null ? '' : `, with ${seated.seats} seat${seated.seats === 1 ? '' : 's'}`}.`}
         </CardDescription>
       </CardHeader>
@@ -190,7 +194,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
         {state && seated && state.active.some((action) => action.neededApprovals !== null && !teamCanApprove(action.neededApprovals, seated)) && (
           <p role="alert" data-testid="team-actions-unreachable" className="rounded-lg border border-red-300 dark:border-red-800 p-3 text-red-600 dark:text-red-400">
             The team has fewer people than a team removal needs approvals, so these proposals cannot run. The team must add
-            a member before it can remove settled posts.
+            a member before it can remove anything that has settled.
           </p>
         )}
         {state && state.active.length === 0 && <p className="text-gray-500 dark:text-gray-400">No team removal is waiting for approval.</p>}
@@ -208,8 +212,10 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
                 <li key={action.actionId} data-testid={`team-action-${action.actionId}`} className={`rounded-lg border border-gray-200 dark:border-gray-800 p-3 space-y-1${dead ? ' opacity-60' : ''}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">
-                      Remove {action.documentTypeName}{' '}
-                      <Link href={`/post?id=${encodeURIComponent(action.documentId)}`} className="font-mono text-yappr-500 hover:underline">{shortId(action.documentId)}</Link>
+                      Remove {documentNoun(action.documentTypeName)}{' '}
+                      {social
+                        ? <Link href={`/post?id=${encodeURIComponent(action.documentId)}`} className="font-mono text-yappr-500 hover:underline">{shortId(action.documentId)}</Link>
+                        : <span className="font-mono">{shortId(action.documentId)}</span>}
                     </span>
                     <span className="font-semibold" data-testid={`team-action-approvals-${action.actionId}`}>
                       {have} of {action.neededApprovals ?? '?'} approvals{counted ? '' : ' (at most)'}
@@ -223,12 +229,12 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
                   <p>Reason: {reasonLabel(action)}</p>
                   {deadAs === 'gone' && (
                     <p data-testid={`team-action-gone-${action.actionId}`} className="italic text-gray-500 dark:text-gray-400">
-                      Its {action.documentTypeName} is already gone (another proposal removed it{authorDeletesLeaveHoles() ? ', or its author deleted it' : ''}), so this proposal can never run.
+                      Its {documentNoun(action.documentTypeName)} is already gone (another proposal removed it{moderatedContract(contract).authorsDelete(action.documentTypeName) ? ', or its author deleted it' : ''}), so this proposal can never run.
                     </p>
                   )}
                   {deadAs === 'changed' && (
                     <p data-testid={`team-action-changed-${action.actionId}`} className="italic text-gray-500 dark:text-gray-400">
-                      Its {action.documentTypeName} changed after this proposal (its author deleted or re-saved it), so this proposal can
+                      Its {documentNoun(action.documentTypeName)} changed after this proposal (its author deleted or re-saved it), so this proposal can
                       never run. If its author deleted it, nothing is left to remove; otherwise the change restarted its window, in which
                       one moderator removes it alone, and after that it can be proposed again.
                     </p>
@@ -265,7 +271,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
             <ul className="space-y-1 text-gray-600 dark:text-gray-400">
               {state.closed.map((action) => (
                 <li key={action.actionId} data-testid={`team-action-closed-${action.actionId}`}>
-                  {action.documentTypeName} <span className="font-mono">{shortId(action.documentId)}</span> removed with {action.approvalCount} approval{action.approvalCount === 1 ? '' : 's'}
+                  {documentNoun(action.documentTypeName)} <span className="font-mono">{shortId(action.documentId)}</span> removed with {action.approvalCount} approval{action.approvalCount === 1 ? '' : 's'}
                   {' · '}proposed by {nameOf(action.proposerId)} {new Date(action.proposedAt).toLocaleDateString()} · {reasonLabel(action)}
                 </li>
               ))}

@@ -85,6 +85,13 @@ class StoreStatsService {
     this.rankings.clear();
   }
 
+  /** Drop every cached aggregate (a moderator restored a review, whose store or item the record does not name). */
+  invalidateAll(): void {
+    this.storeSummaries.clear();
+    this.itemSummaries.clear();
+    this.rankings.clear();
+  }
+
   /**
    * A store's proved rating summary: average and count from the `storeRating`
    * average tree, the 1–5 distribution from one grouped count. Two requests;

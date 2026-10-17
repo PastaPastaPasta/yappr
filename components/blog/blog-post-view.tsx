@@ -18,7 +18,7 @@ import { BlogViewer } from './blog-viewer'
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
-import { blogAuthorHandle, blogPostDate, commentsAreEnabled, decodeSummary, estimateReadingTime, formatLabels, getBlogPostUrl, isPublishedBlogPost } from '@/lib/blog/content-utils'
+import { blogAuthorHandle, blogPostDate, commentsAreEnabled, decodeSummary, estimateReadingTime, formatLabels, getBlogPostUrl, getBlogUrl, isPublishedBlogPost } from '@/lib/blog/content-utils'
 import { getReaderOverrideStyle, getReaderFontSize, getAppThemeForReadingMode } from '@/lib/blog/reader-preferences'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
 import { ReadingPreferencesPopover } from './reading-preferences'
@@ -28,6 +28,10 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBlogFollow } from '@/hooks/use-blog-follow'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { APP_URL } from '@/lib/constants'
+import { useRouter } from 'next/navigation'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
+import { blogPostService } from '@/lib/services'
 
 const X_ICON_PATH = 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z'
 
@@ -48,6 +52,7 @@ function BlogAvatar({ blog, size }: { blog: Blog; size: 'sm' | 'md' }) {
     return (
       <IpfsImage
         src={blog.avatar}
+        size="avatar"
         alt={blog.name}
         className={`${sizeClass} shrink-0 rounded-full object-cover`}
       />
@@ -58,6 +63,7 @@ function BlogAvatar({ blog, size }: { blog: Blog; size: 'sm' | 'md' }) {
 }
 
 export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
+  const router = useRouter()
   const blocks = Array.isArray(post.content) ? post.content : []
   const { text: summaryText, hidden: summaryHidden } = decodeSummary(post.subtitle)
   const { setQuotingPost, setComposeOpen } = useAppStore()
@@ -227,6 +233,14 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
                 {isFollowing ? 'Following' : 'Follow'}
               </button>
             )}
+            <ModeratorContentMenu
+              target={documentRemovalTarget('blog', 'blogPost', 'blog post', post, post.title)}
+              ownerId={post.ownerId}
+              onRemoved={() => {
+                blogPostService.clearCache(post.id)
+                router.push(getBlogUrl(blog.id))
+              }}
+            />
           </div>
 
           {/* Meta / action row */}
