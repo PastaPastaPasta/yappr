@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NotificationSettings } from '@/lib/store'
 import type { Notification } from '@/lib/types'
 import { getVisibleUnreadNotificationCount } from '@/lib/notification-preferences'
-import { useNotificationStore } from './notification-store'
+import { useNotificationStore, withoutBlockedActors } from './notification-store'
 
 // The store persists readIds through localStorage, which the node test
 // environment lacks. It must exist before the store module is evaluated.
@@ -110,5 +110,20 @@ describe('removeFromActor', () => {
 
     expect(store().notifications.map(({ id, from, likers, likerCount }) => ({ id, from: from.id, likers: likers?.map(l => l.id), likerCount })))
       .toEqual([{ id: 'both', from: 'bob', likers: ['bob'], likerCount: 2 }])
+  })
+})
+
+describe('withoutBlockedActors', () => {
+  const user = (id: string) => ({ id }) as Notification['from']
+  const batch: Notification = { ...notification('b', 'like', 1), from: user('alice'), likers: [user('alice'), user('bob'), user('carol')], likerCount: 5 }
+
+  it('leaves a notification untouched when no one in it is blocked', () => {
+    expect(withoutBlockedActors(batch, () => false)).toBe(batch)
+  })
+
+  it('lowers the count by the blocked likers and shows the first one left', () => {
+    const shown = withoutBlockedActors(batch, (id) => id !== 'carol')
+    expect(shown && { from: shown.from.id, likers: shown.likers?.map(l => l.id), likerCount: shown.likerCount })
+      .toEqual({ from: 'carol', likers: ['carol'], likerCount: 3 })
   })
 })

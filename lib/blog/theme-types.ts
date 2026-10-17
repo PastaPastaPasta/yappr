@@ -225,7 +225,17 @@ const SAFE_CSS_PROPERTIES = new Set([
   'text-decoration',
 ])
 
-export const FORBIDDEN_CSS_PATTERN = /(?:url\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|data\s*:|behavior\s*:|binding\s*:)/i
+export const FORBIDDEN_CSS_PATTERN = /(?:url\s*\(|image-set\s*\(|src\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|data\s*:|behavior\s*:|binding\s*:)/i
+
+/**
+ * A stored CSS value (a block's background, padding) that is safe to apply:
+ * one declaration's value, loading nothing (no `url()`, so no image can get
+ * past the media rules or the takedown denylist) and running nothing.
+ */
+export function isSafeCssValue(value: string): boolean {
+  if (/[;{}]/.test(value)) return false
+  return !FORBIDDEN_CSS_PATTERN.test(value)
+}
 
 const SAFE_CSS_COLOR = /^(#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|transparent|[a-zA-Z]{3,20})$/
 

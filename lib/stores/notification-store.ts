@@ -9,6 +9,23 @@ import type { NotificationSettings } from '@/lib/store';
 // At ~44 chars per base58 ID, 1000 IDs ≈ 44KB, well under localStorage limits
 const MAX_READ_IDS = 1000;
 
+/**
+ * A held notification as the viewer may see it, given who they block: an
+ * aggregated like loses just its blocked likers (the one shown and the count
+ * follow) and goes only when none is left; anything else goes when its actor
+ * is blocked. Null when nothing is left. Shared by the web store and the
+ * mobile engine's live block filter.
+ */
+export function withoutBlockedActors(notification: Notification, isBlocked: (id: string) => boolean): Notification | null {
+  const { likers } = notification;
+  if (!likers) return isBlocked(notification.from.id) ? null : notification;
+  const kept = likers.filter(liker => !isBlocked(liker.id));
+  if (kept.length === likers.length) return notification;
+  if (kept.length === 0) return null;
+  const likerCount = Math.max(kept.length, (notification.likerCount ?? likers.length) - (likers.length - kept.length));
+  return { ...notification, from: kept[0], likers: kept, likerCount };
+}
+
 type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'privateFeed';
 
 /**
@@ -118,21 +135,10 @@ export const useNotificationStore = create<NotificationState>()(
 
       removeFromActor: (actorId) => {
         const state = get();
-        let changed = false;
-        const notifications = state.notifications.flatMap((n): Notification[] => {
-          // An aggregated like loses just this liker, and goes only when none is left.
-          if (n.likers?.some(liker => liker.id === actorId)) {
-            changed = true;
-            const kept = n.likers.filter(liker => liker.id !== actorId);
-            if (kept.length === 0) return [];
-            const likerCount = Math.max(kept.length, (n.likerCount ?? n.likers.length) - 1);
-            return [{ ...n, from: kept[0], likers: kept, likerCount }];
-          }
-          if (n.from.id !== actorId) return [n];
-          changed = true;
-          return [];
-        });
-        if (changed) set({ notifications });
+        const notifications = state.notifications.flatMap(n => withoutBlockedActors(n, id => id === actorId) ?? []);
+        if (notifications.some((n, i) => n !== state.notifications[i]) || notifications.length !== state.notifications.length) {
+          set({ notifications });
+        }
       },
 
       setFilter: (filter) => set({ filter }),

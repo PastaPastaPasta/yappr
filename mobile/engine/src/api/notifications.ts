@@ -2,7 +2,7 @@ import { getVisibleUnreadNotificationCount, isNotificationEnabled } from '@/lib/
 import { blockService } from '@/lib/services/block-service'
 import { notificationService } from '@/lib/services/notification-service'
 import { useSettingsStore } from '@/lib/store'
-import { useNotificationStore } from '@/lib/stores/notification-store'
+import { useNotificationStore, withoutBlockedActors } from '@/lib/stores/notification-store'
 import type { Notification } from '@/lib/types'
 import { truncateId } from '@/lib/utils/common'
 import { RpcError } from '../protocol/envelope'
@@ -75,7 +75,8 @@ const settings = () => useSettingsStore.getState().notificationSettings
  * lib's fetches already leave out actors blocked when they ran; this covers
  * the ones blocked (or unblocked) since.
  */
-const unblocked = (blocked: ReadonlySet<string>) => store().notifications.filter(notification => !blocked.has(notification.from.id))
+const unblocked = (blocked: ReadonlySet<string>) =>
+  store().notifications.flatMap(notification => withoutBlockedActors(notification, id => blocked.has(id)) ?? [])
 const visible = (blocked: ReadonlySet<string>) => unblocked(blocked).filter(notification => isNotificationEnabled(notification, settings()))
 const unreadCountOf = (blocked: ReadonlySet<string>) => getVisibleUnreadNotificationCount(unblocked(blocked), settings())
 
@@ -86,7 +87,8 @@ const unreadCountOf = (blocked: ReadonlySet<string>) => getVisibleUnreadNotifica
  * it knew, as feeds fail soft to "not blocked".
  */
 async function blockedAmong(viewer: string, notifications: Notification[]): Promise<Set<string> | null> {
-  const actors = Array.from(new Set(notifications.map(notification => notification.from.id)))
+  // Every liker of an aggregated like, so blocking any one of them reaches it.
+  const actors = Array.from(new Set(notifications.flatMap(notification => notification.likers?.map(liker => liker.id) ?? [notification.from.id])))
   if (actors.length === 0) return new Set()
   const result = await blockService.checkBlockedBatch(viewer, actors).catch(() => null)
   return result ? new Set(actors.filter(actor => result.get(actor) === true)) : null

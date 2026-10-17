@@ -1,5 +1,5 @@
 import type { EmbedBlock, EmbedRenderOptions } from './embed-types'
-import { FORBIDDEN_CSS_PATTERN } from '@/lib/blog/theme-types'
+import { isSafeCssValue } from '@/lib/blog/theme-types'
 import { imageSourceFor, isDeniedMedia } from '@/lib/media/remote-media'
 
 // Keep in sync with the first path-format entry of IPFS_GATEWAYS
@@ -22,11 +22,6 @@ function ensureString(value: unknown): string {
 function toRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   return value as Record<string, unknown>
-}
-
-function isSafeCssValue(value: string): boolean {
-  if (/[;{}]/.test(value)) return false
-  return !FORBIDDEN_CSS_PATTERN.test(value)
 }
 
 function sanitizeUrl(value: string, options?: EmbedRenderOptions): string {

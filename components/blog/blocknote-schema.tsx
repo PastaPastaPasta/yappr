@@ -36,6 +36,7 @@ import { YouTubeIcon } from '@/components/ui/brand-icons'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { YouTubeThumbnail } from '@/components/ui/youtube-thumbnail'
 import { isDeniedMedia } from '@/lib/media/remote-media'
+import { isSafeCssValue } from '@/lib/blog/theme-types'
 import { extractInlineText } from '@/lib/blog/content-utils'
 
 const CODE_LANGUAGES = ['javascript', 'typescript', 'python', 'rust', 'bash', 'json', 'html', 'css', 'go', 'solidity'] as const
@@ -121,7 +122,10 @@ const backgroundSectionBlock = createReactBlockSpec(
   },
   {
     render: ({ block, contentRef }) => {
-      const background = block.props.background || 'rgba(15, 23, 42, 0.55)'
+      // A stored value that would load something (`url(...)`) or break out
+      // of the declaration falls back to the default.
+      const stored = block.props.background
+      const background = stored && isSafeCssValue(stored) ? stored : 'rgba(15, 23, 42, 0.55)'
 
       return (
         <div
