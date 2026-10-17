@@ -306,7 +306,7 @@ export async function cleanStorefront({ battery, owners, since, reopened = new M
 
 /**
  * Cleans the pollr contract: the owners' polls without a ballot are deleted, the rest are leftovers.
- * @param {{ battery: object, owners: Owner[], since: number, live: boolean }} args
+ * @param {{ battery: object, contractId: string, owners: Owner[], since: number, live: boolean, pollIds?: Iterable<string> | null }} args
  * @returns {Promise<CleanupReport>}
  */
 export async function cleanPollr({ battery, contractId, owners, since, live, pollIds }) {

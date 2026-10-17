@@ -157,7 +157,7 @@ export async function personaActor(handle, personaIdx) {
 }
 
 /** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
-export function createBattery({ handle, contractId, socialId, agreementFor }) {
+export function createBattery({ handle, contractId, socialId, agreementFor = undefined }) {
   let failures = 0;
   const capturedErrors = [];
   const createdDocuments = new Map();

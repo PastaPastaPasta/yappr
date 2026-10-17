@@ -111,7 +111,7 @@ describe('what a surface cleanup plans', () => {
       ],
       vote: [{ $id: id(4), $ownerId: id(8), $createdAt: 6000n, pollId: id(2) }],
     })
-    const report = await cleanPollr({ battery, owners: [persona], since, live: false })
+    const report = await cleanPollr({ battery, contractId: b58(9), owners: [persona], since, live: false })
     expect(report.found).toEqual({ poll: 2 })
     expect(report.done).toEqual({ poll: 1 })
     expect(report.leftovers).toEqual([expect.objectContaining({ type: 'poll', id: b58(2), name: 'Withdrawn x?' })])
