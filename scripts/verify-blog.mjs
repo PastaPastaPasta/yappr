@@ -77,6 +77,7 @@ let SCHEMAS = CONTRACT.documentSchemas;
 const publishedOnly = () => SCHEMAS.blogPost.required.includes('publishedAt');
 /** A JSON-schema refusal (10101): an unknown property or a missing required field. */
 const SCHEMA_REFUSED = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror|additional ?propert/i;
+const MISSING_PUBLISHED_AT = /(?=.*(?:\b10101\b|jsonschemaerror))(?=.*publishedAt)(?=.*required)/is;
 
 /** An index `docType` declares, by name (undefined when it declares none). */
 const index = (docType, name) => (SCHEMAS[docType].indices ?? []).find((entry) => entry.name === name);
@@ -437,7 +438,8 @@ async function caseB22Tombstone(ctx) {
   for (const [label, data, rule] of refusedReplaces(CONTRACT_FILE, 'blogPost')) {
     await replace(`b22 ${label} is refused (10422 ${rule})`, constraintViolation(rule), { ...data, blogId: id32(ctx.blogId), slug: fixture.slug, publishedAt: fixture.publishedAt });
   }
-  await replace('b22a a tombstone that drops publishedAt is refused (40128: frozen once set)', IMMUTABLE_CHANGED, drop(tombstoneData(ctx, fixture), 'publishedAt'));
+  await replace(`b22a a tombstone that drops publishedAt is refused (${publishedOnly() ? '10101: required field' : '40128: frozen once set'})`,
+    publishedOnly() ? MISSING_PUBLISHED_AT : IMMUTABLE_CHANGED, drop(tombstoneData(ctx, fixture), 'publishedAt'));
   await replace('b22b the author\'s tombstone lands: deleted, comments off, blogId/slug/publishedAt kept', null, tombstoneData(ctx, fixture));
   const stored = (await battery.fetchDocument('blogPost', fixture.id))?.toJSON?.() ?? {};
   battery.check('b22c it reads back as a tombstone: no title, no body, the slug kept',

@@ -1268,6 +1268,13 @@ async function main() {
     await attempt('ol-t3', () => ranked(...tagRankingArgs(tag), oldestOf('byTrendHashtagPost')), (r) => check('ol-t3 the tag\'s top posts in its window: Th 2', same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
     await attempt('ol-t4', () => ranked(...tagRankingArgs(tag)), (r) => check(`ol-t4 hashtag Top all-time (byHashtagPost ranked ${PIN} groupBy postId): Th 2`, same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
 
+    // Refresh T2 immediately before the retention probe: the earlier query cases and tag
+    // wait can outlive its shortened proof window, especially under DAPI throttling.
+    // Deleting and recreating overwrites the kept entry with a fresh window timestamp.
+    await unlike(B, 'like', { postId: id(T2), postAuthor: id(A.ownerId) }).catch(reported('refresh unlike of T2'));
+    await likeWrite(B, 'like', { postId: id(T2), postAuthor: id(A.ownerId) });
+    await sleep(SETTLE_MS);
+
     // (h) unlikes WITHOUT $createdAt. h0 first offers the time anyway: the SDK drops it on a
     // type whose rows commit to none, so it is reported, never failed.
     try {
