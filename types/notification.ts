@@ -49,6 +49,11 @@ export interface Notification {
    */
   likerCount?: number
   /**
+   * v11 aggregated like: the new likers read so far, `from` first. Blocking
+   * one of them later drops just that liker (notification store).
+   */
+  likers?: User[]
+  /**
    * v11 like: no like index keeps a like's time, so `createdAt` is when this
    * device noticed it — used for ordering only, never shown as a time.
    */

@@ -52,6 +52,7 @@ function BlogAvatar({ blog, size }: { blog: Blog; size: 'sm' | 'md' }) {
     return (
       <IpfsImage
         src={blog.avatar}
+        size="avatar"
         alt={blog.name}
         className={`${sizeClass} shrink-0 rounded-full object-cover`}
       />

@@ -24,6 +24,7 @@ import { StaleRevisionError } from '@/lib/services/document-service'
 import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 import { combinationStockCap, itemStockCap } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 /** What a stock edit changed on an item, for the page to merge into its copy. */
 /** What a save changed, with the revision it wrote (the next variant save must start from it). */
@@ -567,15 +568,13 @@ export function InventoryTable({
                         <td className="px-3 py-2"></td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-3 pl-6">
-                            {thumbnail ? (
-                              <img
-                                src={thumbnail}
-                                alt={label}
-                                className="w-8 h-8 object-cover rounded"
-                              />
-                            ) : (
-                              <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded" />
-                            )}
+                            <IpfsImage
+                              src={thumbnail ?? ''}
+                              size="thumbnail"
+                              alt={label}
+                              className="w-8 h-8 object-cover rounded"
+                              fallback={<div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded" />}
+                            />
                             <span className="text-gray-600 dark:text-gray-400">
                               {label}
                             </span>
@@ -624,17 +623,17 @@ export function InventoryTable({
                       </td>
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-3">
-                          {item.imageUrls?.[0] ? (
-                            <img
-                              src={item.imageUrls[0]}
-                              alt={item.title}
-                              className="w-10 h-10 object-cover rounded"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded flex items-center justify-center">
-                              <CubeIcon className="h-5 w-5 text-gray-400" />
-                            </div>
-                          )}
+                          <IpfsImage
+                            src={item.imageUrls?.[0] ?? ''}
+                            size="thumbnail"
+                            alt={item.title}
+                            className="w-10 h-10 object-cover rounded"
+                            fallback={
+                              <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded flex items-center justify-center">
+                                <CubeIcon className="h-5 w-5 text-gray-400" />
+                              </div>
+                            }
+                          />
                           <div>
                             <div className="font-medium">{item.title}</div>
                             {item.category && (

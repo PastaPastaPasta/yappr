@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { PlayIcon } from 'react-native-heroicons/solid';
 
-import { cn } from '~/lib-allowlist';
+import { cn, isDeniedMedia } from '~/lib-allowlist';
 
 import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
@@ -48,7 +48,8 @@ export function LinkPreviewCard({
   const [failedImage, setFailedImage] = useState<string>();
   const urls = useMediaUrls();
 
-  if (preview === 'error') return null;
+  // A link on the takedown denylist gets no card at all.
+  if (preview === 'error' || (preview !== 'loading' && isDeniedMedia(preview.url))) return null;
   if (preview === 'loading') {
     return (
       <SkeletonGroup label="Loading link preview" className={FRAME} testID="link-preview-skeleton">
@@ -63,7 +64,10 @@ export function LinkPreviewCard({
 
   const host = displayHost(preview.url);
   const youtube = preview.youtubeVideoId;
-  const image = youtube ? `https://img.youtube.com/vi/${youtube}/hqdefault.jpg` : urls.media(preview.image);
+  // A YouTube thumbnail goes through the image proxy like any other remote image.
+  const image = urls.media(
+    youtube ? `https://img.youtube.com/vi/${encodeURIComponent(youtube)}/hqdefault.jpg` : preview.image,
+  );
   // Fetched metadata is untrusted: only a safe target is ever handed out.
   const target = urls.external(preview.url);
   const label = [youtube ? 'YouTube video' : host, preview.title].filter(Boolean).join(', ');

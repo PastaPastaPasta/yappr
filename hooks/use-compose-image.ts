@@ -7,6 +7,8 @@ import { useImageUpload } from '@/hooks/use-image-upload'
 import type { UploadResult } from '@/lib/upload'
 import { mediaCarriesHashes } from '@/lib/contract-topology'
 import { computeMediaHashes } from '@/lib/media/media-fingerprint'
+import { uploadPostImage } from '@/lib/media/post-image-upload'
+import { ImageMetadataError } from '@/lib/media/strip-metadata'
 
 export interface AttachedImage {
   file: File
@@ -18,14 +20,12 @@ export interface AttachedImage {
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 /**
- * Upload a post image. On v10 its sha256 and dHash are computed from the same
- * file alongside, because the post must carry them beside `mediaUrl`; an
- * image the browser cannot decode fails the attachment.
+ * Upload a post image, metadata stripped first. On v10 its sha256 and dHash
+ * are computed from the same stripped file, because the post must carry them
+ * beside `mediaUrl`; an image the browser cannot decode fails the attachment.
  */
-async function uploadPostImage(upload: (file: File) => Promise<UploadResult>, file: File): Promise<UploadResult> {
-  if (!mediaCarriesHashes()) return upload(file)
-  const [result, hashes] = await Promise.all([upload(file), computeMediaHashes(file)])
-  return { ...result, hashes }
+function uploadComposeImage(upload: (file: File) => Promise<UploadResult>, file: File): Promise<UploadResult> {
+  return uploadPostImage(file, upload, mediaCarriesHashes() ? computeMediaHashes : null)
 }
 
 /**
@@ -60,11 +60,11 @@ export function useComposeImage(isOpen: boolean) {
         return
       }
       setAttached({ file, preview: URL.createObjectURL(file) })
-      uploadPostImage(upload, file)
+      uploadComposeImage(upload, file)
         .then((result) => setAttached((prev) => (prev && prev.file === file ? { ...prev, uploadResult: result } : prev)))
         .catch((err) => {
           logger.error('Failed to upload image:', err)
-          toast.error('Failed to upload image')
+          toast.error(err instanceof ImageMetadataError ? err.message : 'Failed to upload image')
         })
     },
     [upload]
@@ -116,7 +116,7 @@ export function useComposeImage(isOpen: boolean) {
   const ensureUploaded = useCallback(async (): Promise<UploadResult | null> => {
     if (!attached) return null
     if (attached.uploadResult) return attached.uploadResult
-    const result = await uploadPostImage(upload, attached.file)
+    const result = await uploadComposeImage(upload, attached.file)
     setAttached((prev) => (prev ? { ...prev, uploadResult: result } : null))
     return result
   }, [attached, upload])

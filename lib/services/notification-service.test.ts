@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { QueryDocumentsOptions } from './sdk-helpers'
+import type { Notification } from '@/lib/types'
 
-const { bundle } = vi.hoisted(() => ({ bundle: vi.fn() }))
+const { bundle, checkBlockedBatch } = vi.hoisted(() => ({ bundle: vi.fn(), checkBlockedBatch: vi.fn() }))
 vi.mock('./document-query-bundle', () => ({ queryDocumentBundle: bundle }))
+vi.mock('./block-service', () => ({ blockService: { checkBlockedBatch } }))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: vi.fn() }))
 vi.mock('./identity-batch', () => ({ loadIdentityBatch: vi.fn() }))
 
 beforeEach(() => {
   vi.resetModules()
   bundle.mockReset().mockImplementation(async (queries: QueryDocumentsOptions[]) => queries.map(() => []))
+  checkBlockedBatch.mockReset().mockImplementation(async (_viewer: string, ids: string[]) => new Map(ids.map((id) => [id, false])))
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9')
 })
 afterEach(() => {
@@ -17,7 +20,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('notification sources', () => {
+// The first test pays the cold import of the service graph, slow on a loaded runner.
+describe('notification sources', { timeout: 20_000 }, () => {
   it('reads each source newest first, so a busy source keeps its latest events', async () => {
     const { notificationService } = await import('./notification-service')
     vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
@@ -348,7 +352,7 @@ describe('v11 timeless like notifications', () => {
     expect(likes.likers.mock.calls).toEqual([['me', ['P1'], 'post']])
     expect(raw).toEqual([{
       id: 'like:post:P1:5000', type: 'like', fromUserId: 'carol', postId: 'P1', targetKind: 'post',
-      likerCount: 2, timeless: true, createdAt: 5_000,
+      likerCount: 2, likers: ['carol', 'dave'], timeless: true, createdAt: 5_000,
     }])
     // Retained, not re-created: the next diff finds nothing new and returns the same batch.
     expect(await notificationService.getLikeNotifications('me', 0)).toEqual(raw)
@@ -405,6 +409,27 @@ describe('v11 timeless like notifications', () => {
     expect((await notificationService.pollNewNotifications('me', 1_000)).notifications).toEqual([])
     const initial = await notificationService.getInitialNotifications('me')
     expect(initial.notifications.map(({ id }) => id)).toEqual(polled.notifications.map(({ id }) => id))
+  })
+
+  it('drops only the blocked likers from a batch, and the batch only when every liker is blocked', async () => {
+    const { loadIdentityBatch } = await import('./identity-batch')
+    vi.mocked(loadIdentityBatch).mockResolvedValue({ usernames: new Map(), profiles: [], avatars: new Map() } as unknown as Awaited<ReturnType<typeof loadIdentityBatch>>)
+    const { getEvoSdk } = await import('./evo-sdk-service')
+    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query: vi.fn().mockResolvedValue([]) } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    const { notificationService } = await import('./notification-service')
+    vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
+    vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
+    checkBlockedBatch.mockImplementation(async (_viewer: string, ids: string[]) => new Map(ids.map((id) => [id, id === 'troll'])))
+
+    chainSays({ P1: ['alice'], P2: ['alice'] })
+    await notificationService.pollNewNotifications('me', 1_000)
+    // The blocked liker comes first on P1; P2's only new liker is blocked.
+    chainSays({ P1: ['alice', 'troll', 'carol', 'dave'], P2: ['alice', 'troll'] })
+    const polled = await notificationService.pollNewNotifications('me', 1_000)
+
+    // P1 keeps carol and dave; P2 had no one else and is gone.
+    expect(polled.notifications.map(({ id, from, likerCount }) => ({ id, from: from.id, likerCount })))
+      .toEqual([{ id: expect.stringMatching(/^like:post:P1:/), from: 'carol', likerCount: 2 }])
   })
 
   it('skips a kind whose reads fail and retries it next poll, without losing its baseline', async () => {
@@ -565,6 +590,101 @@ describe('blog comment notifications', () => {
     ])
     const notifications = await notificationService.getBlogCommentNotifications('me', 0)
     expect(notifications.map((n) => n.postId)).toEqual(['live'])
+  })
+})
+
+describe('blocked actors', () => {
+  async function serviceWithFollowsFrom(...followers: string[]) {
+    const { loadIdentityBatch } = await import('./identity-batch')
+    vi.mocked(loadIdentityBatch).mockResolvedValue({ usernames: new Map(), profiles: [], avatars: new Map() } as unknown as Awaited<ReturnType<typeof loadIdentityBatch>>)
+    bundle.mockImplementation(async (queries: QueryDocumentsOptions[]) => queries.map((q) => q.documentTypeName === 'follow'
+      ? followers.map((owner, index) => ({ $id: `follow-${owner}`, $ownerId: owner, $createdAt: 1_500 + index, followingId: 'viewer' }))
+      : []))
+    const { notificationService } = await import('./notification-service')
+    vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
+    vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
+    for (const reader of ['getLikeNotifications', 'getRepostNotifications', 'getReplyNotifications'] as const) {
+      vi.spyOn(notificationService, reader).mockResolvedValue([])
+    }
+    return notificationService
+  }
+  const blocking = (...blocked: string[]) => async (_viewer: string, ids: string[]) =>
+    new Map(ids.map((id) => [id, blocked.includes(id)]))
+
+  it('drops a blocked actor from the initial fetch, with one lookup for the distinct actors', async () => {
+    checkBlockedBatch.mockImplementation(blocking('bob'))
+    const notificationService = await serviceWithFollowsFrom('bob', 'carol')
+
+    const { notifications } = await notificationService.getInitialNotifications('viewer')
+
+    expect(notifications.map((n) => n.from.id)).toEqual(['carol'])
+    expect(checkBlockedBatch).toHaveBeenCalledTimes(1)
+    expect(checkBlockedBatch).toHaveBeenCalledWith('viewer', expect.arrayContaining(['bob', 'carol']))
+  })
+
+  it('drops a blocked actor from a poll, and still moves the watermark past them', async () => {
+    checkBlockedBatch.mockImplementation(blocking('bob'))
+    const notificationService = await serviceWithFollowsFrom('bob')
+
+    const polled = await notificationService.pollNewNotifications('viewer', 1_000)
+
+    expect(polled.notifications).toEqual([])
+    expect(polled.latestTimestamp).toBe(1_500)
+  })
+
+  it('honours a block inherited from a followed block list (the batch lookup says blocked)', async () => {
+    // checkBlockedBatch folds own blocks and followed lists into one answer.
+    checkBlockedBatch.mockImplementation(blocking('listed'))
+    const notificationService = await serviceWithFollowsFrom('listed', 'carol')
+
+    const polled = await notificationService.pollNewNotifications('viewer', 1_000)
+
+    expect(polled.notifications.map((n) => n.from.id)).toEqual(['carol'])
+  })
+
+  it('keeps the notifications, and warns, when the block lookup fails', async () => {
+    const { logger } = await import('@/lib/logger')
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    checkBlockedBatch.mockRejectedValue(new Error('blocks unavailable'))
+    const notificationService = await serviceWithFollowsFrom('bob', 'carol')
+
+    const polled = await notificationService.pollNewNotifications('viewer', 1_000)
+
+    expect(polled.notifications.map((n) => n.from.id).sort()).toEqual(['bob', 'carol'])
+    expect(polled.failure).toBeUndefined()
+    expect(warn).toHaveBeenCalled()
+  })
+
+  it('finds which held notifications are blocked now, every liker included, and fails soft', async () => {
+    const { notificationService } = await import('./notification-service')
+    const user = (id: string) => ({ id }) as Notification['from']
+    const held = [
+      { id: 'f', type: 'follow', from: user('carol'), createdAt: new Date(1), read: false },
+      { id: 'l', type: 'like', from: user('alice'), likers: [user('alice'), user('listed')], likerCount: 2, createdAt: new Date(1), read: false },
+    ] as Notification[]
+    checkBlockedBatch.mockImplementation(blocking('listed'))
+    expect(await notificationService.blockedAmongHeld('viewer', held)).toEqual(new Set(['listed']))
+    expect(checkBlockedBatch).toHaveBeenCalledWith('viewer', ['carol', 'alice', 'listed'])
+
+    checkBlockedBatch.mockRejectedValue(new Error('blocks unavailable'))
+    expect(await notificationService.blockedAmongHeld('viewer', held)).toBeNull()
+  })
+
+  it('looks nothing up when there are no notifications', async () => {
+    const notificationService = await serviceWithFollowsFrom()
+
+    await notificationService.pollNewNotifications('viewer', 1_000)
+
+    expect(checkBlockedBatch).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the generated local avatar, never a third-party URL', async () => {
+    const notificationService = await serviceWithFollowsFrom('bob')
+
+    const { notifications } = await notificationService.pollNewNotifications('viewer', 1_000)
+
+    expect(notifications[0].from.avatar).toMatch(/^data:image\//)
+    expect(notifications[0].from.avatar).not.toContain('dicebear.com')
   })
 })
 

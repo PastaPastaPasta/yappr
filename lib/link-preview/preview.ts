@@ -1,22 +1,22 @@
 /**
- * Preview data for a URL. YouTube and image links are built from the URL
- * alone; anything else is fetched and parsed. Results are cached for the
- * page's lifetime and concurrent requests for one URL share a fetch.
+ * Preview data for a URL. YouTube, image and ordinary web links are built
+ * from the URL alone; only IPFS and allow-listed hosts are fetched and parsed
+ * (./fetch). Results are cached for the page's lifetime and concurrent
+ * requests for one URL share a fetch.
  */
 
 import type { LinkPreviewData } from './types'
 import { extractYouTubeVideoId, isDirectImageUrl } from './urls'
-import { fetchPreviewContent, isImageContentType } from './fetch'
+import { canFetchPreview, fetchPreviewContent, isImageContentType } from './fetch'
 import { parseHtmlForPreview } from './parse-html'
 
 const previewCache = new Map<string, LinkPreviewData>()
 const pendingPreviews = new Map<string, Promise<LinkPreviewData>>()
 
-/** What we can say about a URL without fetching it. */
+/** What we can say about a URL without contacting its site: its host. */
 function basicPreview(url: string): LinkPreviewData {
   try {
-    const parsed = new URL(url)
-    return { url, siteName: parsed.hostname.replace(/^www\./, ''), favicon: `${parsed.origin}/favicon.ico` }
+    return { url, siteName: new URL(url).hostname.replace(/^www\./, '') }
   } catch {
     return { url }
   }
@@ -30,8 +30,6 @@ function youTubePreview(url: string, videoId: string): LinkPreviewData {
   return {
     url,
     siteName: 'YouTube',
-    // maxresdefault is not always present; the component falls back to hqdefault on error.
-    image: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
     youtubeVideoId: videoId,
   }
 }
@@ -40,6 +38,7 @@ async function buildPreview(url: string): Promise<LinkPreviewData> {
   if (isDirectImageUrl(url)) return directImagePreview(url)
   const videoId = extractYouTubeVideoId(url)
   if (videoId) return youTubePreview(url, videoId)
+  if (!canFetchPreview(url)) return basicPreview(url)
 
   const { content, contentType, resolvedUrl } = await fetchPreviewContent(url)
   // For ipfs:// the resolved gateway URL is what a browser can actually load.

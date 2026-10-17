@@ -23,6 +23,7 @@ const m = vi.hoisted(() => {
     viewer: 'viewer' as string | null,
     getInitialNotifications: vi.fn(),
     pollNewNotifications: vi.fn(),
+    blocked: new Set<string>(),
   }
 })
 
@@ -30,7 +31,7 @@ vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>()
 vi.mock('@/lib/services/notification-service', () => ({
   notificationService: { getInitialNotifications: m.getInitialNotifications, pollNewNotifications: m.pollNewNotifications },
 }))
-vi.mock('@/lib/services/block-service', () => ({ blockService: { checkBlockedBatch: async () => new Map() } }))
+vi.mock('@/lib/services/block-service', () => ({ blockService: { checkBlockedBatch: async (_viewer: string, ids: string[]) => new Map(ids.map(id => [id, m.blocked.has(id)])) } }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => ({
   ...await load<object>(),
   unifiedProfileService: { getProfilesByIdentityIds: async () => [], getProfile: async () => null },
@@ -48,6 +49,7 @@ describe('notifications.list (NEW-R-vi-002)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     m.viewer = 'viewer'
+    m.blocked = new Set()
     notifications = createNotificationsModule(() => undefined)
   })
 
@@ -84,6 +86,44 @@ describe('notifications.list (NEW-R-vi-002)', () => {
   it('still answers an empty list when every source answered', async () => {
     m.getInitialNotifications.mockResolvedValueOnce({ notifications: [], latestTimestamp: 1_000 })
     expect((await notifications.api.list()).items).toEqual([])
+  })
+})
+
+describe('notifications from blocked actors', () => {
+  it('hides a held actor once the viewer blocks them, and counts them out of the badge', async () => {
+    m.viewer = 'viewer'
+    m.blocked = new Set()
+    const notifications = createNotificationsModule(() => undefined)
+    m.getInitialNotifications.mockResolvedValueOnce({ notifications: [follow('f1', 2_000)], latestTimestamp: 2_000 })
+    expect((await notifications.api.list()).items.map(item => item.id)).toEqual(['f1'])
+
+    m.blocked = new Set(['actor'])
+    expect((await notifications.api.list()).items).toEqual([])
+    expect(await notifications.api.unreadCount()).toBe(0)
+  })
+  it('takes just the blocked liker out of an aggregated like, whichever of them it is', async () => {
+    const user = (id: string): User => ({ ...actor, id, username: id, displayName: id })
+    const batch: Notification = {
+      id: 'like:post:P1:1', type: 'like', from: user('alice'), likers: [user('alice'), user('bob')], likerCount: 2,
+      timeless: true, createdAt: new Date(1_000), read: false,
+    }
+    const shown = async () => (await notifications.api.list()).items.map(item => ({ id: item.id, actor: item.actor.id, likers: item.likers }))
+    m.viewer = 'viewer'
+    m.blocked = new Set()
+    const notifications = createNotificationsModule(() => undefined)
+    m.getInitialNotifications.mockResolvedValueOnce({ notifications: [batch], latestTimestamp: 1_000 })
+    expect(await shown()).toEqual([{ id: batch.id, actor: 'alice', likers: 2 }])
+
+    m.blocked = new Set(['alice'])
+    expect(await shown()).toEqual([{ id: batch.id, actor: 'bob', likers: undefined }])
+    expect(await notifications.api.unreadCount()).toBe(1)
+
+    m.blocked = new Set(['bob'])
+    expect(await shown()).toEqual([{ id: batch.id, actor: 'alice', likers: undefined }])
+
+    m.blocked = new Set(['alice', 'bob'])
+    expect(await shown()).toEqual([])
+    expect(await notifications.api.unreadCount()).toBe(0)
   })
 })
 

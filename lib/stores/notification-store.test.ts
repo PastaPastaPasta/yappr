@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NotificationSettings } from '@/lib/store'
 import type { Notification } from '@/lib/types'
 import { getVisibleUnreadNotificationCount } from '@/lib/notification-preferences'
-import { useNotificationStore } from './notification-store'
+import { useNotificationStore, withoutBlockedActors } from './notification-store'
 
 // The store persists readIds through localStorage, which the node test
 // environment lacks. It must exist before the store module is evaluated.
@@ -87,5 +87,166 @@ describe('markAllAsRead', () => {
     store().markAllAsRead(enabled)
     expect(store().notifications.every(n => n.read)).toBe(true)
     expect(store().readIds).toHaveLength(5)
+  })
+})
+
+describe('removeFromActor', () => {
+  it('drops one actor\'s notifications and keeps the rest', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [] })
+    useNotificationStore.setState({ viewerId: 'viewer', blockedActors: [] })
+    store().setNotifications([notification('a', 'like', 3), notification('b', 'follow', 2)])
+    store().removeFromActor('from-a', 'viewer')
+    expect(store().notifications.map(n => n.id)).toEqual(['b'])
+  })
+
+  it('takes just the blocked liker out of an aggregated like, and the like only when no liker is left', () => {
+    const user = (id: string) => ({ id }) as Notification['from']
+    const batch = (id: string, likers: string[], likerCount: number): Notification => ({
+      ...notification(id, 'like', 1), from: user(likers[0]), likers: likers.map(user), likerCount, timeless: true,
+    })
+    useNotificationStore.setState({ notifications: [], readIds: [], viewerId: 'viewer', blockedActors: [] })
+    store().setNotifications([batch('both', ['alice', 'bob'], 3), batch('alone', ['alice'], 1)])
+
+    store().removeFromActor('alice', 'viewer')
+
+    expect(store().notifications.map(({ id, from, likers, likerCount }) => ({ id, from: from.id, likers: likers?.map(l => l.id), likerCount })))
+      .toEqual([{ id: 'both', from: 'bob', likers: ['bob'], likerCount: 2 }])
+  })
+})
+
+describe('withoutBlockedActors', () => {
+  const user = (id: string) => ({ id }) as Notification['from']
+  const batch: Notification = { ...notification('b', 'like', 1), from: user('alice'), likers: [user('alice'), user('bob'), user('carol')], likerCount: 5 }
+
+  it('leaves a notification untouched when no one in it is blocked', () => {
+    expect(withoutBlockedActors(batch, () => false)).toBe(batch)
+  })
+
+  it('lowers the count by the blocked likers and shows the first one left', () => {
+    const shown = withoutBlockedActors(batch, (id) => id !== 'carol')
+    expect(shown && { from: shown.from.id, likers: shown.likers?.map(l => l.id), likerCount: shown.likerCount })
+      .toEqual({ from: 'carol', likers: ['carol'], likerCount: 3 })
+  })
+})
+
+describe('blocks during this session', () => {
+  it('keep a fetch that was already running from bringing a blocked actor back, until they are unblocked', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'viewer' })
+    store().removeFromActor('from-a', 'viewer')
+
+    store().setNotifications([notification('a', 'follow', 2), notification('b', 'follow', 1)])
+    store().addNotifications([{ ...notification('a2', 'like', 3), from: { id: 'from-a' } as Notification['from'] }])
+    expect(store().notifications.map(n => n.id)).toEqual(['b'])
+
+    store().allowActor('from-a', 'viewer')
+    store().addNotifications([notification('a', 'follow', 2)])
+    expect(store().notifications.map(n => n.id)).toEqual(['a', 'b'])
+  })
+
+  it('belong to the account that made them: another account signing in sees that actor again', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: null })
+    store().setViewer('account-a')
+    store().removeFromActor('from-x', 'account-a')
+
+    store().setViewer(null)
+    store().setViewer('account-b')
+    store().setNotifications([notification('x', 'follow', 1)])
+    expect(store().notifications.map(n => n.id)).toEqual(['x'])
+  })
+
+  it('stay while the same account is signed in', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: null })
+    store().setViewer('account-a')
+    store().removeFromActor('from-x', 'account-a')
+    store().setViewer('account-a')
+    store().setNotifications([notification('x', 'follow', 1)])
+    expect(store().notifications).toEqual([])
+  })
+
+  it('ignore a block or unblock that finishes after another account signed in', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: null })
+    store().setViewer('account-b')
+    store().setNotifications([notification('x', 'follow', 1)])
+
+    // account-a's block request was still running when account-b signed in.
+    store().removeFromActor('from-x', 'account-a')
+    expect(store().notifications.map(n => n.id)).toEqual(['x'])
+    expect(store().blockedActors).toEqual([])
+
+    store().removeFromActor('from-x', 'account-b')
+    store().allowActor('from-x', 'account-a')
+    expect(store().blockedActors.map(block => block.actorId)).toEqual(['from-x'])
+  })
+
+  it('are forgotten when the store is cleared', () => {
+    useNotificationStore.setState({ viewerId: 'viewer' })
+    store().removeFromActor('from-a', 'viewer')
+    store().clearNotifications()
+    expect(store().blockedActors).toEqual([])
+  })
+})
+
+describe('a large aggregated like', () => {
+  it('keeps the like while anyone in it is unblocked, however many likers came before them', () => {
+    const user = (id: string) => ({ id }) as Notification['from']
+    const likers = Array.from({ length: 11 }, (_, i) => user(`u${i}`))
+    const big: Notification = { ...notification('big', 'like', 1), from: likers[0], likers, likerCount: 11 }
+    const shown = withoutBlockedActors(big, (id) => id !== 'u10')
+    expect(shown && { from: shown.from.id, likerCount: shown.likerCount }).toEqual({ from: 'u10', likerCount: 1 })
+  })
+})
+
+describe('pruneBlocked', () => {
+  it('drops held notifications of actors blocked by any route, per liker, without recording them as session blocks', () => {
+    const user = (id: string) => ({ id }) as Notification['from']
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'viewer' })
+    store().setNotifications([
+      notification('x', 'follow', 3),
+      { ...notification('batch', 'like', 2), from: user('listed'), likers: [user('listed'), user('bob')], likerCount: 2 },
+      notification('y', 'follow', 1),
+    ])
+
+    store().pruneBlocked(new Set(['from-x', 'listed']), 'viewer')
+
+    expect(store().notifications.map(({ id, from, likerCount }) => ({ id, from: from.id, likerCount })))
+      .toEqual([{ id: 'batch', from: 'bob', likerCount: 1 }, { id: 'y', from: 'from-y', likerCount: undefined }])
+    expect(store().blockedActors).toEqual([])
+  })
+
+  it('ignores a re-check that finishes after another account signed in', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'account-b' })
+    store().setNotifications([notification('x', 'follow', 1)])
+    store().pruneBlocked(new Set(['from-x']), 'account-a')
+    expect(store().notifications.map(n => n.id)).toEqual(['x'])
+  })
+})
+
+describe('an own block lifted while a followed block list also blocks', () => {
+  it('lets new notifications through once the list stops blocking, with no session exclusion left behind', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'viewer' })
+    // Own block, then the own block deleted (the list still blocks: held rows are pruned by the re-check).
+    store().removeFromActor('from-x', 'viewer')
+    store().allowActor('from-x', 'viewer')
+    store().pruneBlocked(new Set(['from-x']), 'viewer')
+    // The list is unfollowed: the next fetch brings X's new notification.
+    store().addNotifications([notification('x', 'follow', 1)])
+    expect(store().notifications.map(n => n.id)).toEqual(['x'])
+  })
+})
+
+describe('a session block lifted on another device', () => {
+  it('stops filtering once its in-flight window has passed, so the actor\'s new notifications come through', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'viewer' })
+    store().removeFromActor('from-x', 'viewer')
+    // A fetch already in flight when the block landed is still filtered.
+    store().addNotifications([notification('x1', 'follow', 1)].map(n => ({ ...n, from: { id: 'from-x' } as Notification['from'] })))
+    expect(store().notifications).toEqual([])
+
+    // Unblocked elsewhere; the block cache refreshes and the service returns X again.
+    now.mockReturnValue(1_000_000 + 5 * 60 * 1000 + 1)
+    store().addNotifications([{ ...notification('x2', 'reply', 2), from: { id: 'from-x' } as Notification['from'] }])
+    expect(store().notifications.map(n => n.id)).toEqual(['x2'])
+    now.mockRestore()
   })
 })

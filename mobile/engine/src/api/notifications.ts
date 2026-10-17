@@ -2,7 +2,7 @@ import { getVisibleUnreadNotificationCount, isNotificationEnabled } from '@/lib/
 import { blockService } from '@/lib/services/block-service'
 import { notificationService } from '@/lib/services/notification-service'
 import { useSettingsStore } from '@/lib/store'
-import { useNotificationStore } from '@/lib/stores/notification-store'
+import { useNotificationStore, withoutBlockedActors } from '@/lib/stores/notification-store'
 import { isStoreNotificationType, storeNotificationPath, storeNotificationPhrase, storeNotificationSnippet } from '@/lib/storefront/store-notification-copy'
 import type { Notification } from '@/lib/types'
 import { truncateId } from '@/lib/utils/common'
@@ -81,8 +81,11 @@ const settings = () => useSettingsStore.getState().notificationSettings
 /**
  * The list, tab counts and badge share one visibility rule: notifications
  * from blocked actors (NOTIF-08) and types turned off in settings are hidden.
+ * lib's fetches already leave out actors blocked when they ran; this covers
+ * the ones blocked (or unblocked) since.
  */
-const unblocked = (blocked: ReadonlySet<string>) => store().notifications.filter(notification => !blocked.has(notification.from.id))
+const unblocked = (blocked: ReadonlySet<string>) =>
+  store().notifications.flatMap(notification => withoutBlockedActors(notification, id => blocked.has(id)) ?? [])
 const visible = (blocked: ReadonlySet<string>) => unblocked(blocked).filter(notification => isNotificationEnabled(notification, settings()))
 const unreadCountOf = (blocked: ReadonlySet<string>) => getVisibleUnreadNotificationCount(unblocked(blocked), settings())
 
@@ -93,7 +96,8 @@ const unreadCountOf = (blocked: ReadonlySet<string>) => getVisibleUnreadNotifica
  * it knew, as feeds fail soft to "not blocked".
  */
 async function blockedAmong(viewer: string, notifications: Notification[]): Promise<Set<string> | null> {
-  const actors = Array.from(new Set(notifications.map(notification => notification.from.id)))
+  // Every liker of an aggregated like, so blocking any one of them reaches it.
+  const actors = Array.from(new Set(notifications.flatMap(notification => notification.likers?.map(liker => liker.id) ?? [notification.from.id])))
   if (actors.length === 0) return new Set()
   const result = await blockService.checkBlockedBatch(viewer, actors).catch(() => null)
   return result ? new Set(actors.filter(actor => result.get(actor) === true)) : null
@@ -130,7 +134,7 @@ function storeOf({ type, store }: Notification): NotificationDTO['store'] {
 
 async function toNotificationDTOs(notifications: Notification[]): Promise<NotificationDTO[]> {
   const ids = notifications.flatMap(notification => [notification.from.id, notification.post?.author.id ?? ''])
-  // Stored avatars, so a generated one is a recipe RN renders, not lib's remote DiceBear URL. Decoration: a failed read falls back.
+  // Stored avatars, so a generated one is a recipe RN renders, not lib's generated data: URI. Decoration: a failed read falls back.
   const avatars = await avatarsOf(ids).catch(() => new Map<string, AuthorDTO['avatar']>())
   return notifications.map(notification => {
     const isBlog = notification.type === 'blogPost' || notification.type === 'blogComment'
@@ -203,12 +207,12 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
       // and a retry reads the 7 days again (NEW-R-vi-002). Partial results show; the next poll reads
       // the failed source's window again (lib keeps the watermark).
       if (result.failure !== undefined && result.notifications.length === 0) throw readFailure(result.failure)
-      const blockedNow = await blockedAmong(viewer, result.notifications)
-      if (overtaken()) throw changed()
       store().setNotifications(result.notifications)
       store().setLastFetchTimestamp(result.latestTimestamp)
       store().setHasFetchedOnce(true)
-      blocked = blockedNow ?? new Set()
+      // lib already left out the actors blocked now, so nothing held is hidden yet;
+      // `refreshBlocked` picks up blocks and unblocks made after this fetch.
+      blocked = new Set()
       loadedFor = viewer
       report()
     })().finally(() => {
