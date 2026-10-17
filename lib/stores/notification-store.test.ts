@@ -220,3 +220,16 @@ describe('pruneBlocked', () => {
     expect(store().notifications.map(n => n.id)).toEqual(['x'])
   })
 })
+
+describe('an own block lifted while a followed block list also blocks', () => {
+  it('lets new notifications through once the list stops blocking, with no session exclusion left behind', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'viewer' })
+    // Own block, then the own block deleted (the list still blocks: held rows are pruned by the re-check).
+    store().removeFromActor('from-x', 'viewer')
+    store().allowActor('from-x', 'viewer')
+    store().pruneBlocked(new Set(['from-x']), 'viewer')
+    // The list is unfollowed: the next fetch brings X's new notification.
+    store().addNotifications([notification('x', 'follow', 1)])
+    expect(store().notifications.map(n => n.id)).toEqual(['x'])
+  })
+})

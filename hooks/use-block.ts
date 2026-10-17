@@ -46,15 +46,16 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
       const { blockService } = await import('@/lib/services/block-service')
       const result = await blockService.unblockUser(viewerId, subjectId)
       if (!result.success) return result
+      // The own block is gone: release its session exclusion. A followed block
+      // list that still blocks them is enforced by the fetches and the re-check.
+      useNotificationStore.getState().allowActor(subjectId, viewerId)
       // Only the viewer's own block can be deleted; a followed block list
       // keeps blocking, so the toggle must roll back instead of claiming success.
       const after = await blockService.getBlockProvenance(subjectId, viewerId).catch((error) => {
         logger.error('useBlock: status check after unblock failed:', error)
         return null
       })
-      if (after?.isBlocked) return { success: false, error: STILL_BLOCKED_BY_LIST }
-      useNotificationStore.getState().allowActor(subjectId, viewerId)
-      return result
+      return after?.isBlocked ? { success: false, error: STILL_BLOCKED_BY_LIST } : result
     },
     onMessage: (result) => (result.autoRevoked ? 'User blocked and private feed access revoked' : 'User blocked'),
     offMessage: 'User unblocked',
@@ -126,7 +127,8 @@ export function useBlockProvenance(targetUserId: string | undefined): UseBlockPr
       const { blockService } = await import('@/lib/services/block-service')
       const result = await blockService.unblockUser(viewerId, targetUserId)
       if (!result.success) throw new Error(result.error || 'Failed to unblock user')
-      if (inheritedFrom === null) useNotificationStore.getState().allowActor(targetUserId, viewerId)
+      // Own block gone: release its session exclusion (a followed list's block is enforced elsewhere).
+      useNotificationStore.getState().allowActor(targetUserId, viewerId)
     } catch (error) {
       logger.error('useBlockProvenance: unblock failed:', error)
       toast.error('Failed to update block status')
