@@ -14,10 +14,12 @@ import type { ItemReview } from '@/lib/types'
 interface ItemReviewListProps {
   itemId: string
   limit?: number
+  /** Runs after a moderator removed one of the reviews, so the item's rating can be read again. */
+  onReviewRemoved?: () => void
 }
 
 /** The newest reviews of one item, with the reviewer's name resolved in one batch. */
-export function ItemReviewList({ itemId, limit = 10 }: ItemReviewListProps) {
+export function ItemReviewList({ itemId, limit = 10, onReviewRemoved }: ItemReviewListProps) {
   const [reviews, setReviews] = useState<ItemReview[]>([])
   const [names, setNames] = useState<Map<string, string | null>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
@@ -63,7 +65,10 @@ export function ItemReviewList({ itemId, limit = 10 }: ItemReviewListProps) {
                 className="ml-auto"
                 target={documentRemovalTarget('storefront', 'itemReview', 'review', review, review.content ?? '')}
                 ownerId={review.reviewerId}
-                onRemoved={() => setReviews((previous) => previous.filter((r) => r.id !== review.id))}
+                onRemoved={() => {
+                  setReviews((previous) => previous.filter((r) => r.id !== review.id))
+                  onReviewRemoved?.()
+                }}
               />
             </div>
             {review.content && (

@@ -15,6 +15,7 @@ import { barredAuthorsCanTombstone, contractTakesReports, deletesAreTombstones }
 import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import type { ReportTargetKind } from '@/lib/reports'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
+import { storeStatsService } from '@/lib/services/store-stats-service'
 import {
   moderationServiceFor,
   postedOnLabel,
@@ -226,6 +227,8 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
       return
     }
     toast.success(`${what} restored`)
+    // A restored review counts in its store's or item's rating again; the record names neither.
+    if (contract === 'storefront') storeStatsService.invalidateAll()
     refresh().catch(() => { /* reported inside */ })
   }
 

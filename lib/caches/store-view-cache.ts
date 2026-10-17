@@ -98,3 +98,13 @@ export function loadStoreViewCache(storeId: string): StoreViewCacheData | null {
     return null
   }
 }
+
+/** Forget a store's saved view, so the next visit reads it again (a moderator just removed something on it). */
+export function clearStoreViewCache(storeId: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.removeItem(getCacheKey(storeId))
+  } catch {
+    // SessionStorage unavailable: nothing was saved either.
+  }
+}

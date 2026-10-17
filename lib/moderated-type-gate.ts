@@ -10,8 +10,9 @@ export const MODERATED_TYPE_RECHECK_MS = 60_000
  * The gate reads once at once, again every `intervalMs` while it is closed
  * (the first team may be seated at any time), and again on `focus` or
  * `visibilitychange` (to visible) from any of `targets` (the window and the
- * document). A read that fails changes nothing, and a closed gate keeps
- * polling through it. Returns the function that stops it.
+ * document). A read that fails changes nothing; a closed gate keeps polling
+ * through it, and so does one that has had no answer yet (its first read
+ * failed). Returns the function that stops it.
  */
 export function watchModeratedTypeOpen(
   read: () => Promise<boolean>,
@@ -35,7 +36,7 @@ export function watchModeratedTypeOpen(
       if (!open) timer = setTimeout(check, intervalMs)
     }).catch((error: unknown) => {
       logger.warn('watchModeratedTypeOpen: could not read the moderation team', error)
-      if (!stopped && lastOpen === false) timer = setTimeout(check, intervalMs)
+      if (!stopped && lastOpen !== true) timer = setTimeout(check, intervalMs)
     }).finally(() => {
       reading = false
     })

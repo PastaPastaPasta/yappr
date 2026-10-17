@@ -33,7 +33,7 @@ import { storeStatsService } from '@/lib/services/store-stats-service'
 import { storefrontIsV2 } from '@/lib/constants'
 import { cartService } from '@/lib/services/cart-service'
 import { parseStorePolicies } from '@/lib/utils/policies'
-import { saveStoreViewCache, loadStoreViewCache } from '@/lib/caches/store-view-cache'
+import { clearStoreViewCache, saveStoreViewCache, loadStoreViewCache } from '@/lib/caches/store-view-cache'
 import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy, ItemRatingSummary } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 
@@ -469,6 +469,7 @@ function StoreDetailContent() {
                       ownerId={store.ownerId}
                       onRemoved={() => {
                         storeService.clearCache(store.id)
+                        clearStoreViewCache(store.id)
                         router.push('/store')
                       }}
                     />
@@ -725,7 +726,14 @@ function StoreDetailContent() {
                     key={review.id}
                     review={review}
                     index={index}
-                    onRemoved={() => setReviews((previous) => previous.filter((r) => r.id !== review.id))}
+                    onRemoved={() => {
+                      setReviews((previous) => previous.filter((r) => r.id !== review.id))
+                      // The average and count came from the proved rating tree, which the removal changed.
+                      storeStatsService.invalidateStore(store.id)
+                      storeStatsService.getStoreRatingSummary(store.id)
+                        .then(setRatingSummary)
+                        .catch((error) => logger.warn('Failed to refresh the store rating:', error))
+                    }}
                   />
                 ))
               )}

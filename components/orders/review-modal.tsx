@@ -105,7 +105,11 @@ export function ReviewModal({
           })
         } catch (error) {
           logger.error(`Failed to submit item review for ${itemId}:`, error)
-          if (handleInsufficientYapp(error, 'You ran out of YAPP before every item review was posted.')) {
+          // Out of YAPP, or refused by the storefront's moderation (closed, or the buyer
+          // barred): every later rating would fail the same way, and a refusal is paid.
+          const stop = reportModerationRefusal(error, order.buyerId, 'storefront')
+            || handleInsufficientYapp(error, 'You ran out of YAPP before every item review was posted.')
+          if (stop) {
             // Nothing after this one was attempted either.
             failedItems.push(...ratedItems.slice(index).map(([id]) => id))
             break
