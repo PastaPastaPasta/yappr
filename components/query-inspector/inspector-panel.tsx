@@ -46,7 +46,7 @@ export function InspectorPanel() {
       animate={{ x: 0 }}
       exit={{ x: '100%' }}
       transition={{ type: 'tween', duration: 0.2, ease: 'easeOut' }}
-      className="fixed right-0 top-[32px] sm:top-[40px] bottom-0 z-[60] flex w-full flex-col border-l border-gray-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-2xl sm:w-[480px]"
+      className="fixed right-0 top-0 bottom-0 z-[60] flex w-full flex-col border-l border-gray-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-2xl sm:w-[480px]"
       aria-label="Query inspector"
     >
       <header className="shrink-0 border-b border-gray-200 dark:border-neutral-800">

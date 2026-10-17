@@ -790,7 +790,7 @@ export function LegacyMessages() {
   }
 
   return (
-    <div className="h-[calc(100dvh-32px-56px)] md:h-[calc(100dvh-40px)] flex overflow-hidden">
+    <div className="h-[calc(100dvh-56px)] md:h-[100dvh] flex overflow-hidden">
       <Sidebar />
 
       <main className="flex-1 md:max-w-[1200px] md:border-x border-gray-200 dark:border-gray-800 flex overflow-hidden">

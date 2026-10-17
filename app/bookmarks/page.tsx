@@ -8,7 +8,8 @@ import {
   MagnifyingGlassIcon,
   EllipsisHorizontalIcon,
   ShareIcon,
-  TrashIcon
+  TrashIcon,
+  GlobeAltIcon,
 } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
@@ -166,8 +167,13 @@ function BookmarksPage() {
           <div className="flex items-center justify-between px-4 py-3">
             <div>
               <h1 className="text-xl font-bold">Bookmarks</h1>
-              <p className="text-sm text-gray-500">
-                {bookmarkCount} saved {bookmarkCount === 1 ? 'post' : 'posts'} · Bookmarks are public
+              <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-gray-500">
+                <span>{bookmarkCount} saved {bookmarkCount === 1 ? 'post' : 'posts'}</span>
+                <span aria-hidden="true">·</span>
+                <span className="inline-flex items-center gap-1" data-testid="bookmarks-public-note">
+                  <GlobeAltIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                  Anyone can see your bookmarks
+                </span>
               </p>
             </div>
             
@@ -236,8 +242,7 @@ function BookmarksPage() {
             <BookmarkIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <h2 className="text-xl font-semibold mb-2">Save posts for later</h2>
             <p className="text-gray-500 text-sm">
-              Don&apos;t let the good ones fly away! Bookmark posts to easily find them again. Like everything on Dash Platform,
-              bookmarks are public.
+              Don&apos;t let the good ones fly away! Bookmark posts to easily find them again.
             </p>
           </div>
         ) : filteredBookmarks.length === 0 && !list.hasMore ? (

@@ -11,7 +11,7 @@ test('home renders the app shell', async ({ page }) => {
   const network = await expectedNetwork()
   await page.goto(appUrl('/'))
 
-  // The network banner lives in the always-mounted AppShell — the cheapest
+  // The network pill lives in the always-mounted AppShell — the cheapest
   // "the app booted at all" probe there is. Its label follows
   // NEXT_PUBLIC_NETWORK, so this doubles as a build-targets-the-right-chain
   // check.
@@ -23,13 +23,14 @@ test('home renders the app shell', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'Explore', exact: true })).toBeVisible()
 })
 
-test('about page renders and reports the network', async ({ page }) => {
+test('about page renders and the network pill names the network', async ({ page }) => {
   const network = await expectedNetwork()
   await page.goto(appUrl('/about/'))
 
   await expect(page.getByRole('heading', { name: 'About Yappr' })).toBeVisible()
-  await expect(page.getByText('Network', { exact: true })).toBeVisible()
-  await expect(page.getByText(network, { exact: true })).toBeVisible()
+  // The build's network shows as a small pill (never on mainnet); the build's
+  // contracts and topology moved to Settings > Developer > Build details.
+  await expect(page.getByTestId('network-pill')).toContainText(new RegExp(`^${network}`, 'i'))
 })
 
 test('explore page loads', async ({ page }) => {
@@ -49,7 +50,8 @@ for (const route of ['/store/view/', '/store/view/?id=']) {
     await expect(page.getByText('This store link is incomplete.')).toBeVisible()
     await page.getByRole('button', { name: 'Browse Stores' }).click()
     await expect(page).toHaveURL(appUrlPattern('/store'))
-    await expect(page.getByRole('heading', { name: 'Stores', exact: true })).toBeVisible()
+    // The heading carries the Store Beta pill while the build marks Store Beta.
+    await expect(page.getByRole('heading', { name: /^Stores( Beta)?$/ })).toBeVisible()
   })
 }
 
@@ -110,6 +112,6 @@ test('primary navigation moves between sections', async ({ page }) => {
   await expect(page).toHaveURL(appUrlPattern('/explore'))
   await expect(page.getByPlaceholder('Search posts and blog articles')).toBeVisible()
 
-  await page.getByRole('link', { name: 'Blog', exact: true }).click()
+  await page.getByRole('link', { name: /^Blog( Beta)?$/ }).click()
   await expect(page).toHaveURL(appUrlPattern('/blog'))
 })

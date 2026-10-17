@@ -4,6 +4,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { expect, type Page } from '@playwright/test'
 
 /**
  * `baseURL` in playwright.config.ts has no trailing slash, so `page.goto('/x')`
@@ -54,4 +55,18 @@ export function isAppConnectBuild(): boolean {
 
 export function scopedKey(key: string): string {
   return STORAGE_SCOPE ? `${STORAGE_SCOPE}:${key}` : key
+}
+
+/**
+ * Open Settings > Developer > Build details, which print the commit, the
+ * compiled-in topology and the contract ids. The settings page is auth-gated,
+ * so callers need a signed-in page.
+ */
+export async function openBuildDetails(page: Page): Promise<void> {
+  await page.goto(appUrl('/settings/?section=developer'))
+  const details = page.getByTestId('build-details')
+  await expect(details).toBeVisible({ timeout: 60_000 })
+  if (!(await details.evaluate((element) => (element as HTMLDetailsElement).open))) {
+    await details.locator('summary').click()
+  }
 }

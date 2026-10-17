@@ -21,7 +21,7 @@ interface PageShellProps {
  */
 export function PageShell({ children, mainClassName, hideRightSidebar = false }: PageShellProps) {
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
+    <div className="min-h-screen flex">
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
         <main className={cn('w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800', mainClassName)}>
@@ -49,7 +49,7 @@ export function PageHeader({ children, borderless = false, className }: PageHead
   return (
     <header
       className={cn(
-        'sticky top-[32px] sm:top-[40px] z-40 bg-white/80 dark:bg-neutral-900/80',
+        'sticky top-0 z-40 bg-white/80 dark:bg-neutral-900/80',
         !borderless && 'border-b border-gray-200 dark:border-gray-800',
         !potatoMode && 'backdrop-blur-xl',
         className
