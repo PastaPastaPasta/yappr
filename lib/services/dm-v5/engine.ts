@@ -122,6 +122,7 @@ export class DmEngine {
   private snapshot: EngineSnapshot | null = null
   private sweeping = false
   private pollFailures = 0
+  private pollPromise: Promise<void> | null = null
 
   constructor(options: EngineOptions) {
     this.ctx = createContext({
@@ -178,7 +179,7 @@ export class DmEngine {
   async start(): Promise<void> {
     if (this.started) return
     this.started = true
-    if (!this.paused) await this.tick()
+    if (!this.paused) await this.tick(true)
   }
 
   /** The first successful load: the saved conversations, and recovery when the state is lost (§9). */
@@ -239,8 +240,9 @@ export class DmEngine {
 
   /** Poll now, and on the cadence again, after `pause()`. */
   resume(): Promise<void> {
+    if (!this.paused) return this.pollPromise ?? Promise.resolve()
     this.paused = false
-    return this.tick()
+    return this.tick(true)
   }
 
   /** Save pending self-state edits now (page hidden or closed, §5.5), on the queue. */
@@ -255,25 +257,43 @@ export class DmEngine {
     if (this.stopped || this.paused) return
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
-      this.tick().catch((error) => logger.warn('DM v5 poll failed:', error))
+      this.tick(true).catch((error) => logger.warn('DM v5 poll failed:', error))
     }, pollDelay(this.openKey ? OPEN_POLL_MS : BACKGROUND_POLL_MS, this.pollFailures))
   }
 
-  /** One poll now, then reschedule. */
-  async tick(): Promise<void> {
+  /** Explicit checks get a fresh poll; lifecycle/cadence calls share pending work. */
+  tick(automatic = false): Promise<void> {
+    if (this.pollPromise) {
+      return automatic ? this.pollPromise : this.pollPromise.then(() => this.tick())
+    }
+    this.pollPromise = this.poll(automatic)
+    return this.pollPromise
+  }
+
+  private async poll(automatic: boolean): Promise<void> {
     try {
-      await this.run(async () => {
+      const polled = await this.run(async () => {
+        // A foreground catch-up may wait behind a send/flush while the tab hides again.
+        if (automatic && this.paused) return false
         await this.ensureLoaded()
-        await pollOnce(this.ctx)
-        this.restorePositions()
+        if (automatic && this.paused) return false
+        try {
+          await pollOnce(this.ctx)
+        } finally {
+          this.restorePositions()
+        }
+        return true
       })
-      this.error = null
-      this.pollFailures = 0
+      if (polled) {
+        this.error = null
+        this.pollFailures = 0
+      }
     } catch (error) {
       this.pollFailures += 1
       this.error = error instanceof Error ? error.message : 'Could not load messages'
       logger.warn('DM v5 poll failed:', error)
     } finally {
+      this.pollPromise = null
       this.emit()
       this.schedule()
       this.maybeSweep()

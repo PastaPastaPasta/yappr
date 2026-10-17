@@ -424,6 +424,76 @@ describe('DmEngine unreachable 1:1s (the peer has not set up messaging)', () => 
 })
 
 describe('DmEngine.pause', () => {
+  it('queues an explicit check after an outstanding poll, including while paused', async () => {
+    const alice = engine(new MemoryLedger(), ALICE_ID, ALICE_PRIV)
+    await alice.start()
+    let release!: () => void
+    let entered!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    const reading = new Promise<void>(resolve => { entered = resolve })
+    const read = alice.ctx.chain.invitesSince.bind(alice.ctx.chain)
+    const reads = vi.spyOn(alice.ctx.chain, 'invitesSince').mockImplementationOnce(async (...args) => {
+      entered()
+      await pending
+      return read(...args)
+    })
+    const inFlight = alice.tick()
+    await reading
+    alice.pause()
+    const explicit = alice.tick()
+    expect(explicit).not.toBe(inFlight)
+    expect(reads).toHaveBeenCalledTimes(1)
+    release()
+    await Promise.all([inFlight, explicit])
+    expect(reads).toHaveBeenCalledTimes(2)
+  })
+
+  it('coalesces catch-ups during an outstanding poll and does not poll again after hide/show/hide', async () => {
+    const alice = engine(new MemoryLedger(), ALICE_ID, ALICE_PRIV)
+    await alice.start()
+    let release!: () => void
+    let entered!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    const reading = new Promise<void>(resolve => { entered = resolve })
+    const read = alice.ctx.chain.invitesSince.bind(alice.ctx.chain)
+    const reads = vi.spyOn(alice.ctx.chain, 'invitesSince').mockImplementationOnce(async (...args) => {
+      entered()
+      await pending
+      return read(...args)
+    })
+    const inFlight = alice.tick()
+    await reading
+    alice.pause()
+    const catchUp = alice.resume()
+    expect(alice.resume()).toBe(catchUp)
+    alice.pause()
+    const flush = alice.flush()
+    release()
+    await Promise.all([inFlight, catchUp, flush])
+    expect(reads).toHaveBeenCalledTimes(1)
+    await alice.resume()
+    expect(reads).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips a queued catch-up that becomes hidden while waiting behind a flush', async () => {
+    const alice = engine(new MemoryLedger(), ALICE_ID, ALICE_PRIV)
+    await alice.start()
+    let release!: () => void
+    let entered!: () => void
+    const pending = new Promise<boolean>(resolve => { release = () => resolve(false) })
+    const saving = new Promise<void>(resolve => { entered = resolve })
+    vi.spyOn(alice.ctx.store, 'flush').mockImplementationOnce(() => { entered(); return pending })
+    const reads = vi.spyOn(alice.ctx.chain, 'invitesSince')
+    const flush = alice.flush()
+    await saving
+    alice.pause()
+    const catchUp = alice.resume()
+    alice.pause()
+    release()
+    await Promise.all([flush, catchUp])
+    expect(reads).not.toHaveBeenCalled()
+  })
+
   it('does not start a hidden engine until resume', async () => {
     const ledger = new MemoryLedger()
     const alice = engine(ledger, ALICE_ID, ALICE_PRIV)

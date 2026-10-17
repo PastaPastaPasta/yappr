@@ -13,11 +13,11 @@ settings.
 
 Baseline → updated, bytes raw / gzip:
 
-- `/`: 17,509,434 / 10,505,427 → 5,509,569 / 1,506,811.
-- `/feed`: 17,540,212 / 10,516,016 → 5,539,801 / 1,517,333.
-- `/post?id=…`: 17,525,231 / 10,510,944 → 5,524,852 / 1,512,218.
-- `/user?id=…`: 17,598,460 / 10,529,912 → 5,598,072 / 1,531,203.
-- `/terms`: 17,285,349 / 10,436,226 → 5,294,316 / 1,440,630.
+- `/`: 17,509,434 / 10,505,427 → 5,510,121 / 1,506,971.
+- `/feed`: 17,540,212 / 10,516,016 → 5,540,353 / 1,517,493.
+- `/post?id=…`: 17,525,231 / 10,510,944 → 5,525,404 / 1,512,378.
+- `/user?id=…`: 17,598,460 / 10,529,912 → 5,598,624 / 1,531,363.
+- `/terms`: 17,285,349 / 10,436,226 → 5,294,316 / 1,440,629.
 
 The feed's eager transfer is 85.6% smaller with gzip (68.4% smaller raw).
 The WASM payload and BlockNote/Mantine are absent from those eager scripts.
@@ -86,6 +86,10 @@ off exponentially up to five minutes. Partial notification failures also trigger
 backoff without advancing the failed source's watermark.
 Following-feed continuation failures retain partial posts and their retry
 watermark while triggering backoff; an intentional batch cap alone does not.
+DM polls share one pending operation, including duplicate mobile foreground
+signals, and recheck visibility when dequeued. State flushes, explicit sends and explicit refresh checks
+still run while hidden; explicit checks wait for a fresh poll. DM stream continuation failures retain partial messages
+and retryable cursors, finish healthy work, then trigger polling backoff.
 
 The legacy v3/v4 active-conversation poller is outside this DM-v5 engine policy.
 The current default config still selects that older path. The release audit
@@ -120,10 +124,10 @@ No denylist of testnet node operators or upstream SDK/node changes is included.
 
 ## Validation
 
-Web lint and dead-code checks pass, with 224 unit-test files / 3,260 tests.
+Web lint and dead-code checks pass, with 224 unit-test files / 3,264 tests.
 The production export builds successfully. The Sakura export passes the
 per-file and eager-route size budgets; read-only smoke E2E reports 33 passed
-and two skipped. Mobile engine typecheck and lint pass, as do all 522 unit
+and two skipped. Mobile engine typecheck and lint pass, as do all 523 unit
 tests and both testnet/devnet bundle builds. On the busy build host, the mobile
 module-import test hit its default five-second timeout; the full suite passed
 with two workers and a 30-second test timeout. No assertion was disabled.
