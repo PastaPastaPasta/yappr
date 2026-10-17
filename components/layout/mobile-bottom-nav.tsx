@@ -130,7 +130,7 @@ export function MobileBottomNav() {
       {/* More Menu Sheet */}
       {/* React 18 emits inert only as a string, while the DOM typings declare it boolean. */}
       <div id="mobile-more-menu" aria-hidden={!moreMenuOpen} inert={moreMenuOpen ? undefined : ('' as unknown as boolean)} className={cn(
-        "fixed bottom-14 left-0 right-0 z-40 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
+        "fixed bottom-14 left-0 right-0 z-40 md:hidden max-h-[calc(100dvh-3.5rem)] overflow-y-auto bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
         moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
       )}>
         <div className="p-4">

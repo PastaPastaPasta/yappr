@@ -3,20 +3,22 @@
 import Link from 'next/link'
 import { ShieldCheckIcon, EyeIcon, LockClosedIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
 import { InfoPage, InfoSection, Prose, BulletList, NetworkNotice } from '@/components/layout/info-page'
+import { SupportEmailLink } from '@/components/layout/legal-links'
 import { IPFS_GATEWAYS } from '@/lib/utils/ipfs-gateway'
-import { LEGAL_UPDATED, SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/lib/legal'
+import { LEGAL_UPDATED } from '@/lib/legal'
 
 const PUBLIC_DATA = [
   'Your username, identity ID and credit balance',
-  'Your profile: name, bio, avatar, banner, website, location, links and payment addresses',
+  'Your profile: name, bio, pronouns, avatar, banner, website, location, links and payment addresses',
   'Your posts, replies and quotes, and the media they link to',
   'Who you follow, who follows you, and follow requests to private feeds',
   'Likes, bookmarks and poll votes',
-  'Who you block, and any note you add to a block',
-  'Reports you file: what you reported, why, and your details',
+  'Who you block, any note you add to a block, and whose block lists you follow',
+  'Reports you file: what you reported, why, and anything you wrote',
   'Who you approve to read your private feed',
-  'Your blogs, blog posts and comments',
+  'Your blogs, blog posts and comments, and the blogs you follow',
   'Your store and items, the reviews you write, and that you ordered from a store and when',
+  'Standing for a moderation team, and votes in its election',
   'The time of every action',
 ]
 
@@ -40,11 +42,11 @@ const THIRD_PARTIES: ThirdParty[] = [
   },
   {
     name: 'wsrv.nl',
-    what: 'Images from other websites are loaded through this public image proxy, so those websites don’t see your IP address. wsrv.nl sees the image address and your IP address.',
+    what: 'Images from other websites load through this public image proxy, so the site hosting an image is never contacted by your browser; if the proxy is down, a placeholder shows instead. wsrv.nl sees the image address and your IP address.',
   },
   {
     name: 'IPFS gateways',
-    what: `Images and files stored on IPFS load from public gateways (${IPFS_GATEWAYS.map((gateway) => gateway.domain).join(', ')}). They see your IP address and what you load.`,
+    what: `Images and files stored on IPFS load from public IPFS gateways (${IPFS_GATEWAYS.map((gateway) => gateway.domain).join(', ')}). They see your IP address and what you load.`,
   },
   {
     name: 'Storacha and Pinata',
@@ -56,7 +58,11 @@ const THIRD_PARTIES: ThirdParty[] = [
   },
   {
     name: 'Link previews',
-    what: 'When a post links to a page, your browser may fetch a preview from that site. You can turn previews off in Settings › Privacy.',
+    what: 'Most link previews are made from the link itself, without contacting the website. Links to IPFS and a few image hosts (such as Imgur, Reddit, Giphy, GitHub and X) are read directly from those services. You can turn previews off in Settings › Privacy.',
+  },
+  {
+    name: 'Dash block explorer (Insight)',
+    what: 'When you pay in DASH, the app watches the payment address to confirm your payment arrived. The explorer sees your IP address and that address.',
   },
   {
     name: 'CoinGecko and CryptoCompare',
@@ -68,7 +74,7 @@ const THIRD_PARTIES: ThirdParty[] = [
   },
   {
     name: 'Getting an identity',
-    what: 'The sign-in screen links to a separate site for getting a Dash identity: on test networks, an identity bridge funded by a faucet. It has its own terms.',
+    what: 'The sign-in screen links to a separate service for getting a Dash identity: on test networks, an identity bridge funded by a faucet.',
   },
 ]
 
@@ -88,7 +94,7 @@ export default function PrivacyPage() {
         <Prose>
           <BulletList>
             <li>Almost everything you do on Yappr is public and permanent, because it is written to Dash Platform.</li>
-            <li>Messages, private-feed posts and order details are encrypted, but some facts about them are still visible.</li>
+            <li>Messages, private-feed posts, what you order and shipping addresses are encrypted, but some facts about them are still visible.</li>
             <li>We have no accounts database, no ads, and we don&apos;t sell or share your data.</li>
             <li>Your keys stay on your device. We never receive them.</li>
             <li>We use Cloudflare Web Analytics to count visits. It sets no cookies.</li>
@@ -135,7 +141,8 @@ export default function PrivacyPage() {
             <p className="font-medium text-gray-700 dark:text-gray-300">Private feeds</p>
             <p className="mt-1">
               Private posts can only be read by the followers you approve. That you posted, when, who you approved, and who asked to
-              follow are public. Followers you remove keep whatever they could already read.
+              follow are public. Followers you approve can also read all your earlier private posts. Followers you remove keep
+              whatever they could already read.
             </p>
             <p className="mt-2">
               <strong>Reports open private posts to moderators.</strong> If someone reports one of your private posts, the report gives
@@ -145,9 +152,11 @@ export default function PrivacyPage() {
           </div>
           <div>
             <p className="font-medium text-gray-700 dark:text-gray-300">Orders and addresses</p>
+            {/* R-M3: the next storefront cut encrypts status updates; drop the tracking/carrier/note clause with it. */}
             <p className="mt-1">
               What you ordered and your shipping address are encrypted so only you and the seller can read them. That you placed an
-              order with a store, when, and its status are public. Saved addresses are encrypted so only you can read them.
+              order with a store, when, and its status are public, along with any tracking number, carrier or note the seller adds.
+              Saved addresses are encrypted so only you can read them.
             </p>
           </div>
         </Prose>
@@ -157,7 +166,7 @@ export default function PrivacyPage() {
         <Prose>
           A report is public. The person you report can see that you reported them, the reason you chose and anything you wrote. How
           the moderators resolved it is public too. Reports expire after 90 days. To report something privately, email{' '}
-          <a href={SUPPORT_MAILTO} className="underline">{SUPPORT_EMAIL}</a>.
+          <SupportEmailLink />.
         </Prose>
       </InfoSection>
 
@@ -165,13 +174,12 @@ export default function PrivacyPage() {
         <Prose className="space-y-3">
           <p>
             You can delete your posts, replies, likes, follows, bookmarks, blocks and more. A deleted item disappears from Yappr and
-            from the network&apos;s current data, though a deleted post may leave a small marker behind. It does not disappear from
-            the network&apos;s history, or from anyone who already saw, saved or copied it.
+            from the network&apos;s current data, though a deleted post may leave a marker behind showing when it was posted and its
+            hashtags. It does not disappear from the network&apos;s history, or from anyone who already saw, saved or copied it.
           </p>
           <p>
-            When moderators remove something, a few details (such as when it was posted) stay, along with a public record of the
-            removal. Your Dash identity
-            itself can&apos;t be deleted.
+            When moderators remove something, a few details (such as when it was posted and its hashtags) stay, along with a public
+            record of the removal. Your Dash identity itself can&apos;t be deleted.
           </p>
         </Prose>
       </InfoSection>
@@ -200,9 +208,9 @@ export default function PrivacyPage() {
 
       <InfoSection title="Contact">
         <Prose>
-          Questions about privacy, or a request about your data: <a href={SUPPORT_MAILTO} className="underline">{SUPPORT_EMAIL}</a>.
-          We can&apos;t change or delete what is on Dash Platform, but we will explain what is possible and pass requests to the
-          moderators where they can help.
+          Questions about privacy, or a request about your data: <SupportEmailLink />. We can&apos;t change or delete what is on Dash
+          Platform, but we will explain what is possible and pass requests to the moderators where they can help. If you email us,
+          we keep your message to handle it, and may share the reported content (not your email address) with the moderators.
         </Prose>
       </InfoSection>
     </InfoPage>

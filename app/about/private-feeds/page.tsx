@@ -124,7 +124,7 @@ export default function PrivateFeedsPage() {
     <InfoPage
       icon={LockClosedIcon}
       title="How Private Feeds Work"
-      subtitle="End-to-end encrypted content sharing with efficient revocation on a public blockchain"
+      subtitle="Encrypted posts for approved followers, with efficient revocation, on a public blockchain"
       back={{ href: '/about', label: 'Back to About' }}
       spacing="loose"
     >

@@ -31,6 +31,7 @@ function ConsentLink({ href, children }: { href: string; children: string }) {
   return (
     <Link href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-gray-700 dark:hover:text-gray-200">
       {children}
+      <span className="sr-only"> (opens in new tab)</span>
     </Link>
   )
 }
@@ -136,6 +137,11 @@ export function LoginModal() {
 
               {/* Primary: private key */}
               <KeyLoginForm onComplete={close} />
+              <p className="mt-3 text-xs text-center text-gray-600 dark:text-gray-400">
+                By continuing, you agree to the <ConsentLink href="/terms">Terms</ConsentLink> and{' '}
+                <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink> and confirm you are {MINIMUM_AGE} or
+                older. The <ConsentLink href="/privacy">Privacy Policy</ConsentLink> explains what is public.
+              </p>
 
               {/* New users */}
               <div className="mt-5 rounded-xl bg-gray-50 dark:bg-neutral-800/60 px-4 py-3 text-center">
@@ -192,12 +198,6 @@ export function LoginModal() {
                   </AnimatePresence>
                 </div>
               )}
-
-              <p className="mt-5 text-xs text-center text-gray-500 dark:text-gray-400">
-                By continuing, you agree to the <ConsentLink href="/terms">Terms</ConsentLink> and{' '}
-                <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink> and confirm you are {MINIMUM_AGE} or
-                older. The <ConsentLink href="/privacy">Privacy Policy</ConsentLink> explains what is public.
-              </p>
             </div>
           </motion.div>
           </Dialog.Content>

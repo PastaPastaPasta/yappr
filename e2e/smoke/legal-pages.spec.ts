@@ -18,9 +18,9 @@ test('the sign-in dialog links the terms, rules and privacy policy', async ({ pa
   await page.goto(appUrl('/login/'))
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
   await expect(dialog.getByText(/By continuing, you agree to the/)).toBeVisible()
-  await expect(dialog.getByRole('link', { name: 'Terms', exact: true })).toHaveAttribute('target', '_blank')
-  await expect(dialog.getByRole('link', { name: 'Community Rules', exact: true })).toHaveAttribute('href', /\/terms\/?#community-rules$/)
-  await expect(dialog.getByRole('link', { name: 'Privacy Policy', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('link', { name: /^Terms/ })).toHaveAttribute('target', '_blank')
+  await expect(dialog.getByRole('link', { name: /^Community Rules/ })).toHaveAttribute('href', /\/terms\/?#community-rules$/)
+  await expect(dialog.getByRole('link', { name: /^Privacy Policy/ })).toBeVisible()
 })
 
 test.describe('on a phone', () => {

@@ -21,7 +21,8 @@ import {
 } from '@heroicons/react/24/outline'
 import { YAPPR_CONTRACT_ID, getContractTopology } from '@/lib/constants'
 import { InfoPage, InfoSection, Prose } from '@/components/layout/info-page'
-import { COMMUNITY_RULES_HREF, ISSUES_URL, LEGAL_UPDATED, SOURCE_URL, SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/lib/legal'
+import { SupportEmailLink } from '@/components/layout/legal-links'
+import { COMMUNITY_RULES_HREF, ISSUES_URL, LEGAL_UPDATED, SOURCE_URL } from '@/lib/legal'
 
 const GITHUB_PATH =
   'M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0012 2z'
@@ -135,9 +136,9 @@ export default function AboutPage() {
       <InfoSection title="Moderated in the Open" icon={ScaleIcon}>
         <Prose className="space-y-3">
           <p>
-            Yappr&apos;s social network, blogs and stores each have a moderation team elected on Dash Platform. Moderators can remove
+            Yappr&apos;s social network, blogs and stores each get a moderation team, elected on Dash Platform. Moderators can remove
             content and warn, suspend or ban accounts, but only for a reason listed in their team&apos;s published charter, and every
-            action leaves a public record.
+            removal, warning, suspension or ban leaves a public record.
           </p>
           <p>
             Anyone can report a post, reply or profile, and you can block anyone. Read the{' '}
@@ -146,10 +147,10 @@ export default function AboutPage() {
         </Prose>
       </InfoSection>
 
-      <InfoSection title="Open Source" icon={CodeBracketIcon}>
+      <InfoSection title="Public Source Code" icon={CodeBracketIcon}>
         <Prose className="mb-4">
-          Yappr is open source software. Anyone can view the code, verify what it does, suggest improvements, or create their own
-          version. Transparency builds trust.
+          Yappr&apos;s source code is public on GitHub. Anyone can read it, check what the app does, and suggest improvements.
+          Transparency builds trust.
         </Prose>
         <a
           href={SOURCE_URL}
@@ -166,7 +167,7 @@ export default function AboutPage() {
 
       <InfoSection title="Community Driven" icon={UserGroupIcon}>
         <Prose>
-          Yappr is an open-source community project with no ads. It exists because people believe in social media that users
+          Yappr is a community project with no ads. It exists because people believe in social media that users
           actually own. Contributions, feedback, and ideas are always welcome.
         </Prose>
       </InfoSection>
@@ -174,7 +175,7 @@ export default function AboutPage() {
       <InfoSection title="Contact" icon={ChatBubbleLeftRightIcon}>
         <Prose className="space-y-2">
           <p>
-            Questions, abuse reports, or legal requests: <a href={SUPPORT_MAILTO} className="underline">{SUPPORT_EMAIL}</a>.
+            Questions, abuse reports, or legal requests: <SupportEmailLink />.
           </p>
           <p>
             Found a bug or have an idea?{' '}

@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { DocumentTextIcon } from '@heroicons/react/24/outline'
 import { InfoPage, InfoSection, Prose, BulletList, NetworkNotice, testNetwork } from '@/components/layout/info-page'
-import { LEGAL_UPDATED, MINIMUM_AGE, SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/lib/legal'
+import { SupportEmailLink } from '@/components/layout/legal-links'
+import { LEGAL_UPDATED, MINIMUM_AGE } from '@/lib/legal'
 
 const COMMUNITY_RULES = [
   { title: 'Nothing illegal', body: 'Don’t post, sell or link to anything that is illegal where you or the people you share it with live.' },
@@ -32,7 +33,7 @@ export default function TermsPage() {
         {({ where }) => (
           <>
             This release of Yappr runs on {where}. Credits and test DASH have no monetary value. The network can be reset, and
-            Yappr&apos;s mainnet launch will start fresh, so don&apos;t count on anything you post here being kept.
+            Yappr&apos;s mainnet launch may start fresh, so don&apos;t count on anything you post here being kept.
           </>
         )}
       </NetworkNotice>
@@ -50,13 +51,12 @@ export default function TermsPage() {
       <InfoSection title="What Yappr is">
         <Prose className="space-y-3">
           <p>
-            Yappr is open-source software that runs in your browser and reads and writes to Dash Platform, a public, shared network.
-            Your posts, likes, follows and profile are records on Dash Platform, not on our servers. We don&apos;t run servers that
-            store them, and we can&apos;t edit what you write.
+            Yappr is software that runs in your browser and reads and writes to Dash Platform, a public, shared network. Its source
+            code is public on GitHub. Your posts, likes, follows and profile are records on Dash Platform, not on our servers. We
+            don&apos;t run servers that store them, and we can&apos;t edit what you write.
           </p>
           <p>
-            Other apps can read the same records, and other people can build their own versions of Yappr. These terms cover the apps we
-            publish, not anyone else&apos;s.
+            Other apps can read and display the same records. These terms cover the apps we publish, not anyone else&apos;s.
           </p>
         </Prose>
       </InfoSection>
@@ -118,8 +118,9 @@ export default function TermsPage() {
       <InfoSection title="Moderation">
         <Prose className="space-y-3">
           <p>
-            Yappr&apos;s social network, blogs and stores each have a moderation team, chosen in an election on Dash Platform. Each
-            team publishes a charter, and every action it takes must cite one of the charter&apos;s reasons. Moderators can:
+            Yappr&apos;s social network, blogs and stores each get a moderation team, elected on Dash Platform. Each team publishes a
+            charter, and every removal, warning, suspension or ban it makes must cite one of the charter&apos;s reasons. Moderators
+            can:
           </p>
           <BulletList>
             <li>remove posts, replies and the Yappr parts of a profile (such as the banner, website and links);</li>
@@ -128,7 +129,8 @@ export default function TermsPage() {
             <li>warn, suspend or ban an account from the part of Yappr they moderate.</li>
           </BulletList>
           <p>
-            Moderation happens in the open. A removal leaves a public record of who removed what and when. Removing a post or reply
+            Moderation happens in the open. Every removal, warning, suspension or ban leaves a public record of who did it, to what,
+            and when. Removing a post or reply
             that is more than a week old needs the team&apos;s leader and two more moderators to agree.
           </p>
           <p>
@@ -143,13 +145,13 @@ export default function TermsPage() {
         <Prose className="space-y-3">
           <p>
             Use <strong>Report</strong> on a post, reply or profile to send it to the moderators. Reports are public: the person you
-            report can see that you reported them, the reason you chose and any details you wrote.
+            report can see that you reported them, the reason you chose and anything you wrote.
           </p>
           <p>
-            For anything urgent or private, copyright and other legal requests, or if reporting isn&apos;t open yet, email{' '}
-            <a href={SUPPORT_MAILTO} className="underline">{SUPPORT_EMAIL}</a> with a link to the content and what is wrong with it.
-            We pass it to the right moderation team and can hide it in our apps. If a child is in danger, contact your local police
-            first.
+            For blogs, stores, reviews and messages, for anything urgent or private, for copyright and other legal requests, or if
+            reporting isn&apos;t open yet, email <SupportEmailLink /> with a link to the content and what is wrong with it. We review
+            it, pass it to the moderators once a team is seated, and may stop showing it in our apps. If a child is in danger,
+            contact your local police first.
           </p>
         </Prose>
       </InfoSection>
@@ -175,8 +177,11 @@ export default function TermsPage() {
             </li>
             {network && (
               <li>
-                <strong>On {network}, DASH has no value, but other payment addresses may be real.</strong> A seller can list addresses
-                for other cryptocurrencies. Check before you send anything of value.
+                <strong>
+                  On {network}, test DASH has no value, but a seller can list real payment addresses, including mainnet Dash and other
+                  cryptocurrencies.
+                </strong>{' '}
+                Check before you send anything of value.
               </li>
             )}
           </BulletList>
@@ -187,15 +192,16 @@ export default function TermsPage() {
       <InfoSection title="Costs">
         <Prose>
           Writing to Dash Platform costs credits, paid from your identity&apos;s balance. Some actions also carry a small moderation
-          fee that goes to the elected moderators. Posting, replying and liking are paid in YAPP, Yappr&apos;s in-app token, and the
-          network fee for those is covered for you. YAPP has no monetary value and can&apos;t be sent to other people.
+          fee that goes to the elected moderators. Posting, replying and liking can be paid in YAPP, Yappr&apos;s in-app token. New
+          accounts get a starter amount, and while you pay in YAPP the network fee is usually covered for you. Once your YAPP runs
+          out, or if you choose, you pay in credits. YAPP has no monetary value and can&apos;t be sent to other people.
           {network && ` On ${network}, credits are free: you can get them through the identity bridge linked from the sign-in screen.`}
         </Prose>
       </InfoSection>
 
       <InfoSection title="No warranty">
         <Prose>
-          Yappr is free, open-source software provided &quot;as is&quot;, without any warranty. It may have bugs, be unavailable, or
+          Yappr is provided free of charge and &quot;as is&quot;, without any warranty. It may have bugs, be unavailable, or
           change. Because it runs on a public network that nobody fully controls, mistakes can&apos;t always be undone and data
           can&apos;t always be recovered. To the extent the law allows, we are not liable for any loss that comes from using Yappr,
           including lost keys, lost funds, or content posted by others.
@@ -205,7 +211,7 @@ export default function TermsPage() {
       <InfoSection title="Changes and contact">
         <Prose>
           We may update these terms. The date below shows the last change, and continuing to use Yappr after a change means you accept
-          it. Questions: <a href={SUPPORT_MAILTO} className="underline">{SUPPORT_EMAIL}</a>.
+          it. Questions: <SupportEmailLink />.
         </Prose>
       </InfoSection>
     </InfoPage>

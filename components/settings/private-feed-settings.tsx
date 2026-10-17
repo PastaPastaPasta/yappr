@@ -16,7 +16,7 @@ import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { ResetPrivateFeedDialog } from './reset-private-feed-dialog'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { useWalletSession } from '@/components/auth/wallet-encryption-key-prompt'
-import { SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/lib/legal'
+import { SupportEmailLink } from '@/components/layout/legal-links'
 
 interface PrivateFeedSettingsProps {
   /** If true, automatically open the reset dialog when component mounts */
@@ -326,7 +326,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                     <p className="text-sm text-amber-700 dark:text-amber-300">
                       Your private feed is approaching its maximum revocation limit.
                       Once it&apos;s reached, you can&apos;t remove more followers from this feed. Email{' '}
-                      <a href={SUPPORT_MAILTO} className="underline">{SUPPORT_EMAIL}</a> if you need help.
+                      <SupportEmailLink /> if you need help.
                     </p>
                   </div>
                 </div>

@@ -30,21 +30,35 @@ function StorageGroup({ name, summary, items }: { name: string; summary: string;
   )
 }
 
+/** Wallet sign-in (App Connect builds only) keeps its keys in IndexedDB. */
+const INDEXED_DB_ITEMS: StoredItem[] = [
+  {
+    name: 'Wallet sign-in keys',
+    what: 'When you sign in with a Dash wallet app, the keys it grants Yappr are stored encrypted, under a device key the browser will not let anyone export.',
+    howLong: 'until you sign out',
+  },
+  {
+    name: 'Connection ID',
+    what: 'A random ID for this browser, so your next wallet sign-in replaces this one instead of adding another.',
+    howLong: 'until you clear site data',
+  },
+]
+
 export default function CookiesPage() {
-  // Builds with wallet sign-in keep a typed-in CRITICAL key for the tab only and wallet keys in IndexedDB.
+  // Builds with wallet sign-in keep the most powerful typed-in keys for the tab only, and wallet keys in IndexedDB.
   const walletBuild = isAppConnectBuild()
 
   const localItems: StoredItem[] = [
     {
       name: 'Your sign-in key',
       what: walletBuild
-        ? 'When you sign in with a private key, Yappr keeps it so you stay signed in. A CRITICAL-level key is the exception: it is kept for this tab only (see below).'
+        ? 'When you sign in with a private key, Yappr keeps it so you stay signed in. Your identity’s most powerful (CRITICAL) key is the exception (see below).'
         : 'When you sign in with a private key, Yappr keeps it so you stay signed in.',
       howLong: 'until you sign out',
     },
     {
-      name: 'Encryption and transfer keys',
-      what: 'Your encryption key, which opens your messages and private feed, and a transfer key if you add one for tips.',
+      name: 'Encryption keys',
+      what: 'Your encryption key, which opens your messages and private feed, and the keys for the private feeds you follow.',
       howLong: 'until you sign out',
     },
     {
@@ -66,7 +80,11 @@ export default function CookiesPage() {
 
   const sessionItems: StoredItem[] = [
     ...(walletBuild
-      ? [{ name: 'A CRITICAL-level sign-in key', what: 'If you sign in with your identity’s CRITICAL key, it is never written to lasting storage.', howLong: 'until you close the tab' }]
+      ? [{
+          name: 'Your most powerful key',
+          what: 'If the key you enter is your identity’s most powerful (CRITICAL) key, Yappr keeps it only until you close this tab.',
+          howLong: 'until you close the tab',
+        }]
       : []),
     { name: 'Tab state', what: 'Small markers for this tab, such as a sign-in step in progress.', howLong: 'until you close the tab' },
   ]
@@ -93,19 +111,7 @@ export default function CookiesPage() {
         </Prose>
         <div className="space-y-6">
           <StorageGroup name="Local storage" summary="Stays on this device, shared by all Yappr tabs, until removed." items={localItems} />
-          {walletBuild && (
-            <StorageGroup
-              name="IndexedDB"
-              summary="Stays on this device until removed."
-              items={[
-                {
-                  name: 'Wallet sign-in keys',
-                  what: 'When you sign in with a Dash wallet app, the keys it grants Yappr are stored encrypted, under a device key the browser will not let anyone export.',
-                  howLong: 'until you sign out',
-                },
-              ]}
-            />
-          )}
+          {walletBuild && <StorageGroup name="IndexedDB" summary="Stays on this device until removed." items={INDEXED_DB_ITEMS} />}
           <StorageGroup name="Session storage" summary="Belongs to one tab and is cleared when that tab closes." items={sessionItems} />
         </div>
       </InfoSection>

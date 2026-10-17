@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { COMMUNITY_RULES_HREF, SUPPORT_MAILTO } from '@/lib/legal'
+import { COMMUNITY_RULES_HREF, SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/lib/legal'
 import { cn } from '@/lib/utils'
 
 const LINKS = [
@@ -16,7 +16,7 @@ const LINKS = [
  */
 export function LegalLinks({ className, onNavigate }: { className?: string; onNavigate?: () => void }) {
   return (
-    <nav aria-label="Legal" className={cn('flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs text-gray-500', className)}>
+    <nav aria-label="Legal" className={cn('flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-400', className)}>
       {LINKS.map((link) => (
         <Link key={link.href} href={link.href} onClick={onNavigate} className="hover:underline">
           {link.label}
@@ -24,5 +24,14 @@ export function LegalLinks({ className, onNavigate }: { className?: string; onNa
       ))}
       <a href={SUPPORT_MAILTO} className="hover:underline">Contact</a>
     </nav>
+  )
+}
+
+/** The support address as an underlined mail link, for body copy. */
+export function SupportEmailLink() {
+  return (
+    <a href={SUPPORT_MAILTO} className="underline">
+      {SUPPORT_EMAIL}
+    </a>
   )
 }
