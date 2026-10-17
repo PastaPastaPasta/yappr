@@ -53,6 +53,8 @@ interface NotificationState {
   // Actions
   setNotifications: (notifications: Notification[]) => void;
   addNotifications: (notifications: Notification[]) => void;
+  /** Drop the held notifications from one actor (the viewer just blocked them). */
+  removeFromActor: (actorId: string) => void;
   setFilter: (filter: NotificationFilter) => void;
   markAsRead: (id: string) => void;
   /**
@@ -112,6 +114,12 @@ export const useNotificationStore = create<NotificationState>()(
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
         set({ notifications: merged });
+      },
+
+      removeFromActor: (actorId) => {
+        const state = get();
+        if (!state.notifications.some(n => n.from.id === actorId)) return;
+        set({ notifications: state.notifications.filter(n => n.from.id !== actorId) });
       },
 
       setFilter: (filter) => set({ filter }),

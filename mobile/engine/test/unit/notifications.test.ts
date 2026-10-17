@@ -23,6 +23,7 @@ const m = vi.hoisted(() => {
     viewer: 'viewer' as string | null,
     getInitialNotifications: vi.fn(),
     pollNewNotifications: vi.fn(),
+    blocked: new Set<string>(),
   }
 })
 
@@ -30,7 +31,7 @@ vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>()
 vi.mock('@/lib/services/notification-service', () => ({
   notificationService: { getInitialNotifications: m.getInitialNotifications, pollNewNotifications: m.pollNewNotifications },
 }))
-vi.mock('@/lib/services/block-service', () => ({ blockService: { checkBlockedBatch: async () => new Map() } }))
+vi.mock('@/lib/services/block-service', () => ({ blockService: { checkBlockedBatch: async (_viewer: string, ids: string[]) => new Map(ids.map(id => [id, m.blocked.has(id)])) } }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => ({
   ...await load<object>(),
   unifiedProfileService: { getProfilesByIdentityIds: async () => [], getProfile: async () => null },
@@ -47,6 +48,7 @@ describe('notifications.list (NEW-R-vi-002)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     m.viewer = 'viewer'
+    m.blocked = new Set()
     notifications = createNotificationsModule(() => undefined)
   })
 
@@ -83,5 +85,19 @@ describe('notifications.list (NEW-R-vi-002)', () => {
   it('still answers an empty list when every source answered', async () => {
     m.getInitialNotifications.mockResolvedValueOnce({ notifications: [], latestTimestamp: 1_000 })
     expect((await notifications.api.list()).items).toEqual([])
+  })
+})
+
+describe('notifications from blocked actors', () => {
+  it('hides a held actor once the viewer blocks them, and counts them out of the badge', async () => {
+    m.viewer = 'viewer'
+    m.blocked = new Set()
+    const notifications = createNotificationsModule(() => undefined)
+    m.getInitialNotifications.mockResolvedValueOnce({ notifications: [follow('f1', 2_000)], latestTimestamp: 2_000 })
+    expect((await notifications.api.list()).items.map(item => item.id)).toEqual(['f1'])
+
+    m.blocked = new Set(['actor'])
+    expect((await notifications.api.list()).items).toEqual([])
+    expect(await notifications.api.unreadCount()).toBe(0)
   })
 })

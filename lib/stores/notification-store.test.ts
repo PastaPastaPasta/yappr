@@ -89,3 +89,12 @@ describe('markAllAsRead', () => {
     expect(store().readIds).toHaveLength(5)
   })
 })
+
+describe('removeFromActor', () => {
+  it('drops one actor\'s notifications and keeps the rest', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [] })
+    store().setNotifications([notification('a', 'like', 3), notification('b', 'follow', 2)])
+    store().removeFromActor('from-a')
+    expect(store().notifications.map(n => n.id)).toEqual(['b'])
+  })
+})

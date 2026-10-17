@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
 import { blockStatusCache } from '@/lib/caches/user-status-cache'
+import { useNotificationStore } from '@/lib/stores/notification-store'
 import type { BlockProvenance } from '@/lib/services/block-service'
 import { useToggleRelation } from './use-toggle-relation'
 
@@ -36,7 +37,10 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
     },
     turnOn: async (viewerId, subjectId, message) => {
       const { blockService } = await import('@/lib/services/block-service')
-      return blockService.blockUser(viewerId, subjectId, message)
+      const result = await blockService.blockUser(viewerId, subjectId, message)
+      // Their notifications already held disappear now, not at the next reload.
+      if (result.success) useNotificationStore.getState().removeFromActor(subjectId)
+      return result
     },
     turnOff: async (viewerId, subjectId) => {
       const { blockService } = await import('@/lib/services/block-service')
