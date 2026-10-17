@@ -266,7 +266,7 @@ describe('store notifications', () => {
     expect(options).toEqual({ maxResults: 900, inClause: false })
   })
 
-  it('reads on an `in` read as one, whose continuation pages may come back short', async () => {
+  it('reads an `in` read on to its end, uncapped: it walks item by item, so a cap would cut by item, not by age', async () => {
     getByOwner.mockResolvedValue(sellerStore)
     answer({ itemReview: Array.from({ length: 100 }, (_, i) => doc(`IRev${i}`, BUYER, 9_000 - i, { itemId: ITEM, rating: 5 })) })
     paginateFetchAll.mockResolvedValue({ documents: [], reachedLimit: false })
@@ -274,7 +274,7 @@ describe('store notifications', () => {
 
     await stores.getNotifications(SELLER, SINCE, vi.fn())
 
-    expect(paginateFetchAll.mock.calls[0][3]).toEqual({ maxResults: 900, inClause: true })
+    expect(paginateFetchAll.mock.calls[0][3]).toEqual({ maxResults: Infinity, inClause: true })
   })
 
   it('reports a failed read and still answers from the sources that read', async () => {

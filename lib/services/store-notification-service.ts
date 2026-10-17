@@ -23,9 +23,10 @@ export interface RawStoreNotification {
 
 const PAGE = 100;
 /**
- * Rows per source and fetch. A busier window keeps its newest rows, except
- * an item-review chunk, which walks item by item: there the last items' rows
- * would be cut.
+ * Rows per single-key source and fetch: a busier window keeps its newest
+ * rows. An `in` read (item reviews) has no cap: it walks item by item, so a
+ * cut would drop the last items' rows whatever their age, and the
+ * watermark would then pass them.
  */
 const MAX_PER_SOURCE = 1000;
 /** How often to look again for the store of a user who had none. */
@@ -265,8 +266,9 @@ class StoreNotificationService {
       if (first.length < PAGE || typeof last !== 'string') return first;
       try {
         const sdk = await getEvoSdk();
+        const inClause = query.where?.some(([, operator]) => operator === 'in') ?? false;
         const { documents, reachedLimit } = await paginateFetchAll(sdk, (startAfter) => ({ ...query, startAfter: startAfter ?? last }),
-          doc => doc, { maxResults: MAX_PER_SOURCE - first.length, inClause: query.where?.some(([, operator]) => operator === 'in') });
+          doc => doc, { maxResults: inClause ? Infinity : MAX_PER_SOURCE - first.length, inClause });
         if (reachedLimit) incomplete.add(index);
         return [...first, ...documents];
       } catch (error) {
