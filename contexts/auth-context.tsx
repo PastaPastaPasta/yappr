@@ -20,10 +20,13 @@ import { restorePasskeyMessagingKey, unlockWithPasskey, type PasskeyRenewal } fr
 import { clearPasskeyCriticalKey, markPasskeyCriticalKey } from '@/lib/auth/passkey-device'
 import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompts'
 
-/** A sign-in finished (not a restore): the passkey prompts decide whether to offer one or ask to update them. */
-function noteSignIn(intent: PlatformAuthIntent, method: SignInMethod): void {
+/**
+ * A sign-in finished (not a restore): the passkey prompts decide whether to
+ * offer one or ask to update them, bound to the session `epoch` it left.
+ */
+function noteSignIn(intent: PlatformAuthIntent, method: SignInMethod, epoch: number): void {
   // A username prompt still means a signed-in session: the passkey dialogs wait for it to close.
-  if (intent.kind !== 'logged-out') usePasskeyPrompts.getState().noteSignIn(intent.identityId, method)
+  if (intent.kind !== 'logged-out') usePasskeyPrompts.getState().noteSignIn(intent.identityId, method, epoch)
 }
 
 export interface AuthUser {
@@ -184,8 +187,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const intent = await signInWithKey(identityId, privateKey, options)
     // Cleared only once the typed key is the session's: a failed sign-in leaves a passkey's CRITICAL key marked.
     clearPasskeyCriticalKey(identityId)
-    noteSignIn(intent, 'key')
-  }, [signInWithKey])
+    noteSignIn(intent, 'key', controller.sessionEpoch())
+  }, [controller, signInWithKey])
 
   const signInWithGrant = useCallback(async (grant: AppConnectGrant, since?: number): Promise<PlatformAuthIntent> => {
     const result = await walletSignIn.signIn(grant, since)
@@ -195,9 +198,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
     const intent = await signInWithGrant(grant)
-    noteSignIn(intent, 'wallet')
+    noteSignIn(intent, 'wallet', controller.sessionEpoch())
     return intent
-  }, [signInWithGrant])
+  }, [controller, signInWithGrant])
 
   const loginWithPasskey = useCallback(async (): Promise<PasskeyRenewal | null> => {
     // Taken before the passkey picker: a sign-in or sign-out while the passkey opens supersedes it.
@@ -211,7 +214,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           wipeGrant(unlocked.grant)
           throw new SupersededSignInError()
         }
-        noteSignIn(await signInWithGrant(unlocked.grant, since), 'passkey')
+        noteSignIn(await signInWithGrant(unlocked.grant, since), 'passkey', controller.sessionEpoch())
         return null
       case 'raw-key': {
         // Marked before the key is stored, so it never signs unmarked; a HIGH key clears the mark only once it is the session's.
@@ -225,7 +228,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         if (!unlocked.critical) clearPasskeyCriticalKey(unlocked.identityId)
         if (unlocked.messagingWif) restorePasskeyMessagingKey(unlocked.identityId, unlocked.messagingWif)
-        noteSignIn(intent, 'passkey')
+        noteSignIn(intent, 'passkey', controller.sessionEpoch())
         return null
       }
     }
@@ -240,7 +243,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await walletSignIn.renew(grant)
       useAppConnectStatus.getState().dismissRenewRequired()
       // The renewal superseded the old wallet keys: passkeys still holding them need updating.
-      usePasskeyPrompts.getState().noteSignIn(grant.identityId, 'renewal')
+      usePasskeyPrompts.getState().noteSignIn(grant.identityId, 'renewal', controller.sessionEpoch())
       return
     }
     // Signed out meanwhile: the renewal signs back in, and a sign-in prompt that

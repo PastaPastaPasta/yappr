@@ -56,6 +56,7 @@ function InlineError({ children }: { children: React.ReactNode }) {
  */
 export function PasskeyPrompts() {
   const { user } = useAuth()
+  const { controller } = useAuth()
   const { signedIn, dialog, open, close } = usePasskeyPrompts()
   const signedInUser = user?.identityId
   /** The sign-in last checked: each is checked once, whatever else re-renders. */
@@ -71,7 +72,8 @@ export function PasskeyPrompts() {
     if (!signedIn || signedInUser !== signedIn.identityId || checkedAt.current === signedIn.at || !passkeysOffered()) return
     checkedAt.current = signedIn.at
     const { identityId, method } = signedIn
-    const stillThisSignIn = () => usePasskeyPrompts.getState().signedIn?.at === signedIn.at
+    // The controller's epoch moves the moment a sign-out starts, before React sees the user go.
+    const stillThisSignIn = () => usePasskeyPrompts.getState().signedIn?.at === signedIn.at && controller.sessionEpoch() === signedIn.epoch
     /** The passkeys and the session check; a read that failed is retried a few times before the check gives up. */
     const read = async () => {
       for (let attempt = 1; ; attempt += 1) {
@@ -103,7 +105,7 @@ export function PasskeyPrompts() {
       }
     }
     check().catch((error: unknown) => logger.warn('Passkeys: the after-sign-in check failed:', error))
-  }, [open, signedIn, signedInUser])
+  }, [controller, open, signedIn, signedInUser])
 
   // A dialog for an identity that is no longer signed in here has nothing to do.
   if (!dialog || !user || user.identityId !== dialog.identityId) return null
@@ -124,8 +126,9 @@ type EnrolStep =
 const ENROL_BUTTON: Partial<Record<EnrolStep['kind'], string>> = { creating: 'Waiting for your passkey…', saving: 'Saving…' }
 
 function EnrolDialog({ identityId, username, offer, onClose }: { identityId: string; username?: string; offer: boolean; onClose: () => void }) {
-  const changed = usePasskeyPrompts((state) => state.changed)
-  const [step, setStep] = useState<EnrolStep>({ kind: 'intro' })
+  const { changed, setPendingEnrolment } = usePasskeyPrompts()
+  const resumed = usePasskeyPrompts((state) => (state.pendingEnrolment?.identityId === identityId ? state.pendingEnrolment : null))
+  const [step, setStep] = useState<EnrolStep>(() => (resumed ? { kind: 'pending', pending: resumed, checking: false } : { kind: 'intro' }))
   const busy = step.kind === 'creating' || step.kind === 'saving' || (step.kind === 'pending' && step.checking)
 
   const fail = useCallback((error: unknown, back: EnrolStep) => {
@@ -150,27 +153,29 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
       })
       .catch((error: unknown) => {
         if (error instanceof PasskeyVaultError && error.code === 'pending') {
-          // Settings may already show the entry once it lands.
+          // Kept past this dialog: reopening resumes it, and Settings may show the entry once it lands.
+          setPendingEnrolment(pending)
           changed()
           setStep({ kind: 'pending', pending, checking: false })
           return
         }
         fail(error, { kind: 'confirm', pending })
       })
-  }, [changed, fail])
+  }, [changed, fail, setPendingEnrolment])
 
   const checkAgain = useCallback((pending: PendingPasskey) => {
     setStep({ kind: 'pending', pending, checking: true })
     passkeySaved(pending)
       .then((saved) => {
         changed()
+        if (saved) setPendingEnrolment(null)
         setStep(saved ? { kind: 'done' } : { kind: 'pending', pending, checking: false })
       })
       .catch((error: unknown) => {
         logger.warn('Passkeys: checking a saved passkey failed:', error)
         setStep({ kind: 'pending', pending, checking: false })
       })
-  }, [changed])
+  }, [changed, setPendingEnrolment])
 
   return (
     <Modal open onOpenChange={(next) => { if (!next && !busy) onClose() }} className="w-[440px] max-w-[92vw]">

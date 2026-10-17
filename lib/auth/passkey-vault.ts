@@ -39,7 +39,7 @@ import {
 } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { STORAGE_SCOPE } from '@/lib/storage-scope'
-import { bytesEqual, bytesToBase64Url, bytesToHex } from '@/lib/bytes'
+import { base64ToBytes, bytesEqual, bytesToBase64Url, bytesToHex } from '@/lib/bytes'
 import { YAPPR_PASSKEY_VAULT_CONTRACT_ID, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { getPublicKey, matchIdentityKey } from '@/lib/crypto/keys'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
@@ -393,7 +393,8 @@ export async function startPasskeyEnrolment(user: { identityId: string; username
     userName: name,
     displayName: passkeyDisplayName(name, { network: getConfiguredNetwork(), scope: STORAGE_SCOPE }),
     prfInput: prfInput(contractId),
-    excludeCredentialIds: existing.map((entry) => entry.credentialId),
+    // Also this browser's own passkeys, so one whose entry is still settling is never replaced in the provider.
+    excludeCredentialIds: [...existing.map((entry) => entry.credentialId), ...credentialsHere(user.identityId)],
   }))
   if (created.prfEnabled === false) {
     created.prfOutput?.fill(0)
@@ -580,6 +581,22 @@ export interface PasskeyEntryView {
   needsUpdate: boolean
   /** The name given to it in this browser, if any. */
   name: string | null
+}
+
+function base64UrlToBytes(value: string): Uint8Array | null {
+  try {
+    return base64ToBytes(value.replace(/-/g, '+').replace(/_/g, '/'))
+  } catch {
+    return null
+  }
+}
+
+/** The credential ids of the passkeys this browser made or opened for `identityId`. */
+function credentialsHere(identityId: string): Uint8Array[] {
+  return passkeysHere(identityId).flatMap((marker) => {
+    const bytes = base64UrlToBytes(marker.slice(0, marker.indexOf('.')))
+    return bytes ? [bytes] : []
+  })
 }
 
 function markerOf(credentialId: Uint8Array, recipientKey: Uint8Array): string {
