@@ -45,7 +45,7 @@ unchanged. The wrapper and local identities/configuration are not committed.
 ## Validation
 
 Local lint, standalone TypeScript checking, production build and dead-code checks pass. The full unit suite
-passes 238 files / 3,474 tests after merging staging elections updates and the
+passes 238 files / 3,475 tests after merging staging elections updates and the
 review regressions. Offline social/seed checks cover both v16 and
 v17; each seeder self-test reports 98 PASS / 0 FAIL. Social-shape tests report
 595 PASS / 0 FAIL, and App Connect self-tests report 30 PASS / 0 FAIL.
@@ -174,6 +174,9 @@ rejected candidate. Seven regression tests cover restart recovery, unresolved
 IDs, schema/fee refusals, ambiguous nonce-used errors, local signing failure and checkpoint-save
 failure without leaking an unsent ID into a later save. Local signing finishes
 before the checkpoint callback; broadcasting starts only after the atomic save. Signer-only DM seed actors retain their existing facade path.
+Battery cleanup also retains pre-broadcast candidate IDs when all acceptance
+reads fail; its regression makes a no-index poll visible only before cleanup
+and confirms it is deleted without changing the failed create verdict.
 Blog cleanup scans the permanent comment index directly, so removing a blog
 and tombstoning all its posts cannot hide a reader's deletable comments.
 The transport, unpriced no-index lost-confirmation and signer-only paths have

@@ -315,6 +315,49 @@ describe('unpriced no-index seeder recovery', () => {
     expect(facade).toHaveBeenCalledTimes(1);
   });
 
+  it('cleans a no-index poll that becomes visible only after every acceptance read failed', async () => {
+    await ensureInitialized();
+    const key = PrivateKey.fromHex('01'.repeat(32), 'testnet');
+    const actor = {
+      ownerId: b58(7), wif: key.toWIF(), signer: {}, label: 'delayed-poll-owner',
+      identityKey: new IdentityPublicKey({ keyId: 1, purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_secp256k1', data: key.getPublicKey().toBytes() }),
+    };
+    const since = Date.now();
+    let visible = false;
+    const broadcast = vi.fn(async () => { throw new Error('504 Gateway Timeout'); });
+    const remove = vi.fn(async () => { visible = false; });
+    const get = vi.fn(async (_contract: string, _type: string, docId: string) => visible ? {
+      toObject: () => ({ $id: docId, $ownerId: actor.ownerId, $createdAt: since, question: 'Delayed poll?' }),
+    } : null);
+    const battery = createBattery({ handle: { sdk: {
+      wasm: { getIdentityContractNonce: async () => 0n },
+      stateTransitions: { broadcastAndWait: broadcast },
+      contracts: { fetch: async () => ({ toJSON: () => ({ documentSchemas: { poll: { indices: [] } } }) }) },
+      documents: { get, query: async () => { throw new Error('where clause on non indexed property'); }, count: async () => ({ '': 0 }), delete: remove },
+    } }, contractId: b58(9), socialId: b58(9) });
+    vi.useFakeTimers();
+    try {
+      const pending = battery.attemptCreate(actor, 'poll', { question: 'Delayed poll?' });
+      await vi.runAllTimersAsync();
+      const outcome = await pending;
+      expect(outcome.ok).toBe(false);
+      expect(get).toHaveBeenCalledTimes(3);
+      expect(battery.createdDocuments.get('poll')).toEqual(new Set([outcome.id]));
+      expect(broadcast).toHaveBeenCalledTimes(1);
+      visible = true;
+      const cleanup = cleanPollr({ battery, contractId: b58(9), owners: [actor], since, live: true });
+      await vi.runAllTimersAsync();
+      const report = await cleanup;
+      expect(report.found.poll).toBe(1);
+      expect(report.done.poll).toBe(1);
+      expect(report.failed).toEqual([]);
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(visible).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('retains the ID before a landed poll create loses its confirmation, without creating another poll', async () => {
     await ensureInitialized();
     const key = PrivateKey.fromHex('01'.repeat(32), 'testnet');

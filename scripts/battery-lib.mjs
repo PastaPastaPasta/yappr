@@ -352,7 +352,17 @@ export function createBattery({ handle, contractId, socialId, agreementFor = und
       return id !== null && (await fetchDocument(docType, id, contract)) !== null;
     };
     const payment = noPayment ? {} : paymentInfo(tokenCost);
-    const onDerivedId = (derived) => { id = derived; };
+    const rememberId = (candidate) => {
+      if (!candidate || contract !== contractId) return;
+      if (!createdDocuments.has(docType)) createdDocuments.set(docType, new Set());
+      createdDocuments.get(docType).add(candidate);
+    };
+    const onDerivedId = (derived) => {
+      id = derived;
+      // Acceptance reads can lag a landed broadcast. Cleanup still needs every
+      // candidate ID on types with no listing index, even when the verdict fails.
+      rememberId(derived);
+    };
     const outcome = await attemptWrite(
       { accepted: accepted ?? storedById },
       () => (agreement
@@ -367,10 +377,7 @@ export function createBattery({ handle, contractId, socialId, agreementFor = und
           : sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...payment }))
     );
     if (accepted && outcome.ok) id = createdId(outcome.result);
-    if (outcome.ok && id && contract === contractId) {
-      if (!createdDocuments.has(docType)) createdDocuments.set(docType, new Set());
-      createdDocuments.get(docType).add(id);
-    }
+    if (outcome.ok) rememberId(id);
     return { ...outcome, id, document: outcome.result ?? document };
   }
 
