@@ -187,8 +187,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     noteSignIn(intent, 'key')
   }, [signInWithKey])
 
-  const signInWithGrant = useCallback(async (grant: AppConnectGrant): Promise<PlatformAuthIntent> => {
-    const result = await walletSignIn.signIn(grant)
+  const signInWithGrant = useCallback(async (grant: AppConnectGrant, since?: number): Promise<PlatformAuthIntent> => {
+    const result = await walletSignIn.signIn(grant, since)
     await applyIntent(result.intent)
     return result.intent
   }, [applyIntent, walletSignIn])
@@ -211,7 +211,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           wipeGrant(unlocked.grant)
           throw new SupersededSignInError()
         }
-        noteSignIn(await signInWithGrant(unlocked.grant), 'passkey')
+        noteSignIn(await signInWithGrant(unlocked.grant, since), 'passkey')
         return null
       case 'raw-key': {
         // Marked before the key is stored, so it never signs unmarked; a HIGH key clears the mark only once it is the session's.

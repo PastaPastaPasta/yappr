@@ -18,6 +18,8 @@ interface PasskeyPromptsState {
   open: (kind: PasskeyDialog['kind'], identityId: string) => void
   close: () => void
   changed: () => void
+  /** The session ended: forget its sign-in and close its dialog. */
+  reset: () => void
 }
 
 export const usePasskeyPrompts = create<PasskeyPromptsState>((set) => ({
@@ -28,6 +30,7 @@ export const usePasskeyPrompts = create<PasskeyPromptsState>((set) => ({
   open: (kind, identityId) => set({ dialog: { kind, identityId } }),
   close: () => set({ dialog: null }),
   changed: () => set((state) => ({ revision: state.revision + 1 })),
+  reset: () => set({ signedIn: null, dialog: null }),
 }))
 
 /** Whether this page offers passkeys, decided after mount: it reads the page's host, which the static export does not know. */

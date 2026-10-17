@@ -10,8 +10,10 @@ import { useUsernameModal } from '@/hooks/use-username-modal'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { markPasskeyOfferMade, passkeyOfferMade, passkeysHere } from '@/lib/auth/passkey-device'
 import {
+  PasskeyVaultError,
   finishPasskeyEnrolment,
   listPasskeys,
+  passkeySaved,
   passkeyEligibility,
   passkeysOffered,
   removeAllPasskeys,
@@ -58,6 +60,12 @@ export function PasskeyPrompts() {
   const signedInUser = user?.identityId
   /** The sign-in last checked: each is checked once, whatever else re-renders. */
   const checkedAt = useRef<number | null>(null)
+
+  // Signing out (by hand, or after the wallet revoked) ends that session's checks and dialogs:
+  // a check still reading sees its sign-in gone, and no dialog survives to the next sign-in.
+  useEffect(() => {
+    if (!signedInUser) usePasskeyPrompts.getState().reset()
+  }, [signedInUser])
 
   useEffect(() => {
     if (!signedIn || signedInUser !== signedIn.identityId || checkedAt.current === signedIn.at || !passkeysOffered()) return
@@ -108,6 +116,8 @@ type EnrolStep =
   | { kind: 'creating' }
   | { kind: 'confirm'; pending: PendingPasskey }
   | { kind: 'saving' }
+  /** Sent but not confirmed: only checking again is offered, never another passkey. */
+  | { kind: 'pending'; pending: PendingPasskey; checking: boolean }
   | { kind: 'done' }
   | { kind: 'error'; message: string }
 
@@ -116,7 +126,7 @@ const ENROL_BUTTON: Partial<Record<EnrolStep['kind'], string>> = { creating: 'Wa
 function EnrolDialog({ identityId, username, offer, onClose }: { identityId: string; username?: string; offer: boolean; onClose: () => void }) {
   const changed = usePasskeyPrompts((state) => state.changed)
   const [step, setStep] = useState<EnrolStep>({ kind: 'intro' })
-  const busy = step.kind === 'creating' || step.kind === 'saving'
+  const busy = step.kind === 'creating' || step.kind === 'saving' || (step.kind === 'pending' && step.checking)
 
   const fail = useCallback((error: unknown, back: EnrolStep) => {
     logger.warn('Passkeys: adding a passkey stopped:', error)
@@ -138,8 +148,29 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
         changed()
         setStep({ kind: 'done' })
       })
-      .catch((error: unknown) => fail(error, { kind: 'confirm', pending }))
+      .catch((error: unknown) => {
+        if (error instanceof PasskeyVaultError && error.code === 'pending') {
+          // Settings may already show the entry once it lands.
+          changed()
+          setStep({ kind: 'pending', pending, checking: false })
+          return
+        }
+        fail(error, { kind: 'confirm', pending })
+      })
   }, [changed, fail])
+
+  const checkAgain = useCallback((pending: PendingPasskey) => {
+    setStep({ kind: 'pending', pending, checking: true })
+    passkeySaved(pending)
+      .then((saved) => {
+        changed()
+        setStep(saved ? { kind: 'done' } : { kind: 'pending', pending, checking: false })
+      })
+      .catch((error: unknown) => {
+        logger.warn('Passkeys: checking a saved passkey failed:', error)
+        setStep({ kind: 'pending', pending, checking: false })
+      })
+  }, [changed])
 
   return (
     <Modal open onOpenChange={(next) => { if (!next && !busy) onClose() }} className="w-[440px] max-w-[92vw]">
@@ -157,14 +188,21 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-3">
             Use Face ID, Touch ID, Windows Hello or your phone to sign in to Yappr on any device. Your sign-in is saved encrypted, and only your passkey can open it.
           </Dialog.Description>
-          {step.kind === 'confirm' ? (
+          {step.kind === 'pending' ? (
+            <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">{enrolErrorCopy(new PasskeyVaultError('pending'))}</p>
+          ) : step.kind === 'confirm' ? (
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">Almost done. Confirm your passkey once more.</p>
           ) : (
             <p className="text-sm text-gray-500 mb-5">Saving it costs less than 3¢ from your balance.</p>
           )}
           {step.kind === 'error' && <InlineError>{step.message}</InlineError>}
           <div className="flex flex-col gap-3">
-            {step.kind === 'confirm' ? (
+            {step.kind === 'pending' ? (
+              <Button className="w-full gap-2" onClick={() => checkAgain(step.pending)} disabled={busy}>
+                {busy && <Spinner size="sm" />}
+                Check again
+              </Button>
+            ) : step.kind === 'confirm' ? (
               <Button className="w-full" onClick={() => confirm(step.pending)} data-testid="passkey-confirm">Confirm</Button>
             ) : (
               <Button className="w-full gap-2" onClick={create} disabled={busy} data-testid="passkey-add">

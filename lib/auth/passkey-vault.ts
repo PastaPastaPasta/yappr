@@ -372,6 +372,8 @@ export interface PendingPasskey {
   identityId: string
   credentialId: Uint8Array
   createPrf: Uint8Array | null
+  /** Set once its entry was sent: the recipient key it was sealed to, for {@link passkeySaved}. */
+  sentTo?: Uint8Array
 }
 
 /**
@@ -430,6 +432,7 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<v
     // Remembered either way: if a write that is still settling lands, this is the device that made it.
     rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipient.publicKey))
     if (!confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipient.publicKey)) {
+      pending.sentTo = recipient.publicKey
       throw new PasskeyVaultError('pending')
     }
   } finally {
@@ -453,6 +456,16 @@ async function entryLanded(identityId: string, credentialId: Uint8Array, recipie
     await new Promise((resolve) => setTimeout(resolve, LANDED_READ_MS))
   }
   return false
+}
+
+/**
+ * For an enrolment whose entry is still settling (`pending`): whether that
+ * exact entry has landed now. Never makes or writes anything, so a second
+ * passkey cannot replace the first in the provider while it settles.
+ */
+export async function passkeySaved(pending: PendingPasskey): Promise<boolean> {
+  if (!pending.sentTo) return false
+  return entryLanded(pending.identityId, pending.credentialId, pending.sentTo)
 }
 
 /** What opening a passkey restores. */
