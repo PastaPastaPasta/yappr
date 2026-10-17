@@ -23,6 +23,16 @@ const SUBDOMAIN_GATEWAY = /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+([^?#]*)/i
 const PATH_GATEWAY = /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i
 const IPNS = /^ipns:|^https?:\/\/(?:[^/?#]+\/ipns\/|[^./?#]+\.ipns\.)/i
 const OTHER_SUBDOMAIN_CID = /^[0-9a-z]{40,}$/i
+// Same as in lib/media/remote-media.ts.
+const CONTROL = /[\u0000-\u001f\u007f]/
+const PLAIN_HTTP_AUTHORITY = /^https?:\/\/([a-z0-9.-]+)(?::\d+)?(?:[/?#]|$)/i
+const CANONICAL_IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/
+const IPV4_SHAPED = /(?:^|\.)(?:0x[0-9a-f]*|\d+)\.?$/i
+const hasPlainAuthority = (url) => {
+  const host = PLAIN_HTTP_AUTHORITY.exec(url)?.[1]
+  return host !== undefined && (!IPV4_SHAPED.test(host) || CANONICAL_IPV4.test(host))
+}
+
 const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
 
@@ -45,7 +55,7 @@ export function ipfsCidOf(input) {
   const trimmed = input.trim()
   if (CANONICAL_CID.test(trimmed)) return isCanonicalCid(trimmed) ? trimmed : null
   // Same as PLAIN_HTTP_AUTHORITY in lib/media/remote-media.ts: any other http(s) shape, and IPNS names, are refused by the apps outright.
-  if ((/^https?:/i.test(trimmed) && !/^https?:\/\/[a-z0-9.-]+(?::\d+)?(?:[/?#]|$)/i.test(trimmed)) || IPNS.test(trimmed)) return null
+  if (CONTROL.test(trimmed) || (/^https?:/i.test(trimmed) && !hasPlainAuthority(trimmed)) || IPNS.test(trimmed)) return null
   const cidIn = (match) => (isCanonicalCid(match[1]) && !ESCAPING_PATH.test(match[2]) ? match[1] : null)
   const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
   if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) return cidIn(subdomain)
@@ -66,7 +76,7 @@ export function ipfsCidOf(input) {
  */
 export function canonicalHttpsUrl(url) {
   // Browsers drop tabs and newlines anywhere in a URL.
-  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?#][^#]*)?(?:#.*)?$/i.exec(url.trim().replace(/[\t\n\r]/g, ''))
+  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?][^#]*)?(?:#.*)?$/i.exec(url.trim().replace(/[\t\n\r]/g, ''))
   if (!match) return null
   const host = match[1].toLowerCase().replace(/\.$/, '')
   const port = match[2] !== undefined && Number(match[2]) !== 443 ? `:${Number(match[2])}` : ''

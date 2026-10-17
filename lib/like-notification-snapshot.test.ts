@@ -93,6 +93,16 @@ describe('later polls', () => {
     expect(back.snapshot.targets['post:P1']).toEqual({ count: 3, likers: ['alice', 'bob', 'zed'] })
   })
 
+  it('counts only the named likers of a batch saved before every liker was kept', () => {
+    const legacy = JSON.stringify({
+      v: 1, baselined: ['post'], horizons: {}, targets: {},
+      batches: [{ id: 'like:post:P1:1', kind: 'post', targetId: 'P1', firstSeenMs: NOW, likers: Array.from({ length: 10 }, (_, i) => `u${i}`), total: 25 }],
+    })
+    const parsed = parseLikeSnapshot(legacy)
+    expect(parsed?.batches[0]).toMatchObject({ total: 10 })
+    expect(parsed?.batches[0].likers).toHaveLength(10)
+  })
+
   it('names every new liker in a batch, so a block filter can see who is left', () => {
     const crowd = Array.from({ length: 25 }, (_, i) => `u${i}`)
     const { fresh } = applyLikeObservations(baselined(), [observe('post', { P1: 27 }, { P1: ['alice', 'bob', ...crowd] })], { selfId: ME, nowMs: NOW })

@@ -136,7 +136,11 @@ export function parseLikeSnapshot(raw: string | null): LikeSnapshot | null {
       baselined: parsed.baselined.filter(isKind),
       horizons: Object.fromEntries(Object.entries(horizons).filter(([kind, at]) => isKind(kind) && typeof at === 'number')),
       targets: Object.fromEntries(targets),
-      batches: parsed.batches.filter(isBatch),
+      // Batches saved before every liker was kept named only the first ten:
+      // count only those, so `likers` is exhaustive and a block filter can
+      // tell whether anyone unblocked is left ("Ava and 9 others" for the
+      // few days such a batch is kept).
+      batches: parsed.batches.filter(isBatch).map((batch) => ({ ...batch, total: Math.min(batch.total, batch.likers.length) })),
     }
   } catch {
     return null

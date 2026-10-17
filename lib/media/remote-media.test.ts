@@ -77,8 +77,17 @@ describe('the denylist', () => {
     expect(canonicalHttpsUrl('https://cdn.example/caf\u00e9.png')).toBe('https://cdn.example/caf%C3%A9.png')
     expect(canonicalHttpsUrl('https://cdn.example/pix\nel.png')).toBe('https://cdn.example/pixel.png')
     expect(canonicalHttpsUrl('https://tracker.example')).toBe('https://tracker.example/')
+    // A fragment is never part of the request, even when it looks like a query.
+    expect(canonicalHttpsUrl('https://cdn.example#?ignored=1')).toBe('https://cdn.example/')
+    expect(canonicalHttpsUrl('https://cdn.example/a#?ignored=1')).toBe('https://cdn.example/a')
     expect(canonicalHttpsUrl('https://tracker.example/a/..')).toBe('https://tracker.example/')
     expect(canonicalHttpsUrl('https://tracker.example:8443/pixel.png?id=1')).toBe('https://tracker.example:8443/pixel.png?id=1')
+    // Other spellings of an IPv4 address can't be hashed alike, so they are refused; dotted decimal is fine.
+    for (const host of ['16843009', '0x1.1.1.1', '01.1.1.1', '1.1.257', '1.1.1.1.']) {
+      expect(isDeniedMedia(`https://${host}/pixel.png`)).toBe(true)
+      expect(scriptCid(`https://${host}/ipfs/${CID_V1}`)).toBeNull()
+    }
+    expect(isDeniedMedia('https://1.1.1.1/pixel.png')).toBe(false)
     expect(isDeniedMedia('https://tracker.example/pixel.png?id=2')).toBe(false)
     expect(isDeniedMedia('https://tracker.example/pixel.png?id=1&x')).toBe(false)
   })
@@ -194,6 +203,14 @@ describe('IPFS spellings', () => {
     expect(isDeniedMedia(url)).toBe(true)
     expect(imageSourceFor(`https://${other}.ipfs.dweb.link/ipfs/x/a.png`))
       .toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${other}/ipfs/x/a.png` })
+  })
+
+  it('refuses a URL with a tab or newline, which browsers drop (`i\\tpfs` is `ipfs`)', () => {
+    for (const url of [`https://ipfs.io/i\tpfs/${CID_V1}`, `https://ipfs.io/ipfs/${CID_V1.slice(0, 10)}\n${CID_V1.slice(10)}`]) {
+      expect(isDeniedMedia(url)).toBe(true)
+      expect(imageSourceFor(url)).toEqual({ kind: 'none' })
+      expect(scriptCid(url)).toBeNull()
+    }
   })
 
   it('drops a gateway query string from the IPFS path', () => {

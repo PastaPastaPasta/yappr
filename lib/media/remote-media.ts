@@ -88,7 +88,23 @@ const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
  * processing maps to ASCII, backslashes or extra slashes before the host…)
  * could route somewhere a pattern doesn't see, and Yappr never writes it.
  */
-const PLAIN_HTTP_AUTHORITY = /^https?:\/\/[a-z0-9.-]+(?::\d+)?(?:[/?#]|$)/i
+/** Control characters, which browsers drop or reject in URLs. */
+const CONTROL = /[\u0000-\u001f\u007f]/
+const PLAIN_HTTP_AUTHORITY = /^https?:\/\/([a-z0-9.-]+)(?::\d+)?(?:[/?#]|$)/i
+/**
+ * A dotted-decimal IPv4 host as browsers print it. Other spellings of an IPv4
+ * address (`16843009`, `0x1.1.1.1`, `01.1.1.1`) name the same server but
+ * would hash differently, so a host whose last label is numeric must be this.
+ */
+const CANONICAL_IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/
+const IPV4_SHAPED = /(?:^|\.)(?:0x[0-9a-f]*|\d+)\.?$/i
+
+/** Whether an http(s) URL has the one host shape this module reads exactly as a browser does. */
+function hasPlainAuthority(url: string): boolean {
+  const host = PLAIN_HTTP_AUTHORITY.exec(url)?.[1]
+  return host !== undefined && (!IPV4_SHAPED.test(host) || CANONICAL_IPV4.test(host))
+}
+
 
 type IpfsReference = { cid: string; path: string } | 'refused'
 
@@ -101,7 +117,9 @@ type IpfsReference = { cid: string; path: string } | 'refused'
  */
 function ipfsReferenceOf(url: string): IpfsReference | null {
   const trimmed = url.trim()
-  if ((/^https?:/i.test(trimmed) && !PLAIN_HTTP_AUTHORITY.test(trimmed)) || IPNS.test(trimmed)) return 'refused'
+  // Browsers drop tabs and newlines anywhere in a URL (`i\tpfs` is `ipfs`), and
+  // Yappr never writes control characters: refuse them before classifying.
+  if (CONTROL.test(trimmed) || (/^https?:/i.test(trimmed) && !hasPlainAuthority(trimmed)) || IPNS.test(trimmed)) return 'refused'
   // The host's CID is the root: on a subdomain gateway `/ipfs/X/…` is a path inside it.
   const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
   if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) {
@@ -177,7 +195,7 @@ function canonicalCid(cid: string): string {
  */
 export function canonicalHttpsUrl(url: string): string | null {
   // Browsers drop tabs and newlines anywhere in a URL.
-  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?#][^#]*)?(?:#.*)?$/i.exec(url.trim().replace(/[\t\n\r]/g, ''))
+  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?][^#]*)?(?:#.*)?$/i.exec(url.trim().replace(/[\t\n\r]/g, ''))
   if (!match) return null
   const host = match[1].toLowerCase().replace(/\.$/, '')
   const port = match[2] !== undefined && Number(match[2]) !== 443 ? `:${Number(match[2])}` : ''
@@ -267,13 +285,12 @@ export type ImageSource =
 
 /** `/x` but not `//host` or `/\\host`, which browsers send to another host. */
 const LOCAL_IMAGE = /^(data:image\/|blob:|\/(?![/\\]))/i
-/** Browsers drop tabs and newlines from URLs, so `/\t/host` is `//host`: refuse control characters outright. */
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
 
 /** How an image URL may be loaded; see the module comment. */
 export function imageSourceFor(url: string | null | undefined, size: ProxyImageSize = 'full'): ImageSource {
   const trimmed = url?.trim()
-  if (!trimmed || CONTROL_CHARACTER.test(trimmed)) return { kind: 'none' }
+  // Browsers drop tabs and newlines, so `/\t/host` would be `//host`.
+  if (!trimmed || CONTROL.test(trimmed)) return { kind: 'none' }
   if (LOCAL_IMAGE.test(trimmed)) return { kind: 'local', url: trimmed }
   if (isDeniedMedia(trimmed)) return { kind: 'denied' }
   const reference = ipfsReferenceOf(trimmed)
