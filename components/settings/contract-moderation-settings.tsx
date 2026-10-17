@@ -63,7 +63,7 @@ const PANEL_COPY: Record<ModeratedContractKey, PanelCopy> = {
     barred: 'A banned identity cannot write anything to the social contract until unbanned; a suspended one until the suspension lapses.',
     potFunding: 'Every post and reply pays a small credit fee into this pot.',
     removalsTitle: 'Removed posts and replies',
-    kindLabels: {},
+    kindLabels: { post: 'Post', reply: 'Reply' },
     citable: [
       { docType: 'post', label: 'Posts this is about (optional, public)', placeholder: 'Post IDs, comma-separated', inputId: 'contract-moderation-cited' },
       { docType: 'reply', label: 'Replies this is about (optional, public; at most 16 posts and replies together)', placeholder: 'Reply IDs, comma-separated', inputId: 'contract-moderation-cited-replies' },
@@ -140,10 +140,11 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   const { user } = useAuth()
   const service = moderationServiceFor(contract)
   const copy = PANEL_COPY[contract]
-  /** Element ids, unique per contract's panel. */
+  const social = contract === 'social'
   /** A removal kind as the list names it ("Post", "Listing", "Comment"). */
-  const kindLabel = (kind: string) => copy.kindLabels[kind] ?? (kind === 'reply' ? 'Reply' : 'Post')
-  const fieldId = (name: string) => (contract === 'social' ? `contract-moderation-${name}` : `${contract}-moderation-${name}`)
+  const kindLabel = (kind: string) => copy.kindLabels[kind] ?? kind
+  /** Element ids, unique per contract's panel. */
+  const fieldId = (name: string) => (social ? `contract-moderation-${name}` : `${contract}-moderation-${name}`)
   const [targetId, setTargetId] = useState(citation?.authorId ?? '')
   const [reason, setReason] = useState('')
   /** Ids of the documents the ban, suspension or warning is about, per type (`reason.documents`, at most 16 together). */
@@ -315,7 +316,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   }
 
   /** The entered identity's standing on every list the contract keeps, warnings included. */
-  const lookUp = async (identityId: string) => {
+  const lookUp = useCallback(async (identityId: string) => {
     const id = identityId.trim()
     if (!id) return
     try {
@@ -324,32 +325,25 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
       logger.warn('ContractModerationSettings: status check failed', error)
       setStanding({ identityId: id, standing: null, error: 'Could not read this identity\'s moderation status.' })
     }
-  }
+  }, [service])
 
   // Arrived from a document's moderator menu: show where its author stands.
   const citedAuthor = citation?.authorId
   useEffect(() => {
-    if (!citedAuthor) return
-    service.readStanding(citedAuthor)
-      .then((read) => setStanding({ identityId: citedAuthor, standing: read, error: null }))
-      .catch((error: unknown) => {
-        logger.warn('ContractModerationSettings: status check failed', error)
-        setStanding({ identityId: citedAuthor, standing: null, error: 'Could not read this identity\'s moderation status.' })
-      })
-  }, [citedAuthor, service])
-
+    if (citedAuthor) lookUp(citedAuthor).catch(() => { /* reported inside */ })
+  }, [citedAuthor, lookUp])
 
   return (
     <div className="space-y-4">
       <ElectionStatusPanel contract={contract} />
-      {contract === 'social' && contractTakesReports() && <ReportQueue seatedReasons={seatedReasons} onModerateAuthor={moderateAuthor} />}
+      {social && contractTakesReports() && <ReportQueue seatedReasons={seatedReasons} onModerateAuthor={moderateAuthor} />}
       <TeamActionsPanel contract={contract} seatedReasons={seatedReasons} onChanged={() => { refresh().catch(() => { /* reported inside */ }) }} />
       <Card>
         <CardHeader>
-          <CardTitle>{contract === 'social' ? 'Contract Moderation' : `${moderatedContract(contract).label} Moderation`}</CardTitle>
+          <CardTitle>{social ? 'Contract Moderation' : `${moderatedContract(contract).label} Moderation`}</CardTitle>
           <CardDescription>
             {copy.barred} Both refusals are recorded with your reason, which anyone can read.
-            {contract === 'social' && <> Only deleting their own documents (an unlike, an unfollow) still goes through for them{barredOwnDeleteNote()}</>}
+            {social && <> Only deleting their own documents (an unlike, an unfollow) still goes through for them{barredOwnDeleteNote()}</>}
             {canWarn && ' A warning bars nothing: it is a public, reasoned note, and at most 16 accumulate until cleared.'}
           </CardDescription>
         </CardHeader>
@@ -460,7 +454,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
       <EntryList title={copy.removalsTitle} empty="Nothing has been removed." entries={removals}
         render={(removal) => (
           <>
-            {contract === "social" ? "" : `${kindLabel(removal.kind)} `}
+            {!social && `${kindLabel(removal.kind)} `}
             {removal.documentId} by {removal.moderatorId.slice(0, 8)}… on {new Date(removal.removedAt).toLocaleDateString()}
             {removal.kept.tags ? ` · ${removal.kept.tags.map((tag) => `#${tag}`).join(' ')}` : ''}
             {removal.kept.createdAt !== undefined ? ` · posted ${postedOnLabel(removal.kept.createdAt)}` : ''}

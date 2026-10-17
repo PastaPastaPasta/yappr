@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
+import { documentNoun, moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import { countedSigners, moderationServiceFor, teamCanApprove, type ModerationService, type SeatedTeamSeats, type TeamAction, type TeamActionTargetState } from '@/lib/services/moderation-service'
 import type { SeatedReasonsState } from './charter-reason-picker'
 
@@ -156,7 +156,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social'
       toast.error(result.error || 'Approval failed')
     } else {
       toast.success(result.status === 'closed'
-        ? `Approved: the team removed the ${action.documentTypeName}. A team removal cannot be undone.`
+        ? `Approved: the team removed the ${documentNoun(action.documentTypeName)}. A team removal cannot be undone.`
         : 'Approved')
       // A removal that ran shows in the removal records and the pot counts.
       if (result.status === 'closed') onChanged?.()
@@ -212,7 +212,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social'
                 <li key={action.actionId} data-testid={`team-action-${action.actionId}`} className={`rounded-lg border border-gray-200 dark:border-gray-800 p-3 space-y-1${dead ? ' opacity-60' : ''}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">
-                      Remove {action.documentTypeName}{' '}
+                      Remove {documentNoun(action.documentTypeName)}{' '}
                       {social
                         ? <Link href={`/post?id=${encodeURIComponent(action.documentId)}`} className="font-mono text-yappr-500 hover:underline">{shortId(action.documentId)}</Link>
                         : <span className="font-mono">{shortId(action.documentId)}</span>}
@@ -229,12 +229,12 @@ export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social'
                   <p>Reason: {reasonLabel(action)}</p>
                   {deadAs === 'gone' && (
                     <p data-testid={`team-action-gone-${action.actionId}`} className="italic text-gray-500 dark:text-gray-400">
-                      Its {action.documentTypeName} is already gone (another proposal removed it{moderatedContract(contract).authorsDelete(action.documentTypeName) ? ', or its author deleted it' : ''}), so this proposal can never run.
+                      Its {documentNoun(action.documentTypeName)} is already gone (another proposal removed it{moderatedContract(contract).authorsDelete(action.documentTypeName) ? ', or its author deleted it' : ''}), so this proposal can never run.
                     </p>
                   )}
                   {deadAs === 'changed' && (
                     <p data-testid={`team-action-changed-${action.actionId}`} className="italic text-gray-500 dark:text-gray-400">
-                      Its {action.documentTypeName} changed after this proposal (its author deleted or re-saved it), so this proposal can
+                      Its {documentNoun(action.documentTypeName)} changed after this proposal (its author deleted or re-saved it), so this proposal can
                       never run. If its author deleted it, nothing is left to remove; otherwise the change restarted its window, in which
                       one moderator removes it alone, and after that it can be proposed again.
                     </p>
@@ -271,7 +271,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social'
             <ul className="space-y-1 text-gray-600 dark:text-gray-400">
               {state.closed.map((action) => (
                 <li key={action.actionId} data-testid={`team-action-closed-${action.actionId}`}>
-                  {action.documentTypeName} <span className="font-mono">{shortId(action.documentId)}</span> removed with {action.approvalCount} approval{action.approvalCount === 1 ? '' : 's'}
+                  {documentNoun(action.documentTypeName)} <span className="font-mono">{shortId(action.documentId)}</span> removed with {action.approvalCount} approval{action.approvalCount === 1 ? '' : 's'}
                   {' · '}proposed by {nameOf(action.proposerId)} {new Date(action.proposedAt).toLocaleDateString()} · {reasonLabel(action)}
                 </li>
               ))}

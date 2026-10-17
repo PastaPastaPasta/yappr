@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 const MENU_ITEM = 'px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2'
 
 /** Where the moderation settings open on one contract's panel, with a document's author and the document filled in. */
-function moderateAuthorHref(target: Pick<ModeratorRemoveTarget, 'contract' | 'docType' | 'documentId'>, authorId: string): string {
+function moderateAuthorHref(target: ModeratorRemoveTarget, authorId: string): string {
   const params = new URLSearchParams({
     section: 'moderation',
     contract: target.contract,

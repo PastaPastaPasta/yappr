@@ -48,14 +48,15 @@ const duration = (seconds: number) => (seconds >= 86_400 ? `${Math.round(seconds
 export function ElectionStatusPanel({ contract = 'social' }: { contract?: ModeratedContractKey }) {
   // A stable, frozen object (memoised per contract); the effect below keys on
   // the boolean anyway, so it runs once per mount, never per render.
-  const { contractId } = moderatedContract(contract)
-  const declaration = moderatedContract(contract).elected()
+  const declared = moderatedContract(contract)
+  const { contractId } = declared
+  const declaration = declared.elected()
   const elected = declaration !== null
   // A panel mounts (and its effect runs) before SdkProvider has called
   // initialize(), so a read on mount fails with "SDK not configured".
   const { isReady: sdkReady, error: sdkError } = useSdk()
   // One loader per mounted panel: concurrent loads share a single read.
-  const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus(contractId, moderatedContract(contract).elected())), [contract, contractId])
+  const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus(contractId, declared.elected())), [declared, contractId])
   const [status, setStatus] = useState<ElectionStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)

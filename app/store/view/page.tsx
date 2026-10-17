@@ -463,7 +463,7 @@ function StoreDetailContent() {
 
                 <div className="pt-10 flex-1 min-w-0">
                   <div className="flex items-center gap-1">
-                    <h2 className="text-xl font-bold truncate">{store.name}</h2>
+                    <h2 className="min-w-0 text-xl font-bold truncate">{store.name}</h2>
                     <ModeratorContentMenu
                       target={documentRemovalTarget('storefront', 'store', 'store', store, store.name)}
                       ownerId={store.ownerId}

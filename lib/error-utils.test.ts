@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import blogContract from '@/contracts/yappr-blog-contract.json'
 import storefrontContract from '@/contracts/yappr-storefront-contract.json'
+import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import {
   UNCONFIRMED_WRITE_MESSAGE,
   sentWriteOutcomeUnknown,
@@ -1126,6 +1127,16 @@ describe('41200 says which product is closed (R-M24)', () => {
     expect(moderationClosedCopy(refusal('post'))).toBe(MODERATION_CLOSED_COPY.social)
     expect(moderationClosedCopy(refusal('"yapprProfile"'))).toBe(MODERATION_CLOSED_COPY.social)
     expect(categorizeError(refusal('reply'))).toBe(POSTING_CLOSED_COPY)
+  })
+
+  it('keeps the posting copy for every type the social contract moderates', () => {
+    for (const type of Object.keys(socialContractV16.config.moderation.moderators.moderatedDocumentTypes)) {
+      expect(moderationClosedCopy(refusal(type), 'storefront')).toBe(MODERATION_CLOSED_COPY.social)
+    }
+  })
+
+  it('uses the writing product for a type it does not know', () => {
+    expect(moderationClosedCopy(refusal('storeCoupon'), 'storefront')).toBe(MODERATION_CLOSED_COPY.storefront)
   })
 
   it('falls back to the writing product when the refusal names no type', () => {

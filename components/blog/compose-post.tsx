@@ -323,8 +323,9 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       }
     } catch (err) {
       logger.error(isEditing ? 'Failed to update blog post:' : 'Failed to publish blog post:', err)
+      // Closed until the blog's moderators are elected, or the writer barred: reportModerationRefusal says so itself.
+      if (reportModerationRefusal(err, user.identityId, 'blog')) return
       if (err instanceof ListLimitError || err instanceof BlogFieldError) toast.error(err.message)
-      else if (reportModerationRefusal(err, user.identityId, 'blog')) return
       // Only the pre-publish lookup fails before anything is broadcast; a rate
       // limit later on may follow a write that landed, and a blind retry pays twice.
       else if (isPublishedAheadRefusal(err)) toast.error('This device\'s clock is more than 10 minutes ahead, so the network refused the publish date. Set the clock right and try again.')

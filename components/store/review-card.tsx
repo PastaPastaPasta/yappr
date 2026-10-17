@@ -115,14 +115,6 @@ export function ReviewCard({ review, index = 0, onRemoved }: ReviewCardProps) {
             <span className="text-sm text-gray-500">
               {formatDate(review.createdAt)}
             </span>
-            {onRemoved && (
-              <ModeratorContentMenu
-                className="ml-auto"
-                target={documentRemovalTarget('storefront', 'storeReview', 'review', review, [review.title, review.content].filter(Boolean).join(' — '))}
-                ownerId={review.reviewerId}
-                onRemoved={onRemoved}
-              />
-            )}
             {review.ordered && (
               <span
                 className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300"
@@ -131,6 +123,14 @@ export function ReviewCard({ review, index = 0, onRemoved }: ReviewCardProps) {
                 <CheckBadgeIcon className="h-3.5 w-3.5" aria-hidden="true" />
                 Ordered
               </span>
+            )}
+            {onRemoved && (
+              <ModeratorContentMenu
+                className="ml-auto"
+                target={documentRemovalTarget('storefront', 'storeReview', 'review', review, [review.title, review.content].filter(Boolean).join(' — '))}
+                ownerId={review.reviewerId}
+                onRemoved={onRemoved}
+              />
             )}
           </div>
 

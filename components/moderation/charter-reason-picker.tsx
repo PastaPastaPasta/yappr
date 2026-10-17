@@ -30,8 +30,9 @@ const IDLE: SeatedReasonsState = { reasons: [], required: false, loading: false,
  * (`contract`, social by default).
  */
 export function useSeatedReasons(active: boolean, contract: ModeratedContractKey = 'social'): SeatedReasonsState {
-  const { contractId } = moderatedContract(contract)
-  const elected = moderatedContract(contract).elected() !== null
+  const declared = moderatedContract(contract)
+  const { contractId } = declared
+  const elected = declared.elected() !== null
   const [state, setState] = useState<SeatedReasonsState>(IDLE)
 
   useEffect(() => {

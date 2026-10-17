@@ -21,7 +21,7 @@ import { parseCountInput } from '@/lib/storefront/variant-editor-model'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { storefrontVariantsAreTyped } from '@/lib/constants'
 import { StaleRevisionError } from '@/lib/services/document-service'
-import { moderationClosedCopy } from '@/lib/error-utils'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 import { combinationStockCap, itemStockCap } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
 
@@ -211,6 +211,7 @@ export function InventoryTable({
     setIsDeleting(true)
     setBulkDeleteProgress({ current: 0, total })
     const failedIds: string[] = []
+    let refused = false
 
     for (let i = 0; i < idsToDelete.length; i++) {
       const itemId = idsToDelete[i]
@@ -221,12 +222,24 @@ export function InventoryTable({
       } catch (err) {
         failedIds.push(itemId)
         logger.error(`Failed to delete item ${itemId}:`, err)
+        // Closed until the storefront's moderators are elected, or the seller
+        // barred: every later item would be refused the same way, each refusal
+        // paid, so the run stops here and says why.
+        if (reportModerationRefusal(err, ownerId, 'storefront')) {
+          failedIds.push(...idsToDelete.slice(i + 1))
+          refused = true
+          break
+        }
       }
     }
 
     setSelectedItems(new Set(failedIds))
     setBulkDeleteProgress(null)
     setIsDeleting(false)
+    if (refused) {
+      setShowBulkDeleteDialog(false)
+      return
+    }
     if (failedIds.length > 0) {
       toast.error(`Failed to delete ${failedIds.length} item${failedIds.length === 1 ? '' : 's'}. Please try again.`)
     } else {
@@ -308,7 +321,7 @@ export function InventoryTable({
       toast.success('Stock saved')
     } catch (err) {
       logger.error('Failed to update stock:', err)
-      toast.error(moderationClosedCopy(err, 'storefront') ?? ((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.'))
+      if (!reportModerationRefusal(err, ownerId, 'storefront')) toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
     } finally {
       setSavingItemId(null)
     }
@@ -341,7 +354,7 @@ export function InventoryTable({
       onItemUpdated?.(item.id, { stockQuantity, $revision: updated.$revision })
     } catch (err) {
       logger.error('Failed to update stock:', err)
-      toast.error(moderationClosedCopy(err, 'storefront') ?? ((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.'))
+      if (!reportModerationRefusal(err, ownerId, 'storefront')) toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
     }
   }, [editingStock, items, ownerId, storeId, onItemUpdated, setStockDraft])
 
@@ -355,7 +368,7 @@ export function InventoryTable({
       setDeleteItemId(null)
     } catch (err) {
       logger.error('Failed to delete item:', err)
-      toast.error(moderationClosedCopy(err, 'storefront') ?? 'Failed to delete item. Please try again.')
+      if (!reportModerationRefusal(err, ownerId, 'storefront')) toast.error('Failed to delete item. Please try again.')
     } finally {
       setIsDeleting(false)
     }

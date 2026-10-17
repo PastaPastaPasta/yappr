@@ -959,17 +959,18 @@ export const MODERATION_CLOSED_COPY = {
 } as const
 export type ModerationClosedProduct = keyof typeof MODERATION_CLOSED_COPY
 
-/** The moderated types of the storefront and blog contracts (pinned against the contract files by error-utils.test). */
+/** The moderated types of each contract (pinned against the contract files by error-utils.test). */
+const SOCIAL_MODERATED_TYPES: ReadonlySet<string> = new Set(['post', 'reply', 'report', 'yapprProfile'])
 const STOREFRONT_MODERATED_TYPES: ReadonlySet<string> = new Set(['store', 'storeItem', 'storeReview', 'itemReview'])
 const BLOG_MODERATED_TYPES: ReadonlySet<string> = new Set(['blog', 'blogPost', 'blogComment'])
 
-/** The product a 41200 names by its document type, or `fallback` when the refusal names none. */
+/** The product a 41200 names by its document type, or `fallback` when it names none Yappr knows. */
 function closedProductOf(error: unknown, fallback: ModerationClosedProduct): ModerationClosedProduct {
   const type = /documents of type\s+["'`]?([A-Za-z0-9_]+)["'`]?\s+on contract/i.exec(extractErrorMessage(error))?.[1]
   if (!type) return fallback
   if (STOREFRONT_MODERATED_TYPES.has(type)) return 'storefront'
   if (BLOG_MODERATED_TYPES.has(type)) return 'blog'
-  return 'social'
+  return SOCIAL_MODERATED_TYPES.has(type) ? 'social' : fallback
 }
 
 /**

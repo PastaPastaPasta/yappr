@@ -238,7 +238,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
                         <CommentTimestamp createdAt={comment.createdAt} />
                       </span>
                     </div>
-                    {isOwnComment && (
+                    {isOwnComment && commentsOpen && (
                       <Button
                         type="button"
                         variant="ghost"

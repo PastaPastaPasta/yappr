@@ -39,13 +39,13 @@ export function ModeratorRemoveModal() {
   const { isOpen, target, onRemoved, close } = useModeratorRemoveModal()
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
+  const contract = target?.contract ?? 'social'
+  const service = moderationServiceFor(contract)
   /**
    * A seated elected team must cite one of its charter's reasons on every
    * deletion (41203). Read only while the modal is open (only moderators can
    * open it), and again on every open, so a team seated mid-session is seen.
    */
-  const contract = target?.contract ?? 'social'
-  const service = moderationServiceFor(contract)
   const seatedReasons = useSeatedReasons(isOpen, contract)
   const [reasonDocumentId, setReasonDocumentId] = useState('')
   /** How this viewer may remove the post: null while it is being worked out (a settled post reads the seated team). */
@@ -66,7 +66,8 @@ export function ModeratorRemoveModal() {
   const postId = target?.documentId
   const createdAtMs = target?.createdAt ?? Number.NaN
   /** No deletion window (social v2-v10, storefront, blog): always the single removal, known without reading anything. */
-  const windowless = moderatedContract(contract).deleteWindowSeconds(kind) === null
+  const windowSeconds = moderatedContract(contract).deleteWindowSeconds(kind)
+  const windowless = windowSeconds === null
 
   /**
    * Works out the route (and, for the team route, any proposal already
@@ -243,7 +244,7 @@ export function ModeratorRemoveModal() {
     close()
   }
 
-  const windowText = windowLabel(moderatedContract(contract).deleteWindowSeconds(kind))
+  const windowText = windowLabel(windowSeconds)
   const effectiveRoute: RemovalRoute | null = windowless ? { route: 'single', closing: false } : route
   const team = effectiveRoute?.route === 'team' ? effectiveRoute : null
   const blocked = effectiveRoute?.route === 'none' ? effectiveRoute : null

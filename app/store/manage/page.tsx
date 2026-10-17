@@ -46,6 +46,7 @@ import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { ModerationClosedBanner } from '@/components/moderation/moderation-closed-notice'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 
 function StoreManagePage() {
   const appConnect = isAppConnectBuild()
@@ -53,6 +54,10 @@ function StoreManagePage() {
   const searchParams = useSearchParams()
   const storeId = searchParams.get('id')
   const { user } = useAuth()
+  /** A write's failure, said in storefront words when its moderators refused it (closed, or the seller barred). */
+  const writeFailed = (error: unknown, message: string) => {
+    if (!reportModerationRefusal(error, user?.identityId, 'storefront')) toast.error(message)
+  }
   const { isReady: sdkReady } = useSdk()
 
   const [store, setStore] = useState<Store | null>(null)
@@ -185,7 +190,7 @@ function StoreManagePage() {
       setDeleteItemId(null)
     } catch (error) {
       logger.error('Failed to delete item:', error)
-      toast.error('Failed to delete product. Please try again.')
+      writeFailed(error, 'Failed to delete product. Please try again.')
     } finally {
       setIsDeleting(false)
     }
@@ -222,7 +227,7 @@ function StoreManagePage() {
       setShowZoneModal(false)
     } catch (err) {
       logger.error('Failed to create shipping zone:', err)
-      toast.error('Failed to create shipping zone')
+      writeFailed(err, 'Failed to create shipping zone')
     }
   }
 
@@ -242,7 +247,7 @@ function StoreManagePage() {
       setEditingZone(null)
     } catch (err) {
       logger.error('Failed to update shipping zone:', err)
-      toast.error('Failed to update shipping zone')
+      writeFailed(err, 'Failed to update shipping zone')
     }
   }
 
@@ -267,7 +272,7 @@ function StoreManagePage() {
       setShowPaymentModal(false)
     } catch (error) {
       logger.error('Failed to add payment method:', error)
-      toast.error('Failed to add payment method')
+      writeFailed(error, 'Failed to add payment method')
     }
   }
 
@@ -307,7 +312,7 @@ function StoreManagePage() {
       toast.success(`Imported ${newUris.length} payment method${newUris.length !== 1 ? 's' : ''} from profile`)
     } catch (error) {
       logger.error('Failed to import payment methods:', error)
-      toast.error('Failed to import payment methods')
+      writeFailed(error, 'Failed to import payment methods')
     } finally {
       setIsImporting(false)
     }
@@ -326,6 +331,7 @@ function StoreManagePage() {
       setDeletePaymentIndex(null)
     } catch (error) {
       logger.error('Failed to remove payment method:', error)
+      writeFailed(error, 'Failed to remove payment method')
     } finally {
       setIsDeleting(false)
     }
@@ -706,7 +712,7 @@ function StoreManagePage() {
                             setStore(updated)
                           } catch (error) {
                             logger.error('Failed to update status:', error)
-                            toast.error('Failed to update store status. Please try again.')
+                            writeFailed(error, 'Failed to update store status. Please try again.')
                           }
                         }}
                         className="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"

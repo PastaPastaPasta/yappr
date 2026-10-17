@@ -210,3 +210,20 @@ const CONTRACTS: Readonly<Record<ModeratedContractKey, ModeratedContract>> = { s
 export function moderatedContract(key: ModeratedContractKey): ModeratedContract {
   return CONTRACTS[key]
 }
+
+/** How a moderated document type is named to people ("listing", not "storeItem"). */
+const DOCUMENT_NOUNS: Readonly<Record<string, string>> = {
+  store: 'store',
+  storeItem: 'listing',
+  storeReview: 'review',
+  itemReview: 'review',
+  blog: 'blog',
+  blogPost: 'blog post',
+  blogComment: 'comment',
+  yapprProfile: 'profile',
+}
+
+/** `docType` as moderators read it; social's `post`, `reply` and `report` are their own names. */
+export function documentNoun(docType: string): string {
+  return DOCUMENT_NOUNS[docType] ?? docType
+}

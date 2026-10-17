@@ -4,7 +4,7 @@ import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { keyNetwork } from '@/lib/constants';
 import { authorDeletesLeaveHoles, settledDeletionFor, type ElectedModerationDeclaration, type SettledDeletionRule } from '@/lib/contract-topology';
-import { MODERATED_CONTRACTS, moderatedContract, type ModeratedContract, type ModeratedContractKey } from '@/lib/moderated-contracts';
+import { documentNoun, moderatedContract, type ModeratedContract, type ModeratedContractKey } from '@/lib/moderated-contracts';
 import { storedTags } from '@/lib/post-helpers';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
@@ -1094,7 +1094,7 @@ class ModerationService {
    */
   async removeDocument(moderatorId: string, kind: string, documentId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
     if (!this.canRemove(kind)) {
-      return { success: false, error: `Moderators cannot remove a ${kind} on this contract`, errorCode: 'NOT_MODERATED' };
+      return { success: false, error: `Moderators cannot remove a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
     }
     let snapshotSaved = false;
     let documentGone = false;
@@ -1118,7 +1118,7 @@ class ModerationService {
     const result: ModerationResult = documentGone
       ? {
         success: false,
-        error: `This ${kind} is already gone (removed by a moderator, perhaps by an earlier attempt of yours${this.contract.authorsDelete(kind) ? ', or deleted by its author' : ''})`,
+        error: `This ${documentNoun(kind)} is already gone (removed by a moderator, perhaps by an earlier attempt of yours${this.contract.authorsDelete(kind) ? ', or deleted by its author' : ''})`,
         errorCode: 'DOCUMENT_GONE',
       }
       : moderated;
@@ -1139,7 +1139,7 @@ class ModerationService {
     if (result.errorCode === 'MAYBE_APPLIED') {
       return {
         ...result,
-        error: `The network did not confirm in time: the ${kind} may have been removed. Check again before retrying.`,
+        error: `The network did not confirm in time: the ${documentNoun(kind)} may have been removed. Check again before retrying.`,
         snapshotSaved,
       };
     }
@@ -1155,7 +1155,7 @@ class ModerationService {
    */
   async restoreDocument(moderatorId: string, kind: string, documentId: string): Promise<ModerationResult> {
     if (!this.canRemove(kind)) {
-      return { success: false, error: `Moderators cannot restore a ${kind} on this contract`, errorCode: 'NOT_MODERATED' };
+      return { success: false, error: `Moderators cannot restore a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
     }
     const bytes = loadSnapshot(kind, documentId);
     if (!bytes) {
@@ -1592,9 +1592,11 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
 
 export type { ModerationService };
 
-const SERVICES = Object.fromEntries(
-  MODERATED_CONTRACTS.map((key) => [key, new ModerationService(moderatedContract(key))])
-) as Record<ModeratedContractKey, ModerationService>;
+const SERVICES: Record<ModeratedContractKey, ModerationService> = {
+  social: new ModerationService(moderatedContract('social')),
+  storefront: new ModerationService(moderatedContract('storefront')),
+  blog: new ModerationService(moderatedContract('blog')),
+};
 
 /** The moderation of one of Yappr's contracts. */
 export function moderationServiceFor(key: ModeratedContractKey): ModerationService {
