@@ -32,7 +32,7 @@ interface InfoPageProps {
  */
 export function InfoPage({ icon: TitleIcon, title, subtitle, headerExtra, back = { href: '/', label: 'Back to Yappr' }, width = 'prose', updated, spacing = 'normal', children }: InfoPageProps) {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <main className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <div className={cn('mx-auto px-4 py-8', width === 'wide' ? 'max-w-7xl' : 'max-w-4xl')}>
         <div className="mb-8">
           <Link href={back.href} className="inline-flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors">
@@ -61,7 +61,7 @@ export function InfoPage({ icon: TitleIcon, title, subtitle, headerExtra, back =
           </div>
         </motion.div>
       </div>
-    </div>
+    </main>
   )
 }
 

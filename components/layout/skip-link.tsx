@@ -5,16 +5,16 @@ import type { MouseEvent } from 'react'
 /**
  * "Skip to content": the first stop for keyboard users, visible only while
  * focused. It moves focus to the page's `<main>`, which every page frame
- * renders, so no page has to carry an id for it.
+ * renders; a standalone page without one gets its first heading instead.
  */
 export function SkipLink() {
   const skip = (event: MouseEvent<HTMLAnchorElement>) => {
-    const main = document.querySelector('main')
-    if (!main) return
+    const target = document.querySelector<HTMLElement>('main') ?? document.querySelector<HTMLElement>('h1, h2')
+    if (!target) return
     event.preventDefault()
-    if (!main.hasAttribute('tabindex')) main.setAttribute('tabindex', '-1')
-    main.focus()
-    main.scrollIntoView()
+    if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1')
+    target.focus()
+    target.scrollIntoView()
   }
 
   return (
