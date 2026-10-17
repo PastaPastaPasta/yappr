@@ -11,6 +11,25 @@ import { usePrivateFeedRequest } from '@/hooks/use-private-feed-request'
 
 type PrivateFeedStatus = 'none' | 'pending' | 'approved' | 'approved-no-keys' | 'renewing' | 'revoked' | 'loading' | 'no-private-feed'
 
+/** A tooltip with `text` on the single element `children`. */
+function StatusTooltip({ text, children }: { text: string; children: React.ReactElement }) {
+  return (
+    <Tooltip.Provider>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
+            sideOffset={5}
+          >
+            {text}
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  )
+}
+
 interface PrivateFeedAccessButtonProps {
   /** The profile owner's identity ID */
   ownerId: string
@@ -185,57 +204,35 @@ export function PrivateFeedAccessButton({
       }
       if (status === 'renewing') {
         return (
-          <Tooltip.Provider>
-            <Tooltip.Root>
-              <Tooltip.Trigger asChild>
-                <button
-                  type="button"
-                  data-testid="access-renewing"
-                  onClick={() => setShowCancelOption(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30"
-                >
-                  <ArrowPathIcon className="h-4 w-4" />
-                  <span>Renewing</span>
-                </button>
-              </Tooltip.Trigger>
-              <Tooltip.Portal>
-                <Tooltip.Content
-                  className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                  sideOffset={5}
-                >
-                  This person renewed their private feed. You&apos;ll be moved over automatically.
-                </Tooltip.Content>
-              </Tooltip.Portal>
-            </Tooltip.Root>
-          </Tooltip.Provider>
+          <StatusTooltip text="This person renewed their private feed. You'll be moved over automatically.">
+            <button
+              type="button"
+              data-testid="access-renewing"
+              onClick={() => setShowCancelOption(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30"
+            >
+              <ArrowPathIcon className="h-4 w-4" />
+              <span>Renewing</span>
+            </button>
+          </StatusTooltip>
         )
       }
       return (
-        <Tooltip.Provider>
-          <Tooltip.Root>
-            <Tooltip.Trigger asChild>
-              <button type="button" onClick={() => setShowCancelOption(true)} data-testid="access-approved" className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg ${
-                needsRecovery
-                  ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30'
-                  : 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30'
-              }`}>
-                <LockOpenIcon className="h-4 w-4" />
-                <span>Private</span>
-                <CheckIcon className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content
-                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                sideOffset={5}
-              >
-                {needsRecovery
-                  ? 'You have access but need to enter your encryption key to view private posts'
-                  : 'You have access to this user\'s private feed'}
-              </Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip.Root>
-        </Tooltip.Provider>
+        <StatusTooltip
+          text={needsRecovery
+            ? 'You have access but need to enter your encryption key to view private posts'
+            : 'You have access to this user\'s private feed'}
+        >
+          <button type="button" onClick={() => setShowCancelOption(true)} data-testid="access-approved" className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg ${
+            needsRecovery
+              ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30'
+              : 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30'
+          }`}>
+            <LockOpenIcon className="h-4 w-4" />
+            <span>Private</span>
+            <CheckIcon className="h-3.5 w-3.5" />
+          </button>
+        </StatusTooltip>
       )
     }
 
@@ -243,24 +240,12 @@ export function PrivateFeedAccessButton({
     if (status === 'revoked') {
       return (
         <div className="flex items-center gap-2">
-          <Tooltip.Provider>
-            <Tooltip.Root>
-              <Tooltip.Trigger asChild>
-                <div data-testid="access-revoked" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                  <LockClosedIcon className="h-4 w-4" />
-                  <span>Revoked</span>
-                </div>
-              </Tooltip.Trigger>
-              <Tooltip.Portal>
-                <Tooltip.Content
-                  className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                  sideOffset={5}
-                >
-                  Your access to this private feed has been revoked
-                </Tooltip.Content>
-              </Tooltip.Portal>
-            </Tooltip.Root>
-          </Tooltip.Provider>
+          <StatusTooltip text="Your access to this private feed has been revoked">
+            <div data-testid="access-revoked" className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg">
+              <LockClosedIcon className="h-4 w-4" />
+              <span>Revoked</span>
+            </div>
+          </StatusTooltip>
           <Button
             data-testid="request-access-btn"
             variant="outline"
@@ -312,29 +297,17 @@ export function PrivateFeedAccessButton({
       }
 
       return (
-        <Tooltip.Provider>
-          <Tooltip.Root>
-            <Tooltip.Trigger asChild>
-              <button
-                type="button"
-                data-testid="access-pending"
-                onClick={() => setShowCancelOption(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
-              >
-                <ClockIcon className="h-4 w-4" />
-                <span>Pending...</span>
-              </button>
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content
-                className="bg-gray-800 dark:bg-gray-700 text-white text-xs px-2 py-1 rounded max-w-xs"
-                sideOffset={5}
-              >
-                Your request is pending approval. Click to cancel.
-              </Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip.Root>
-        </Tooltip.Provider>
+        <StatusTooltip text="Your request is pending approval. Click to cancel.">
+          <button
+            type="button"
+            data-testid="access-pending"
+            onClick={() => setShowCancelOption(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+          >
+            <ClockIcon className="h-4 w-4" />
+            <span>Pending...</span>
+          </button>
+        </StatusTooltip>
       )
     }
 

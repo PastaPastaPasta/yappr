@@ -37,8 +37,6 @@ type Outcome = { success: true } | { success: false; error: string }
 /** A follower's keys for an owner's current feed, ready to encrypt a reply. */
 type CurrentKeys = { success: true; feed: number; keys: MemberFeedKeys } | { success: false; error: string }
 
-const toBytes = identifierToBytes
-
 class PrivateFeedFollowerService {
   private readonly contractId = YAPPR_CONTRACT_ID
 
@@ -62,7 +60,7 @@ class PrivateFeedFollowerService {
         const removed = await stateTransitionService.deleteDocument(this.contractId, DOCUMENT_TYPES.FOLLOW_REQUEST, existing.$id, myId)
         if (!removed.success) return { success: false, error: removed.error || 'Could not send your request' }
       }
-      const data: Record<string, unknown> = { targetId: toBytes(ownerId) }
+      const data: Record<string, unknown> = { targetId: identifierToBytes(ownerId) }
       if (publicKey) data.publicKey = publicKey
       const result = await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.FOLLOW_REQUEST, myId, data)
       return result.success ? { success: true } : { success: false, error: result.error || 'Could not send your request' }
@@ -121,7 +119,7 @@ class PrivateFeedFollowerService {
     if (!feed) return { success: false, error: 'This private feed could not be read' }
     let payload
     try {
-      payload = await openGrant(encryptionPrivateKey, grant.encryptedPayload, toBytes(grant.ownerId), toBytes(myId), {
+      payload = await openGrant(encryptionPrivateKey, grant.encryptedPayload, identifierToBytes(grant.ownerId), identifierToBytes(myId), {
         feed: grant.feed, leafIndex: grant.leafIndex, keyGeneration: grant.keyGeneration, treeCapacity: feed.treeCapacity, maxKeyGeneration: feed.maxKeyGeneration,
       })
     } catch (error) {
@@ -150,7 +148,7 @@ class PrivateFeedFollowerService {
       const rekeys = await fetchRekeys(ownerId, feed, keys.keyGeneration)
       for (const rekey of rekeys) {
         if (rekey.keyGeneration !== keys.keyGeneration + 1) return { success: false, error: `Missing key change ${keys.keyGeneration + 1}` }
-        const ctx = { ownerId: toBytes(ownerId), feed, keyGeneration: rekey.keyGeneration }
+        const ctx = { ownerId: identifierToBytes(ownerId), feed, keyGeneration: rekey.keyGeneration }
         const applied = applyRekey(keys.pathKeys, decodeRekeyPackets(rekey.packets, keys.treeCapacity), rekey.encryptedCEK, ctx)
         if (!applied) {
           // A grant newer than these keys (re-approved after a removal) takes over; else this leaf was revoked.

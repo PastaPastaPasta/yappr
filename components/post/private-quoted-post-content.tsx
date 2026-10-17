@@ -83,10 +83,18 @@ export function PrivateQuotedPostContent({
     }
   }, [state.status, attemptDecryption])
 
-  // Common link wrapper class for all states
-  const linkClass = cn(
-    'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
-    className
+  // Common link wrapper for all states
+  const renderLink = (children: React.ReactNode) => (
+    <Link
+      href={`/post?id=${quotedPost.id}`}
+      onClick={(e) => e.stopPropagation()}
+      className={cn(
+        'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
+        className
+      )}
+    >
+      {children}
+    </Link>
   )
 
   // Common header for quoted post
@@ -121,8 +129,8 @@ export function PrivateQuotedPostContent({
 
   // Loading state
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
+    return renderLink(
+      <>
         {renderHeader()}
         <div className="mt-2 flex items-center gap-2 text-gray-500">
           <LockOpenIcon className="h-4 w-4 animate-pulse" />
@@ -133,14 +141,14 @@ export function PrivateQuotedPostContent({
             {quotedPost.content}
           </div>
         )}
-      </Link>
+      </>
     )
   }
 
   // Decrypted state
   if (state.status === 'decrypted') {
-    return (
-      <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
+    return renderLink(
+      <>
         {renderHeader()}
         {hasTeaser && (
           <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-1">
@@ -150,14 +158,14 @@ export function PrivateQuotedPostContent({
         <div className="mt-1">
           <PostContent content={state.content} className="text-sm line-clamp-3" disableInternalPostEmbed mediaGate={mediaGate} />
         </div>
-      </Link>
+      </>
     )
   }
 
   // Locked state - per PRD §5.3: Non-followers see "[Private post from @user]"
   if (state.status === 'locked') {
-    return (
-      <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
+    return renderLink(
+      <>
         {renderHeader()}
         {hasTeaser && (
           <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
@@ -165,16 +173,16 @@ export function PrivateQuotedPostContent({
           </div>
         )}
         {renderLockedIndicator()}
-      </Link>
+      </>
     )
   }
 
   // Error state - show as locked
-  return (
-    <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
+  return renderLink(
+    <>
       {renderHeader()}
       {renderLockedIndicator()}
-    </Link>
+    </>
   )
 }
 

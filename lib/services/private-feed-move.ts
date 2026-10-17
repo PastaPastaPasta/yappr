@@ -23,7 +23,9 @@
 
 import { logger } from '@/lib/logger'
 import { privateFeedService, type PrivateFeedResult } from './private-feed-service'
-import { activeGrants, fetchFeeds, fetchFollowRequestsTo, fetchGrant, fetchMembers, fetchRekeys, type PrivateFeedDocument } from './private-feed-reads'
+import {
+  activeGrants, fetchCurrentFeed, fetchFeeds, fetchFollowRequestsTo, fetchGrant, fetchMembers, fetchRekeys, mainFeeds, type PrivateFeedDocument,
+} from './private-feed-reads'
 import { clearMove, loadMove, moveProgress, saveMove, type MoveJob } from './private-feed-move-job'
 import { identityService } from './identity-service'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
@@ -52,7 +54,7 @@ export async function estimateRenewal(ownerId: string): Promise<RenewalEstimate>
 }
 
 async function currentMainFeed(ownerId: string): Promise<PrivateFeedDocument> {
-  const feed = (await fetchFeeds(ownerId, { fresh: true })).find((doc) => doc.audience === undefined)
+  const feed = await fetchCurrentFeed(ownerId, { fresh: true })
   if (!feed) throw new Error('You have no private feed to renew.')
   return feed
 }
@@ -242,7 +244,7 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
 export async function adoptUnfinishedMove(ownerId: string): Promise<number> {
   const existing = loadMove(ownerId)
   if (existing) return moveProgress(existing).total - moveProgress(existing).done
-  const [current, previous] = (await fetchFeeds(ownerId, { fresh: true })).filter((doc) => doc.audience === undefined)
+  const [current, previous] = mainFeeds(await fetchFeeds(ownerId, { fresh: true }))
   if (!current || !previous) return 0
   const [recipients, moved] = await Promise.all([movableFollowers(ownerId, previous.feed), fetchMembers(ownerId, current.feed)])
   const granted = new Set(moved.map((grant) => grant.recipientId))

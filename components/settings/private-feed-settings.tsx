@@ -39,6 +39,83 @@ function nearlyFull(stats: FeedStats): boolean {
   return stats.followerCount >= 0.9 * stats.treeCapacity || stats.keyGeneration >= stats.maxKeyGeneration - 10
 }
 
+/** Why the renewal dialog is opened, from the feed's state. */
+function renewReason(stats: FeedStats | null): 'choice' | 'key-changed' | 'full' {
+  if (stats?.keyRotated) return 'key-changed'
+  if (stats && nearlyFull(stats)) return 'full'
+  return 'choice'
+}
+
+/**
+ * Keep the key the chain just accepted available the way the manual key-entry
+ * flow does. Throws when it cannot be saved (the store swallows write failures,
+ * so this reads it back).
+ */
+async function rememberEncryptionKey(identityId: string, enteredKey: string, acceptedKey: Uint8Array): Promise<void> {
+  const {
+    storeEncryptionKey,
+    getEncryptionKey,
+    getEncryptionKeyBytes,
+    clearEncryptionKey,
+    storeEncryptionKeyType,
+    clearEncryptionKeyType,
+  } = await import('@/lib/secure-storage')
+  const { bytesEqual } = await import('@/lib/bytes')
+  // The input is prefilled with the stored key, which may be a derived key.
+  // Remember it so resubmitting that same key does not relabel it.
+  const priorKeyBytes = getEncryptionKeyBytes(identityId)
+  storeEncryptionKey(identityId, enteredKey)
+  const normalizedEncryptionKey = getEncryptionKey(identityId)
+  // The store swallows write failures, so a non-null readback can still be a stale
+  // key left over from an earlier session. Compare the decoded secret with the key
+  // that was actually accepted before backing anything up.
+  const storedKeyBytes = getEncryptionKeyBytes(identityId)
+  if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, acceptedKey)) {
+    // Drop any stale key so later private-feed operations cannot pick up a secret
+    // that no longer matches the one the chain just accepted.
+    clearEncryptionKey(identityId)
+    clearEncryptionKeyType(identityId)
+    throw new Error('Encryption key was not saved')
+  }
+  // A newly pasted key is recorded as external, matching the add-encryption-key flow.
+  // Resubmitting the key that was already stored keeps its existing type label.
+  if (!priorKeyBytes || !bytesEqual(priorKeyBytes, acceptedKey)) {
+    storeEncryptionKeyType(identityId, 'external')
+  }
+}
+
+function BulletList({ items }: { items: readonly string[] }) {
+  return (
+    <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+      {items.map((item) => (
+        <li key={item} className="flex gap-2">
+          <span className="text-yappr-500">•</span>
+          {item}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** The amber "encryption key required" box. */
+function EncryptionKeyRequiredNotice({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
+      <div className="flex gap-3">
+        <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+            Encryption key required
+          </p>
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            {children}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /**
  * PrivateFeedSettings Component
  *
@@ -240,36 +317,7 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
         // Storage/backup failures cannot undo the feed that was already enabled.
         if (!walletSession) {
           try {
-            const {
-              storeEncryptionKey,
-              getEncryptionKey,
-              getEncryptionKeyBytes,
-              clearEncryptionKey,
-              storeEncryptionKeyType,
-              clearEncryptionKeyType,
-            } = await import('@/lib/secure-storage')
-            const { bytesEqual } = await import('@/lib/bytes')
-            // The input is prefilled with the stored key, which may be a derived key.
-            // Remember it so resubmitting that same key does not relabel it.
-            const priorKeyBytes = getEncryptionKeyBytes(user.identityId)
-            storeEncryptionKey(user.identityId, trimmedKey)
-            const normalizedEncryptionKey = getEncryptionKey(user.identityId)
-            // The store swallows write failures, so a non-null readback can still be a stale
-            // key left over from an earlier session. Compare the decoded secret with the key
-            // that was actually accepted before backing anything up.
-            const storedKeyBytes = getEncryptionKeyBytes(user.identityId)
-            if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, validation.privateKey)) {
-              // Drop any stale key so later private-feed operations cannot pick up a secret
-              // that no longer matches the one the chain just accepted.
-              clearEncryptionKey(user.identityId)
-              clearEncryptionKeyType(user.identityId)
-              throw new Error('Encryption key was not saved')
-            }
-            // A newly pasted key is recorded as external, matching the add-encryption-key flow.
-            // Resubmitting the key that was already stored keeps its existing type label.
-            if (!priorKeyBytes || !bytesEqual(priorKeyBytes, validation.privateKey)) {
-              storeEncryptionKeyType(user.identityId, 'external')
-            }
+            await rememberEncryptionKey(user.identityId, trimmedKey, validation.privateKey)
           } catch (error) {
             logger.error('Failed to store encryption key after enabling private feed:', error)
             toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
@@ -469,7 +517,7 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
                 open={showRenewDialog}
                 onOpenChange={setShowRenewDialog}
                 ownerId={user.identityId}
-                reason={stats?.keyRotated ? 'key-changed' : stats && nearlyFull(stats) ? 'full' : 'choice'}
+                reason={renewReason(stats)}
                 onConfirm={handleRenew}
               />
             )}
@@ -483,39 +531,20 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
                     <p className="text-sm text-gray-700 dark:text-gray-300">
                       Create a private feed visible only to approved followers
                     </p>
-                    <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                      <li className="flex gap-2">
-                        <span className="text-yappr-500">•</span>
-                        You control who can see your private posts
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="text-yappr-500">•</span>
-                        Up to {DEFAULT_FEED_CAPS.treeCapacity.toLocaleString()} private followers, with more room when you renew
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="text-yappr-500">•</span>
-                        Revoke access at any time
-                      </li>
-                    </ul>
+                    <BulletList items={[
+                      'You control who can see your private posts',
+                      `Up to ${DEFAULT_FEED_CAPS.treeCapacity.toLocaleString()} private followers, with more room when you renew`,
+                      'Revoke access at any time',
+                    ]} />
                   </div>
                 </div>
 
                 {/* Show different UI based on whether user has encryption key on identity */}
                 {hasEncryptionKeyOnIdentity === false ? (
                   <div className="space-y-3">
-                    <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
-                      <div className="flex gap-3">
-                        <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                        <div className="space-y-1">
-                          <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                            Encryption key required
-                          </p>
-                          <p className="text-sm text-amber-700 dark:text-amber-300">
-                            To use private feeds, you need to add an encryption key to your identity first.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                    <EncryptionKeyRequiredNotice>
+                      To use private feeds, you need to add an encryption key to your identity first.
+                    </EncryptionKeyRequiredNotice>
                     <Button
                       className="w-full"
                       onClick={() => setShowAddKeyModal(true)}
@@ -537,20 +566,10 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
               </>
             ) : (
               <>
-                <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
-                  <div className="flex gap-3">
-                    <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                        Encryption key required
-                      </p>
-                      <p className="text-sm text-amber-700 dark:text-amber-300">
-                        Enter your identity encryption private key (WIF or hex format).
-                        This key is used to encrypt and decrypt your private feed data.
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                <EncryptionKeyRequiredNotice>
+                  Enter your identity encryption private key (WIF or hex format).
+                  This key is used to encrypt and decrypt your private feed data.
+                </EncryptionKeyRequiredNotice>
 
                 <div className="space-y-2">
                   {walletSession ? (
@@ -558,22 +577,22 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
                       Your private feed will use the messaging key from your Dash wallet.
                     </p>
                   ) : (
-                  <>
-                  <label htmlFor={encryptionKeyId} className="text-sm font-medium">
-                    Encryption Private Key
-                  </label>
-                  <Input
-                    id={encryptionKeyId}
-                    type="password"
-                    placeholder="WIF (cXyz...) or hex (64 chars)"
-                    value={encryptionKeyInput}
-                    onChange={(e) => {
-                      setEncryptionKeyInput(e.target.value)
-                      setKeyError(null)
-                    }}
-                    className="font-mono text-sm"
-                  />
-                  </>
+                    <>
+                      <label htmlFor={encryptionKeyId} className="text-sm font-medium">
+                        Encryption Private Key
+                      </label>
+                      <Input
+                        id={encryptionKeyId}
+                        type="password"
+                        placeholder="WIF (cXyz...) or hex (64 chars)"
+                        value={encryptionKeyInput}
+                        onChange={(e) => {
+                          setEncryptionKeyInput(e.target.value)
+                          setKeyError(null)
+                        }}
+                        className="font-mono text-sm"
+                      />
+                    </>
                   )}
                   {keyError && (
                     <p className="text-sm text-red-600 dark:text-red-400">
@@ -614,32 +633,14 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
 
             <div className="pt-4 border-t">
               <h4 className="font-medium mb-2 text-sm">How it works:</h4>
-              <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Your private posts are encrypted with a unique feed key
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Only approved followers can decrypt and view your private posts
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Revoked followers lose access to new private posts
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  If someone reports a private post, the moderators can read it and the earlier posts in the same private feed
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Attached images are not encrypted: anyone with an image&apos;s address can see it
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Your encryption key is needed to manage your private feed
-                </li>
-              </ul>
+              <BulletList items={[
+                'Your private posts are encrypted with a unique feed key',
+                'Only approved followers can decrypt and view your private posts',
+                'Revoked followers lose access to new private posts',
+                'If someone reports a private post, the moderators can read it and the earlier posts in the same private feed',
+                'Attached images are not encrypted: anyone with an image\'s address can see it',
+                'Your encryption key is needed to manage your private feed',
+              ]} />
             </div>
           </>
         )}

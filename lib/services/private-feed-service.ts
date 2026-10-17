@@ -25,7 +25,7 @@ import { stateTransitionService } from './state-transition-service'
 import { privateFeedKeyStore, type OwnerFeedKeys } from './private-feed-key-store'
 import {
   activeGrants, fetchCurrentFeed, fetchFeeds, fetchFollowRequest, fetchFollowRequestsTo, fetchGrantsTo, fetchLatestKeyGeneration,
-  fetchMembers, fetchRekeys, forgetFeeds, type FollowRequestDocument, type GrantDocument, type PrivateFeedDocument,
+  fetchMembers, fetchRekeys, forgetFeeds, mainFeeds, type FollowRequestDocument, type GrantDocument, type PrivateFeedDocument,
 } from './private-feed-reads'
 import { loadMove, moveInProgress, saveMove } from './private-feed-move-job'
 import { identityService } from './identity-service'
@@ -101,8 +101,6 @@ function grantRefusal(error: unknown): PrivateFeedResult | null {
   return null
 }
 
-const toBytes = identifierToBytes
-
 const toFollower = (grant: GrantDocument): PrivateFollower => ({ recipientId: grant.recipientId, leafIndex: grant.leafIndex, grantedAt: grant.createdAt })
 
 /** A feed and this device's keys for it, synced with the chain. */
@@ -134,11 +132,6 @@ export interface OwnerOverview {
   keyGeneration: number
   /** The feed's seed is sealed to an encryption key the identity no longer uses. */
   keyRotated: boolean
-}
-
-/** The current and the previous feed of the main audience, newest first. */
-function mainFeeds(feeds: readonly PrivateFeedDocument[]): PrivateFeedDocument[] {
-  return feeds.filter((doc) => doc.audience === undefined)
 }
 
 class PrivateFeedService {
@@ -271,7 +264,7 @@ class PrivateFeedService {
       const feeds = await fetchFeeds(ownerId, { fresh: true })
       const feed = (feeds[0]?.feed ?? 0) + 1
       const seed = generateSeed()
-      const ownerBytes = toBytes(ownerId)
+      const ownerBytes = identifierToBytes(ownerId)
       const data: Record<string, unknown> = {
         feed,
         treeCapacity: caps.treeCapacity,
@@ -336,7 +329,7 @@ class PrivateFeedService {
     if (!seed) {
       if (!encryptionPrivateKey) return failure('SYNC_REQUIRED')
       try {
-        seed = await openSeed(encryptionPrivateKey, feed.encryptedSeed, toBytes(ownerId), feed.feed, feed.keyId)
+        seed = await openSeed(encryptionPrivateKey, feed.encryptedSeed, identifierToBytes(ownerId), feed.feed, feed.keyId)
       } catch {
         return failure('KEY_CHANGED')
       }
@@ -367,7 +360,7 @@ class PrivateFeedService {
    */
   async writeGrant(ownerId: string, state: OwnerFeedState, recipientId: string, recipientPublicKey: Uint8Array, leafIndex: number): Promise<PrivateFeedResult> {
     const { feed, keys } = state
-    const encryptedPayload = await sealGrant(recipientPublicKey, toBytes(ownerId), toBytes(recipientId), {
+    const encryptedPayload = await sealGrant(recipientPublicKey, identifierToBytes(ownerId), identifierToBytes(recipientId), {
       feed: feed.feed,
       keyGeneration: keys.keyGeneration,
       leafIndex,
@@ -377,7 +370,7 @@ class PrivateFeedService {
     })
     const result = await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.PRIVATE_FEED_GRANT, ownerId, {
       feed: feed.feed,
-      recipientId: toBytes(recipientId),
+      recipientId: identifierToBytes(recipientId),
       leafIndex,
       keyGeneration: keys.keyGeneration,
       encryptedPayload,
@@ -443,7 +436,7 @@ class PrivateFeedService {
       const { keys } = synced.state
       const keyGeneration = keys.keyGeneration + 1
       if (keyGeneration > feed.maxKeyGeneration) return failure('GENERATIONS_USED')
-      const rekey = buildRekey(keys.seed, keys, { ownerId: toBytes(ownerId), feed: feed.feed, keyGeneration }, keys.revokedLeaves, grant.leafIndex)
+      const rekey = buildRekey(keys.seed, keys, { ownerId: identifierToBytes(ownerId), feed: feed.feed, keyGeneration }, keys.revokedLeaves, grant.leafIndex)
       const written = await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.PRIVATE_FEED_REKEY, ownerId, {
         feed: feed.feed, keyGeneration, revokedLeaf: grant.leafIndex, packets: rekey.packets, encryptedCEK: rekey.encryptedCEK,
       })
@@ -521,7 +514,7 @@ export async function prepareOwnerEncryption(
   }
   if (!synced.success) return { success: false, error: synced.error ?? UNVERIFIED_ERROR }
   const { feed, keys } = synced.state
-  const owner = toBytes(ownerId)
+  const owner = identifierToBytes(ownerId)
   const encrypted = encryptContent(cekAt(keys.seed, keys.maxKeyGeneration, keys.keyGeneration), content, {
     feedOwnerId: owner, feed: feed.feed, keyGeneration: keys.keyGeneration, authorId: owner, kind,
   })
@@ -546,7 +539,7 @@ export async function prepareInheritedEncryption(
     if (!ready.success) return { success: false, error: ready.error.startsWith('SYNC_REQUIRED:') ? ready.error : `Cannot encrypt reply: ${ready.error}` }
     const { feed, keys } = ready
     const encrypted = encryptContent(keys.cek, content, {
-      feedOwnerId: toBytes(source.ownerId), feed, keyGeneration: keys.keyGeneration, authorId: toBytes(authorId), kind: 'reply',
+      feedOwnerId: identifierToBytes(source.ownerId), feed, keyGeneration: keys.keyGeneration, authorId: identifierToBytes(authorId), kind: 'reply',
     })
     return { success: true, data: { encryptedContent: encrypted.ciphertext, nonce: encrypted.nonce, keyGeneration: keys.keyGeneration, feed } }
   } catch (error) {

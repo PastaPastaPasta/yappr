@@ -14,7 +14,7 @@
  */
 
 import { getEvoSdk } from './evo-sdk-service'
-import { queryDocuments, identifierToBase58, RequestDeduplicator } from './sdk-helpers'
+import { queryDocuments, identifierToBase58, RequestDeduplicator, type QueryDocumentsOptions } from './sdk-helpers'
 import { paginateFetchAll } from './pagination-utils'
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
 import { normalizeBytes, requireBytes } from '@/lib/bytes'
@@ -127,6 +127,24 @@ function toRequest(doc: Record<string, unknown>): FollowRequestDocument {
   }
 }
 
+/** Every document of `documentTypeName` matching `where`, in `orderBy` order, read page by page. */
+async function fetchAll<T>(
+  documentTypeName: string,
+  where: NonNullable<QueryDocumentsOptions['where']>,
+  orderBy: NonNullable<QueryDocumentsOptions['orderBy']>,
+  convert: (doc: Record<string, unknown>) => T,
+): Promise<T[]> {
+  const { documents } = await paginateFetchAll(await getEvoSdk(), (startAfter) => ({
+    dataContractId: contract,
+    documentTypeName,
+    where,
+    orderBy,
+    limit: PAGE,
+    ...(startAfter && { startAfter }),
+  }), convert, { maxResults: Infinity })
+  return documents
+}
+
 const feedsReads = new RequestDeduplicator<string, PrivateFeedDocument[]>(0)
 /** Feeds are write-once, so an owner's list only ever grows; a short cache spares the private post cards a read each. */
 const feedsCache = new Map<string, { at: number; feeds: PrivateFeedDocument[] }>()
@@ -155,13 +173,14 @@ export function forgetFeeds(ownerId: string): void {
   feedsCache.delete(ownerId)
 }
 
-/** The current feed of the main audience: the highest-numbered feed without an `audience` (design §3). */
-export function currentFeedOf(feeds: readonly PrivateFeedDocument[]): PrivateFeedDocument | null {
-  return feeds.find((feed) => feed.audience === undefined) ?? null
+/** The feeds of the main audience (those without an `audience`; launch has no other), in the order given: newest first from {@link fetchFeeds}. */
+export function mainFeeds(feeds: readonly PrivateFeedDocument[]): PrivateFeedDocument[] {
+  return feeds.filter((feed) => feed.audience === undefined)
 }
 
+/** The current feed of the main audience: its highest-numbered feed (design §3). */
 export async function fetchCurrentFeed(ownerId: string, options: { fresh?: boolean } = {}): Promise<PrivateFeedDocument | null> {
-  return currentFeedOf(await fetchFeeds(ownerId, options))
+  return mainFeeds(await fetchFeeds(ownerId, options))[0] ?? null
 }
 
 /** One feed of `ownerId`, from the cached list when it is there. */
@@ -191,32 +210,24 @@ export async function fetchLatestKeyGeneration(ownerId: string, feed: number): P
 
 /** A feed's rekeys above `afterKeyGeneration`, oldest first. */
 export async function fetchRekeys(ownerId: string, feed: number, afterKeyGeneration = 1): Promise<RekeyDocument[]> {
-  const { documents } = await paginateFetchAll(await getEvoSdk(), (startAfter) => ({
-    dataContractId: contract,
-    documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
-    where: [['$ownerId', '==', ownerId], ['feed', '==', feed], ['keyGeneration', '>', afterKeyGeneration]],
-    orderBy: [['keyGeneration', 'asc']],
-    limit: PAGE,
-    ...(startAfter && { startAfter }),
-  }), toRekey, { maxResults: Infinity })
-  return documents
+  return fetchAll(
+    DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
+    [['$ownerId', '==', ownerId], ['feed', '==', feed], ['keyGeneration', '>', afterKeyGeneration]],
+    [['keyGeneration', 'asc']],
+    toRekey,
+  )
 }
 
 const membersReads = new RequestDeduplicator<string, GrantDocument[]>(0)
 
 /** A feed's grants, by leaf: its members. */
 export async function fetchMembers(ownerId: string, feed: number): Promise<GrantDocument[]> {
-  return membersReads.dedupe(`${ownerId}:${feed}`, async () => {
-    const { documents } = await paginateFetchAll(await getEvoSdk(), (startAfter) => ({
-      dataContractId: contract,
-      documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
-      where: [['$ownerId', '==', ownerId], ['feed', '==', feed]],
-      orderBy: [['leafIndex', 'asc']],
-      limit: PAGE,
-      ...(startAfter && { startAfter }),
-    }), toGrant, { maxResults: Infinity })
-    return documents
-  })
+  return membersReads.dedupe(`${ownerId}:${feed}`, () => fetchAll(
+    DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
+    [['$ownerId', '==', ownerId], ['feed', '==', feed]],
+    [['leafIndex', 'asc']],
+    toGrant,
+  ))
 }
 
 /** `recipientId`'s grant in one feed, or null. */
@@ -248,28 +259,22 @@ export async function fetchNewestGrant(ownerId: string, recipientId: string): Pr
 
 /** Every grant `recipientId` holds, by owner then feed: "the feeds I can read" on any device (D32). */
 export async function fetchGrantsHeldBy(recipientId: string): Promise<GrantDocument[]> {
-  const { documents } = await paginateFetchAll(await getEvoSdk(), (startAfter) => ({
-    dataContractId: contract,
-    documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
-    where: [['recipientId', '==', recipientId]],
-    orderBy: [['$ownerId', 'asc'], ['feed', 'asc']],
-    limit: PAGE,
-    ...(startAfter && { startAfter }),
-  }), toGrant, { maxResults: Infinity })
-  return documents
+  return fetchAll(
+    DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
+    [['recipientId', '==', recipientId]],
+    [['$ownerId', 'asc'], ['feed', 'asc']],
+    toGrant,
+  )
 }
 
 /** Every grant `ownerId` has out to `recipientId`, in any feed, oldest feed first. */
 export async function fetchGrantsTo(ownerId: string, recipientId: string): Promise<GrantDocument[]> {
-  const { documents } = await paginateFetchAll(await getEvoSdk(), (startAfter) => ({
-    dataContractId: contract,
-    documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
-    where: [['recipientId', '==', recipientId], ['$ownerId', '==', ownerId]],
-    orderBy: [['feed', 'asc']],
-    limit: PAGE,
-    ...(startAfter && { startAfter }),
-  }), toGrant, { maxResults: Infinity })
-  return documents
+  return fetchAll(
+    DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
+    [['recipientId', '==', recipientId], ['$ownerId', '==', ownerId]],
+    [['feed', 'asc']],
+    toGrant,
+  )
 }
 
 /**
@@ -309,15 +314,10 @@ const requestsReads = new RequestDeduplicator<string, FollowRequestDocument[]>(0
 
 /** Every follow request to `ownerId`, newest first. */
 export async function fetchFollowRequestsTo(ownerId: string): Promise<FollowRequestDocument[]> {
-  return requestsReads.dedupe(ownerId, async () => {
-    const { documents } = await paginateFetchAll(await getEvoSdk(), (startAfter) => ({
-      dataContractId: contract,
-      documentTypeName: DOCUMENT_TYPES.FOLLOW_REQUEST,
-      where: [['targetId', '==', ownerId]],
-      orderBy: [['targetId', 'asc'], ['$createdAt', 'desc']],
-      limit: PAGE,
-      ...(startAfter && { startAfter }),
-    }), toRequest, { maxResults: Infinity })
-    return documents
-  })
+  return requestsReads.dedupe(ownerId, () => fetchAll(
+    DOCUMENT_TYPES.FOLLOW_REQUEST,
+    [['targetId', '==', ownerId]],
+    [['targetId', 'asc'], ['$createdAt', 'desc']],
+    toRequest,
+  ))
 }

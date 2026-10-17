@@ -43,12 +43,11 @@ interface PrivatePostContentProps {
 type DecryptionState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'recovering' }
   | { status: 'decrypted'; content: string; followerCount?: number }
   | { status: 'locked'; reason: 'no-keys' | 'no-auth' | 'revoked' | 'approved-no-keys' | 'pending' | 'renewing' | 'history' }
   | { status: 'error'; message: string }
 
-type PrivateContentCardStatus = 'loading' | 'recovering' | 'decrypted' | 'locked' | 'error'
+type PrivateContentCardStatus = 'loading' | 'decrypted' | 'locked' | 'error'
 
 interface PrivateContentCardProps {
   children: React.ReactNode
@@ -69,13 +68,6 @@ function PrivateContentCard({ children, status, statusText, footer }: PrivateCon
       border: 'border-gray-200 dark:border-gray-700',
       icon: <LockOpenIcon className="h-4 w-4 animate-pulse" />,
       defaultText: 'Decrypting...',
-    },
-    recovering: {
-      headerBg: 'bg-blue-100 dark:bg-blue-900/40',
-      headerText: 'text-blue-600 dark:text-blue-400',
-      border: 'border-blue-200 dark:border-blue-700',
-      icon: <KeyIcon className="h-4 w-4 animate-pulse" />,
-      defaultText: 'Recovering keys...',
     },
     decrypted: {
       headerBg: 'bg-gray-50 dark:bg-gray-800/50',
@@ -140,23 +132,7 @@ interface TeaserProps {
  * Used across multiple decryption states to avoid prop drilling repetition.
  */
 function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionValidations, onFailedMentionClick, mediaGate, muted = false, disableLinkPreview = false }: TeaserProps & { muted?: boolean; disableLinkPreview?: boolean }): React.ReactElement {
-  if (muted) {
-    return (
-      <div className="text-gray-500 dark:text-gray-400 text-sm">
-        <PostContent
-          content={content}
-          hashtagValidations={hashtagValidations}
-          onFailedHashtagClick={onFailedHashtagClick}
-          mentionValidations={mentionValidations}
-          onFailedMentionClick={onFailedMentionClick}
-          disableLinkPreview={disableLinkPreview}
-          mediaGate={mediaGate}
-        />
-      </div>
-    )
-  }
-
-  return (
+  const postContent = (
     <PostContent
       content={content}
       hashtagValidations={hashtagValidations}
@@ -167,6 +143,7 @@ function Teaser({ content, hashtagValidations, onFailedHashtagClick, mentionVali
       mediaGate={mediaGate}
     />
   )
+  return muted ? <div className="text-gray-500 dark:text-gray-400 text-sm">{postContent}</div> : postContent
 }
 
 /**
@@ -320,7 +297,7 @@ export function PrivatePostContent({
   // Attempt decryption on mount
   useEffect(() => {
     if (state.status === 'idle') {
-      void attemptDecryption()
+      attemptDecryption().catch((err) => logger.error('Decryption failed:', err))
     }
   }, [state.status, attemptDecryption])
 
@@ -346,21 +323,6 @@ export function PrivatePostContent({
           <div className="space-y-2">
             <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-full" />
             <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-3/4" />
-          </div>
-        </PrivateContentCard>
-      </div>
-    )
-  }
-
-  // Recovering state - recovering keys from grant
-  if (state.status === 'recovering') {
-    return (
-      <div className={cn('space-y-2', className)}>
-        {hasTeaser && <Teaser {...teaserProps} />}
-        <PrivateContentCard status="recovering">
-          <div className="space-y-2">
-            <div className="h-4 bg-blue-200 dark:bg-blue-800 rounded animate-pulse w-full" />
-            <div className="h-4 bg-blue-200 dark:bg-blue-800 rounded animate-pulse w-3/4" />
           </div>
         </PrivateContentCard>
       </div>
@@ -542,7 +504,7 @@ export function PrivatePostContent({
                 onClick={(e) => {
                   e.stopPropagation()
                   openEncryptionKeyModal('view_private_posts', () => {
-                    void attemptDecryption()
+                    attemptDecryption().catch((err) => logger.error('Decryption failed:', err))
                   })
                 }}
                 className="px-3 py-1 bg-yappr-500 hover:bg-yappr-600 text-white rounded-full text-xs font-medium transition-colors"

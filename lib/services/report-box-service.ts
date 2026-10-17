@@ -105,7 +105,9 @@ async function openTarget(cek: Uint8Array, feedOwnerId: string, target: Pick<Pos
 /** This device's CEK of `feedOwnerId`'s feed `feed` for `keyGeneration`: the owner's own keys, or a member's. */
 async function contentKeyOf(feedOwnerId: string, feed: number, keyGeneration: number, viewerId: string): Promise<Uint8Array | null> {
   const { contentKeyFor } = await import('./private-feed-reader')
-  const key = await contentKeyFor(viewerId, feedOwnerId, feed, keyGeneration)
+  // The session's encryption key lets a device that never opened this post recover its feed's keys.
+  const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+  const key = await contentKeyFor(viewerId, feedOwnerId, feed, keyGeneration, getEncryptionKeyBytes(viewerId) ?? undefined)
   return 'cek' in key ? key.cek : null
 }
 

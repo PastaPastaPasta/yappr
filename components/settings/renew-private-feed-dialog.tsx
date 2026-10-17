@@ -29,6 +29,11 @@ const INTRO: Record<NonNullable<RenewPrivateFeedDialogProps['reason']>, string> 
   full: 'Your private feed is nearly out of room. Renewing gives it new keys and room to grow, and moves everyone who follows you privately.',
 }
 
+const HISTORY_CHOICES = [
+  { bringHistory: true, title: 'Yes', description: 'Your followers, and anyone you approve later, can read your older private posts.' },
+  { bringHistory: false, title: 'No, start fresh', description: 'Only people who already follow you keep seeing your older private posts.' },
+]
+
 /**
  * Renew the private feed (PF3, PF5, PF9): the cost of moving the followers,
  * and whether older private posts come along. Without the old feed's secret
@@ -90,20 +95,15 @@ export function RenewPrivateFeedDialog({ open, onOpenChange, ownerId, reason = '
           {canLink !== 'no' ? (
             <fieldset className="space-y-2">
               <legend className="font-medium mb-2">Bring your older private posts along?</legend>
-              <label className="flex gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer has-[:checked]:border-yappr-500">
-                <input type="radio" name="bring-history" className="mt-1" checked={bringHistory} onChange={() => setBringHistory(true)} />
-                <span>
-                  <span className="block font-medium">Yes</span>
-                  <span className="block text-gray-500 dark:text-gray-400">Your followers, and anyone you approve later, can read your older private posts.</span>
-                </span>
-              </label>
-              <label className="flex gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer has-[:checked]:border-yappr-500">
-                <input type="radio" name="bring-history" className="mt-1" checked={!bringHistory} onChange={() => setBringHistory(false)} />
-                <span>
-                  <span className="block font-medium">No, start fresh</span>
-                  <span className="block text-gray-500 dark:text-gray-400">Only people who already follow you keep seeing your older private posts.</span>
-                </span>
-              </label>
+              {HISTORY_CHOICES.map((choice) => (
+                <label key={choice.title} className="flex gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer has-[:checked]:border-yappr-500">
+                  <input type="radio" name="bring-history" className="mt-1" checked={bringHistory === choice.bringHistory} onChange={() => setBringHistory(choice.bringHistory)} />
+                  <span>
+                    <span className="block font-medium">{choice.title}</span>
+                    <span className="block text-gray-500 dark:text-gray-400">{choice.description}</span>
+                  </span>
+                </label>
+              ))}
             </fieldset>
           ) : (
             <p className="bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 p-3 rounded-lg" data-testid="renew-history-break">
@@ -113,14 +113,14 @@ export function RenewPrivateFeedDialog({ open, onOpenChange, ownerId, reason = '
 
           <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg space-y-1" data-testid="renew-cost">
             {estimate.followers > 0 ? (
-              <p className="font-medium">
-                Moving your {estimate.followers.toLocaleString()} follower{estimate.followers === 1 ? '' : 's'} costs about {formatUsd(estimate.usd)}.
-              </p>
+              <>
+                <p className="font-medium">
+                  Moving your {estimate.followers.toLocaleString()} follower{estimate.followers === 1 ? '' : 's'} costs about {formatUsd(estimate.usd)}.
+                </p>
+                <p className="text-gray-500 dark:text-gray-400">Private posting pauses until everyone has been moved. You can leave this page; the move picks up where it left off.</p>
+              </>
             ) : (
               <p className="font-medium">You have no private followers to move. Renewing costs about {formatUsd(estimate.usd)}.</p>
-            )}
-            {estimate.followers > 0 && (
-              <p className="text-gray-500 dark:text-gray-400">Private posting pauses until everyone has been moved. You can leave this page; the move picks up where it left off.</p>
             )}
           </div>
         </div>

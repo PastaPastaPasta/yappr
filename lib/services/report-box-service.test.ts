@@ -63,7 +63,7 @@ describe('the report box service', () => {
     const outcome = await buildReportBox(REPORTER, privatePost)
     if (outcome.kind !== 'sealed') throw new Error(`expected a sealed box, got ${outcome.kind}`)
     expect([outcome.recipients, outcome.missing]).toEqual([2, 1])
-    expect(mocks.contentKeyFor).toHaveBeenCalledWith(REPORTER, AUTHOR, FEED, 3)
+    expect(mocks.contentKeyFor).toHaveBeenCalledWith(REPORTER, AUTHOR, FEED, 3, undefined)
     for (const moderator of [LEADER, MEMBER]) {
       await expect(openReportedContent(outcome.box, privatePost, MODERATOR_KEYS[moderator])).resolves.toEqual({ kind: 'opened', text: 'the private words' })
     }
@@ -154,14 +154,14 @@ describe('the report box service', () => {
       const { buildReportBox } = await import('./report-box-service')
       mocks.getPostById.mockResolvedValue(privatePost)
       await expect(buildReportBox(REPORTER, reply(AUTHOR))).resolves.toMatchObject({ kind: 'sealed' })
-      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(REPORTER, AUTHOR, FEED, 3)
+      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(REPORTER, AUTHOR, FEED, 3, undefined)
     })
 
     it('under a public post seals the replier\'s own key', async () => {
       const { buildReportBox } = await import('./report-box-service')
       mocks.getPostById.mockResolvedValue({ ...privatePost, encryptedContent: undefined, nonce: undefined, keyGeneration: undefined })
       await expect(buildReportBox(REPORTER, reply(REPLIER))).resolves.toMatchObject({ kind: 'sealed' })
-      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(REPORTER, REPLIER, FEED, 3)
+      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(REPORTER, REPLIER, FEED, 3, undefined)
     })
 
     it.each([

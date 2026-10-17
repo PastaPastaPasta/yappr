@@ -19,7 +19,7 @@
 
 import { logger } from '@/lib/logger'
 import { privateFeedKeyStore } from './private-feed-key-store'
-import { fetchFeeds, fetchGrant, fetchNewestGrant, type PrivateFeedDocument } from './private-feed-reads'
+import { fetchFeeds, fetchGrant, fetchNewestGrant, mainFeeds, type PrivateFeedDocument } from './private-feed-reads'
 import { identifierToBytes } from './sdk-helpers'
 import { targetKindOf } from '@/lib/contract-topology'
 import { cekAt, decryptContent, hashBack, historyKey, openCarry, type ContentKind } from '@/lib/private-feed/crypto'
@@ -168,7 +168,7 @@ export async function contentKeyFor(
     if (here !== null) return { reason: here }
 
     const feeds = await fetchFeeds(ownerId)
-    const later = feeds.filter((doc) => doc.audience === undefined && doc.feed > feed).map((doc) => doc.feed)
+    const later = mainFeeds(feeds).filter((doc) => doc.feed > feed).map((doc) => doc.feed)
     let start = later.find((candidate) => heldHistoryKey(viewerId, ownerId, candidate) !== null)
     if (start === undefined) {
       const recovered = await recoverNewest(viewerId, ownerId, encryptionPrivateKey)
