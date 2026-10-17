@@ -358,6 +358,46 @@ describe('unpriced no-index seeder recovery', () => {
     }
   });
 
+  it('invalidates a primed facade nonce cache after recovering a manual create with lost confirmation', async () => {
+    await ensureInitialized();
+    const key = PrivateKey.fromHex('01'.repeat(32), 'testnet');
+    const actor = {
+      ownerId: b58(7), wif: key.toWIF(), signer: {},
+      identityKey: new IdentityPublicKey({ keyId: 1, purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_secp256k1', data: key.getPublicKey().toBytes() }),
+      lock: <T>(operation: () => Promise<T>) => operation(),
+    };
+    let chainNonce = 0n;
+    let cachedNonce: bigint | null = null;
+    let landed = false;
+    const replace = vi.fn(async () => {
+      const next = (cachedNonce ?? chainNonce) + 1n;
+      if (next !== chainNonce + 1n) throw new Error('nonce already present at tip');
+      cachedNonce = next;
+      chainNonce = next;
+    });
+    await replace(); // Prime the facade cache before switching to a manual create.
+    const refresh = vi.fn(async () => { cachedNonce = null; });
+    const broadcast = vi.fn(async () => {
+      chainNonce += 1n;
+      landed = true;
+      throw new Error('504 Gateway Timeout');
+    });
+    const writer = createDocWriter({
+      handle: { sdk: {
+        wasm: { getIdentityContractNonce: async () => chainNonce, refreshIdentityNonce: refresh },
+        stateTransitions: { broadcastAndWait: broadcast },
+        documents: { replace, get: async () => landed ? {} : null, query: async () => { throw new Error('where clause on non indexed property'); } },
+      }, reconnect: async () => {} },
+      contractId: b58(9), entropyFor: () => id(3), paymentInfo: () => ({}), wait: async () => {},
+    });
+    const created = await writer.createDoc(actor, 'poll', 'lost-confirmation', { question: 'Question?' });
+    expect(created.id).toBeTruthy();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await expect(replace()).resolves.toBeUndefined();
+    expect(chainNonce).toBe(3n);
+    expect(broadcast).toHaveBeenCalledTimes(1);
+  });
+
   it('retains the ID before a landed poll create loses its confirmation, without creating another poll', async () => {
     await ensureInitialized();
     const key = PrivateKey.fromHex('01'.repeat(32), 'testnet');

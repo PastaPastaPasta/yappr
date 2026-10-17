@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ensureInitialized } from '@dashevo/evo-sdk'
+import { IdentityPublicKey, PrivateKey, ensureInitialized } from '@dashevo/evo-sdk'
 import { createDocWriter, createRecorder, fakeId, saveCheckpoint } from '../scripts/seed/feature-seed-lib.mjs'
 import { createWithAgreement } from '../scripts/seed/seed-lib.mjs'
 
@@ -114,6 +114,21 @@ describe('no-index poll checkpoints', () => {
     })).rejects.toThrow(/invalid|base58|WIF/i)
     expect(onDerivedId).not.toHaveBeenCalled()
     expect(broadcastAndWait).not.toHaveBeenCalled()
+  })
+
+  it('preserves the broadcast error if best-effort cache invalidation also fails', async () => {
+    const key = PrivateKey.fromHex('01'.repeat(32), 'testnet')
+    const error = new Error('504 Gateway Timeout')
+    const refresh = vi.fn(async () => { throw new Error('cache invalidation unavailable') })
+    await expect(createWithAgreement({
+      wasm: { getIdentityContractNonce: async () => 0n, refreshIdentityNonce: refresh },
+      stateTransitions: { broadcastAndWait: async () => { throw error } },
+    }, {
+      contractId: fakeId('poll-contract'), docType: 'poll', ownerId: actor.ownerId,
+      wif: key.toWIF(), identityKey: new IdentityPublicKey({ keyId: 1, purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_secp256k1', data: key.getPublicKey().toBytes() }),
+      agreement: undefined, data, entropy: new Uint8Array(32).fill(1), onDerivedId: () => {},
+    })).rejects.toBe(error)
+    expect(refresh).toHaveBeenCalledTimes(1)
   })
 
   it('does not broadcast if saving the pre-broadcast checkpoint fails', async () => {

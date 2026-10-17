@@ -1126,17 +1126,17 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
   stateTransition.setIdentityContractNonce(nonce);
   stateTransition.sign(PrivateKey.fromWIF(wif), identityKey);
   onDerivedId?.(id);
-  await sdk.stateTransitions.broadcastAndWait(stateTransition);
-  // The nonce was managed by hand, so the facade's cached one is now behind:
-  // refresh it or the next `documents.create` by this actor reuses a spent
-  // nonce. The binding takes an `Identifier` (it `_assertClass`es, and consumes
-  // it), NOT a base58 string — and it throws SYNCHRONOUSLY, so this needs a
-  // try/catch rather than a rejection handler. Best effort: the write already
-  // landed, and a stale cache costs a retry, not the document.
   try {
-    await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId));
-  } catch (error) {
-    console.log(`     (nonce cache refresh failed after ${docType} create: ${describeErr(error).slice(0, 120)})`);
+    await sdk.stateTransitions.broadcastAndWait(stateTransition);
+  } finally {
+    // A lost confirmation can hide a landed manual write too. Invalidate the
+    // facade cache after every attempted broadcast, preserving its original error.
+    // The binding consumes an Identifier and may throw synchronously.
+    try {
+      await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId));
+    } catch (error) {
+      console.log(`     (nonce cache refresh failed after ${docType} create: ${describeErr(error).slice(0, 120)})`);
+    }
   }
   return { id };
 }

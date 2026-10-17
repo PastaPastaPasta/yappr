@@ -45,7 +45,7 @@ unchanged. The wrapper and local identities/configuration are not committed.
 ## Validation
 
 Local lint, standalone TypeScript checking, production build and dead-code checks pass. The full unit suite
-passes 238 files / 3,475 tests after merging staging elections updates and the
+passes 238 files / 3,477 tests after merging staging elections updates and the
 review regressions. Offline social/seed checks cover both v16 and
 v17; each seeder self-test reports 98 PASS / 0 FAIL. Social-shape tests report
 595 PASS / 0 FAIL, and App Connect self-tests report 30 PASS / 0 FAIL.
@@ -68,6 +68,7 @@ bundle is explicitly skipped because no DM v4 contract exists on this chain.
 | Focused retention reproof | 10 | 0 | Same layout copy, refreshed fixture; cleanup included |
 | Removed-blog comment cleanup regression | 8 | 0 | Blog v9; removed parent blog and tombstoned target post |
 | Unpriced poll seeder smoke | 4 | 0 | Pollr v8; shared seeder writer, read by ID and delete |
+| Lost-confirmation nonce-cache recovery | 6 | 0 | Pollr v8; actual SDK facade primed before manual create; both polls removed |
 | Social query bundles | 10 | 0 | Release social and blog read shapes; legacy DM v4 absent |
 
 Completed logs, including diagnostic attempts, are retained locally in
@@ -170,9 +171,10 @@ create. Poll checkpoints persist these IDs atomically before broadcast in a
 separate pending map. A fresh writer and recorder reconcile pending IDs before
 creating anything; an unreadable pending write blocks another send. Confirmed
 writes move to the confirmed map, while explicit consensus refusals clear the
-rejected candidate. Seven regression tests cover restart recovery, unresolved
+rejected candidate. Eight regression tests cover restart recovery, unresolved
 IDs, schema/fee refusals, ambiguous nonce-used errors, local signing failure and checkpoint-save
-failure without leaking an unsent ID into a later save. Local signing finishes
+failure without leaking an unsent ID into a later save, plus preservation of
+the original broadcast error when cache invalidation fails. Local signing finishes
 before the checkpoint callback; broadcasting starts only after the atomic save. Signer-only DM seed actors retain their existing facade path.
 Battery cleanup also retains pre-broadcast candidate IDs when all acceptance
 reads fail; its regression makes a no-index poll visible only before cleanup
@@ -185,6 +187,18 @@ proof above. A live smoke test of the shared seeder writer also created an
 unpriced poll on the no-index v8 copy, read it by the returned ID, then
 deleted it in a fresh cleanup session and confirmed absence: 4/0. The lost-
 confirmation branch is deliberately injected only in the offline regression.
+
+Manual creates now invalidate the facade nonce cache in a best-effort
+`finally` after every attempted broadcast, including confirmation timeouts.
+The original broadcast error is preserved if invalidation also fails. The
+unit regression primes a simulated facade cache, recovers a landed manual
+create after a timeout, then edits through the facade with a fresh nonce.
+A separate live regression used persona 83 and the same pollr v8 copy: actual
+facade create/delete primed the cache, a manual create completed on chain but
+its wrapper injected a 504, readback recovered its ID, and the next facade
+delete succeeded. All six checks passed, and a fresh SDK cleanup confirmed
+both regression polls were already absent. This proves the formerly skipped
+invalidation path; it does not claim to fix the separate diagnostic below.
 
 ## SDK follow-up
 
