@@ -1,10 +1,11 @@
 'use client'
 
+import { LimitedTextarea } from '@/components/ui/limited-text'
+
 import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useRelativeTime } from '@/hooks/use-relative-time'
@@ -17,6 +18,7 @@ import { blogAuthorHandle, createCommentReads, mergeComments } from '@/lib/blog/
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
 import { COMMENTS_OFF_MESSAGE } from '@/lib/services/blog-comment-service'
+import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
 import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
@@ -180,11 +182,10 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
 
       {!commentsOpen && <ModerationClosedNotice product="blog" className="mt-3" />}
       <div className="mt-3 rounded-lg border p-3" style={{ borderColor: 'var(--blog-border)' }}>
-        <Textarea
+        <LimitedTextarea contract="blog" document="blogComment" field="content"
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder="Write a comment..."
-          maxLength={MAX_COMMENT_LENGTH}
           className="min-h-[90px] border-0 bg-transparent p-0 focus-visible:ring-0 dark:bg-transparent"
         />
         <div className="mt-2 flex items-center justify-between">
@@ -250,6 +251,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
                         {deletingId === comment.id ? 'Deleting...' : 'Delete'}
                       </Button>
                     )}
+                    <ContractReportButton contract="blog" docType="blogComment" targetId={comment.id} ownerId={comment.ownerId} />
                     <ModeratorContentMenu
                       target={documentRemovalTarget('blog', 'blogComment', 'comment', comment, comment.content)}
                       ownerId={comment.ownerId}

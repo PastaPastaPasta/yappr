@@ -91,6 +91,14 @@ beforeEach(() => {
 });
 
 describe('PostItem actions', () => {
+  it('disables likes on the viewer’s own post before any write', () => {
+    const post = fixturePost({ id: 'own-post' });
+    renderPost({ ...post, author: { ...post.author, id: VIEWER_ID } });
+    expect(byId('like-btn-own-post')).toBeDisabled();
+    fireEvent.press(byId('like-btn-own-post'));
+    expect(fakeEngine.method('engage.like')).not.toHaveBeenCalled();
+  });
+
   it('likes optimistically with the post as the target, and rolls back a failure', async () => {
     const post = fixturePost({ id: 'like-me' });
     const pending = ticket({ op: 'like' });

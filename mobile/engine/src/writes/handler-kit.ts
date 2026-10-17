@@ -27,11 +27,11 @@ export function assertTarget(target: unknown): asserts target is TargetRef {
   if (ref.rootPostId !== null && ref.rootPostId !== undefined) assertId(ref.rootPostId, 'target.rootPostId')
 }
 
-const HOSTED_URL = /^(https?|ipfs):\/\/\S+$/
+const HOSTED_URL = /^(https|ipfs):\/\/\S+$/
 
-/** An image already hosted somewhere (posts' `mediaUrl`, avatars, banners): http(s):// or ipfs://. */
+/** An image already hosted somewhere (posts' `mediaUrl`, avatars, banners): https:// or ipfs://. */
 export function assertMediaUrl(value: unknown, what: string): asserts value is string {
-  if (typeof value !== 'string' || !HOSTED_URL.test(value)) throw badRequest(`${what} must be an http(s):// or ipfs:// URL`)
+  if (typeof value !== 'string' || !HOSTED_URL.test(value)) throw badRequest(`${what} must be an https:// or ipfs:// URL`)
 }
 
 /** Code points, as a contract's `maxLength` counts them. */

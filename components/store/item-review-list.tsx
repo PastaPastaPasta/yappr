@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger'
 import { useEffect, useState } from 'react'
 import { CheckBadgeIcon } from '@heroicons/react/24/solid'
 import { RatingStars } from './rating-stars'
+import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { formatDate } from '@/lib/utils/format'
@@ -61,6 +62,7 @@ export function ItemReviewList({ itemId, limit = 10, onReviewRemoved }: ItemRevi
                   Ordered
                 </span>
               )}
+              <ContractReportButton contract="storefront" docType="itemReview" targetId={review.id} ownerId={review.reviewerId} />
               <ModeratorContentMenu
                 className="ml-auto"
                 target={documentRemovalTarget('storefront', 'itemReview', 'review', review, review.content ?? '')}

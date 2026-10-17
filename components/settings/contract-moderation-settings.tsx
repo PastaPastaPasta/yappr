@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import { CharterReasonPicker, useSeatedReasons } from '@/components/moderation/charter-reason-picker'
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
+import { ContractReportQueue } from '@/components/moderation/contract-report-queue'
 import { ReportQueue } from '@/components/moderation/report-queue'
 import { TeamActionsPanel } from '@/components/moderation/team-actions-panel'
 import { barredAuthorsCanTombstone, contractTakesReports, deletesAreTombstones } from '@/lib/contract-topology'
@@ -340,6 +341,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
     <div className="space-y-4">
       <ElectionStatusPanel contract={contract} />
       {social && contractTakesReports() && <ReportQueue seatedReasons={seatedReasons} onModerateAuthor={moderateAuthor} />}
+      {contract !== 'social' && moderatedContract(contract).reportsResolved() && <ContractReportQueue contract={contract} seatedReasons={seatedReasons} />}
       <TeamActionsPanel contract={contract} seatedReasons={seatedReasons} onChanged={() => { refresh().catch(() => { /* reported inside */ }) }} />
       <Card>
         <CardHeader>

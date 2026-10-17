@@ -48,7 +48,7 @@ import {
   type DraftPart,
 } from './drafts';
 import { useEditorReveal } from './editor-reveal';
-import { FALLBACK_LIMITS, hasVisibleContent, isOverContentLimit } from './limits';
+import { FALLBACK_LIMITS, utf8ByteCount, hasVisibleContent, isOverContentLimit } from './limits';
 import { MentionSuggestions, useDebounced } from './MentionSuggestions';
 import { discardPending, pendingDraft, publishPost, viewerAuthor } from './pending-posts';
 import { insertMention, mentionAt, tagLimitProblem, tagMaxLength } from './text';
@@ -58,7 +58,7 @@ const MAX_PARTS = 10;
 /** Drafts save this long after the last change (PRD COMP-09). */
 const SAVE_DELAY_MS = 500;
 /** `posts.publish` accepts an image hosted elsewhere (no upload in 1.0): a web or IPFS link, never named to the user (#27). */
-const HOSTED_URL = /^(https?|ipfs):\/\/\S+$/;
+const HOSTED_URL = /^(https|ipfs):\/\/\S+$/;
 /** The contracts' `post.mediaUrl` / `reply.mediaUrl` `maxLength` (v2 and v10), in code points. */
 const MAX_MEDIA_URL = 512;
 
@@ -266,7 +266,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const contentful = parts.filter((p) => p.postedId || hasVisibleContent(p.text));
   const hasContent = open.some((p) => hasVisibleContent(p.text)) || mediaUrl.trim() !== '';
   const overLimit = open.some((p) => isOverContentLimit(p.text.trim(), limits));
-  const mediaTooLong = Array.from(mediaUrl.trim()).length > MAX_MEDIA_URL;
+  const mediaTooLong = utf8ByteCount(mediaUrl.trim()) > MAX_MEDIA_URL;
   const mediaValid = mediaUrl.trim() === '' || (HOSTED_URL.test(mediaUrl.trim()) && !mediaTooLong);
   const targetReady = context.mode === 'post' || (targetPost !== null && !targetGone);
   // Social v16: a post names at most four tags. Only the part published as the post carries any (lib

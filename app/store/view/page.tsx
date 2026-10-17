@@ -17,6 +17,7 @@ import {
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner, DigitalBadge } from '@/components/store'
@@ -465,6 +466,7 @@ function StoreDetailContent() {
                 <div className="pt-10 flex-1 min-w-0">
                   <div className="flex items-center gap-1">
                     <h2 className="min-w-0 text-xl font-bold truncate">{store.name}</h2>
+                    <ContractReportButton contract="storefront" docType="store" targetId={store.id} ownerId={store.ownerId} />
                     <ModeratorContentMenu
                       target={documentRemovalTarget('storefront', 'store', 'store', store, store.name)}
                       ownerId={store.ownerId}
