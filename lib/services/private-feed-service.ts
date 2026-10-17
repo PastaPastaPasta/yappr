@@ -944,7 +944,7 @@ class PrivateFeedService {
    * Check if local keys are initialized (owner has enabled private feed locally)
    */
   isLocallyInitialized(): boolean {
-    return privateFeedKeyStore.hasFeedSeed();
+    return privateFeedClientSupported() && privateFeedKeyStore.hasFeedSeed();
   }
 
   // ============================================================

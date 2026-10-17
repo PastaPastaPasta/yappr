@@ -956,8 +956,8 @@ export const POSTING_CLOSED_COPY = 'Posting opens when Yappr\'s first moderators
  */
 export const MODERATION_CLOSED_COPY = {
   social: POSTING_CLOSED_COPY,
-  storefront: 'Stores open when Yappr\'s first store moderators are elected. Until then, stores, listings, reviews and reports can\'t be created or changed.',
-  blog: 'Blogs open when Yappr\'s first blog moderators are elected. Until then, blogs, posts, comments and reports can\'t be created or changed.',
+  storefront: 'Stores open when Yappr\'s first store moderators are elected. Until then, stores, listings and reviews can\'t be created or changed.',
+  blog: 'Blogs open when Yappr\'s first blog moderators are elected. Until then, blogs, posts and comments can\'t be created or changed.',
 } as const
 export type ModerationClosedProduct = keyof typeof MODERATION_CLOSED_COPY
 

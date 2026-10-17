@@ -191,3 +191,14 @@ describe('inline mentions on v15 (mentionedUserIds, up to 8)', () => {
     expect(resolveIdentity).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('the reply live marker (v17)', () => {
+  it('writes live: true on v17 only, and refuses a private reply there (no multi-feed client yet)', async () => {
+    vi.resetModules()
+    expect(await writtenReply('v17', 'live reply')).toMatchObject({ live: true })
+    vi.resetModules()
+    expect(await writtenReply('v16', 'old reply')).not.toHaveProperty('live')
+    vi.resetModules()
+    await expect(writtenReply('v17', 'secret', { encryption: { type: 'owner' } })).rejects.toThrow(/not available yet/)
+  })
+})

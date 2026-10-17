@@ -267,7 +267,7 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // takes comments). A comment on a comments-off post, a tombstone included, is
 // refused 40127, and the client writes no copy.
 //
-// `v9` (the testnet production cut, docs/NON_SOCIAL_CONTRACTS.md "Blog v9") is
+// `v9` (the testnet production cut, docs/NON_SOCIAL_CONTRACTS.md, Blog: "What v9 changed") is
 // v8 with a `live` marker: a post must carry `publishedAt` (no drafts on
 // chain) and `live: true`, its tombstone leaves `live` out, and the global
 // `timeline` and per-blog `blogAndTime` are keyed on it, so every read of them

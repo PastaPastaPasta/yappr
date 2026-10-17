@@ -256,7 +256,7 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       return this.create(sellerId, documentData);
     }
     if (!data.orderKey) {
-      throw new StatusNoteError('Tracking details are sent privately to the buyer. Unlock your messaging key on this device to send them.');
+      throw new StatusNoteError('Tracking details are sent privately to the buyer. Unlock private messaging on this device to send them.');
     }
 
     const plaintext = encodeOrderStatusNote(note);

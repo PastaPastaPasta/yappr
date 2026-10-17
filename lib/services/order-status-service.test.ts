@@ -119,7 +119,7 @@ describe('tracking and message by topology', () => {
   it('refuses a note on v10 without the order key, in words a seller can act on', async () => {
     const { orderStatusService: service, create } = await load('v10');
     await expect(service.createStatusUpdate(seller, orderId, { status: 'shipped', buyerId: buyer, message: 'Hi' }))
-      .rejects.toThrow(/sent privately to the buyer.*Unlock your messaging key/);
+      .rejects.toThrow(/sent privately to the buyer.*Unlock private messaging/);
     expect(create).not.toHaveBeenCalled();
   });
 

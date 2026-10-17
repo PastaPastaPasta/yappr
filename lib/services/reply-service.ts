@@ -17,6 +17,7 @@ import {
   hasFlatThreads,
   mentionsAreInline,
   notificationWindowFor,
+  privateFeedClientSupported,
   privateFeedKeyFields,
   replyCountFieldFor,
   replyCountNeedsRoot,
@@ -252,6 +253,8 @@ class ReplyService extends BaseDocumentService<Reply> {
 
     // Handle encryption if provided
     if (options.encryption) {
+      // Social v17 names a feed on every private write; this client writes the single-feed shape only.
+      if (!privateFeedClientSupported()) throw new Error('Private posts are not available yet');
       const { prepareOwnerEncryption, prepareInheritedEncryption } = await import('./private-feed-service');
 
       let encryptionResult;

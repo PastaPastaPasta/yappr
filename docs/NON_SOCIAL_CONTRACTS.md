@@ -274,7 +274,7 @@ gated the other way rather than a loosened gate; `immutable` on
 `contracts/yappr-blog-contract.json` — `blog`, `blogPost`, `blogComment`,
 `blogFollow`, and from v9 `report`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v9`, resolved
 in `lib/constants.ts` at call time so unit tests can stub it). **The file is
-blog v9**, the testnet production cut ([below](#what-v9-changed-from-v8)). Blog v8, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)), runs `/devnet` on sakura's beta.6 genesis. v7, the 5.0.0-beta.2 mainnet-ready cut, is registered on sakura as
+blog v9**, the testnet production cut ([below](#what-v9-changed-from-v8-1)). Blog v8, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)), runs `/devnet` on sakura's beta.6 genesis. v7, the 5.0.0-beta.2 mainnet-ready cut, is registered on sakura as
 `4F1Wi4dim7j6eWrFQ3aHWEB9az5dHcJBmdvMvpx7sx1j` (re-registered after the
 2026-10-08 beta.3 wipe); `/devnet` runs it ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
 
