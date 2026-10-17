@@ -72,7 +72,8 @@ export function weightedPick(rng, entries) {
 export const entropySource = (namespace) => (key) => sha256(utf8(`${namespace}/${key}`));
 
 /**
- * Bumped whenever the on-disk checkpoint shape changes. It is part of the provenance, so a file from before the bump
+ * Bumped for incompatible checkpoint changes. Optional pending-create IDs are additive to v2's confirmed docs.
+ * It is part of the provenance, so a file from before the bump
  * fails the same "move it aside" check — an ABSENT key is a mismatch too, which is how pre-v2 files (storefront's
  * `docs[key] = {type, id}` objects, blog's `items` map) are caught instead of crashing mid-phase.
  */
@@ -183,7 +184,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
     let id = null;
     // Every id a create derived before broadcasting, one per attempt: an
     // earlier attempt whose wait threw may land after a later one was sent.
-    const derivedIds = [];
+    const derivedIds = [...(opts.pendingIds ?? [])];
     // Unbounded in time on purpose: the pre-write probe is how a resumed run
     // with a lost checkpoint recognises its own earlier document.
     const landed = async () => {
@@ -196,8 +197,13 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
       return found != null;
     };
     if (await landed()) return { id, skipped: true };
+    if (derivedIds.length > 0) {
+      if (await settles(landed)) return { id, skipped: true };
+      throw new Error(`${docType} ${key}: pending create IDs ${derivedIds.join(', ')} are not readable yet; refusing another create (retry to reconcile pendingCreates[${JSON.stringify(key)}]; verify a write was never broadcast before clearing it)`);
+    }
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      let attemptId = null;
       try {
         // A doctype whose create is PRICED in credits (v8 post/reply) must agree to
         // the fee, and `sdk.documents.create` has no option for it — so those go
@@ -208,7 +214,11 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
           contractId: contract, actor, docType, document, data, entropy, agreement, payment: actor.paysCredits ? {} : payment(tokenCost),
           // WIF-backed creates derive their id before broadcasting: keep it, so a create whose
           // wait throws after landing is recognised by id even on a doctype with no owner index.
-          onDerivedId: (derived) => { derivedIds.push(derived); },
+          onDerivedId: (derived) => {
+            attemptId = derived;
+            derivedIds.push(derived);
+            opts.onDerivedId?.(derived); // synchronously checkpoint before the helper broadcasts
+          },
         }));
         id = createdId(created) ?? id;
         if (await landed()) return { id };
@@ -227,10 +237,21 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
         // outright, it never landed, so there is nothing to wait for.
         const staleMultiplier = FEE_MULTIPLIER_NOT_TOLERATED.test(text);
         if (!staleMultiplier && await settles(landed, settlePollsFor(error))) return { id };
+        // A proved consensus refusal did not land this candidate. Transport/nonce
+        // failures without that evidence keep their IDs in the checkpoint.
+        const refused = !deadSdk && !RETRYABLE.test(text)
+          && (staleMultiplier || /\bcode=[1234]\d{4}\b|\bJsonSchemaError\b/i.test(text));
+        if (refused && attemptId) {
+          derivedIds.splice(derivedIds.indexOf(attemptId), 1);
+          opts.onRejectedId?.(attemptId);
+        }
         if (staleMultiplier) forgetFeeMultiplier();
         const retryable = deadSdk || staleMultiplier || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
-        if (!retryable && (/code=4\d{4}/.test(text) || /consensus/i.test(text))) throw error; // Platform said no
+        if (!retryable && (refused || /consensus/i.test(text))) throw error; // Platform said no
       }
+      // Once an ID has been checkpointed, a second send could create a duplicate
+      // while the first write is still settling. Resume by ID instead.
+      if (opts.onDerivedId && derivedIds.length > 0) throw lastError;
       await wait(2_000 * attempt);
     }
     throw lastError ?? new Error(`${docType} create failed after ${MAX_ATTEMPTS} attempts`);
@@ -301,8 +322,8 @@ export async function actorsFor(battery, personaIndexes) {
 
 /**
  * Checkpoint-backed `createDoc`: skip what the checkpoint already names, record the id the moment it lands, and
- * collect failures instead of aborting the run. Losing the checkpoint costs one existence probe per document, never a
- * duplicate.
+ * collect failures instead of aborting the run. Pending IDs are saved before broadcast,
+ * separately from confirmed docs, so restart recovery also works without listing indexes.
  */
 export function createRecorder({ writer, state, file }) {
   const tally = { created: 0, skipped: 0, failed: 0 };
@@ -315,6 +336,7 @@ export function createRecorder({ writer, state, file }) {
   // the returned object, so `this` is undefined inside it under ESM strict mode.
   const record = (key, id, skipped = false) => {
     state.docs[key] = id;
+    if (state.pendingCreates) delete state.pendingCreates[key];
     saveCheckpoint(file, state);
     tally[skipped ? 'skipped' : 'created'] += 1;
     return id;
@@ -327,9 +349,24 @@ export function createRecorder({ writer, state, file }) {
       // id alone once an equivalent document exists under a different id — the
       // registration batteries share these contracts — so `adopt` reconciles
       // first and returns the id to record.
-      const adopted = opts.adopt ? await opts.adopt() : null;
+      const pending = state.pendingCreates?.[key] ?? [];
+      const adopted = pending.length === 0 && opts.adopt ? await opts.adopt() : null;
       if (adopted) return record(key, adopted, true);
-      const { id, skipped } = known ? { id: known, skipped: true } : await writer.createDoc(actor, docType, key, data, opts);
+      const { id, skipped } = known ? { id: known, skipped: true } : await writer.createDoc(actor, docType, key, data, {
+        ...opts,
+        ...(opts.persistPending || pending.length > 0 ? {
+          pendingIds: pending,
+          onDerivedId: (candidate) => {
+            const pendingCreates = { ...state.pendingCreates, [key]: [candidate] };
+            saveCheckpoint(file, { ...state, pendingCreates });
+            state.pendingCreates = pendingCreates;
+          },
+          onRejectedId: () => {
+            delete state.pendingCreates[key];
+            saveCheckpoint(file, state);
+          },
+        } : {}),
+      });
       // `reconcile` only applies to a MUTABLE doctype: it corrects a document
       // already on chain whose fields have drifted from the table.
       if (skipped && opts.reconcile && await writer.reconcileDoc(actor, docType, id, opts.reconcile(), opts.contract)) {

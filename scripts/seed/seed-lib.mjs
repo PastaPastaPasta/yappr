@@ -1105,7 +1105,7 @@ export async function feeAgreementFor(sdk, docType, schemas = SOCIAL_DOCUMENT_SC
  * unlike the facade path. Returns `{ id }` — the same shape `createdId` reads
  * off a facade-created Document — so callers' acceptance logic is unchanged.
  *
- * `onDerivedId(id)` receives that id before anything is signed or sent: a
+ * `onDerivedId(id)` receives that id after signing and before anything is sent: a
  * broadcast that lands while its wait throws (the DAPI 504 quirk) returns
  * nothing, and a caller reconciling by id needs it then. Looking the document
  * up by value instead needs an owner index, which not every doctype keeps
@@ -1115,7 +1115,6 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
   const rawNonce = (await sdk.wasm.getIdentityContractNonce(ownerId, contractId)) ?? 0n;
   const nonce = (BigInt(rawNonce) & NONCE_SEQUENCE_MASK) + 1n;
   const { document, id } = buildDocument({ contractId, docType, ownerId, data, entropy, nonce });
-  onDerivedId?.(id);
   const transition = new DocumentCreateTransition({
     document,
     identityContractNonce: nonce,
@@ -1126,6 +1125,7 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
   const stateTransition = batch.toStateTransition();
   stateTransition.setIdentityContractNonce(nonce);
   stateTransition.sign(PrivateKey.fromWIF(wif), identityKey);
+  onDerivedId?.(id);
   await sdk.stateTransitions.broadcastAndWait(stateTransition);
   // The nonce was managed by hand, so the facade's cached one is now behind:
   // refresh it or the next `documents.create` by this actor reuses a spent
