@@ -312,12 +312,12 @@ describe('blog v7 post tombstones (a custom base)', () => {
       ...extra,
     }),
   })
-  const blogTombstone = async () => {
+  const blogTombstone = async (clearableReferences: string[] = []) => {
     const [{ tombstoneDocument }, { BLOG_POST_TOMBSTONE, BLOG_POST_TOMBSTONE_KEEPS }] = await Promise.all([
       import('./tombstone-helpers'),
       import('@/lib/blog/content-utils'),
     ])
-    return tombstoneDocument({ contractId, documentType: 'blogPost', documentId: postId, ownerId, preserve: BLOG_POST_TOMBSTONE_KEEPS, base: BLOG_POST_TOMBSTONE })
+    return tombstoneDocument({ contractId, documentType: 'blogPost', documentId: postId, ownerId, preserve: BLOG_POST_TOMBSTONE_KEEPS, base: BLOG_POST_TOMBSTONE, clearableReferences })
   }
 
   it('writes exactly what tombstoneIsBlank accepts: the flag, comments off, blogId as raw bytes, slug and publishedAt', async () => {
@@ -329,6 +329,15 @@ describe('blog v7 post tombstones (a custom base)', () => {
     expect(data).toMatchObject({ deleted: true, commentsEnabled: false, slug: 'my-post', publishedAt: 1_700_000_000_000 })
     expect(Array.from(data.blogId as Uint8Array)).toEqual(Array.from(blogIdBytes))
     expect(updateDocument.mock.calls[0][5]).toBe(2)
+  })
+
+  it('retracts a v9 post after its parent is deleted, clearing only the missing reference', async () => {
+    get.mockResolvedValue(storedBlogPost())
+    updateDocument.mockResolvedValueOnce({ success: false, error: referenceNotFound('blogId') })
+      .mockResolvedValueOnce({ success: true })
+    await expect(blogTombstone(['blogId'])).resolves.toBe(true)
+    expect(attempt(0)).toHaveProperty('blogId')
+    expect(attempt(1)).toEqual({ deleted: true, commentsEnabled: false, slug: 'my-post', publishedAt: 1_700_000_000_000 })
   })
 
   it('leaves publishedAt out for a draft, which never had one', async () => {

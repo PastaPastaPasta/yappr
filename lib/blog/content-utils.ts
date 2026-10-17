@@ -350,8 +350,8 @@ export async function enrichBlogPostsWithAuthors<T extends { ownerId: string; bl
 /**
  * {@link enrichBlogPostsWithAuthors} for posts from many blogs: the blogs are
  * read by id (one query per 100) for their names. A post whose blog does not
- * come back is dropped: a moderator may remove a blog while its posts stay
- * (they reference the removal record), and a post page needs its blog, so
+ * come back is dropped: an author may delete a blog or a moderator remove it
+ * while its posts stay stored, and a post page needs its blog, so
  * such a card would only lead to "Blog not found".
  */
 export async function enrichBlogPostsWithBlogNames<T extends { ownerId: string; blogId: string }>(posts: T[]) {

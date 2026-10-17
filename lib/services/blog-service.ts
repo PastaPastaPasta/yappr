@@ -1,8 +1,9 @@
+import { stateTransitionService } from './state-transition-service'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import type { Blog } from '@/lib/types'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
-import { YAPPR_BLOG_CONTRACT_ID, blogIsV7 } from '@/lib/constants'
+import { YAPPR_BLOG_CONTRACT_ID, blogIsV7, blogIsV9 } from '@/lib/constants'
 import { labelsFromStored, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { normalizeBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
@@ -124,6 +125,15 @@ class BlogService extends BaseDocumentService<Blog> {
     // Explicit undefined values clear optional fields during the replacement merge.
     // Omitted fields stay untouched; do not discard that distinction here.
     return this.update(blogId, ownerId, this.prepareData(data))
+  }
+
+  /** Delete only the blog; its posts remain stored, but no longer have a public blog page. */
+  async deleteBlog(blogId: string, ownerId: string): Promise<boolean> {
+    if (!blogIsV9()) throw new Error('Blogs cannot be deleted on this network')
+    const result = await stateTransitionService.deleteDocument(this.contractId, this.documentType, blogId, ownerId)
+    if (!result.success) throw new Error(result.error || 'Failed to delete blog')
+    this.clearCache()
+    return true
   }
 
   async getBlog(blogId: string): Promise<Blog | null> {

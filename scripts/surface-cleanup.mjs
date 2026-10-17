@@ -204,14 +204,17 @@ const notTombstone = (row) => row.deleted !== true;
 export async function cleanBlog({ battery, contractId, owners, since, moderator = null, live }) {
   const report = newReport('blog', live);
   const blogs = await readEach(owners, (who) => queryAll(battery, 'blog', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]));
-  // Only a blog's owner posts to it (b21), so the owners' posts are the posts on their blogs.
-  const posts = await readEach(blogs, (blog) => queryAll(battery, 'blogPost', [['blogId', '==', normalizeId(blog.$id)], ['$createdAt', '>=', since]], [['blogId', 'asc'], ['$createdAt', 'asc']]));
+  const schemas = (await battery.sdk.contracts.fetch(contractId)).toJSON().documentSchemas;
+  const v9 = Boolean(schemas.blogPost.properties.live);
+  // The timeline also finds posts whose owner has already deleted the blog.
+  const timeline = await queryEvery(battery, 'blogPost', [...(v9 ? [['live', '==', true]] : []), ['$createdAt', '>', 0]], [...(v9 ? [['live', 'asc']] : []), ['$createdAt', 'asc']]);
+  const posts = timeline;
   // blogComment keeps no owner index, so the owners' comments are found through every post author's
   // postOwnerAndTime from `since`, then kept by owner below: an owner's comment on anyone's post, not only
   // on the owners' own. The authors come from the whole blogPost timeline, read to the end: posts outlive a
   // moderator's removal of their blog, so the blogs alone would miss them. (discussedRecent is a timeRange
   // index, which document queries do not read.)
-  const authors = new Set((await queryEvery(battery, 'blogPost', [['$createdAt', '>', 0]], [['$createdAt', 'asc']])).map((row) => normalizeId(row.$ownerId)));
+  const authors = new Set(timeline.map((row) => normalizeId(row.$ownerId)));
   for (const who of owners) authors.add(who.ownerId);
   const comments = await readEach([...authors], (author) => queryAll(battery, 'blogComment', [['blogPostId.$ownerId', '==', author], ['$createdAt', '>=', since]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]));
   const follows = await readEach(owners, (who) => queryAll(battery, 'blogFollow', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['blogId', 'asc']]));
@@ -225,8 +228,12 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
   report.found = countsOf(targets);
 
   await deleteEach({ report, live, battery, owners, targets, types: ['blogComment', 'blogFollow'] });
-  await applyEach(report, live, targets.blogPost, 'blogPost (tombstone)', (row, id) => battery.attemptReplace(ownerOf(owners, row), 'blogPost', id, blogPostTombstone(row), row.$revision));
-  if (!moderator) {
+  await applyEach(report, live, targets.blogPost, 'blogPost (tombstone)', (row, id) => {
+    const tombstone = blogPostTombstone(row);
+    if (v9 && !blogs.some((blog) => normalizeId(blog.$id) === normalizeId(row.blogId))) delete tombstone.blogId;
+    return battery.attemptReplace(ownerOf(owners, row), 'blogPost', id, tombstone, row.$revision);
+  });
+  if (!moderator && !schemas.blog.canBeDeleted) {
     for (const row of targets.blog) report.leftovers.push({ type: 'blog', id: normalizeId(row.$id), name: row.name, why: 'a blog cannot be deleted by its owner; run with a moderator to remove it' });
     return report;
   }
@@ -236,6 +243,10 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
   const removable = targets.blog.filter((row) => !blogsWithFailedPosts.has(normalizeId(row.$id)));
   for (const row of targets.blog.filter((blog) => !removable.includes(blog))) {
     report.failed.push({ label: 'blog (kept: a post failed)', id: normalizeId(row.$id), error: 'a post on it was not tombstoned; re-run to finish' });
+  }
+  if (schemas.blog.canBeDeleted) {
+    await deleteEach({ report, live, battery, owners, targets: { blog: removable }, types: ['blog'] });
+    return report;
   }
   await applyEach(report, live, removable, `blog (removed by ${moderator.label})`, (row) => moderatorRemove(battery, { contractId, moderator, docType: 'blog', id: normalizeId(row.$id), reason: 'test fixture of the blog battery' }));
   return report;

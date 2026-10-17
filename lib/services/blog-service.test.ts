@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { get, query, updateDocument, createDocument } = vi.hoisted(() => ({
-  get: vi.fn(), query: vi.fn(), updateDocument: vi.fn(), createDocument: vi.fn(),
+const { get, query, updateDocument, createDocument, deleteDocument } = vi.hoisted(() => ({
+  get: vi.fn(), query: vi.fn(), updateDocument: vi.fn(), createDocument: vi.fn(), deleteDocument: vi.fn(),
 }))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get, query } }) }))
-vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument, createDocument } }))
+vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument, createDocument, deleteDocument } }))
 
 import { blogService } from './blog-service'
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
@@ -208,5 +208,27 @@ describe('newest blogs for discovery', () => {
     expect(complete).toBe(false)
     // Ten full pages, then a one-row probe that proves there is more.
     expect(query).toHaveBeenCalledTimes(11)
+  })
+})
+
+describe('blog deletion', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('deletes only the blog, then invalidates cached blog reads', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9')
+    await blogService.getBlog(blogId)
+    deleteDocument.mockResolvedValueOnce({ success: true })
+    expect(await blogService.deleteBlog(blogId, ownerId)).toBe(true)
+    expect(deleteDocument).toHaveBeenCalledWith(YAPPR_BLOG_CONTRACT_ID, 'blog', blogId, ownerId)
+    get.mockResolvedValueOnce(null)
+    expect(await blogService.getBlog(blogId)).toBeNull()
+  })
+
+  it('reports a refused deletion and refuses deletion on older cuts', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9')
+    deleteDocument.mockResolvedValueOnce({ success: false, error: 'refused' })
+    await expect(blogService.deleteBlog(blogId, ownerId)).rejects.toThrow('refused')
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v8')
+    await expect(blogService.deleteBlog(blogId, ownerId)).rejects.toThrow('Blogs cannot be deleted')
   })
 })

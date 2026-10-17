@@ -1,0 +1,184 @@
+{
+  "network": "dash-devnet-sakura",
+  "at": "2026-10-17T22:30:10.673Z",
+  "actors": [
+    {
+      "persona": 79,
+      "id": "77C7DHqEPNfpfhR1ytYeXVJYmxFKFnBa6KBcMjf2KSKQ"
+    },
+    {
+      "persona": 77,
+      "id": "9w8zNg4goD4wgy2ACFCsq4pNUDdqCu93e693LK2AnYvg"
+    },
+    {
+      "persona": 78,
+      "id": "9ziyk9A769VgoqnZ29y9bdnvRKn5aqHVacZNg42ATGZ9"
+    }
+  ],
+  "makerNonceBefore": "34",
+  "steps": [
+    {
+      "name": "register-amended-v9",
+      "passed": true,
+      "result": {
+        "id": "5F9AQMA8U3QdQNjXJx7WYbZtr7qaid6mBwuJY4sMkohV",
+        "signedBytes": 9040,
+        "short": false,
+        "registered": true
+      },
+      "netCredits": "36393733480"
+    },
+    {
+      "name": "create-blog",
+      "passed": true,
+      "result": {
+        "id": "3VHFfRs2188ALyj4vCJyDbJFgjQgCfhXTXu3BeQirDHh",
+        "present": true
+      },
+      "netCredits": "0"
+    },
+    {
+      "name": "create-post",
+      "passed": true,
+      "result": {
+        "id": "ckAnQbotbpcPRXBTb873Bzod65rEFjPis91ojUoZ94r",
+        "present": true
+      },
+      "netCredits": "169919540"
+    },
+    {
+      "name": "create-comment",
+      "passed": true,
+      "result": {
+        "id": "FtNJ7m7v2XoZSAHvFaujLWb5VvM5HHpK3qETYH1secpq",
+        "present": true
+      },
+      "netCredits": "87363910"
+    },
+    {
+      "name": "create-follow",
+      "passed": true,
+      "result": {
+        "id": "5zygzajfA8Ga2SXvTAZ428KwT1wvGm4V7YJB5pCJziX6",
+        "present": true
+      },
+      "netCredits": "65961130"
+    },
+    {
+      "name": "owner-deletes-blog-with-post-comment-follow",
+      "passed": true,
+      "result": {
+        "blogAbsent": true,
+        "postPresent": true,
+        "commentPresent": true
+      },
+      "netCredits": "-48203094"
+    },
+    {
+      "name": "author-retracts-orphan-post",
+      "passed": true,
+      "result": {
+        "id": "ckAnQbotbpcPRXBTb873Bzod65rEFjPis91ojUoZ94r",
+        "deleted": true,
+        "blogIdAbsent": true,
+        "bodyAbsent": true,
+        "liveAbsent": true
+      },
+      "netCredits": "-72244330"
+    },
+    {
+      "name": "create-moderation-blog",
+      "passed": true,
+      "result": {
+        "id": "99KuKmX6Znc8UmXdPCQBiVo1J57YEjHwqNAGKZYEtxLW",
+        "present": true
+      },
+      "netCredits": "134484240"
+    },
+    {
+      "name": "create-fresh-post",
+      "passed": true,
+      "result": {
+        "id": "JAgL8SCgX8Tq7Es82haHA4bgXjYYLKkZHhbFnSxLw7Cj",
+        "present": true
+      },
+      "netCredits": "170057380"
+    },
+    {
+      "name": "moderator-removes-fresh-post",
+      "passed": true,
+      "result": {
+        "absent": true,
+        "removals": [
+          {
+            "documentId": "JAgL8SCgX8Tq7Es82haHA4bgXjYYLKkZHhbFnSxLw7Cj",
+            "documentOwnerId": "9w8zNg4goD4wgy2ACFCsq4pNUDdqCu93e693LK2AnYvg",
+            "moderatorId": "77C7DHqEPNfpfhR1ytYeXVJYmxFKFnBa6KBcMjf2KSKQ",
+            "reason": {
+              "code": null,
+              "text": "Throwaway proof"
+            },
+            "removedAt": "1792276270571",
+            "documentHash": "53a3c409a25392b8b0da0ad709e2f23ed379512a9549effd2d7a615e2d07e5f3",
+            "keptFields": {
+              "$createdAt": "1792276268711",
+              "blogId": "99KuKmX6Znc8UmXdPCQBiVo1J57YEjHwqNAGKZYEtxLW"
+            }
+          }
+        ]
+      },
+      "netCredits": "15358780"
+    }
+  ],
+  "contractId": "5F9AQMA8U3QdQNjXJx7WYbZtr7qaid6mBwuJY4sMkohV",
+  "makerNonceAfter": "34",
+  "complete": true,
+  "contractSha256": "001b936c1244a82ac24bf0e672839fb95786019c16bb07e0c8129272dad326b3",
+  "serializedBytes": 8980,
+  "settlementProof": {
+    "note": "Earlier scratch cut with identical moderation rules; only deleteWithin shortened to five seconds. No live three-approval execution.",
+    "contractId": "BzsLLtHuWvBMHJTCU3gr6iWs1zHC867fReKyFCoM6E9F",
+    "steps": [
+      {
+        "name": "register-five-second-variant",
+        "passed": true,
+        "result": {
+          "id": "BzsLLtHuWvBMHJTCU3gr6iWs1zHC867fReKyFCoM6E9F",
+          "signedBytes": 9005,
+          "short": true,
+          "registered": true
+        },
+        "netCredits": "36392824060"
+      },
+      {
+        "name": "short-post",
+        "passed": true,
+        "result": {
+          "id": "4HDkpfQ9CprABL65b71pNPno8FyBhm596WzM8dGsZPVv",
+          "present": true
+        },
+        "netCredits": "169851940"
+      },
+      {
+        "name": "old-post-refuses-single-moderator-delete",
+        "passed": true,
+        "result": {
+          "error": "Document 4HDkpfQ9CprABL65b71pNPno8FyBhm596WzM8dGsZPVv on contract BzsLLtHuWvBMHJTCU3gr6iWs1zHC867fReKyFCoM6E9F was last modified at 1792275905104 and could be deleted by moderators for 5 seconds after that, which block time 1792275914608 is past",
+          "present": true,
+          "createdAt": 1792275905104,
+          "chainTime": "1792275914608"
+        },
+        "netCredits": "0"
+      },
+      {
+        "name": "settled-path-requires-elected-team",
+        "passed": true,
+        "result": {
+          "error": "Contract BzsLLtHuWvBMHJTCU3gr6iWs1zHC867fReKyFCoM6E9F has no seated moderation team, and only the members of one approve the deletion of a settled document",
+          "present": true
+        },
+        "netCredits": "0"
+      }
+    ]
+  }
+}

@@ -307,6 +307,8 @@ export const CONSTRAINT_CASES = {
     // delete is a tombstone (`tombstoneIsBlank`), which `hasBody` admits; `publishedAt` may run
     // at most 10 minutes past `$updatedAt` (`publishedNotAhead`), so a backdated import is fine.
     ['blogPost: a live post with comments on', 'blogPost', { ...baseBlogPost(), commentsEnabled: true }, null],
+    ['blogPost: live post requires a blog', 'blogPost', drop(baseBlogPost(), 'blogId'), 'hasBody'],
+    ['blogPost: orphan tombstone', 'blogPost', drop(blogTombstone(), 'blogId'), null, { replace: true }],
     ['blogPost: a live post with no title', 'blogPost', drop(baseBlogPost(), 'title'), 'hasBody'],
     ['blogPost: a tombstone (deleted, comments off, nothing else)', 'blogPost', blogTombstone({ publishedAt: BLOG_NOW }), null, { replace: true }],
     ['blogPost: a tombstone keeping its title', 'blogPost', blogTombstone({ title: 'still here' }), 'tombstoneIsBlank', { replace: true }],
@@ -676,7 +678,10 @@ const featureDeleteCases = (prefix, base) => [
   ...[1, 2, 3].map((status) => [`${prefix}: withdrawing a report resolved with status ${status}`, 'report', { ...base(), status }, 'pending']),
   [`${prefix}: withdrawing a resolved report that carries a resolution`, 'report', { ...base(), status: 2, resolution: 'content removed' }, 'pending'],
 ];
-DELETE_CASES['yappr-blog-contract.json'] = featureDeleteCases('blogReport', baseBlogReport);
+DELETE_CASES['yappr-blog-contract.json'] = [
+  ['blog: author deletion has no delete constraint', 'blog', { name: 'Delete my blog' }, null],
+  ...featureDeleteCases('blogReport', baseBlogReport),
+];
 DELETE_CASES['yappr-storefront-contract.json'] = featureDeleteCases('storeReport', baseStoreReport);
 
 /**

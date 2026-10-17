@@ -53,7 +53,7 @@
  * wrote since it began (scripts/surface-cleanup.mjs cleanBlog): comments and
  * follows by their owners' deletes, posts and the draft by the author's
  * tombstone, and the run's blogs by the `--moderator`'s removal (a blog's
- * owner cannot delete it; on sakura pass `--moderator maker`, the interim).
+ * owner may delete it on v9; the older cuts need a moderator).
  * Whatever cannot go is printed as a leftover. `--keep-content` skips the
  * cleanup; `scripts/clean-test-content.mjs --surface blog` does it later.
  */
@@ -237,10 +237,27 @@ async function caseB7Edit(ctx) {
 }
 
 async function caseB8Permanence(ctx) {
-  const { battery, author } = ctx;
-  console.log('\n--- b8. permanence: posts and blogs cannot be deleted (an author tombstones a post, b22) ---');
-  for (const [label, docType, id] of [['b8a blogPost delete is rejected', 'blogPost', ctx.post2], ['b8b blog delete is rejected', 'blog', ctx.blogId]]) {
-    await battery.probeDelete(label, DELETE_FORBIDDEN, author, docType, id);
+  const { battery, author, run } = ctx;
+  console.log('\n--- b8. posts stay permanent; an owner may delete their blog ---');
+  await battery.probeDelete('b8a blogPost delete is rejected', DELETE_FORBIDDEN, author, 'blogPost', ctx.post2);
+  const registered = (await battery.sdk.contracts.fetch(ctx.contractId)).toJSON();
+  if (registered.documentSchemas.blog.canBeDeleted === false) {
+    await battery.probeDelete('b8b older cut: blog delete is rejected', DELETE_FORBIDDEN, author, 'blog', ctx.blogId);
+    return;
+  }
+  // Separate fixtures: later cases still need the main blog.
+  const blog = await battery.probeCreate('b8b deletable blog created', null, author, 'blog', blogData(`b8-${run}`));
+  if (!blog.ok) return;
+  const post = await battery.probeCreate('b8c post on deletable blog created', null, author, 'blogPost',
+    { ...postData({ blogId: id32(blog.id), title: `Retained ${run}`, slug: `retained-${run}` }), live: true });
+  await battery.probeDelete('b8d owner deletes a blog with posts', null, author, 'blog', blog.id);
+  battery.check('b8e blog is absent and its post stays stored',
+    !await battery.fetchDocument('blog', blog.id) && post.ok && Boolean(await battery.fetchDocument('blogPost', post.id)));
+  if (post.ok) {
+    const stored = await battery.fetchDocument('blogPost', post.id);
+    await battery.probeReplace('b8f author can retract a post after its blog is deleted', null, author, 'blogPost', post.id,
+      { deleted: true, commentsEnabled: false, slug: `retained-${run}`, publishedAt: Number(stored.toObject().publishedAt) },
+      await battery.revisionOf('blogPost', post.id));
   }
 }
 
@@ -503,10 +520,22 @@ function selfTestV7() {
   const moderators = CONTRACT.config?.moderation?.moderators ?? {};
   const fee = (docType) => actionFeeFor(docType, SCHEMAS)?.moderators;
   return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v9)`, [
+    ['only tombstones may omit blogId after parent deletion', !SCHEMAS.blogPost.required.includes('blogId') && SCHEMAS.blogPost.propertyConstraints.hasBody.anyOf[1].allOf.some((rule) => rule.present === 'blogId')],
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (comments cost no YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['blog and blogPost creates declare an 80M moderators fee', fee('blog') === 80_000_000n && fee('blogPost') === 80_000_000n],
     ['blogComment creates declare a 16M moderators fee', fee('blogComment') === 16_000_000n],
+    ['blog owners may delete their blog; every reference to it admits deletion',
+      SCHEMAS.blog.canBeDeleted === true && [SCHEMAS.blogPost.properties.blogId, SCHEMAS.blogFollow.properties.blogId, SCHEMAS.report.properties.blogId].every((p) => p.refersTo.type === 'deletableDocument')],
+    ['posts and comments mirror social settled deletion: 7 days, leader and three approvals, recorded removals',
+      ['blogPost', 'blogComment'].every((name) => {
+        const a = SCHEMAS[name].moderatorAbilities;
+        return a.delete === true && a.deleteWithin === 604800 && a.deleteKeepsRecord !== false
+          && a.deleteSettled.leader === true && a.deleteSettled.approvals === 3;
+      })],
+    ['removal records keep the parent and creation time',
+      JSON.stringify(SCHEMAS.blogPost.moderatorAbilities.deleteKeepsFields) === '["blogId","$createdAt"]'
+      && JSON.stringify(SCHEMAS.blogComment.moderatorAbilities.deleteKeepsFields) === '["blogPostId","$createdAt"]'],
     ['follows are unpriced', actionFeeFor('blogFollow', SCHEMAS) === null],
     ['blog.timeline indexes [$createdAt]; blogPost.timeline and blogAndTime are keyed on live first and skip a tombstone (v9)',
       JSON.stringify(index('blog', 'timeline')?.properties) === '[{"$createdAt":"asc"}]'
