@@ -26,9 +26,23 @@ export function withoutBlockedActors(notification: Notification, isBlocked: (id:
   return { ...notification, from: kept[0], likers: kept, likerCount };
 }
 
-function withoutSessionBlocks(notifications: Notification[], blockedActors: string[]): Notification[] {
-  if (blockedActors.length === 0) return notifications;
-  const blocked = new Set(blockedActors);
+/**
+ * How long a block made here keeps a fetch that was already running from
+ * bringing the actor back. Longer than any notification fetch takes; after
+ * that the service's own block filter (which also sees blocks lifted on other
+ * devices) and the held re-check decide.
+ */
+const SESSION_EXCLUSION_MS = 5 * 60 * 1000;
+
+interface SessionBlock {
+  actorId: string;
+  until: number;
+}
+
+function withoutSessionBlocks(notifications: Notification[], blockedActors: SessionBlock[]): Notification[] {
+  const now = Date.now();
+  const blocked = new Set(blockedActors.filter(block => block.until > now).map(block => block.actorId));
+  if (blocked.size === 0) return notifications;
   return notifications.flatMap(n => withoutBlockedActors(n, id => blocked.has(id)) ?? []);
 }
 
@@ -76,12 +90,13 @@ interface NotificationState {
   /** The signed-in account the session state below belongs to. */
   viewerId: string | null;
   /**
-   * Actors `viewerId` blocked during this session. A fetch that was already
-   * running when the block landed must not bring them back, so every ingest
-   * filters them (per liker, as {@link withoutBlockedActors}). Not persisted:
-   * each fetch filters blocks itself; this only covers the ones in flight.
+   * Actors `viewerId` just blocked here. A fetch that was already running when
+   * the block landed must not bring them back, so every ingest filters them
+   * (per liker, as {@link withoutBlockedActors}) until `until`. Not persisted
+   * and short-lived: each fetch filters blocks itself; this only covers the
+   * ones in flight, so a block lifted elsewhere isn't held here.
    */
-  blockedActors: string[];
+  blockedActors: SessionBlock[];
 
   // Actions
   setNotifications: (notifications: Notification[]) => void;
@@ -167,9 +182,10 @@ export const useNotificationStore = create<NotificationState>()(
       removeFromActor: (actorId, viewerId) => {
         const state = get();
         if (state.viewerId !== viewerId) return;
+        const until = Date.now() + SESSION_EXCLUSION_MS;
         set({
-          notifications: withoutSessionBlocks(state.notifications, [actorId]),
-          blockedActors: state.blockedActors.includes(actorId) ? state.blockedActors : [...state.blockedActors, actorId],
+          notifications: withoutSessionBlocks(state.notifications, [{ actorId, until }]),
+          blockedActors: [...state.blockedActors.filter(block => block.actorId !== actorId && block.until > Date.now()), { actorId, until }],
         });
       },
 
@@ -188,7 +204,9 @@ export const useNotificationStore = create<NotificationState>()(
 
       allowActor: (actorId, viewerId) => {
         const { blockedActors, viewerId: current } = get();
-        if (current === viewerId && blockedActors.includes(actorId)) set({ blockedActors: blockedActors.filter(id => id !== actorId) });
+        if (current === viewerId && blockedActors.some(block => block.actorId === actorId)) {
+          set({ blockedActors: blockedActors.filter(block => block.actorId !== actorId) });
+        }
       },
 
       setFilter: (filter) => set({ filter }),

@@ -175,7 +175,7 @@ describe('blocks during this session', () => {
 
     store().removeFromActor('from-x', 'account-b')
     store().allowActor('from-x', 'account-a')
-    expect(store().blockedActors).toEqual(['from-x'])
+    expect(store().blockedActors.map(block => block.actorId)).toEqual(['from-x'])
   })
 
   it('are forgotten when the store is cleared', () => {
@@ -231,5 +231,22 @@ describe('an own block lifted while a followed block list also blocks', () => {
     // The list is unfollowed: the next fetch brings X's new notification.
     store().addNotifications([notification('x', 'follow', 1)])
     expect(store().notifications.map(n => n.id)).toEqual(['x'])
+  })
+})
+
+describe('a session block lifted on another device', () => {
+  it('stops filtering once its in-flight window has passed, so the actor\'s new notifications come through', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [], viewerId: 'viewer' })
+    store().removeFromActor('from-x', 'viewer')
+    // A fetch already in flight when the block landed is still filtered.
+    store().addNotifications([notification('x1', 'follow', 1)].map(n => ({ ...n, from: { id: 'from-x' } as Notification['from'] })))
+    expect(store().notifications).toEqual([])
+
+    // Unblocked elsewhere; the block cache refreshes and the service returns X again.
+    now.mockReturnValue(1_000_000 + 5 * 60 * 1000 + 1)
+    store().addNotifications([{ ...notification('x2', 'reply', 2), from: { id: 'from-x' } as Notification['from'] }])
+    expect(store().notifications.map(n => n.id)).toEqual(['x2'])
+    now.mockRestore()
   })
 })
