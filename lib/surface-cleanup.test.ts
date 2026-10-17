@@ -107,6 +107,17 @@ describe('what a surface cleanup plans', () => {
     expect(report.leftovers).toEqual([expect.objectContaining({ type: 'poll', id: b58(2), name: 'Withdrawn x?' })])
   })
 
+  it('blog v9: deletes our comment on a third party whose only post is a tombstone', async () => {
+    const battery = fakeBattery({
+      blogPost: [{ $id: id(2), $ownerId: id(99), $createdAt: 6000n, deleted: true }],
+      blogComment: [{ $id: id(4), $ownerId: id(7), $createdAt: 6000n, 'blogPostId.$ownerId': id(99) }],
+    }, true)
+    const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false })
+    expect(report.found.blogComment).toBe(1)
+    expect(report.done.blogComment).toBe(1)
+    expect(report.leftovers).toEqual([])
+  })
+
   it('blog v9: finds an orphaned post and plans owner deletion of a surviving blog', async () => {
     const battery = fakeBattery({
       blog: [{ $id: id(1), $ownerId: id(7), $createdAt: 6000n, name: 'Surviving blog' }],

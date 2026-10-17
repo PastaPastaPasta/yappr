@@ -209,14 +209,16 @@ export async function cleanBlog({ battery, contractId, owners, since, moderator 
   // The timeline also finds posts whose owner has already deleted the blog.
   const timeline = await queryEvery(battery, 'blogPost', [...(v9 ? [['live', '==', true]] : []), ['$createdAt', '>', 0]], [...(v9 ? [['live', 'asc']] : []), ['$createdAt', 'asc']]);
   const posts = timeline;
-  // blogComment keeps no owner index, so the owners' comments are found through every post author's
-  // postOwnerAndTime from `since`, then kept by owner below: an owner's comment on anyone's post, not only
-  // on the owners' own. The authors come from the whole blogPost timeline, read to the end: posts outlive a
-  // moderator's removal of their blog, so the blogs alone would miss them. (discussedRecent is a timeRange
-  // index, which document queries do not read.)
-  const authors = new Set(timeline.map((row) => normalizeId(row.$ownerId)));
-  for (const who of owners) authors.add(who.ownerId);
-  const comments = await readEach([...authors], (author) => queryAll(battery, 'blogComment', [['blogPostId.$ownerId', '==', author], ['$createdAt', '>=', since]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]));
+  // v9 comments have their own owner index: neither a deleted blog nor a
+  // third-party author's last post being retracted can hide our fixtures.
+  let comments;
+  if (v9) {
+    comments = await readEach(owners, (who) => queryAll(battery, 'blogComment', [['$ownerId', '==', who.ownerId], ['$createdAt', '>=', since]], [['$ownerId', 'asc'], ['$createdAt', 'asc']]));
+  } else {
+    const authors = new Set(timeline.map((row) => normalizeId(row.$ownerId)));
+    for (const who of owners) authors.add(who.ownerId);
+    comments = await readEach([...authors], (author) => queryAll(battery, 'blogComment', [['blogPostId.$ownerId', '==', author], ['$createdAt', '>=', since]], [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'asc']]));
+  }
   const follows = await readEach(owners, (who) => queryAll(battery, 'blogFollow', [['$ownerId', '==', who.ownerId]], [['$ownerId', 'asc'], ['blogId', 'asc']]));
   const scope = { owners: ownerSet(owners), since };
   const targets = {

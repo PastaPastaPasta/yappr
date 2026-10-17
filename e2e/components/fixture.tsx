@@ -4,6 +4,7 @@ import { PrivateFeedSettings } from '@/components/settings/private-feed-settings
 import { snapshot } from './private-feed-mocks'
 import { VariantEditorFixture } from './variant-editor-fixture'
 import { LiveThreadStatusFixture, ThreadStatusFixture } from './thread-status-fixture'
+import { BlogManagementFixture } from './blog-management-fixture'
 import { BlogEditorFixture } from './blog-editor-fixture'
 
 declare global {
@@ -19,7 +20,9 @@ if (!root) throw new Error('Component fixture root is missing')
 const fixture = new URLSearchParams(window.location.search).get('fixture')
 const threadState = fixture?.startsWith('thread-') ? fixture.slice('thread-'.length) : null
 createRoot(root).render(
-  fixture === 'blog-editor' ? (
+  fixture === 'blog-management' ? (
+    <BlogManagementFixture />
+  ) : fixture === 'blog-editor' ? (
     <BlogEditorFixture />
   ) : fixture === 'variant-editor' || fixture === 'variant-editor-legacy' ? (
     <VariantEditorFixture legacy={fixture === 'variant-editor-legacy'} />

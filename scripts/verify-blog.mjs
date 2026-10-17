@@ -35,7 +35,7 @@
  *     counts and "most followed" `followers` (b4, b5b, b11: the same queries);
  *     "most discussed" is the 72h `discussedRecent` window (b5a), "trending"
  *     the 72h `followersTrend` window (b6, b11d);
- *   - `blogPost.ownerAndTime`, `blogComment.ownerAndTime`, `blogFollow.following`
+ *   - `blogFollow.following` (owner indexes are restored by the 2026-10-17 amendments)
  *     and the all-time comment ranking are gone (the self-test pins it);
  *   - an author deletes a post with a TOMBSTONE (b22): `deleted`, comments off,
  *     every content field absent, blogId/slug/publishedAt kept; `deleted` is
@@ -520,6 +520,7 @@ function selfTestV7() {
   const moderators = CONTRACT.config?.moderation?.moderators ?? {};
   const fee = (docType) => actionFeeFor(docType, SCHEMAS)?.moderators;
   return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v9)`, [
+    ['author management and cleanup have independent owner indexes', JSON.stringify(index('blogPost', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"live":"asc"},{"$createdAt":"asc"}]' && JSON.stringify(index('blogComment', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"$createdAt":"asc"}]'],
     ['only tombstones may omit blogId after parent deletion', !SCHEMAS.blogPost.required.includes('blogId') && SCHEMAS.blogPost.propertyConstraints.hasBody.anyOf[1].allOf.some((rule) => rule.present === 'blogId')],
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (comments cost no YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
@@ -549,8 +550,8 @@ function selfTestV7() {
       && JSON.stringify(SCHEMAS.report.deleteConstraints) === '{"pending":{"absent":"status"}}' && SCHEMAS.report.ttl === 7_776_000 && fee('report') === 50_000_000n
       && JSON.stringify(SCHEMAS.report.moderatorAbilities?.changeFields) === '["status","resolution"]'
       && JSON.stringify(moderators.moderatedDocumentTypes?.report) === '["deleteDocuments","changeDocumentFields"]'],
-    ['the dropped indexes are gone (blogPost/blogComment ownerAndTime, blogFollow following, the count-only twins)',
-      !indexNames('blogPost').includes('ownerAndTime') && !indexNames('blogComment').includes('ownerAndTime') && !indexNames('blogComment').includes('commentCount')
+    ['the unused following/count-only indexes stay gone',
+      !indexNames('blogComment').includes('commentCount')
       && !indexNames('blogFollow').includes('following') && !indexNames('blogFollow').includes('followerCount') && !indexNames('blogFollow').includes('followersByDay')],
     ['comment counts ride postAndTime (rangeCountable, b4)', index('blogComment', 'postAndTime')?.rangeCountable === true],
     ['follower counts and "most followed" ride followers (rangeCountable, ranked at blogId; b4c, b5b)', index('blogFollow', 'followers')?.rangeCountable === true && index('blogFollow', 'followers')?.rankedCountable?.at === 'blogId'],

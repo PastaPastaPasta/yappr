@@ -5,6 +5,8 @@ import { PlusIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { blogService, blogPostService } from '@/lib/services'
 import type { Blog } from '@/lib/types'
+import { blogIsV9 } from '@/lib/constants'
+import { MyBlogPosts } from './my-blog-posts'
 import { isBlogPostTombstone } from '@/lib/blog/content-utils'
 import { CreateBlogModal } from './create-blog-modal'
 
@@ -78,6 +80,8 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
           ))}
         </div>
       )}
+
+      {blogIsV9() && <MyBlogPosts key={ownerId} ownerId={ownerId} />}
 
       <CreateBlogModal
         open={openCreate}

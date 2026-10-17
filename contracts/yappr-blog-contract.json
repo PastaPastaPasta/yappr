@@ -186,6 +186,21 @@
             }
           ],
           "skipIfAbsent": true
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "live": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": true
         }
       ],
       "required": [
@@ -503,6 +518,17 @@
             "step": 86400,
             "ttl": 604800
           }
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
         }
       ],
       "required": [

@@ -1,6 +1,6 @@
 {
   "network": "dash-devnet-sakura",
-  "at": "2026-10-17T22:30:10.673Z",
+  "at": "2026-10-17T22:52:40.253Z",
   "actors": [
     {
       "persona": 79,
@@ -21,48 +21,48 @@
       "name": "register-amended-v9",
       "passed": true,
       "result": {
-        "id": "5F9AQMA8U3QdQNjXJx7WYbZtr7qaid6mBwuJY4sMkohV",
-        "signedBytes": 9040,
+        "id": "36Fk9xCJqwsSVVd6UYYFP6rWN9SFuzaff55ipJRcR844",
+        "signedBytes": 9213,
         "short": false,
         "registered": true
       },
-      "netCredits": "36393733480"
+      "netCredits": "38405323540"
     },
     {
       "name": "create-blog",
       "passed": true,
       "result": {
-        "id": "3VHFfRs2188ALyj4vCJyDbJFgjQgCfhXTXu3BeQirDHh",
+        "id": "6dmx2PzUsi8qqk9RZGsW71KpjxDbs6RFjDsuAq93pugf",
         "present": true
       },
-      "netCredits": "0"
+      "netCredits": "149471600"
     },
     {
       "name": "create-post",
       "passed": true,
       "result": {
-        "id": "ckAnQbotbpcPRXBTb873Bzod65rEFjPis91ojUoZ94r",
+        "id": "ALiU9YrtSxbS15Two9bkCH7CWS3wjx2jBKRNkGsuQrQv",
         "present": true
       },
-      "netCredits": "169919540"
+      "netCredits": "204108800"
     },
     {
       "name": "create-comment",
       "passed": true,
       "result": {
-        "id": "FtNJ7m7v2XoZSAHvFaujLWb5VvM5HHpK3qETYH1secpq",
+        "id": "54JsPWxxD5k8hXcxLhj81sg6kXitvjNneLfALzVv5FyQ",
         "present": true
       },
-      "netCredits": "87363910"
+      "netCredits": "109573030"
     },
     {
       "name": "create-follow",
       "passed": true,
       "result": {
-        "id": "5zygzajfA8Ga2SXvTAZ428KwT1wvGm4V7YJB5pCJziX6",
+        "id": "ES67Qz8RnRwxUxfU9USePFM7fB46km6pRRak2KKgJfAu",
         "present": true
       },
-      "netCredits": "65961130"
+      "netCredits": "66011130"
     },
     {
       "name": "owner-deletes-blog-with-post-comment-follow",
@@ -72,37 +72,57 @@
         "postPresent": true,
         "commentPresent": true
       },
-      "netCredits": "-48203094"
+      "netCredits": "-48244974"
+    },
+    {
+      "name": "owner-lists-retained-post-without-parent",
+      "passed": true,
+      "result": {
+        "ids": [
+          "ALiU9YrtSxbS15Two9bkCH7CWS3wjx2jBKRNkGsuQrQv"
+        ]
+      },
+      "netCredits": "0"
     },
     {
       "name": "author-retracts-orphan-post",
       "passed": true,
       "result": {
-        "id": "ckAnQbotbpcPRXBTb873Bzod65rEFjPis91ojUoZ94r",
+        "id": "ALiU9YrtSxbS15Two9bkCH7CWS3wjx2jBKRNkGsuQrQv",
         "deleted": true,
         "blogIdAbsent": true,
         "bodyAbsent": true,
         "liveAbsent": true
       },
-      "netCredits": "-72244330"
+      "netCredits": "-105123710"
+    },
+    {
+      "name": "reader-lists-comment-after-third-party-post-retraction",
+      "passed": true,
+      "result": {
+        "ids": [
+          "54JsPWxxD5k8hXcxLhj81sg6kXitvjNneLfALzVv5FyQ"
+        ]
+      },
+      "netCredits": "0"
     },
     {
       "name": "create-moderation-blog",
       "passed": true,
       "result": {
-        "id": "99KuKmX6Znc8UmXdPCQBiVo1J57YEjHwqNAGKZYEtxLW",
+        "id": "5LctiRdoXNXMiHrkeVZamB4mgudG6qqYBiLcShHjP5ga",
         "present": true
       },
-      "netCredits": "134484240"
+      "netCredits": "134376160"
     },
     {
       "name": "create-fresh-post",
       "passed": true,
       "result": {
-        "id": "JAgL8SCgX8Tq7Es82haHA4bgXjYYLKkZHhbFnSxLw7Cj",
+        "id": "7mVtG4R4ZMTZ3veA95Y7fai8zDvX4HB6tPUGExyMZaVj",
         "present": true
       },
-      "netCredits": "170057380"
+      "netCredits": "204246600"
     },
     {
       "name": "moderator-removes-fresh-post",
@@ -111,30 +131,30 @@
         "absent": true,
         "removals": [
           {
-            "documentId": "JAgL8SCgX8Tq7Es82haHA4bgXjYYLKkZHhbFnSxLw7Cj",
+            "documentId": "7mVtG4R4ZMTZ3veA95Y7fai8zDvX4HB6tPUGExyMZaVj",
             "documentOwnerId": "9w8zNg4goD4wgy2ACFCsq4pNUDdqCu93e693LK2AnYvg",
             "moderatorId": "77C7DHqEPNfpfhR1ytYeXVJYmxFKFnBa6KBcMjf2KSKQ",
             "reason": {
               "code": null,
               "text": "Throwaway proof"
             },
-            "removedAt": "1792276270571",
-            "documentHash": "53a3c409a25392b8b0da0ad709e2f23ed379512a9549effd2d7a615e2d07e5f3",
+            "removedAt": "1792277585211",
+            "documentHash": "17253dba7f4936fff5f812ef063913dddbba512a4847440767b0916be407329c",
             "keptFields": {
-              "$createdAt": "1792276268711",
-              "blogId": "99KuKmX6Znc8UmXdPCQBiVo1J57YEjHwqNAGKZYEtxLW"
+              "$createdAt": "1792277583296",
+              "blogId": "5LctiRdoXNXMiHrkeVZamB4mgudG6qqYBiLcShHjP5ga"
             }
           }
         ]
       },
-      "netCredits": "15358780"
+      "netCredits": "16177220"
     }
   ],
-  "contractId": "5F9AQMA8U3QdQNjXJx7WYbZtr7qaid6mBwuJY4sMkohV",
+  "contractId": "36Fk9xCJqwsSVVd6UYYFP6rWN9SFuzaff55ipJRcR844",
   "makerNonceAfter": "34",
   "complete": true,
-  "contractSha256": "001b936c1244a82ac24bf0e672839fb95786019c16bb07e0c8129272dad326b3",
-  "serializedBytes": 8980,
+  "contractSha256": "a03012221e543b850d7524b27148e6b9c2b84fae3a0c291426e22de30d6dccef",
+  "serializedBytes": 9153,
   "settlementProof": {
     "note": "Earlier scratch cut with identical moderation rules; only deleteWithin shortened to five seconds. No live three-approval execution.",
     "contractId": "BzsLLtHuWvBMHJTCU3gr6iWs1zHC867fReKyFCoM6E9F",
