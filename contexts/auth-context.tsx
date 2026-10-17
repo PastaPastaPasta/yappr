@@ -5,7 +5,7 @@ import { scopedKey } from '@/lib/storage-scope'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { usePathname, useRouter } from 'next/navigation'
-import { PlatformAuthController, clearSensitiveBytes, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
+import { PlatformAuthController, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { currentRoute, dpnsRegisterHref } from '@/lib/auth/return-to'
 import { keyNetwork } from '@/lib/constants'
@@ -14,7 +14,7 @@ import { useUsernameModal } from '@/hooks/use-username-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
-import { serialQueue } from '@/lib/app-connect/serial-queue'
+import { createWalletSignIn } from '@/lib/app-connect/wallet-sign-in'
 
 export interface AuthUser {
   identityId: string
@@ -77,14 +77,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => controller.subscribe(setControllerState), [controller])
 
-  /**
-   * Wallet sign-ins and renewals, one at a time: the key ring holds one grant
-   * per network, so an earlier sign-in's grant can never land over a later one's.
-   */
-  const walletQueue = useMemo(serialQueue, [])
-
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */
   const revokeLogout = useRef<Promise<void> | null>(null)
+
+  /** Wallet sign-ins and renewals, one at a time and bound to the session they began on (#734). */
+  const walletSignIn = useMemo(() => createWalletSignIn({
+    controller,
+    sessions: appConnectSessions,
+    settled: async () => { await revokeLogout.current },
+  }), [controller])
   /**
    * A revoke a renewal under way held back, with the session it was found on;
    * settled once that renewal ends, and dropped if another session replaced that one.
@@ -167,49 +168,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await applyIntent(result.intent)
   }, [applyIntent, controller])
 
-  const loginWithAppConnect = useCallback((grant: AppConnectGrant) => walletQueue(async () => {
-    await revokeLogout.current
-    // Taken before the grant is stored: a sign-in or sign-out while it is
-    // stored or while the identity is read supersedes this one.
-    const since = controller.sessionEpoch()
-    const session = await appConnectSessions.adopt(grant)
-    try {
-      // Bound to this grant and to the session it started on: if a logout or any
-      // other sign-in takes the session meanwhile, this sign-in stores nothing (#734).
-      const result = await controller.loginWithKeyRing(session.identityId, {
-        since,
-        stillCurrent: () => appConnectSessions.current(session.identityId) !== null,
-      })
-      await applyIntent(result.intent)
-      return result.intent
-    } catch (error) {
-      // The grant may be the very one a winning sign-in for this identity now uses
-      // (adopt hands back the newer stored grant): only another identity's session drops it.
-      if (controller.getState().user?.identityId !== session.identityId) await appConnectSessions.discard(session)
-      throw error
-    }
-  }), [applyIntent, controller, walletQueue])
+  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
+    const result = await walletSignIn.signIn(grant)
+    await applyIntent(result.intent)
+    return result.intent
+  }, [applyIntent, walletSignIn])
 
   const renewWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
     // A revocation sign-out may still be running: let it finish first, so it
     // cannot clear the grant adopted here.
     await revokeLogout.current
-    const identityId = controller.getState().user?.identityId
-    if (identityId === grant.identityId) {
-      await walletQueue(() => appConnectSessions.adopt(grant))
+    if (controller.getState().user) {
+      // Only the signed-in identity's own renewal, and only while that session stands.
+      await walletSignIn.renew(grant)
       useAppConnectStatus.getState().dismissRenewRequired()
       return
-    }
-    if (identityId) {
-      for (const key of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
-      throw new Error('The renewal came from another account')
     }
     // Signed out meanwhile: the renewal signs back in, and a sign-in prompt that
     // sign-out opened has nothing left to ask.
     await loginWithAppConnect(grant)
     useAppConnectStatus.getState().dismissSignedOut()
     useLoginModal.getState().close()
-  }, [controller, loginWithAppConnect, walletQueue])
+  }, [controller, loginWithAppConnect, walletSignIn])
 
   const logout = useCallback(async () => {
     const result = await controller.logout()
