@@ -8,7 +8,7 @@ import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { isBareRepost, quotedTargetIdOf } from '@/lib/feed/quote-reposts'
 import { hasFlatThreads, referencesMayDangle, repliesOutliveTheirParent, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
 import { deletedReplyStubs, unloadedReplyParents } from '@/lib/feed/deleted-reply-stubs'
-import { assembleFlatThread, buildReplyTree, byCreatedAtAsc, MAX_NESTED_DEPTH } from '@/lib/feed/reply-thread'
+import { assembleFlatThread, authorThreadDepthFirst, buildReplyTree, byCreatedAtAsc, MAX_NESTED_DEPTH } from '@/lib/feed/reply-thread'
 import { provenAbsent } from '@/lib/feed/prove-absent'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
@@ -653,6 +653,7 @@ async function loadV2Thread(
   const mainAuthorId = loadedPost.author.id
   const authorThreadChain: Reply[] = []
   const authorThreadIds = new Set<string>([loadedPost.id])
+  const authorChildrenOf = new Map<string, Reply[]>()
 
   // Helper to recursively fetch author's thread continuation
   const fetchAuthorThreadContinuation = async (parentIds: string[]): Promise<Reply[]> => {
@@ -661,12 +662,15 @@ async function loadV2Thread(
     const authorContinuations: Reply[] = []
 
     nestedMap.forEach((nested, parentId) => {
+      const authorChildren: Reply[] = []
       for (const reply of nested) {
-        if (reply.author.id === mainAuthorId && authorThreadIds.has(parentId)) {
+        if (reply.author.id === mainAuthorId && authorThreadIds.has(parentId) && !authorThreadIds.has(reply.id)) {
           authorContinuations.push(reply)
+          authorChildren.push(reply)
           authorThreadIds.add(reply.id)
         }
       }
+      authorChildrenOf.set(parentId, authorChildren)
     })
     return authorContinuations
   }
@@ -702,7 +706,8 @@ async function loadV2Thread(
     ? await replyService.getNestedReplies(allIdsForNested)
     : new Map<string, Reply[]>()
 
-  const replyThreads = buildReplyTree(authorThreadChain, otherDirectReplies, nestedRepliesMap)
+  const orderedAuthorThread = authorThreadDepthFirst(mainAuthorId, directReplies, authorChildrenOf)
+  const replyThreads = buildReplyTree(orderedAuthorThread, otherDirectReplies, nestedRepliesMap)
   const replies = [
     ...directReplies,
     ...authorThreadChain.filter(r => !directReplies.some(d => d.id === r.id)),

@@ -4,6 +4,21 @@ import { pruneHiddenTombstones } from './hidden-tombstones'
 
 export const byCreatedAtAsc = (a: Reply, b: Reply) => a.createdAt.getTime() - b.createdAt.getTime()
 
+/** Order the author's connected continuations from their discovered parent/child links. */
+export function authorThreadDepthFirst(authorId: string, directReplies: Reply[], childrenOf: Map<string, Reply[]>): Reply[] {
+  const chain: Reply[] = []
+  const seen = new Set<string>()
+  const stack = directReplies.filter((reply) => reply.author.id === authorId).sort(byCreatedAtAsc).reverse()
+  for (let reply = stack.pop(); reply !== undefined; reply = stack.pop()) {
+    if (seen.has(reply.id)) continue
+    chain.push(reply)
+    seen.add(reply.id)
+    stack.push(...(childrenOf.get(reply.id) ?? [])
+      .filter((child) => child.author.id === authorId).sort(byCreatedAtAsc).reverse())
+  }
+  return chain
+}
+
 /**
  * Nesting levels rendered inline below a top-level reply. Its children (level 1)
  * indent once and level 2 renders flattened at that same indent; anything deeper
@@ -134,15 +149,8 @@ export function assembleFlatThread(mainPost: Post, allReplies: Reply[]): ReplyTh
 
   // Depth-first, oldest branch first: finish each continuation before a
   // later direct reply from the author, matching mobile's reading order.
-  const authorThreadChain: Reply[] = []
-  const authorThreadIds = new Set<string>()
-  const stack = directReplies.filter((reply) => reply.author.id === mainPost.author.id).reverse()
-  for (let reply = stack.pop(); reply !== undefined; reply = stack.pop()) {
-    if (authorThreadIds.has(reply.id)) continue
-    authorThreadChain.push(reply)
-    authorThreadIds.add(reply.id)
-    stack.push(...(childrenOf.get(reply.id) ?? []).filter((child) => child.author.id === mainPost.author.id).reverse())
-  }
+  const authorThreadChain = authorThreadDepthFirst(mainPost.author.id, directReplies, childrenOf)
+  const authorThreadIds = new Set(authorThreadChain.map((reply) => reply.id))
 
   const otherDirectReplies = directReplies.filter((reply) => !authorThreadIds.has(reply.id))
   return buildReplyTree(authorThreadChain, otherDirectReplies, childrenOf)
