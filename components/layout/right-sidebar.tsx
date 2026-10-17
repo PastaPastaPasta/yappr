@@ -19,7 +19,7 @@ export function RightSidebar() {
   if (!visible) return null
 
   return (
-    <div className="hidden lg:block w-[350px] shrink-0 px-4 py-4 space-y-4 h-[calc(100vh-40px)] sticky top-[40px] overflow-y-auto scrollbar-hide">
+    <div className="hidden lg:block w-[350px] shrink-0 px-4 py-4 space-y-4 h-screen sticky top-0 overflow-y-auto scrollbar-hide">
       <SearchInput />
       <TrendingHashtags />
 

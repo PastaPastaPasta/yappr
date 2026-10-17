@@ -12,7 +12,7 @@
  *   post, because 'hide' deliberately never hides the viewer's own posts.
  */
 import type { Page } from '@playwright/test'
-import { appUrl } from '../fixtures/app'
+import { appUrl, openBuildDetails } from '../fixtures/app'
 import { expect, hasSeedPhrase, NO_SEED_REASON, test } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
 import { reloadUntilVisible } from '../fixtures/eventual'
@@ -40,9 +40,9 @@ test.describe('sensitive content on the real testnet', () => {
     const [expected, topology] = await Promise.all([expectedSocialContractId(), expectedTopology()])
     expect(expected, 'the env file must define NEXT_PUBLIC_YAPPR_CONTRACT_ID').not.toBe('')
 
-    await page.goto(appUrl('/about/'))
+    await openBuildDetails(page)
     await expect(page.getByText(expected, { exact: true })).toBeVisible()
-    await expect(page.getByTestId('about-topology')).toHaveText(topology)
+    await expect(page.getByTestId('build-topology')).toHaveText(topology)
   })
 
   test('a post composed with the sensitive toggle is gated, and Show reveals it', async ({ page, bot }) => {

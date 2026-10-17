@@ -134,7 +134,7 @@ export function storedLabels(labels: readonly string[] | undefined, of: 'blog' |
 
 /** Why one label cannot be stored on the configured cut, or null. v1–v3 separate labels with commas. */
 export function labelProblem(label: string): string | null {
-  return !blogLabelsAreTyped() && label.includes(',') ? 'Labels can\'t contain a comma on this network.' : null
+  return !blogLabelsAreTyped() && label.includes(',') ? 'Labels can\'t contain a comma.' : null
 }
 
 /** Stored labels (a v4 list or a v1–v3 comma-separated string) as the app's list; undefined when there are none. */

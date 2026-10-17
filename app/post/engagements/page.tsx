@@ -390,7 +390,7 @@ function EngagementsPageContent() {
 
   if (!postId) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <p className="text-gray-500">Post not found</p>
       </div>
     )
@@ -574,7 +574,7 @@ function EngagementsPageContent() {
 function EngagementsPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-[calc(100vh-40px)] flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center">
         <Spinner size="md" />
       </div>
     }>
@@ -583,4 +583,4 @@ function EngagementsPage() {
   )
 }
 
-export default withAuth(EngagementsPage)
+export default withAuth(EngagementsPage, { optional: true })

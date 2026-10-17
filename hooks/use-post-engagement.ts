@@ -10,6 +10,7 @@ import { categorizeError, isDuplicateUniqueIndexError, isFrozenBalanceError, isT
 import type { OwnQuote } from '@/lib/feed/quote-reposts'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
+import { readScoped, writeScoped } from '@/lib/storage-scope'
 
 export interface EngagementSnapshot {
   liked: boolean
@@ -26,6 +27,15 @@ function reportSpendError(error: unknown, viewerId: string | undefined, buyReaso
   if (reportBarredWrite(error, viewerId)) return
   if (isFrozenBalanceError(error) || isTokenPausedError(error)) toast.error(categorizeError(error))
   else if (!handleInsufficientYapp(error, buyReason)) toast.error(fallback)
+}
+
+const BOOKMARKS_PUBLIC_NOTED_KEY = 'yappr_bookmarks_public_noted'
+
+/** The first bookmark on this browser also says that bookmarks are public; later ones just confirm. */
+function addedToBookmarksMessage(): string {
+  if (readScoped(BOOKMARKS_PUBLIC_NOTED_KEY) === '1') return 'Added to bookmarks'
+  writeScoped(BOOKMARKS_PUBLIC_NOTED_KEY, '1')
+  return 'Added to bookmarks. Anyone can see your bookmarks.'
 }
 
 /** v10: the viewer's quote or repost of `postId` as the chain has it (null when none, or unreadable). */
@@ -239,7 +249,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       const { bookmarkService } = await import('@/lib/services/bookmark-service')
       const ok = wasBookmarked ? await bookmarkService.removeBookmark(post.id, viewerId) : await bookmarkService.bookmarkPost(post.id, viewerId)
       if (!ok) throw new Error('Bookmark operation failed')
-      toast.success(wasBookmarked ? 'Removed from bookmarks' : 'Added to bookmarks')
+      toast.success(wasBookmarked ? 'Removed from bookmarks' : addedToBookmarksMessage())
     } catch (error) {
       setBookmarked(wasBookmarked)
       logger.error('Bookmark error:', error)

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '@/contexts/auth-context'
-import { scopedKey } from '@/lib/storage-scope'
+import { rememberUsernameSkip } from '@/lib/username-skip'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { useSettingsStore } from '@/lib/store'
 import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
@@ -45,7 +45,7 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
   }, [isOpen, reset])
 
   const handleSkip = () => {
-    sessionStorage.setItem(scopedKey('yappr_skip_dpns'), 'true')
+    if (currentIdentityId) rememberUsernameSkip(currentIdentityId)
     onClose()
     router.push(returnToOrDefault(currentReturnToParam()))
   }
@@ -81,29 +81,17 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
             <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8 max-w-md w-full relative max-h-[90vh] overflow-y-auto">
               {/* Close button */}
               <button
+                aria-label="Close"
                 onClick={handleDismiss}
                 className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
 
-              <h1 className="text-2xl font-bold text-center mb-2">Register Username</h1>
+              <h1 className="text-2xl font-bold text-center mb-2">Choose a username</h1>
               <p className="text-gray-600 dark:text-gray-400 text-center mb-6">
-                Choose one or more usernames for your Dash Platform identity
+                It&apos;s how people find and mention you. You can skip this and add one later.
               </p>
-
-              {/* Identity ID Display */}
-              <div className="mb-6 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                <label className="text-xs text-gray-500 uppercase tracking-wide">
-                  Identity ID
-                </label>
-                <div
-                  className="font-mono text-sm mt-1 truncate select-all cursor-text"
-                  title={currentIdentityId}
-                >
-                  {currentIdentityId}
-                </div>
-              </div>
 
               {/* Registration Wizard */}
               {walletSession

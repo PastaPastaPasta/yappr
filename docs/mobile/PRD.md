@@ -309,7 +309,7 @@ As any user, I want a feed of everyone's recent posts, so that I can see what's 
 - For You lists posts newest first: on v2 the global timeline in the feed language (FEED-10), on dev one global timeline. Reposts and quotes appear as on web (FEED-08).
 - First load with no cache shows 4 post skeletons and "Connecting to Dash Platform…" under them while the engine boots.
 - Empty: "No posts yet / Be the first to share something!".
-- End of list: "You've reached the end." On testnet only, it is followed by "Looking for older posts? Open Yappr classic ↗" (opens the legacy link web shows, in the in-app browser). Empty states never show that link, and mainnet and devnet builds never show it.
+- End of list: "You've reached the end." There is no link to an earlier Yappr: the testnet release is a clean start (D21/D22).
 - Private, NSFW-hidden and blocked content follows G-6, G-14, G-15.
 
 #### FEED-02 · Following · P0 · all
@@ -1048,8 +1048,8 @@ As an iPhone user with Lockdown Mode on, I want to know why Yappr can't connect,
 
 #### NET-07 · Network chip · P0 · all
 As a user, I want to know I'm on a test network, so that I don't treat it as real.
-- A compact amber chip "DEVNET" or "TESTNET" in the Home header and at the bottom of Settings. Tapping it opens a sheet: "Yappr is running on a Dash Platform devnet. Posts and accounts may be reset." (testnet: "Yappr is running on Dash Platform Testnet. Posts and accounts may be reset."), and the connection state: "Connected", "Connecting…" (booting or restarting) or "Can't connect right now".
-- The chip's accessibility label carries the same state: "Testnet. Data may be reset. Connected." / "… Connecting." / "… Can't connect."
+- A compact amber chip "DEVNET" or "TESTNET" in the Home header and at the bottom of Settings. Tapping it opens a sheet: "Yappr is running on a Dash Platform devnet. Posts and accounts may be reset." (testnet: "Yappr is running on the Dash test network."), and the connection state: "Connected", "Connecting…" (booting or restarting) or "Can't connect right now".
+- The chip's accessibility label carries the same state: "Testnet. Connected." / "… Connecting." / "… Can't connect." A devnet's adds "Data may be reset": "Devnet. Data may be reset. Connected."
 - No full-width banner anywhere.
 
 #### NET-08 · Foreground only · P0 · all

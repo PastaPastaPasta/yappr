@@ -72,7 +72,7 @@ const settingsSections = [
   { id: 'privateFeed', label: 'Private Feed', icon: LockClosedIcon, description: 'Manage approved followers and private feed access' },
   { id: 'storage', label: 'Storage', icon: CloudArrowUpIcon, description: 'Connect storage for image uploads' },
   { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon, description: 'Customize how Yappr looks' },
-  { id: 'developer', label: 'Developer', icon: CommandLineIcon, description: 'Inspect Dash Platform queries and proofs' },
+  { id: 'developer', label: 'Developer', icon: CommandLineIcon, description: 'Query inspector and build details' },
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
 ]
 
@@ -704,23 +704,7 @@ function SettingsPage() {
   )
 
   const renderAboutSettings = () => {
-    const commitHash = process.env.NEXT_PUBLIC_GIT_COMMIT_HASH || 'dev'
-    const commitDate = process.env.NEXT_PUBLIC_GIT_COMMIT_DATE
-    const branch = process.env.NEXT_PUBLIC_GIT_BRANCH || 'unknown'
-    const formatDate = (dateStr: string | undefined) => {
-      if (!dateStr) return ''
-      try {
-        return new Date(dateStr).toLocaleDateString('en-US', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        })
-      } catch {
-        return dateStr
-      }
-    }
+    const version = process.env.NEXT_PUBLIC_GIT_COMMIT_HASH || 'dev'
 
     return (
     <div className="p-6 space-y-6">
@@ -733,26 +717,6 @@ function SettingsPage() {
             Learn More About Yappr
           </Link>
         </Button>
-      </div>
-
-      {/* Build Information */}
-      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-2">
-        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Build Information</h3>
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <span className="text-gray-500">Commit:</span>
-          <span className="font-mono text-gray-700 dark:text-gray-300">{commitHash}</span>
-
-          <span className="text-gray-500">Branch:</span>
-          <span className="font-mono text-gray-700 dark:text-gray-300">{branch}</span>
-
-          {commitDate && (
-            <>
-              <span className="text-gray-500">Commit Date:</span>
-              <span className="text-gray-700 dark:text-gray-300">{formatDate(commitDate)}</span>
-            </>
-          )}
-
-        </div>
       </div>
 
       <div className="space-y-3">
@@ -771,6 +735,9 @@ function SettingsPage() {
       <div className="pt-6 border-t border-gray-200 dark:border-gray-800 space-y-3">
         <LegalLinks />
         <p className="text-xs text-gray-500 text-center">
+          Version <span className="font-mono">{version}</span>
+        </p>
+        <p className="mt-1 text-xs text-gray-500 text-center">
           © {new Date().getFullYear()} Yappr. All rights reserved.
         </p>
       </div>

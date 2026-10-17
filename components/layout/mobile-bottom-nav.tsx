@@ -31,6 +31,8 @@ import {
   EnvelopeIcon as EnvelopeIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
+import { BetaPill } from '@/components/ui/beta-pill'
+import type { BetaProduct } from '@/lib/feature-flags'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { LegalLinks } from './legal-links'
@@ -102,9 +104,9 @@ export function MobileBottomNav() {
   ]
 
   // More menu items - Store first for prominence, then user-specific items
-  const moreMenuItems = [
-    { name: 'Store', href: '/store', icon: BuildingStorefrontIcon },
-    { name: 'Blog', href: '/blog', icon: BookOpenIcon },
+  const moreMenuItems: Array<{ name: string; href: string; icon: typeof HomeIcon; badge?: number; beta?: BetaProduct }> = [
+    { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, beta: 'store' },
+    { name: 'Blog', href: '/blog', icon: BookOpenIcon, beta: 'blog' },
     ...(user ? [
       { name: 'Profile', href: `/user?id=${user.identityId}`, icon: UserIcon },
       { name: 'Notifications', href: '/notifications', icon: BellIcon, badge: isHydrated && unreadNotificationCount > 0 ? unreadNotificationCount : undefined },
@@ -170,6 +172,7 @@ export function MobileBottomNav() {
                     )}
                   </div>
                   <span className="text-xs mt-1 text-center">{item.name}</span>
+                  {item.beta && <BetaPill product={item.beta} className="mt-1" />}
                 </Link>
               )
             })}

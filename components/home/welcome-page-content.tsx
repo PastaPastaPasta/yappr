@@ -42,7 +42,7 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
   if (!isHydrated) return <LandingSkeleton />
 
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
+    <div className="min-h-screen flex">
       <Sidebar />
 
       <main className="flex-1 md:max-w-[1200px] mx-auto px-4 md:px-8 overflow-x-hidden">
@@ -156,8 +156,8 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
 
 function LandingSkeleton() {
   return (
-    <div className="min-h-[calc(100vh-40px)] flex">
-      <div className="hidden md:block fixed h-[calc(100vh-40px)] w-[275px] px-2 py-4 top-[40px]">
+    <div className="min-h-screen flex">
+      <div className="hidden md:block fixed h-screen w-[275px] px-2 py-4 top-0">
         <div className="h-8 w-20 bg-gray-200 dark:bg-gray-800 rounded mb-6 animate-pulse" />
         <div className="space-y-2">
           {[...Array(6)].map((_, i) => (

@@ -102,13 +102,14 @@ export async function seedContext(context: BrowserContext, bot: BotIdentity): Pr
       // The secure store JSON-encodes its values, so the WIF is double-quoted.
       window.localStorage.setItem(privateKeyKey, JSON.stringify(wif))
       // The bots own DPNS names, so this is belt-and-braces against the
-      // `withAuth` DPNS gate redirecting to /dpns/register mid-test.
-      window.sessionStorage.setItem(skipDpnsKey, 'true')
+      // `withAuth` DPNS gate redirecting to /dpns/register mid-test
+      // (lib/username-skip.ts: remembered per identity in localStorage).
+      window.localStorage.setItem(skipDpnsKey, '1')
     },
     {
       sessionKey: scopedKey('yappr_session'),
       privateKeyKey: scopedKey(`yappr_secure_pk_${bot.identityId}`),
-      skipDpnsKey: scopedKey('yappr_skip_dpns'),
+      skipDpnsKey: scopedKey(`yappr_skip_dpns:${bot.identityId}`),
       identityId: bot.identityId,
       wif: bot.wif,
     }

@@ -570,7 +570,7 @@ function AddItemPage() {
 
   if (!storeId && !isEditMode) {
     return (
-      <div className="min-h-[calc(100vh-40px)] flex">
+      <div className="min-h-screen flex">
         <Sidebar />
         <div className="flex-1 flex justify-center items-center">
           <p className="text-gray-500">No store ID provided</p>

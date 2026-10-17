@@ -140,7 +140,7 @@ class TokenService {
    */
   async buyYapp(buyerId: string, amount: bigint, maxTotalCost: bigint, criticalKeyWif?: string): Promise<TokenResult> {
     if (yappIsLocked()) {
-      return { success: false, error: 'YAPP cannot be bought on this network', errorCode: 'NOT_AUTHORIZED' };
+      return { success: false, error: 'YAPP can\'t be bought', errorCode: 'NOT_AUTHORIZED' };
     }
     if (amount < MIN_YAPP_PURCHASE) {
       return { success: false, error: `Minimum purchase is ${MIN_YAPP_PURCHASE} YAPP`, errorCode: 'BELOW_MINIMUM' };
@@ -195,7 +195,7 @@ class TokenService {
     criticalKeyWif?: string
   ): Promise<TokenResult> {
     if (yappIsLocked()) {
-      return { success: false, error: 'YAPP cannot be transferred on this network', errorCode: 'NOT_AUTHORIZED' };
+      return { success: false, error: 'YAPP can\'t be sent to other accounts', errorCode: 'NOT_AUTHORIZED' };
     }
     try {
       const sdk = await getEvoSdk();

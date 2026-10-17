@@ -13,9 +13,6 @@ export type FeedData = InfiniteData<Page<PostDTO>, string | null>;
 /** `feed.checkNew` returns at most this many (engine `NEW_POSTS_LIMIT`); a full answer may have a gap behind it. */
 export const NEW_POSTS_LIMIT = 50;
 
-/** The previous Yappr deployment ("Yappr classic", testnet data) a testnet feed's end links to (`lib/constants` `LEGACY_APP_URL`). */
-export const LEGACY_APP_URL = 'https://yappr-v2.thepasta.org';
-
 /** When the item entered the feed: a repost's time, else the post's (lib `getFeedItemTimestamp`). */
 export function feedTimestamp(post: PostDTO): number {
   return (post.repostTimestamp ?? post.createdAt).getTime();

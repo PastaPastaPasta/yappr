@@ -9,7 +9,6 @@ import {
   CodeBracketIcon,
   UserGroupIcon,
   ServerStackIcon,
-  CpuChipIcon,
   LockClosedIcon,
   ShoppingBagIcon,
   BellIcon,
@@ -19,7 +18,6 @@ import {
   ScaleIcon,
   ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline'
-import { YAPPR_CONTRACT_ID, getContractTopology } from '@/lib/constants'
 import { InfoPage, InfoSection, Prose } from '@/components/layout/info-page'
 import { SupportEmailLink } from '@/components/layout/legal-links'
 import { COMMUNITY_RULES_HREF, ISSUES_URL, LEGAL_UPDATED, SOURCE_URL } from '@/lib/legal'
@@ -71,15 +69,6 @@ function FeatureCard({ feature }: { feature: Feature }) {
     </Link>
   ) : (
     <div>{card}</div>
-  )
-}
-
-function Detail({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <p className="text-sm text-gray-500">{label}</p>
-      {children}
-    </div>
   )
 }
 
@@ -186,35 +175,6 @@ export default function AboutPage() {
             <Link href="/cookies" className="underline">Cookies</Link>
           </p>
         </Prose>
-      </InfoSection>
-
-      <InfoSection title="Technical Details" icon={CpuChipIcon}>
-        <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4 space-y-3">
-          <Detail label="Contract ID">
-            <p className="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">{YAPPR_CONTRACT_ID}</p>
-          </Detail>
-          <Detail label="Network">
-            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 capitalize">{process.env.NEXT_PUBLIC_NETWORK || 'testnet'}</p>
-          </Detail>
-          {/* The contract id does not say which SHAPE of contract it is, and a v2
-              client pointed at the v9 contract queries fields that do not exist.
-              Printing the compiled-in topology makes that verifiable from the
-              served artifact; the e2e suite gates on it. */}
-          <Detail label="Interaction Topology">
-            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300" data-testid="about-topology">
-              {getContractTopology()}
-            </p>
-          </Detail>
-          <div className="pt-2">
-            <Link
-              href="/contract"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-sm font-medium"
-            >
-              <CodeBracketIcon className="h-4 w-4" />
-              View Full Data Contract
-            </Link>
-          </div>
-        </div>
       </InfoSection>
 
       <section>
