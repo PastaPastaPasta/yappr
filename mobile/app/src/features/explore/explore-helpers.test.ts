@@ -18,7 +18,7 @@ describe('tagFromParam', () => {
     expect(tagFromParam(param)).toEqual({ storage, display });
   });
 
-  it.each([undefined, '', '#', '$', 'two words', 'émoji', 'a'.repeat(64)])('rejects %p', (param) => {
+  it.each([undefined, '', '#', '$', 'two words', 'émoji', '#café', '$DASHé', 'a'.repeat(64)])('rejects %p', (param) => {
     expect(tagFromParam(param)).toEqual({ storage: '', display: '' });
   });
 

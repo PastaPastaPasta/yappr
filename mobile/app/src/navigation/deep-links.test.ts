@@ -46,6 +46,7 @@ describe('toAppRoute: web links', () => {
     [`https://yap.pr/post/engagements?id=${X}&kind=evil`],
     ['https://yap.pr/hashtag?tag=a%2Fb'],
     ['https://yap.pr/hashtag?tag=%E0%A4%A'],
+    ['https://yap.pr/hashtag?tag=caf%C3%A9'],
     ['https://yap.pr/user?id=%2E%2E%2Fsettings'],
     ['https://yap.pr/store/view?id=1'],
     ['https://yap.pr/terms'],

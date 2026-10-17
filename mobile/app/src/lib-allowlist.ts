@@ -33,3 +33,5 @@ export {
 export { formatTime } from '@/lib/utils/common';
 // Stored-tag display (`dash_cashtag` → `$DASH`), from the same import-free module.
 export { cashtagStorageToDisplay, isCashtagStorage } from '@/lib/post-helpers';
+// Post-text tag matching (a whole ASCII word, so `#café` is no tag) and the over-long check, from the same import-free module.
+export { CASHTAG_PATTERN, HASHTAG_PATTERN, tagStorage } from '@/lib/post-helpers';

@@ -6,12 +6,13 @@
  * is literal. Overlaps keep the earliest match. The patterns are ASCII-only,
  * so emoji and RTL text pass through as plain text, never split.
  *
- * One difference from web: a tag is its whole `[a-zA-Z0-9_]` run, as the
- * compose editor reads it (features/compose/text.ts uses these patterns), so
- * a tag longer than the contract indexes is linked whole, never cut
- * mid-word. Its link opens the page the tag was indexed under: the first
- * `tagMaxLength` characters (lib `indexedTags` / `extractHashtags`).
+ * The tag patterns are web's (lib `HASHTAG_PATTERN` / `CASHTAG_PATTERN`): a
+ * tag is a whole ASCII word, so `#café` or `#日本` is plain text, never a
+ * shorter ASCII tag. A tag longer than the contract stores parses as a tag
+ * but renders as plain text ({@link tagTarget}), as web does.
  */
+
+import { CASHTAG_PATTERN, HASHTAG_PATTERN, tagStorage } from '~/lib-allowlist';
 
 export type InlineKind = 'text' | 'url' | 'hashtag' | 'cashtag' | 'mention';
 export type PartKind = InlineKind | 'bold' | 'italic' | 'code';
@@ -35,9 +36,9 @@ interface Pattern {
 export const INLINE_PATTERNS: { regex: RegExp; type: Exclude<InlineKind, 'text'> }[] = [
   // http(s)://, ipfs:// or www.
   { regex: /(https?:\/\/[^\s<>"']+|ipfs:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g, type: 'url' },
-  // Unbounded, as compose reads them: an over-long tag is linked whole.
-  { regex: /#([a-zA-Z0-9_]+)/g, type: 'hashtag' },
-  { regex: /\$([a-zA-Z][a-zA-Z0-9_]*)/g, type: 'cashtag' },
+  // Any length: an over-long tag is matched whole, then shown as plain text (tagTarget).
+  { regex: HASHTAG_PATTERN, type: 'hashtag' },
+  { regex: CASHTAG_PATTERN, type: 'cashtag' },
   // Hyphens included, as DPNS labels (and mention indexing) allow them.
   { regex: /@([a-zA-Z0-9_-]{1,100}(?:\.dash)?)/gi, type: 'mention' },
 ];
@@ -223,11 +224,28 @@ export function displayText(content: string, hideFirstUrl: boolean): string {
   return hideFirstUrl ? stripFirstUrlAndTrim(content, extractFirstUrl(content)) : content;
 }
 
-/** Every tappable span (mentions, tags, links) in reading order, for screen-reader actions. */
-export function inlineTargets(content: string): InlinePart[] {
+/**
+ * The storage form a hashtag or cashtag part opens (`#Dash` → `dash`,
+ * `$DASH` → `dash_cashtag`), or null when it is longer than `tagMaxLength`,
+ * the contract's ceiling: such a tag is never indexed, so it shows as plain
+ * text (lib `tagStorage`). With no ceiling given, every tag links.
+ */
+export function tagTarget(value: string, tagMaxLength: number | undefined): string | null {
+  return tagStorage(value, tagMaxLength ?? Number.POSITIVE_INFINITY);
+}
+
+const isTag = (part: InlinePart) => part.type === 'hashtag' || part.type === 'cashtag';
+
+/**
+ * Every tappable span (mentions, tags, links) in reading order, for
+ * screen-reader actions; a tag longer than `tagMaxLength` is plain text, not one.
+ */
+export function inlineTargets(content: string, tagMaxLength?: number): InlinePart[] {
+  const tappable = (part: InlinePart) =>
+    part.type !== 'text' && (!isTag(part) || tagTarget(part.value, tagMaxLength) !== null);
   return parseContent(content).flatMap((part): InlinePart[] => {
-    if ('children' in part) return part.children.filter((c) => c.type !== 'text');
-    if (part.type === 'code' || part.type === 'text') return [];
-    return [part];
+    if ('children' in part) return part.children.filter(tappable);
+    if (part.type === 'code') return [];
+    return tappable(part) ? [part] : [];
   });
 }
