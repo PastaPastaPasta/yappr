@@ -1,3 +1,4 @@
+import bs58 from 'bs58';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,17 +13,21 @@ export const SITES = [
   { name: 'mirror', url: 'https://yappr.pages.dev/', network: 'production', source: 'master' },
 ];
 
+function isIdentifier(id) {
+  try { return bs58.decode(id).length === 32; } catch { return false; }
+}
+
 export function contractPins(env) {
   const pins = new Map();
   for (const [key, value] of Object.entries(env)) {
     if (key.startsWith('NEXT_PUBLIC_') && (key.endsWith('_CONTRACT_ID') || key === 'NEXT_PUBLIC_APP_CONNECT_APP_ID') && value) pins.set(value, undefined);
   }
   for (const pin of (env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS ?? '').split(',').filter(Boolean)) {
-    const match = /^([1-9A-HJ-NP-Za-km-z]{43,44})(?::([1-9][0-9]*))?$/.exec(pin.trim());
-    if (!match || !Number.isSafeInteger(Number(match[2] ?? 1))) throw new Error(`Invalid App Connect pin: ${pin}`);
+    const match = /^([1-9A-HJ-NP-Za-km-z]+)(?::([1-9][0-9]*))?$/.exec(pin.trim());
+    if (!match || !isIdentifier(match[1]) || !Number.isSafeInteger(Number(match[2] ?? 1))) throw new Error(`Invalid App Connect pin: ${pin}`);
     pins.set(match[1], Number(match[2] ?? 1));
   }
-  for (const id of pins.keys()) if (!/^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(id)) throw new Error(`Invalid contract id: ${id}`);
+  for (const id of pins.keys()) if (!isIdentifier(id)) throw new Error(`Invalid contract id: ${id}`);
   return pins;
 }
 
@@ -71,4 +76,13 @@ export function incidentPlan(results, existing) {
 
 export function contractRoles(env) {
   return Object.fromEntries(Object.entries(env).filter(([key]) => key.endsWith('_CONTRACT_ID') || ['NEXT_PUBLIC_APP_CONNECT_APP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS'].includes(key)).map(([key, value]) => [key, key.endsWith('_GROUP_MEMBERS') ? value.split(',').map(pin => pin.trim()).filter(Boolean).sort().join(',') : value]));
+}
+
+// Expected browser connection settings for this deployment's intended network.
+export function siteNetwork(env, network = 'testnet') {
+  return { network, ...(network === 'devnet' ? {
+    devnetName: env.NEXT_PUBLIC_DEVNET_NAME || 'moutai',
+    addresses: (env.NEXT_PUBLIC_DAPI_ADDRESSES || '').split(',').map(address => address.trim()).filter(Boolean),
+    quorumUrl: env.NEXT_PUBLIC_QUORUM_URL || '',
+  } : {}) };
 }

@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { contractPins, contractRoles, incidentPlan, readNetwork, schemaHash, thresholds } from './config.mjs';
+import { contractPins, contractRoles, incidentPlan, readNetwork, schemaHash, siteNetwork, thresholds } from './config.mjs';
 import { activityFilters, checkFresh, countActivity } from './chain.mjs';
 import { lazyChunks, smokeSite } from './sites.mjs';
 
-const metadata = roles => `<meta name="yappr-contract-config" content="${JSON.stringify(roles).replaceAll('"', '&quot;')}"/>`;
+const metadata = roles => `<meta name="yappr-contract-config" content="${JSON.stringify({ $network: { network: 'testnet' }, ...roles }).replaceAll('"', '&quot;')}"/>`;
 const id = '9hZwi4W3qqNtHFygjkgDvgud4EmE3dUxQUk5NjTYsdqN';
 afterEach(() => vi.unstubAllGlobals());
 
@@ -117,6 +117,19 @@ it.each(['testing', 'devnet'])('exposes every configured role for the %s build, 
     vi.resetModules();
     for (const [key, value] of Object.entries(config.env)) vi.stubEnv(key, value);
     const { monitoringContractConfig } = await import('../../lib/monitoring-contract-config');
+    expect(monitoringContractConfig.$network).toEqual(siteNetwork(config.env, config.network));
     expect(contractRoles(monitoringContractConfig)).toMatchObject(contractRoles(config.env));
   } finally { vi.unstubAllEnvs(); }
+});
+
+it('accepts canonical 32-byte identifiers with shorter Base58 encodings', () => {
+  const short = '1'.repeat(31) + '2';
+  expect([...contractPins({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: short, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${short}:2` })]).toEqual([[short, 2]]);
+  expect(() => contractPins({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: '1'.repeat(31) })).toThrow('Invalid contract id');
+});
+
+it('rejects a wrong browser network with matching roles and bundles', async () => {
+  const html = metadata({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: id, $network: { network: 'mainnet' } }) + '<script src="/_next/static/chunks/app.js"></script><script>"buildId":"abc1234"</script>';
+  vi.stubGlobal('fetch', vi.fn(async url => new Response(String(url).endsWith('.js') ? id : html)));
+  await expect(smokeSite({ url: 'https://yap.pr/', buildId: 'abc1234', config: { network: 'testnet', env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }, pins: [{ id }] } })).rejects.toThrow('Active network settings');
 });

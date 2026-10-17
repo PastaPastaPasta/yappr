@@ -1,5 +1,9 @@
 // Expose the same effective constants the services use, preserving each role.
 import {
+  getConfiguredNetwork,
+  DEVNET_NAME,
+  DEVNET_QUORUM_URL,
+  DAPI_ADDRESSES,
   YAPPR_CONTRACT_ID,
   YAPPR_BLOCKS_CONTRACT_ID,
   TOKEN_HISTORY_CONTRACT_ID,
@@ -13,7 +17,13 @@ import {
   POLLR_CONTRACT_ID,
 } from '@/lib/constants'
 
+const network = getConfiguredNetwork()
+
 export const monitoringContractConfig = {
+  $network: {
+    network,
+    ...(network === 'devnet' ? { devnetName: DEVNET_NAME, addresses: DAPI_ADDRESSES, quorumUrl: DEVNET_QUORUM_URL } : {}),
+  },
   NEXT_PUBLIC_YAPPR_CONTRACT_ID: YAPPR_CONTRACT_ID,
   NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID: YAPPR_BLOCKS_CONTRACT_ID,
   NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID: TOKEN_HISTORY_CONTRACT_ID,
