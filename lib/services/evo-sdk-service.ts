@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { DataContract, EvoSDK, PlatformVersion } from '@dashevo/evo-sdk';
 import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
-import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPPR_VAULT_CONTRACT_ID, YAPPR_AUTH_VAULT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
+import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
 import { profileBaseSource, profileExtensionSource } from '../profile/v10-profile';
 import type { AppNetwork } from '../constants';
 import { SDK_FACADES } from './sdk-facades';
@@ -57,7 +57,7 @@ const CONNECTION_ERROR_MARKERS = [
  */
 const QUORUM_SOURCE_UNAVAILABLE = 'quorum source unavailable';
 
-/** wasm-sdk 5.0.0-beta.6's `QuorumKeyUnavailable`; see isConnectionError(). */
+/** wasm-sdk's `QuorumKeyUnavailable` (unchanged from 5.0.0-beta.6 to rc.3); see isConnectionError(). */
 const QUORUM_KEY_UNAVAILABLE = 'quorum key unavailable';
 
 /** The message of a rejection, whether or not it is an Error. */
@@ -262,14 +262,6 @@ class EvoSdkService {
     // Add Key Exchange contract if configured
     if (KEY_EXCHANGE_CONTRACT_ID && !KEY_EXCHANGE_CONTRACT_ID.includes('PLACEHOLDER')) {
       contractsToFetch.push({ id: KEY_EXCHANGE_CONTRACT_ID, name: 'KeyExchange' });
-    }
-
-    // Add Vault contract if configured
-    if (YAPPR_VAULT_CONTRACT_ID && !YAPPR_VAULT_CONTRACT_ID.includes('PLACEHOLDER')) {
-      contractsToFetch.push({ id: YAPPR_VAULT_CONTRACT_ID, name: 'Vault' });
-    }
-    if (YAPPR_AUTH_VAULT_CONTRACT_ID && !YAPPR_AUTH_VAULT_CONTRACT_ID.includes('PLACEHOLDER')) {
-      contractsToFetch.push({ id: YAPPR_AUTH_VAULT_CONTRACT_ID, name: 'AuthVault' });
     }
 
     // Contracts snapshotted at build time need no round trip: seed them and

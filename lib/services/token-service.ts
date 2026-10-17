@@ -5,12 +5,17 @@ import { Identifier } from '@dashevo/evo-sdk';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
+import { TOKEN_HISTORY_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
 import { starterGrantAmount, yappIsLocked } from '../contract-topology';
 import { UNCONFIRMED_WRITE_MESSAGE, extractErrorMessage, isOncePerIdentityAlreadyClaimedError, sentWriteOutcomeUnknown } from '../error-utils';
 import { withSdkSignedWrite } from './identity-nonce';
 import { SigningUnavailableError, assertRawKeyCovers, hasAppConnectSession, reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
 import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
+import { starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
+import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
+
+/** One page of an identity's token-history claims is plenty: YAPP's only distribution is the starter grant. */
+const CLAIM_HISTORY_PAGE = 20;
 
 export interface TokenResult {
   success: boolean;
@@ -236,6 +241,31 @@ class TokenService {
       logger.debug('tokenService: critical-key probe failed', error);
       return false;
     }
+  }
+
+  /**
+   * Whether `identityId` has claimed its starter grant, read from chain: the
+   * `claim` document Platform writes into the SYSTEM token-history contract
+   * for every claim (byRecipient index). Rejects when the read fails;
+   * callers then treat it as unknown and offer no claim (#740).
+   */
+  async readStarterClaimState(identityId: string): Promise<StarterClaimState> {
+    const [sdk, tokenId] = await Promise.all([getEvoSdk(), this.getTokenId()]);
+    const response = await sdk.documents.query({
+      dataContractId: TOKEN_HISTORY_CONTRACT_ID,
+      documentTypeName: 'claim',
+      where: [
+        ['tokenId', '==', tokenId],
+        ['recipientId', '==', identityId],
+      ] as DocumentWhereClause[],
+      orderBy: [
+        ['tokenId', 'asc'],
+        ['recipientId', 'asc'],
+        ['$createdAt', 'asc'],
+      ] as DocumentOrderByClause[],
+      limit: CLAIM_HISTORY_PAGE,
+    });
+    return starterClaimFromHistory(normalizeSDKResponse(response), CLAIM_HISTORY_PAGE);
   }
 
   /**

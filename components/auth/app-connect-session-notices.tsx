@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { KeyRound, LogOut } from 'lucide-react'
 import { clearSensitiveBytes, type AppConnectGrant } from 'platform-auth'
@@ -8,6 +8,8 @@ import { useAuth } from '@/contexts/auth-context'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAppConnectStatus, type RenewReason } from '@/lib/app-connect/session-manager'
+import type { RenewSoonReason } from '@/lib/app-connect/session-health'
+import { pendingWork } from '@/lib/app-connect/pending-work'
 import { APP_CONNECT_RENEWED_EVENT, useRenewModal } from '@/hooks/use-renew-modal'
 import { identityService } from '@/lib/services/identity-service'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -19,6 +21,11 @@ const RENEW_REASON_COPY: Record<RenewReason, string> = {
   'insufficient-allowance': 'There isn\'t enough allowance left for that. Renew it in your Dash wallet to keep posting. You can still read everything.',
 }
 
+const RENEW_SOON_COPY: Record<RenewSoonReason, string> = {
+  allowance: 'Yappr\'s allowance from your wallet is running low. Renew it in your Dash wallet so posting keeps working.',
+  expiry: 'Your wallet sign-in expires soon. Renew it in your Dash wallet so posting keeps working.',
+}
+
 /**
  * The App Connect session's prompts, mounted once for the whole app:
  * - a banner when the allowance or the time left runs low;
@@ -28,7 +35,7 @@ const RENEW_REASON_COPY: Record<RenewReason, string> = {
  */
 export function AppConnectSessionNotices() {
   const { user, renewWithAppConnect } = useAuth()
-  const { identityId, health, renewRequired, signedOutByWallet, dismissRenewRequired, dismissSignedOut } = useAppConnectStatus()
+  const { identityId, renewSoon, renewRequired, signedOutByWallet, renewing, dismissRenewRequired, dismissSignedOut, setRenewing } = useAppConnectStatus()
   const renew = useRenewModal()
   const openLogin = useLoginModal((state) => state.open)
   const [bannerDismissed, setBannerDismissed] = useState(false)
@@ -36,16 +43,24 @@ export function AppConnectSessionNotices() {
   const sessionUser = user && identityId === user.identityId ? user : null
   const wantsRenew = renew.isOpen || renewRequired !== null
   /**
-   * The identity being renewed, kept for as long as the dialog is open: the
-   * wallet may already have disabled the old keys, and the hourly or startup
-   * check can sign the old session out while the renewal is still arriving.
-   * The renewal must survive that and sign the identity back in.
+   * The identity being renewed, kept (in the session status) for as long as
+   * the dialog is open: the wallet disables the old keys before the new grant
+   * arrives, so the hourly or startup check can find them revoked meanwhile.
+   * The sign-out that would follow waits for the renewal (auth-context.tsx),
+   * including a grant still being stored after the dialog closed.
    */
-  const [renewing, setRenewing] = useState<string | null>(null)
+  // Every accepted renewal still being stored: a dialog closed and reopened can have more than one.
+  const adoptions = useMemo(pendingWork, [])
+  const endRenewal = useCallback(() => {
+    if (!adoptions.busy) setRenewing(null)
+  }, [adoptions, setRenewing])
   useEffect(() => {
-    if (!wantsRenew) setRenewing(null)
-    else if (sessionUser) setRenewing((current) => current ?? sessionUser.identityId)
-  }, [sessionUser, wantsRenew])
+    if (!wantsRenew) {
+      if (renewing !== null) endRenewal()
+    } else if (sessionUser && renewing === null) {
+      setRenewing(sessionUser.identityId)
+    }
+  }, [endRenewal, renewing, sessionUser, setRenewing, wantsRenew])
   const dialogOpen = wantsRenew && renewing !== null
   // A refused write asks for renewal through the session status, which a
   // sign-out resets; hold the dialog open on its own state so it survives that.
@@ -55,9 +70,11 @@ export function AppConnectSessionNotices() {
   }, [openRenewDialog, renew.isOpen, renewRequired])
 
   const closeRenew = useCallback(() => {
+    // Ends the renewal first, in the same update: a revoke it held back is settled before anything renders.
+    endRenewal()
     renew.close()
     dismissRenewRequired()
-  }, [dismissRenewRequired, renew])
+  }, [dismissRenewRequired, endRenewal, renew])
 
   /** The panel showed its success state: close the dialog. */
   const finishRenew = closeRenew
@@ -70,21 +87,28 @@ export function AppConnectSessionNotices() {
       throw new Error('The renewal came from another account')
     }
     // Renews the keys, or signs the identity back in if a revocation signed it out meanwhile.
-    await renewWithAppConnect(grant)
+    // Until it is stored, the renewal stays under way even if the dialog closes.
+    const release = adoptions.start()
+    try {
+      await renewWithAppConnect(grant)
+    } finally {
+      release()
+      if (!adoptions.busy && !useRenewModal.getState().isOpen && useAppConnectStatus.getState().renewRequired === null) setRenewing(null)
+    }
     // Side effects of a landed renewal run here, not when the panel finishes,
     // so dismissing the dialog during its success state loses none of them.
     // The renewal may have added keys: callers re-checking the identity must not see a cached copy.
     identityService.clearCache(grant.identityId)
     onRenewed?.()
     window.dispatchEvent(new CustomEvent(APP_CONNECT_RENEWED_EVENT))
-  }, [renewWithAppConnect, renewing])
+  }, [adoptions, renewWithAppConnect, renewing, setRenewing])
 
   return (
     <>
-      {sessionUser && health === 'renew-soon' && !bannerDismissed && !dialogOpen && (
+      {sessionUser && renewSoon && !bannerDismissed && !dialogOpen && (
         <div className="fixed bottom-20 md:bottom-4 inset-x-4 md:left-auto md:right-4 md:w-96 z-40 rounded-2xl bg-white dark:bg-neutral-900 ring-1 ring-gray-200 dark:ring-neutral-700 shadow-lg p-4 flex flex-col gap-3" role="status" data-testid="app-connect-renew-banner">
           <p className="text-sm text-gray-700 dark:text-gray-300">
-            Yappr&apos;s allowance from your wallet is running low. Renew it in your Dash wallet so posting keeps working.
+            {RENEW_SOON_COPY[renewSoon]}
           </p>
           <div className="flex gap-2 justify-end">
             <Button variant="ghost" size="sm" onClick={() => setBannerDismissed(true)}>Later</Button>

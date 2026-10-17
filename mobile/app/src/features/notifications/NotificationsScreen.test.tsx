@@ -50,7 +50,7 @@ const viewer: SessionDTO = {
   method: 'key',
 };
 
-const TOGGLES = { likes: true, reposts: true, replies: true, follows: true, mentions: true, messages: true, blogPosts: true };
+const TOGGLES = { likes: true, reposts: true, replies: true, follows: true, mentions: true, messages: true, blogPosts: true, store: true };
 const settings = (overrides: Partial<SettingsDTO['notificationSettings']> = {}): SettingsDTO => ({
   linkPreviewsEnabled: true,
   gateMediaFromNonFollowed: false,

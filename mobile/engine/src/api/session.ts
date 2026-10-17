@@ -4,7 +4,6 @@ import { useLoginModal } from '@/hooks/use-login-modal'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { getConfiguredNetwork, type AppNetwork } from '@/lib/constants'
 import {
-  clearAuthVaultDek,
   clearEncryptionKey,
   clearEncryptionKeyType,
   clearLoginKey,
@@ -171,15 +170,8 @@ export function createMobileAuthController({ unhydrated }: { unhydrated?: Readon
       ...deps.features,
       usernameGate: false,
       profileGate: false,
-      passwordLogin: false,
-      passkeyLogin: false,
-      authVault: false,
-      legacyPasswordLogin: false,
       balanceRefresh: false,
     },
-    vault: undefined,
-    passkeys: undefined,
-    legacyPasswordLogins: undefined,
   })
 }
 
@@ -578,7 +570,7 @@ export function createSessionModule(options: SessionModuleOptions) {
         throw error
       }
     } else {
-      for (const clear of [clearPrivateKey, clearEncryptionKey, clearEncryptionKeyType, clearTransferKey, clearLoginKey, clearAuthVaultDek]) {
+      for (const clear of [clearPrivateKey, clearEncryptionKey, clearEncryptionKeyType, clearTransferKey, clearLoginKey]) {
         clear(identityId)
       }
     }

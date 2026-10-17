@@ -2,8 +2,9 @@ import { logger } from '@/lib/logger';
 import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
-import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
-import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, isV11, moderationListsKept, moderatorDeletableTypes, moderatorDeleteWindowSeconds, moderatorDeletionKeepsRecord, reportsAreResolved, settledDeletionFor, type ElectedModerationDeclaration, type SettledDeletionRule, type TargetKind } from '@/lib/contract-topology';
+import { keyNetwork } from '@/lib/constants';
+import { authorDeletesLeaveHoles, settledDeletionFor, type ElectedModerationDeclaration, type SettledDeletionRule } from '@/lib/contract-topology';
+import { documentNoun, moderatedContract, type ModeratedContract, type ModeratedContractKey } from '@/lib/moderated-contracts';
 import { storedTags } from '@/lib/post-helpers';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
@@ -16,8 +17,10 @@ import { identifierToBase58 } from './sdk-helpers';
 import { signerService } from './signer-service';
 
 /**
- * Contract moderation on the social contract (Platform 4.2.0-beta.3,
- * protocol version 14; docs/SOCIAL_V8.md):
+ * Contract moderation (Platform 4.2.0-beta.3, protocol version 14;
+ * docs/SOCIAL_V8.md), described below for the social contract, where it
+ * began. Storefront and blog declare the same machinery for their own types
+ * (lib/moderated-contracts.ts), each with an instance of its own:
  *
  * - the contract keeps a **banlist** and a **suspension list**; an identity
  *   on either has every document transition against the contract refused,
@@ -301,8 +304,13 @@ export interface TeamAction {
   leaderRequired: boolean;
 }
 
-export const toTeamAction = (entry: ContractTeamActionEntry, status: ContractTeamActionStatus, seats: number | null): TeamAction => {
-  const rule = settledDeletionFor(entry.event.documentTypeName);
+export const toTeamAction = (
+  entry: ContractTeamActionEntry,
+  status: ContractTeamActionStatus,
+  seats: number | null,
+  ruleFor: (documentTypeName: string) => SettledDeletionRule | null = settledDeletionFor
+): TeamAction => {
+  const rule = ruleFor(entry.event.documentTypeName);
   return {
     actionId: entry.actionId,
     status,
@@ -586,7 +594,15 @@ export function missingDocumentState(
   return recordsRead ? 'deleted' : 'unavailable';
 }
 
+/**
+ * Moderation of ONE contract: its lists, removals, fee pots and team. Each of
+ * Yappr's moderated contracts (social, storefront, blog) has its own
+ * instance ({@link moderationServiceFor}); nothing is shared between them, as
+ * on chain, where a ban, a seated team or a pot belongs to one contract.
+ */
 class ModerationService {
+  constructor(readonly contract: ModeratedContract) {}
+
   /**
    * The in-flight or recent team fetch: a feed of cards asks once, not once
    * per card. Short-lived, because on an elected contract a team can be seated
@@ -641,7 +657,7 @@ class ModerationService {
    * moderate, true without a read. Rejects when the contract cannot be read.
    */
   async moderatedTypeOpen(docType: string): Promise<boolean> {
-    if (!electedModeration()?.moderatedDocumentTypes[docType]) return true;
+    if (!this.contract.elected()?.moderatedDocumentTypes[docType]) return true;
     const read = this.readTeam();
     if (read === null) return true;
     const { interim, seated } = await read;
@@ -649,12 +665,12 @@ class ModerationService {
   }
 
   private readTeam(): Promise<TeamRead> | null {
-    if (!contractIsModerated()) return null;
+    if (!this.contract.moderated()) return null;
     if (!this.team || Date.now() - this.team.at >= ModerationService.TEAM_TTL_MS) {
       const promise = (async () => {
         const sdk = await getEvoSdk();
-        const contract = await sdk.contracts.fetch(YAPPR_CONTRACT_ID);
-        if (!contract) throw new Error('Social contract not found');
+        const contract = await sdk.contracts.fetch(this.contract.contractId);
+        if (!contract) throw new Error(`${this.contract.label} contract not found`);
         const moderators = contract.config.moderation?.moderators;
         const seated = moderators?.$type === 'elected' ? await this.seatedTeam(sdk, moderators.maxAddedModerators ?? 0) : null;
         const interim = moderators?.$type === 'elected' ? moderators.interim.$type as InterimKind : null;
@@ -681,7 +697,7 @@ class ModerationService {
    * moderator checks every topology runs.
    */
   private async seatedTeam(sdk: EvoSDK, maxAddedModerators: number): Promise<SeatedTeamSeats | null> {
-    const team = await sdk.moderationCharters.team(YAPPR_CONTRACT_ID);
+    const team = await sdk.moderationCharters.team(this.contract.contractId);
     if (!team) return null;
     try {
       let seats: number | null = null;
@@ -713,14 +729,19 @@ class ModerationService {
     }
   }
 
+  /** True when the author of some type the moderators remove may also delete it, so a vanished target may be their own delete. */
+  private authorsMayDelete(): boolean {
+    return this.contract.deletableTypes().some((type) => this.contract.authorsDelete(type));
+  }
+
   /** The document types a moderator may remove (`post`, `reply` on v9). */
-  canRemove(kind: TargetKind): boolean {
-    return moderatorDeletableTypes().includes(kind);
+  canRemove(kind: string): boolean {
+    return this.contract.deletableTypes().includes(kind);
   }
 
   /** True when the contract keeps a warning list (`warnings: true`, as v9 declares). */
   canWarn(): boolean {
-    return contractKeepsWarnings();
+    return this.contract.listsKept().includes('warnings');
   }
 
   /**
@@ -728,8 +749,8 @@ class ModerationService {
    * `documentRemovals` can answer for. Asking it about a type that keeps none
    * (v10's `report`) is refused, so the reads below never do.
    */
-  private keepsRemovals(kind: TargetKind): boolean {
-    return this.canRemove(kind) && moderatorDeletionKeepsRecord(kind);
+  private keepsRemovals(kind: string): boolean {
+    return this.canRemove(kind) && this.contract.keepsRecord(kind);
   }
 
   /**
@@ -738,7 +759,7 @@ class ModerationService {
    * still kept here and hashes to what the record holds (anything else is a
    * paid 41121).
    */
-  canRestore(kind: TargetKind, removal: DocumentRemoval, now = Date.now()): boolean {
+  canRestore(kind: string, removal: DocumentRemoval, now = Date.now()): boolean {
     if (!this.canRemove(kind) || removal.restoredAt !== null) return false;
     if (now > removal.removedAt + RESTORE_WINDOW_MS) return false;
     const bytes = loadSnapshot(kind, removal.documentId, now);
@@ -749,12 +770,12 @@ class ModerationService {
 
   /** True when some type's settled documents are deleted by the seated team together (v11 post and reply). */
   teamDeletesSettled(): boolean {
-    return moderatorDeletableTypes().some((type) => settledDeletionFor(type) !== null);
+    return this.contract.deletableTypes().some((type) => this.contract.settledDeletionFor(type) !== null);
   }
 
   /** Where a `kind` written at `createdAt` stands against its deletion window ({@link DeletionPhase}); always `open` before v11. */
-  deletionPhaseOf(kind: TargetKind, createdAt: Date | number, now = Date.now()): DeletionPhase {
-    return deletionPhase(moderatorDeleteWindowSeconds(kind), createdAt instanceof Date ? createdAt.getTime() : createdAt, now);
+  deletionPhaseOf(kind: string, createdAt: Date | number, now = Date.now()): DeletionPhase {
+    return deletionPhase(this.contract.deleteWindowSeconds(kind), createdAt instanceof Date ? createdAt.getTime() : createdAt, now);
   }
 
   /**
@@ -763,7 +784,7 @@ class ModerationService {
    * end it is not yet treated as settled: the single delete is offered and the
    * node decides.
    */
-  isSettled(kind: TargetKind, createdAt: Date | number, now = Date.now()): boolean {
+  isSettled(kind: string, createdAt: Date | number, now = Date.now()): boolean {
     return this.deletionPhaseOf(kind, createdAt, now) === 'settled';
   }
 
@@ -772,10 +793,10 @@ class ModerationService {
    * its window is open, by proposing to the seated team once it settled, or
    * not at all. Reads the (cached) seated team only for a settled document.
    */
-  async removalRoute(viewerId: string, kind: TargetKind, createdAt: Date | number, now = Date.now()): Promise<RemovalRoute> {
+  async removalRoute(viewerId: string, kind: string, createdAt: Date | number, now = Date.now()): Promise<RemovalRoute> {
     const phase = this.deletionPhaseOf(kind, createdAt, now);
     if (phase !== 'settled') return removalRouteFor(phase, null, null, viewerId);
-    const rule = settledDeletionFor(kind);
+    const rule = this.contract.settledDeletionFor(kind);
     return removalRouteFor(phase, rule, rule ? await this.getSeatedTeam() : null, viewerId);
   }
 
@@ -788,7 +809,7 @@ class ModerationService {
    * own 41107/41108.
    */
   async getStanding(identityId: string, { fresh = false } = {}): Promise<ModerationStanding> {
-    if (!contractIsModerated()) return NO_STANDING;
+    if (!this.contract.moderated()) return NO_STANDING;
     const cached = this.standingCache.get(identityId);
     if (!fresh && cached && Date.now() - cached.at < ModerationService.STANDING_TTL_MS) return cached.standing;
     try {
@@ -806,12 +827,12 @@ class ModerationService {
    * {@link getStanding}.
    */
   async readStanding(identityId: string): Promise<ModerationStanding> {
-    if (!contractIsModerated()) return NO_STANDING;
+    if (!this.contract.moderated()) return NO_STANDING;
     const sdk = await getEvoSdk();
     const status: ContractModerationStatus = await sdk.contracts.moderationStatus({
-      contractId: YAPPR_CONTRACT_ID,
+      contractId: this.contract.contractId,
       identityId,
-      lists: [...moderationListsKept()],
+      lists: [...this.contract.listsKept()],
     });
     const standing: ModerationStanding = {
       banned: status.banned === true,
@@ -826,9 +847,9 @@ class ModerationService {
 
   /** One page of a list the contract keeps, in identity id order; empty for a list it does not keep. */
   async listEntries(list: 'banlist' | 'suspensions' | 'warnings', startAfter?: string): Promise<{ entries: ModerationEntry[]; nextStartAfter?: string }> {
-    if (!moderationListsKept().includes(list)) return { entries: [] };
+    if (!this.contract.listsKept().includes(list)) return { entries: [] };
     const sdk = await getEvoSdk();
-    const page = await sdk.contracts.moderationEntries({ contractId: YAPPR_CONTRACT_ID, list, startAfter, limit: 100 });
+    const page = await sdk.contracts.moderationEntries({ contractId: this.contract.contractId, list, startAfter, limit: 100 });
     return {
       entries: page.entries.map((entry) => ({
         identityId: entry.identityId,
@@ -848,7 +869,7 @@ class ModerationService {
    * Where "no record" is itself a claim (the author's delete), use the strict
    * {@link readRemovals}.
    */
-  async getRemovals(kind: TargetKind, documentIds: readonly string[]): Promise<Map<string, DocumentRemoval>> {
+  async getRemovals(kind: string, documentIds: readonly string[]): Promise<Map<string, DocumentRemoval>> {
     try {
       return await this.readRemovals(kind, documentIds);
     } catch (error) {
@@ -863,12 +884,12 @@ class ModerationService {
    * cannot delete, or whose moderator deletions keep no record, has none to
    * find.
    */
-  async readRemovals(kind: TargetKind, documentIds: readonly string[]): Promise<Map<string, DocumentRemoval>> {
+  async readRemovals(kind: string, documentIds: readonly string[]): Promise<Map<string, DocumentRemoval>> {
     const removals = new Map<string, DocumentRemoval>();
     if (!this.keepsRemovals(kind) || documentIds.length === 0) return removals;
     const sdk = await getEvoSdk();
     const page = await sdk.contracts.documentRemovals({
-      contractId: YAPPR_CONTRACT_ID,
+      contractId: this.contract.contractId,
       documentTypeName: kind,
       documentIds: Array.from(new Set(documentIds)).slice(0, 100),
     });
@@ -877,18 +898,18 @@ class ModerationService {
   }
 
   /** One page of every removal record of a type, in document id order. */
-  async listRemovals(kind: TargetKind, startAfter?: string): Promise<{ removals: DocumentRemoval[]; nextStartAfter?: string }> {
+  async listRemovals(kind: string, startAfter?: string): Promise<{ removals: DocumentRemoval[]; nextStartAfter?: string }> {
     if (!this.keepsRemovals(kind)) return { removals: [] };
     const sdk = await getEvoSdk();
-    const page = await sdk.contracts.documentRemovals({ contractId: YAPPR_CONTRACT_ID, documentTypeName: kind, startAfter, limit: 100 });
+    const page = await sdk.contracts.documentRemovals({ contractId: this.contract.contractId, documentTypeName: kind, startAfter, limit: 100 });
     return { removals: page.removals.map(toRemoval), nextStartAfter: page.nextStartAfter };
   }
 
   /** The contract's two fee pots. */
   async getFeePots(): Promise<{ owner: FeePotState; moderators: FeePotState } | null> {
-    if (!contractIsModerated()) return null;
+    if (!this.contract.moderated()) return null;
     const sdk = await getEvoSdk();
-    const pots = await sdk.contracts.feePots(YAPPR_CONTRACT_ID);
+    const pots = await sdk.contracts.feePots(this.contract.contractId);
     const toState = (pot: typeof pots.owner): FeePotState => ({
       credits: pot.credits,
       lastClaimEpoch: pot.lastClaimEpoch ?? null,
@@ -912,12 +933,12 @@ class ModerationService {
     let startAtActionId: string | undefined;
     for (;;) {
       const page = await sdk.contracts.teamActions({
-        contractId: YAPPR_CONTRACT_ID,
+        contractId: this.contract.contractId,
         status,
         ...(startAtActionId ? { startAtActionId, startAtActionIdIncluded: false } : {}),
         limit: TEAM_ACTIONS_PAGE,
       });
-      for (const entry of page.actions) actions.push(toTeamAction(entry, status, seated?.seats ?? null));
+      for (const entry of page.actions) actions.push(toTeamAction(entry, status, seated?.seats ?? null, (type) => this.contract.settledDeletionFor(type)));
       startAtActionId = page.nextStartAtActionId;
       if (!startAtActionId) return { actions, truncated: false };
       if (actions.length >= max) return { actions, truncated: true };
@@ -957,7 +978,7 @@ class ModerationService {
         const ids = Array.from(new Set(group.map((action) => action.documentId)));
         for (let start = 0; start < ids.length; start += TEAM_TARGETS_PER_READ) {
           const batch = ids.slice(start, start + TEAM_TARGETS_PER_READ);
-          const page = await sdk.documents.query({ dataContractId: YAPPR_CONTRACT_ID, documentTypeName: kind, where: [['$id', 'in', batch]], limit: batch.length });
+          const page = await sdk.documents.query({ dataContractId: this.contract.contractId, documentTypeName: kind, where: [['$id', 'in', batch]], limit: batch.length });
           for (const [id, doc] of page) if (doc) found.set(String(id), { updatedAt: doc.updatedAt, createdAt: doc.createdAt });
         }
         for (const action of group) states.set(action.actionId, teamActionTargetState(action, found.get(action.documentId) ?? null));
@@ -976,7 +997,7 @@ class ModerationService {
   async teamActionSigners(actionId: string, status: ContractTeamActionStatus): Promise<string[]> {
     if (!this.teamDeletesSettled()) return [];
     const sdk = await getEvoSdk();
-    const { signerIds } = await sdk.contracts.teamActionSigners({ contractId: YAPPR_CONTRACT_ID, status, actionId });
+    const { signerIds } = await sdk.contracts.teamActionSigners({ contractId: this.contract.contractId, status, actionId });
     return [...signerIds];
   }
 
@@ -988,10 +1009,10 @@ class ModerationService {
    * refuses or the read fails: the pot panel simply shows no counts.
    */
   async getActionCounts(): Promise<Map<string, number> | null> {
-    if (!isV11() || electedModeration() === null) return null;
+    if (!this.contract.countsActions()) return null;
     try {
       const sdk = await getEvoSdk();
-      const { counts } = await sdk.contracts.moderationActionCounts(YAPPR_CONTRACT_ID);
+      const { counts } = await sdk.contracts.moderationActionCounts(this.contract.contractId);
       return new Map(counts.map(({ identityId, count }) => [identityId, count]));
     } catch (error) {
       logger.warn('moderationService: moderation action counts read failed', error);
@@ -1003,13 +1024,13 @@ class ModerationService {
 
   async ban(moderatorId: string, identityId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.banUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, reason: reasonOf(reason) }));
+      await send(() => sdk.contracts.banUser({ ...auth, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
     }, identityId, reason);
   }
 
   async unban(moderatorId: string, identityId: string): Promise<ModerationResult> {
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.unbanUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId }));
+      await send(() => sdk.contracts.unbanUser({ ...auth, contractId: this.contract.contractId, identityId }));
     }, identityId);
   }
 
@@ -1018,7 +1039,7 @@ class ModerationService {
     let targetBanned = false;
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       try {
-        await send(() => sdk.contracts.suspendUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, until: BigInt(until), reason: reasonOf(reason) }));
+        await send(() => sdk.contracts.suspendUser({ ...auth, contractId: this.contract.contractId, identityId, until: BigInt(until), reason: reasonOf(reason) }));
       } catch (error) {
         // Drive answers a suspension of a BANNED identity with 41107, whose
         // prose ("... is banned ... and can not act on its documents") reads
@@ -1035,7 +1056,7 @@ class ModerationService {
 
   async unsuspend(moderatorId: string, identityId: string): Promise<ModerationResult> {
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.unsuspendUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId }));
+      await send(() => sdk.contracts.unsuspendUser({ ...auth, contractId: this.contract.contractId, identityId }));
     }, identityId);
   }
 
@@ -1050,7 +1071,7 @@ class ModerationService {
       return { success: false, error: 'This contract keeps no warning list', errorCode: 'NOT_MODERATED' };
     }
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.warnUser({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId, reason: reasonOf(reason) }));
+      await send(() => sdk.contracts.warnUser({ ...auth, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
     }, identityId, reason);
   }
 
@@ -1060,7 +1081,7 @@ class ModerationService {
       return { success: false, error: 'This contract keeps no warning list', errorCode: 'NOT_MODERATED' };
     }
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.clearUserWarnings({ ...auth, contractId: YAPPR_CONTRACT_ID, identityId }));
+      await send(() => sdk.contracts.clearUserWarnings({ ...auth, contractId: this.contract.contractId, identityId }));
     }, identityId);
   }
 
@@ -1074,9 +1095,9 @@ class ModerationService {
    * can undo the removal with `restoreDocument`. A failed snapshot does not
    * block the removal; it only means there is nothing to restore from.
    */
-  async removeDocument(moderatorId: string, kind: TargetKind, documentId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
+  async removeDocument(moderatorId: string, kind: string, documentId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
     if (!this.canRemove(kind)) {
-      return { success: false, error: `Moderators cannot remove a ${kind} on this contract`, errorCode: 'NOT_MODERATED' };
+      return { success: false, error: `Moderators cannot remove a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
     }
     let snapshotSaved = false;
     let documentGone = false;
@@ -1088,7 +1109,7 @@ class ModerationService {
           snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
           return sdk.contracts.moderatorDeleteDocument({
             ...auth,
-            contractId: YAPPR_CONTRACT_ID,
+            contractId: this.contract.contractId,
             documentTypeName: kind,
             documentId,
             reason: reasonOf(reason),
@@ -1104,7 +1125,7 @@ class ModerationService {
     const result: ModerationResult = documentGone
       ? {
         success: false,
-        error: `This ${kind} is already gone (removed by a moderator, perhaps by an earlier attempt of yours${authorDeletesLeaveHoles() ? ', or deleted by its author' : ''})`,
+        error: `This ${documentNoun(kind)} is already gone (removed by a moderator, perhaps by an earlier attempt of yours${this.contract.authorsDelete(kind) ? ', or deleted by its author' : ''})`,
         errorCode: 'DOCUMENT_GONE',
       }
       : moderated;
@@ -1119,13 +1140,13 @@ class ModerationService {
       dropSnapshot(kind, documentId);
       snapshotSaved = false;
     }
-    if (result.errorCode === 'DELETE_WINDOW_ELAPSED' && settledDeletionFor(kind)) {
+    if (result.errorCode === 'DELETE_WINDOW_ELAPSED' && this.contract.settledDeletionFor(kind)) {
       return { ...result, error: `${result.error}. Only the seated moderation team can remove it now, together.`, snapshotSaved };
     }
     if (result.errorCode === 'MAYBE_APPLIED') {
       return {
         ...result,
-        error: `The network did not confirm in time: the ${kind} may have been removed. Check again before retrying.`,
+        error: `The network did not confirm in time: the ${documentNoun(kind)} may have been removed. Check again before retrying.`,
         snapshotSaved,
       };
     }
@@ -1139,21 +1160,21 @@ class ModerationService {
    * someone took meanwhile refuses it (40105). The restoring moderator pays the
    * storage.
    */
-  async restoreDocument(moderatorId: string, kind: TargetKind, documentId: string): Promise<ModerationResult> {
+  async restoreDocument(moderatorId: string, kind: string, documentId: string): Promise<ModerationResult> {
     if (!this.canRemove(kind)) {
-      return { success: false, error: `Moderators cannot restore a ${kind} on this contract`, errorCode: 'NOT_MODERATED' };
+      return { success: false, error: `Moderators cannot restore a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
     }
     const bytes = loadSnapshot(kind, documentId);
     if (!bytes) {
       return { success: false, error: 'This device kept no copy of the removed document, so it cannot be restored from here', errorCode: 'NO_SNAPSHOT' };
     }
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
-      const contract = await sdk.contracts.fetch(YAPPR_CONTRACT_ID);
-      if (!contract) throw new Error('Social contract not found');
+      const contract = await sdk.contracts.fetch(this.contract.contractId);
+      if (!contract) throw new Error(`${this.contract.label} contract not found`);
       // A fresh Document for the call, never a caller's: nothing holds a wasm
       // borrow on it across the await.
       const document = Document.fromBytes(bytes, contract, kind, PlatformVersion.latest());
-      await send(() => sdk.contracts.moderatorRestoreDocument({ ...auth, contractId: YAPPR_CONTRACT_ID, documentTypeName: kind, document }));
+      await send(() => sdk.contracts.moderatorRestoreDocument({ ...auth, contractId: this.contract.contractId, documentTypeName: kind, document }));
     });
     if (result.success || result.errorCode === 'ALREADY_RESTORED' || result.errorCode === 'RESTORE_WINDOW_ELAPSED'
       || result.errorCode === 'RESTORE_HASH_MISMATCH' || result.errorCode === 'SETTLED_DELETION_NOT_RESTORABLE') {
@@ -1174,11 +1195,11 @@ class ModerationService {
    */
   async proposeSettledDeletion(
     moderatorId: string,
-    kind: TargetKind,
+    kind: string,
     documentId: string,
     reason: ModerationReasonInput
   ): Promise<ModerationResult & { actionId?: string; status?: ContractTeamActionStatus }> {
-    if (!this.canRemove(kind) || !settledDeletionFor(kind)) {
+    if (!this.canRemove(kind) || !this.contract.settledDeletionFor(kind)) {
       return { success: false, error: MODERATION_ERROR_MESSAGES.NOT_SETTLED_DELETABLE, errorCode: 'NOT_SETTLED_DELETABLE' };
     }
     if (!reason.reasonDocumentId) {
@@ -1188,7 +1209,7 @@ class ModerationService {
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       const proposal = await send(() => sdk.contracts.moderatorDeleteSettledDocument({
         ...auth,
-        contractId: YAPPR_CONTRACT_ID,
+        contractId: this.contract.contractId,
         documentTypeName: kind,
         documentId,
         reason: reasonOf(reason),
@@ -1216,7 +1237,7 @@ class ModerationService {
     let documentGone = false;
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       try {
-        ({ status } = await send(() => sdk.contracts.moderatorApproveTeamAction({ ...auth, contractId: YAPPR_CONTRACT_ID, actionId })));
+        ({ status } = await send(() => sdk.contracts.moderatorApproveTeamAction({ ...auth, contractId: this.contract.contractId, actionId })));
       } catch (error) {
         // 40101: the document is gone (another proposal for it ran, or its
         // author deleted it), so this action can never run.
@@ -1225,7 +1246,7 @@ class ModerationService {
       }
     });
     if (documentGone) {
-      return { success: false, error: `The document is already gone (another proposal removed it${authorDeletesLeaveHoles() ? ', or its author deleted it' : ''}), so this proposal can never run`, errorCode: 'DOCUMENT_GONE' };
+      return { success: false, error: `The document is already gone (another proposal removed it${this.authorsMayDelete() ? ', or its author deleted it' : ''}), so this proposal can never run`, errorCode: 'DOCUMENT_GONE' };
     }
     if (result.errorCode === 'TEAM_ACTION_DOCUMENT_CHANGED') {
       // Any replace by its author moves `$updatedAt` (on v11 the tombstone, or a
@@ -1242,11 +1263,11 @@ class ModerationService {
    * state Drive reads, so the serialization here must be of the document as
    * fetched now, under the contract as it is now.
    */
-  private async snapshotForRestore(sdk: EvoSDK, kind: TargetKind, documentId: string): Promise<boolean> {
+  private async snapshotForRestore(sdk: EvoSDK, kind: string, documentId: string): Promise<boolean> {
     try {
       const [contract, document] = await Promise.all([
-        sdk.contracts.fetch(YAPPR_CONTRACT_ID),
-        sdk.documents.get(YAPPR_CONTRACT_ID, kind, documentId),
+        sdk.contracts.fetch(this.contract.contractId),
+        sdk.documents.get(this.contract.contractId, kind, documentId),
       ]);
       if (!contract || !document) return false;
       return saveSnapshot(kind, documentId, document.toBytes(contract, PlatformVersion.latest()));
@@ -1260,7 +1281,7 @@ class ModerationService {
   async getProtectedIdentities(): Promise<Set<string>> {
     const team = await this.getTeam();
     if (!team) return new Set();
-    return protectedIdentities(team, electedModeration()?.ownerProtected === true);
+    return protectedIdentities(team, this.contract.elected()?.ownerProtected === true);
   }
 
   /**
@@ -1269,12 +1290,12 @@ class ModerationService {
    * removal record) beside {@link resolveReports}.
    */
   canDismissReports(): boolean {
-    return moderatorDeletableTypes().includes('report');
+    return this.contract.deletableTypes().includes('report');
   }
 
   /** True when the moderators mark reports handled instead of deleting them (v10: `changeFields` on `report`). */
   canResolveReports(): boolean {
-    return reportsAreResolved();
+    return this.contract.reportsResolved();
   }
 
   /**
@@ -1305,7 +1326,7 @@ class ModerationService {
         try {
           await send(() => sdk.contracts.moderatorDeleteDocument({
             ...auth,
-            contractId: YAPPR_CONTRACT_ID,
+            contractId: this.contract.contractId,
             documentTypeName: 'report',
             documentId,
             reason: reasonOf(reason),
@@ -1363,7 +1384,7 @@ class ModerationService {
         try {
           await send(() => sdk.contracts.moderatorChangeDocumentFields({
             ...auth,
-            contractId: YAPPR_CONTRACT_ID,
+            contractId: this.contract.contractId,
             documentTypeName: 'report',
             documentId: report.id,
             // `null` removes a note the report carries; an absent one is not named.
@@ -1397,7 +1418,7 @@ class ModerationService {
   async claimModeratorsPot(moderatorId: string): Promise<ModerationResult & { remainingCredits?: bigint }> {
     let remainingCredits: bigint | undefined;
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
-      const claimed = await send(() => sdk.contracts.claimFees({ ...auth, contractId: YAPPR_CONTRACT_ID, pot: 'moderators' }));
+      const claimed = await send(() => sdk.contracts.claimFees({ ...auth, contractId: this.contract.contractId, pot: 'moderators' }));
       remainingCredits = claimed.remainingCredits;
     });
     return remainingCredits === undefined ? result : { ...result, remainingCredits };
@@ -1417,7 +1438,7 @@ class ModerationService {
     moderatedIdentityId?: string,
     reason?: string | ModerationReasonInput
   ): Promise<ModerationResult> {
-    if (!contractIsModerated()) {
+    if (!this.contract.moderated()) {
       return { success: false, error: 'This contract declares no moderation', errorCode: 'NOT_MODERATED' };
     }
     if (reason !== undefined) {
@@ -1431,7 +1452,7 @@ class ModerationService {
     // answer could not be verified may hide a landed transition.
     let started = false;
     // Each transition its own reservation (a batch signs one nonce per report).
-    const send: ModerationSend = (write) => withSdkSignedWrite(moderatorId, YAPPR_CONTRACT_ID, () => {
+    const send: ModerationSend = (write) => withSdkSignedWrite(moderatorId, this.contract.contractId, () => {
       started = true;
       return write();
     });
@@ -1563,7 +1584,7 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   MODERATOR_FIELD: 'Only the moderators may set that field',
   NOTHING_TO_CHANGE: 'The document already reads that way, so there is nothing to change',
   NOT_SETTLED_DELETABLE: 'Nobody may remove documents of this type once they have settled',
-  TEAM_NOT_SEATED: 'No moderation team is seated, and only a seated team can remove a settled post or reply',
+  TEAM_NOT_SEATED: 'No moderation team is seated, and only a seated team can remove something that has settled',
   NOT_SETTLED: 'This is still within its window, so one moderator removes it directly: no team proposal is needed',
   TEAM_ACTION_NOT_FOUND: 'The team never proposed that action',
   TEAM_ACTION_ALREADY_SIGNED: 'You already approved that team action',
@@ -1580,5 +1601,19 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   REASON_TOO_LONG: 'The reason is too long: at most 1024 bytes (characters outside ASCII take more than one)',
 };
 
-export const moderationService = new ModerationService();
+export type { ModerationService };
+
+const SERVICES: Record<ModeratedContractKey, ModerationService> = {
+  social: new ModerationService(moderatedContract('social')),
+  storefront: new ModerationService(moderatedContract('storefront')),
+  blog: new ModerationService(moderatedContract('blog')),
+};
+
+/** The moderation of one of Yappr's contracts. */
+export function moderationServiceFor(key: ModeratedContractKey): ModerationService {
+  return SERVICES[key];
+}
+
+/** The social contract's moderation. */
+export const moderationService = SERVICES.social;
 

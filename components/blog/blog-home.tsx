@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
-import { blogCommentService, blogPostService } from '@/lib/services'
+import { blogCommentService, blogPostService, blogService } from '@/lib/services'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { blogPostDate, commentsAreEnabled, estimateReadingTime, formatLabels, getBlogPostUrl, getPostExcerpt, publishedPostsNewestFirst } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
@@ -19,6 +22,7 @@ interface BlogHomeProps {
 }
 
 export function BlogHome({ blog, username }: BlogHomeProps) {
+  const router = useRouter()
   const [posts, setPosts] = useState<BlogPost[]>([])
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
@@ -114,6 +118,14 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
               {followerCount} {followerCount === 1 ? 'follower' : 'followers'}
             </span>
           )}
+          <ModeratorContentMenu
+            target={documentRemovalTarget('blog', 'blog', 'blog', blog, blog.name)}
+            ownerId={blog.ownerId}
+            onRemoved={() => {
+              blogService.clearCache(blog.id)
+              router.push('/blog')
+            }}
+          />
         </div>
       )}
     >

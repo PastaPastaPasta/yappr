@@ -41,7 +41,7 @@ export function EncryptionKeyModal() {
 
 function KeyEntryEncryptionKeyModal() {
   const router = useRouter()
-  const { user, mergeSecretsIntoAuthVault } = useAuth()
+  const { user } = useAuth()
   const encryptionKeyId = useId()
   const { isOpen, action, onSuccess, close } = useEncryptionKeyModal()
   const [encryptionKeyInput, setEncryptionKeyInput] = useState('')
@@ -87,7 +87,7 @@ function KeyEntryEncryptionKeyModal() {
         return
       }
 
-      // App Connect builds: a key already stored here (say, from a password vault) may be the anchor key.
+      // App Connect builds: a key already stored here (say, entered earlier) may be the anchor key.
       if (isAppConnectBuild()) {
         const { confirmStoredEncryptionKey } = await import('@/lib/services/messaging-key-service')
         if (await confirmStoredEncryptionKey(user.identityId)) {
@@ -139,7 +139,6 @@ function KeyEntryEncryptionKeyModal() {
 
         storeEncryptionKey(user.identityId, derivedKeyWif)
         storeEncryptionKeyType(user.identityId, 'derived')
-        await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: derivedKeyWif })
 
         // Brief success message, then close
         setTimeout(() => {
@@ -163,7 +162,7 @@ function KeyEntryEncryptionKeyModal() {
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('')
     }
-  }, [close, mergeSecretsIntoAuthVault, user, onSuccess])
+  }, [close, user, onSuccess])
 
   // Trigger auto-recovery when modal opens
   useEffect(() => {
@@ -212,12 +211,8 @@ function KeyEntryEncryptionKeyModal() {
       }
 
       // Key is valid - store it (storeEncryptionKey handles conversion to WIF)
-      const { getEncryptionKey, storeEncryptionKey } = await import('@/lib/secure-storage')
+      const { storeEncryptionKey } = await import('@/lib/secure-storage')
       storeEncryptionKey(user.identityId, trimmedKey)
-      const normalizedEncryptionKey = getEncryptionKey(user.identityId)
-      if (normalizedEncryptionKey) {
-        await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
-      }
 
       toast.success('Encryption key saved')
       setEncryptionKeyInput('')
@@ -233,7 +228,7 @@ function KeyEntryEncryptionKeyModal() {
     } finally {
       setIsValidating(false)
     }
-  }, [close, mergeSecretsIntoAuthVault, user, encryptionKeyInput, onSuccess])
+  }, [close, user, encryptionKeyInput, onSuccess])
 
   const handleClose = useCallback(() => {
     // State is reset by the useEffect when isOpen becomes false

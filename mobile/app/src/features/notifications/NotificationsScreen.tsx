@@ -254,7 +254,7 @@ export function NotificationsScreen() {
         renderItem={({ item }) => (
           <NotificationRow
             row={item}
-            snippet={snippetOf(item.preview, sensitiveMode, viewerId)}
+            snippet={item.store ? item.store.snippet : snippetOf(item.preview, sensitiveMode, viewerId)}
             onPress={onRowPress}
             onActorPress={openUser}
           />

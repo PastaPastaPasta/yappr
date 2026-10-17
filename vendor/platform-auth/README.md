@@ -10,12 +10,9 @@ The project is intended for app developers who want a consistent, configurable a
 
 It is designed to help applications compose and reuse:
 
-- identity-based sign-in
-- password-unlock flows
-- passkey-unlock flows
+- identity-based sign-in (a private key, or an App Connect key ring)
 - wallet or login-key based sign-in flows
 - Yappr-compatible wallet key exchange with QR-based login and first-login key registration
-- auth-vault enrollment and secret merging
 - session restore and logout behavior
 - username and balance refresh
 - application-specific post-login hooks
@@ -38,7 +35,8 @@ This keeps the auth engine reusable across multiple apps with different onboardi
 
 - `PlatformAuthController`: the core auth orchestration engine
 - `PlatformAuthProvider` and `usePlatformAuth`: React bindings for consuming controller state
-- typed adapter interfaces: contracts for storage, identity lookup, usernames, vaults, passkeys, and side effects
+- typed adapter interfaces: contracts for storage, identity lookup, usernames and side effects
+- browser helpers: a secret store and WebAuthn PRF passkey primitives (not wired into the controller; there is no password or passkey vault)
 - Yappr-compatible key-exchange module: protocol helpers, transport polling, registration helpers, and React hooks
 
 ## Integration Model
@@ -51,8 +49,6 @@ Typical adapters include:
 - secret storage
 - identity and DPNS lookups
 - profile existence checks
-- passkey operations
-- auth-vault reads and writes
 - key-exchange response queries and key-registration transition building
 - app-specific post-login tasks
 

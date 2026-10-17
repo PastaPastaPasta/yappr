@@ -17,6 +17,8 @@ const LIB_ALLOWLIST = [
   'lib/utils/common',
   // Tag and mention normalizers. No imports at all.
   'lib/post-helpers',
+  // The media loading rule and takedown denylist. Imports only its bundled JSON list.
+  'lib/media/remote-media',
 ];
 /** Allowed for `import type` / `export type` only (erased at build time). */
 const LIB_TYPE_ALLOWLIST = ['lib/types'];

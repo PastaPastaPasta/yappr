@@ -56,13 +56,13 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     }, 500)
   }, [editor, onChange, reportBytes])
 
-  const insertImageBlock = useCallback((url: string, name = '') => {
+  const insertImageBlock = useCallback((url: string) => {
     const cursor = editor.getTextCursorPosition()
     editor.insertBlocks(
       [
         {
           type: 'image',
-          props: { url, caption: '', name },
+          props: { url, caption: '', name: '' },
         } as never,
       ],
       cursor.block,
@@ -76,7 +76,8 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
 
     try {
       const result = await upload(file)
-      insertImageBlock(`ipfs://${result.cid}`, file.name)
+      // No file name: a camera's IMG_20261015_143201.jpg would publish when the photo was taken.
+      insertImageBlock(`ipfs://${result.cid}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Image upload failed'
       if (msg.toLowerCase().includes('provider')) {

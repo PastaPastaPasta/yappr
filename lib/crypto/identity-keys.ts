@@ -91,12 +91,3 @@ export function getSecurityLevelName(level: number): string {
 export function getPurposeName(purpose: number): string {
   return PURPOSE_NAMES[purpose] ?? `UNKNOWN(${purpose})`
 }
-
-/** Login and DPNS signing accept CRITICAL or HIGH authentication keys, never MASTER. */
-export function isSecurityLevelAllowedForLogin(level: number): boolean {
-  return level === SecurityLevel.CRITICAL || level === SecurityLevel.HIGH
-}
-
-export function isPurposeAllowedForLogin(purpose: number): boolean {
-  return purpose === KeyPurpose.AUTHENTICATION
-}

@@ -2,9 +2,8 @@
 
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map'
-import { useState, useEffect, memo } from 'react'
+import { useState, useEffect, useCallback, memo } from 'react'
 import { PresenceIndicator } from './presence-indicator'
-import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from './ipfs-image'
 
 // Module-level cache for avatar URLs to prevent redundant fetches
@@ -130,26 +129,30 @@ export const UserAvatar = memo(function UserAvatar({
     }
   }, [userId, preloadedUrl])
 
+  // A picture that can't be shown (unreachable, removed, not loadable) gives
+  // way to the generated default avatar, as if none had been set.
+  const showDefaultAvatar = useCallback(() => {
+    import('@/lib/services/unified-profile-service')
+      .then(({ unifiedProfileService }) => setAvatarUrl(unifiedProfileService.getDefaultAvatarUrl(userId)))
+      .catch(err => logger.error('Failed to load the default avatar:', err))
+  }, [userId])
+
   const sizeClass = sizeClasses[size] || sizeClasses.md
+  const placeholder = <div className={`rounded-full bg-gray-200 dark:bg-gray-700 ${sizeClass} ${className}`} />
 
   // Don't render until we have the correct URL
   if (!avatarUrl) {
-    return <div className={`rounded-full bg-gray-200 dark:bg-gray-700 ${sizeClass} ${className}`} />
+    return placeholder
   }
 
-  // Use IpfsImage for IPFS URLs (handles gateway fallback)
-  const avatarElement = isIpfsProtocol(avatarUrl) ? (
+  const avatarElement = (
     <IpfsImage
       src={avatarUrl}
+      size="avatar"
       alt={alt}
       className={`rounded-full object-cover ${sizeClass} ${showPresence ? '' : className}`}
-    />
-  ) : (
-    <img
-      src={avatarUrl}
-      alt={alt}
-      className={`rounded-full object-cover ${sizeClass} ${showPresence ? '' : className}`}
-      crossOrigin="anonymous"
+      onError={showDefaultAvatar}
+      fallback={placeholder}
     />
   )
 

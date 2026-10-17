@@ -1,14 +1,16 @@
 'use client'
 
 import { useState, createContext, useContext } from 'react'
-import Image from 'next/image'
 import Link from 'next/link'
-import { LinkIcon, PlayIcon, XMarkIcon, InformationCircleIcon } from '@heroicons/react/24/solid'
+import { LinkIcon, PhotoIcon, PlayIcon, XMarkIcon, InformationCircleIcon } from '@heroicons/react/24/solid'
 import { useSettingsStore } from '@/lib/store'
-import { CORS_PROXY_INFO } from '@/lib/link-preview/fetch'
+import { LINK_PREVIEW_SERVICES } from '@/lib/link-preview/fetch'
 import { isDirectImageUrl, isYouTubeUrl } from '@/lib/link-preview/urls'
 import type { LinkPreviewData } from '@/lib/link-preview/types'
+import { isDeniedMedia } from '@/lib/media/remote-media'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
+import { IpfsImage } from '@/components/ui/ipfs-image'
+import { YouTubeThumbnail } from '@/components/ui/youtube-thumbnail'
 
 // Context for managing the link preview modal state
 interface LinkPreviewModalContextType {
@@ -89,10 +91,10 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
           {/* Simple explanation for most users */}
           <div className="space-y-3 text-sm text-neutral-600 dark:text-neutral-400">
             <p>
-              Link previews show images and other rich content for links in posts.
+              Link previews show a title and picture for links in posts.
             </p>
             <p>
-              To do this, Yappr needs to fetch preview content from the web. In some cases, the service providing the preview may see the URL being viewed.
+              Most previews are made from the link itself, without contacting the website. Pictures load through an image service, so the sites hosting them don&apos;t see your IP address.
             </p>
             <p>
               Previews are on by default. You can turn them off here or anytime in Settings.
@@ -121,10 +123,13 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
               {/* Direct services */}
               <div>
                 <h3 className="text-sm font-medium text-neutral-800 dark:text-neutral-200 mb-2">
-                  Direct previews
+                  Read directly
                 </h3>
+                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">
+                  Links to these services are read straight from them, so they can see that the link was viewed:
+                </p>
                 <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
-                  {CORS_PROXY_INFO.directServices.map((service) => (
+                  {LINK_PREVIEW_SERVICES.directServices.map((service) => (
                     <li key={service.name}>
                       <span className="font-medium">{service.name}</span>
                       <span className="text-neutral-500 dark:text-neutral-500"> — {service.description}</span>
@@ -139,10 +144,10 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
                   IPFS content
                 </h3>
                 <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">
-                  For ipfs:// links, content is fetched from public gateways:
+                  IPFS links and pictures load from public gateways:
                 </p>
                 <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
-                  {CORS_PROXY_INFO.ipfsGateways.map((gateway) => (
+                  {LINK_PREVIEW_SERVICES.ipfsGateways.map((gateway) => (
                     <li key={gateway.name}>
                       <a
                         href={gateway.url}
@@ -157,28 +162,23 @@ function LinkPreviewModal({ onClose }: { onClose: () => void }) {
                 </ul>
               </div>
 
-              {/* Proxy services */}
+              {/* Image proxy */}
               <div>
                 <h3 className="text-sm font-medium text-neutral-800 dark:text-neutral-200 mb-2">
-                  Other links
+                  Other links and pictures
                 </h3>
-                <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">
-                  For sites not listed above, previews are fetched through external services to avoid browser restrictions. External providers may see the requested URL. Currently used providers:
+                <p className="text-xs text-neutral-600 dark:text-neutral-400">
+                  Other links show their address only; the website is not contacted. Pictures that aren&apos;t on IPFS load through{' '}
+                  <a
+                    href={LINK_PREVIEW_SERVICES.imageProxy.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-neutral-800 dark:hover:text-neutral-300"
+                  >
+                    {LINK_PREVIEW_SERVICES.imageProxy.name}
+                  </a>
+                  , which fetches them for you, so the sites hosting them never see your IP address.
                 </p>
-                <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
-                  {CORS_PROXY_INFO.proxies.map((proxy) => (
-                    <li key={proxy.name}>
-                      <a
-                        href={proxy.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline hover:text-neutral-800 dark:hover:text-neutral-300"
-                      >
-                        {proxy.name}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
               </div>
             </div>
           )}
@@ -233,9 +233,6 @@ export function LinkPreviewInfoIcon() {
   )
 }
 
-// Note: We use next/image for favicon (small, fixed size) but regular img
-// for preview images so we can check naturalWidth/Height on load
-
 interface LinkPreviewProps {
   data: LinkPreviewData
   className?: string
@@ -267,19 +264,13 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
     }
     return false
   })
-  const [faviconError, setFaviconError] = useState(false)
   // YouTube player state
   const [isPlaying, setIsPlaying] = useState(false)
-  const [thumbnailUrl, setThumbnailUrl] = useState(() =>
-    data.youtubeVideoId
-      ? `https://img.youtube.com/vi/${data.youtubeVideoId}/maxresdefault.jpg`
-      : ''
-  )
 
   const safeUrl = sanitizeUrl(data.url)
 
-  // Don't render if URL is invalid/unsafe
-  if (!safeUrl) {
+  // Don't render if URL is invalid/unsafe, or the link is on the takedown denylist
+  if (!safeUrl || isDeniedMedia(safeUrl)) {
     return null
   }
 
@@ -298,12 +289,22 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
   const isDirectImage = data.isDirectImage || isDirectImageUrl(data.url)
 
   // Handler to check actual image dimensions after load
-  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget
+  const handleImageLoad = (loadedUrl: string, img: HTMLImageElement) => {
     if (img.naturalWidth < MIN_IMAGE_SIZE || img.naturalHeight < MIN_IMAGE_SIZE) {
       setImageTooSmall(true)
     }
   }
+
+  // The site's icon, through the image proxy; a link icon if there is none
+  const siteIcon = (
+    <IpfsImage
+      src={data.favicon ?? ''}
+      size="avatar"
+      alt=""
+      className="h-3.5 w-3.5 rounded-sm flex-shrink-0"
+      fallback={<LinkIcon className="h-3.5 w-3.5 flex-shrink-0" />}
+    />
+  )
 
   // YouTube video preview with click-to-play embedded player
   if (data.youtubeVideoId) {
@@ -319,20 +320,7 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
               }}
               className="relative w-full aspect-video bg-black cursor-pointer group"
             >
-              {/* Thumbnail */}
-              <img
-                src={thumbnailUrl}
-                alt="YouTube video thumbnail"
-                className="w-full h-full object-cover"
-                onError={() => {
-                  // Fallback from maxresdefault to hqdefault if maxres doesn't exist
-                  if (thumbnailUrl.includes('maxresdefault')) {
-                    setThumbnailUrl(
-                      `https://img.youtube.com/vi/${data.youtubeVideoId}/hqdefault.jpg`
-                    )
-                  }
-                }}
-              />
+              <YouTubeThumbnail videoId={data.youtubeVideoId} className="w-full h-full object-cover" />
               {/* Play button overlay */}
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="w-16 h-16 bg-red-600 rounded-full flex items-center justify-center shadow-lg group-hover:bg-red-700 transition-colors">
@@ -382,36 +370,23 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
           onClick={(e) => e.stopPropagation()}
           className="block border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
         >
-          {/* Large image display */}
-          {!imageError ? (
-            <div className="relative bg-neutral-100 dark:bg-neutral-800">
-              <img
-                src={safeUrl}
-                alt="Image preview"
-                className="w-full max-h-[400px] object-contain"
-                onError={() => setImageError(true)}
-              />
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-32 bg-neutral-100 dark:bg-neutral-800 text-neutral-400">
-              Failed to load image
-            </div>
-          )}
+          {/* Large image display (IPFS via the gateways, anything else via the image proxy) */}
+          <div className="relative bg-neutral-100 dark:bg-neutral-800">
+            <IpfsImage
+              src={safeUrl}
+              alt="Image preview"
+              className="w-full max-h-[400px] object-contain"
+              fallback={
+                <div className="flex flex-col items-center justify-center gap-1 h-32 text-neutral-400 dark:text-neutral-500">
+                  <PhotoIcon className="h-6 w-6" />
+                  <span className="text-xs">Image unavailable</span>
+                </div>
+              }
+            />
+          </div>
           {/* Domain info footer */}
           <div className="flex items-center gap-1.5 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 border-t border-neutral-200 dark:border-neutral-700">
-            {data.favicon && !faviconError ? (
-              <Image
-                src={data.favicon}
-                alt=""
-                width={14}
-                height={14}
-                className="rounded-sm flex-shrink-0"
-                onError={() => setFaviconError(true)}
-                unoptimized
-              />
-            ) : (
-              <LinkIcon className="h-3.5 w-3.5 flex-shrink-0" />
-            )}
+            {siteIcon}
             <span className="truncate">{hostname}</span>
           </div>
         </a>
@@ -432,19 +407,7 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
         {/* Text content */}
         <div className="flex-1 p-3 min-w-0">
           <div className="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 mb-1">
-            {data.favicon && !faviconError ? (
-              <Image
-                src={data.favicon}
-                alt=""
-                width={14}
-                height={14}
-                className="rounded-sm flex-shrink-0"
-                onError={() => setFaviconError(true)}
-                unoptimized
-              />
-            ) : (
-              <LinkIcon className="h-3.5 w-3.5 flex-shrink-0" />
-            )}
+            {siteIcon}
             <span className="truncate">{data.siteName || hostname}</span>
           </div>
           {data.title ? (
@@ -462,11 +425,12 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
             </p>
           )}
         </div>
-        {/* Small thumbnail on the right - use img tag to check naturalWidth/Height */}
+        {/* Small thumbnail on the right; handleImageLoad hides it if it is tiny */}
         {showImage && (
           <div className="relative w-24 h-24 flex-shrink-0 bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
-            <img
-              src={data.image}
+            <IpfsImage
+              src={data.image ?? ''}
+              size="thumbnail"
               alt={data.title || 'Link preview'}
               className="w-full h-full object-cover"
               onError={() => setImageError(true)}

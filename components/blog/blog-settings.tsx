@@ -13,6 +13,7 @@ import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
 import { logger } from '@/lib/logger'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 
 interface BlogSettingsProps {
   blog: Blog
@@ -47,7 +48,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
       toast.success('Blog updated')
       onUpdated?.(updated)
     } catch (err) {
-      toast.error(err instanceof ListLimitError || err instanceof BlogFieldError ? err.message : 'Failed to update blog')
+      if (!reportModerationRefusal(err, ownerId, 'blog')) toast.error(err instanceof ListLimitError || err instanceof BlogFieldError ? err.message : 'Failed to update blog')
     } finally {
       setIsSaving(false)
     }
@@ -67,7 +68,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
     } catch (err) {
       setLabels(previous)
       logger.error('Failed to add label:', err)
-      toast.error(err instanceof ListLimitError ? err.message : 'Failed to update labels')
+      if (!reportModerationRefusal(err, ownerId, 'blog')) toast.error(err instanceof ListLimitError ? err.message : 'Failed to update labels')
     } finally {
       setIsSavingLabels(false)
     }

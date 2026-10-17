@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   AES_GCM_IV_LENGTH,
-  MAX_KDF_ITERATIONS,
-  MIN_KDF_ITERATIONS,
   aesGcmDecrypt,
   aesGcmEncrypt,
   aesGcmOpen,
   aesGcmSeal,
   deriveAesKeyFromPrivateKey,
-  deriveKeyFromPasswordAndSalt,
   deriveKeyWithHkdf,
   importAesKey,
 } from './aes-gcm'
@@ -88,11 +85,5 @@ describe('key derivation', () => {
     const sealed = await aesGcmEncrypt(a, PLAINTEXT)
     expect(await aesGcmDecrypt(b, sealed)).toEqual(PLAINTEXT)
     await expect(aesGcmDecrypt(c, sealed)).rejects.toThrow()
-  })
-
-  it('rejects PBKDF2 iteration counts outside the allowed range', async () => {
-    const salt = new Uint8Array(16)
-    await expect(deriveKeyFromPasswordAndSalt('pw', salt, MIN_KDF_ITERATIONS - 1)).rejects.toThrow('Iterations')
-    await expect(deriveKeyFromPasswordAndSalt('pw', salt, MAX_KDF_ITERATIONS + 1)).rejects.toThrow('Iterations')
   })
 })

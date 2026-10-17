@@ -106,7 +106,7 @@ function AmountPresets({ presets, unit, value, onSelect }: AmountPresetsProps) {
 
 export function TipModal() {
   const { isOpen, post, recipient, close } = useTipModal()
-  const { user, refreshBalance, mergeSecretsIntoAuthVault } = useAuth()
+  const { user, refreshBalance } = useAuth()
 
   // Derive recipient info from either post.author or direct recipient
   const recipientInfo = useMemo(() => {
@@ -546,23 +546,13 @@ export function TipModal() {
       return
     }
 
-    let normalizedTransferKey: string | null = null
     try {
       storeTransferKey(user.identityId, usedTransferKeyRef.current)
-      normalizedTransferKey = getTransferKey(user.identityId)
     } catch (err) {
       logger.error('Failed to store transfer key:', err)
       setError('Failed to save transfer key')
       setState('error')
       return
-    }
-
-    if (normalizedTransferKey) {
-      try {
-        await mergeSecretsIntoAuthVault(user.identityId, { transferKeyWif: normalizedTransferKey })
-      } catch (err) {
-        logger.error('Failed to merge transfer key into auth vault:', err)
-      }
     }
     usedTransferKeyRef.current = null
     setState('success')

@@ -59,8 +59,9 @@
  *
  * ## Owner
  *
- * `--maker` reads the contract-maker key file (see owner-keys.mjs); `--bot <n>`
- * derives from `E2E_SEED_PHRASE`. Identity **ids** are not derivable, and the
+ * `--maker` signs as the devnet maker (DEVNET_MAKER_IDENTITY_ID, seed index 9;
+ * `resolveMakerOwner`, which needs NETWORK=devnet); `--bot <n>` derives from
+ * `E2E_SEED_PHRASE`. Identity **ids** are not derivable, and the
  * devnet ids differ from the testnet ones, so on devnet pass the id explicitly:
  *
  *   node scripts/register-social-v3-draft.mjs --bot 0 --owner <devnetIdentityId>
@@ -108,6 +109,7 @@ import { DataContract, PlatformVersion, ensureInitialized } from '@dashevo/evo-s
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { devnetConfig, devnetSdk as buildDevnetSdk } from './sdk-env.mjs';
 import { auditModeration, requireModeratorsExist, withInterim, withModerators } from './register-lib.mjs';
+import { resolveMakerOwner } from './social-battery-lib.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACTS_DIR = join(REPO_ROOT, 'contracts');
@@ -346,7 +348,7 @@ try {
     process.exit(0);
   }
 
-  const owner = resolveOwner(args);
+  const owner = args.maker ? resolveMakerOwner() : resolveOwner(args);
   const { sdk, devnetName, addresses } = devnetSdk();
   await sdk.connect();
   console.log(`connected to devnet "${devnetName}" (${addresses.length} addresses); owner=${owner.label}`);

@@ -31,11 +31,12 @@ import {
 import { clearAppConnectEncryptionKey, setAppConnectEncryptionKey, setAppConnectSessionIdentity } from './memory-keys'
 import { appConnectPlatformPort } from './platform-port'
 import {
-  appConnectHealth,
+  appConnectStanding,
   primaryGroupKey,
   reconcileSessionWithChain,
   withoutOutdatedEncryptionKeys,
   type AppConnectHealth,
+  type RenewSoonReason,
 } from './session-health'
 
 /**
@@ -52,24 +53,36 @@ interface AppConnectStatus {
   /** The identity with an App Connect session, or null. */
   identityId: string | null
   health: AppConnectHealth | null
+  /** Why `health` is `renew-soon`, for the banner's wording. */
+  renewSoon: RenewSoonReason | null
   /** Set when a write was refused for the allowance or expiry: the blocking renew prompt. */
   renewRequired: RenewReason | null
   /** The wallet revoked this browser's keys; the session was wiped. */
   signedOutByWallet: boolean
   /** The group key is CRITICAL (the wallet granted what was asked), so token claims can be signed here. */
   canSignTokens: boolean
+  /**
+   * The identity whose renewal the user has started and not yet finished or
+   * abandoned. The wallet disables the old keys before the new grant arrives,
+   * so a revoke found meanwhile is the renewal under way, not a sign-out.
+   */
+  renewing: string | null
   dismissRenewRequired: () => void
   dismissSignedOut: () => void
+  setRenewing: (identityId: string | null) => void
 }
 
 export const useAppConnectStatus = create<AppConnectStatus>((set) => ({
   identityId: null,
   health: null,
+  renewSoon: null,
   renewRequired: null,
   signedOutByWallet: false,
   canSignTokens: false,
+  renewing: null,
   dismissRenewRequired: () => set({ renewRequired: null }),
   dismissSignedOut: () => set({ signedOutByWallet: false }),
+  setRenewing: (identityId) => set({ renewing: identityId }),
 }))
 
 /**
@@ -85,13 +98,15 @@ const REFRESH_INTERVAL_MS = 60 * 60_000
 
 function publishSession(session: AppConnectSession | null): void {
   if (!session) {
-    useAppConnectStatus.setState({ identityId: null, health: null, renewRequired: null, canSignTokens: false })
+    useAppConnectStatus.setState({ identityId: null, health: null, renewSoon: null, renewRequired: null, canSignTokens: false })
     return
   }
   const group = primaryGroupKey(session)
+  const { health, renewSoon } = appConnectStanding(session, Date.now())
   useAppConnectStatus.setState({
     identityId: session.identityId,
-    health: appConnectHealth(session, Date.now()),
+    health,
+    renewSoon,
     canSignTokens: group?.securityLevel === KeySecurityLevel.CRITICAL,
   })
 }

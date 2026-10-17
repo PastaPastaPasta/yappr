@@ -2,8 +2,7 @@
  * Token Purchase Builder
  *
  * Builds an UNSIGNED TokenDirectPurchaseTransition, handed to a remote wallet to
- * sign with its CRITICAL key. The construction mirrors the signed flow in
- * scripts/set-yapp-price.mjs; the batch plumbing it shares with the tip builder
+ * sign with its CRITICAL key. The batch plumbing it shares with the tip builder
  * lives in token-transition-builder.ts.
  */
 

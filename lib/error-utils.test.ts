@@ -6,6 +6,9 @@
  * must NOT claim.
  */
 import { describe, expect, it, vi } from 'vitest'
+import blogContract from '@/contracts/yappr-blog-contract.json'
+import storefrontContract from '@/contracts/yappr-storefront-contract.json'
+import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import {
   UNCONFIRMED_WRITE_MESSAGE,
   sentWriteOutcomeUnknown,
@@ -29,6 +32,9 @@ import {
   isReferencedRuleReadInvalidError,
   isDocumentPropertyRuleError,
   isModerationNotYetSeatedError,
+  MODERATION_CLOSED_COPY,
+  POSTING_CLOSED_COPY,
+  moderationClosedCopy,
   isModeratorsShareMismatchError,
   isPropertyMaxBytesError,
   isReferenceNotFoundError,
@@ -958,6 +964,29 @@ describe('isConsensusRefusal', () => {
   })
 })
 
+describe('5.0.0-rc.3 wait errors (platform#5400)', () => {
+  // The combined and affected-state waits now say "Failed to wait for state
+  // transition result: …" (was "Failed to broadcast: …"); waitForResponse, which
+  // state-transition-service uses, and a strict wait's ExecutionNotProved have none.
+  const WAIT = 'Failed to wait for state transition result'
+
+  it('still reads a refusal by its code behind the new prefix', () => {
+    const refused = { code: 40106, name: 'Protocol', message: `${WAIT}: Protocol error: invalid revision`, isRetriable: false }
+    expect(isConsensusRefusal(refused)).toBe(true)
+    expect(sentWriteOutcomeUnknown(refused)).toBe(false)
+  })
+
+  it('leaves a lost wait and an unproven execution with an unknown outcome', () => {
+    const lost = { code: -1, name: 'DapiClientError', message: `${WAIT}: Dapi client error: transport error: deadline exceeded` }
+    const unproven = { code: -1, name: 'ExecutionNotProved', message: "proof authenticates the transition's affected state only, not its execution: Document" }
+    for (const error of [lost, unproven]) {
+      expect(isConsensusRefusal(error)).toBe(false)
+      expect(sentWriteOutcomeUnknown(error)).toBe(true)
+    }
+    expect(isOutcomeUnknownError(unproven)).toBe(true)
+  })
+})
+
 describe('isUnverifiedOutcomeError', () => {
   it.each([
     [{ code: -1, name: 'Proof', message: 'context provider error: invalid quorum: Quorum not found in cache for hash: 1855' }],
@@ -1075,5 +1104,53 @@ describe('v13 propertyConstraints rules', () => {
     expect(categorizeError(broken('minPrice <= maxPrice'))).toMatch(/combination of values/)
     expect(categorizeError(new Error('A document of type "listing" breaks its propertyConstraints rule "media": no'))).toMatch(/combination of values/)
     expect(categorizeError(broken('constructor'))).toMatch(/combination of values/)
+  })
+})
+
+describe('41200 says which product is closed (R-M24)', () => {
+  const refusal = (type: string) => new Error(`Documents of type ${type} on contract 9hZw can not be used until a moderation team is seated`)
+
+  it('names the storefront for every type the storefront contract moderates', () => {
+    for (const type of Object.keys(storefrontContract.config.moderation.moderators.moderatedDocumentTypes)) {
+      expect(moderationClosedCopy(refusal(type))).toBe(MODERATION_CLOSED_COPY.storefront)
+      expect(categorizeError(refusal(type))).toBe(MODERATION_CLOSED_COPY.storefront)
+    }
+  })
+
+  it('names blogs for every type the blog contract moderates', () => {
+    for (const type of Object.keys(blogContract.config.moderation.moderators.moderatedDocumentTypes)) {
+      expect(moderationClosedCopy(refusal(type))).toBe(MODERATION_CLOSED_COPY.blog)
+    }
+  })
+
+  it('keeps the posting copy for social types, quoted or not', () => {
+    expect(moderationClosedCopy(refusal('post'))).toBe(MODERATION_CLOSED_COPY.social)
+    expect(moderationClosedCopy(refusal('"yapprProfile"'))).toBe(MODERATION_CLOSED_COPY.social)
+    expect(categorizeError(refusal('reply'))).toBe(POSTING_CLOSED_COPY)
+  })
+
+  it('keeps the posting copy for every type the social contract moderates', () => {
+    for (const type of Object.keys(socialContractV16.config.moderation.moderators.moderatedDocumentTypes)) {
+      expect(moderationClosedCopy(refusal(type), 'storefront')).toBe(MODERATION_CLOSED_COPY.social)
+    }
+  })
+
+  it('uses the writing product for a type it does not know', () => {
+    expect(moderationClosedCopy(refusal('storeCoupon'), 'storefront')).toBe(MODERATION_CLOSED_COPY.storefront)
+  })
+
+  it('falls back to the writing product when the refusal names no type', () => {
+    expect(moderationClosedCopy(new Error('rejected: code=41200'), 'blog')).toBe(MODERATION_CLOSED_COPY.blog)
+    expect(moderationClosedCopy(new Error('rejected: code=41200'))).toBe(MODERATION_CLOSED_COPY.social)
+  })
+
+  it('answers null for anything else, so the caller keeps its own message', () => {
+    expect(moderationClosedCopy(new Error('Identity GuNN is banned on contract 9hZw and can not act on its documents'), 'storefront')).toBeNull()
+  })
+
+  it('says nothing of posts or profiles on a store or blog refusal', () => {
+    for (const copy of [MODERATION_CLOSED_COPY.storefront, MODERATION_CLOSED_COPY.blog]) {
+      expect(copy).not.toMatch(/posts, replies|profile/i)
+    }
   })
 })

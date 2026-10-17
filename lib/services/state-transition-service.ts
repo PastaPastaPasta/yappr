@@ -461,8 +461,7 @@ class StateTransitionService {
    *
    * This is the typed write path: `documentData` should already use `Uint8Array` for binary
    * fields before it is wrapped in a `Document`. It may be a function of the document's id
-   * for data that must commit to the id before the document exists (the auth vault binds
-   * its ciphertext to the vault id as AEAD associated data): the function is called once,
+   * for data that must commit to the id before the document exists: the function is called once,
    * with the id the create transition WILL carry, and the same nonce is then used for the
    * broadcast, so the id the data was built against is the id Platform stores.
    *

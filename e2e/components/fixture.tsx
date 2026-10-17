@@ -4,6 +4,7 @@ import { PrivateFeedSettings } from '@/components/settings/private-feed-settings
 import { snapshot } from './private-feed-mocks'
 import { VariantEditorFixture } from './variant-editor-fixture'
 import { LiveThreadStatusFixture, ThreadStatusFixture } from './thread-status-fixture'
+import { BlogEditorFixture } from './blog-editor-fixture'
 
 declare global {
   interface Window {
@@ -18,7 +19,9 @@ if (!root) throw new Error('Component fixture root is missing')
 const fixture = new URLSearchParams(window.location.search).get('fixture')
 const threadState = fixture?.startsWith('thread-') ? fixture.slice('thread-'.length) : null
 createRoot(root).render(
-  fixture === 'variant-editor' || fixture === 'variant-editor-legacy' ? (
+  fixture === 'blog-editor' ? (
+    <BlogEditorFixture />
+  ) : fixture === 'variant-editor' || fixture === 'variant-editor-legacy' ? (
     <VariantEditorFixture legacy={fixture === 'variant-editor-legacy'} />
   ) : threadState === 'checking' || threadState === 'unreachable' || threadState === 'reachable' ? (
     <ThreadStatusFixture state={threadState} />
@@ -28,7 +31,7 @@ createRoot(root).render(
     <LiveThreadStatusFixture answers={[false, null, true]} />
   ) : (
     <>
-      <h1>Isolated private-feed regression fixture (mocked chain and vault)</h1>
+      <h1>Isolated private-feed regression fixture (mocked chain)</h1>
       <PrivateFeedSettings />
       <Toaster toastOptions={{ duration: Infinity }} />
     </>

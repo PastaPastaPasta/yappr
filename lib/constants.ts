@@ -184,11 +184,8 @@ export const storefrontSupportsDigital = () => storefrontIsV6()
 export const storefrontSupportsItemZones = () => storefrontTopologyAtLeast('v9')
 /** True on v2–v5: store and item reviews cost YAPP (v6 charges an action fee instead). */
 export const storefrontReviewsCostYapp = () => storefrontIsV2() && !storefrontIsV6()
-export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
-export const YAPPR_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_VAULT_CONTRACT_ID ?? '7RQoHtVZaRZDSrR22s8KcbCJmwSwetJHBcFjx6FJdkJD' // Testnet - Vault contract (contract-bound encryption keys + encrypted storage)
-export const YAPPR_AUTH_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID ?? '64RTgHjGXhtiN9t5S4u6hVDps7oHuTBaaHrQEFYcxt9M'
 export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID ?? '9jfarXPwRoKXK4v2JBDaiFg3j78diQuLnHMyVqBZfZNc' // Testnet - Blog contract v4 (BlockNote 0.47 upgrade)
 // ---- blog v2 topology — owned by the blog work, edit here only ----
 // `v1` is the testnet contract: plain indexes, no reference integrity, no token
@@ -556,7 +553,6 @@ export const DOCUMENT_TYPES = {
   BLOCK: 'block',
   BLOCK_FILTER: 'blockFilter',
   BLOCK_FOLLOW: 'blockFollow',
-  ENCRYPTED_KEY_BACKUP: 'encryptedKeyBackup',
   POST_HASHTAG: 'postHashtag',
   POST_MENTION: 'postMention',
   // Private feed document types
@@ -570,9 +566,6 @@ export const DOCUMENT_TYPES = {
   BLOG_POST: 'blogPost',
   BLOG_COMMENT: 'blogComment',
   BLOG_FOLLOW: 'blogFollow',
-  VAULT: 'vault',
-  AUTH_VAULT: 'authVault',
-  AUTH_VAULT_ACCESS: 'authVaultAccess',
 } as const
 
 // Storefront document types (separate contract)

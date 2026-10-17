@@ -422,6 +422,9 @@ function selfTestAppConnect() {
   ]);
 }
 
+// The self-test is offline and names no network; the env reads below need one.
+if (process.argv.includes('--self-test')) process.exit(selfTestAppConnect());
+
 /** A variable from the environment, and on a devnet also from .env.devnet (never another network's file). */
 const fromEnv = (name) => (network() === 'devnet' ? envValue(name) : process.env[name]) ?? '';
 // runBattery defaults --contract from process.env alone; give it the devnet file's value too.

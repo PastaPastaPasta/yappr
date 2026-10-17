@@ -950,6 +950,41 @@ function isVoteChoiceNotAllowedError(error: unknown): boolean {
 export const POSTING_CLOSED_COPY = 'Posting opens when Yappr\'s first moderators are elected. Until then posts, replies, reports and profile changes are closed.'
 
 /**
+ * What a 41200 means on each moderated contract. Storefront and blog elect
+ * teams of their own, so each opens on its own schedule, and each refusal
+ * names only what it closes.
+ */
+export const MODERATION_CLOSED_COPY = {
+  social: POSTING_CLOSED_COPY,
+  storefront: 'Stores open when Yappr\'s first store moderators are elected. Until then, stores, listings and reviews can\'t be created or changed.',
+  blog: 'Blogs open when Yappr\'s first blog moderators are elected. Until then, blogs, posts and comments can\'t be created or changed.',
+} as const
+export type ModerationClosedProduct = keyof typeof MODERATION_CLOSED_COPY
+
+/** The moderated types of each contract (pinned against the contract files by error-utils.test). */
+const SOCIAL_MODERATED_TYPES: ReadonlySet<string> = new Set(['post', 'reply', 'report', 'yapprProfile'])
+const STOREFRONT_MODERATED_TYPES: ReadonlySet<string> = new Set(['store', 'storeItem', 'storeReview', 'itemReview'])
+const BLOG_MODERATED_TYPES: ReadonlySet<string> = new Set(['blog', 'blogPost', 'blogComment'])
+
+/** The product a 41200 names by its document type, or `fallback` when it names none Yappr knows. */
+function closedProductOf(error: unknown, fallback: ModerationClosedProduct): ModerationClosedProduct {
+  const type = /documents of type\s+["'`]?([A-Za-z0-9_]+)["'`]?\s+on contract/i.exec(extractErrorMessage(error))?.[1]
+  if (!type) return fallback
+  if (STOREFRONT_MODERATED_TYPES.has(type)) return 'storefront'
+  if (BLOG_MODERATED_TYPES.has(type)) return 'blog'
+  return SOCIAL_MODERATED_TYPES.has(type) ? 'social' : fallback
+}
+
+/**
+ * The closed copy for a 41200, for the product whose type it refused (the
+ * write's own product, `fallback`, when the message names no type), or null
+ * when the error is something else.
+ */
+export function moderationClosedCopy(error: unknown, fallback: ModerationClosedProduct = 'social'): string | null {
+  return isModerationNotYetSeatedError(error) ? MODERATION_CLOSED_COPY[closedProductOf(error, fallback)] : null
+}
+
+/**
  * **41200** `ContractModeratedDocumentTypeNotYetUsableError` (elected
  * moderation, #4886/#4952): the contract declares elected moderation with a
  * `notYetUsable` interim, and no team is seated yet, so every document
@@ -1283,7 +1318,7 @@ export function categorizeError(error: unknown, action = 'create post'): string 
     return 'Your account has been banned or suspended here by a moderator, so this action isn\'t allowed right now.'
   }
   if (isModerationNotYetSeatedError(error)) {
-    return POSTING_CLOSED_COPY
+    return MODERATION_CLOSED_COPY[closedProductOf(error, 'social')]
   }
   if (isPropertyMaxBytesError(error)) {
     // maxLength counts characters and the UI enforces it; maxBytes counts

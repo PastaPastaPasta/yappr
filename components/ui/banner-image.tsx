@@ -3,7 +3,6 @@
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { useState, useEffect, memo } from 'react'
-import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from './ipfs-image'
 
 // Module-level cache for banner URLs to prevent redundant fetches
@@ -129,34 +128,23 @@ export const BannerImage = memo(function BannerImage({
     )
   }
 
-  // Show banner image if available
+  // Show banner image if available (IPFS through the gateways, other https
+  // through the image proxy); the gradient stands in if it can't be shown.
   if (bannerUrl) {
-    // Use IpfsImage for IPFS URLs (handles gateway fallback)
-    if (isIpfsProtocol(bannerUrl)) {
-      return (
-        <div className={`relative ${className}`}>
-          {!imageLoaded && (
-            <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 animate-pulse" />
-          )}
-          <IpfsImage
-            src={bannerUrl}
-            alt="Profile banner"
-            className={`w-full h-full object-cover ${imageLoaded ? '' : 'invisible'}`}
-            onLoad={() => setImageLoaded(true)}
-            onError={() => setImageLoaded(true)} // Still show something even on error
-            fallback={fallbackGradient ? <div className="absolute inset-0 bg-gradient-yappr" /> : undefined}
-          />
-        </div>
-      )
-    }
-
-    // Regular URL - use normal img tag
     return (
-      <img
-        src={bannerUrl}
-        alt="Profile banner"
-        className={`object-cover ${className}`}
-      />
+      <div className={`relative ${className}`}>
+        {!imageLoaded && (
+          <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 animate-pulse" />
+        )}
+        <IpfsImage
+          src={bannerUrl}
+          alt="Profile banner"
+          className={`w-full h-full object-cover ${imageLoaded ? '' : 'invisible'}`}
+          onLoad={() => setImageLoaded(true)}
+          onError={() => setImageLoaded(true)} // Stop the pulse; the fallback takes over
+          fallback={fallbackGradient ? <div className="absolute inset-0 bg-gradient-yappr" /> : undefined}
+        />
+      </div>
     )
   }
 

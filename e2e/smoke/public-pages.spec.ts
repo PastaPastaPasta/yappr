@@ -4,7 +4,7 @@
  * PRs. Nothing here writes to Dash Platform.
  */
 import { expect, test } from '@playwright/test'
-import { appUrl, appUrlPattern } from '../fixtures/app'
+import { appUrl, appUrlPattern, isAppConnectBuild } from '../fixtures/app'
 import { expectedNetwork } from '../fixtures/contracts'
 
 test('home renders the app shell', async ({ page }) => {
@@ -56,13 +56,25 @@ for (const route of ['/store/view/', '/store/view/?id=']) {
 test('login page shows the login affordance', async ({ page }) => {
   await page.goto(appUrl('/login/'))
 
-  // /login auto-opens the global login modal after hydration. Wallet sign-in
-  // is the primary path, so the dialog leads with a QR code; password and
-  // private-key entry sit behind a disclosure.
+  // /login auto-opens the global login modal after hydration. Private-key
+  // sign-in is the primary path, with the way to create an identity under it.
+  // There is no password or passkey sign-in.
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible()
-  await expect(dialog.locator('#loginIdentityInput')).toHaveCount(0)
+  await expect(dialog.locator('#loginCredential')).toBeVisible()
+  await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('link', { name: /Create a Dash identity|Get the Dash wallet/ })).toBeVisible()
+  await expect(dialog.getByText(/passkey|password/i)).toHaveCount(0)
+
+  // Wallet sign-in is a collapsed secondary option, offered on App Connect builds only.
+  const walletToggle = dialog.getByRole('button', { name: 'Sign in with a Dash wallet app' })
+  if (!isAppConnectBuild()) {
+    await expect(walletToggle).toHaveCount(0)
+    return
+  }
+  await expect(dialog.getByRole('link', { name: 'Open in wallet app' })).toHaveCount(0)
+  await walletToggle.click()
 
   // The deep link is offered on desktop too (Dash Evo Tool runs on the same
   // machine), with copy-the-link as the manual fallback.
@@ -88,12 +100,6 @@ test('login page shows the login affordance', async ({ page }) => {
   })
   await openWallet.click()
   await expect(dialog.getByText(/Nothing opened\? No wallet on this computer/)).toBeVisible()
-
-  await dialog.getByRole('button', { name: 'Sign in with a password or private key' }).click()
-  await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
-  await expect(dialog.locator('#loginCredential')).toBeVisible()
-  await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
-  await expect(dialog.getByRole('button', { name: /passkey/i })).toHaveCount(1)
 })
 
 test('primary navigation moves between sections', async ({ page }) => {

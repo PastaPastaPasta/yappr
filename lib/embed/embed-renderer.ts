@@ -1,5 +1,6 @@
 import type { EmbedBlock, EmbedRenderOptions } from './embed-types'
-import { FORBIDDEN_CSS_PATTERN } from '@/lib/blog/theme-types'
+import { isSafeCssValue } from '@/lib/blog/theme-types'
+import { imageSourceFor, isDeniedMedia } from '@/lib/media/remote-media'
 
 // Keep in sync with the first path-format entry of IPFS_GATEWAYS
 // (lib/utils/ipfs-gateway.ts) - ipfs.io rate-limits image bursts with 403s.
@@ -23,11 +24,6 @@ function toRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>
 }
 
-function isSafeCssValue(value: string): boolean {
-  if (/[;{}]/.test(value)) return false
-  return !FORBIDDEN_CSS_PATTERN.test(value)
-}
-
 function sanitizeUrl(value: string, options?: EmbedRenderOptions): string {
   const trimmed = value.trim()
   if (!trimmed) return ''
@@ -43,6 +39,17 @@ function sanitizeUrl(value: string, options?: EmbedRenderOptions): string {
   }
 
   return ''
+}
+
+/**
+ * Where an embedded image may load from (lib/media/remote-media): IPFS via
+ * the gateway, other https via the image proxy, never a denied, plain-http
+ * or inline one.
+ */
+function imageSrc(value: string, options?: EmbedRenderOptions): string {
+  const source = imageSourceFor(value)
+  if (source.kind === 'ipfs') return sanitizeUrl(source.ipfsUrl, options)
+  return source.kind === 'proxied' ? source.url : ''
 }
 
 function applyTextStyles(text: string, styles: Record<string, unknown> | null): string {
@@ -154,7 +161,7 @@ function renderBlock(block: EmbedBlock, options?: EmbedRenderOptions): string {
   }
 
   if (type === 'image') {
-    const src = sanitizeUrl(ensureString(props?.url) || ensureString(props?.src), options)
+    const src = imageSrc(ensureString(props?.url) || ensureString(props?.src), options)
     if (!src) return ''
     const caption = renderInline(props?.caption || block.content, options)
     const captionText = inlineToText(props?.caption || block.content)
@@ -189,7 +196,7 @@ function renderBlock(block: EmbedBlock, options?: EmbedRenderOptions): string {
 
   if (type === 'video' || type === 'videoEmbed') {
     const url = sanitizeUrl(ensureString(props?.url), options)
-    if (!url) return ''
+    if (!url || isDeniedMedia(ensureString(props?.url))) return ''
     const label = ensureString(props?.caption) || ensureString(props?.name) || 'Watch video'
     return `<p><a href="${escapeHtml(url)}" target="_top" rel="noopener noreferrer">${escapeHtml(label)}</a></p>`
   }

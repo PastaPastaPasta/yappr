@@ -8,6 +8,7 @@ import { tokenService } from '@/lib/services/token-service'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useStarterGrantModal } from '@/hooks/use-starter-grant-modal'
 import { yappTopUp } from '@/lib/starter-grant'
+import { useStarterClaimState } from '@/hooks/use-starter-claim'
 import { useTokenClaimHidden } from '@/lib/app-connect/session-manager'
 
 /**
@@ -23,6 +24,8 @@ export function YappBalanceItem() {
   const [yapp, setYapp] = useState<bigint | null>(null)
   const identityId = user?.identityId
   const claimHidden = useTokenClaimHidden(identityId)
+  // Read from chain: a grant claimed on another device is never offered again (#740).
+  const claimState = useStarterClaimState(identityId)
 
   useEffect(() => {
     // Clear the previous identity's balance immediately so an account switch
@@ -46,7 +49,7 @@ export function YappBalanceItem() {
   if (!user) return null
 
   // A wallet sign-in without the CRITICAL group key cannot sign the claim, so it is not offered.
-  const offered = yappTopUp(user.identityId)
+  const offered = yappTopUp(claimState)
   const topUp = offered === 'buy' || !claimHidden ? offered : null
   const balance = (
     <div>

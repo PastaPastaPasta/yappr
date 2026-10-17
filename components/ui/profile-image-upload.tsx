@@ -3,7 +3,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useImageUpload } from '@/hooks/use-image-upload'
 import { useFileDrop } from '@/hooks/use-file-drop'
-import { isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import { validateHttpUrl } from '@/lib/utils'
 import { IpfsImage } from './ipfs-image'
 import { useRouter } from 'next/navigation'
@@ -58,7 +57,7 @@ export function ProfileImageUpload({
   }, [checkProvider])
 
   useEffect(() => {
-    setImageLoading(Boolean(currentUrl && isIpfsProtocol(currentUrl)))
+    setImageLoading(Boolean(currentUrl))
   }, [currentUrl])
 
   const processFile = useCallback(async (file: File) => {
@@ -159,27 +158,29 @@ export function ProfileImageUpload({
 
     if (!currentUrl) return null
 
-    if (isIpfsProtocol(currentUrl)) {
-      return (
-        <>
-          {imageLoading && (
+    // IPFS through the gateways, any other https image through the image proxy.
+    return (
+      <>
+        {imageLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
+            <Loader2 className="h-6 w-6 text-gray-400 animate-spin" />
+          </div>
+        )}
+        <IpfsImage
+          src={currentUrl}
+          size={aspectRatio === 'square' ? 'avatar' : 'full'}
+          alt="Preview"
+          className={imageClass}
+          onLoad={() => setImageLoading(false)}
+          onError={() => setImageLoading(false)}
+          fallback={
             <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
-              <Loader2 className="h-6 w-6 text-gray-400 animate-spin" />
+              <PhotoIcon className="h-8 w-8 text-gray-400" />
             </div>
-          )}
-          <IpfsImage
-            src={currentUrl}
-            alt="Preview"
-            className={imageClass}
-            onLoad={() => setImageLoading(false)}
-            onError={() => setImageLoading(false)}
-          />
-        </>
-      )
-    }
-
-    // Regular http(s) URL
-    return <img src={currentUrl} alt="Preview" className={imageClass} />
+          }
+        />
+      </>
+    )
   }
 
   return (

@@ -17,6 +17,8 @@ import {
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner, DigitalBadge } from '@/components/store'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
@@ -460,7 +462,17 @@ function StoreDetailContent() {
                 </div>
 
                 <div className="pt-10 flex-1 min-w-0">
-                  <h2 className="text-xl font-bold truncate">{store.name}</h2>
+                  <div className="flex items-center gap-1">
+                    <h2 className="min-w-0 text-xl font-bold truncate">{store.name}</h2>
+                    <ModeratorContentMenu
+                      target={documentRemovalTarget('storefront', 'store', 'store', store, store.name)}
+                      ownerId={store.ownerId}
+                      onRemoved={() => {
+                        storeService.clearCache(store.id)
+                        router.push('/store')
+                      }}
+                    />
+                  </div>
                   {ratingSummary && ratingSummary.reviewCount > 0 && (
                     <div className="flex items-center gap-2 mt-1">
                       <RatingStars rating={ratingSummary.averageRating} size="lg" />
@@ -650,17 +662,17 @@ function StoreDetailContent() {
                           className="cursor-pointer group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-black"
                         >
                           <div className="relative aspect-square bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden">
-                            {item.imageUrls?.[0] ? (
-                              <img
-                                src={item.imageUrls[0]}
-                                alt={item.title}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <BuildingStorefrontIcon className="h-12 w-12 text-gray-300" />
-                              </div>
-                            )}
+                            <IpfsImage
+                              src={item.imageUrls?.[0] ?? ''}
+                              size="thumbnail"
+                              alt={item.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                              fallback={
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <BuildingStorefrontIcon className="h-12 w-12 text-gray-300" />
+                                </div>
+                              }
+                            />
                             {isOutOfStock && (
                               <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
                                 <span className="text-white font-medium">Out of Stock</span>
@@ -709,7 +721,18 @@ function StoreDetailContent() {
                 </div>
               ) : (
                 reviews.map((review, index) => (
-                  <ReviewCard key={review.id} review={review} index={index} />
+                  <ReviewCard
+                    key={review.id}
+                    review={review}
+                    index={index}
+                    onRemoved={() => {
+                      setReviews((previous) => previous.filter((r) => r.id !== review.id))
+                      // The average and count come from the proved rating tree, which the removal changed.
+                      storeStatsService.getStoreRatingSummary(store.id)
+                        .then(setRatingSummary)
+                        .catch((error) => logger.warn('Failed to refresh the store rating:', error))
+                    }}
+                  />
                 ))
               )}
             </div>

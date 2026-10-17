@@ -52,7 +52,6 @@ export function validateWifNetwork(
 
 /**
  * Check if a string looks like a WIF private key
- * Used to auto-detect whether user entered a password or private key
  */
 export function isLikelyWif(input: string): boolean {
   // Quick format check - WIF is 51-52 chars

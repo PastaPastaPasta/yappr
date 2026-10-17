@@ -87,6 +87,10 @@ const LIMITS = {
 export const CREATE_TRANSITION_BUDGET = 20_000;
 /** The state transition cap every broadcast must fit (rs-dapi refuses a larger one; Drive decodes it as 10602). */
 export const STATE_TRANSITION_CAP = LIMITS.maxStateTransitionSize;
+/** The [min, max] seconds an elected declaration's joinWindow and voteWindow may take on `network`. */
+export function electionWindowBounds(network) {
+  return network === 'mainnet' ? [LIMITS.mainnetElectionWindowFloor, LIMITS.electionWindow[1]] : LIMITS.electionWindow;
+}
 const SIGNATURE_ALLOWANCE = 100;
 
 // ---- JSON meta-schema --------------------------------------------------------
@@ -262,7 +266,7 @@ function referenceBudget(schema) {
 
 function auditElected(elected, moderation, schemas, { network }) {
   const problems = [];
-  const bounds = network === 'mainnet' ? [LIMITS.mainnetElectionWindowFloor, LIMITS.electionWindow[1]] : LIMITS.electionWindow;
+  const bounds = electionWindowBounds(network);
   for (const key of ['joinWindow', 'voteWindow']) {
     const value = elected[key] ?? 604_800;
     if (!within(value, bounds)) problems.push(`elected ${key} ${value} s is outside ${bounds.join(' to ')} s on ${network} (10900)`);
