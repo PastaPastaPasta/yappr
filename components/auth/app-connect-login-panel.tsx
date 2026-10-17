@@ -28,12 +28,12 @@ const UNAVAILABLE_COPY: Record<AppConnectUnavailableReason, { title: string; des
   },
   'network-not-ready': {
     title: 'Wallet sign-in isn\'t available yet',
-    description: 'This network hasn\'t been upgraded for wallet sign-in. Please try again later.',
+    description: 'Wallet sign-in is coming soon. Please try again later.',
     retry: false,
   },
   untrusted: {
     title: 'Wallet sign-in is paused',
-    description: 'Yappr\'s sign-in setup on this network isn\'t what this app expects, so it\'s turned off to keep your account safe. Please try again later.',
+    description: 'Something about wallet sign-in doesn\'t look right, so it\'s turned off to keep your account safe. Please try again later.',
     retry: false,
   },
   offline: {

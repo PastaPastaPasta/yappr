@@ -2,22 +2,32 @@
  * Canonical primary-username selection for identities with multiple DPNS names.
  *
  * Ordering: contested names first, then shortest, then alphabetically.
- * Contested status is a pure function of the label (WasmSdk static check),
+ * Contested status is a pure function of the label (a WasmSdk static check),
  * so selection is synchronous and must be identical everywhere a "primary"
  * username is shown.
  */
 
-import { WasmSdk } from '@dashevo/wasm-sdk'
+import { WasmSdk } from '@dashevo/evo-sdk'
+import { logger } from '@/lib/logger'
+
+let warnedUnavailable = false
 
 /**
  * Check whether a username's label is contested (premium).
  * Accepts a bare label or a full name like "alice.dash".
- * Returns false if the WASM module is not initialized yet.
+ *
+ * The check runs on evo-sdk's own WASM instance, the one every SDK call
+ * initialises, so by the time usernames have been read from the chain it is
+ * ready. Called before that, it answers false and says so once.
  */
 export function isUsernameContested(username: string): boolean {
   try {
     return WasmSdk.dpnsIsContestedUsername(username.split('.')[0])
-  } catch {
+  } catch (error) {
+    if (!warnedUnavailable) {
+      warnedUnavailable = true
+      logger.warn('Contested-username check unavailable before the SDK has initialised; ordering by length only', error)
+    }
     return false
   }
 }
