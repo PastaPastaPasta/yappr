@@ -319,6 +319,8 @@ function SellerOrdersPage() {
       const sellerPrivateKey = user?.identityId ? getEncryptionKeyBytes(user.identityId) : null
       if (!sellerPrivateKey) return
       setHasSellerKey(true)
+      // v10: the notes sealed to these orders open with the same key.
+      if (storefrontStatusIsSealed()) setOrderStatuses(prev => openStatusNotesAsSeller(prev, orders, sellerPrivateKey))
       Promise.all(orders.map(async (order) => [order.id, await decryptSellerOrderPayload(order, sellerPrivateKey)] as const))
         .then(async (entries) => {
           const decrypted = entries.filter((entry): entry is readonly [string, OrderPayload] => entry[1] !== null)

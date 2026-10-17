@@ -1470,6 +1470,13 @@ export function profileExtensionPattern(field: 'website' | 'bannerUri' | 'avatar
   return pattern ? new RegExp(pattern) : null
 }
 
+/** The UTF-8 byte caps the configured cut's `yapprProfile` text fields declare (v17), by field; empty where it declares none. */
+export function profileExtensionByteCaps(): Readonly<Record<string, number>> {
+  if (!dashpayProfileExtension()) return {}
+  return Object.fromEntries(Object.entries(devnetSchemas().yapprProfile?.properties ?? {})
+    .flatMap(([field, property]) => (typeof property.maxBytes === 'number' && property.maxLength !== undefined ? [[field, property.maxBytes]] : [])))
+}
+
 /** The DashPay contract, whose `profile` is v10's base profile (a system contract on every network). */
 export const DASHPAY_PROFILE = { contractId: DASHPAY_CONTRACT_ID, documentType: 'profile' } as const
 

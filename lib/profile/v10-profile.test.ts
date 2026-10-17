@@ -195,3 +195,16 @@ describe('the v17 profile URL rules', () => {
     expect(v16.planV10ProfileWrite(plan({ website: 'http://example.com' })).extension).toMatchObject({ website: 'http://example.com' })
   })
 })
+
+describe('the v17 profile byte caps', () => {
+  it('refuses an over-long value in bytes before any write on v17, and not on v16', async () => {
+    const plan = (patch: Record<string, string>) => ({ base: null, extension: null, fallbackAvatar: recipe, patch: { displayName: 'Ava', ...patch } })
+    const longWebsite = `https://example.com/${'界'.repeat(70)}`
+    const v17 = await profileModule('v17')
+    expect(() => v17.planV10ProfileWrite(plan({ website: longWebsite }))).toThrow(/Website is too long/)
+    expect(() => v17.planV10ProfileWrite(plan({ location: '😀'.repeat(40) }))).toThrow(/Location is too long/)
+    expect(v17.planV10ProfileWrite(plan({ location: '界'.repeat(50) })).extension).toMatchObject({ location: '界'.repeat(50) })
+    const v16 = await profileModule('v16')
+    expect(v16.planV10ProfileWrite(plan({ website: longWebsite })).extension).toMatchObject({ website: longWebsite })
+  })
+})
