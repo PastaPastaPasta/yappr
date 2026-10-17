@@ -53,10 +53,45 @@ export function ipfsCidOf(input) {
   return pathRef ? cidIn(pathRef) : null
 }
 
-/** Same form as canonicalHttpsUrl in lib/media/remote-media.ts; a test holds them together. */
+/**
+ * The form of an https URL whose sha256 the denylist stores, spelled the way
+ * a browser requests it, so equivalent spellings hash alike: host lowercased
+ * without a trailing dot, the default port dropped, an empty path as `/`,
+ * `.`/`..` segments resolved (also `%2e` and backslash forms), fragment
+ * dropped; the query is kept as written, so `?a=1` and `?a=2` differ. Null
+ * when the URL isn't https in a plain `scheme://host` shape (those are
+ * refused anyway). lib/media/remote-media.ts carries the same function (a
+ * test holds them together).
+ */
 export function canonicalHttpsUrl(url) {
-  const match = /^https:\/\/([^/?#]+)([^#]*)/i.exec(url.trim())
-  return match ? `https://${match[1].toLowerCase()}${match[2]}` : null
+  const match = /^https:\/\/([a-z0-9.-]+)(?::(\d+))?([/?#][^#]*)?(?:#.*)?$/i.exec(url.trim())
+  if (!match) return null
+  const host = match[1].toLowerCase().replace(/\.$/, '')
+  const port = match[2] !== undefined && Number(match[2]) !== 443 ? `:${Number(match[2])}` : ''
+  const rest = match[3] ?? ''
+  const queryAt = rest.indexOf('?')
+  const path = queryAt === -1 ? rest : rest.slice(0, queryAt)
+  const query = queryAt === -1 ? '' : rest.slice(queryAt)
+  return `https://${host}${port}${resolvedPath(path)}${query}`
+}
+
+/** A URL path with `.` and `..` segments resolved, as browsers do (WHATWG URL). */
+function resolvedPath(path) {
+  const segments = path.replace(/\\/g, '/').split('/').slice(1)
+  const out = []
+  segments.forEach((segment, index) => {
+    const last = index === segments.length - 1
+    const lower = segment.toLowerCase()
+    if (lower === '..' || lower === '.%2e' || lower === '%2e.' || lower === '%2e%2e') {
+      out.pop()
+      if (last) out.push('')
+    } else if (lower === '.' || lower === '%2e') {
+      if (last) out.push('')
+    } else {
+      out.push(segment)
+    }
+  })
+  return `/${out.join('/')}`
 }
 
 export function urlSha256(url) {

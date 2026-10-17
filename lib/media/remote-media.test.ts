@@ -59,8 +59,31 @@ describe('the denylist', () => {
     expect(isDeniedMedia('https://tracker.example/pixel.png?id=2')).toBe(false)
   })
 
+  it('hashes equivalent spellings of a URL alike, and different queries apart', () => {
+    const listed = canonicalHttpsUrl('https://tracker.example/pixel.png?id=1')
+    for (const same of [
+      'https://tracker.example:443/pixel.png?id=1',
+      'https://tracker.example:0443/pixel.png?id=1',
+      'https://TRACKER.example./pixel.png?id=1#x',
+      'https://tracker.example/unused/../pixel.png?id=1',
+      'https://tracker.example/unused/%2E%2e/./pixel.png?id=1',
+      'https://tracker.example/unused\\..\\pixel.png?id=1',
+    ]) {
+      expect(canonicalHttpsUrl(same)).toBe(listed)
+      expect(isDeniedMedia(same)).toBe(true)
+    }
+    expect(canonicalHttpsUrl('https://tracker.example')).toBe('https://tracker.example/')
+    expect(canonicalHttpsUrl('https://tracker.example/a/..')).toBe('https://tracker.example/')
+    expect(canonicalHttpsUrl('https://tracker.example:8443/pixel.png?id=1')).toBe('https://tracker.example:8443/pixel.png?id=1')
+    expect(isDeniedMedia('https://tracker.example/pixel.png?id=2')).toBe(false)
+    expect(isDeniedMedia('https://tracker.example/pixel.png?id=1&x')).toBe(false)
+  })
+
   it('has a script that hashes exactly as the renderers do', () => {
-    for (const url of [DENIED_URL, 'https://a.b/c?d=e&f=g', 'https://EXAMPLE.com', `https://${CID_V1}.ipfs.dweb.link/x`]) {
+    for (const url of [
+      DENIED_URL, 'https://a.b/c?d=e&f=g', 'https://EXAMPLE.com', `https://${CID_V1}.ipfs.dweb.link/x`,
+      'https://a.b:443/x/../y/./z?q#f', 'https://a.b.:8443/%2e%2E/x\\y', 'https://a.b/x/..',
+    ]) {
       expect(scriptCanonical(url)).toBe(canonicalHttpsUrl(url))
       expect(scriptCid(url)).toBe(ipfsCidOf(url))
     }

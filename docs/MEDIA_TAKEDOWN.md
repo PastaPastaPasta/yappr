@@ -32,10 +32,12 @@ The list matches two things:
   are refused too: they are mutable and can point at anything. An entry covers everything under its CID, but
   not the same file wrapped in a new directory, which has a different root
   CID: list that CID too.
-- **Any other https URL, by the sha256 of its canonical form**: trimmed, with
-  scheme and host lowercased and the fragment dropped. The query string
-  counts, so `?a=1` and `?a=2` are different entries. Only the hash goes in the
-  public repository, never the URL.
+- **Any other https URL, by the sha256 of its canonical form**: the URL as a
+  browser requests it (host lowercased, default port and fragment dropped,
+  `.`/`..` segments resolved), so equivalent spellings match one entry. The
+  query string counts, so `?a=1` and `?a=2` are different entries, and a
+  server that serves the same file under other paths needs an entry per path.
+  Only the hash goes in the public repository, never the URL.
 
 It does **not** remove anything from the chain or from IPFS. Other clients
 and public gateways still serve the bytes. Pair every entry with the steps in
