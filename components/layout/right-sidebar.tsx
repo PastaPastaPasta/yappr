@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import Image from 'next/image'
 import { useEffect, useState } from 'react'
 import { SearchInput } from '@/components/search/search-input'
@@ -49,13 +48,6 @@ export function RightSidebar() {
             style={{ width: 'auto', height: 'auto' }}
           />
         </a>
-      </div>
-
-      <div className="px-4 py-2 text-xs text-gray-500 space-x-2 text-center">
-        <Link href="/terms" className="hover:underline">Terms</Link>
-        <Link href="/privacy" className="hover:underline">Privacy</Link>
-        <Link href="/cookies" className="hover:underline">Cookies</Link>
-        <Link href="/about" className="hover:underline">About</Link>
       </div>
     </div>
   )

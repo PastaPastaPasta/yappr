@@ -33,11 +33,11 @@ export default function LoginPage() {
           Decentralized social media on Dash Platform
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center text-sm text-gray-500 dark:text-gray-500">
-          <span>Own your data</span>
+          <span>You hold your keys</span>
           <span className="hidden sm:inline">·</span>
-          <span>No algorithms</span>
+          <span>Chronological or ranked feeds</span>
           <span className="hidden sm:inline">·</span>
-          <span>Censorship resistant</span>
+          <span>Moderated in the open</span>
         </div>
       </div>
     </main>
