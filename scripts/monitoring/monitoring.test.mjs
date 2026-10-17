@@ -8,6 +8,7 @@ import { contractPins, incidentPlan, readNetwork, schemaHash, thresholds } from 
 import { activityFilters, checkFresh, countActivity } from './chain.mjs';
 import { lazyChunks, smokeSite } from './sites.mjs';
 
+const metadata = roles => `<meta name="yappr-contract-config" content="${JSON.stringify(roles).replaceAll('"', '&quot;')}"/>`;
 const id = '9hZwi4W3qqNtHFygjkgDvgud4EmE3dUxQUk5NjTYsdqN';
 afterEach(() => vi.unstubAllGlobals());
 
@@ -66,10 +67,10 @@ it('covers every report status and follows activity pages until the threshold is
 });
 
 it('validates loaded subpath bundles and buildId against trusted expectations', async () => {
-  const html = '<script src="/testing/_next/static/chunks/app.js"></script><script>self.__next_f.push([1,"{\\"buildId\\":\\"abc1234\\"}"])</script>';
+  const html = metadata({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }) + '<script src="/testing/_next/static/chunks/app.js"></script><script>self.__next_f.push([1,"{\\"buildId\\":\\"abc1234\\"}"])</script>';
   const fetchMock = vi.fn(async url => new Response(String(url).endsWith('app.js') ? `contract="${id}"` : html));
   vi.stubGlobal('fetch', fetchMock);
-  const site = { url: 'https://yap.pr/testing/', buildId: 'abc1234', commit: 'abc1234', config: { pins: [{ id }] } };
+  const site = { url: 'https://yap.pr/testing/', buildId: 'abc1234', commit: 'abc1234', config: { env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }, pins: [{ id }] } };
   await expect(smokeSite(site)).resolves.toContain('1 contract ids');
   await expect(smokeSite({ ...site, buildId: 'wrong' })).rejects.toThrow('expected wrong');
   await expect(smokeSite({ ...site, config: { pins: [{ id: 'missing-contract' }] } })).rejects.toThrow('missing configured contract');
@@ -80,9 +81,9 @@ it('validates loaded subpath bundles and buildId against trusted expectations', 
 it('discovers independently hashed mirror lazy chunks without executing JavaScript', async () => {
   const source = 'w.u=function(e){return 42===e?"static/chunks/42-abc.js":"static/chunks/"+e+"."+({1795:"48762af95e1437d0"})[e]+".js"},w.miniCssF=function(e){}';
   expect(lazyChunks(source)).toEqual(['static/chunks/42-abc.js', 'static/chunks/1795.48762af95e1437d0.js']);
-  const html = '<script src="/_next/static/chunks/webpack-own.js"></script><script>"buildId":"abc1234"</script>';
+  const html = metadata({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }) + '<script src="/_next/static/chunks/webpack-own.js"></script><script>"buildId":"abc1234"</script>';
   vi.stubGlobal('fetch', vi.fn(async url => new Response(String(url).endsWith('webpack-own.js') ? source : String(url).endsWith('.js') ? id : html)));
-  await expect(smokeSite({ name: 'mirror', url: 'https://yappr.pages.dev/', buildId: 'abc1234', config: { pins: [{ id }] }, bundlePaths: ['/_next/static/chunks/other-provider-404.js'] })).resolves.toContain('1 contract ids');
+  await expect(smokeSite({ name: 'mirror', url: 'https://yappr.pages.dev/', buildId: 'abc1234', config: { env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }, pins: [{ id }] }, bundlePaths: ['/_next/static/chunks/other-provider-404.js'] })).resolves.toContain('1 contract ids');
 });
 
 it('reads the deployed network set instead of the monitoring checkout', () => {
@@ -97,6 +98,15 @@ it('reads the deployed network set instead of the monitoring checkout', () => {
     try { execFileSync(process.execPath, [fileURLToPath(new URL('./run.mjs', import.meta.url)), '--chain-only', '--network', 'production', '--manifest', join(root, 'absent.json')], { cwd: root, encoding: 'utf8', timeout: 15000 }); }
     catch (error) { failed = error; }
     expect(failed?.stdout).toContain('FAIL monitor/expectations');
-    expect(failed?.stdout).toContain('SKIP chain/production: .env.testnet does not exist');
+    expect(failed?.stdout).toContain('SKIP diagnostic/chain/production: .env.testnet does not exist');
+    const recovered = incidentPlan([{ key: 'diagnostic/chain/testing/availability', status: 'pass' }], [{ title: '[monitoring] chain/testing/availability', number: 123 }]);
+    expect(recovered[0].issues).toEqual([]);
   } finally { rmSync(root, { recursive: true }); }
 }, 30000);
+
+it('rejects a wrong active role even when a snapshot bundle contains the expected id', async () => {
+  const html = metadata({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: 'wrong-active-id' }) + '<script src="/_next/static/chunks/snapshot.js"></script><script>"buildId":"abc1234"</script>';
+  const fetchMock = vi.fn(async url => new Response(String(url).endsWith('.js') ? id : html));
+  vi.stubGlobal('fetch', fetchMock);
+  await expect(smokeSite({ url: 'https://yap.pr/', buildId: 'abc1234', config: { env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }, pins: [{ id }] } })).rejects.toThrow('Active NEXT_PUBLIC_YAPPR_CONTRACT_ID: wrong-active-id');
+});

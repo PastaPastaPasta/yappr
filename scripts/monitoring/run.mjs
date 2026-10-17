@@ -11,6 +11,8 @@ const option = key => args.includes(key) ? args[args.indexOf(key) + 1] : undefin
 const output = option('--output') ?? 'monitoring-results.json';
 const results = [];
 const manifestPath = option('--manifest');
+const diagnostic = !manifestPath || !existsSync(manifestPath);
+const chainKey = key => diagnostic ? `diagnostic/${key}` : key;
 function add(result) { results.push(result); console.log(`${result.status.toUpperCase()} ${result.key}: ${result.detail}`); }
 async function record(key, fn) {
   const start = Date.now();
@@ -27,11 +29,11 @@ async function worker(network) {
         let result;
         try { result = JSON.parse(line); } catch { continue; }
         if (!result.key?.startsWith(`chain/${network}`) || !['pass', 'fail', 'skip'].includes(result.status)) continue;
-        add(result); count++;
+        add({ ...result, key: chainKey(result.key) }); count++;
         if (result.status !== 'skip') onlySkips = false;
       }
-      if (error || !count) add({ key: `chain/${network}/worker`, status: 'fail', detail: `${error?.message ?? 'Worker returned no checks'}; ${stderr.slice(-3000)}` });
-      else add({ key: `chain/${network}/worker`, status: onlySkips ? 'skip' : 'pass', detail: 'Read-only probe completed' });
+      if (error || !count) add({ key: chainKey(`chain/${network}/worker`), status: 'fail', detail: `${error?.message ?? 'Worker returned no checks'}; ${stderr.slice(-3000)}` });
+      else add({ key: chainKey(`chain/${network}/worker`), status: onlySkips ? 'skip' : 'pass', detail: 'Read-only probe completed' });
       done();
     });
   });

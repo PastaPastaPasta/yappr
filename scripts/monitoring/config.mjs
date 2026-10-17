@@ -68,3 +68,7 @@ export function incidentPlan(results, existing) {
     return { title, result, issues, action: result.status === 'fail' ? (issues.length ? 'update' : 'open') : 'close' };
   });
 }
+
+export function contractRoles(env) {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => key.endsWith('_CONTRACT_ID') || ['NEXT_PUBLIC_APP_CONNECT_APP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS'].includes(key)).map(([key, value]) => [key, key.endsWith('_GROUP_MEMBERS') ? value.split(',').map(pin => pin.trim()).filter(Boolean).sort().join(',') : value]));
+}

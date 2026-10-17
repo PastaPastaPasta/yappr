@@ -1,4 +1,4 @@
-import { SITES } from './config.mjs';
+import { SITES, contractRoles } from './config.mjs';
 
 export async function fetchText(url, signal) {
   const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000), headers: { 'cache-control': 'no-cache' } });
@@ -20,6 +20,17 @@ export async function smokeSite(expected) {
   const build = /(?:\\?"buildId\\?"\s*:\s*\\?")([^"\\]+)/.exec(html)?.[1];
   if (!expected.buildId) throw new Error('Missing deployment buildId expectation');
   if (build !== expected.buildId) throw new Error(`buildId ${build ?? 'missing'}; expected ${expected.buildId} (${expected.commit})`);
+  if (!expected.config?.skip) {
+    const tag = [...html.matchAll(/<meta\b[^>]*>/g)].map(match => match[0]).find(tag => /name="yappr-contract-config"/.test(tag));
+    const encoded = tag && /content="([^"]*)"/.exec(tag)?.[1];
+    if (!encoded) throw new Error('Missing effective contract configuration metadata; rebuild this deployment');
+    const entities = { '&quot;': '"', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&#x27;': "'" };
+    const actual = JSON.parse(encoded.replace(/&quot;|&amp;|&lt;|&gt;|&#x27;/g, entity => entities[entity]));
+    const roles = contractRoles(actual);
+    for (const [role, value] of Object.entries(contractRoles(expected.config?.env ?? {}))) {
+      if (roles[role] !== value) throw new Error(`Active ${role}: ${roles[role] ?? 'missing'}; expected ${value}`);
+    }
+  }
   const scripts = [...html.matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(match => new URL(match[1].replaceAll('&amp;', '&'), expected.url));
   const base = new URL(expected.url);
   if (!scripts.length) throw new Error('No JavaScript bundles in page');
