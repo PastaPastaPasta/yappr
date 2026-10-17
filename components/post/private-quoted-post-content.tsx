@@ -10,7 +10,7 @@ import { PostContent } from './post-content'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { cn } from '@/lib/utils'
 import { useRelativeTime } from '@/hooks/use-relative-time'
-import { identifierToBytes } from '@/lib/services/sdk-helpers'
+import { privateContentOf } from '@/lib/services/private-feed-reader'
 import { useAuth } from '@/contexts/auth-context'
 import { useMediaGate } from '@/hooks/use-media-gate'
 
@@ -49,89 +49,21 @@ export function PrivateQuotedPostContent({
   const authorDisplay = getAuthorDisplay(quotedPost.author)
 
   const attemptDecryption = useCallback(async () => {
-    // Safety check: ensure this is a private post
-    if (!quotedPost.encryptedContent || quotedPost.keyGeneration == null || !quotedPost.nonce) {
+    // A quote is always of a top-level post, encrypted in its author's feed.
+    const content = privateContentOf(quotedPost)
+    if (!content) {
       setState({ status: 'error' })
       return
     }
-
-    // If not logged in, show locked state
     if (!user) {
       setState({ status: 'locked' })
       return
     }
-
     setState({ status: 'loading' })
-
     try {
-      const { privateFeedFollowerService } = await import('@/lib/services')
-      const { privateFeedKeyStore } = await import('@/lib/services')
-
-      // For quoted posts, the encryption source is always the post author
-      // (Replies use inherited encryption but quoted posts are always top-level posts)
-      const encryptionSourceOwnerId = quotedPost.author.id
-
-      // Check if user is the encryption source owner (can decrypt with their own feed keys)
-      const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
-
-      if (isEncryptionSourceOwner) {
-        const feedSeed = privateFeedKeyStore.getFeedSeed()
-        if (!feedSeed) {
-          setState({ status: 'locked' })
-          return
-        }
-
-        const { privateFeedCryptoService, MAX_KEY_GENERATION } = await import('@/lib/services')
-
-        const cached = privateFeedKeyStore.getCachedCEK(encryptionSourceOwnerId)
-        let cek: Uint8Array
-
-        if (cached && cached.keyGeneration === quotedPost.keyGeneration) {
-          cek = cached.cek
-        } else if (cached && cached.keyGeneration > quotedPost.keyGeneration) {
-          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, quotedPost.keyGeneration)
-        } else {
-          const chain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION)
-          cek = chain[quotedPost.keyGeneration]
-        }
-
-        const ownerIdBytes = identifierToBytes(encryptionSourceOwnerId)
-
-        const decryptedContent = privateFeedCryptoService.decryptPostContent(
-          cek,
-          {
-            ciphertext: quotedPost.encryptedContent,
-            nonce: quotedPost.nonce,
-            keyGeneration: quotedPost.keyGeneration,
-          },
-          ownerIdBytes
-        )
-
-        setState({ status: 'decrypted', content: decryptedContent })
-        return
-      }
-
-      // Check if follower can decrypt using encryption source owner's keys
-      const canDecrypt = await privateFeedFollowerService.canDecrypt(encryptionSourceOwnerId)
-
-      if (!canDecrypt) {
-        setState({ status: 'locked' })
-        return
-      }
-
-      // Attempt to decrypt using encryption source owner's keys
-      const result = await privateFeedFollowerService.decryptPost({
-        encryptedContent: quotedPost.encryptedContent,
-        keyGeneration: quotedPost.keyGeneration,
-        nonce: quotedPost.nonce,
-        $ownerId: encryptionSourceOwnerId,
-      }, user?.identityId)
-
-      if (result.success && result.content) {
-        setState({ status: 'decrypted', content: result.content })
-      } else {
-        setState({ status: 'locked' })
-      }
+      const { decryptPrivateContent } = await import('@/lib/services/private-feed-reader')
+      const outcome = await decryptPrivateContent(content, user.identityId)
+      setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked' })
     } catch (error) {
       logger.error('Error decrypting quoted private post:', error)
       setState({ status: 'error' })
@@ -142,7 +74,7 @@ export function PrivateQuotedPostContent({
   // Must watch all encryption-relevant fields to avoid stale decryption data
   useEffect(() => {
     setState({ status: 'idle' })
-  }, [quotedPost.id, quotedPost.encryptedContent, quotedPost.keyGeneration, quotedPost.nonce, user?.identityId])
+  }, [quotedPost.id, quotedPost.encryptedContent, quotedPost.keyGeneration, quotedPost.nonce, quotedPost.feed, user?.identityId])
 
   // Attempt decryption on mount
   useEffect(() => {

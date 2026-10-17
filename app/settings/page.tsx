@@ -634,20 +634,19 @@ function SettingsPage() {
   )
 
   const renderPrivateFeedSettings = () => {
-    // Check for action=reset URL param to auto-open reset dialog
-    const actionParam = searchParams.get('action')
-    const shouldOpenReset = actionParam === 'reset'
+    // action=renew (from the lost-key flow) opens the renewal dialog
+    const shouldOpenRenew = searchParams.get('action') === 'renew'
 
-    // Clear the URL param when opening the reset dialog to prevent re-open on re-render
-    const handleResetDialogOpened = () => {
-      if (shouldOpenReset) {
+    // Clear the URL param when opening the dialog to prevent re-open on re-render
+    const handleRenewDialogOpened = () => {
+      if (shouldOpenRenew) {
         router.replace('/settings?section=privateFeed', { scroll: false })
       }
     }
 
     return (
       <div className="p-6 space-y-6">
-        <PrivateFeedSettings openReset={shouldOpenReset} onResetOpened={handleResetDialogOpened} />
+        <PrivateFeedSettings openRenew={shouldOpenRenew} onRenewOpened={handleRenewDialogOpened} />
         <PrivateFeedDashboard />
         <div id="private-feed-requests">
           <PrivateFeedFollowRequests />

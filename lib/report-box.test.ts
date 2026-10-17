@@ -15,7 +15,7 @@ const key = (fill: number) => new Uint8Array(32).fill(fill)
 const id = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
 const moderators = [key(1), key(2), key(3)]
 const TARGET = id(40)
-const payload: ReportBoxPayload = { feedOwnerId: id(50), keyGeneration: 7, cek: key(60) }
+const payload: ReportBoxPayload = { feedOwnerId: id(50), feed: 3, keyGeneration: 7, cek: key(60) }
 
 describe('the report box', () => {
   it('opens for every moderator it was sealed to, and to the same payload', () => {
@@ -48,7 +48,7 @@ describe('the report box', () => {
   it('refuses an unknown version or a malformed length', () => {
     const box = sealReportBox(payload, [getPublicKey(moderators[0])], TARGET)
     const wrongVersion = box.slice()
-    wrongVersion[0] = 2
+    wrongVersion[0] = 1
     expect(() => openReportBox(wrongVersion, TARGET, moderators[0])).toThrow(/version/)
     expect(() => openReportBox(box.slice(0, -1), TARGET, moderators[0])).toThrow(/Malformed/)
   })
@@ -71,6 +71,8 @@ describe('the report box', () => {
     expect(() => sealReportBox(payload, [], TARGET)).toThrow(/at least one/)
     expect(() => sealReportBox({ ...payload, cek: key(1).slice(1) }, [getPublicKey(key(1))], TARGET)).toThrow(/32 bytes/)
     expect(() => sealReportBox({ ...payload, keyGeneration: 0 }, [getPublicKey(key(1))], TARGET)).toThrow(/generation/)
+    expect(() => sealReportBox({ ...payload, keyGeneration: 0x10000 }, [getPublicKey(key(1))], TARGET)).toThrow(/generation/)
+    expect(() => sealReportBox({ ...payload, feed: 0 }, [getPublicKey(key(1))], TARGET)).toThrow(/feed/)
     expect(() => sealReportBox(payload, [new Uint8Array(65)], TARGET)).toThrow(/compressed/)
   })
 })

@@ -7,13 +7,14 @@ import { YAPPR_CONTRACT_ID, blogIsV2, storefrontIsV6 } from '../constants';
 import { Notification, User, Post, StoreNotificationDetail, StoreNotificationType } from '../../types';
 import { truncateId } from '../utils';
 import { isBlogPostTombstone, isPublishedBlogPost } from '../blog/content-utils';
-import { likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
+import { privateFeedClientSupported, likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
 import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
 import { readNotificationWindow } from './notification-windows';
 import { mentionsOfUserQuery } from './mention-service';
 import { readScoped, scopedKey, writeScoped } from '../storage-scope';
 import { applyLikeObservations, parseLikeSnapshot, targetsToRead, type KindObservation, type LikeBatch } from '../like-notification-snapshot';
+import { diffAccess, parseAccessSnapshot } from '../private-feed/access-snapshot';
 
 // Constants for notification queries
 /** Likers of an aggregated like whose profiles are loaded; the rest are known by id only (for the block filter). */
@@ -82,6 +83,9 @@ interface RawNotification {
 
 /** localStorage key (deployment-scoped) of a user's timeless-like snapshot on this device. */
 const likeSnapshotKey = (userId: string) => `yappr_like_notifications:${userId}`;
+
+/** localStorage key (deployment-scoped) of the private feeds a user could read at the last look on this device. */
+const accessSnapshotKey = (userId: string) => `yappr_pf_access:${userId}`;
 
 /**
  * What a reply was a reply TO — which is what the notification's wording is
@@ -270,6 +274,27 @@ class NotificationService {
       fromUserId: doc.$ownerId as string, // The requester
       createdAt: doc.$createdAt as number
     }));
+  }
+
+  /**
+   * Private-feed approvals and removals (R-S14): the feeds this user can read,
+   * from the recipient-first grant index, diffed against this device's last
+   * look (lib/private-feed/access-snapshot.ts). Timeless: the time is when
+   * this device noticed, so it never moves the poll watermark. A snapshot
+   * that does not persist yields nothing, or every poll would repeat it.
+   */
+  async getPrivateFeedAccessNotifications(userId: string): Promise<RawNotification[]> {
+    if (!privateFeedClientSupported()) return [];
+    const { fetchGrantsHeldBy } = await import('./private-feed-reads');
+    const grants = await fetchGrantsHeldBy(userId);
+    const key = accessSnapshotKey(userId);
+    const diff = diffAccess(parseAccessSnapshot(readScoped(key)), grants);
+    if (!writeScoped(key, JSON.stringify(diff.snapshot))) return [];
+    const now = Date.now();
+    return [
+      ...diff.approved.map(({ ownerId, feed }) => ({ id: `pf-approved:${ownerId}:${feed}`, type: 'privateFeedApproved' as const, fromUserId: ownerId, createdAt: now, timeless: true })),
+      ...diff.removed.map((ownerId) => ({ id: `pf-removed:${ownerId}:${now}`, type: 'privateFeedRevoked' as const, fromUserId: ownerId, createdAt: now, timeless: true })),
+    ];
   }
 
   /**
@@ -975,16 +1000,17 @@ class NotificationService {
     fallbackTimestamp: number
   ): Promise<NotificationResult> {
     const failures = new SourceFailures();
-    const [sourced, blogPosts, blogComments, storeEvents] = await Promise.all([
+    const [sourced, blogPosts, blogComments, storeEvents, privateFeedAccess] = await Promise.all([
       notificationsAreWindowed()
         ? this.fetchWindowedSources(userId, sinceTimestamp, failures)
         : this.fetchBundledSources(userId, sinceTimestamp, failures),
       failures.source('Error fetching blog post notifications:', this.getBlogPostNotifications(userId, sinceTimestamp, failures.tolerated)),
       failures.source('Error fetching blog comment notifications:', this.getBlogCommentNotifications(userId, sinceTimestamp)),
       failures.source('Error fetching store notifications:', this.getStoreNotifications(userId, sinceTimestamp, failures.tolerated)),
+      failures.source('Error fetching private feed access notifications:', this.getPrivateFeedAccessNotifications(userId)),
     ]);
 
-    const allRaw = [...sourced, ...blogPosts, ...blogComments, ...storeEvents];
+    const allRaw = [...sourced, ...blogPosts, ...blogComments, ...storeEvents, ...privateFeedAccess];
 
     // Drop self-notifications across every type (liking/reposting/replying to your
     // own content, mentioning yourself, your own posts in a blog you follow).

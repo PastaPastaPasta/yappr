@@ -107,7 +107,7 @@ describe('contract topology', () => {
       m.hasFlatThreads(), m.quoteFieldsAreSplit(), m.likeSurfacesAreSplit(), m.referencesAreEnforced(),
       m.deletesAreTombstones(), m.likesAreIndexOnly(), m.hashtagsAreInline(), m.prefixRankingsAvailable(),
       m.followRankingsAvailable(), m.windowedRankingsAvailable(), m.contractIsModerated(), m.referencesMayDangle(),
-      m.contractKeepsWarnings(), m.privateFeedWritesAreGated(), m.blockFollowsAreTyped(), m.contractTakesReports(),
+      m.contractKeepsWarnings(), m.blockFollowsAreTyped(), m.contractTakesReports(),
     ]
     const v9 = await topologyModule('v9')
     expect(capabilities(v9).every(Boolean)).toBe(true)
@@ -480,7 +480,7 @@ describe('contract topology', () => {
       const shared = (m: Awaited<ReturnType<typeof topologyModule>>) => [
         m.hasFlatThreads(), m.quoteFieldsAreSplit(), m.likeSurfacesAreSplit(), m.referencesAreEnforced(), m.likesAreIndexOnly(),
         m.hashtagsAreInline(), m.prefixRankingsAvailable(), m.followRankingsAvailable(), m.windowedRankingsAvailable(),
-        m.contractIsModerated(), m.referencesMayDangle(), m.contractKeepsWarnings(), m.privateFeedWritesAreGated(),
+        m.contractIsModerated(), m.referencesMayDangle(), m.contractKeepsWarnings(),
         m.blockFollowsAreTyped(), m.contractTakesReports(),
       ]
       const only10 = (m: Awaited<ReturnType<typeof topologyModule>>) => [
@@ -575,14 +575,6 @@ describe('contract topology', () => {
         expect(V10[kind].properties.mediaHash).toMatchObject({ byteArray: true, minItems: 32, maxItems: 32 })
         expect(V10[kind].properties.mediaFingerprint).toMatchObject({ byteArray: true, minItems: 8, maxItems: 8 })
       }
-      const { generation, latest } = v10.privateFeedKeyFields()
-      for (const docType of ['post', 'reply', 'privateFeedGrant', 'privateFeedRekey']) {
-        expect(V10[docType].properties[generation], docType).toBeDefined()
-        expect(V10[docType].properties.epoch, docType).toBeUndefined()
-      }
-      expect(V10.privateFeedState.properties[latest]).toBeDefined()
-      expect(V10.privateFeedRekey.indices?.map((index) => index.name)).toEqual(['ownerAndKeyGeneration'])
-      expect((await topologyModule('v9')).privateFeedKeyFields()).toEqual({ generation: 'epoch', latest: 'maxEpoch' })
       expect(V10.post.indices?.find((index) => index.name === 'timeline')?.properties).toEqual([{ $createdAt: 'asc' }])
     })
 
@@ -1480,12 +1472,12 @@ describe('contract topology', () => {
       expect([v17.postListingsCarryLiveMarker(), v17.repliesCarryLiveMarker()]).toEqual([true, true])
       expect(v17.postListingWherePrefix()).toEqual([['live', '==', true]])
       expect([v17.replyOwnerIndexPrefix(), v17.replyOwnerIndexOrderPrefix()]).toEqual([[['live', '==', true]], [['live', 'asc']]])
-      expect([v17.yappCanBeFrozen(), v17.privateFeedsAreMultiple(), v17.privateFeedClientSupported()]).toEqual([false, true, false])
+      expect([v17.yappCanBeFrozen(), v17.privateFeedsAreMultiple(), v17.privateFeedClientSupported()]).toEqual([false, true, true])
       expect(v17.ownerDistinctProperties('like')).toEqual(['postAuthor'])
       expect(v17.reportShape().maxReason).toBe(31)
       const v16 = await topologyModule('v16')
       expect([v16.postListingsCarryLiveMarker(), v16.repliesCarryLiveMarker(), v16.postListingWherePrefix(), v16.replyOwnerIndexPrefix()]).toEqual([false, false, [], []])
-      expect([v16.yappCanBeFrozen(), v16.privateFeedsAreMultiple(), v16.privateFeedClientSupported()]).toEqual([true, false, true])
+      expect([v16.yappCanBeFrozen(), v16.privateFeedsAreMultiple(), v16.privateFeedClientSupported()]).toEqual([true, false, false])
       expect((await topologyModule('v2')).yappCanBeFrozen()).toBe(true)
       const surfaces = async (topology: string) => {
         const m = await topologyModule(topology)

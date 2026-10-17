@@ -176,11 +176,19 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
     }
 
     try {
-      const result = await privateFeedFollowerService.syncFollowedFeeds()
+      const result = await privateFeedFollowerService.syncFollowedFeeds(identityId)
       if (!context.isSessionActive()) {
         logger.debug('Auth: Private feed sync completed but session ended - clearing keys')
-        privateFeedKeyStore.clearAllKeys()
+        privateFeedKeyStore.clearIdentity(identityId)
         return
+      }
+      // A follower move this device started and did not finish (a reload or a crash) picks up again (PF4).
+      const { loadMove } = await import('@/lib/services/private-feed-move-job')
+      if (loadMove(identityId)) {
+        const { runMove } = await import('@/lib/services/private-feed-move')
+        const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+        const moved = await runMove(identityId, getEncryptionKeyBytes(identityId) ?? undefined)
+        if (!moved.success) logger.debug('Auth: Private feed follower move paused:', moved.error)
       }
 
       if (result.synced.length > 0 || result.failed.length > 0) {
@@ -209,7 +217,7 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
 async function runLogoutCleanup(identityId: string): Promise<void> {
   sessionStorage.removeItem(scopedKey('yappr_dpns_username'))
   invalidateBlockCache(identityId)
-  privateFeedKeyStore.clearAllKeys()
+  privateFeedKeyStore.clearIdentity(identityId)
 }
 
 export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies {

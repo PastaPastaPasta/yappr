@@ -18,7 +18,6 @@ import {
   mentionsAreInline,
   notificationWindowFor,
   privateFeedClientSupported,
-  privateFeedKeyFields,
   replyCountFieldFor,
   replyCountNeedsRoot,
   replyLinkage,
@@ -65,7 +64,8 @@ export interface ReplyTarget {
  * Encryption source result for replies to private posts
  */
 export interface EncryptionSource {
-  ownerId: string;        // The feed owner whose CEK should be used
+  ownerId: string;        // The private thread's owner: the reply goes into their current feed
+  feed: number;           // The root private post's feed
   keyGeneration: number;  // The key generation at which the root private post was created
   inherited: boolean;     // True if encryption is inherited from parent
 }
@@ -117,8 +117,8 @@ class ReplyService extends BaseDocumentService<Reply> {
 
     // Extract private feed fields if present
     const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
-    const { generation } = privateFeedKeyFields();
-    const keyGeneration = (data[generation] ?? doc[generation]) as number | undefined;
+    const keyGeneration = (data.keyGeneration ?? doc.keyGeneration) as number | undefined;
+    const feed = (data.feed ?? doc.feed) as number | undefined;
     const rawNonce = data.nonce || doc.nonce;
 
     // Normalize byte arrays
@@ -149,6 +149,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       encryptedContent,
       keyGeneration,
       nonce,
+      feed,
     };
 
     return reply;
@@ -253,7 +254,7 @@ class ReplyService extends BaseDocumentService<Reply> {
 
     // Handle encryption if provided
     if (options.encryption) {
-      // Social v17 names a feed on every private write; this client writes the single-feed shape only.
+      // Private feeds are social v17's several write-once feeds; no earlier cut offers them.
       if (!privateFeedClientSupported()) throw new Error('Private posts are not available yet');
       const { prepareOwnerEncryption, prepareInheritedEncryption } = await import('./private-feed-service');
 
@@ -262,6 +263,7 @@ class ReplyService extends BaseDocumentService<Reply> {
         encryptionResult = await prepareOwnerEncryption(
           ownerId,
           content,
+          'reply',
           options.encryption.teaser,
           options.encryption.encryptionPrivateKey
         );
@@ -281,8 +283,9 @@ class ReplyService extends BaseDocumentService<Reply> {
       }
 
       data.encryptedContent = encryptionResult.data.encryptedContent;
-      data[privateFeedKeyFields().generation] = encryptionResult.data.keyGeneration;
+      data.keyGeneration = encryptionResult.data.keyGeneration;
       data.nonce = encryptionResult.data.nonce;
+      data.feed = encryptionResult.data.feed;
       data.content = encryptionResult.data.teaser || PRIVATE_REPLY_PLACEHOLDER;
     } else {
       data.content = content;
@@ -758,85 +761,21 @@ class ReplyService extends BaseDocumentService<Reply> {
  * Get the encryption source a reply to `target` must inherit (PRD §5.5).
  *
  * A thread's encryption belongs to the ROOT post's author: anyone who can read
- * the root can read every reply under it. Where a reply names its root directly
- * (v9) that is one lookup. On v2 the only link is the polymorphic direct parent,
- * so the chain has to be walked — which is what `walkEncryptionSource` below does.
+ * the root can read every reply under it, and a reply goes into that author's
+ * current private feed. Private feeds are social v17's, whose replies name
+ * their root directly, so this is one lookup.
  */
 export async function getEncryptionSource(
   target: { id: string; targetKind?: TargetKind; parentId?: string; rootPostId?: string }
 ): Promise<EncryptionSource | null> {
-  if (!hasFlatThreads()) {
-    return walkEncryptionSource(target.id);
-  }
-
+  if (!hasFlatThreads()) return null;
   try {
     const { postService } = await import('./post-service');
     const rootPost = await postService.getPostById(threadRootIdOf(target), { skipEnrichment: true });
-    if (!rootPost?.encryptedContent || rootPost.keyGeneration === undefined || !rootPost.nonce) {
+    if (!rootPost?.encryptedContent || rootPost.keyGeneration === undefined || !rootPost.nonce || rootPost.feed === undefined) {
       return null;
     }
-    return { ownerId: rootPost.author.id, keyGeneration: rootPost.keyGeneration, inherited: true };
-  } catch (error) {
-    logger.error('Error getting encryption source:', error);
-    return null;
-  }
-}
-
-/** v2 only: walk the polymorphic parent chain looking for the root private post. */
-async function walkEncryptionSource(
-  parentId: string,
-  depth: number = 0
-): Promise<EncryptionSource | null> {
-  const MAX_DEPTH = 100;
-  if (depth >= MAX_DEPTH) {
-    logger.warn('walkEncryptionSource: Max recursion depth reached, possible circular reference');
-    return null;
-  }
-
-  try {
-    // First try to get the parent as a post
-    const { postService } = await import('./post-service');
-    const parentPost = await postService.getPostById(parentId, { skipEnrichment: true });
-
-    if (parentPost) {
-      // Check if parent post is encrypted
-      if (parentPost.encryptedContent && parentPost.keyGeneration !== undefined && parentPost.nonce) {
-        // This is the root private post - use its encryption
-        return {
-          ownerId: parentPost.author.id,
-          keyGeneration: parentPost.keyGeneration,
-          inherited: true
-        };
-      }
-      // Parent post is public - no inherited encryption
-      return null;
-    }
-
-    // If not a post, try as a reply
-    const parentReply = await replyService.getReplyById(parentId, { skipEnrichment: true });
-
-    if (!parentReply) {
-      logger.warn('Parent not found:', parentId);
-      return null;
-    }
-
-    // Check if parent reply is encrypted
-    if (parentReply.encryptedContent && parentReply.keyGeneration !== undefined && parentReply.nonce) {
-      // This reply is encrypted - recurse to find the root
-      const rootSource = await walkEncryptionSource(parentReply.parentId, depth + 1);
-      if (rootSource) {
-        return rootSource;
-      }
-      // No root found - use this reply's author as encryption source
-      return {
-        ownerId: parentReply.author.id,
-        keyGeneration: parentReply.keyGeneration,
-        inherited: true
-      };
-    }
-
-    // Parent reply is not encrypted - no inherited encryption
-    return null;
+    return { ownerId: rootPost.author.id, feed: rootPost.feed, keyGeneration: rootPost.keyGeneration, inherited: true };
   } catch (error) {
     logger.error('Error getting encryption source:', error);
     return null;

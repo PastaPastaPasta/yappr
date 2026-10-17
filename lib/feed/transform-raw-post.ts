@@ -2,7 +2,7 @@ import { Post } from '@/lib/types';
 import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
 import { extractPostEmbedFields } from '@/lib/poll-embed';
 import { mediaFromDocument } from '@/lib/media/media-fields';
-import { inlinePostTags, privateFeedKeyFields } from '@/lib/contract-topology';
+import { inlinePostTags } from '@/lib/contract-topology';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
@@ -104,9 +104,9 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
 
   const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
   const rawNonce = data.nonce || doc.nonce;
-  // Also takes an already-built Post (optimistic feed cards), which names it keyGeneration.
-  const { generation } = privateFeedKeyFields();
-  const keyGeneration = (data[generation] ?? doc[generation] ?? doc.keyGeneration) as number | undefined;
+  // Also takes an already-built Post (optimistic feed cards), which uses the same names.
+  const keyGeneration = (data.keyGeneration ?? doc.keyGeneration) as number | undefined;
+  const feed = (data.feed ?? doc.feed) as number | undefined;
 
   const username = (existingAuthor.username as string | undefined) || '';
   const hasResolvedUsername = Boolean(username && !username.startsWith('user_'));
@@ -163,5 +163,6 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     encryptedContent: rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined,
     keyGeneration,
     nonce: rawNonce ? normalizeBytes(rawNonce) ?? undefined : undefined,
+    feed,
   };
 }

@@ -1,513 +1,222 @@
-'use client';
-
-import { logger } from '@/lib/logger';
 /**
- * PrivateFeedKeyStore
+ * This device's private-feed keys (social v17, crypto v2), one entry per
+ * identity and feed, under `yappr:pf:` (secure storage on mobile,
+ * mobile/engine/src/shims/storage.ts):
  *
- * Local key storage for private feed operations.
- * Handles both owner keys (feed seed) and follower keys (path keys, cached CEK).
+ *     o:<ownerId>:<feed>                 the owner's seed of one of their feeds, its key generation and revocations
+ *     f:<viewerId>:<ownerId>:<feed>      a member's grant keys for someone's feed: path keys, current CEK, history key
+ *     h:<viewerId>:<ownerId>:<feed>      a closed feed's final CEK and history key, reached through a carry walk
  *
- * Storage: localStorage with keys prefixed 'yappr:pf:'
- *
- * See PRD §3.4 for interface specification.
- * See SPEC §6.3 for available leaves derivation.
+ * The first identity in every key is the account the entry belongs to, so one
+ * account's keys are never read for another on a shared device, and signing
+ * out clears only that account's ({@link clearIdentity}).
  */
 
-import type { NodeKey } from './private-feed-crypto-service';
-import { scopedKey } from '@/lib/storage-scope';
-import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
+import { scopedKey } from '@/lib/storage-scope'
+import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
+import { logger } from '@/lib/logger'
+import type { NodeKey } from '@/lib/private-feed/crypto'
 
-// Storage key prefix as per PRD §3.4
-const STORAGE_PREFIX = scopedKey('yappr:pf:');
+const PREFIX = scopedKey('yappr:pf:')
 
-// Storage keys
-const KEY_FEED_SEED = 'feed_seed';
-// Stored under its pre-v10 name so earlier builds' state still loads.
-const KEY_CURRENT_KEY_GENERATION = 'current_epoch';
-const KEY_REVOKED_LEAVES = 'revoked_leaves';
-const KEY_PATH_KEYS_PREFIX = 'path_keys:';
-const KEY_CACHED_CEK_PREFIX = 'cached_cek:';
-const KEY_AVAILABLE_LEAVES = 'available_leaves';
-const KEY_RECIPIENT_MAP = 'recipient_map';
-
-/**
- * Stored path key with version information
- */
-export interface StoredPathKey {
-  nodeId: number;
-  version: number;
-  key: string; // Base64-encoded key bytes
+/** The owner's own keys of one feed. */
+export interface OwnerFeedKeys {
+  seed: Uint8Array
+  /** The feed's current key generation (1 + its revocations). */
+  keyGeneration: number
+  /** Revoked leaves, in revocation order: they fix every node's version. */
+  revokedLeaves: number[]
+  treeCapacity: number
+  maxKeyGeneration: number
 }
 
-/**
- * Cached CEK for a followed feed, as persisted. `epoch` is the stored name of
- * the key generation; it stays so keys cached by earlier builds still load.
- */
-export interface CachedCEK {
-  epoch: number;
-  cek: string; // Base64-encoded CEK bytes
+/** A member's keys for someone else's feed, from its grant and the rekeys since. */
+export interface MemberFeedKeys {
+  /** When the grant these keys came from was written (its `$createdAt`). */
+  grantedAt: number
+  leafIndex: number
+  keyGeneration: number
+  cek: Uint8Array
+  history: Uint8Array
+  pathKeys: NodeKey[]
+  treeCapacity: number
+  maxKeyGeneration: number
 }
 
-/**
- * Recipient to leaf mapping for owner
- */
-export interface RecipientLeafMap {
-  [recipientId: string]: number; // recipientId -> leafIndex
+/** A closed feed's last CEK and history key: enough to read all of it and walk further back. */
+export interface HistoryFeedKeys {
+  finalKeyGeneration: number
+  cek: Uint8Array
+  history: Uint8Array
 }
 
-/**
- * Check if localStorage is available
- */
-function isStorageAvailable(): boolean {
-  if (typeof window === 'undefined') return false;
+const b64 = bytesToBase64
+const unb64 = (value: unknown) => base64ToBytes(String(value))
+
+function storage(): Storage | null {
   try {
-    const test = '__storage_test__';
-    localStorage.setItem(test, test);
-    localStorage.removeItem(test);
-    return true;
+    return typeof window === 'undefined' ? null : window.localStorage
   } catch {
-    return false;
+    return null
   }
 }
 
-/**
- * Get item from localStorage with prefix
- */
-function getItem(key: string): string | null {
-  if (!isStorageAvailable()) return null;
-  return localStorage.getItem(STORAGE_PREFIX + key);
-}
-
-/**
- * Set item in localStorage with prefix
- */
-function setItem(key: string, value: string): void {
-  if (!isStorageAvailable()) return;
+function read<T>(key: string, decode: (raw: Record<string, unknown>) => T): T | null {
+  const raw = storage()?.getItem(PREFIX + key)
+  if (!raw) return null
   try {
-    localStorage.setItem(STORAGE_PREFIX + key, value);
-  } catch (e) {
-    logger.error('PrivateFeedKeyStore: Failed to store value:', e);
+    return decode(JSON.parse(raw) as Record<string, unknown>)
+  } catch {
+    return null
   }
 }
 
-/**
- * Remove item from localStorage with prefix
- */
-function removeItem(key: string): void {
-  if (!isStorageAvailable()) return;
-  localStorage.removeItem(STORAGE_PREFIX + key);
+function write(key: string, value: Record<string, unknown>): void {
+  try {
+    storage()?.setItem(PREFIX + key, JSON.stringify(value))
+  } catch (error) {
+    logger.error('PrivateFeedKeyStore: could not store a key', error)
+  }
 }
 
-/**
- * Get all keys with our prefix
- */
-function getAllKeys(): string[] {
-  if (!isStorageAvailable()) return [];
-  const keys: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key?.startsWith(STORAGE_PREFIX)) {
-      keys.push(key.slice(STORAGE_PREFIX.length));
-    }
+function keysWith(prefix: string): string[] {
+  const store = storage()
+  if (!store) return []
+  const keys: string[] = []
+  for (let i = 0; i < store.length; i++) {
+    const key = store.key(i)
+    if (key?.startsWith(PREFIX + prefix)) keys.push(key.slice(PREFIX.length))
   }
-  return keys;
+  return keys
+}
+
+const ownerKey = (ownerId: string, feed: number) => `o:${ownerId}:${feed}`
+const memberKey = (viewerId: string, ownerId: string, feed: number) => `f:${viewerId}:${ownerId}:${feed}`
+const historyKeyName = (viewerId: string, ownerId: string, feed: number) => `h:${viewerId}:${ownerId}:${feed}`
+
+const encodeNodeKeys = (keys: readonly NodeKey[]) => keys.map((k) => ({ n: k.nodeId, v: k.version, k: b64(k.key) }))
+const decodeNodeKeys = (value: unknown): NodeKey[] => {
+  if (!Array.isArray(value)) throw new Error('path keys')
+  return value.map((k: { n: number; v: number; k: string }) => ({ nodeId: k.n, version: k.v, key: unb64(k.k) }))
 }
 
 class PrivateFeedKeyStore {
-  private followerKeyListeners = new Set<() => void>();
+  private listeners = new Set<() => void>()
 
-  /** Observe follower-key changes in this tab and other tabs. No key material is emitted. */
-  subscribeFollowerKeys = (listener: () => void): (() => void) => {
-    this.followerKeyListeners.add(listener);
+  /** Observe key changes in this tab and others (member and history keys; no key material is emitted). */
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
     const onStorage = (event: StorageEvent) => {
-      if (event.key === null || event.key.startsWith(STORAGE_PREFIX + KEY_PATH_KEYS_PREFIX) ||
-          event.key.startsWith(STORAGE_PREFIX + KEY_CACHED_CEK_PREFIX)) {
-        listener();
-      }
-    };
-    window.addEventListener('storage', onStorage);
+      if (event.key === null || event.key.startsWith(PREFIX)) listener()
+    }
+    if (typeof window !== 'undefined') window.addEventListener('storage', onStorage)
     return () => {
-      this.followerKeyListeners.delete(listener);
-      window.removeEventListener('storage', onStorage);
-    };
-  };
-
-  private notifyFollowerKeys(): void {
-    this.followerKeyListeners.forEach(listener => listener());
-  }
-
-  /** UI readiness for a particular post; older cached keys cannot cover a newer key generation. */
-  hasKeysForGeneration(ownerId: string, keyGeneration: number): boolean {
-    const cachedKeyGeneration = this.getCachedKeyGeneration(ownerId);
-    return cachedKeyGeneration !== null && cachedKeyGeneration >= keyGeneration && this.hasPathKeys(ownerId);
-  }
-
-  // ============================================================
-  // Owner Keys
-  // ============================================================
-
-  /**
-   * Store feed seed for owner
-   */
-  storeFeedSeed(seed: Uint8Array): void {
-    setItem(KEY_FEED_SEED, bytesToBase64(seed));
-  }
-
-  /**
-   * Get feed seed for owner
-   */
-  getFeedSeed(): Uint8Array | null {
-    const stored = getItem(KEY_FEED_SEED);
-    if (!stored) return null;
-    try {
-      return base64ToBytes(stored);
-    } catch {
-      return null;
+      this.listeners.delete(listener)
+      if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage)
     }
   }
 
-  /**
-   * Check if owner has private feed enabled
-   */
-  hasFeedSeed(): boolean {
-    return this.getFeedSeed() !== null;
+  private changed(): void {
+    this.listeners.forEach((listener) => listener())
+  }
+
+  // ---- owner ----
+
+  ownerKeys(ownerId: string, feed: number): OwnerFeedKeys | null {
+    return read(ownerKey(ownerId, feed), (raw) => ({
+      seed: unb64(raw.seed),
+      keyGeneration: Number(raw.gen),
+      revokedLeaves: (raw.revoked as number[]).map(Number),
+      treeCapacity: Number(raw.cap),
+      maxKeyGeneration: Number(raw.max),
+    }))
+  }
+
+  storeOwnerKeys(ownerId: string, feed: number, keys: OwnerFeedKeys): void {
+    write(ownerKey(ownerId, feed), {
+      seed: b64(keys.seed), gen: keys.keyGeneration, revoked: keys.revokedLeaves, cap: keys.treeCapacity, max: keys.maxKeyGeneration,
+    })
+    this.changed()
+  }
+
+  /** The feeds of `ownerId` whose seed this device holds, newest first. */
+  ownerFeeds(ownerId: string): number[] {
+    return keysWith(`o:${ownerId}:`).map((key) => Number(key.split(':')[2])).filter(Number.isInteger).sort((a, b) => b - a)
+  }
+
+  // ---- member ----
+
+  memberKeys(viewerId: string, ownerId: string, feed: number): MemberFeedKeys | null {
+    return read(memberKey(viewerId, ownerId, feed), (raw) => ({
+      grantedAt: Number(raw.at),
+      leafIndex: Number(raw.leaf),
+      keyGeneration: Number(raw.gen),
+      cek: unb64(raw.cek),
+      history: unb64(raw.h),
+      pathKeys: decodeNodeKeys(raw.path),
+      treeCapacity: Number(raw.cap),
+      maxKeyGeneration: Number(raw.max),
+    }))
+  }
+
+  storeMemberKeys(viewerId: string, ownerId: string, feed: number, keys: MemberFeedKeys): void {
+    write(memberKey(viewerId, ownerId, feed), {
+      at: keys.grantedAt, leaf: keys.leafIndex, gen: keys.keyGeneration, cek: b64(keys.cek), h: b64(keys.history),
+      path: encodeNodeKeys(keys.pathKeys), cap: keys.treeCapacity, max: keys.maxKeyGeneration,
+    })
+    this.changed()
+  }
+
+  /** Every feed `viewerId` holds member keys for, as `{ ownerId, feed }`. */
+  memberFeeds(viewerId: string): { ownerId: string; feed: number }[] {
+    return keysWith(`f:${viewerId}:`).map((key) => {
+      const [, , ownerId, feed] = key.split(':')
+      return { ownerId, feed: Number(feed) }
+    }).filter(({ ownerId, feed }) => !!ownerId && Number.isInteger(feed))
+  }
+
+  /** The newest of `ownerId`'s feeds `viewerId` holds member keys for, or null. */
+  newestMemberFeed(viewerId: string, ownerId: string): number | null {
+    const feeds = this.memberFeeds(viewerId).filter((entry) => entry.ownerId === ownerId).map((entry) => entry.feed)
+    return feeds.length > 0 ? Math.max(...feeds) : null
+  }
+
+  // ---- history ----
+
+  historyKeys(viewerId: string, ownerId: string, feed: number): HistoryFeedKeys | null {
+    return read(historyKeyName(viewerId, ownerId, feed), (raw) => ({
+      finalKeyGeneration: Number(raw.gen), cek: unb64(raw.cek), history: unb64(raw.h),
+    }))
+  }
+
+  storeHistoryKeys(viewerId: string, ownerId: string, feed: number, keys: HistoryFeedKeys): void {
+    write(historyKeyName(viewerId, ownerId, feed), { gen: keys.finalKeyGeneration, cek: b64(keys.cek), h: b64(keys.history) })
+    this.changed()
   }
 
   /**
-   * Store current key generation
+   * True when this device holds keys that read `ownerId`'s feed `feed` at
+   * `keyGeneration` without any network read: the owner's seed, a member's
+   * keys at that generation or later, or a closed feed's history entry.
    */
-  storeCurrentKeyGeneration(keyGeneration: number): void {
-    setItem(KEY_CURRENT_KEY_GENERATION, keyGeneration.toString());
+  canReadLocally(viewerId: string, ownerId: string, feed: number, keyGeneration: number): boolean {
+    if (viewerId === ownerId && this.ownerKeys(ownerId, feed)) return true
+    const member = this.memberKeys(viewerId, ownerId, feed)
+    if (member && member.keyGeneration >= keyGeneration) return true
+    const history = this.historyKeys(viewerId, ownerId, feed)
+    return !!history && history.finalKeyGeneration >= keyGeneration
   }
 
-  /**
-   * Get current key generation (defaults to 1 if not set)
-   */
-  getCurrentKeyGeneration(): number {
-    const stored = getItem(KEY_CURRENT_KEY_GENERATION);
-    if (!stored) return 1;
-    const keyGeneration = parseInt(stored, 10);
-    return isNaN(keyGeneration) ? 1 : keyGeneration;
-  }
-
-  /**
-   * Store revoked leaves list (ordered by revocation time)
-   */
-  storeRevokedLeaves(leaves: number[]): void {
-    setItem(KEY_REVOKED_LEAVES, JSON.stringify(leaves));
-  }
-
-  /**
-   * Get revoked leaves list
-   */
-  getRevokedLeaves(): number[] {
-    const stored = getItem(KEY_REVOKED_LEAVES);
-    if (!stored) return [];
-    try {
-      const parsed = JSON.parse(stored);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
+  /** Remove every entry belonging to `identityId`: its own feeds' seeds and what it holds of others' feeds. */
+  clearIdentity(identityId: string): void {
+    const store = storage()
+    if (!store) return
+    for (const key of [...keysWith(`o:${identityId}:`), ...keysWith(`f:${identityId}:`), ...keysWith(`h:${identityId}:`)]) {
+      store.removeItem(PREFIX + key)
     }
-  }
-
-  /**
-   * Add a revoked leaf to the list (appends to maintain order)
-   */
-  addRevokedLeaf(leafIndex: number): void {
-    const current = this.getRevokedLeaves();
-    current.push(leafIndex);
-    this.storeRevokedLeaves(current);
-  }
-
-  /**
-   * Store available leaves bitmap (as array of available leaf indices)
-   * Note: This is a cache; authoritative source is grants (SPEC §6.3)
-   */
-  storeAvailableLeaves(availableIndices: number[]): void {
-    setItem(KEY_AVAILABLE_LEAVES, JSON.stringify(availableIndices));
-  }
-
-  /**
-   * Get available leaves
-   */
-  getAvailableLeaves(): number[] | null {
-    const stored = getItem(KEY_AVAILABLE_LEAVES);
-    if (!stored) return null;
-    try {
-      const parsed = JSON.parse(stored);
-      return Array.isArray(parsed) ? parsed : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Mark a leaf as unavailable (assigned)
-   */
-  markLeafUnavailable(leafIndex: number): void {
-    const available = this.getAvailableLeaves();
-    if (!available) return;
-    const updated = available.filter((i) => i !== leafIndex);
-    this.storeAvailableLeaves(updated);
-  }
-
-  /**
-   * Mark a leaf as available (revoked)
-   */
-  markLeafAvailable(leafIndex: number): void {
-    const available = this.getAvailableLeaves();
-    if (!available) return;
-    if (!available.includes(leafIndex)) {
-      available.push(leafIndex);
-      available.sort((a, b) => a - b);
-      this.storeAvailableLeaves(available);
-    }
-  }
-
-  /**
-   * Get next available leaf index (or null if full)
-   */
-  getNextAvailableLeaf(): number | null {
-    const available = this.getAvailableLeaves();
-    if (!available || available.length === 0) return null;
-    return available[0];
-  }
-
-  /**
-   * Store recipient to leaf mapping
-   */
-  storeRecipientMap(map: RecipientLeafMap): void {
-    setItem(KEY_RECIPIENT_MAP, JSON.stringify(map));
-  }
-
-  /**
-   * Get recipient to leaf mapping
-   */
-  getRecipientMap(): RecipientLeafMap {
-    const stored = getItem(KEY_RECIPIENT_MAP);
-    if (!stored) return {};
-    try {
-      return JSON.parse(stored);
-    } catch {
-      return {};
-    }
-  }
-
-  /**
-   * Add recipient to leaf mapping
-   */
-  addRecipientMapping(recipientId: string, leafIndex: number): void {
-    const map = this.getRecipientMap();
-    map[recipientId] = leafIndex;
-    this.storeRecipientMap(map);
-  }
-
-  /**
-   * Remove recipient mapping
-   */
-  removeRecipientMapping(recipientId: string): void {
-    const map = this.getRecipientMap();
-    delete map[recipientId];
-    this.storeRecipientMap(map);
-  }
-
-  /**
-   * Get leaf index for a recipient
-   */
-  getLeafForRecipient(recipientId: string): number | undefined {
-    const map = this.getRecipientMap();
-    return map[recipientId];
-  }
-
-  // ============================================================
-  // Follower Keys (per feed owner)
-  // ============================================================
-
-  /**
-   * Store path keys for a followed feed
-   */
-  storePathKeys(ownerId: string, pathKeys: NodeKey[]): void {
-    const stored: StoredPathKey[] = pathKeys.map((pk) => ({
-      nodeId: pk.nodeId,
-      version: pk.version,
-      key: bytesToBase64(pk.key),
-    }));
-    setItem(KEY_PATH_KEYS_PREFIX + ownerId, JSON.stringify(stored));
-    this.notifyFollowerKeys();
-  }
-
-  /**
-   * Get path keys for a followed feed
-   */
-  getPathKeys(ownerId: string): NodeKey[] | null {
-    const stored = getItem(KEY_PATH_KEYS_PREFIX + ownerId);
-    if (!stored) return null;
-    try {
-      const parsed: StoredPathKey[] = JSON.parse(stored);
-      return parsed.map((pk) => ({
-        nodeId: pk.nodeId,
-        version: pk.version,
-        key: base64ToBytes(pk.key),
-      }));
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Check if we have path keys for a feed
-   */
-  hasPathKeys(ownerId: string): boolean {
-    return this.getPathKeys(ownerId) !== null;
-  }
-
-  /**
-   * Update specific path keys (after applying rekey)
-   */
-  updatePathKeys(ownerId: string, updatedKeys: Map<number, NodeKey>): void {
-    const current = this.getPathKeys(ownerId);
-    if (!current) return;
-
-    const updated = current.map((pk) => {
-      const newKey = updatedKeys.get(pk.nodeId);
-      return newKey || pk;
-    });
-
-    this.storePathKeys(ownerId, updated);
-  }
-
-  /**
-   * Store cached CEK for a followed feed
-   */
-  storeCachedCEK(ownerId: string, keyGeneration: number, cek: Uint8Array): void {
-    const cached: CachedCEK = {
-      epoch: keyGeneration,
-      cek: bytesToBase64(cek),
-    };
-    setItem(KEY_CACHED_CEK_PREFIX + ownerId, JSON.stringify(cached));
-    this.notifyFollowerKeys();
-  }
-
-  /**
-   * Get cached CEK for a followed feed
-   */
-  getCachedCEK(ownerId: string): { keyGeneration: number; cek: Uint8Array } | null {
-    const stored = getItem(KEY_CACHED_CEK_PREFIX + ownerId);
-    if (!stored) return null;
-    try {
-      const cached: CachedCEK = JSON.parse(stored);
-      return {
-        keyGeneration: cached.epoch,
-        cek: base64ToBytes(cached.cek),
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Get cached key generation for a feed (or null if not cached)
-   */
-  getCachedKeyGeneration(ownerId: string): number | null {
-    const cached = this.getCachedCEK(ownerId);
-    return cached ? cached.keyGeneration : null;
-  }
-
-  // ============================================================
-  // Cleanup
-  // ============================================================
-
-  /**
-   * Clear all keys for a specific followed feed
-   */
-  clearFeedKeys(ownerId: string): void {
-    removeItem(KEY_PATH_KEYS_PREFIX + ownerId);
-    removeItem(KEY_CACHED_CEK_PREFIX + ownerId);
-    this.notifyFollowerKeys();
-  }
-
-  /**
-   * Clear all owner keys (used when disabling private feed)
-   */
-  clearOwnerKeys(): void {
-    removeItem(KEY_FEED_SEED);
-    removeItem(KEY_CURRENT_KEY_GENERATION);
-    removeItem(KEY_REVOKED_LEAVES);
-    removeItem(KEY_AVAILABLE_LEAVES);
-    removeItem(KEY_RECIPIENT_MAP);
-  }
-
-  /**
-   * Clear all private feed keys (owner and all followed feeds)
-   */
-  clearAllKeys(): void {
-    const allKeys = getAllKeys();
-    for (const key of allKeys) {
-      removeItem(key);
-    }
-    this.notifyFollowerKeys();
-  }
-
-  /**
-   * Get list of all feed owners we have keys for
-   */
-  getFollowedFeedOwners(): string[] {
-    const allKeys = getAllKeys();
-    const owners: string[] = [];
-    const prefix = KEY_PATH_KEYS_PREFIX;
-    for (const key of allKeys) {
-      if (key.startsWith(prefix)) {
-        owners.push(key.slice(prefix.length));
-      }
-    }
-    return owners;
-  }
-
-  // ============================================================
-  // Initialization Helpers
-  // ============================================================
-
-  /**
-   * Initialize owner state with all available leaves (for new feed)
-   */
-  initializeOwnerState(seed: Uint8Array, treeCapacity: number = 1024): void {
-    this.storeFeedSeed(seed);
-    this.storeCurrentKeyGeneration(1);
-    this.storeRevokedLeaves([]);
-    this.storeRecipientMap({});
-
-    // All leaves available initially
-    const allAvailable: number[] = [];
-    for (let i = 0; i < treeCapacity; i++) {
-      allAvailable.push(i);
-    }
-    this.storeAvailableLeaves(allAvailable);
-  }
-
-  /**
-   * Initialize follower state from grant payload
-   */
-  initializeFollowerState(
-    ownerId: string,
-    pathKeys: NodeKey[],
-    grantKeyGeneration: number,
-    currentCEK: Uint8Array
-  ): void {
-    this.storePathKeys(ownerId, pathKeys);
-    this.storeCachedCEK(ownerId, grantKeyGeneration, currentCEK);
-  }
-
-  /**
-   * Check if storage is available
-   */
-  isAvailable(): boolean {
-    return isStorageAvailable();
+    this.changed()
   }
 }
 
-// Export singleton instance
-export const privateFeedKeyStore = new PrivateFeedKeyStore();
-
-// Export class for testing
-export { PrivateFeedKeyStore };
+export const privateFeedKeyStore = new PrivateFeedKeyStore()
+export { PrivateFeedKeyStore }

@@ -8,7 +8,7 @@ import { Post } from '@/lib/types'
 import { PostContent } from './post-content'
 import type { MediaGate } from '@/hooks/use-media-gate'
 import { cn } from '@/lib/utils'
-import { identifierToBytes } from '@/lib/services/sdk-helpers'
+import { privateContentOf } from '@/lib/services/private-feed-reader'
 import { useAuth } from '@/contexts/auth-context'
 import type { FieldValidationStatus } from '@/hooks/use-post-field-validation'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
@@ -45,7 +45,7 @@ type DecryptionState =
   | { status: 'loading' }
   | { status: 'recovering' }
   | { status: 'decrypted'; content: string; followerCount?: number }
-  | { status: 'locked'; reason: 'no-keys' | 'no-auth' | 'revoked' | 'approved-no-keys' | 'pending' }
+  | { status: 'locked'; reason: 'no-keys' | 'no-auth' | 'revoked' | 'approved-no-keys' | 'pending' | 'renewing' | 'history' }
   | { status: 'error'; message: string }
 
 type PrivateContentCardStatus = 'loading' | 'recovering' | 'decrypted' | 'locked' | 'error'
@@ -235,176 +235,27 @@ export function PrivatePostContent({
     mediaGate,
   }
 
-  // Attempt follower key recovery using encryption key
-  const attemptRecovery = useCallback(async () => {
-    if (!user) return
-    const { encryptedContent, keyGeneration, nonce } = post
-    if (!encryptedContent || keyGeneration == null || !nonce) {
-      setState({ status: 'error', message: 'Invalid private post data' })
-      return
-    }
-
-    setState({ status: 'recovering' })
-
-    try {
-      // Get encryption key bytes from session storage (handles both WIF and hex formats)
-      const encryptionPrivateKey = getEncryptionKeyBytes(user.identityId)
-      if (!encryptionPrivateKey) {
-        // Key not in session storage - should have been entered via modal
-        setState({ status: 'locked', reason: 'approved-no-keys' })
-        return
-      }
-
-      // Attempt to recover follower keys from grant
-      const { privateFeedFollowerService } = await import('@/lib/services')
-      const result = await privateFeedFollowerService.recoverFollowerKeys(
-        encryptionSourceOwnerId,
-        user.identityId,
-        encryptionPrivateKey
-      )
-
-      if (result.success) {
-        // Recovery successful - now try to decrypt the post
-        const decryptResult = await privateFeedFollowerService.decryptPost({
-          encryptedContent,
-          keyGeneration,
-          nonce,
-          $ownerId: encryptionSourceOwnerId,
-        }, user.identityId)
-
-        if (decryptResult.success && decryptResult.content) {
-          setState({ status: 'decrypted', content: decryptResult.content })
-        } else {
-          // Decryption failed after recovery - show error with Retry (Test 5.7)
-          logger.error('Decryption failed after recovery:', decryptResult.error)
-          setState({
-            status: 'error',
-            message: decryptResult.error || 'Decryption failed after key recovery',
-          })
-        }
-      } else {
-        // Recovery failed - could be revoked or corrupted grant
-        logger.error('Recovery failed:', result.error)
-        setState({
-          status: 'error',
-          message: result.error || 'Failed to recover access keys',
-        })
-      }
-    } catch (error) {
-      logger.error('Error recovering follower keys:', error)
-      setState({
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Recovery failed',
-      })
-    }
-  }, [post, user, encryptionSourceOwnerId])
-
-  // Handle "Recover Access" button click
-  const handleRecoverAccess = useCallback(() => {
-    // Open encryption key modal with recovery action
-    // On success, attempt recovery
-    openEncryptionKeyModal('recover_follower_keys', () => {
-      // After user enters key successfully, attempt recovery
-      void attemptRecovery()
-    })
-  }, [openEncryptionKeyModal, attemptRecovery])
-
   const attemptDecryption = useCallback(async () => {
-    // Safety check: ensure this is a private post
-    const { encryptedContent, keyGeneration, nonce } = post
-    if (!encryptedContent || keyGeneration == null || !nonce) {
+    const content = privateContentOf(post, encryptionSourceOwnerId)
+    if (!content) {
       setState({ status: 'error', message: 'Invalid private post data' })
       return
     }
-
-    // If not logged in, show locked state
     if (!user) {
       setState({ status: 'locked', reason: 'no-auth' })
       return
     }
 
     setState({ status: 'loading' })
-
     try {
-      const { privateFeedFollowerService } = await import('@/lib/services')
-      const { privateFeedKeyStore } = await import('@/lib/services')
-
-      // Check if user is the encryption source owner (can decrypt with their own feed keys)
-      const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
-
-      if (isEncryptionSourceOwner) {
-        // User is the encryption source owner - decrypt using their feed keys
-        let feedSeed = privateFeedKeyStore.getFeedSeed()
-
-        // BUG-011 fix: If owner has no local keys but has encryption key, attempt auto-recovery
-        if (!feedSeed) {
-          const encryptionPrivateKey = getEncryptionKeyBytes(user.identityId)
-          if (encryptionPrivateKey) {
-            logger.debug('Owner auto-recovery: no local feed seed, attempting recovery with encryption key')
-            setState({ status: 'recovering' })
-
-            // Attempt to recover owner state from chain
-            const { privateFeedService } = await import('@/lib/services')
-            const recoveryResult = await privateFeedService.recoverOwnerState(
-              encryptionSourceOwnerId,
-              encryptionPrivateKey
-            )
-
-            if (recoveryResult.success) {
-              logger.debug('Owner auto-recovery: successfully recovered feed seed')
-              feedSeed = privateFeedKeyStore.getFeedSeed()
-            } else {
-              logger.debug('Owner auto-recovery failed:', recoveryResult.error)
-              // Recovery failed - show locked state with no-keys reason
-              setState({ status: 'locked', reason: 'no-keys' })
-              return
-            }
-          } else {
-            // Owner doesn't have encryption key - needs to enter it
-            logger.debug('Owner cannot decrypt: no feed seed and no encryption key')
-            setState({ status: 'locked', reason: 'no-keys' })
-            return
-          }
-        }
-
-        // Double-check we have feedSeed after potential recovery
-        if (!feedSeed) {
-          setState({ status: 'locked', reason: 'no-keys' })
-          return
-        }
-
-        // Owner decrypts using their own keys
-        const { privateFeedCryptoService, MAX_KEY_GENERATION } = await import('@/lib/services')
-
-        // Get CEK for the post's key generation
-        const cached = privateFeedKeyStore.getCachedCEK(encryptionSourceOwnerId)
-        let cek: Uint8Array
-
-        if (cached && cached.keyGeneration === keyGeneration) {
-          cek = cached.cek
-        } else if (cached && cached.keyGeneration > keyGeneration) {
-          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, keyGeneration)
-        } else {
-          // Generate from chain
-          const chain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION)
-          cek = chain[keyGeneration]
-        }
-
-        // Convert encryption source owner ID to bytes for AAD
-        const ownerIdBytes = identifierToBytes(encryptionSourceOwnerId)
-
-        const decryptedContent = privateFeedCryptoService.decryptPostContent(
-          cek,
-          {
-            ciphertext: encryptedContent,
-            nonce,
-            keyGeneration,
-          },
-          ownerIdBytes
-        )
-
-        // Fetch follower count for owner's own posts (PRD §4.8)
-        // Only show follower count if this is the author's own post (not inherited reply)
+      const { decryptPrivateContent } = await import('@/lib/services/private-feed-reader')
+      const encryptionKey = getEncryptionKeyBytes(user.identityId) ?? undefined
+      let outcome = await decryptPrivateContent(content, user.identityId, encryptionKey)
+      // A private reply under a public root is in its own author's feed, not the root's.
+      if (!outcome.ok && (outcome.reason === 'no-access' || outcome.reason === 'failed') && content.feedOwnerId !== post.author.id) {
+        outcome = await decryptPrivateContent({ ...content, feedOwnerId: post.author.id }, user.identityId, encryptionKey)
+      }
+      if (outcome.ok) {
         let followerCount: number | undefined
         if (isOwner) {
           try {
@@ -412,112 +263,53 @@ export function PrivatePostContent({
             followerCount = await privateFeedService.getPrivateFollowerCount(encryptionSourceOwnerId)
           } catch (err) {
             logger.warn('Failed to fetch private follower count:', err)
-            // Continue without follower count - it's not critical
           }
         }
-
-        setState({ status: 'decrypted', content: decryptedContent, followerCount })
+        setState({ status: 'decrypted', content: outcome.text, followerCount })
         return
       }
-
-      // User is not the encryption source owner - try to decrypt as follower
-      // Check if follower can decrypt using the encryption source owner's keys
-      const canDecrypt = await privateFeedFollowerService.canDecrypt(encryptionSourceOwnerId)
-
-      if (!canDecrypt) {
-        // Check access status to determine why
-        const accessStatus = await privateFeedFollowerService.getAccessStatus(
-          encryptionSourceOwnerId,
-          user.identityId
-        )
-
-        if (accessStatus === 'revoked') {
+      switch (outcome.reason) {
+        case 'needs-key':
+          setState({ status: 'locked', reason: isOwner ? 'no-keys' : 'approved-no-keys' })
+          return
+        case 'revoked':
           setState({ status: 'locked', reason: 'revoked' })
-        } else if (accessStatus === 'pending') {
-          // User has a pending request - seed the shared cache so other posts show pending too
-          const { setPrivateFeedRequestStatus } = await import('@/lib/caches/user-status-cache')
-          setPrivateFeedRequestStatus(`${user.identityId}:${encryptionSourceOwnerId}`, 'pending')
-          setState({ status: 'locked', reason: 'pending' })
-        } else if (accessStatus === 'approved-no-keys') {
-          // User has a grant but no local keys - needs to recover
-          // Check if we already have an encryption key in session
-          const encryptionKeyBytes = getEncryptionKeyBytes(user.identityId)
-          if (encryptionKeyBytes) {
-            // Key is available - attempt recovery automatically
-            void attemptRecovery()
-          } else {
-            // Need to prompt user for encryption key
-            setState({ status: 'locked', reason: 'approved-no-keys' })
-          }
-        } else {
-          setState({ status: 'locked', reason: 'no-keys' })
-        }
+          return
+        case 'history-unavailable':
+          setState({ status: 'locked', reason: 'history' })
+          return
+        case 'failed':
+          setState({ status: 'error', message: 'Unable to decrypt this post.' })
+          return
+      }
+      if (isOwner) {
+        setState({ status: 'locked', reason: 'no-keys' })
         return
       }
-
-      // Attempt to decrypt using encryption source owner's keys
-      const result = await privateFeedFollowerService.decryptPost({
-        encryptedContent,
-        keyGeneration,
-        nonce,
-        $ownerId: encryptionSourceOwnerId,
-      }, user.identityId)
-
-      if (result.success && result.content) {
-        setState({ status: 'decrypted', content: result.content })
+      const { privateFeedFollowerService } = await import('@/lib/services')
+      const accessStatus = await privateFeedFollowerService.getAccessStatus(encryptionSourceOwnerId, user.identityId)
+      if (accessStatus === 'pending') {
+        // Seed the shared cache so the author's other posts show pending too
+        const { setPrivateFeedRequestStatus } = await import('@/lib/caches/user-status-cache')
+        setPrivateFeedRequestStatus(`${user.identityId}:${encryptionSourceOwnerId}`, 'pending')
+        setState({ status: 'locked', reason: 'pending' })
+      } else if (accessStatus === 'renewing') {
+        setState({ status: 'locked', reason: 'renewing' })
+      } else if (accessStatus === 'approved-no-keys' || accessStatus === 'approved') {
+        setState({ status: 'locked', reason: 'history' })
       } else {
-        // Check if access has been revoked (grant deleted)
-        if (result.error === 'Access has been revoked' || result.error?.startsWith('REVOKED:')) {
-          setState({ status: 'locked', reason: 'revoked' })
-          return
-        }
-        // Check if this is an old post from before user's current access
-        if (result.error?.startsWith('OLD_POST:')) {
-          // Show a specific message for old posts that can't be decrypted
-          setState({
-            status: 'error',
-            message: 'This post is from before your current access and cannot be decrypted.',
-          })
-          return
-        }
-        // Generic decrypt failure (no user context)
-        if (result.error?.startsWith('DECRYPT_FAILED:')) {
-          setState({
-            status: 'error',
-            message: 'Unable to decrypt this post.',
-          })
-          return
-        }
-        // BUG-017 fix: Check if we need to trigger key recovery due to missing wrapNonceSalt
-        if (result.error?.startsWith('REKEY_RECOVERY_NEEDED:')) {
-          logger.debug('BUG-017: Triggering key recovery due to missing wrapNonceSalt')
-          // Check if we have encryption key in session to auto-recover
-          const encryptionKeyBytes = getEncryptionKeyBytes(user.identityId)
-          if (encryptionKeyBytes) {
-            // Key is available - attempt recovery automatically
-            void attemptRecovery()
-          } else {
-            // Need to prompt user for encryption key
-            setState({ status: 'locked', reason: 'approved-no-keys' })
-          }
-          return
-        }
-
-        // Decryption failed - show error state with Retry button (Test 5.7)
-        logger.error('Decryption failed:', result.error || 'Unknown error')
-        setState({
-          status: 'error',
-          message: result.error || 'Decryption failed. Keys may be corrupted or invalid.',
-        })
+        setState({ status: 'locked', reason: accessStatus === 'revoked' ? 'revoked' : 'no-keys' })
       }
     } catch (error) {
       logger.error('Error decrypting private post:', error)
-      setState({
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Decryption failed',
-      })
+      setState({ status: 'error', message: 'Unable to decrypt this post.' })
     }
-  }, [post, user, isOwner, attemptRecovery, encryptionSourceOwnerId])
+  }, [post, user, isOwner, encryptionSourceOwnerId])
+
+  // "Recover": enter the encryption key, then read again with it.
+  const handleRecoverAccess = useCallback(() => {
+    openEncryptionKeyModal('recover_follower_keys', () => setState({ status: 'idle' }))
+  }, [openEncryptionKeyModal])
 
   // Reset state when post or user changes to avoid stale decryption data
   useEffect(() => {
@@ -536,7 +328,7 @@ export function PrivatePostContent({
   const awaitingKeys = state.status === 'locked' && state.reason === 'approved-no-keys'
   useEffect(() => {
     if (!awaitingKeys) return
-    return privateFeedKeyStore.subscribeFollowerKeys(() => setState({ status: 'idle' }))
+    return privateFeedKeyStore.subscribe(() => setState({ status: 'idle' }))
   }, [awaitingKeys])
 
   // Handle retry for decryption failures (Test 5.7)
@@ -622,6 +414,14 @@ export function PrivatePostContent({
         break
       case 'approved-no-keys':
         statusText = 'Key recovery required'
+        break
+      case 'renewing':
+        statusText = 'Your access is being renewed'
+        break
+      case 'history':
+        statusText = isOwner
+          ? 'From before your private feed was renewed'
+          : 'From before you could see this private feed'
         break
       case 'no-keys':
         statusText = isOwner ? 'Enter encryption key to view' : 'Private content'
@@ -751,7 +551,7 @@ export function PrivatePostContent({
             )}
             {/* Request Access button for no-keys (non-owner), or pending badge for pending requests */}
             {/* Posts always show request button for non-owners (replies don't reach this component) */}
-            {(state.reason === 'no-keys' || state.reason === 'revoked' || state.reason === 'pending' || isPending) && !isOwner && renderRequestButton()}
+            {(state.reason === 'no-keys' || state.reason === 'revoked' || state.reason === 'pending' || (isPending && state.reason !== 'renewing' && state.reason !== 'history')) && !isOwner && renderRequestButton()}
           </div>
         </div>
 
@@ -792,5 +592,5 @@ export function PrivatePostContent({
  * Check if a post is a private post (has encrypted content)
  */
 export function isPrivatePost(post: Post): boolean {
-  return !!(post.encryptedContent && post.keyGeneration !== undefined && post.nonce)
+  return privateContentOf(post) !== null
 }

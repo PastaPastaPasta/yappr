@@ -16,7 +16,6 @@ import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
-import { privateFeedKeyFields } from '@/lib/contract-topology';
 import { mediaDocumentFields, mediaFromDocument, type MediaItemInput } from '@/lib/media/media-fields';
 
 /**
@@ -29,8 +28,8 @@ export interface EncryptionOptions {
   teaser?: string;
   /** Feed owner's encryption private key for automatic sync/recovery (own posts, and the owner's replies in their own threads) */
   encryptionPrivateKey?: Uint8Array;
-  /** Encryption source for inherited encryption (only for 'inherited' type) */
-  source?: { ownerId: string; keyGeneration: number };
+  /** Whose private thread a reply belongs to (only for 'inherited' type): it is encrypted into that owner's current feed */
+  source?: { ownerId: string };
 }
 
 export interface PostStats {
@@ -275,8 +274,8 @@ class PostService extends BaseDocumentService<Post> {
 
     // Extract private feed fields if present
     const rawEncryptedContent = data.encryptedContent || doc.encryptedContent;
-    const { generation } = privateFeedKeyFields();
-    const keyGeneration = (data[generation] ?? doc[generation]) as number | undefined;
+    const keyGeneration = (data.keyGeneration ?? doc.keyGeneration) as number | undefined;
+    const feed = (data.feed ?? doc.feed) as number | undefined;
     const rawNonce = data.nonce || doc.nonce;
 
     // Normalize byte arrays (SDK may return as base64 string, Uint8Array, or regular array)
@@ -319,6 +318,7 @@ class PostService extends BaseDocumentService<Post> {
       encryptedContent,
       keyGeneration,
       nonce,
+      feed,
     };
 
     return post;
@@ -471,7 +471,7 @@ class PostService extends BaseDocumentService<Post> {
 
     // Handle encryption if provided
     if (options.encryption) {
-      // Social v17 names a feed on every private write; this client writes the single-feed shape only.
+      // Private feeds are social v17's several write-once feeds; no earlier cut offers them.
       if (!privateFeedClientSupported()) throw new Error('Private posts are not available yet');
       const { prepareOwnerEncryption, prepareInheritedEncryption } = await import('./private-feed-service');
 
@@ -480,6 +480,7 @@ class PostService extends BaseDocumentService<Post> {
         encryptionResult = await prepareOwnerEncryption(
           ownerId,
           content,
+          'post',
           options.encryption.teaser,
           options.encryption.encryptionPrivateKey
         );
@@ -500,8 +501,9 @@ class PostService extends BaseDocumentService<Post> {
 
       // Set encrypted fields
       data.encryptedContent = encryptionResult.data.encryptedContent;
-      data[privateFeedKeyFields().generation] = encryptionResult.data.keyGeneration;
+      data.keyGeneration = encryptionResult.data.keyGeneration;
       data.nonce = encryptionResult.data.nonce;
+      data.feed = encryptionResult.data.feed;
 
       // Use teaser or placeholder as public content
       data.content = encryptionResult.data.teaser || PRIVATE_POST_PLACEHOLDER;

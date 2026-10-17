@@ -1,1082 +1,250 @@
-'use client';
-
-import { logger } from '@/lib/logger';
 /**
- * PrivateFeedFollowerService
+ * Private feeds, follower side (social v17, crypto v2).
  *
- * Follower-side operations for private feeds.
- * Implements PRD §3.3 interface.
- *
- * Operations:
- * - requestAccess(): Request access to a user's private feed
- * - cancelRequest(): Cancel a pending follow request
- * - canDecrypt(): Check if user can decrypt a feed owner's posts
- * - decryptPost(): Decrypt a private post
- * - catchUp(): Apply rekey documents to catch up on key state
- * - recoverFollowerKeys(): Recover keys from grant document
- *
- * See YAPPR_PRIVATE_FEED_SPEC.md for cryptographic details.
- * See YAPPR_PRIVATE_FEED_PRD.md for implementation guidance.
+ * A follower asks once: their `followRequest` stays as standing consent while
+ * they follow privately (PF8), so the owner can carry them into a renewed feed
+ * without asking again; "Leave private feed" deletes it. The owner's grant
+ * (one per feed) hands over the follower's path keys, the feed's current CEK
+ * and its history key; rekeys move the keys on after each revocation.
+ * "Feeds I can read" is the recipient-first grant index, so it holds on any
+ * device (D32).
  */
 
-import { getEvoSdk } from './evo-sdk-service';
-import { stateTransitionService } from './state-transition-service';
-import { privateFeedCryptoService } from './private-feed-crypto-service';
-import { privateFeedKeyStore } from './private-feed-key-store';
-import { privateFeedService } from './private-feed-service';
-import type { PrivateFeedRekeyDocument } from './private-feed-service';
-import type { NodeKey } from './private-feed-crypto-service';
-import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
-import { privateFeedKeyFields } from '@/lib/contract-topology';
-import { RequestDeduplicator, queryDocuments, identifierToBase58, identifierToBytes } from './sdk-helpers';
-import { paginateFetchAll } from './pagination-utils';
-import { requireBytes } from '@/lib/bytes';
+import { logger } from '@/lib/logger'
+import { stateTransitionService } from './state-transition-service'
+import { privateFeedKeyStore, type MemberFeedKeys } from './private-feed-key-store'
+import {
+  fetchCurrentFeed, fetchFeed, fetchFollowRequest, fetchGrant, fetchGrantsHeldBy, fetchNewestGrant, fetchRekeys,
+  type GrantDocument,
+} from './private-feed-reads'
+import { identifierToBytes } from './sdk-helpers'
+import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants'
+import { applyRekey, decodeRekeyPackets, openGrant } from '@/lib/private-feed/crypto'
 
 /**
- * FollowRequest document from platform
+ * Where a viewer stands with someone's private feed:
+ * - `approved`: a grant in the current feed and the keys on this device;
+ * - `approved-no-keys`: the grant, but not yet the keys here (enter the encryption key);
+ * - `renewing`: a grant only in an older feed and the request still stands: the owner renewed and is moving followers;
+ * - `pending`: asked, not granted;
+ * - `revoked`: this device held keys, the grant is gone, and no request was made since;
+ * - `none`: nothing.
  */
-export interface FollowRequestDocument {
-  $id: string;
-  $ownerId: string;
-  $createdAt: number;
-  targetId: string;
-  publicKey?: Uint8Array;
-}
+export type AccessStatus = 'none' | 'pending' | 'approved' | 'approved-no-keys' | 'renewing' | 'revoked'
 
-/**
- * PrivateFeedGrant document from platform
- */
-export interface PrivateFeedGrantDocument {
-  $id: string;
-  $ownerId: string;
-  $createdAt: number;
-  recipientId: string;
-  leafIndex: number;
-  keyGeneration: number;
-  encryptedPayload: Uint8Array;
-}
+type Outcome = { success: true } | { success: false; error: string }
 
-/**
- * Result of decrypting a private post
- */
-export interface DecryptResult {
-  success: boolean;
-  content?: string;
-  error?: string;
-}
+/** A follower's keys for an owner's current feed, ready to encrypt a reply. */
+type CurrentKeys = { success: true; feed: number; keys: MemberFeedKeys } | { success: false; error: string }
 
-/**
- * Encrypted post fields from a post document
- */
-export interface EncryptedPostFields {
-  encryptedContent: Uint8Array;
-  keyGeneration: number;
-  nonce: Uint8Array;
-  $ownerId: string;
-}
+const toBytes = identifierToBytes
 
 class PrivateFeedFollowerService {
-  private readonly contractId = YAPPR_CONTRACT_ID;
+  private readonly contractId = YAPPR_CONTRACT_ID
 
   // ============================================================
-  // Access Request Operations (SPEC §8.3)
+  // Requests
   // ============================================================
 
   /**
-   * Request access to a user's private feed
-   *
-   * @param ownerId - The feed owner's identity ID
-   * @param myId - The requester's identity ID
-   * @param publicKey - Optional: requester's encryption public key (if not on-chain)
+   * Ask `ownerId` for access. A request that already stands is replaced by a
+   * new one: that is how a revoked follower asks again, and how a member whose
+   * encryption key changed asks for a fresh grant (the owner sees a request
+   * newer than their grant).
    */
-  async requestAccess(
-    ownerId: string,
-    myId: string,
-    publicKey?: Uint8Array
-  ): Promise<{ success: boolean; error?: string }> {
-    // v9 refuses a self-request in consensus (distinctFrom $ownerId, 10419).
-    if (ownerId === myId) {
-      return { success: false, error: 'You cannot request access to your own private feed' };
-    }
+  async requestAccess(ownerId: string, myId: string, publicKey?: Uint8Array): Promise<Outcome> {
+    if (ownerId === myId) return { success: false, error: 'You cannot request access to your own private feed' }
     try {
-      // 1. Check if the owner has a private feed
-      const hasPrivateFeed = await privateFeedService.hasPrivateFeed(ownerId);
-      if (!hasPrivateFeed) {
-        return { success: false, error: 'User does not have a private feed' };
+      const feed = await fetchCurrentFeed(ownerId)
+      if (!feed) return { success: false, error: 'This person has no private feed' }
+      const existing = await fetchFollowRequest(ownerId, myId)
+      if (existing) {
+        const removed = await stateTransitionService.deleteDocument(this.contractId, DOCUMENT_TYPES.FOLLOW_REQUEST, existing.$id, myId)
+        if (!removed.success) return { success: false, error: removed.error || 'Could not send your request' }
       }
-
-      // 2. Check if already approved
-      const existingGrant = await this.getGrant(ownerId, myId);
-      if (existingGrant) {
-        return { success: false, error: 'Already approved for this private feed' };
-      }
-
-      // 3. Check if request already pending
-      const existingRequest = await this.getFollowRequest(ownerId, myId);
-      if (existingRequest) {
-        return { success: false, error: 'Request already pending' };
-      }
-
-      // 4. Create FollowRequest document through the typed write path.
-      const documentData: Record<string, unknown> = {
-        targetId: identifierToBytes(ownerId),
-      };
-
-      // Include public key if provided (for hash160-only keys on identity)
-      if (publicKey) {
-        documentData.publicKey = publicKey;
-      }
-
-      logger.debug('Creating FollowRequest:', { targetId: ownerId });
-
-      const result = await stateTransitionService.createDocument(
-        this.contractId,
-        DOCUMENT_TYPES.FOLLOW_REQUEST,
-        myId,
-        documentData
-      );
-
-      if (!result.success) {
-        return { success: false, error: result.error || 'Failed to create follow request' };
-      }
-
-      // Note: Notifications are now discovered by querying followRequest documents directly
-      // (see notification-service.ts getPrivateFeedNotifications). No need to create
-      // separate notification documents, which would fail anyway due to ownership constraints.
-      // The feed owner's client will find this request when polling for notifications.
-
-      logger.debug('Follow request created successfully');
-      return { success: true };
+      const data: Record<string, unknown> = { targetId: toBytes(ownerId) }
+      if (publicKey) data.publicKey = publicKey
+      const result = await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.FOLLOW_REQUEST, myId, data)
+      return result.success ? { success: true } : { success: false, error: result.error || 'Could not send your request' }
     } catch (error) {
-      logger.error('Error requesting access:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
+      logger.error('Error requesting access:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Could not send your request' }
     }
   }
 
   /**
-   * Cancel a pending follow request
-   *
-   * @param ownerId - The feed owner's identity ID
-   * @param myId - The requester's identity ID
+   * Withdraw a request, or leave a private feed (PF8): delete the standing
+   * request, so the owner no longer carries this follower into a renewed feed.
+   * Keys already on this device keep reading what they could.
    */
-  async cancelRequest(
-    ownerId: string,
-    myId: string
-  ): Promise<{ success: boolean; error?: string }> {
+  async leave(ownerId: string, myId: string): Promise<Outcome> {
     try {
-      // 1. Find the existing request
-      const request = await this.getFollowRequest(ownerId, myId);
-      if (!request) {
-        return { success: false, error: 'No pending request found' };
-      }
-
-      // 2. Delete the request (requester owns their own follow request)
-      const result = await stateTransitionService.deleteDocument(
-        this.contractId,
-        DOCUMENT_TYPES.FOLLOW_REQUEST,
-        request.$id,
-        myId
-      );
-
-      if (!result.success) {
-        return { success: false, error: result.error || 'Failed to delete follow request' };
-      }
-
-      logger.debug('Follow request cancelled successfully');
-      return { success: true };
+      const request = await fetchFollowRequest(ownerId, myId)
+      if (!request) return { success: false, error: 'No pending request found' }
+      const result = await stateTransitionService.deleteDocument(this.contractId, DOCUMENT_TYPES.FOLLOW_REQUEST, request.$id, myId)
+      return result.success ? { success: true } : { success: false, error: result.error || 'Could not withdraw your request' }
     } catch (error) {
-      logger.error('Error cancelling request:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
+      logger.error('Error leaving a private feed:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Could not withdraw your request' }
     }
   }
 
-  /**
-   * Get all follow requests targeting a feed owner (for owner to review)
-   *
-   * @param ownerId - The feed owner's identity ID
-   */
-  private getFollowRequestsForOwnerReads = new RequestDeduplicator<string, FollowRequestDocument[]>(0);
-
-  async getFollowRequestsForOwner(ownerId: string): Promise<FollowRequestDocument[]> {
-    return this.getFollowRequestsForOwnerReads.dedupe(ownerId, () => this.fetchFollowRequestsForOwner(ownerId));
-  }
-
-  private async fetchFollowRequestsForOwner(ownerId: string): Promise<FollowRequestDocument[]> {
-    try {
-      const sdk = await getEvoSdk();
-
-      const { documents: allDocs } = await paginateFetchAll<FollowRequestDocument>(
-        sdk,
-        (startAfter) => ({
-          dataContractId: this.contractId,
-          documentTypeName: DOCUMENT_TYPES.FOLLOW_REQUEST,
-          where: [['targetId', '==', ownerId]],
-          // Use target index: [targetId, $createdAt] - must include all index fields in orderBy
-          orderBy: [['targetId', 'asc'], ['$createdAt', 'desc']],
-          limit: 100,
-          ...(startAfter && { startAfter }),
-        }),
-        (doc) => ({
-          $id: doc.$id as string,
-          $ownerId: doc.$ownerId as string,
-          $createdAt: doc.$createdAt as number,
-          targetId: doc.targetId as string,
-          publicKey: doc.publicKey ? requireBytes(doc.publicKey, 'publicKey') : undefined,
-        }),
-        { maxResults: 1024 } // SPEC allows up to 1024 followers
-      );
-
-      // Filter out requests where a grant already exists (stale requests)
-      const requests: FollowRequestDocument[] = [];
-      for (const doc of allDocs) {
-        const existingGrant = await this.getGrant(ownerId, doc.$ownerId);
-        if (!existingGrant) {
-          requests.push(doc);
-        }
-      }
-
-      return requests;
-    } catch (error) {
-      logger.error('Error fetching follow requests for owner:', error);
-      return [];
-    }
+  /** Withdraw a pending request (the same write as {@link leave}). */
+  cancelRequest(ownerId: string, myId: string): Promise<Outcome> {
+    return this.leave(ownerId, myId)
   }
 
   // ============================================================
-  // Grant Query Operations
+  // Status
   // ============================================================
 
-  /**
-   * Get a specific follow request. Concurrent reads of one pair (every private
-   * post card of a feed owner checks access at once) share one query.
-   */
-  private getFollowRequestReads = new RequestDeduplicator<string, FollowRequestDocument | null>(0);
+  /** Where `myId` stands with `ownerId`'s private feed (see {@link AccessStatus}). Throws on a failed read. */
+  async getAccessStatus(ownerId: string, myId: string): Promise<AccessStatus> {
+    const [feed, grant, request] = await Promise.all([fetchCurrentFeed(ownerId), fetchNewestGrant(ownerId, myId), fetchFollowRequest(ownerId, myId)])
+    if (!feed) return 'none'
+    if (grant && grant.feed === feed.feed) {
+      const keys = privateFeedKeyStore.memberKeys(myId, ownerId, feed.feed)
+      return keys && keys.leafIndex === grant.leafIndex && keys.keyGeneration >= grant.keyGeneration ? 'approved' : 'approved-no-keys'
+    }
+    if (grant) return request ? 'renewing' : 'none'
+    // Keys here and no grant: removed, unless they asked again since (the standing request predates the keys).
+    const newest = privateFeedKeyStore.newestMemberFeed(myId, ownerId)
+    const keys = newest === null ? null : privateFeedKeyStore.memberKeys(myId, ownerId, newest)
+    if (keys && (!request || request.$createdAt <= keys.grantedAt)) return 'revoked'
+    return request ? 'pending' : 'none'
+  }
 
-  async getFollowRequest(
-    ownerId: string,
-    requesterId: string,
-    options: { throwOnError?: boolean } = {}
-  ): Promise<FollowRequestDocument | null> {
+  // ============================================================
+  // Keys
+  // ============================================================
+
+  /** Open `grant` with the follower's encryption key and keep its keys, then catch up on the feed's rekeys. */
+  async recoverFromGrant(grant: GrantDocument, myId: string, encryptionPrivateKey: Uint8Array): Promise<Outcome> {
+    const feed = await fetchFeed(grant.ownerId, grant.feed)
+    if (!feed) return { success: false, error: 'This private feed could not be read' }
+    let payload
     try {
-      return await this.getFollowRequestReads.dedupe(`${ownerId}:${requesterId}`, () => this.fetchFollowRequest(ownerId, requesterId));
+      payload = await openGrant(encryptionPrivateKey, grant.encryptedPayload, toBytes(grant.ownerId), toBytes(myId), {
+        feed: grant.feed, leafIndex: grant.leafIndex, keyGeneration: grant.keyGeneration, treeCapacity: feed.treeCapacity, maxKeyGeneration: feed.maxKeyGeneration,
+      })
     } catch (error) {
-      if (options.throwOnError) throw error;
-      return null;
+      logger.warn('Private feed grant did not open:', error)
+      return { success: false, error: 'KEY_MISMATCH:Your access was granted to a different encryption key. Ask for access again.' }
+    }
+    privateFeedKeyStore.storeMemberKeys(myId, grant.ownerId, grant.feed, {
+      grantedAt: grant.createdAt, leafIndex: payload.leafIndex, keyGeneration: payload.keyGeneration, cek: payload.cek, history: payload.history,
+      pathKeys: payload.pathKeys, treeCapacity: feed.treeCapacity, maxKeyGeneration: feed.maxKeyGeneration,
+    })
+    const caught = await this.catchUp(grant.ownerId, grant.feed, myId)
+    if (!caught.success) logger.warn('Private feed keys recovered but not caught up:', caught.error)
+    return { success: true }
+  }
+
+  /** Recover `myId`'s keys for `ownerId`'s newest feed that granted them, with their encryption key. */
+  async recoverFollowerKeys(ownerId: string, myId: string, encryptionPrivateKey: Uint8Array): Promise<Outcome> {
+    try {
+      const grant = await fetchNewestGrant(ownerId, myId)
+      if (!grant) return { success: false, error: 'No access to this private feed' }
+      return await this.recoverFromGrant(grant, myId, encryptionPrivateKey)
+    } catch (error) {
+      logger.error('Error recovering follower keys:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Recovery failed' }
     }
   }
 
-  private async fetchFollowRequest(ownerId: string, requesterId: string): Promise<FollowRequestDocument | null> {
-    try {
-      const sdk = await getEvoSdk();
-
-      const documents = await queryDocuments(sdk, {
-        dataContractId: this.contractId,
-        documentTypeName: DOCUMENT_TYPES.FOLLOW_REQUEST,
-        where: [
-          ['targetId', '==', ownerId],
-          ['$ownerId', '==', requesterId],
-        ],
-        limit: 1,
-      });
-
-      if (documents.length === 0) {
-        return null;
-      }
-
-      const doc = documents[0];
-      return {
-        $id: doc.$id as string,
-        $ownerId: doc.$ownerId as string,
-        $createdAt: doc.$createdAt as number,
-        targetId: doc.targetId as string,
-        publicKey: doc.publicKey ? requireBytes(doc.publicKey, 'publicKey') : undefined,
-      };
-    } catch (error) {
-      logger.error('Error fetching follow request:', error);
-      throw error;
-    }
-  }
-
   /**
-   * Get a grant for a specific user. Concurrent reads of one pair share one query.
+   * Apply `ownerId`'s rekeys of `feed` above the generation this device holds.
+   * Fails with `REVOKED:` when the follower was removed, and `RECOVERY_NEEDED:`
+   * when they were re-approved since (the keys here belong to the old grant).
+   * Throws nothing; a failed read is a failure, never "up to date".
    */
-  private getGrantReads = new RequestDeduplicator<string, PrivateFeedGrantDocument | null>(0);
-
-  async getGrant(
-    ownerId: string,
-    recipientId: string,
-    options: { throwOnError?: boolean } = {}
-  ): Promise<PrivateFeedGrantDocument | null> {
+  async catchUp(ownerId: string, feed: number, myId: string): Promise<Outcome> {
     try {
-      return await this.getGrantReads.dedupe(`${ownerId}:${recipientId}`, () => this.fetchGrant(ownerId, recipientId));
-    } catch (error) {
-      if (options.throwOnError) throw error;
-      return null;
-    }
-  }
-
-  private async fetchGrant(ownerId: string, recipientId: string): Promise<PrivateFeedGrantDocument | null> {
-    try {
-      const sdk = await getEvoSdk();
-
-      const documents = await queryDocuments(sdk, {
-        dataContractId: this.contractId,
-        documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
-        where: [
-          ['$ownerId', '==', ownerId],
-          ['recipientId', '==', recipientId],
-        ],
-        limit: 1,
-      });
-
-      if (documents.length === 0) {
-        return null;
-      }
-
-      const doc = documents[0];
-      return {
-        $id: doc.$id as string,
-        $ownerId: doc.$ownerId as string,
-        $createdAt: doc.$createdAt as number,
-        // Convert recipientId from base64 bytes (SDK format) to base58 string (identity ID format)
-        recipientId: identifierToBase58(doc.recipientId) || '',
-        leafIndex: doc.leafIndex as number,
-        keyGeneration: doc[privateFeedKeyFields().generation] as number,
-        encryptedPayload: requireBytes(doc.encryptedPayload, 'encryptedPayload'),
-      };
-    } catch (error) {
-      logger.error('Error fetching grant:', error);
-      throw error;
-    }
-  }
-
-  // ============================================================
-  // Decryption Capability (SPEC §8.6)
-  // ============================================================
-
-  /**
-   * Check if we can decrypt posts from a specific owner
-   *
-   * @param ownerId - The feed owner's identity ID
-   */
-  async canDecrypt(ownerId: string): Promise<boolean> {
-    // Check if we have cached keys for this owner
-    return privateFeedKeyStore.hasPathKeys(ownerId);
-  }
-
-  /**
-   * Get the cached key generation for a feed owner
-   *
-   * @param ownerId - The feed owner's identity ID
-   */
-  getCachedKeyGeneration(ownerId: string): number | null {
-    return privateFeedKeyStore.getCachedKeyGeneration(ownerId);
-  }
-
-  // ============================================================
-  // Post Decryption (SPEC §8.6)
-  // ============================================================
-
-  /**
-   * Decrypt a private post
-   *
-   * @param post - The encrypted post fields
-   * @param myId - The current user's identity ID (optional, enables revocation detection)
-   */
-  async decryptPost(post: EncryptedPostFields, myId?: string): Promise<DecryptResult> {
-    try {
-      const ownerId = post.$ownerId;
-      const postKeyGeneration = post.keyGeneration;
-
-      // 1-4. The follower's CEK for the post's key generation.
-      const key = await this.contentKeyFor(ownerId, postKeyGeneration, myId);
-      if ('error' in key) return { success: false, error: key.error };
-      const { cek } = key;
-
-      // 5. Decrypt the content
-      const ownerIdBytes = identifierToBytes(ownerId);
-      try {
-        const content = privateFeedCryptoService.decryptPostContent(
-          cek,
-          {
-            ciphertext: post.encryptedContent,
-            nonce: post.nonce,
-            keyGeneration: postKeyGeneration,
-          },
-          ownerIdBytes
-        );
-        return { success: true, content };
-      } catch (decryptError) {
-        // Check if this is an "invalid tag" error (AES-GCM authentication failure)
-        const errorMsg = decryptError instanceof Error ? decryptError.message : '';
-        if (errorMsg.includes('invalid tag') || errorMsg.includes('tag doesn\'t match')) {
-          // Decryption failed - keys don't work for this post.
-          // This could be because:
-          // 1. User was revoked (no grant)
-          // 2. Post is from before a feed reset (encrypted with old seed)
-          // 3. Post is from after user was revoked (they can't derive the CEKs of newer key generations)
-          //
-          // NOTE: We do NOT clear local keys here because the user might still
-          // be able to decrypt other posts (e.g., new posts after re-requesting access,
-          // or old posts from before they were revoked).
-          if (myId) {
-            const grant = await this.getGrant(ownerId, myId);
-            if (!grant) {
-              // No grant - user was revoked or feed was reset and grants deleted
-              return {
-                success: false,
-                error: 'REVOKED:Your access has been revoked.',
-              };
-            }
-            // Has grant but keys don't work for this specific post
-            // This is likely an old post from before a feed reset
-            return {
-              success: false,
-              error: 'OLD_POST:This post was encrypted before your current access was granted and cannot be decrypted.',
-            };
+      let keys = privateFeedKeyStore.memberKeys(myId, ownerId, feed)
+      if (!keys) return { success: false, error: 'No keys for this feed' }
+      const rekeys = await fetchRekeys(ownerId, feed, keys.keyGeneration)
+      for (const rekey of rekeys) {
+        if (rekey.keyGeneration !== keys.keyGeneration + 1) return { success: false, error: `Missing key change ${keys.keyGeneration + 1}` }
+        const ctx = { ownerId: toBytes(ownerId), feed, keyGeneration: rekey.keyGeneration }
+        const applied = applyRekey(keys.pathKeys, decodeRekeyPackets(rekey.packets, keys.treeCapacity), rekey.encryptedCEK, ctx)
+        if (!applied) {
+          const grant = await fetchGrant(ownerId, feed, myId)
+          if (!grant) return { success: false, error: 'REVOKED:Your access has been revoked.' }
+          if (grant.leafIndex !== keys.leafIndex || grant.keyGeneration > keys.keyGeneration) {
+            return { success: false, error: 'RECOVERY_NEEDED:Your access was renewed. Enter your encryption key to sync.' }
           }
-          // No myId provided, generic error
-          return {
-            success: false,
-            error: 'DECRYPT_FAILED:Decryption failed - keys may be invalid for this post.',
-          };
+          return { success: false, error: 'This private feed\'s keys could not be updated' }
         }
-        throw decryptError;
+        keys = { ...keys, keyGeneration: rekey.keyGeneration, cek: applied.cek, pathKeys: applied.pathKeys }
+        privateFeedKeyStore.storeMemberKeys(myId, ownerId, feed, keys)
       }
+      return { success: true }
     } catch (error) {
-      logger.error('Error decrypting post:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Decryption failed',
-      };
+      logger.error('Error catching up on private feed keys:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Catch-up failed' }
     }
   }
 
   /**
-   * A follower's CEK of `ownerId`'s feed for `keyGeneration`, from the keys
-   * its grant gave this device, catching up on rekeys when the generation is
-   * newer than the cached one (SPEC §8.6 steps 1-4). The error is one
-   * {@link decryptPost} reports as is.
+   * `myId`'s up-to-date keys for `ownerId`'s current feed (to encrypt a reply
+   * in their thread): caught up on every rekey, recovered from the grant with
+   * the session's encryption key when this device has none.
    */
-  async contentKeyFor(ownerId: string, keyGeneration: number, myId?: string): Promise<{ cek: Uint8Array } | { error: string }> {
-    // 1. Check if we have keys for this owner
-    if (!privateFeedKeyStore.hasPathKeys(ownerId)) return { error: 'No keys for this feed' };
-
-    // 2. Check if we need to catch up on rekeys
-    const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
-    if (cachedKeyGeneration === null) return { error: 'No cached CEK for this feed' };
-
-    // 3. If the key generation is newer than our cached one, catch up
-    if (keyGeneration > cachedKeyGeneration) {
-      const catchUpResult = await this.catchUp(ownerId, myId);
-      if (!catchUpResult.success) {
-        // BUG-017 fix: If recovery is needed (missing wrapNonceSalt), propagate special error
-        // The UI layer can detect this and prompt the user to enter their encryption key
-        // to re-recover from the grant document
-        if (catchUpResult.error?.startsWith('RECOVERY_NEEDED:')) {
-          return { error: 'REKEY_RECOVERY_NEEDED:Your access keys need to be refreshed. Please enter your encryption key to sync.' };
-        }
-        return { error: catchUpResult.error || 'Failed to catch up on rekeys' };
-      }
+  async currentFeedKeys(ownerId: string, myId: string): Promise<CurrentKeys> {
+    const feed = await fetchCurrentFeed(ownerId, { fresh: true })
+    if (!feed) return { success: false, error: 'this private feed is gone' }
+    if (!privateFeedKeyStore.memberKeys(myId, ownerId, feed.feed)) {
+      const grant = await fetchGrant(ownerId, feed.feed, myId)
+      if (!grant) return { success: false, error: 'you can reply once your access to this private feed is renewed' }
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+      const key = getEncryptionKeyBytes(myId)
+      if (!key) return { success: false, error: 'SYNC_REQUIRED:Enter your encryption key to reply to private posts.' }
+      const recovered = await this.recoverFromGrant(grant, myId, key)
+      if (!recovered.success) return recovered
     }
-
-    // 4. Derive the CEK for the key generation
-    const cached = privateFeedKeyStore.getCachedCEK(ownerId);
-    if (!cached) return { error: 'No cached CEK after catch-up' };
-    if (keyGeneration === cached.keyGeneration) return { cek: cached.cek };
-    if (keyGeneration < cached.keyGeneration) {
-      // Derive backwards via hash chain
-      return { cek: privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, keyGeneration) };
+    let caught = await this.catchUp(ownerId, feed.feed, myId)
+    if (!caught.success && caught.error.startsWith('RECOVERY_NEEDED:')) {
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+      const key = getEncryptionKeyBytes(myId)
+      const grant = key ? await fetchGrant(ownerId, feed.feed, myId) : null
+      if (!key || !grant) return { success: false, error: 'SYNC_REQUIRED:Your private feed access was renewed. Enter your encryption key to sync.' }
+      caught = await this.recoverFromGrant(grant, myId, key)
+      if (caught.success) caught = await this.catchUp(ownerId, feed.feed, myId)
     }
-    return { error: 'Post key generation still newer than cached key generation after catch-up' };
+    if (!caught.success) return caught
+    const keys = privateFeedKeyStore.memberKeys(myId, ownerId, feed.feed)
+    return keys ? { success: true, feed: feed.feed, keys } : { success: false, error: 'could not sync private feed keys' }
   }
 
-  // ============================================================
-  // Key Catch-up (SPEC §8.7)
-  // ============================================================
-
   /**
-   * Catch up on rekey documents for a feed owner
-   *
-   * @param ownerId - The feed owner's identity ID
+   * On sign-in: bring every feed `viewerId` can read up to date, from the
+   * grant index (any device): catch up where this device holds the keys,
+   * recover where it does not and the session holds the encryption key.
    */
-  async catchUp(ownerId: string, myId?: string): Promise<{ success: boolean; error?: string }> {
+  async syncFollowedFeeds(viewerId: string): Promise<{ synced: string[]; failed: string[]; upToDate: string[] }> {
+    const synced: string[] = []
+    const failed: string[] = []
+    const upToDate: string[] = []
     try {
-      const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
-      if (cachedKeyGeneration === null) {
-        return { success: false, error: 'No cached key generation - need to recover from grant first' };
-      }
-
-      // Fetch rekey documents newer than our cached key generation
-      const rekeyDocs = await this.getRekeyDocumentsAfter(ownerId, cachedKeyGeneration);
-      if (rekeyDocs.length === 0) {
-        // Already up to date
-        return { success: true };
-      }
-
-      // Sort by key generation ascending to apply in order
-      rekeyDocs.sort((a, b) => a.keyGeneration - b.keyGeneration);
-
-      // Verify key generation continuity
-      let expectedKeyGeneration = cachedKeyGeneration + 1;
-      for (const rekey of rekeyDocs) {
-        if (rekey.keyGeneration !== expectedKeyGeneration) {
-          return { success: false, error: `Missing rekey for key generation ${expectedKeyGeneration}` };
-        }
-        expectedKeyGeneration++;
-      }
-
-      // Apply each rekey in order
-      for (const rekey of rekeyDocs) {
-        const result = await this.applyRekey(ownerId, rekey);
-        if (!result.success) {
-          // If we failed to derive root key, check if we've actually been revoked
-          if (result.error?.includes('Failed to derive new root key') && myId) {
-            const grant = await this.getGrant(ownerId, myId, { throwOnError: true });
-            if (!grant) {
-              // Grant is gone - definitively revoked. The local keys stay: posts
-              // from before the revocation remain readable on this device
-              // (SPEC §3.4), and they are what tells getAccessStatus that this
-              // device was revoked rather than never approved.
-              return { success: false, error: 'Access has been revoked' };
-            }
-            if (grant.keyGeneration > cachedKeyGeneration) {
-              // Re-approved after a revocation: these keys belong to the
-              // earlier grant and must be recovered from the current one.
-              return { success: false, error: 'RECOVERY_NEEDED:Local keys predate the current grant' };
-            }
-          }
-          return result;
-        }
-      }
-
-      logger.debug(`Caught up on ${rekeyDocs.length} rekey(s) for owner ${ownerId}`);
-      return { success: true };
-    } catch (error) {
-      logger.error('Error catching up:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Catch-up failed',
-      };
-    }
-  }
-
-  /**
-   * Apply a single rekey document (SPEC §8.7)
-   * Uses public feedOwnerId for nonce derivation (SPEC §10)
-   */
-  private async applyRekey(
-    ownerId: string,
-    rekey: PrivateFeedRekeyDocument
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      const ownerIdBytes = identifierToBytes(ownerId);
-
-      // 1. Get current path keys
-      const pathKeys = privateFeedKeyStore.getPathKeys(ownerId);
-      if (!pathKeys) {
-        return { success: false, error: 'No path keys found' };
-      }
-
-      // 2. Build key lookup from current path keys
-      const keyLookup = new Map<string, NodeKey>();
-      for (const pk of pathKeys) {
-        keyLookup.set(`${pk.nodeId}:${pk.version}`, pk);
-      }
-
-      // 3. Parse rekey packets
-      const packets = privateFeedCryptoService.decodeRekeyPackets(rekey.packets);
-
-      // 4. Validate packets
-      for (const packet of packets) {
-        privateFeedCryptoService.validateRekeyPacket(packet);
-      }
-
-      // 5. Process packets iteratively (SPEC §8.7 step 4)
-      const newKeys = new Map<number, NodeKey>();
-      const decryptedPackets = new Set<number>();
-      let progress = true;
-
-      while (progress) {
-        progress = false;
-
-        for (let i = 0; i < packets.length; i++) {
-          if (decryptedPackets.has(i)) continue;
-
-          const packet = packets[i];
-          const lookupKey = `${packet.encryptedUnderNodeId}:${packet.encryptedUnderVersion}`;
-
-          // Check if we have the key to decrypt this packet
-          let unwrapSourceKey: NodeKey | undefined;
-
-          // First check newly decrypted keys from this rekey
-          const newKey = newKeys.get(packet.encryptedUnderNodeId);
-          if (newKey && newKey.version === packet.encryptedUnderVersion) {
-            unwrapSourceKey = newKey;
-          } else {
-            // Check existing path keys
-            unwrapSourceKey = keyLookup.get(lookupKey);
-          }
-
-          if (!unwrapSourceKey) continue;
-
-          // Decrypt the packet
-          const wrapKey = privateFeedCryptoService.deriveWrapKey(unwrapSourceKey.key);
-
-          // Derive nonce using public feedOwnerId (SPEC §10)
-          const nonce = privateFeedCryptoService.deriveRekeyNonce(
-            ownerIdBytes,
-            rekey.keyGeneration,
-            packet.targetNodeId,
-            packet.targetVersion,
-            packet.encryptedUnderNodeId,
-            packet.encryptedUnderVersion
-          );
-
-          const aad = privateFeedCryptoService.buildRekeyAAD(
-            ownerIdBytes,
-            rekey.keyGeneration,
-            packet.targetNodeId,
-            packet.targetVersion,
-            packet.encryptedUnderNodeId,
-            packet.encryptedUnderVersion
-          );
-
-          try {
-            const unwrappedKey = privateFeedCryptoService.unwrapKey(
-              wrapKey,
-              packet.wrappedKey,
-              nonce,
-              aad
-            );
-
-            newKeys.set(packet.targetNodeId, {
-              nodeId: packet.targetNodeId,
-              version: packet.targetVersion,
-              key: unwrappedKey,
-            });
-            decryptedPackets.add(i);
-            progress = true;
-          } catch {
-            // Can't decrypt this packet yet, will retry on next iteration
-          }
-        }
-      }
-
-      // 6. Verify we got the new root key
-      const newRootKey = newKeys.get(1);
-      if (!newRootKey) {
-        return { success: false, error: 'Failed to derive new root key - may be revoked' };
-      }
-
-      // 7. Decrypt CEK from encryptedCEK field
-      const newCEK = privateFeedCryptoService.decryptCEK(
-        newRootKey.key,
-        rekey.encryptedCEK,
-        ownerIdBytes,
-        rekey.keyGeneration
-      );
-
-      // 8. Update path keys with new versions
-      const updatedPathKeys = pathKeys.map((pk) => {
-        const newKey = newKeys.get(pk.nodeId);
-        return newKey || pk;
-      });
-
-      // 9. Store updated state
-      privateFeedKeyStore.storePathKeys(ownerId, updatedPathKeys);
-      privateFeedKeyStore.storeCachedCEK(ownerId, rekey.keyGeneration, newCEK);
-
-      return { success: true };
-    } catch (error) {
-      logger.error('Error applying rekey:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Rekey application failed',
-      };
-    }
-  }
-
-  /**
-   * Get rekey documents with key generation greater than a given value.
-   * Throws on a failed read: an empty result means "up to date", and a reply
-   * must never be encrypted at a stale key generation because a read failed.
-   */
-  private async getRekeyDocumentsAfter(
-    ownerId: string,
-    afterKeyGeneration: number
-  ): Promise<PrivateFeedRekeyDocument[]> {
-    try {
-      const sdk = await getEvoSdk();
-
-      const { documents } = await paginateFetchAll<PrivateFeedRekeyDocument>(
-        sdk,
-        (startAfter) => ({
-          dataContractId: this.contractId,
-          documentTypeName: DOCUMENT_TYPES.PRIVATE_FEED_REKEY,
-          where: [
-            ['$ownerId', '==', ownerId],
-            [privateFeedKeyFields().generation, '>', afterKeyGeneration],
-          ],
-          orderBy: [[privateFeedKeyFields().generation, 'asc']],
-          limit: 100,
-          ...(startAfter && { startAfter }),
-        }),
-        (doc) => ({
-          $id: doc.$id as string,
-          $ownerId: doc.$ownerId as string,
-          $createdAt: doc.$createdAt as number,
-          keyGeneration: doc[privateFeedKeyFields().generation] as number,
-          revokedLeaf: doc.revokedLeaf as number,
-          packets: requireBytes(doc.packets, 'packets'),
-          encryptedCEK: requireBytes(doc.encryptedCEK, 'encryptedCEK'),
-        }),
-        { maxResults: 2000 } // SPEC allows up to 2000 key generations
-      );
-
-      return documents;
-    } catch (error) {
-      logger.error('Error fetching rekey documents:', error);
-      throw error;
-    }
-  }
-
-  // ============================================================
-  // Follower Recovery (SPEC §8.9)
-  // ============================================================
-
-  /**
-   * Recover follower keys from grant document
-   *
-   * @param ownerId - The feed owner's identity ID
-   * @param myId - The follower's identity ID
-   * @param encryptionPrivateKey - The follower's encryption private key
-   */
-  async recoverFollowerKeys(
-    ownerId: string,
-    myId: string,
-    encryptionPrivateKey: Uint8Array
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      // 1. Fetch grant
-      const grant = await this.getGrant(ownerId, myId);
-      if (!grant) {
-        return { success: false, error: 'No grant found for this feed' };
-      }
-
-      // 2. Build AAD for grant decryption
-      const ownerIdBytes = identifierToBytes(ownerId);
-      const myIdBytes = identifierToBytes(myId);
-      const aad = privateFeedCryptoService.buildGrantAAD(
-        ownerIdBytes,
-        myIdBytes,
-        grant.leafIndex,
-        grant.keyGeneration
-      );
-
-      // 3. Decrypt grant payload using ECIES
-      const payloadBytes = await privateFeedCryptoService.eciesDecrypt(
-        encryptionPrivateKey,
-        grant.encryptedPayload,
-        aad
-      );
-
-      // 4. Decode and validate payload
-      const payload = privateFeedCryptoService.decodeGrantPayload(payloadBytes);
-      privateFeedCryptoService.validateGrantPayload(payload, grant.leafIndex);
-
-      // 5. Store path keys and CEK
-      privateFeedKeyStore.initializeFollowerState(
-        ownerId,
-        payload.pathKeys,
-        payload.grantKeyGeneration,
-        payload.currentCEK
-      );
-
-      // 6. Catch up on any rekeys since grant key generation
-      const catchUpResult = await this.catchUp(ownerId, myId);
-      if (!catchUpResult.success) {
-        // Log but don't fail - we have initial keys at least
-        logger.warn('Failed to catch up after recovery:', catchUpResult.error);
-      }
-
-      // 7. Clean up stale FollowRequest if it exists (PRD §4.5)
-      this.cleanupStaleFollowRequest(ownerId, myId).catch(err => {
-        logger.warn('Failed to cleanup stale follow request after recovery:', err);
-      });
-
-      logger.debug(`Recovered follower keys for owner ${ownerId} at key generation ${payload.grantKeyGeneration}`);
-      return { success: true };
-    } catch (error) {
-      logger.error('Error recovering follower keys:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Recovery failed',
-      };
-    }
-  }
-
-  // ============================================================
-  // Access Status Query
-  // ============================================================
-
-  /**
-   * Get the access status for a user's private feed
-   *
-   * @param ownerId - The feed owner's identity ID
-   * @param myId - The requester's identity ID
-   * @param autoCleanup - If true, automatically clean up stale FollowRequest when approved (default: true)
-   */
-  async getAccessStatus(
-    ownerId: string,
-    myId: string,
-    autoCleanup: boolean = true
-  ): Promise<'none' | 'pending' | 'approved' | 'approved-no-keys' | 'revoked'> {
-    try {
-      // Check if we have an active grant. A failed read must not look like a
-      // missing grant, or an approved follower would be shown as revoked.
-      const grant = await this.getGrant(ownerId, myId, { throwOnError: true });
-
-      if (grant) {
-        // We have a grant - check if we can still decrypt
-        // If we have keys and can decrypt current key generation, we're approved.
-        // Keys cached below the grant's key generation are left from an earlier
-        // approval that was revoked, so they need recovering from this grant.
-        const canDecrypt = await this.canDecrypt(ownerId);
-        const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
-        if (canDecrypt && cachedKeyGeneration !== null && cachedKeyGeneration >= grant.keyGeneration) {
-          // Auto-cleanup: Delete stale FollowRequest if it exists (PRD §4.5)
-          if (autoCleanup) {
-            this.cleanupStaleFollowRequest(ownerId, myId).catch(err => {
-              logger.warn('Failed to cleanup stale follow request:', err);
-            });
-          }
-          return 'approved';
-        }
-
-        // Grant exists but no local keys - distinguish from revoked
-        // 'approved-no-keys' means user needs to enter encryption key to recover
-        // This happens on new device or after clearing storage
-        // True 'revoked' would mean the grant is orphaned from a previous key generation
-        // We can't easily distinguish here, so we return 'approved-no-keys'
-        // and let the recovery attempt determine if it's actually revoked
-        return 'approved-no-keys';
-      }
-
-      // No grant - check for pending request
-      const request = await this.getFollowRequest(ownerId, myId, { throwOnError: true });
-      if (request) {
-        // A feed-wide rekey does not identify whether this requester was revoked.
-        // Without a grant, the requester-owned document remains pending on the
-        // owner's side and must remain cancellable by its owner.
-        return 'pending';
-      }
-
-      // No grant and no request, but this device holds keys for the feed: it
-      // was approved here, and the owner has since revoked that access.
-      if (await this.canDecrypt(ownerId)) {
-        return 'revoked';
-      }
-
-      return 'none';
-    } catch (error) {
-      logger.error('Error getting access status:', error);
-      return 'none';
-    }
-  }
-
-  /**
-   * Clean up stale FollowRequest after approval (PRD §4.5)
-   *
-   * After a user is approved for private feed access, their FollowRequest document
-   * should be deleted since it's no longer needed. This is a best-effort cleanup
-   * that doesn't affect the user's access (the grant is what matters).
-   *
-   * @param ownerId - The feed owner's identity ID
-   * @param myId - The requester's identity ID
-   */
-  async cleanupStaleFollowRequest(
-    ownerId: string,
-    myId: string
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      // Check if a follow request still exists
-      const request = await this.getFollowRequest(ownerId, myId);
-      if (!request) {
-        // No stale request - nothing to clean up
-        return { success: true };
-      }
-
-      // Delete the stale request
-      logger.debug('Cleaning up stale FollowRequest for approved user:', myId);
-      const result = await stateTransitionService.deleteDocument(
-        this.contractId,
-        DOCUMENT_TYPES.FOLLOW_REQUEST,
-        request.$id,
-        myId
-      );
-
-      if (!result.success) {
-        return { success: false, error: result.error || 'Failed to delete stale follow request' };
-      }
-
-      logger.debug('Successfully cleaned up stale FollowRequest');
-      return { success: true };
-    } catch (error) {
-      logger.error('Error cleaning up stale follow request:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Cleanup failed',
-      };
-    }
-  }
-
-  /**
-   * Clean up local keys for a feed (e.g., after being revoked)
-   */
-  clearFeedKeys(ownerId: string): void {
-    privateFeedKeyStore.clearFeedKeys(ownerId);
-  }
-
-  // ============================================================
-  // Background Key Sync (PRD §5.4)
-  // ============================================================
-
-  /**
-   * Sync keys for all followed private feeds in background
-   *
-   * Per PRD §5.4 Key Caching:
-   * "On app load:
-   *  1. For each feed owner we follow privately:
-   *     - Check if cachedKeyGeneration < latest post key generation from that author
-   *     - If stale, trigger background catch-up
-   *  2. Decrypt posts using cached keys"
-   *
-   * This method should be called on app load/login to proactively
-   * sync keys before the user tries to view private posts.
-   *
-   * @returns Summary of sync results
-   */
-  async syncFollowedFeeds(): Promise<{
-    synced: string[];
-    failed: string[];
-    upToDate: string[];
-  }> {
-    const synced: string[] = [];
-    const failed: string[] = [];
-    const upToDate: string[] = [];
-
-    try {
-      // Get all feeds we have keys for
-      const followedOwners = privateFeedKeyStore.getFollowedFeedOwners();
-
-      if (followedOwners.length === 0) {
-        logger.debug('PrivateFeedSync: No followed private feeds to sync');
-        return { synced, failed, upToDate };
-      }
-
-      logger.debug(`PrivateFeedSync: Syncing ${followedOwners.length} followed private feed(s)`);
-
-      // Process each feed owner in parallel (with limited concurrency)
-      const CONCURRENCY_LIMIT = 3;
-      const chunks: string[][] = [];
-      for (let i = 0; i < followedOwners.length; i += CONCURRENCY_LIMIT) {
-        chunks.push(followedOwners.slice(i, i + CONCURRENCY_LIMIT));
-      }
-
-      for (const chunk of chunks) {
-        const results = await Promise.allSettled(
-          chunk.map(async (ownerId) => {
-            const result = await this.syncFeedKeys(ownerId);
-            return { ownerId, result };
-          })
-        );
-
-        for (const settledResult of results) {
-          if (settledResult.status === 'fulfilled') {
-            const { ownerId, result } = settledResult.value;
-            if (result.status === 'synced') {
-              synced.push(ownerId);
-            } else if (result.status === 'up_to_date') {
-              upToDate.push(ownerId);
-            } else {
-              failed.push(ownerId);
-            }
-          } else {
-            // Promise rejected - shouldn't happen but handle gracefully
-            logger.error('PrivateFeedSync: Promise rejected:', settledResult.reason);
-          }
-        }
-      }
-
-      logger.debug(`PrivateFeedSync: Complete - synced: ${synced.length}, up-to-date: ${upToDate.length}, failed: ${failed.length}`);
-      return { synced, failed, upToDate };
-    } catch (error) {
-      logger.error('PrivateFeedSync: Error syncing feeds:', error);
-      return { synced, failed, upToDate };
-    }
-  }
-
-  /**
-   * Sync keys for a single feed owner
-   *
-   * Checks if the cached key generation is behind the chain key generation and
-   * triggers catch-up if needed.
-   *
-   * @param ownerId - The feed owner's identity ID
-   * @param myId - The current user's identity ID (optional, enables revocation detection)
-   */
-  async syncFeedKeys(ownerId: string, myId?: string): Promise<{
-    status: 'synced' | 'up_to_date' | 'failed';
-    error?: string;
-  }> {
-    try {
-      // Get cached key generation from local storage
-      const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
-      if (cachedKeyGeneration === null) {
-        // No cached key generation means we don't have keys properly initialized
-        return { status: 'failed', error: 'No cached key generation' };
-      }
-
-      // Get latest key generation from chain
-      const chainKeyGeneration = await privateFeedService.getLatestKeyGeneration(ownerId);
-
-      if (chainKeyGeneration <= cachedKeyGeneration) {
-        // Already up to date
-        return { status: 'up_to_date' };
-      }
-
-      // Need to catch up
-      logger.debug(`PrivateFeedSync: Catching up feed ${ownerId} from key generation ${cachedKeyGeneration} to ${chainKeyGeneration}`);
-      const catchUpResult = await this.catchUp(ownerId, myId);
-
-      if (catchUpResult.success) {
-        return { status: 'synced' };
-      } else {
-        return { status: 'failed', error: catchUpResult.error };
+      const grants = await fetchGrantsHeldBy(viewerId)
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+      const key = getEncryptionKeyBytes(viewerId)
+      for (const grant of grants) {
+        const label = `${grant.ownerId}:${grant.feed}`
+        const held = privateFeedKeyStore.memberKeys(viewerId, grant.ownerId, grant.feed)
+        if (!held && !key) continue
+        const before = held?.keyGeneration
+        const result = held ? await this.catchUp(grant.ownerId, grant.feed, viewerId) : await this.recoverFromGrant(grant, viewerId, key as Uint8Array)
+        if (!result.success) failed.push(label)
+        else if (before !== undefined && privateFeedKeyStore.memberKeys(viewerId, grant.ownerId, grant.feed)?.keyGeneration === before) upToDate.push(label)
+        else synced.push(label)
       }
     } catch (error) {
-      logger.error(`PrivateFeedSync: Error syncing feed ${ownerId}:`, error);
-      return {
-        status: 'failed',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
+      logger.error('PrivateFeedSync: could not read the feeds you follow:', error)
     }
+    return { synced, failed, upToDate }
   }
-
-  // ============================================================
-  // Utility Methods
-  // ============================================================
 }
 
-// Export singleton instance
-export const privateFeedFollowerService = new PrivateFeedFollowerService();
-
-// Export class for testing
-export { PrivateFeedFollowerService };
+export const privateFeedFollowerService = new PrivateFeedFollowerService()
+export { PrivateFeedFollowerService }

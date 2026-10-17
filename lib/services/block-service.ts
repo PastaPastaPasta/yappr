@@ -226,24 +226,19 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   ): Promise<boolean> {
     try {
       // Dynamically import to avoid circular dependencies
-      const { privateFeedService, privateFeedKeyStore } = await import('./index')
+      if (!privateFeedClientSupported()) return false
+      const { privateFeedService } = await import('./index')
 
-      // Check if blocker has private feed enabled locally (this client has none on social v17)
-      if (!privateFeedClientSupported() || !privateFeedKeyStore.hasFeedSeed()) {
-        return false
-      }
-
-      // Check if target is a private follower by looking for their grant
+      // Only a member of the blocker's current feed needs a revocation (at launch there is one audience).
       const followers = await privateFeedService.getPrivateFollowers(blockerId)
-      const isPrivateFollower = followers.some(f => f.recipientId === targetUserId)
-
-      if (!isPrivateFollower) {
+      if (!followers.some(f => f.recipientId === targetUserId)) {
         return false
       }
 
-      // Revoke their access
+      // Revoke their access; the owner's keys must be on this device (or the session's encryption key recovers them).
       logger.debug(`Auto-revoking private feed access for blocked user: ${targetUserId}`)
-      const revokeResult = await privateFeedService.revokeFollower(blockerId, targetUserId)
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+      const revokeResult = await privateFeedService.revokeFollower(blockerId, targetUserId, getEncryptionKeyBytes(blockerId) ?? undefined)
 
       if (revokeResult.success) {
         logger.debug(`Successfully auto-revoked private feed access for: ${targetUserId}`)
