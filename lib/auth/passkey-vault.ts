@@ -21,6 +21,7 @@
  */
 import bs58 from 'bs58'
 import {
+  APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS,
   KeyPurpose,
   KeySecurityLevel,
   PasskeyCancelledError,
@@ -222,7 +223,13 @@ async function verifyKeptGrant(identityId: string, privateKeys: Uint8Array[], pr
     let primary = primaryIndex
     for (;;) {
       const result = await verifyAppConnectKeys({
-        request, ownerId: identityId, identity: appConnectPlatformPort, now: Date.now(), privateKeys: keys.map((key) => key.slice()),
+        request,
+        ownerId: identityId,
+        identity: appConnectPlatformPort,
+        now: Date.now(),
+        // The signing margin, as entryNeedsUpdate uses: a key that still signs is not "expired" here and "healthy" there.
+        expiryMarginMs: APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS,
+        privateKeys: keys.map((key) => key.slice()),
       })
       if (result.ok) return result
       // For a fresh answer a superseded encryption key may be a lagging read; for a kept one it is final.
@@ -631,6 +638,12 @@ const REMOVAL_REREAD_MS = 2000
  * chain history; only turning the keys they hold off makes them useless.
  */
 export async function removePasskeys(identityId: string, entryIds: readonly string[]): Promise<{ removed: number; failed: number }> {
+  const { gone, failed } = await removeEntries(identityId, entryIds)
+  return { removed: gone.length, failed }
+}
+
+/** Deletes `entryIds`; the ids confirmed gone, and how many are not. Tells the provider only when nothing is uncertain. */
+async function removeEntries(identityId: string, entryIds: readonly string[]): Promise<{ gone: string[]; failed: number }> {
   const entries = (await passkeyVaultService.list(identityId, { partial: true })).filter((entry) => entryIds.includes(entry.$id))
   const confirmed = new Set<string>()
   for (const entry of entries) {
@@ -651,10 +664,10 @@ export async function removePasskeys(identityId: string, entryIds: readonly stri
   const stillThere = new Set(remaining.map((entry) => entry.$id))
   const gone = entries.filter((entry) => confirmed.has(entry.$id) && !stillThere.has(entry.$id))
   for (const entry of gone) forgetPasskeyHere(identityId, bytesToBase64Url(entry.credentialId))
-  const removed = gone.length
-  const failed = entries.length - removed
-  await signalRemaining(identityId, remaining)
-  return { removed, failed }
+  const failed = entries.length - gone.length
+  // An unconfirmed delete leaves the list uncertain: the provider is only told what remains when everything is known.
+  if (failed === 0) await signalRemaining(identityId, remaining)
+  return { gone: gone.map((entry) => entry.$id), failed }
 }
 
 /** Rounds of "Remove all": each reads up to the list's limit and deletes it, so even a flood of planted entries drains. */
@@ -662,18 +675,22 @@ const REMOVE_ALL_ROUNDS = 5
 
 /** "Remove all and start over": every entry of `identityId` read now, including any the user never saw listed. */
 export async function removeAllPasskeys(identityId: string): Promise<{ removed: number; failed: number }> {
-  let removed = 0
+  const attempted = new Set<string>()
+  const gone = new Set<string>()
   for (let round = 0; round < REMOVE_ALL_ROUNDS; round += 1) {
     const entries = await passkeyVaultService.list(identityId, { partial: true })
     if (entries.length === 0) break
-    const result = await removePasskeys(identityId, entries.map((entry) => entry.$id))
-    removed += result.removed
-    // Nothing deleted this round (every delete refused): another round would not do better.
-    if (result.removed === 0) break
+    entries.forEach((entry) => attempted.add(entry.$id))
+    const result = await removeEntries(identityId, entries.map((entry) => entry.$id))
+    result.gone.forEach((id) => gone.add(id))
+    // Nothing confirmed gone this round (every delete refused): another round would not do better.
+    if (result.gone.length === 0) break
   }
-  // Whatever is still there, from any round, counts as not removed.
-  const failed = (await passkeyVaultService.list(identityId, { partial: true })).length
-  return { removed, failed }
+  // An entry counts as removed only once its own delete was confirmed; an empty read alone proves nothing.
+  const left = await passkeyVaultService.list(identityId, { partial: true })
+  const unconfirmed = new Set([...attempted].filter((id) => !gone.has(id)))
+  left.forEach((entry) => unconfirmed.add(entry.$id))
+  return { removed: gone.size, failed: unconfirmed.size }
 }
 
 /**

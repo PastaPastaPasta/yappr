@@ -244,6 +244,14 @@ describe('verifyAppConnectKeys (keys kept from an earlier grant)', () => {
     expect(rejection(spent).reason).toBe('budget-exhausted')
   })
 
+  it('takes the caller\'s expiry margin: a key 30 minutes from expiry is fine at the signing margin, not the default hour', async () => {
+    const keys = [groupKey({ expiresAt: NOW + 30 * 60_000 }), profileKey(), encryptionKey()]
+    const atDefault = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: OWNER, identity: port(keys), now: NOW, privateKeys: kept() })
+    expect(rejection(atDefault).reason).toBe('key-expired')
+    const atSigning = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: OWNER, identity: port(keys), now: NOW, expiryMarginMs: 5 * 60_000, privateKeys: kept() })
+    expect(atSigning.ok).toBe(true)
+  })
+
   it('refuses keys the wallet has since revoked, or that belong to another identity', async () => {
     const revoked = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: OWNER, identity: port([groupKey({ disabledAt: NOW - 1 }), profileKey(), encryptionKey()]), now: NOW, privateKeys: kept() })
     expect(rejection(revoked).reason).toBe('key-disabled')

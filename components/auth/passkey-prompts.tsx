@@ -321,7 +321,7 @@ function ReviewDialog({ identityId, onClose }: { identityId: string; onClose: ()
   })()
 
   return (
-    <Modal open onOpenChange={(next) => { if (!next && !working) onClose() }} className="w-[480px] max-w-[94vw]">
+    <Modal open onOpenChange={(next) => { if (!next && !working) onClose() }} className="w-[480px] max-w-[94vw] max-h-[90vh] overflow-y-auto">
       <ModalTitle><KeyIcon className="h-6 w-6 text-yappr-500" />Update your passkeys</ModalTitle>
       {body}
     </Modal>
