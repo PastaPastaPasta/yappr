@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/contexts/auth-context'
-import { contractIsModerated } from '@/lib/contract-topology'
-import { moderationService } from '@/lib/services/moderation-service'
+import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
+import { moderationServiceFor } from '@/lib/services/moderation-service'
 
 interface ModerationRole {
-  /** On the social contract's moderation team (its owner or an appointed or seated moderator). */
+  /** On the contract's moderation team (its owner or an appointed or seated moderator). */
   isModerator: boolean
   /**
    * Protected from moderation (Drive `ContractModerators::protects`): whoever
@@ -26,22 +26,25 @@ interface ModerationRole {
 const NONE: ModerationRole = { isModerator: false, isProtected: false, protectedIds: new Set() }
 
 /**
- * The signed-in identity's standing on the social contract's moderation, read
- * off the contract itself rather than a hardcoded id. Both false off a
- * moderated topology, while logged out, and until the contract has been fetched.
+ * The signed-in identity's standing on one contract's moderation (social by
+ * default), read off the contract itself rather than a hardcoded id. Each
+ * contract has its own team: a social moderator moderates nothing on the
+ * storefront. Both false off a moderated cut, while logged out, and until the
+ * contract has been fetched.
  */
-export function useModerationRole(): ModerationRole {
+export function useModerationRole(contract: ModeratedContractKey = 'social'): ModerationRole {
   const { user } = useAuth()
   const identityId = user?.identityId
   const [role, setRole] = useState<ModerationRole>(NONE)
 
   useEffect(() => {
-    if (!identityId || !contractIsModerated()) {
+    if (!identityId || !moderatedContract(contract).moderated()) {
       setRole(NONE)
       return
     }
     let cancelled = false
-    Promise.all([moderationService.isModerator(identityId), moderationService.getProtectedIdentities()]).then(([isModerator, protectedIds]) => {
+    const service = moderationServiceFor(contract)
+    Promise.all([service.isModerator(identityId), service.getProtectedIdentities()]).then(([isModerator, protectedIds]) => {
       if (!cancelled) setRole({ isModerator, isProtected: isModerator || protectedIds.has(identityId), protectedIds })
     }).catch(() => {
       if (!cancelled) setRole(NONE)
@@ -49,12 +52,12 @@ export function useModerationRole(): ModerationRole {
     return () => {
       cancelled = true
     }
-  }, [identityId])
+  }, [identityId, contract])
 
   return role
 }
 
-/** Whether the signed-in identity is on the social contract's moderation team. */
-export function useIsModerator(): boolean {
-  return useModerationRole().isModerator
+/** Whether the signed-in identity is on the contract's moderation team (social by default). */
+export function useIsModerator(contract: ModeratedContractKey = 'social'): boolean {
+  return useModerationRole(contract).isModerator
 }

@@ -29,6 +29,9 @@ import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract
 import { inventoryCsvTemplate, optionTypesSummary } from '@/lib/storefront/inventory-csv'
 import { priceRange, tracksStock } from '@/lib/storefront/variant-codec'
 import { ListLimitError } from '@/lib/typed-array-codecs'
+import { isBarredFromContractError, moderationClosedCopy } from '@/lib/error-utils'
+import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 
 interface InventoryUploadModalProps {
   isOpen: boolean
@@ -78,6 +81,8 @@ export function InventoryUploadModal({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const openerRef = useRef<HTMLElement | null>(null)
   const isUploadingRef = useRef(false)
+  // Testnet registers the storefront `notYetUsable`: listings open with its first seated team (41200 before).
+  const listingsOpen = useModeratedTypeOpen('storeItem', isOpen, 'storefront')
   const [step, setStep] = useState<UploadStep>('select')
   const [fileName, setFileName] = useState('')
   const [items, setItems] = useState<GroupedInventoryItem[]>([])
@@ -167,9 +172,15 @@ export function InventoryUploadModal({
           successCount++
         } catch (err) {
           logger.error(`Failed to upload item ${item.title}:`, err)
+          // Closed until the storefront's moderators are elected, or the seller
+          // barred: every later listing would be refused the same way, and each
+          // refusal is paid, so the upload stops at the first.
+          const refusal = moderationClosedCopy(err, 'storefront')
+            ?? (isBarredFromContractError(err) ? 'Moderators have barred your account from Yappr stores.' : null)
           // A listing too large to save says why, in words for the seller.
-          const reason = err instanceof ListLimitError ? err.message : 'It could not be saved. Please try again.'
+          const reason = refusal ?? (err instanceof ListLimitError ? err.message : 'It could not be saved. Please try again.')
           newErrors.push(`${item.title}: ${reason}`)
+          if (refusal) break
         }
 
         setUploadProgress(Math.round(((i + 1) / readyItems.length) * 100))
@@ -486,6 +497,8 @@ export function InventoryUploadModal({
           )}
         </div>
 
+        {step === 'preview' && !listingsOpen && <ModerationClosedNotice product="storefront" className="mx-4 mb-2" />}
+
         {/* v6 charges an action fee on every new listing. */}
         {step === 'preview' && readyItems.length > 0 && listingFeeCredits !== null && (
           <p className="px-4 pb-2 text-xs text-gray-500">
@@ -517,7 +530,7 @@ export function InventoryUploadModal({
               <Button
                 className="flex-1"
                 onClick={handleUpload}
-                disabled={readyItems.length === 0 || errors.length > 0}
+                disabled={readyItems.length === 0 || errors.length > 0 || !listingsOpen}
               >
                 Upload {plural(readyItems.length, 'Product')}
               </Button>

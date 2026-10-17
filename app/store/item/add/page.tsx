@@ -41,6 +41,9 @@ import { VariantEditor } from '@/components/store/variant-editor'
 import { ItemShippingZones } from '@/components/store/item-shipping-zones'
 import { zoneDraftFromItem, zoneUpdateFor, zonesStranded, type ItemZoneMode } from '@/lib/storefront/item-zones'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
+import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
 const EMPTY_KIT: ItemDeliverablePayload = { v: 1, assets: [], deliverWhen: 'payment_confirmed' }
@@ -139,6 +142,8 @@ function AddItemPage() {
   const [stockQuantity, setStockQuantity] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Testnet registers the storefront `notYetUsable`: listings open with its first seated team (41200 before).
+  const listingsOpen = useModeratedTypeOpen('storeItem', true, 'storefront')
   const [loadedStoreId, setLoadedStoreId] = useState<string | null>(null)
 
   // Variant state: the option types and the combinations offered (saved only while hasVariants is on).
@@ -556,7 +561,8 @@ function AddItemPage() {
       // Refused before signing (a limit, or a listing changed elsewhere): nothing was sent.
       const refusedBeforeSending = err instanceof ListLimitError || err instanceof StaleRevisionError
       if (!refusedBeforeSending && hasVariants && variantsAreTyped) keepSentVariants()
-      setError(refusedBeforeSending ? err.message : `Failed to ${editingItemId ? 'update' : 'create'} product. Please try again.`)
+      if (!refusedBeforeSending && reportModerationRefusal(err, user.identityId, 'storefront')) setError(null)
+      else setError(refusedBeforeSending ? err.message : `Failed to ${editingItemId ? 'update' : 'create'} product. Please try again.`)
     } finally {
       setIsSubmitting(false)
     }
@@ -597,6 +603,7 @@ function AddItemPage() {
             <p role="alert" className="p-4 text-red-500">{error}</p>
           ) : (
           <form onSubmit={handleSubmit} className="p-4 space-y-6">
+            {!listingsOpen && <ModerationClosedNotice product="storefront" />}
             {error && (
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
@@ -971,7 +978,7 @@ function AddItemPage() {
             <div className="pt-4">
               <Button
                 type="submit"
-                disabled={isSubmitting || isKitUploading || !title.trim()}
+                disabled={isSubmitting || isKitUploading || !title.trim() || !listingsOpen}
                 className="w-full"
               >
                 {isSubmitting

@@ -98,3 +98,22 @@ export function loadStoreViewCache(storeId: string): StoreViewCacheData | null {
     return null
   }
 }
+
+/**
+ * Forget every saved store view, so the next visit to any store reads it
+ * again: after a moderator removed or restored a store, listing or review,
+ * whose record does not always name the store it belonged to.
+ */
+export function clearStoreViewCaches(): void {
+  if (typeof window === 'undefined') return
+  try {
+    const keys: string[] = []
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i)
+      if (key?.startsWith(CACHE_KEY_PREFIX)) keys.push(key)
+    }
+    for (const key of keys) sessionStorage.removeItem(key)
+  } catch {
+    // SessionStorage unavailable: nothing was saved either.
+  }
+}

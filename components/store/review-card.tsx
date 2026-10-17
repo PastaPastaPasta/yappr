@@ -8,6 +8,8 @@ import { CheckBadgeIcon } from '@heroicons/react/24/solid'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { RatingStars } from './rating-stars'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { formatDate } from '@/lib/utils/format'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
@@ -16,9 +18,11 @@ import type { StoreReview } from '@/lib/types'
 interface ReviewCardProps {
   review: StoreReview
   index?: number
+  /** Shown to the storefront's moderators: runs once they removed the review. */
+  onRemoved?: () => void
 }
 
-export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
+export function ReviewCard({ review, index = 0, onRemoved }: ReviewCardProps) {
   const [username, setUsername] = useState<string | null>(review.reviewerUsername || null)
   const [displayName, setDisplayName] = useState<string | null>(review.reviewerDisplayName || null)
 
@@ -119,6 +123,14 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
                 <CheckBadgeIcon className="h-3.5 w-3.5" aria-hidden="true" />
                 Ordered
               </span>
+            )}
+            {onRemoved && (
+              <ModeratorContentMenu
+                className="ml-auto"
+                target={documentRemovalTarget('storefront', 'storeReview', 'review', review, [review.title, review.content].filter(Boolean).join(' — '))}
+                ownerId={review.reviewerId}
+                onRemoved={onRemoved}
+              />
             )}
           </div>
 

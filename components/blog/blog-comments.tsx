@@ -17,6 +17,11 @@ import { blogAuthorHandle, createCommentReads, mergeComments } from '@/lib/blog/
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
 import { COMMENTS_OFF_MESSAGE } from '@/lib/services/blog-comment-service'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
+import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 
 interface BlogCommentsProps {
   blogPostId: string
@@ -51,6 +56,8 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
   // paid comment on screen instead of silently dropping it (and inviting a
   // second, paid, attempt).
   const [reads] = useState(() => createCommentReads<BlogComment>())
+  // Testnet registers blogs `notYetUsable`: comments open with the first seated blog team (41200 before).
+  const commentsOpen = useModeratedTypeOpen('blogComment', commentsEnabled, 'blog')
 
   useEffect(() => {
     onCommentCountChange?.(comments.length)
@@ -106,7 +113,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
   }, [loadComments])
 
   const trimmedContent = content.trim()
-  const canSubmit = trimmedContent.length > 0 && trimmedContent.length <= MAX_COMMENT_LENGTH && !isSubmitting
+  const canSubmit = commentsOpen && trimmedContent.length > 0 && trimmedContent.length <= MAX_COMMENT_LENGTH && !isSubmitting
 
   const handleSubmit = async () => {
     const authedUser = requireAuth()
@@ -123,7 +130,8 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       logger.error('Failed to post blog comment:', error)
       if (error instanceof Error && error.message === COMMENTS_OFF_MESSAGE) {
         toast.error(COMMENTS_OFF_MESSAGE)
-      } else if (!blogCommentsCostYapp() || !handleInsufficientYapp(error, `A comment costs ${COMMENT_YAPP_COST} YAPP.`)) {
+      } else if (!reportModerationRefusal(error, authedUser.identityId, 'blog')
+        && (!blogCommentsCostYapp() || !handleInsufficientYapp(error, `A comment costs ${COMMENT_YAPP_COST} YAPP.`))) {
         toast.error('Failed to post comment. Please try again.')
       }
     } finally {
@@ -170,6 +178,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
         {headingLabel}
       </h3>
 
+      {!commentsOpen && <ModerationClosedNotice product="blog" className="mt-3" />}
       <div className="mt-3 rounded-lg border p-3" style={{ borderColor: 'var(--blog-border)' }}>
         <Textarea
           value={content}
@@ -229,7 +238,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
                         <CommentTimestamp createdAt={comment.createdAt} />
                       </span>
                     </div>
-                    {isOwnComment && (
+                    {isOwnComment && commentsOpen && (
                       <Button
                         type="button"
                         variant="ghost"
@@ -241,6 +250,14 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
                         {deletingId === comment.id ? 'Deleting...' : 'Delete'}
                       </Button>
                     )}
+                    <ModeratorContentMenu
+                      target={documentRemovalTarget('blog', 'blogComment', 'comment', comment, comment.content)}
+                      ownerId={comment.ownerId}
+                      onRemoved={() => {
+                        reads.removed(comment.id)
+                        setComments((prev) => prev.filter((c) => c.id !== comment.id))
+                      }}
+                    />
                   </div>
                   <p className="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--blog-text)]">{comment.content}</p>
                 </div>

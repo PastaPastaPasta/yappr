@@ -49,6 +49,25 @@ describe('the moderated-type gate', () => {
     stop()
   })
 
+  it('retries a first read that failed, so a page shown before the SDK came up still learns it is closed', async () => {
+    const read = teamRead(new Error('SDK not configured. Call initialize() first.'), false, true)
+    const seen: boolean[] = []
+    const stop = watchModeratedTypeOpen(read, (open) => seen.push(open), { intervalMs: 1_000 })
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(seen).toEqual([false, true])
+    stop()
+  })
+
+  it('stops reading once a gate answered open', async () => {
+    const read = teamRead(true, new Error('offline'))
+    const seen: boolean[] = []
+    const stop = watchModeratedTypeOpen(read, (open) => seen.push(open), { intervalMs: 1_000 })
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(seen).toEqual([true])
+    expect(read).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
   it('reads nothing after it is stopped', async () => {
     const read = teamRead(false)
     const target = new EventTarget()

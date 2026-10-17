@@ -6,21 +6,29 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { useSdk } from '@/contexts/sdk-context'
 import { logger } from '@/lib/logger'
-import { electedModeration, isV10 } from '@/lib/contract-topology'
+import { isV10 } from '@/lib/contract-topology'
+import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import { createElectionStatusLoader } from '@/lib/election-status-loader'
 import { electionView, moderationElectionService, type ElectionStatus } from '@/lib/services/moderation-election-service'
-import { moderationService } from '@/lib/services/moderation-service'
+import { moderationServiceFor } from '@/lib/services/moderation-service'
 
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id)
 const when = (ms: number | null) => (ms === null ? 'unknown' : new Date(ms).toLocaleString())
 const hours = (seconds: number) => `${Math.round(seconds / 3600)} h`
+/** What stays closed under a `notYetUsable` interim, per contract. */
+const CLOSED_UNTIL_SEATED: Record<ModeratedContractKey, string> = {
+  social: 'posts, replies, reports and profile changes',
+  storefront: 'stores, listings and reviews',
+  blog: 'blogs, blog posts and comments',
+}
+
 /** Who moderates before a team is seated, as the panel says it. */
-function interimText(interim: string): string {
+function interimText(interim: string, contract: ModeratedContractKey): string {
   switch (interim) {
     case 'contractOwner':
       return 'the contract owner moderates'
     case 'notYetUsable':
-      return 'nobody moderates, and posts, replies, reports and profile changes stay closed'
+      return `nobody moderates, and ${CLOSED_UNTIL_SEATED[contract]} stay closed`
     default:
       return `the interim (${interim}) applies`
   }
@@ -35,17 +43,20 @@ const duration = (seconds: number) => (seconds >= 86_400 ? `${Math.round(seconds
  * vote tallies and end time, and — once a charter is seated — the team, its
  * leader and members and the reasons it may cite. Read-only and public:
  * anyone can watch the election. Renders nothing off an elected contract.
+ * Each contract (`contract`, social by default) holds an election of its own.
  */
-export function ElectionStatusPanel() {
-  // A stable, frozen object (electedModeration memoises it); the effect below
-  // keys on the boolean anyway, so it runs once per mount, never per render.
-  const declaration = electedModeration()
+export function ElectionStatusPanel({ contract = 'social' }: { contract?: ModeratedContractKey }) {
+  // A stable, frozen object (memoised per contract); the effect below keys on
+  // the boolean anyway, so it runs once per mount, never per render.
+  const declared = moderatedContract(contract)
+  const { contractId } = declared
+  const declaration = declared.elected()
   const elected = declaration !== null
   // A panel mounts (and its effect runs) before SdkProvider has called
   // initialize(), so a read on mount fails with "SDK not configured".
   const { isReady: sdkReady, error: sdkError } = useSdk()
   // One loader per mounted panel: concurrent loads share a single read.
-  const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus()), [])
+  const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus(contractId, declared.elected())), [declared, contractId])
   const [status, setStatus] = useState<ElectionStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -73,13 +84,13 @@ export function ElectionStatusPanel() {
   useEffect(() => {
     if (!elected || !sdkReady) return
     let cancelled = false
-    moderationService.getInterim().then((interim) => {
+    moderationServiceFor(contract).getInterim().then((interim) => {
       if (!cancelled) setRegisteredInterim(interim)
     }).catch((error: unknown) => logger.warn('ElectionStatusPanel: could not read the registered interim', error))
     return () => {
       cancelled = true
     }
-  }, [elected, sdkReady])
+  }, [contract, elected, sdkReady])
 
   if (!declaration) return null
 
@@ -95,7 +106,7 @@ export function ElectionStatusPanel() {
         <CardTitle className="flex items-center gap-2"><ScaleIcon className="h-5 w-5" /> Moderation election</CardTitle>
         <CardDescription>
           Masternodes elect this contract&apos;s moderation team. Until a team is seated,{' '}
-          {interimText(registeredInterim ?? declaration.interim)}.
+          {interimText(registeredInterim ?? declaration.interim, contract)}.
           Applicants join for {duration(declaration.joinWindowSeconds)}, then masternodes vote for {duration(declaration.voteWindowSeconds)};{' '}
           {declaration.seatContestable
             ? `the seat becomes contestable once challenges ship${declaration.challengeCoolDownSeconds ? `, with ${duration(declaration.challengeCoolDownSeconds)} of protection after each seat change` : ''}`

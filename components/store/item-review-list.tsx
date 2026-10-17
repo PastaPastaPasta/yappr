@@ -4,6 +4,8 @@ import { logger } from '@/lib/logger'
 import { useEffect, useState } from 'react'
 import { CheckBadgeIcon } from '@heroicons/react/24/solid'
 import { RatingStars } from './rating-stars'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { formatDate } from '@/lib/utils/format'
 import { itemReviewService } from '@/lib/services/item-review-service'
 import { dpnsService } from '@/lib/services/dpns-service'
@@ -12,10 +14,12 @@ import type { ItemReview } from '@/lib/types'
 interface ItemReviewListProps {
   itemId: string
   limit?: number
+  /** Runs after a moderator removed one of the reviews, so the item's rating can be read again. */
+  onReviewRemoved?: () => void
 }
 
 /** The newest reviews of one item, with the reviewer's name resolved in one batch. */
-export function ItemReviewList({ itemId, limit = 10 }: ItemReviewListProps) {
+export function ItemReviewList({ itemId, limit = 10, onReviewRemoved }: ItemReviewListProps) {
   const [reviews, setReviews] = useState<ItemReview[]>([])
   const [names, setNames] = useState<Map<string, string | null>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
@@ -57,6 +61,15 @@ export function ItemReviewList({ itemId, limit = 10 }: ItemReviewListProps) {
                   Ordered
                 </span>
               )}
+              <ModeratorContentMenu
+                className="ml-auto"
+                target={documentRemovalTarget('storefront', 'itemReview', 'review', review, review.content ?? '')}
+                ownerId={review.reviewerId}
+                onRemoved={() => {
+                  setReviews((previous) => previous.filter((r) => r.id !== review.id))
+                  onReviewRemoved?.()
+                }}
+              />
             </div>
             {review.content && (
               <p className="mt-1 text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{review.content}</p>
