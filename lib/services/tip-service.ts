@@ -358,7 +358,7 @@ class TipService {
    */
   validateYappTip(senderId: string, recipientId: string, amount: bigint): TipResult | null {
     if (yappIsLocked()) {
-      return { success: false, error: 'YAPP cannot be transferred on this network. Tip in DASH instead.', errorCode: 'NOT_AUTHORIZED' };
+      return { success: false, error: 'YAPP can\'t be sent as a tip. Tip in DASH instead.', errorCode: 'NOT_AUTHORIZED' };
     }
     if (senderId === recipientId) {
       return { success: false, error: 'Cannot tip yourself', errorCode: 'SELF_TIP' };

@@ -54,7 +54,7 @@ export interface BlockProvenance {
 }
 
 /** What a block write answers on a deployment without its blocks contract. */
-const BLOCKS_UNAVAILABLE = 'Blocking is not available on this network yet.'
+const BLOCKS_UNAVAILABLE = 'Blocking isn\'t available yet.'
 
 /** What `blockUser` and `unblockUser` answer. */
 export interface BlockWriteResult extends StateTransitionResult {

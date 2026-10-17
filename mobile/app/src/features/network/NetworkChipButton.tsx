@@ -12,7 +12,7 @@ import { Text } from '~/ui/Text';
 export const networkCopy = {
   body: {
     devnet: 'Yappr is running on a Dash Platform devnet. Posts and accounts may be reset.',
-    testnet: 'Yappr is running on Dash Platform Testnet. Posts and accounts may be reset.',
+    testnet: 'Yappr is running on the Dash test network.',
   } as Partial<Record<string, string>>,
   /** The connection line, in the chip's states: booting and restarting both read "Connecting…". */
   state: {

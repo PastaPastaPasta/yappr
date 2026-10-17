@@ -1,10 +1,86 @@
 'use client'
 
+import type { ReactNode } from 'react'
+import Link from 'next/link'
+import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { SettingsSwitch } from '@/components/settings/settings-switch'
 import { useQueryInspectorStore } from '@/lib/query-inspector/store'
+import {
+  POLLR_CONTRACT_ID,
+  YAPPR_BLOG_CONTRACT_ID,
+  YAPPR_CONTRACT_ID,
+  YAPPR_DM_V5_CONTRACT_ID,
+  YAPPR_STOREFRONT_CONTRACT_ID,
+  getConfiguredNetwork,
+  getContractTopology,
+} from '@/lib/constants'
 import toast from 'react-hot-toast'
+
+function formatBuildDate(value: string | undefined): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function BuildRow({ label, children, testId }: { label: string; children: ReactNode; testId?: string }) {
+  return (
+    <div className="grid grid-cols-[7.5rem_1fr] gap-3 py-1.5">
+      <dt className="text-gray-500">{label}</dt>
+      <dd className="min-w-0 break-all font-mono text-gray-800 dark:text-gray-200" data-testid={testId}>
+        {children}
+      </dd>
+    </div>
+  )
+}
+
+/** The contracts this build talks to; a blank id means the build has none. */
+const BUILD_CONTRACTS = [
+  { label: 'Social contract', id: YAPPR_CONTRACT_ID },
+  { label: 'Messages contract', id: YAPPR_DM_V5_CONTRACT_ID },
+  { label: 'Store contract', id: YAPPR_STOREFRONT_CONTRACT_ID },
+  { label: 'Blog contract', id: YAPPR_BLOG_CONTRACT_ID },
+  { label: 'Polls contract', id: POLLR_CONTRACT_ID },
+].filter(({ id }) => id)
+
+/**
+ * What this build was compiled against: the network, the commit and the
+ * contracts it talks to. Collapsed by default; the e2e suite opens it to check
+ * that the served artifact targets the contracts under test.
+ */
+function BuildDetails() {
+  const builtAt = formatBuildDate(process.env.NEXT_PUBLIC_GIT_COMMIT_DATE)
+
+  return (
+    <details className="group rounded-lg border border-gray-200 dark:border-gray-800" data-testid="build-details">
+      <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 font-medium [&::-webkit-details-marker]:hidden">
+        Build details
+        <ChevronDownIcon className="h-4 w-4 text-gray-500 transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <dl className="border-t border-gray-200 px-4 py-3 text-sm dark:border-gray-800">
+        <BuildRow label="Network">{getConfiguredNetwork()}</BuildRow>
+        <BuildRow label="Commit" testId="build-commit">{process.env.NEXT_PUBLIC_GIT_COMMIT_HASH || 'dev'}</BuildRow>
+        <BuildRow label="Branch">{process.env.NEXT_PUBLIC_GIT_BRANCH || 'unknown'}</BuildRow>
+        {builtAt && <BuildRow label="Committed">{builtAt}</BuildRow>}
+        {/* The contract id does not say which SHAPE of contract it is, and a
+            client compiled for one shape queries fields another lacks. Printing
+            the compiled-in topology makes that checkable from the served build. */}
+        <BuildRow label="Topology" testId="build-topology">{getContractTopology()}</BuildRow>
+        {BUILD_CONTRACTS.map(({ label, id }) => (
+          <BuildRow key={label} label={label}>{id}</BuildRow>
+        ))}
+      </dl>
+      <div className="border-t border-gray-200 px-4 py-3 dark:border-gray-800">
+        <Link href="/contract" className="text-sm font-medium text-yappr-700 hover:underline dark:text-yappr-400">
+          View the social data contract
+        </Link>
+      </div>
+    </details>
+  )
+}
 
 export function DeveloperSettings() {
   const enabled = useQueryInspectorStore((s) => s.enabled)
@@ -83,6 +159,8 @@ export function DeveloperSettings() {
           </li>
         </ul>
       </div>
+
+      <BuildDetails />
     </div>
   )
 }

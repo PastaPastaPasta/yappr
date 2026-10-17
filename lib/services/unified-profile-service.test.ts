@@ -283,3 +283,24 @@ describe('stored avatar settings', () => {
     expect(await unifiedProfileService.getAvatarUrl(ownerId)).toBe('data:image/svg+xml,avatar');
   });
 });
+
+describe('getPaymentUris', () => {
+  it('returns the profile addresses, and none for an identity without a profile', async () => {
+    await expect(unifiedProfileService.getPaymentUris(ownerId)).resolves.toEqual([
+      { scheme: 'dash:', uri: 'dash:original-address' },
+    ]);
+    unifiedProfileService.clearCache();
+    cacheManager.invalidateByTag(`user:${ownerId}`);
+    query.mockResolvedValue([]);
+    get.mockResolvedValue(null);
+    await expect(unifiedProfileService.getPaymentUris(ownerId)).resolves.toEqual([]);
+  });
+
+  it('rejects when the profile read fails, instead of reporting no addresses', async () => {
+    query.mockRejectedValue(new Error('DAPI down'));
+    get.mockRejectedValue(new Error('DAPI down'));
+    await expect(unifiedProfileService.getPaymentUris(ownerId)).rejects.toThrow('DAPI down');
+    // getProfile keeps its forgiving contract.
+    await expect(unifiedProfileService.getProfile(ownerId)).resolves.toBeNull();
+  });
+});

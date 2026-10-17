@@ -449,9 +449,9 @@ describe('badges and chips', () => {
     const { rerender } = render(<NetworkChip network="devnet" state="booting" onPress={jest.fn()} />);
     expect(screen.getByRole('button', { name: 'Devnet. Data may be reset. Connecting.' })).toBeTruthy();
     rerender(<NetworkChip network="testnet" state="ready" onPress={jest.fn()} />);
-    expect(screen.getByRole('button', { name: 'Testnet. Data may be reset. Connected.' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Testnet. Connected.' })).toBeTruthy();
     rerender(<NetworkChip network="testnet" state="unavailable" onPress={jest.fn()} />);
-    expect(screen.getByRole('button', { name: "Testnet. Data may be reset. Can't connect." })).toBeTruthy();
+    expect(screen.getByRole('button', { name: "Testnet. Can't connect." })).toBeTruthy();
     rerender(<NetworkChip network="devnet" state="offline" onPress={jest.fn()} />);
     expect(screen.getByRole('button', { name: 'Devnet. Data may be reset. Offline.' })).toBeTruthy();
     rerender(<NetworkChip network="devnet" state="booting" onPress={jest.fn()} />);

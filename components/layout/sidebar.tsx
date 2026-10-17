@@ -34,6 +34,7 @@ import {
   BookOpenIcon as BookOpenIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn, truncateId } from '@/lib/utils'
+import { BetaPill } from '@/components/ui/beta-pill'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/lib/store'
 import { useVisibleUnreadNotificationCount } from '@/hooks/use-visible-unread-notification-count'
@@ -54,8 +55,8 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
     return [
       { name: 'Home', href: '/', icon: HomeIcon, activeIcon: HomeIconSolid },
       { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
-      { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
-      { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid },
+      { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid, beta: 'store' as const },
+      { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid, beta: 'blog' as const },
     ]
   }
 
@@ -64,8 +65,8 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
     { name: 'Following', href: '/following', icon: UserGroupIcon, activeIcon: UserGroupIconSolid },
     { name: 'Followers', href: '/followers', icon: UsersIcon, activeIcon: UsersIconSolid },
     { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
-    { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid },
-    { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid },
+    { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid, beta: 'store' as const },
+    { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid, beta: 'blog' as const },
     { name: 'Notifications', href: '/notifications', icon: BellIcon, activeIcon: BellIconSolid },
     { name: 'Messages', href: '/messages', icon: EnvelopeIcon, activeIcon: EnvelopeIconSolid },
     { name: 'Bookmarks', href: '/bookmarks', icon: BookmarkIcon, activeIcon: BookmarkIconSolid },
@@ -223,7 +224,7 @@ export function Sidebar() {
   const formatIdentityId = (id: string) => truncateId(id, 6, 4)
 
   return (
-    <div className="hidden md:flex h-[calc(100vh-40px)] w-[275px] shrink-0 flex-col px-2 sticky top-[40px]">
+    <div className="hidden md:flex h-screen w-[275px] shrink-0 flex-col px-2 sticky top-0">
       <div className="flex-1 space-y-1 py-4 overflow-y-auto scrollbar-hide">
         <Link href="/welcome" className="flex items-center px-3 py-4 mb-2 group">
           <div className="text-2xl font-bold text-gradient">Yappr</div>
@@ -259,6 +260,7 @@ export function Sidebar() {
                   )}
                 </div>
                 <span>{item.name}</span>
+                {item.beta && <BetaPill product={item.beta} />}
               </Link>
             )
           })}

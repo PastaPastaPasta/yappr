@@ -28,7 +28,7 @@ export function buildUnsignedYappTipTransition(
   amount: bigint,
   publicNote?: string
 ): Promise<WalletTransitionRequest> {
-  if (!yappIsTransferable()) return Promise.reject(new Error('YAPP cannot be transferred on this network'));
+  if (!yappIsTransferable()) return Promise.reject(new Error('YAPP can\'t be sent to other accounts'));
   return buildUnsignedTokenBatch('TokenTransferBuilder', senderId, (base) =>
     new TokenTransferTransition({
       base,
