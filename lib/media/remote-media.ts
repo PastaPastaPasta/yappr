@@ -55,21 +55,29 @@ const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
 /** Any other multibase spelling (`z…`, `f…`, `k…`) of a CID: long and alphanumeric. */
 const OTHER_CID = /^[0-9a-z]{40,}$/i
 
-type IpfsReference = { cid: string; path: string } | 'other-spelling'
+/**
+ * A path that could leave its CID once a browser or gateway normalizes it:
+ * a `.` or `..` segment (literal or percent-encoded), or an encoded or
+ * backslash separator. `ipfs://A/../B` would load B while A is checked.
+ */
+const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
+
+type IpfsReference = { cid: string; path: string } | 'refused'
 
 /**
  * What an IPFS-shaped URL names: a CID in a spelling the denylist can match
- * and its path (query and fragment dropped), `'other-spelling'` for a CID
- * written any other way (so it can't slip past the denylist), or null when
- * the URL isn't an IPFS reference (`https://docs.ipfs.tech/` is a website).
+ * and its path (query and fragment dropped); `'refused'` for a CID written
+ * any other way or a path that could escape the CID (so neither can slip past
+ * the denylist); null when the URL isn't an IPFS reference
+ * (`https://docs.ipfs.tech/` is a website).
  */
 function ipfsReferenceOf(url: string): IpfsReference | null {
   const trimmed = url.trim()
   for (const pattern of IPFS_REFERENCES) {
     const match = pattern.exec(trimmed)
     if (!match) continue
-    if (CANONICAL_CID.test(match[1])) return { cid: match[1], path: match[2] }
-    if (/^ipfs:/i.test(trimmed) || OTHER_CID.test(match[1])) return 'other-spelling'
+    if (CANONICAL_CID.test(match[1])) return ESCAPING_PATH.test(match[2]) ? 'refused' : { cid: match[1], path: match[2] }
+    if (/^ipfs:/i.test(trimmed) || OTHER_CID.test(match[1])) return 'refused'
   }
   return null
 }
@@ -77,7 +85,7 @@ function ipfsReferenceOf(url: string): IpfsReference | null {
 /** The CID an IPFS reference names, in a spelling the denylist can match; null otherwise. */
 export function ipfsCidOf(url: string): string | null {
   const reference = ipfsReferenceOf(url)
-  return reference && reference !== 'other-spelling' ? reference.cid : null
+  return reference && reference !== 'refused' ? reference.cid : null
 }
 
 /** CIDv1 in base32 is case-insensitive, and subdomain gateways lowercase it anyway. */
@@ -108,12 +116,13 @@ const deniedUrlHashes = new Set(entries.urlSha256.map((entry) => entry.sha256.to
 
 /**
  * Whether a URL is on the takedown denylist, by its CID or by its sha256. An
- * IPFS CID in a spelling the list can't match counts as denied: Yappr never
- * writes one, so only a way around the list would.
+ * IPFS reference the list can't vouch for (another CID spelling, a path that
+ * could escape its CID) counts as denied: Yappr never writes one, so only a
+ * way around the list would.
  */
 export function isDeniedMedia(url: string): boolean {
   const reference = ipfsReferenceOf(url)
-  if (reference === 'other-spelling') return true
+  if (reference === 'refused') return true
   if (reference) return deniedCids.has(canonicalCid(reference.cid))
   if (deniedUrlHashes.size === 0) return false
   const canonical = canonicalHttpsUrl(url)
@@ -144,7 +153,7 @@ export function imageSourceFor(url: string | null | undefined, size: ProxyImageS
   if (LOCAL_IMAGE.test(trimmed)) return { kind: 'local', url: trimmed }
   if (isDeniedMedia(trimmed)) return { kind: 'denied' }
   const reference = ipfsReferenceOf(trimmed)
-  if (reference && reference !== 'other-spelling') {
+  if (reference && reference !== 'refused') {
     return { kind: 'ipfs', ipfsUrl: `ipfs://${reference.cid}${reference.path}` }
   }
   if (/^https:\/\//i.test(trimmed)) return { kind: 'proxied', url: proxiedImageUrl(trimmed, size) }

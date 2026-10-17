@@ -18,11 +18,13 @@ import { fileURLToPath } from 'node:url'
 const LIST_PATH = fileURLToPath(new URL('../lib/media/media-denylist.json', import.meta.url))
 
 const IPFS_REFERENCES = [
-  /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)/i,
-  /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)/i,
-  /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+/i,
+  /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)([^?#]*)/i,
+  /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i,
+  /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+([^?#]*)/i,
 ]
 const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
+/** Same as ESCAPING_PATH in lib/media/remote-media.ts: a path that could leave its CID. */
+const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
 
 /**
  * Same rule as ipfsCidOf in lib/media/remote-media.ts (a test holds them
@@ -34,7 +36,7 @@ export function ipfsCidOf(input) {
   if (CANONICAL_CID.test(trimmed)) return trimmed
   for (const pattern of IPFS_REFERENCES) {
     const match = pattern.exec(trimmed)
-    if (match && CANONICAL_CID.test(match[1])) return match[1]
+    if (match && CANONICAL_CID.test(match[1])) return ESCAPING_PATH.test(match[2]) ? null : match[1]
   }
   return null
 }

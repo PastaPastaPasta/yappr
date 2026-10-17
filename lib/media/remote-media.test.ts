@@ -87,6 +87,24 @@ describe('IPFS spellings', () => {
     }
   })
 
+  it('refuses a path that could leave its CID, so a listed CID cannot hide behind another', () => {
+    const other = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
+    for (const url of [
+      `ipfs://${other}/../${CID_V1}`,
+      `ipfs://${other}/%2e%2e/${CID_V1}`,
+      `ipfs://${other}/.%2E/${CID_V1}`,
+      `ipfs://${other}/./a.png`,
+      `https://ipfs.io/ipfs/${other}/..%2f${CID_V1}`,
+      `https://ipfs.io/ipfs/${other}/..\\${CID_V1}`,
+      `https://${other}.ipfs.dweb.link/../ipfs/${CID_V1}`,
+    ]) {
+      expect(isDeniedMedia(url)).toBe(true)
+      expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
+      expect(scriptCid(url)).toBeNull()
+    }
+    expect(imageSourceFor(`ipfs://${other}/a..b/c.png`)).toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${other}/a..b/c.png` })
+  })
+
   it('drops a gateway query string from the IPFS path', () => {
     const cid = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
     expect(imageSourceFor(`https://ipfs.io/ipfs/${cid}?filename=a.png`)).toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${cid}` })

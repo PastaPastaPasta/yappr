@@ -7,7 +7,7 @@
  */
 
 import { IPFS_GATEWAYS, getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
-import { IMAGE_PROXY_ORIGIN, imageSourceFor } from '@/lib/media/remote-media'
+import { IMAGE_PROXY_ORIGIN, imageSourceFor, isDeniedMedia } from '@/lib/media/remote-media'
 
 /** Major hosts known to send CORS headers; fetched directly. Keep it short to limit IP exposure. */
 const CORS_ALLOWED_DOMAINS = new Set([
@@ -111,8 +111,12 @@ function ipfsContentOf(url: string): string | null {
   return source.kind === 'ipfs' ? source.ipfsUrl : null
 }
 
-/** Whether a link's page may be fetched for its preview: IPFS content, or an allow-listed https host. */
+/**
+ * Whether a link's page may be fetched for its preview: never when it is on
+ * the takedown denylist; otherwise IPFS content, or an allow-listed https host.
+ */
 export function canFetchPreview(url: string): boolean {
+  if (isDeniedMedia(url)) return false
   return ipfsContentOf(url) !== null || (url.startsWith('https://') && isCorsAllowedDomain(url))
 }
 
