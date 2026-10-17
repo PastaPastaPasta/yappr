@@ -218,7 +218,7 @@ deliver a `javascript:` link.
 
 ## Moderation
 
-Storefront v7 and later elect their own moderation team (`config.moderation`:
+Storefront v6 and later elect their own moderation team (`config.moderation`:
 banlist, suspensions, warnings; `store`, `storeItem`, `storeReview` and
 `itemReview` are moderated types, each `moderatorAbilities.delete`). The
 client moderates it like social, one service instance per contract

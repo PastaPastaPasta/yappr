@@ -845,6 +845,8 @@ function SettingsPage() {
           {activeSection === 'main' && (
             <div className="px-4 pt-4">
               <OwnWarningsNotice />
+              <OwnWarningsNotice contract="storefront" />
+              <OwnWarningsNotice contract="blog" />
             </div>
           )}
           {renderSection()}

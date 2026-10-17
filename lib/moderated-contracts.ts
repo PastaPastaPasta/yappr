@@ -9,7 +9,8 @@
  * - `storefront`: stores, listings and both kinds of review;
  * - `blog`: blogs, blog posts and comments.
  *
- * Storefront (v7 and later) and blog (v7 and later) declare ELECTED moderation
+ * Storefront (v6 and later: the mainnet re-cut; v7 only re-encodes variants)
+ * and blog (v7 and later) declare ELECTED moderation
  * of their own, read here off the committed contract JSON
  * (contracts/yappr-storefront-contract.json, contracts/yappr-blog-contract.json):
  * a banlist, suspensions and warnings, their own fee pots, their own charter
@@ -20,7 +21,7 @@
  */
 import blogContract from '@/contracts/yappr-blog-contract.json'
 import storefrontContract from '@/contracts/yappr-storefront-contract.json'
-import { YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, blogIsV7, storefrontVariantsAreTyped } from '@/lib/constants'
+import { YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, blogIsV7, storefrontIsV6 } from '@/lib/constants'
 import {
   authorDeletesLeaveHoles,
   contractIsModerated,
@@ -202,7 +203,7 @@ const SOCIAL: ModeratedContract = {
   countsActions: () => isV11() && electedModeration() !== null,
 }
 
-const STOREFRONT = declaredContract('storefront', 'Storefront', YAPPR_STOREFRONT_CONTRACT_ID, storefrontContract, storefrontVariantsAreTyped)
+const STOREFRONT = declaredContract('storefront', 'Storefront', YAPPR_STOREFRONT_CONTRACT_ID, storefrontContract, storefrontIsV6)
 const BLOG = declaredContract('blog', 'Blogs', YAPPR_BLOG_CONTRACT_ID, blogContract, blogIsV7)
 
 const CONTRACTS: Readonly<Record<ModeratedContractKey, ModeratedContract>> = { social: SOCIAL, storefront: STOREFRONT, blog: BLOG }
