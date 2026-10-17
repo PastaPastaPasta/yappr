@@ -7,7 +7,8 @@ import bs58 from 'bs58';
 const connected = vi.hoisted(() => ({ document: vi.fn(), connect: vi.fn(), decoded: vi.fn((bytes) => ({ bytes })) }));
 vi.mock('./sdk-env.mjs', () => ({ connectSdk: connected.connect, keyNetwork: () => 'testnet', devnetName: () => 'sakura' }));
 vi.mock('@dashevo/evo-sdk', async (original) => { const actual = await original(); return { ...actual, Document: { fromBytes: connected.document, fromObject: actual.Document.fromObject }, StateTransition: { fromBytes: connected.decoded } }; });
-import { assertRegistered, existsStep, nextNonce, manifestHash, balancesFor, charterOptions, commitStep, main, validateManifest, watchContract, writeCheckpoint } from './file-release-charters.mjs';
+import { assertRegistered, existsStep, importNonceFloors, nextNonce, manifestHash, balancesFor, charterOptions, commitStep, main, validateManifest, watchContract, writeCheckpoint } from './file-release-charters.mjs';
+import { APP_CONNECT_ENTRIES, contractFilePath } from './app-connect-set.mjs';
 
 const id = (n) => bs58.encode(new Uint8Array(32).fill(n));
 const actor = (n) => ({ identityId: id(n), keyFile: `/missing/actor-${n}.json`, keyId: 1, masterKeyFile: `/missing/actor-${n}.json`, masterKeyId: 0 });
@@ -42,6 +43,17 @@ describe('charter release safety policy', () => {
     expect(() => assertRegistered(contract, input.expected)).not.toThrow();
     expect(() => assertRegistered(contract, { ...input.expected, voteWindow: 259200 })).toThrow('voteWindow');
     expect(() => assertRegistered(contract, { ...input.expected, ownerId: id(7) })).toThrow('owner');
+  });
+  it('documents the exact moderated types from the selected registration templates', () => {
+    const docs = readFileSync(new URL('../docs/TESTNET_RELEASE.md', import.meta.url), 'utf8');
+    const lists = docs.match(/social uses ([^;]+); blog uses ([^;]+); storefront uses ([^.]+)\./);
+    expect(lists).not.toBeNull();
+    for (const [i, name] of ['social', 'blog', 'storefront'].entries()) {
+      const entry = APP_CONNECT_ENTRIES.find((e) => e.name === name);
+      const template = JSON.parse(readFileSync(contractFilePath(entry.file), 'utf8'));
+      const documented = [...lists[i + 1].matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+      expect(documented.sort()).toEqual(Object.keys(template.config.moderation.moderators.moderatedDocumentTypes).sort());
+    }
   });
   it('binds journal semantics while allowing restored key paths and reordered fields', () => {
     const input = validateManifest(manifest());
@@ -129,6 +141,31 @@ describe('read-only modes', () => {
 describe('journaled create recovery', () => {
   const step = () => ({ id: id(8), type: 'submittedCharter', owner: id(2), bytes: Buffer.from('same signed bytes').toString('base64'), state: 'prepared' });
   const sdkFor = () => ({ documents: { get: vi.fn() }, system: { status: vi.fn().mockResolvedValue({ toJSON: () => ({ chain: { latestBlockHeight: '10' } }), free: vi.fn() }) }, stateTransitions: { broadcastAndWait: vi.fn() } });
+  it('carries a proved actor nonce across two sequential target journals and persists it for resume', async () => {
+    vi.useFakeTimers();
+    const prior = { network: 'devnet', devnet: 'sakura', targetContractId: id(1), configHash: 'a'.repeat(64), keys: {},
+      steps: { application: { type: 'electedCharter', owner: id(2), nonce: '8', state: 'verified' } } };
+    const state = { network: 'devnet', devnet: 'sakura', targetContractId: id(9), steps: { reusedReason: { type: 'reason', owner: id(2), state: 'verified' } } };
+    importNonceFloors(state, prior);
+    const restored = JSON.parse(JSON.stringify(state));
+    const sdk = { wasm: { getIdentityContractNonce: vi.fn().mockResolvedValueOnce(7n).mockResolvedValue(8n) } };
+    const pending = nextNonce(sdk, restored, id(2));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await pending).toBe(9n);
+    expect(restored.nonceFloors).toEqual({ [id(2)]: '8' });
+    importNonceFloors(restored, { ...prior, steps: {}, nonceFloorsContractId: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', nonceFloors: { [id(2)]: '6' } });
+    expect(restored.nonceFloors[id(2)]).toBe('8');
+  });
+  it('rejects prior journals from other networks, devnets, contracts or unresolved writes', () => {
+    const state = { network: 'devnet', devnet: 'sakura', steps: {} };
+    const prior = { ...state, targetContractId: id(1), configHash: 'a'.repeat(64), keys: {}, steps: {} };
+    expect(() => importNonceFloors(state, { ...prior, network: 'testnet' })).toThrow('network/devnet');
+    expect(() => importNonceFloors(state, { ...prior, devnet: 'other' })).toThrow('network/devnet');
+    expect(() => importNonceFloors(state, { ...prior, steps: { proposal: { type: 'submittedCharter', state: 'broadcasting' } } })).toThrow('unresolved');
+    expect(() => importNonceFloors(state, { ...prior, nonceFloorsContractId: id(7), nonceFloors: {} })).toThrow('another contract');
+    expect(() => importNonceFloors(state, { ...prior, steps: { document: { type: 'post', state: 'verified' } } })).toThrow('charters contract');
+    expect(() => importNonceFloors(state, { ...prior, nonceFloorsContractId: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', nonceFloors: { [id(2)]: '-1' } })).toThrow('nonce floor');
+  });
   it('waits for a nonce read to catch up with the preceding proved write by this actor', async () => {
     vi.useFakeTimers();
     const sdk = { wasm: { getIdentityContractNonce: vi.fn().mockResolvedValueOnce(4n).mockResolvedValueOnce(4n).mockResolvedValue(5n) } };

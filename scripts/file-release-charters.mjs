@@ -62,6 +62,7 @@ export function validateManifest(input) {
 export function charterOptions(argv, env = process.env) {
   const { values } = parseArgs({ args: argv, options: {
     config: { type: 'string' }, journal: { type: 'string' }, targets: { type: 'string' },
+    'prior-journal': { type: 'string', multiple: true },
     plan: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, live: { type: 'boolean' }, watch: { type: 'boolean' },
     prepare: { type: 'boolean' }, production: { type: 'boolean' }, 'allow-mainnet': { type: 'boolean' },
     'wait-registration': { type: 'string', default: '0' },
@@ -76,6 +77,7 @@ export function charterOptions(argv, env = process.env) {
   if (mode === 'live' && !values.journal) throw new Error('--live requires --journal in a private directory');
   if (mode === 'live' && network !== 'devnet' && !values.production) throw new Error('--live off devnet requires --production');
   if (values.prepare && mode !== 'live') throw new Error('--prepare belongs to --live');
+  if (values['prior-journal'] && mode !== 'live') throw new Error('--prior-journal belongs to --live');
   const waitSeconds = Number(values['wait-registration']);
   if (!Number.isSafeInteger(waitSeconds) || waitSeconds < 0 || waitSeconds > 86400) throw new Error('--wait-registration must be 0 to 86400 seconds');
   return { ...values, network, mode, waitSeconds };
@@ -153,11 +155,33 @@ function document(type, owner, data) {
     $dataContractId: idBytes(CHARTERS), $type: type, $revision: 1n, $entropy: randomBytes(32), ...data }, w.PlatformVersion.latest());
 }
 
-/** Never allocate below a write this journal has already proved. Nodes may lag. */
+function verifiedNonceFloors(state) {
+  if (state.nonceFloors && state.nonceFloorsContractId !== CHARTERS) throw new Error('nonce floors belong to another contract');
+  const floors = { ...state.nonceFloors };
+  for (const step of Object.values(state.steps)) {
+    if (step.state === 'verified' && step.nonce && BigInt(step.nonce) > BigInt(floors[step.owner] ?? 0)) floors[step.owner] = step.nonce;
+  }
+  return floors;
+}
+
+/** Carry proved CHARTERS writes between sequential targets using the same actors. */
+export function importNonceFloors(state, prior) {
+  if (prior.network !== state.network || prior.devnet !== state.devnet) throw new Error('prior journal network/devnet disagrees with this run');
+  if (!identityId(prior.targetContractId) || !prior.steps || !prior.keys || !/^[a-f0-9]{64}$/.test(prior.configHash ?? '')) throw new Error('invalid prior charter journal');
+  if (Object.values(prior.keys).some((key) => key.state !== 'verified') || Object.values(prior.steps).some((step) => step.state !== 'verified')) throw new Error('prior journal has unresolved writes; reconcile before sharing actors');
+  for (const step of Object.values(prior.steps)) if (!['reason', 'submittedCharter', 'joinRequest', 'electedCharter'].includes(step.type)) throw new Error('prior journal is not for the charters contract');
+  const floors = verifiedNonceFloors(prior);
+  state.nonceFloorsContractId = CHARTERS;
+  state.nonceFloors ??= {};
+  for (const [owner, nonce] of Object.entries(floors)) {
+    if (!identityId(owner) || !/^\d+$/.test(String(nonce)) || BigInt(nonce) > NONCE_MASK) throw new Error('invalid prior charter nonce floor');
+    if (BigInt(nonce) > BigInt(state.nonceFloors[owner] ?? 0)) state.nonceFloors[owner] = String(nonce);
+  }
+}
+
+/** Never allocate below a proved write, including imported prior target journals. */
 export async function nextNonce(sdk, state, owner) {
-  const floor = Object.values(state.steps).reduce((highest, step) =>
-    step.owner === owner && step.state === 'verified' && step.nonce && BigInt(step.nonce) > highest
-      ? BigInt(step.nonce) : highest, 0n);
+  const floor = BigInt(verifiedNonceFloors(state)[owner] ?? 0);
   for (let attempt = 0; attempt <= 12; attempt++) {
     const raw = await sdk.wasm.getIdentityContractNonce(owner, CHARTERS);
     const current = BigInt(raw ?? 0) & NONCE_MASK;
@@ -387,6 +411,10 @@ async function live(sdk, manifest, options) {
     if (existsSync(path)) privateFile(path);
     const state = existsSync(path) ? readJson(path) : { ...scope, keys: {}, steps: {} };
     for (const [key, value] of Object.entries(scope)) if (state[key] !== value) throw new Error(`journal ${key} disagrees with this run; refusing to mix networks or charters`);
+    for (const priorPath of options['prior-journal'] ?? []) {
+      privateFile(resolve(priorPath));
+      importNonceFloors(state, readJson(resolve(priorPath)));
+    }
     const save = () => writeCheckpoint(path, state);
     save();
     // A completed journal is read-only on resume, even if the contest deposit
