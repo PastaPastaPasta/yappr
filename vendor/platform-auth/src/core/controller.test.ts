@@ -155,12 +155,20 @@ describe('PlatformAuthController username sync', () => {
     await vi.waitFor(() => expect(controller.getState().user?.username).toBe('alice.dash'))
   })
 
-  it('runs beforeStore inside the commit that stores the key, and never for a superseded sign-in', async () => {
+  it('runs beforeStore and afterStore around the key store, and neither for a superseded sign-in', async () => {
     const { controller, storePrivateKey } = setup(async () => 'alice.dash')
     const order: string[] = []
     storePrivateKey.mockImplementation(async () => { order.push('store') })
-    await controller.loginWithAuthKey(IDENTITY_ID, 'private-key', { beforeStore: () => order.push('before') })
-    expect(order).toEqual(['before', 'store'])
+    await controller.loginWithAuthKey(IDENTITY_ID, 'private-key', { beforeStore: () => order.push('before'), afterStore: () => order.push('after') })
+    expect(order).toEqual(['before', 'store', 'after'])
+
+    // A store that fails runs beforeStore but never afterStore.
+    order.length = 0
+    storePrivateKey.mockImplementation(async () => { throw new Error('storage full') })
+    await expect(controller.loginWithAuthKey(IDENTITY_ID, 'private-key', { beforeStore: () => order.push('before'), afterStore: () => order.push('after') }))
+      .rejects.toThrow('storage full')
+    expect(order).toEqual(['before'])
+    storePrivateKey.mockImplementation(async () => undefined)
 
     let superseded = 0
     const stale = controller.sessionEpoch()
