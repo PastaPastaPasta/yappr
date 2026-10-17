@@ -39,7 +39,7 @@ import {
 } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { STORAGE_SCOPE } from '@/lib/storage-scope'
-import { bytesEqual, bytesToBase64Url } from '@/lib/bytes'
+import { bytesEqual, bytesToBase64Url, bytesToHex } from '@/lib/bytes'
 import { YAPPR_PASSKEY_VAULT_CONTRACT_ID, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { getPublicKey, matchIdentityKey } from '@/lib/crypto/keys'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
@@ -64,7 +64,7 @@ import { buildYapprAppConnectRequest } from '@/lib/app-connect/yappr-request'
 import { rememberAnchorKey } from '@/lib/app-connect/anchor-key-mark'
 import { getEncryptionKeyBytes, getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
 import { passkeyVaultService, type VaultEntryDocument } from '@/lib/services/passkey-vault-service'
-import { forgetPasskeyHere, passkeyName, passkeysHere, rememberPasskeyHere } from './passkey-device'
+import { forgetPasskeyHere, passkeyMarker, passkeyName, passkeysHere, rememberPasskeyHere } from './passkey-device'
 import {
   MAX_PASSKEYS,
   checkSignInKey,
@@ -419,7 +419,7 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<v
       wipeBundle(bundle)
     }
     await passkeyVaultService.add(pending.identityId, sealed)
-    rememberPasskeyHere(pending.identityId, bytesToBase64Url(pending.credentialId))
+    rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipient.publicKey))
   } finally {
     prf?.fill(0)
     pending.createPrf?.fill(0)
@@ -464,10 +464,11 @@ async function unlockRawKey(identityId: string, bundle: VaultBundle): Promise<Pa
   const check = checkSignInKey(signIn, keys, Date.now())
   if (!check.ok) throw new PasskeyVaultError('stale')
   if (!await signInKeyAllowed(identityId, check.needsModerator)) throw new PasskeyVaultError('not-eligible')
-  // The slot holds a copy: the bundle's own key is wiped with the bundle.
-  const messaging = rest[0] ? await messagingSlot(identityId, rest[0].privateKey.slice(), keys) : null
-  const network = keyNetwork()
+  // A copy: the bundle's own key is wiped with the bundle, and this one below whatever the check says.
+  const messagingCopy = rest[0]?.privateKey.slice() ?? null
   try {
+    const messaging = messagingCopy ? await messagingSlot(identityId, messagingCopy, keys) : null
+    const network = keyNetwork()
     return {
       kind: 'raw-key',
       identityId,
@@ -476,7 +477,7 @@ async function unlockRawKey(identityId: string, bundle: VaultBundle): Promise<Pa
       critical: check.key.securityLevel === KeySecurityLevel.CRITICAL,
     }
   } finally {
-    messaging?.privateKey.fill(0)
+    messagingCopy?.fill(0)
   }
 }
 
@@ -512,7 +513,8 @@ export async function unlockWithPasskey(): Promise<PasskeyUnlock> {
       const unlocked = bundle.format === BundleFormat.KEY_RING
         ? await unlockKeyRing(identityId, bundle)
         : await unlockRawKey(identityId, bundle)
-      rememberPasskeyHere(identityId, bytesToBase64Url(assertion.credentialId))
+      // openEntry proved this passkey derives the entry's recipient key.
+      rememberPasskeyHere(identityId, markerOf(assertion.credentialId, entry.recipientKey))
       return unlocked
     } finally {
       wipeBundle(bundle)
@@ -536,6 +538,10 @@ export interface PasskeyEntryView {
   name: string | null
 }
 
+function markerOf(credentialId: Uint8Array, recipientKey: Uint8Array): string {
+  return passkeyMarker(bytesToBase64Url(credentialId), bytesToHex(recipientKey))
+}
+
 function viewOf(entry: VaultEntryDocument, keys: AppConnectIdentityKey[], here: string[], now: number): PasskeyEntryView {
   const credentialId = bytesToBase64Url(entry.credentialId)
   return {
@@ -543,7 +549,7 @@ function viewOf(entry: VaultEntryDocument, keys: AppConnectIdentityKey[], here: 
     credentialId,
     addedAt: entry.$createdAt,
     updatedAt: entry.$updatedAt,
-    thisDevice: here.includes(credentialId),
+    thisDevice: here.includes(markerOf(entry.credentialId, entry.recipientKey)),
     needsUpdate: entryNeedsUpdate(entry.authKeyId, keys, now),
     name: passkeyName(credentialId),
   }
@@ -596,37 +602,57 @@ async function signalRemaining(identityId: string, remaining: VaultEntryDocument
   }
 }
 
+const REMOVAL_REREADS = 3
+const REMOVAL_REREAD_MS = 2000
+
 /**
  * Removes passkeys: their entries are deleted, so they stop signing in, and
  * the provider is told so it can hide them. Copies sealed earlier stay in
  * chain history; only turning the keys they hold off makes them useless.
  */
 export async function removePasskeys(identityId: string, entryIds: readonly string[]): Promise<{ removed: number; failed: number }> {
-  const entries = (await passkeyVaultService.list(identityId)).filter((entry) => entryIds.includes(entry.$id))
-  let removed = 0
-  let failed = 0
+  const entries = (await passkeyVaultService.list(identityId, { partial: true })).filter((entry) => entryIds.includes(entry.$id))
+  const confirmed = new Set<string>()
   for (const entry of entries) {
     try {
       await passkeyVaultService.remove(entry)
-      removed += 1
-    } catch {
-      failed += 1
+      confirmed.add(entry.$id)
+    } catch (error) {
+      logger.warn('Passkey vault: removing a passkey failed:', error)
     }
   }
   // A delete sent without a verdict (a timeout) may still have landed: what is left on chain decides.
-  const remaining = await passkeyVaultService.list(identityId)
+  // A node can lag a confirmed delete by a moment, so those get a few more reads before they count as left.
+  let remaining = await passkeyVaultService.list(identityId, { partial: true })
+  for (let attempt = 0; attempt < REMOVAL_REREADS && remaining.some((entry) => confirmed.has(entry.$id)); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, REMOVAL_REREAD_MS))
+    remaining = await passkeyVaultService.list(identityId, { partial: true })
+  }
   const stillThere = new Set(remaining.map((entry) => entry.$id))
   for (const entry of entries) if (!stillThere.has(entry.$id)) forgetPasskeyHere(identityId, bytesToBase64Url(entry.credentialId))
-  failed = entries.filter((entry) => stillThere.has(entry.$id)).length
-  removed = entries.length - failed
+  const failed = entries.filter((entry) => stillThere.has(entry.$id)).length
+  const removed = entries.length - failed
   await signalRemaining(identityId, remaining)
   return { removed, failed }
 }
 
+/** Rounds of "Remove all": each reads up to the list's limit and deletes it, so even a flood of planted entries drains. */
+const REMOVE_ALL_ROUNDS = 5
+
 /** "Remove all and start over": every entry of `identityId` read now, including any the user never saw listed. */
 export async function removeAllPasskeys(identityId: string): Promise<{ removed: number; failed: number }> {
-  const entries = await passkeyVaultService.list(identityId)
-  return removePasskeys(identityId, entries.map((entry) => entry.$id))
+  let removed = 0
+  for (let round = 0; round < REMOVE_ALL_ROUNDS; round += 1) {
+    const entries = await passkeyVaultService.list(identityId, { partial: true })
+    if (entries.length === 0) break
+    const result = await removePasskeys(identityId, entries.map((entry) => entry.$id))
+    removed += result.removed
+    // Nothing deleted this round (every delete refused): another round would not do better.
+    if (result.removed === 0) break
+  }
+  // Whatever is still there, from any round, counts as not removed.
+  const failed = (await passkeyVaultService.list(identityId, { partial: true })).length
+  return { removed, failed }
 }
 
 /**

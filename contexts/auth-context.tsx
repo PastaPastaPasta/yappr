@@ -180,9 +180,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [applyIntent, controller])
 
   const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
-    // A typed key is never one a passkey held, whatever this tab signed in with before.
+    const intent = await signInWithKey(identityId, privateKey, options)
+    // Cleared only once the typed key is the session's: a failed sign-in leaves a passkey's CRITICAL key marked.
     clearPasskeyCriticalKey(identityId)
-    noteSignIn(await signInWithKey(identityId, privateKey, options), 'key')
+    noteSignIn(intent, 'key')
   }, [signInWithKey])
 
   const signInWithGrant = useCallback(async (grant: AppConnectGrant): Promise<PlatformAuthIntent> => {
@@ -212,9 +213,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         noteSignIn(await signInWithGrant(unlocked.grant), 'passkey')
         return null
       case 'raw-key': {
-        // Marked before the key is stored, so no moment exists where it signs unmarked.
+        // Marked before the key is stored, so it never signs unmarked; a HIGH key clears the mark only once it is the session's.
         if (unlocked.critical) markPasskeyCriticalKey(unlocked.identityId)
-        else clearPasskeyCriticalKey(unlocked.identityId)
         let intent: PlatformAuthIntent
         try {
           intent = await signInWithKey(unlocked.identityId, unlocked.signInWif, { since })
@@ -222,6 +222,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (controller.getState().user?.identityId !== unlocked.identityId) clearPasskeyCriticalKey(unlocked.identityId)
           throw error
         }
+        if (!unlocked.critical) clearPasskeyCriticalKey(unlocked.identityId)
         if (unlocked.messagingWif) restorePasskeyMessagingKey(unlocked.identityId, unlocked.messagingWif)
         noteSignIn(intent, 'passkey')
         return null

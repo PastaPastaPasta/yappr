@@ -87,9 +87,9 @@ One mutable, deletable type, `vaultEntry`, unique index `byCredential [$ownerId,
 |---|---:|---:|
 | Register the contract (with the group membership) | 13,085,062,050 | 785.1 |
 | Add a passkey: the identity's first entry (key / wallet) | 46,257,340 / 48,634,740 | 2.78 / 2.92 |
-| Add a passkey: a later entry | 37,628,180 | 2.26 |
-| Update a passkey (re-seal; key / wallet) | 1,861,020 / 2,056,280 | 0.11 / 0.12 |
-| Remove a passkey (refund; key / wallet) | −33,606,783 / −35,596,829 | −2.02 / −2.14 |
+| Add a passkey: a later entry (key / wallet) | 28,012,320 / 30,666,820 | 1.68 / 1.84 |
+| Update a passkey (re-seal; key / wallet) | 1,861,020 to 2,051,820 / 2,056,280 to 2,548,480 | 0.11–0.12 / 0.12–0.15 |
+| Remove a passkey (refund; key / wallet) | −23,088,745 to −33,606,783 / −35,103,269 to −35,596,829 | −1.39 to −2.02 / −2.11 to −2.14 |
 | Sign in with a passkey | reads only | 0 |
 
 A wallet session's writes count against its group key's allowance.

@@ -73,12 +73,19 @@ class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
     }
   }
 
-  /** Every entry `ownerId` has, by credential id. Rejects when the read fails, so a failure never reads as "no passkeys". */
-  async list(ownerId: string): Promise<VaultEntryDocument[]> {
-    const { documents } = await this.queryAll({
+  /**
+   * Every entry `ownerId` has, by credential id. Rejects when the read fails,
+   * so a failure never reads as "no passkeys", and when there are more than
+   * it walks, so no list is ever silently partial. Removal passes `partial`:
+   * it deletes what it read and reads again, so a flood of planted entries
+   * cannot block it.
+   */
+  async list(ownerId: string, options: { partial?: boolean } = {}): Promise<VaultEntryDocument[]> {
+    const { documents, reachedLimit } = await this.queryAll({
       where: [['$ownerId', '==', ownerId]],
       orderBy: [['$ownerId', 'asc'], ['credentialId', 'asc']],
     }, LIST_LIMIT)
+    if (reachedLimit && !options.partial) throw new Error(`more than ${LIST_LIMIT} passkey entries`)
     return documents.filter((entry) => entry.$ownerId === ownerId)
   }
 

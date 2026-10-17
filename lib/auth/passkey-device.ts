@@ -34,21 +34,34 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
-/** The passkeys (base64url credential ids) added or used for `identityId` in this browser. */
+/**
+ * A passkey as this browser knows it: its credential id (base64url) and the
+ * recipient key its entry is sealed to (hex). Credential ids are public, and
+ * anyone holding a key of the identity can delete an entry and write another
+ * under the same credential id with their own recipient key; the recipient
+ * key, recorded where this browser proved it (making the passkey, or opening
+ * its entry), tells the real one from such a copy.
+ */
+export function passkeyMarker(credentialId: string, recipientKeyHex: string): string {
+  return `${credentialId}.${recipientKeyHex}`
+}
+
+/** The markers ({@link passkeyMarker}) of the passkeys added or used for `identityId` in this browser. */
 export function passkeysHere(identityId: string): string[] {
   return stringList(readMap(DEVICE_KEY)[identityId])
 }
 
-export function rememberPasskeyHere(identityId: string, credentialId: string): void {
+export function rememberPasskeyHere(identityId: string, marker: string): void {
   const map = readMap(DEVICE_KEY)
-  const ids = stringList(map[identityId])
-  if (ids.includes(credentialId)) return
-  writeScoped(DEVICE_KEY, JSON.stringify({ ...map, [identityId]: [...ids, credentialId] }))
+  const markers = stringList(map[identityId])
+  if (markers.includes(marker)) return
+  writeScoped(DEVICE_KEY, JSON.stringify({ ...map, [identityId]: [...markers, marker] }))
 }
 
+/** Forgets every marker of the passkey `credentialId` (base64url). */
 export function forgetPasskeyHere(identityId: string, credentialId: string): void {
   const map = readMap(DEVICE_KEY)
-  writeScoped(DEVICE_KEY, JSON.stringify({ ...map, [identityId]: stringList(map[identityId]).filter((id) => id !== credentialId) }))
+  writeScoped(DEVICE_KEY, JSON.stringify({ ...map, [identityId]: stringList(map[identityId]).filter((marker) => !marker.startsWith(`${credentialId}.`)) }))
 }
 
 /** The name the user gave a passkey in this browser, or null. */
