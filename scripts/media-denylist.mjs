@@ -17,12 +17,12 @@ import { fileURLToPath } from 'node:url'
 
 const LIST_PATH = fileURLToPath(new URL('../lib/media/media-denylist.json', import.meta.url))
 
-const IPFS_REFERENCES = [
-  /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)([^?#]*)/i,
-  // The host's CID is the root: on a subdomain gateway `/ipfs/X/…` is a path inside it.
-  /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+([^?#]*)/i,
-  /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i,
-]
+// Same patterns as lib/media/remote-media.ts.
+const IPFS_PROTOCOL = /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)([^?#]*)/i
+const SUBDOMAIN_GATEWAY = /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+([^?#]*)/i
+const PATH_GATEWAY = /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i
+const IPNS = /^ipns:|^https?:\/\/(?:[^/?#]+\/ipns\/|[^./?#]+\.ipns\.)/i
+const OTHER_SUBDOMAIN_CID = /^[0-9a-z]{40,}$/i
 const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
 /** Same as ESCAPING_PATH in lib/media/remote-media.ts: a path that could leave its CID. */
 const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
@@ -35,13 +35,13 @@ const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
 export function ipfsCidOf(input) {
   const trimmed = input.trim()
   if (CANONICAL_CID.test(trimmed)) return trimmed
-  // Credential-bearing URLs are refused by the apps outright.
-  if (/^https?:\/\/[^/?#\\]*@/i.test(trimmed)) return null
-  for (const pattern of IPFS_REFERENCES) {
-    const match = pattern.exec(trimmed)
-    if (match && CANONICAL_CID.test(match[1])) return ESCAPING_PATH.test(match[2]) ? null : match[1]
-  }
-  return null
+  // Credential-bearing URLs and IPNS names are refused by the apps outright.
+  if (/^https?:\/\/[^/?#\\]*@/i.test(trimmed) || IPNS.test(trimmed)) return null
+  const cidIn = (match) => (CANONICAL_CID.test(match[1]) && !ESCAPING_PATH.test(match[2]) ? match[1] : null)
+  const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
+  if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) return cidIn(subdomain)
+  const pathRef = IPFS_PROTOCOL.exec(trimmed) ?? PATH_GATEWAY.exec(trimmed)
+  return pathRef ? cidIn(pathRef) : null
 }
 
 /** Same form as canonicalHttpsUrl in lib/media/remote-media.ts; a test holds them together. */

@@ -41,20 +41,23 @@ export function proxiedImageUrl(url: string, size: ProxyImageSize = 'full'): str
 }
 
 /** `ipfs://CID…`, a subdomain gateway `https://CID.ipfs.host…`, a path gateway `https://host/ipfs/CID…`. */
-const IPFS_REFERENCES = [
-  /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)([^?#]*)/i,
-  // The host's CID is the root: on a subdomain gateway `/ipfs/X/…` is a path inside it.
-  /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+([^?#]*)/i,
-  /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i,
-]
+const IPFS_PROTOCOL = /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)([^?#]*)/i
+const SUBDOMAIN_GATEWAY = /^https?:\/\/([^./?#]+)\.ipfs\.[^/?#]+([^?#]*)/i
+const PATH_GATEWAY = /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i
+/** IPNS names are mutable: one can point at any content, so none can be checked against the denylist. */
+const IPNS = /^ipns:|^https?:\/\/(?:[^/?#]+\/ipns\/|[^./?#]+\.ipns\.)/i
 
 /**
  * The two CID spellings Yappr writes and the denylist holds: CIDv0 (`Qm…`,
  * base58btc, case-sensitive) and CIDv1 in base32 (`b…`, case-insensitive).
  */
 const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
-/** Any other multibase spelling (`z…`, `f…`, `k…`) of a CID: long and alphanumeric. */
-const OTHER_CID = /^[0-9a-z]{40,}$/i
+/**
+ * A subdomain gateway's label in another DNS-safe multibase (`k…` base36,
+ * `f…` base16): long and alphanumeric. Shorter labels (`docs.ipfs.tech`)
+ * are ordinary websites.
+ */
+const OTHER_SUBDOMAIN_CID = /^[0-9a-z]{40,}$/i
 
 /**
  * A path that could leave its CID once a browser or gateway normalizes it:
@@ -79,19 +82,27 @@ function ipfsReferenceOf(url: string): IpfsReference | null {
   const trimmed = url.trim()
   // Userinfo (`a@b`) makes the authority ambiguous to a pattern: refuse it
   // outright. Yappr never writes credentials into a media URL.
-  if (USERINFO.test(trimmed)) return 'refused'
-  for (const pattern of IPFS_REFERENCES) {
-    const match = pattern.exec(trimmed)
-    if (!match) continue
-    if (CANONICAL_CID.test(match[1])) return ESCAPING_PATH.test(match[2]) ? 'refused' : { cid: match[1], path: match[2] }
-    if (/^ipfs:/i.test(trimmed) || OTHER_CID.test(match[1]) || match[1].includes('%')) return 'refused'
+  if (USERINFO.test(trimmed) || IPNS.test(trimmed)) return 'refused'
+  // The host's CID is the root: on a subdomain gateway `/ipfs/X/…` is a path inside it.
+  const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
+  if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) {
+    return referenceTo(subdomain[1], subdomain[2])
   }
+  // After `ipfs://` and a path gateway's `/ipfs/` only a CID can follow, so
+  // anything but the two spellings Yappr writes (base64url `u…`, `z…`,
+  // percent-escapes…) is refused rather than guessed at.
+  const pathRef = IPFS_PROTOCOL.exec(trimmed) ?? PATH_GATEWAY.exec(trimmed)
+  if (pathRef) return referenceTo(pathRef[1], pathRef[2])
   // Where the request really goes, once the browser and the gateway have
   // decoded it and resolved `.`/`..` (`https://ipfs.io/x/../ipfs/CID`,
   // `/%69pfs/CID`, `/ipfs/%62afy…`): if that is IPFS content, refuse it.
   // Yappr never writes such URLs, so only a way around the denylist would.
   const destination = effectiveDestination(trimmed)
   return destination !== trimmed && ipfsReferenceOf(destination) !== null ? 'refused' : null
+}
+
+function referenceTo(cid: string, path: string): IpfsReference {
+  return CANONICAL_CID.test(cid) && !ESCAPING_PATH.test(path) ? { cid, path } : 'refused'
 }
 
 /**

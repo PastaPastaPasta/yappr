@@ -72,7 +72,8 @@ describe('IPFS spellings', () => {
   it('treats only CIDs in the two spellings Yappr writes as IPFS content', () => {
     expect(ipfsCidOf('https://docs.ipfs.tech/logo.png')).toBeNull()
     expect(imageSourceFor('https://docs.ipfs.tech/logo.png').kind).toBe('proxied')
-    expect(imageSourceFor('https://example.com/ipfs/notacid.png').kind).toBe('proxied')
+    // Only a CID can follow a path gateway's /ipfs/: anything else is refused, not guessed at.
+    expect(imageSourceFor('https://example.com/ipfs/notacid.png')).toEqual({ kind: 'denied' })
   })
 
   it('refuses any other spelling of a CID, so it cannot slip past the denylist', () => {
@@ -81,9 +82,18 @@ describe('IPFS spellings', () => {
       'https://ipfs.io/ipfs/f01701220c3c4733ec8affd06cf9e9ff50ffc6bcd2ec85a6170004bb709669c31de94391a',
       'https://k2jmtxw8rjh1z69c6not3wbfllaqxlycv9mmnvh62ztxrh3edhprnl6t.ipfs.dweb.link/',
       'ipfs://bafy',
+      // base64url (`u…`) carries punctuation, which no alphabet heuristic catches.
+      'https://ipfs.io/ipfs/uAXASIJ00OJvXLJYZ46V2uRPI2G68_2AOFWMsGCPx18olnBqo',
+      'ipfs://uAXASIJ00OJvXLJYZ46V2uRPI2G68_2AOFWMsGCPx18olnBqo/a.png',
+      'https://ipfs.io/ipfs/mAXASIJ00OJvXLJYZ46V2uRPI2G68+2AOFWMsGCPx18olnBqo',
+      // IPNS names are mutable and can point at anything.
+      'https://ipfs.io/ipns/example.com/a.png',
+      'https://k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8.ipns.dweb.link/',
+      'ipns://example.com',
     ]) {
       expect(isDeniedMedia(url)).toBe(true)
       expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
+      expect(scriptCid(url)).toBeNull()
     }
   })
 

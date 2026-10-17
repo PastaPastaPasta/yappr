@@ -27,8 +27,9 @@ The list matches two things:
   `https://host/ipfs/CID/…` path gateway and any `https://CID.ipfs.host/…`
   subdomain gateway. The apps only load CIDs in the two spellings Yappr
   writes, CIDv0 (`Qm…`) and base32 CIDv1 (`b…`, matched case-insensitively);
-  any other spelling (`z…`, `f…`, `k…`) is refused outright, so it can't be
-  used to get around an entry. An entry covers everything under its CID, but
+  any other spelling (`z…`, `f…`, `k…`, `u…`) is refused outright, so it
+  can't be used to get around an entry. IPNS names (`/ipns/…`, `….ipns.…`)
+  are refused too: they are mutable and can point at anything. An entry covers everything under its CID, but
   not the same file wrapped in a new directory, which has a different root
   CID: list that CID too.
 - **Any other https URL, by the sha256 of its canonical form**: trimmed, with
