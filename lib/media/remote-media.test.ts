@@ -107,6 +107,9 @@ describe('IPFS spellings', () => {
 
   it('refuses a percent-encoded IPFS reference, which a gateway would decode to listed content', () => {
     for (const url of [
+      `https://ipfs.io/unused/../ipfs/${CID_V1}`,
+      `https://ipfs.io/unused/%2e%2e/ipfs/${CID_V1}`,
+      `https://ipfs.io/unused\\..\\ipfs/${CID_V1}`,
       `https://ipfs.io/ipfs/%62${CID_V1.slice(1)}`,
       `https://ipfs.io/%69pfs/${CID_V1}`,
       `https://ipfs.io/%69pfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy`,
@@ -116,6 +119,9 @@ describe('IPFS spellings', () => {
       expect(scriptCid(url)).toBeNull()
     }
     expect(imageSourceFor('https://cdn.example/a%20b.png').kind).toBe('proxied')
+    // An ordinary site's dot segments or encoded slashes stay ordinary (Firebase Storage paths use %2F).
+    expect(imageSourceFor('https://firebasestorage.googleapis.com/v0/b/x/o/images%2Fa.jpg?alt=media').kind).toBe('proxied')
+    expect(imageSourceFor('https://cdn.example/a/../b.png').kind).toBe('proxied')
   })
 
   it('drops a gateway query string from the IPFS path', () => {

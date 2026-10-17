@@ -10,6 +10,7 @@ import { NoSymbolIcon } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
 import { resolveUserDetailsBatch, type UserDetails } from '@/lib/utils/resolve-user-details'
+import { useNotificationStore } from '@/lib/stores/notification-store'
 
 export function BlockedUsersSettings() {
   const { user } = useAuth()
@@ -64,6 +65,7 @@ export function BlockedUsersSettings() {
       if (result.success) {
         // Remove from local state
         setBlockedUsers(prev => prev.filter(u => u.id !== blockedUserId))
+        useNotificationStore.getState().allowActor(blockedUserId)
         toast.success('User unblocked')
       } else {
         throw new Error(result.error || 'Failed to unblock user')

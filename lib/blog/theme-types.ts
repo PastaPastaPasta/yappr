@@ -233,7 +233,9 @@ export const FORBIDDEN_CSS_PATTERN = /(?:url\s*\(|image-set\s*\(|src\s*\(|expres
  * past the media rules or the takedown denylist) and running nothing.
  */
 export function isSafeCssValue(value: string): boolean {
-  if (/[;{}]/.test(value)) return false
+  // Backslash escapes (`u\72l(`) and comments (`ur/**/l(`) could spell a
+  // forbidden function the pattern below can't see.
+  if (/[;{}\\]|\/\*/.test(value)) return false
   return !FORBIDDEN_CSS_PATTERN.test(value)
 }
 

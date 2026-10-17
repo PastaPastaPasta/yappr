@@ -26,6 +26,12 @@ export function withoutBlockedActors(notification: Notification, isBlocked: (id:
   return { ...notification, from: kept[0], likers: kept, likerCount };
 }
 
+function withoutSessionBlocks(notifications: Notification[], blockedActors: string[]): Notification[] {
+  if (blockedActors.length === 0) return notifications;
+  const blocked = new Set(blockedActors);
+  return notifications.flatMap(n => withoutBlockedActors(n, id => blocked.has(id)) ?? []);
+}
+
 type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'store' | 'privateFeed';
 
 /**
@@ -67,11 +73,21 @@ interface NotificationState {
   // Read state (persisted)
   readIds: string[];
 
+  /**
+   * Actors blocked during this session. A fetch that was already running when
+   * the block landed must not bring them back, so every ingest filters them
+   * (per liker, as {@link withoutBlockedActors}). Not persisted: each fetch
+   * filters blocks itself; this only covers the ones in flight.
+   */
+  blockedActors: string[];
+
   // Actions
   setNotifications: (notifications: Notification[]) => void;
   addNotifications: (notifications: Notification[]) => void;
-  /** Drop the held notifications from one actor (the viewer just blocked them). */
+  /** Drop the held notifications from one actor, and keep them out of fetches still running (the viewer just blocked them). */
   removeFromActor: (actorId: string) => void;
+  /** The viewer unblocked this actor: their new notifications show again. */
+  allowActor: (actorId: string) => void;
   setFilter: (filter: NotificationFilter) => void;
   markAsRead: (id: string) => void;
   /**
@@ -99,12 +115,13 @@ export const useNotificationStore = create<NotificationState>()(
       isLoading: false,
       hasFetchedOnce: false,
       readIds: [],
+      blockedActors: [],
       dmUnreadCount: 0,
 
       // Actions
       setNotifications: (notifications) => {
         const readIdsSet = new Set(get().readIds);
-        const withReadStatus = notifications.map(n => ({
+        const withReadStatus = withoutSessionBlocks(notifications, get().blockedActors).map(n => ({
           ...n,
           read: readIdsSet.has(n.id)
         }));
@@ -117,7 +134,7 @@ export const useNotificationStore = create<NotificationState>()(
         const readIdsSet = new Set(state.readIds);
 
         // Filter out duplicates and set read status
-        const uniqueNew = newNotifications
+        const uniqueNew = withoutSessionBlocks(newNotifications, state.blockedActors)
           .filter(n => !existingIds.has(n.id))
           .map(n => ({
             ...n,
@@ -135,10 +152,15 @@ export const useNotificationStore = create<NotificationState>()(
 
       removeFromActor: (actorId) => {
         const state = get();
-        const notifications = state.notifications.flatMap(n => withoutBlockedActors(n, id => id === actorId) ?? []);
-        if (notifications.some((n, i) => n !== state.notifications[i]) || notifications.length !== state.notifications.length) {
-          set({ notifications });
-        }
+        set({
+          notifications: withoutSessionBlocks(state.notifications, [actorId]),
+          blockedActors: state.blockedActors.includes(actorId) ? state.blockedActors : [...state.blockedActors, actorId],
+        });
+      },
+
+      allowActor: (actorId) => {
+        const { blockedActors } = get();
+        if (blockedActors.includes(actorId)) set({ blockedActors: blockedActors.filter(id => id !== actorId) });
       },
 
       setFilter: (filter) => set({ filter }),
@@ -182,6 +204,7 @@ export const useNotificationStore = create<NotificationState>()(
       clearNotifications: () => set({
         notifications: [],
         lastFetchTimestamp: 0,
+        blockedActors: [],
         dmUnreadCount: 0
       }),
 

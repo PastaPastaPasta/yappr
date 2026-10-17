@@ -127,3 +127,24 @@ describe('withoutBlockedActors', () => {
       .toEqual({ from: 'carol', likers: ['carol'], likerCount: 3 })
   })
 })
+
+describe('blocks during this session', () => {
+  it('keep a fetch that was already running from bringing a blocked actor back, until they are unblocked', () => {
+    useNotificationStore.setState({ notifications: [], readIds: [], blockedActors: [] })
+    store().removeFromActor('from-a')
+
+    store().setNotifications([notification('a', 'follow', 2), notification('b', 'follow', 1)])
+    store().addNotifications([{ ...notification('a2', 'like', 3), from: { id: 'from-a' } as Notification['from'] }])
+    expect(store().notifications.map(n => n.id)).toEqual(['b'])
+
+    store().allowActor('from-a')
+    store().addNotifications([notification('a', 'follow', 2)])
+    expect(store().notifications.map(n => n.id)).toEqual(['a', 'b'])
+  })
+
+  it('are forgotten when the account changes', () => {
+    store().removeFromActor('from-a')
+    store().clearNotifications()
+    expect(store().blockedActors).toEqual([])
+  })
+})

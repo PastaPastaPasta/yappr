@@ -52,7 +52,9 @@ export function useBlock(targetUserId: string, options: UseBlockOptions = {}): U
         logger.error('useBlock: status check after unblock failed:', error)
         return null
       })
-      return after?.isBlocked ? { success: false, error: STILL_BLOCKED_BY_LIST } : result
+      if (after?.isBlocked) return { success: false, error: STILL_BLOCKED_BY_LIST }
+      useNotificationStore.getState().allowActor(subjectId)
+      return result
     },
     onMessage: (result) => (result.autoRevoked ? 'User blocked and private feed access revoked' : 'User blocked'),
     offMessage: 'User unblocked',
@@ -124,6 +126,7 @@ export function useBlockProvenance(targetUserId: string | undefined): UseBlockPr
       const { blockService } = await import('@/lib/services/block-service')
       const result = await blockService.unblockUser(viewerId, targetUserId)
       if (!result.success) throw new Error(result.error || 'Failed to unblock user')
+      if (inheritedFrom === null) useNotificationStore.getState().allowActor(targetUserId)
     } catch (error) {
       logger.error('useBlockProvenance: unblock failed:', error)
       toast.error('Failed to update block status')

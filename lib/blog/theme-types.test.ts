@@ -15,6 +15,8 @@ describe('isSafeCssValue', () => {
       'image-set("data:image/png;base64,AAAA" 1x)',
       '-webkit-image-set("https://ipfs.io/ipfs/bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va" 1x)',
       'src("https://tracker.example/p.png")',
+      'u\\72l("https://ipfs.io/ipfs/bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va")',
+      'ur/**/l("https://tracker.example/p.png")',
     ]) {
       expect(isSafeCssValue(value)).toBe(false)
     }

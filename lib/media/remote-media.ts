@@ -79,10 +79,29 @@ function ipfsReferenceOf(url: string): IpfsReference | null {
     if (CANONICAL_CID.test(match[1])) return ESCAPING_PATH.test(match[2]) ? 'refused' : { cid: match[1], path: match[2] }
     if (/^ipfs:/i.test(trimmed) || OTHER_CID.test(match[1]) || match[1].includes('%')) return 'refused'
   }
-  // A gateway decodes the path before routing it, so `/%69pfs/CID` or
-  // `/ipfs/%62afy…` reaches IPFS content too. Yappr never writes those.
-  const decoded = percentDecoded(trimmed)
-  return decoded !== trimmed && ipfsReferenceOf(decoded) !== null ? 'refused' : null
+  // Where the request really goes, once the browser and the gateway have
+  // decoded it and resolved `.`/`..` (`https://ipfs.io/x/../ipfs/CID`,
+  // `/%69pfs/CID`, `/ipfs/%62afy…`): if that is IPFS content, refuse it.
+  // Yappr never writes such URLs, so only a way around the denylist would.
+  const destination = effectiveDestination(trimmed)
+  return destination !== trimmed && ipfsReferenceOf(destination) !== null ? 'refused' : null
+}
+
+/**
+ * An http(s) URL as the server ends up routing it: percent-decoded,
+ * backslashes as slashes, `.` and `..` segments resolved; query and
+ * fragment dropped. Anything else is returned unchanged.
+ */
+function effectiveDestination(url: string): string {
+  const match = /^(https?:\/\/)([^?#]*)/i.exec(url)
+  if (!match) return url
+  const [host, ...segments] = percentDecoded(match[2]).replace(/\\/g, '/').split('/')
+  const path: string[] = []
+  for (const segment of segments) {
+    if (segment === '..') path.pop()
+    else if (segment !== '.') path.push(segment)
+  }
+  return `${match[1]}${[host, ...path].join('/')}`
 }
 
 function percentDecoded(url: string): string {
