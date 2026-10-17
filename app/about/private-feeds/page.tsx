@@ -2,6 +2,7 @@
 
 import { LockClosedIcon, KeyIcon, ShieldCheckIcon, QuestionMarkCircleIcon, CpuChipIcon, ArrowPathIcon, ExclamationTriangleIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
 import { InfoPage } from '@/components/layout/info-page'
+import { SOURCE_URL } from '@/lib/legal'
 import { contentLimits, privateFeedKeyFields } from '@/lib/contract-topology'
 
 /** A full-length post's characters; at about a byte each, 1,000 follower copies cost this many KB. */
@@ -145,7 +146,8 @@ export default function PrivateFeedsPage() {
               <p>
                 The answer is cryptography. Instead of controlling <em>who can access</em> the data, we control{' '}
                 <em>who can understand</em> it. Private posts are encrypted before they&apos;re stored on the
-                blockchain. Only approved followers have the keys to decrypt them.
+                blockchain. Only approved followers have the keys to decrypt them, plus the moderators, if someone reports
+                a private post.
               </p>
               <p>
                 But this creates new problems. How do you share keys with hundreds of followers efficiently?
@@ -1084,7 +1086,7 @@ export default function PrivateFeedsPage() {
               <h2 className="text-xl font-semibold mb-4">Resources</h2>
               <div className="grid md:grid-cols-2 gap-4">
                 <a
-                  href="https://github.com/pastapastapasta/yappr/blob/master/docs/YAPPR_PRIVATE_FEED_SPEC_v1.md"
+                  href={`${SOURCE_URL}/blob/master/docs/YAPPR_PRIVATE_FEED_SPEC.md`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
@@ -1095,7 +1097,7 @@ export default function PrivateFeedsPage() {
                   </p>
                 </a>
                 <a
-                  href="https://github.com/pastapastapasta/yappr"
+                  href={SOURCE_URL}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block bg-gray-50 dark:bg-gray-950 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"

@@ -16,6 +16,7 @@ import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { ResetPrivateFeedDialog } from './reset-private-feed-dialog'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { useWalletSession } from '@/components/auth/wallet-encryption-key-prompt'
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/lib/legal'
 
 interface PrivateFeedSettingsProps {
   /** If true, automatically open the reset dialog when component mounts */
@@ -324,7 +325,8 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                     </p>
                     <p className="text-sm text-amber-700 dark:text-amber-300">
                       Your private feed is approaching its maximum revocation limit.
-                      Contact support for migration options.
+                      Once it&apos;s reached, you can&apos;t remove more followers from this feed. Email{' '}
+                      <a href={SUPPORT_MAILTO} className="underline">{SUPPORT_EMAIL}</a> if you need help.
                     </p>
                   </div>
                 </div>
@@ -571,6 +573,10 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 <li className="flex gap-2">
                   <span className="text-yappr-500">•</span>
                   Revoked followers lose access to new private posts
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-yappr-500">•</span>
+                  If someone reports a private post, the moderators can read it and your earlier private posts
                 </li>
                 <li className="flex gap-2">
                   <span className="text-yappr-500">•</span>

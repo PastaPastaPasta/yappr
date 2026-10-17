@@ -33,6 +33,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import * as Tooltip from '@radix-ui/react-tooltip'
+import { LegalLinks } from './legal-links'
 
 export function MobileBottomNav() {
   const pathname = usePathname()
@@ -204,6 +205,8 @@ export function MobileBottomNav() {
               </button>
             </div>
           )}
+
+          <LegalLinks className="mt-4" onNavigate={() => setMoreMenuOpen(false)} />
         </div>
       </div>
 

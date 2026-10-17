@@ -1,78 +1,211 @@
 'use client'
 
+import Link from 'next/link'
 import { DocumentTextIcon } from '@heroicons/react/24/outline'
-import { InfoPage, InfoSection, Prose, NetworkNotice, testNetwork } from '@/components/layout/info-page'
+import { InfoPage, InfoSection, Prose, BulletList, NetworkNotice, testNetwork } from '@/components/layout/info-page'
+import { LEGAL_UPDATED, MINIMUM_AGE, SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/lib/legal'
+
+const COMMUNITY_RULES = [
+  { title: 'Nothing illegal', body: 'Don’t post, sell or link to anything that is illegal where you or the people you share it with live.' },
+  {
+    title: 'No sexual content involving minors',
+    body: 'Zero tolerance. It is removed, the account is banned, and it may be reported to the authorities.',
+  },
+  { title: 'No harassment or bullying', body: 'Don’t target, insult, intimidate or pile on other people, and don’t publish someone’s private information.' },
+  { title: 'No hate', body: 'Don’t attack people for who they are, such as their race, ethnicity, religion, gender, sexuality or disability.' },
+  { title: 'No violence or threats', body: 'Don’t threaten, incite or glorify violence.' },
+  { title: 'No promotion of self-harm', body: 'Don’t encourage suicide or self-injury.' },
+  { title: 'No spam or scams', body: 'No repetitive or misleading content, fake giveaways, phishing or fraud.' },
+  { title: 'No impersonation', body: 'Don’t pretend to be another person or organisation.' },
+  {
+    title: 'Mark sensitive content',
+    body: 'Mark posts with nudity, gore or other graphic content as sensitive, so Yappr hides them until each viewer chooses to see them.',
+  },
+  { title: 'Respect other people’s rights', body: 'Only post what you have the right to share, including other people’s photos, writing and trademarks.' },
+]
 
 export default function TermsPage() {
-  const faucetNetwork = testNetwork()
+  const network = testNetwork()
   return (
-    <InfoPage icon={DocumentTextIcon} title="Terms of Use" subtitle="Understanding how Yappr works as a decentralized platform" updated="January 2025">
+    <InfoPage icon={DocumentTextIcon} title="Terms of Use" subtitle="The rules for using Yappr, in plain words" updated={LEGAL_UPDATED}>
       <NetworkNotice>
-        {({ name, where }) => (
+        {({ where }) => (
           <>
-            Yappr is currently running on {where}. This means all data, including your posts, profile, and social connections, may
-            be wiped at any time when the network resets or when we migrate to mainnet. Do not rely on {name} data being permanent.
+            This release of Yappr runs on {where}. Credits and test DASH have no monetary value. The network can be reset, and
+            Yappr&apos;s mainnet launch will start fresh, so don&apos;t count on anything you post here being kept.
           </>
         )}
       </NetworkNotice>
 
-      <InfoSection title="No Central Authority">
-        <Prose>
-          Yappr is open-source software that connects directly to Dash Platform, a decentralized blockchain network. There is no
-          company, organization, or central authority operating this platform. No one controls the network, moderates content, or
-          has special access to user data. The software is provided as a tool for interacting with the Dash Platform blockchain.
-        </Prose>
-      </InfoSection>
-
-      <InfoSection title="You Are Responsible">
+      <InfoSection title="About these terms">
         <Prose className="space-y-3">
-          <p>When you use Yappr, you are directly interacting with a blockchain. This comes with important responsibilities:</p>
-          <ul className="list-disc list-inside space-y-2 ml-2">
+          <p>
+            These terms cover the Yappr app at yap.pr and the official Yappr apps. &quot;We&quot; means the people who maintain
+            Yappr. By signing in or posting, you agree to these terms and the <a href="#community-rules" className="underline">Community Rules</a>{' '}
+            below. Our <Link href="/privacy" className="underline">Privacy Policy</Link> explains what is public and what is not.
+          </p>
+        </Prose>
+      </InfoSection>
+
+      <InfoSection title="What Yappr is">
+        <Prose className="space-y-3">
+          <p>
+            Yappr is open-source software that runs in your browser and reads and writes to Dash Platform, a public, shared network.
+            Your posts, likes, follows and profile are records on Dash Platform, not on our servers. We don&apos;t run servers that
+            store them, and we can&apos;t edit what you write.
+          </p>
+          <p>
+            Other apps can read the same records, and other people can build their own versions of Yappr. These terms cover the apps we
+            publish, not anyone else&apos;s.
+          </p>
+        </Prose>
+      </InfoSection>
+
+      <InfoSection title="Who can use Yappr">
+        <Prose>
+          You must be at least {MINIMUM_AGE} years old, and able to agree to these terms where you live. Don&apos;t use Yappr if the
+          law, or a ban from Yappr&apos;s moderators, says you can&apos;t.
+        </Prose>
+      </InfoSection>
+
+      <InfoSection title="Your identity and keys">
+        <Prose>
+          <BulletList>
             <li>
-              <strong>Your private key is your identity.</strong> If you lose it, there is no way to recover your account. No one can reset
-              your password or restore access.
+              <strong>Your keys are your account.</strong> You sign in with your Dash identity&apos;s private key. Nobody, including us,
+              can reset it or recover it if you lose it.
             </li>
             <li>
-              <strong>You own your content.</strong> Everything you post is signed with your private key and stored on the blockchain
-              under your identity.
+              <strong>Keep them safe.</strong> Anyone with your keys can post as you and spend your credits. Sign out on devices you
+              share.
             </li>
             <li>
-              <strong>You are responsible for your actions.</strong> Content you post reflects on you and is permanently associated
-              with your identity.
+              <strong>You are responsible for what you do with them.</strong> Everything signed with your keys is attributed to your
+              identity.
             </li>
-          </ul>
+          </BulletList>
         </Prose>
       </InfoSection>
 
-      <InfoSection title="Data Is Permanent">
-        <Prose>
-          Posts, likes, follows, and other interactions are stored on the Dash Platform blockchain. Once something is written to the
-          blockchain, it cannot be deleted or modified. Think carefully before you post. Even if content is hidden in the app
-          interface, it remains on the blockchain and can be viewed by anyone with the technical knowledge to query it directly.
+      <InfoSection title="Your content">
+        <Prose className="space-y-3">
+          <p>
+            You own what you post. Because Dash Platform is public, anyone, using Yappr or another app, can read, display, share and
+            quote it. By posting, you agree to that.
+          </p>
+          <p>
+            Treat everything you post as public and permanent. You can delete your posts and most other actions, but deleting does not
+            erase them from the network&apos;s history or from people who already saw or saved them. The{' '}
+            <Link href="/privacy" className="underline">Privacy Policy</Link> explains what deleting does.
+          </p>
         </Prose>
       </InfoSection>
 
-      <InfoSection title="No Content Moderation">
-        <Prose>
-          Because there is no central authority, there is no content moderation. No one can delete posts, ban users, or remove content
-          from the blockchain. Users have tools to manage their own experience (such as blocking), but these only affect what you see,
-          not what exists on the network. Other users and applications may still display content you&apos;ve blocked.
+      <InfoSection title="Community Rules" id="community-rules">
+        <Prose className="space-y-3">
+          <p>These rules apply to everything on Yappr: posts, replies, profiles, messages, blogs, stores, items and reviews.</p>
+          <BulletList>
+            {COMMUNITY_RULES.map((rule) => (
+              <li key={rule.title}>
+                <strong>{rule.title}.</strong> {rule.body}
+              </li>
+            ))}
+          </BulletList>
+          <p>Breaking them can get your content removed and your account warned, suspended or banned.</p>
         </Prose>
       </InfoSection>
 
-      <InfoSection title="Transaction Costs">
-        <Prose>
-          Creating posts, updating your profile, and other actions require Dash Platform credits. These credits are a form of
-          cryptocurrency used to pay for storing data on the blockchain. You are responsible for maintaining sufficient credits in
-          your identity to perform actions.{faucetNetwork && ` On ${faucetNetwork}, credits can be obtained from faucets for free.`}
+      <InfoSection title="Moderation">
+        <Prose className="space-y-3">
+          <p>
+            Yappr&apos;s social network, blogs and stores each have a moderation team, chosen in an election on Dash Platform. Each
+            team publishes a charter, and every action it takes must cite one of the charter&apos;s reasons. Moderators can:
+          </p>
+          <BulletList>
+            <li>remove posts, replies and the Yappr parts of a profile (such as the banner, website and links);</li>
+            <li>remove blogs, blog posts and comments;</li>
+            <li>remove stores, items and reviews;</li>
+            <li>warn, suspend or ban an account from the part of Yappr they moderate.</li>
+          </BulletList>
+          <p>
+            Moderation happens in the open. A removal leaves a public record of who removed what and when. Removing a post or reply
+            that is more than a week old needs the team&apos;s leader and two more moderators to agree.
+          </p>
+          <p>
+            Until a team is elected and seated, the parts of Yappr it moderates (such as posting) stay closed. We can also stop
+            showing content or media in the apps we publish when it breaks these rules or the law, but we can&apos;t remove anything
+            from Dash Platform ourselves.
+          </p>
         </Prose>
       </InfoSection>
 
-      <InfoSection title="No Warranty">
+      <InfoSection title="Reporting and takedown requests">
+        <Prose className="space-y-3">
+          <p>
+            Use <strong>Report</strong> on a post, reply or profile to send it to the moderators. Reports are public: the person you
+            report can see that you reported them, the reason you chose and any details you wrote.
+          </p>
+          <p>
+            For anything urgent or private, copyright and other legal requests, or if reporting isn&apos;t open yet, email{' '}
+            <a href={SUPPORT_MAILTO} className="underline">{SUPPORT_EMAIL}</a> with a link to the content and what is wrong with it.
+            We pass it to the right moderation team and can hide it in our apps. If a child is in danger, contact your local police
+            first.
+          </p>
+        </Prose>
+      </InfoSection>
+
+      <InfoSection title="Stores and payments">
+        <Prose className="space-y-3">
+          <BulletList>
+            <li>
+              <strong>Yappr is not a party to any sale.</strong> Stores are run by their owners. A purchase is an agreement between
+              you and the seller.
+            </li>
+            <li>
+              <strong>You pay the seller directly</strong>, from your own wallet to the address the seller lists. We never hold the
+              money, and there is no escrow, refund or chargeback through Yappr. Sort out problems with the seller.
+            </li>
+            <li>
+              <strong>Sellers are responsible</strong> for what they sell, for delivering it, and for following the law, including
+              tax, consumer protection, and shipping rules.
+            </li>
+            <li>
+              <strong>Reviews are public</strong> and tied to an order. Store moderators can remove stores, items and reviews that
+              break the Community Rules.
+            </li>
+            {network && (
+              <li>
+                <strong>On {network}, DASH has no value, but other payment addresses may be real.</strong> A seller can list addresses
+                for other cryptocurrencies. Check before you send anything of value.
+              </li>
+            )}
+          </BulletList>
+          <p>Tips work the same way: they go straight from your wallet to the address the person lists.</p>
+        </Prose>
+      </InfoSection>
+
+      <InfoSection title="Costs">
         <Prose>
-          This software is provided &quot;as is&quot; without warranty of any kind. The developers make no guarantees about availability,
-          reliability, or fitness for any particular purpose. Use at your own risk. The decentralized nature of the platform means
-          that issues cannot always be fixed or data recovered.
+          Writing to Dash Platform costs credits, paid from your identity&apos;s balance. Some actions also carry a small moderation
+          fee that goes to the elected moderators. Posting, replying and liking are paid in YAPP, Yappr&apos;s in-app token, and the
+          network fee for those is covered for you. YAPP has no monetary value and can&apos;t be sent to other people.
+          {network && ` On ${network}, credits are free: you can get them through the identity bridge linked from the sign-in screen.`}
+        </Prose>
+      </InfoSection>
+
+      <InfoSection title="No warranty">
+        <Prose>
+          Yappr is free, open-source software provided &quot;as is&quot;, without any warranty. It may have bugs, be unavailable, or
+          change. Because it runs on a public network that nobody fully controls, mistakes can&apos;t always be undone and data
+          can&apos;t always be recovered. To the extent the law allows, we are not liable for any loss that comes from using Yappr,
+          including lost keys, lost funds, or content posted by others.
+        </Prose>
+      </InfoSection>
+
+      <InfoSection title="Changes and contact">
+        <Prose>
+          We may update these terms. The date below shows the last change, and continuing to use Yappr after a change means you accept
+          it. Questions: <a href={SUPPORT_MAILTO} className="underline">{SUPPORT_EMAIL}</a>.
         </Prose>
       </InfoSection>
     </InfoPage>

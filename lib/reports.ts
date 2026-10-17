@@ -28,6 +28,7 @@ import { declaredActionFee, reportShape, reportsWithdrawOnlyWhilePending, type T
 import { categorizeError, extractErrorMessage, hasConsensusCode, isDeleteConstraintError, isReferenceNotFoundError } from './error-utils'
 import { normalizeBytes } from './bytes'
 import { identifierToBase58 } from './services/sdk-helpers'
+import { SUPPORT_EMAIL } from './legal'
 
 export interface ReportReason {
   /** The `reason` value stored on chain; fixed once the contract is registered. */
@@ -78,10 +79,10 @@ export const ABOUT_PROFILE = 1
 
 /**
  * Where reports go when the chain cannot carry them: the team's email
- * (`support@yap.pr`, the address the mobile apps use), for a private post no
- * moderator holds an encryption key to read, or anything urgent.
+ * (the support address), for a private post no moderator holds an
+ * encryption key to read, or anything urgent.
  */
-export const MODERATION_EMAIL = 'support@yap.pr'
+export const MODERATION_EMAIL = SUPPORT_EMAIL
 
 /** A `mailto:` for reporting `target` by email, naming it and the reason (never the content). */
 export function reportEmailHref(target: { kind: ReportTargetKind; targetId: string }, reasonCode: number): string {

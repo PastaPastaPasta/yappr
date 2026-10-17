@@ -70,13 +70,15 @@ interface InfoSectionProps {
   icon?: Icon
   /** Icon colour; the default is neutral. */
   iconClassName?: string
+  /** Anchor, for links straight to this section. */
+  id?: string
   children: ReactNode
 }
 
 /** A titled section of an InfoPage; body copy is styled by the page. */
-export function InfoSection({ title, icon: SectionIcon, iconClassName, children }: InfoSectionProps) {
+export function InfoSection({ title, icon: SectionIcon, iconClassName, id, children }: InfoSectionProps) {
   return (
-    <section>
+    <section id={id} className={id ? 'scroll-mt-16' : undefined}>
       {SectionIcon ? (
         <div className="flex items-center gap-2 mb-3">
           <SectionIcon className={cn('h-5 w-5 text-gray-500', iconClassName)} />
@@ -93,6 +95,11 @@ export function InfoSection({ title, icon: SectionIcon, iconClassName, children 
 /** Body copy inside an InfoSection. */
 export function Prose({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn('text-gray-600 dark:text-gray-400 leading-relaxed', className)}>{children}</div>
+}
+
+/** A bulleted list inside Prose. */
+export function BulletList({ children }: { children: ReactNode }) {
+  return <ul className="list-disc pl-5 space-y-2">{children}</ul>
 }
 
 /** The networks that are not mainnet. */

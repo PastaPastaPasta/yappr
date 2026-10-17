@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useId, useRef } from 'react'
+import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
@@ -11,6 +12,7 @@ import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { identityBridgeUrl } from '@/lib/identity-bridge'
 import { getConfiguredNetwork } from '@/lib/constants'
+import { COMMUNITY_RULES_HREF, MINIMUM_AGE } from '@/lib/legal'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { KeyLoginForm } from './key-login-form'
@@ -22,6 +24,15 @@ function newUserLink(): { href: string; label: string } {
   return getConfiguredNetwork() === 'mainnet'
     ? { href: DASH_WALLET_DOWNLOAD_URL, label: 'Get the Dash wallet' }
     : { href: identityBridgeUrl(), label: 'Create a Dash identity' }
+}
+
+/** A legal page opened in a new tab, so the sign-in under way is not lost. */
+function ConsentLink({ href, children }: { href: string; children: string }) {
+  return (
+    <Link href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-gray-700 dark:hover:text-gray-200">
+      {children}
+    </Link>
+  )
 }
 
 /** Wallet sign-in is offered only where App Connect is set up on this build. */
@@ -181,6 +192,12 @@ export function LoginModal() {
                   </AnimatePresence>
                 </div>
               )}
+
+              <p className="mt-5 text-xs text-center text-gray-500 dark:text-gray-400">
+                By continuing, you agree to the <ConsentLink href="/terms">Terms</ConsentLink> and{' '}
+                <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink> and confirm you are {MINIMUM_AGE} or
+                older. The <ConsentLink href="/privacy">Privacy Policy</ConsentLink> explains what is public.
+              </p>
             </div>
           </motion.div>
           </Dialog.Content>
