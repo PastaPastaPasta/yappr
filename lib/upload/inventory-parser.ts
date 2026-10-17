@@ -105,6 +105,7 @@ const COLUMN_ALIASES: Record<Column, string[]> = {
   subcategory: ['subcategory', 'subcat', 'sub_category'],
   itemName: ['item name', 'item_name', 'itemname', 'name', 'title', 'product', 'product name'],
   description: ['description', 'desc', 'details'],
+  // Marketplace `item_sku` names a variant; our `Item SKU` names the listing.
   sku: ['sku', 'item_sku', 'product_sku', 'variant sku'],
   tags: ['tags', 'keywords'],
   variant: ['variant', 'option', 'option1', 'color', 'colour', 'type'],
@@ -857,8 +858,20 @@ export function parseInventoryCSV(content: string, currency = 'USD', zones: read
   }
 
   const parsedRows: ParsedInventoryRow[] = []
-  // A group's title, for its later rows (Shopify names a product on its first row only).
-  const groupTitles = new Map<string, string>()
+  // Product fields may appear on just one row. Resolve them before parsing
+  // prices so a blank currency cell never changes a combination's units.
+  const groupFields = new Map<string, { title: string; currency: string; itemSku: string }>()
+  for (const row of csvRows.slice(1)) {
+    const cell = (column: Column): string => row[columns.fields[column] ?? -1] ?? ''
+    const group = cell('group')
+    if (!group) continue
+    const known = groupFields.get(group)
+    groupFields.set(group, {
+      title: known?.title || cell('itemName'),
+      currency: known?.currency || cell('currency'),
+      itemSku: known?.itemSku || cell('itemSku'),
+    })
+  }
 
   for (let i = 1; i < csvRows.length; i++) {
     const row = csvRows[i]
@@ -868,15 +881,15 @@ export function parseInventoryCSV(content: string, currency = 'USD', zones: read
     const getValue = (column: Column): string => cell(columns.fields[column])
 
     const group = getValue('group') || undefined
-    const itemName = getValue('itemName') || (group ? groupTitles.get(group) ?? '' : '')
+    const defaults = group ? groupFields.get(group) : undefined
+    const itemName = getValue('itemName') || defaults?.title
     if (!itemName) {
       warnings.push({ row: rowNumber, column: 'itemName', message: 'Empty item name, skipping row' })
       continue
     }
-    if (group && !groupTitles.has(group)) groupTitles.set(group, itemName)
-
-    const rowCurrency = getValue('currency').toUpperCase() || currency
-    if (!/^[A-Z]{3,8}$/.test(rowCurrency)) {
+    const rowCurrency = (getValue('currency') || defaults?.currency || currency).toUpperCase()
+    // The formatter accepts three-letter fiat/crypto codes, plus DASH.
+    if (!/^(?:[A-Z]{3}|DASH)$/.test(rowCurrency)) {
       errors.push({ row: rowNumber, column: 'currency', message: `Invalid currency: "${rowCurrency}"` })
       continue
     }
@@ -916,7 +929,7 @@ export function parseInventoryCSV(content: string, currency = 'USD', zones: read
       itemName,
       description: getValue('description') || undefined,
       sku: getValue('sku') || undefined,
-      itemSku: getValue('itemSku') || undefined,
+      itemSku: getValue('itemSku') || defaults?.itemSku || undefined,
       currency: rowCurrency,
       tags,
       variant: getValue('variant') || undefined,

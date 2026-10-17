@@ -110,6 +110,30 @@ describe('optionTypesSummary', () => {
 })
 
 describe('lossless CSV fields (#720)', () => {
+  it.each([false, true])('inherits group currency and item SKU before parsing prices (metadata last: %s)', (metadataLast) => {
+    const rows = [
+      'a,Toy,Color,Red,0.12345678,DASH,TOY-FAMILY,RED',
+      'a,,Color,Blue,0.87654321,,,BLUE',
+    ]
+    if (metadataLast) {
+      rows[0] = 'a,Toy,Color,Red,0.12345678,,,RED'
+      rows[1] = 'a,,Color,Blue,0.87654321,DASH,TOY-FAMILY,BLUE'
+    }
+    const result = parseInventoryCSV('Group,Title,Option1 Name,Option1 Value,Price,Currency,Item SKU,SKU\n' + rows.join('\n'), 'USD')
+    expect(result.errors).toEqual([])
+    const [item] = result.items
+    expect(item.errors).toEqual([])
+    expect(toStoreItemData(item)).toMatchObject({ currency: 'DASH', sku: 'TOY-FAMILY' })
+    expect(defined(item.variants).combinations.map(({ price, sku }) => ({ price, sku }))).toEqual([
+      { price: 12345678, sku: 'RED' }, { price: 87654321, sku: 'BLUE' },
+    ])
+  })
+
+  it('rejects currency labels that cannot be displayed in the import preview', () => {
+    const result = parseInventoryCSV('Title,Price,Currency\nToy,1.00,DOLLARS')
+    expect(result.errors).toEqual([{ row: 2, column: 'currency', message: 'Invalid currency: "DOLLARS"' }])
+  })
+
   it('keeps mixed currencies even when importing into a store with another default', () => {
     const originals = [
       storeItem({ id: 'dash', title: 'Dash', currency: 'DASH', basePrice: 12345678 }),
