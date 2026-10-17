@@ -44,8 +44,8 @@ const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
 export function ipfsCidOf(input) {
   const trimmed = input.trim()
   if (CANONICAL_CID.test(trimmed)) return isCanonicalCid(trimmed) ? trimmed : null
-  // Credential-bearing or non-ASCII authorities and IPNS names are refused by the apps outright.
-  if (/^https?:\/\/[^/?#\\]*(?:[@%]|[^\x21-\x7e/?#\\])/i.test(trimmed) || IPNS.test(trimmed)) return null
+  // Same as PLAIN_HTTP_AUTHORITY in lib/media/remote-media.ts: any other http(s) shape, and IPNS names, are refused by the apps outright.
+  if ((/^https?:/i.test(trimmed) && !/^https?:\/\/[a-z0-9.-]+(?::\d+)?(?:[/?#]|$)/i.test(trimmed)) || IPNS.test(trimmed)) return null
   const cidIn = (match) => (isCanonicalCid(match[1]) && !ESCAPING_PATH.test(match[2]) ? match[1] : null)
   const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
   if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) return cidIn(subdomain)

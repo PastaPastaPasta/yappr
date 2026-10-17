@@ -82,12 +82,13 @@ const OTHER_SUBDOMAIN_CID = /^[0-9a-z]{40,}$/i
 const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
 
 /**
- * An http(s) URL whose authority a pattern can't read the way a browser
- * will: it carries `user[:pass]@`, a percent-escape, or characters outside
- * printable ASCII (hostname processing decodes escapes and maps `。` to `.`,
- * fullwidth letters to ASCII…).
+ * The only http(s) shape whose host a pattern reads exactly as a browser
+ * will: `scheme://`, a plain ASCII hostname, an optional port, then `/`, `?`,
+ * `#` or the end. Anything else (userinfo, escapes, non-ASCII that hostname
+ * processing maps to ASCII, backslashes or extra slashes before the host…)
+ * could route somewhere a pattern doesn't see, and Yappr never writes it.
  */
-const AMBIGUOUS_AUTHORITY = /^https?:\/\/[^/?#\\]*(?:[@%]|[^\x21-\x7e/?#\\])/i
+const PLAIN_HTTP_AUTHORITY = /^https?:\/\/[a-z0-9.-]+(?::\d+)?(?:[/?#]|$)/i
 
 type IpfsReference = { cid: string; path: string } | 'refused'
 
@@ -100,9 +101,7 @@ type IpfsReference = { cid: string; path: string } | 'refused'
  */
 function ipfsReferenceOf(url: string): IpfsReference | null {
   const trimmed = url.trim()
-  // Yappr never writes credentials or non-ASCII hosts into a media URL, and
-  // either can make a gateway host read differently: refuse outright.
-  if (AMBIGUOUS_AUTHORITY.test(trimmed) || IPNS.test(trimmed)) return 'refused'
+  if ((/^https?:/i.test(trimmed) && !PLAIN_HTTP_AUTHORITY.test(trimmed)) || IPNS.test(trimmed)) return 'refused'
   // The host's CID is the root: on a subdomain gateway `/ipfs/X/…` is a path inside it.
   const subdomain = SUBDOMAIN_GATEWAY.exec(trimmed)
   if (subdomain && (CANONICAL_CID.test(subdomain[1]) || OTHER_SUBDOMAIN_CID.test(subdomain[1]))) {

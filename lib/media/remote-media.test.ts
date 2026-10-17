@@ -136,6 +136,11 @@ describe('IPFS spellings', () => {
       `https://${CID_V1}%E3%80%82ipfs.dweb.link/photo%FF.png`,
       `https://ipfs.io/%69pfs/${CID_V1}/photo%FF.png`,
       `https://ipfs.io/x%2F..%2Fipfs/${CID_V1}/photo%FF.png`,
+      // Backslashes or extra slashes before the host: browsers skip them and start the host after.
+      `https://\\${CID_V1}.ipfs.dweb.link/a.png`,
+      `https:///${CID_V1}.ipfs.dweb.link/a.png`,
+      `https:\\\\${CID_V1}.ipfs.dweb.link/a.png`,
+      `https://ipfs.io\\ipfs/${CID_V1}`,
       `https://ipfs.io/ipfs/%62${CID_V1.slice(1)}`,
       `https://ipfs.io/%69pfs/${CID_V1}`,
       `https://ipfs.io/%69pfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy`,
@@ -150,6 +155,7 @@ describe('IPFS spellings', () => {
     expect(imageSourceFor('https://cdn.example/a/../b.png').kind).toBe('proxied')
     // Non-ASCII paths are fine; only the host has to be plain ASCII.
     expect(imageSourceFor('https://cdn.example/caf\u00e9.png').kind).toBe('proxied')
+    expect(imageSourceFor('https://cdn.example:8443/a.png?x=1#y').kind).toBe('proxied')
   })
 
   it('reads a subdomain gateway by its host CID, even with an /ipfs/ path', () => {
