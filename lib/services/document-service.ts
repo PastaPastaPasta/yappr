@@ -3,7 +3,7 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsHaveLanguage } from '@/lib/contract-topology';
+import { postListingWherePrefix, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsHaveLanguage } from '@/lib/contract-topology';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES, paginateFetchAll, type PaginateFetchResult } from './pagination-utils';
 
@@ -114,13 +114,15 @@ export async function queryPostsByOwnersSince(
  * The newest-first post timeline after `sinceTimestamp`: the per-language
  * `languageTimeline [language, $createdAt]` where posts carry a language (v2,
  * v9), the one global `timeline [$createdAt]` where they do not (v10, which
- * ignores `language`). An empty `language` drops the language pin.
+ * ignores `language`), keyed on the live marker on v17 (`[live, $createdAt]`,
+ * pinned `live == true`: tombstones are not on it). An empty `language` drops
+ * the language pin.
  */
 export function postTimelineClauses(
   language: string,
   sinceTimestamp = 0
 ): { where: DocumentWhereClause[]; orderBy: DocumentOrderByClause[] } {
-  const where: DocumentWhereClause[] = [['$createdAt', '>', sinceTimestamp]];
+  const where: DocumentWhereClause[] = [...postListingWherePrefix(), ['$createdAt', '>', sinceTimestamp]];
   const orderBy: DocumentOrderByClause[] = [['$createdAt', 'desc']];
 
   if (language && postsHaveLanguage()) {

@@ -222,6 +222,9 @@ export function isOwnStore(store: { ownerId: string } | null | undefined, viewer
 /** Largest encrypted order payload, in bytes (v6). */
 export const ORDER_PAYLOAD_MAX_BYTES = property('storeOrder', 'encryptedPayload').maxItems ?? 5120
 
+/** Largest sealed status note (tracking and message, with the cipher's tag), in bytes (v10). */
+export const STATUS_NOTE_MAX_BYTES = property('orderStatusUpdate', 'encryptedPayload').maxItems ?? 2560
+
 /**
  * Why an encrypted order payload of `bytes` cannot be placed on this cut, or
  * null when it fits (always null before v6).

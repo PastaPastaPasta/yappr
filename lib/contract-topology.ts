@@ -34,6 +34,7 @@ import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
 import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
 import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
 import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
+import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { storedTags } from './post-helpers'
 
@@ -559,6 +560,22 @@ const V16_DESCRIPTOR: ContractTopologyDescriptor = {
   },
 }
 
+/**
+ * v17 — `contracts/yappr-social-contract-v17.json`, the testnet production
+ * cut (docs/SOCIAL_V17.md). v16's surfaces; what changes is outside this
+ * descriptor: the global `timeline` and `tagAndTime` are keyed on the `live`
+ * marker ({@link postListingsCarryLiveMarker}), replies carry one too and
+ * their author index is keyed on it ({@link repliesCarryLiveMarker}), a like
+ * of one's own post or reply is refused (`ownerDistinctProperties('like')`),
+ * YAPP has no authority actions ({@link yappCanBeFrozen}), and private feeds
+ * are several write-once `privateFeed` documents per identity
+ * ({@link privateFeedsAreMultiple}).
+ */
+const V17_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V16_DESCRIPTOR,
+  topology: 'v17',
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -578,6 +595,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v14: V14_DESCRIPTOR,
   v15: V15_DESCRIPTOR,
   v16: V16_DESCRIPTOR,
+  v17: V17_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -590,7 +608,7 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
 
 /**
  * True on `cut` and on every cut after it, in {@link CONTRACT_TOPOLOGIES}
- * order (v2 < v9 < v10 < v11 < v12 < v13 < v14 < v15 < v16). Each later cut keeps what the
+ * order (v2 < v9 < … < v16 < v17). Each later cut keeps what the
  * earlier ones introduced unless a predicate says otherwise.
  */
 function isAtLeast(cut: ContractTopology): boolean {
@@ -684,6 +702,53 @@ export function postOwnerIndexPrefix(): Array<['live', '==', true]> {
 /** The `orderBy` entries matching {@link postOwnerIndexPrefix}. */
 export function postOwnerIndexOrderPrefix(): Array<['live', 'asc']> {
   return postOwnerIndexPrefix().map(([field]): ['live', 'asc'] => [field, 'asc'])
+}
+
+/**
+ * True when the global post listings are keyed on the `live` marker too (v17):
+ * `timeline [live, $createdAt]` and `tagAndTime [live, tags, $createdAt]`,
+ * both `skipIfAbsent`, so a tombstone (or a moderator's removal) leaves them,
+ * and the live-post total is the timeline's count at `live == true` (the type
+ * keeps no count of every post any more). Drive serves a skipping index only
+ * to a read that pins its skip property, so every read of either index pins
+ * `live == true` ({@link postListingWherePrefix}) and an unpinned one is
+ * refused outright.
+ */
+export function postListingsCarryLiveMarker(): boolean {
+  return isAtLeast('v17')
+}
+
+/**
+ * The `where` clauses every read of `post.timeline` and `post.tagAndTime`
+ * starts with: `live == true` on v17, nothing elsewhere. Only in `where`: on
+ * `tagAndTime` the tag sits between `live` and `$createdAt`, so the order
+ * names `$createdAt` alone (an orderBy over an index must be a contiguous run
+ * of its properties).
+ */
+export function postListingWherePrefix(): Array<['live', '==', true]> {
+  return postListingsCarryLiveMarker() ? [['live', '==', true]] : []
+}
+
+/**
+ * True when every live reply carries `live: true` and its tombstone leaves it
+ * out (v17, the post rule of v13): `reply.ownerAndTime` is `[live, $ownerId,
+ * $createdAt]` with `skipIfAbsent`, so a profile's Replies tab reads it with
+ * `live == true` pinned first ({@link replyOwnerIndexPrefix}). Thread reads
+ * (`repliesOf`) and the notification windows still hold tombstones: they
+ * anchor the live replies under them.
+ */
+export function repliesCarryLiveMarker(): boolean {
+  return isAtLeast('v17')
+}
+
+/** The `where` clauses every read of `reply.ownerAndTime` starts with: `live == true` on v17. Paired with {@link replyOwnerIndexOrderPrefix}. */
+export function replyOwnerIndexPrefix(): Array<['live', '==', true]> {
+  return repliesCarryLiveMarker() ? [['live', '==', true]] : []
+}
+
+/** The `orderBy` entries matching {@link replyOwnerIndexPrefix}. */
+export function replyOwnerIndexOrderPrefix(): Array<['live', 'asc']> {
+  return replyOwnerIndexPrefix().map(([field]): ['live', 'asc'] => [field, 'asc'])
 }
 
 /**
@@ -1652,11 +1717,12 @@ interface SocialDocumentSchema {
   deleteConstraints?: Record<string, unknown>
 }
 
-type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14 | typeof socialContractV15 | typeof socialContractV16
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14 | typeof socialContractV15 | typeof socialContractV16 | typeof socialContractV17
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
   switch (topologyDescriptor().topology) {
+    case 'v17': return socialContractV17
     case 'v16': return socialContractV16
     case 'v15': return socialContractV15
     case 'v14': return socialContractV14
@@ -1888,6 +1954,7 @@ export function starterGrantAmount(): bigint | null {
 
 interface YappTokenRules {
   startAsPaused?: boolean
+  freezeRules: { authorizedToMakeChange: { $type: string } }
   /** 5.0.0-beta.4 (token configuration v1, v15): false when no balance can ever leave its holder. */
   transferable?: boolean
   emergencyActionRules: { authorizedToMakeChange: { $type: string } }
@@ -1950,6 +2017,17 @@ export function yappIsLocked(): boolean {
   const token = yappToken()
   return token.transferable === false || (token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
     && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne')
+}
+
+/**
+ * True when someone may freeze, unfreeze or slash a YAPP balance (the token's
+ * `freezeRules`): the contract owner on v2 to v16. False on v17, whose manual
+ * mint, burn, freeze, unfreeze and destroy-frozen rules all name `noOne`, so
+ * the owner's YAPP moderation tools have nothing to sign and stay hidden.
+ */
+export function yappCanBeFrozen(): boolean {
+  if (!isDevnetCut()) return true
+  return yappToken().freezeRules.authorizedToMakeChange.$type !== 'noOne'
 }
 
 // ---------------------------------------------------------------------------
@@ -2049,6 +2127,23 @@ export function ownerDistinctProperties(docType: string): readonly string[] {
  */
 export function privateFeedWritesAreGated(): boolean {
   return isDevnetCut() && devnetSchemas().privateFeedGrant?.ownerRefersTo !== undefined
+}
+
+/**
+ * True when an identity keeps several write-once private feeds (v17: the
+ * `privateFeed` type, one document per feed number, replaces
+ * `privateFeedState`; docs/SOCIAL_V17.md). The private-feed client in this
+ * build speaks the single-`privateFeedState` shape only, so on such a cut it
+ * reads no feeds and offers none ({@link privateFeedClientSupported}) until
+ * the multi-feed client lands.
+ */
+export function privateFeedsAreMultiple(): boolean {
+  return isDevnetCut() && devnetSchemas().privateFeed !== undefined
+}
+
+/** True when this build's private-feed client can read and write the configured cut's feeds (every cut but v17 for now). */
+export function privateFeedClientSupported(): boolean {
+  return !privateFeedsAreMultiple()
 }
 
 /**

@@ -36,6 +36,10 @@
             "ban",
             "suspend",
             "warn"
+          ],
+          "report": [
+            "deleteDocuments",
+            "changeDocumentFields"
           ]
         },
         "interim": {
@@ -198,6 +202,20 @@
               "$createdAt": "asc"
             }
           ]
+        },
+        {
+          "name": "storeStatusAndTime",
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "status": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
         }
       ],
       "required": [
@@ -272,7 +290,7 @@
             "type": "string",
             "maxLength": 512,
             "maxBytes": 512,
-            "pattern": "^(https?|ipfs)://.+$"
+            "pattern": "^(https|ipfs)://.+$"
           },
           "description": "Product image URLs (https:// or ipfs://), at most 12, no duplicates"
         },
@@ -964,29 +982,40 @@
           "description": "Order status",
           "maxLength": 16
         },
-        "trackingNumber": {
-          "type": "string",
+        "encryptedPayload": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 2560,
           "position": 2,
-          "maxLength": 100,
-          "description": "Shipping tracking number"
+          "description": "Tracking and note, sealed like orderDelivery"
         },
-        "trackingCarrier": {
-          "type": "string",
+        "nonce": {
+          "type": "bytes",
           "position": 3,
-          "maxLength": 50,
-          "description": "Shipping carrier name"
-        },
-        "message": {
-          "type": "string",
-          "position": 4,
-          "maxLength": 500,
-          "description": "Optional message to buyer"
+          "size": 24
         }
       },
       "description": "One immutable status change for an order, written only by its seller; the order's documents are its history.",
       "additionalProperties": false,
       "documentsMutable": false,
-      "canBeDeleted": false
+      "canBeDeleted": false,
+      "propertyConstraints": {
+        "sealed": {
+          "in": [
+            {
+              "countPresent": [
+                "encryptedPayload",
+                "nonce"
+              ]
+            },
+            [
+              0,
+              2
+            ]
+          ]
+        }
+      }
     },
     "orderDelivery": {
       "type": "object",
@@ -1315,6 +1344,237 @@
       },
       "description": "Encrypted saved shipping addresses (one document per user)",
       "additionalProperties": false
+    },
+    "report": {
+      "type": "object",
+      "documentsMutable": false,
+      "moderatorAbilities": {
+        "delete": true,
+        "deleteKeepsRecord": false,
+        "changeFields": [
+          "status",
+          "resolution"
+        ]
+      },
+      "required": [
+        "$createdAt",
+        "targetOwnerId",
+        "reason"
+      ],
+      "propertyConstraints": {
+        "oneTarget": {
+          "equal": [
+            {
+              "countPresent": [
+                "storeId",
+                "itemId",
+                "storeReviewId",
+                "itemReviewId"
+              ]
+            },
+            1
+          ]
+        },
+        "otherNote": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "reason",
+                8
+              ]
+            },
+            {
+              "present": "note"
+            }
+          ]
+        },
+        "resolvedStatus": {
+          "anyOf": [
+            {
+              "absent": "resolution"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        },
+        "staysResolved": {
+          "ifThen": [
+            {
+              "present": "$old.status"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        }
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 50000000
+        }
+      },
+      "additionalProperties": false,
+      "ttl": 7776000,
+      "deleteConstraints": {
+        "pending": {
+          "absent": "status"
+        }
+      },
+      "properties": {
+        "storeId": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "moderatedDocument",
+            "documentType": "store",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "itemId": {
+          "type": "identifier",
+          "position": 1,
+          "refersTo": {
+            "type": "moderatedDocument",
+            "documentType": "storeItem",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "storeReviewId": {
+          "type": "identifier",
+          "position": 2,
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "storeReview",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "itemReviewId": {
+          "type": "identifier",
+          "position": 3,
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "itemReview",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "targetOwnerId": {
+          "type": "identifier",
+          "position": 4,
+          "distinctFrom": "$ownerId"
+        },
+        "reason": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31,
+          "position": 5
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "maxBytes": 1500,
+          "position": 6
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "position": 7
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "maxBytes": 600,
+          "position": 8
+        }
+      },
+      "indices": [
+        {
+          "name": "byStore",
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byItem",
+          "properties": [
+            {
+              "itemId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byStoreReview",
+          "properties": [
+            {
+              "storeReviewId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byItemReview",
+          "properties": [
+            {
+              "itemReviewId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byStatus",
+          "properties": [
+            {
+              "status": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byModerator",
+          "properties": [
+            {
+              "$moderatedBy": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ]
+        }
+      ]
     }
   }
 }

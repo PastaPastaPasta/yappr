@@ -9,7 +9,7 @@
  *   APP_ID      = generateId(maker, N)              the anchor contract, the App Connect app id
  *   GROUP_ID    = contractGroupId(maker, N)         registered by the anchor's own create
  *   GROUP_OWNER = maker
- *   member i    = generateId(maker, N + i)          i = 1 … 7, in APP_CONNECT_ENTRIES order
+ *   member i    = generateId(maker, N + i)          i = 1, 2, …, in APP_CONNECT_ENTRIES order
  *
  * APP_ID and GROUP_ID depend on N alone. A member's id is only N + i when
  * nothing else spends a maker nonce in between; the publisher's journal
@@ -41,18 +41,21 @@ export const APP_CONNECT_GROUP = {
  *
  * A fresh Platform genesis starts a new set: nothing of the old group survives,
  * so a replaced member is dropped and its replacement takes its place. This is
- * the set of sakura's 5.0.0-beta.6 genesis (docs/SAKURA_BETA6_DEPLOY.md), with
- * social v16 where v15 was.
+ * the testnet release set (docs/TESTNET_RELEASE.md): social v17, blog v9,
+ * pollr v8 and storefront v10 (docs/SOCIAL_V17.md), and no password-era
+ * `authVault` (R-M6; the passkey vault joins as its own member). Sakura's
+ * 5.0.0-beta.6 genesis registered the previous set (social v16 and the auth
+ * vault, docs/SAKURA_BETA6_DEPLOY.md); a sakura rehearsal of this one is a
+ * fresh registration from another maker.
  */
 export const APP_CONNECT_ENTRIES = [
   { name: 'app', file: 'yappr-app-contract.json', envKey: 'NEXT_PUBLIC_APP_CONNECT_APP_ID', sha256: 'd3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41' },
-  { name: 'social', file: 'yappr-social-contract-v16.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '63dcfa91da1e6fba0c9759101cca4c3d515c34f3ba0ac9594261f03cf2d428fa' },
+  { name: 'social', file: 'yappr-social-contract-v17.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: 'b21d61f7cbfe37d5b784bae52884c9ac0db42b87a97152d2a1519c7c2f605bcf' },
   { name: 'blocks', file: 'yappr-blocks-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID', sha256: 'ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677' },
   { name: 'dmV5', file: 'yappr-dm-contract-v5.json', envKey: 'NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID', sha256: '4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21' },
-  { name: 'blog', file: 'yappr-blog-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '79c8a4620cf1756cbc91dcb89d05fc902be74a703b24372f8cf93fe405c085a9' },
-  { name: 'pollr', file: 'pollr-contract.json', envKey: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', sha256: '4b660df8d095f931c9b422714ddb4ed7bcc629ab1ff5a9919d8df4079469b7d4' },
-  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: 'e331d37dae44847ae3f323c365fe51ad027d1358b33f8b2de06ac866f5130cc3' },
-  { name: 'authVault', file: 'yappr-auth-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID', sha256: 'cecf0ccca95ab0aff76ccf3142405dadd84c8f4c662419a727c0fa157f9738dd' },
+  { name: 'blog', file: 'yappr-blog-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '3c024b2137e15acfdbcf9fddea8002c80f1525b1c3fa81691f0f33cf31c5e5e9' },
+  { name: 'pollr', file: 'pollr-contract.json', envKey: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', sha256: 'a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347' },
+  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: '581122bbf27b76ed014c2695e6c84d4dc14a9712c9c6fb97f9f3614a4455bdca' },
 ];
 
 /**
@@ -64,6 +67,8 @@ export const RETIRED_ON_PV14 = [
   'yappr-vault-contract.json',
   'encrypted-key-backup-contract.json',
   'yappr-dm-contract.json',
+  // The password-era auth vault (R-M6, D10): the release set carries none; the passkey vault replaces it.
+  'yappr-auth-vault-contract.json',
 ];
 
 /** The env names the client reads the set from (docs/APP_CONNECT_CONTRACTS.md). */

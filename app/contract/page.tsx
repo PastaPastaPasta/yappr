@@ -13,6 +13,7 @@ import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
 import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
 import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
 import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
+import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
 import { getContractTopology } from '@/lib/constants'
 import { contentLimits } from '@/lib/contract-topology'
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
@@ -28,6 +29,7 @@ const CONTRACTS_BY_TOPOLOGY = {
   v14: socialContractV14,
   v15: socialContractV15,
   v16: socialContractV16,
+  v17: socialContractV17,
 }
 const socialContract = CONTRACTS_BY_TOPOLOGY[getContractTopology()]
 const dataContract = {

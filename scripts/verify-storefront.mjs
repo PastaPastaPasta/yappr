@@ -776,7 +776,7 @@ function selfTestV6() {
   const variants = SCHEMAS.storeItem.properties.variants;
   const list = (name) => variants.properties?.[name];
   const zoneIds = CONTRACT.documentSchemas.storeItem.properties.shippingZoneIds;
-  return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v9)`, [
+  return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v10)`, [
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (nothing costs YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['store, storeItem, storeReview and itemReview creates declare 1000M / 50M / 16M / 8M moderators fees (s5e, s12)', fee('store') === 1_000_000_000n && fee('storeItem') === 50_000_000n && fee('storeReview') === 16_000_000n && fee('itemReview') === 8_000_000n],
@@ -805,6 +805,18 @@ function selfTestV6() {
       && !indexNames('orderStatusUpdate').includes('sellerStatusUpdates')],
     ['v9 storeItem.shippingZoneIds: 1–16 unique identifiers, optional, with no reference (s26)', zoneIds?.type === 'array' && zoneIds.items?.type === 'identifier'
       && zoneIds.minItems === 1 && zoneIds.maxItems === 16 && zoneIds.uniqueItems === true && zoneIds.refersTo === undefined && !SCHEMAS.storeItem.required.includes('shippingZoneIds')],
+    // v10 (docs/STOREFRONT_V10.md): the tracking number, carrier and note leave the clear.
+    ['v10 orderStatusUpdate carries no trackingNumber, trackingCarrier or message: an optional encryptedPayload (1–2,560 B) with its 24-byte nonce, both or neither (rule sealed)',
+      ['trackingNumber', 'trackingCarrier', 'message'].every((name) => SCHEMAS.orderStatusUpdate.properties[name] === undefined)
+      && SCHEMAS.orderStatusUpdate.properties.encryptedPayload?.byteArray === true && SCHEMAS.orderStatusUpdate.properties.encryptedPayload.maxItems === 2560
+      && SCHEMAS.orderStatusUpdate.properties.nonce?.minItems === 24 && SCHEMAS.orderStatusUpdate.properties.nonce?.maxItems === 24 && !SCHEMAS.orderStatusUpdate.required.includes('encryptedPayload') && !SCHEMAS.orderStatusUpdate.required.includes('nonce')],
+    ['v10 storeItem lists a store\'s items by status on storeStatusAndTime [storeId, status, $createdAt], and its images are https or ipfs links',
+      indexProps('storeItem', 'storeStatusAndTime') === '[{"storeId":"asc"},{"status":"asc"},{"$createdAt":"asc"}]' && SCHEMAS.storeItem.properties.imageUrls.items.pattern === '^(https|ipfs)://.+$'],
+    ['v10 report is a moderated type: one target of four, a note for "something else", withdrawn only while pending, resolved through status/resolution, a 50M moderators action fee',
+      Object.keys(SCHEMAS.report?.propertyConstraints ?? {}).sort().join() === DECLARED_RULES[CONTRACT_FILE].report.slice().sort().join()
+      && JSON.stringify(SCHEMAS.report.deleteConstraints) === '{"pending":{"absent":"status"}}' && SCHEMAS.report.ttl === 7_776_000 && fee('report') === 50_000_000n
+      && JSON.stringify(SCHEMAS.report.moderatorAbilities?.changeFields) === '["status","resolution"]'
+      && JSON.stringify(moderators.moderatedDocumentTypes?.report) === '["deleteDocuments","changeDocumentFields"]'],
     ['item ratings ride storeItemRating [storeId, itemId] (s7e, s10c)', indexProps('itemReview', 'storeItemRating') === '[{"storeId":"asc"},{"itemId":"asc"}]' && index('itemReview', 'storeItemRating')?.rangeCountable === true],
   ]);
 }
@@ -822,7 +834,8 @@ function selfTestRules() {
     // the store must be active, a where condition rather than a rule.
     storeOrder: { where: { storeId: { $ownerId: 'sellerId', status: { const: 'active' } } }, constraints: [] },
     // s4d/s4e: only the seller posts status updates (the buyer is derived, not copied).
-    orderStatusUpdate: { where: { orderId: { sellerId: '$ownerId' } } },
+    // v10: the optional sealed tracking and note travel together (rule sealed).
+    orderStatusUpdate: { where: { orderId: { sellerId: '$ownerId' } }, constraints: constraints.orderStatusUpdate },
     // s5c/s6: only the identity that placed the order may review it.
     // s15/s16: reviews are moderator-deletable; so are stores and items (v6),
     // whose references are all moderatedDocument references.
@@ -830,6 +843,8 @@ function selfTestRules() {
     storeReview: { where: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } }, moderatorDeletable: true, distinctFromOwner: ['sellerId'] },
     itemReview: { where: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
     store: { moderatorDeletable: true },
+    // v10: reports are purged by the moderators and withdrawn only while pending (deleteConstraints).
+    report: { moderatorDeletable: true, constraints: constraints.report, deleteConstraints: { pending: { absent: 'status' } } },
     // s22: only an item's owner keeps its kit, which never moves; only an
     // order's seller delivers it (the buyer is derived through the order).
     itemDeliverable: { where: { itemId: { $ownerId: '$ownerId' } }, immutable: ['itemId'] },

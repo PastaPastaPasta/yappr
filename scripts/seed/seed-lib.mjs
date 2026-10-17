@@ -67,10 +67,12 @@ export const YAPP_TOKEN_POSITION = 0;
  * notification windows derive the root and parent owners). v15 (docs/SOCIAL_V15.md) writes what v14
  * writes; only its YAPP differs (not transferable, costs burn). v16 (docs/SOCIAL_V16.md) is v15 whose
  * post carries up to four tags in the typed array `tags` (one `hashtag` before) and whose like repeats
- * the post's list exactly (`SOCIAL_SHAPES.tags`). All take their profiles from DashPay plus
- * `yapprProfile`.
+ * the post's list exactly (`SOCIAL_SHAPES.tags`). v17 (docs/SOCIAL_V17.md) writes what v16 writes
+ * (`SOCIAL_SHAPES.reply` adds the reply's `live`); its YAPP can no longer be minted, so the
+ * owner-mint top-ups of provision-seed-identities.mjs and feature-seed-lib.mjs are refused there.
+ * All take their profiles from DashPay plus `yapprProfile`.
  */
-export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16'];
+export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17'];
 /** The social contract the seeder writes (the configured topology's file), read once: every limit and cost below comes from it. */
 const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT,
   `contracts/yappr-social-contract-${SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY')) ? envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') : 'v10'}.json`), 'utf8'));
@@ -470,12 +472,16 @@ export function validatePersona(persona, limits) {
   if (persona.website !== undefined) {
     const max = limits.website?.maxLength ?? 200;
     if (typeof persona.website !== 'string' || persona.website.length > max) errors.push(`website exceeds ${max} chars`);
-    else if (!/^https?:\/\/.+$/.test(persona.website)) errors.push('website must match ^https?://.+$');
+    else if (!new RegExp(limits.website?.pattern ?? '^https?://.+$').test(persona.website)) errors.push(`website must match ${limits.website?.pattern ?? '^https?://.+$'}`);
   }
   if (persona.avatarSeed === undefined || String(persona.avatarSeed).length === 0) errors.push('avatarSeed is required');
   const avatarMax = limits.avatar?.maxLength ?? 512;
-  if (avatarFieldFor({ avatarSeed: persona.avatarSeed ?? '' }).length > avatarMax) {
+  const avatarJson = avatarFieldFor({ avatarSeed: persona.avatarSeed ?? '' });
+  if (avatarJson.length > avatarMax) {
     errors.push(`avatar JSON exceeds ${avatarMax} chars (avatarSeed too long)`);
+  } else if (limits.avatar?.maxBytes !== undefined && Buffer.byteLength(avatarJson, 'utf8') > limits.avatar.maxBytes) {
+    // v17 caps the avatar at 384 bytes as well.
+    errors.push(`avatar JSON exceeds ${limits.avatar.maxBytes} bytes (avatarSeed too long)`);
   }
   return errors;
 }

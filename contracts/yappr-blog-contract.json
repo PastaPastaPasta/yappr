@@ -30,6 +30,10 @@
             "ban",
             "suspend",
             "warn"
+          ],
+          "report": [
+            "deleteDocuments",
+            "changeDocumentFields"
           ]
         },
         "interim": {
@@ -74,27 +78,31 @@
           "minLength": 1,
           "maxLength": 64,
           "position": 0,
-          "description": "Blog name"
+          "description": "Blog name",
+          "maxBytes": 192
         },
         "description": {
           "type": "string",
           "maxLength": 256,
           "position": 1,
-          "description": "Blog description"
+          "description": "Blog description",
+          "maxBytes": 768
         },
         "headerImage": {
           "type": "string",
           "maxLength": 256,
           "position": 2,
           "description": "ipfs:// URI for header/banner image",
-          "pattern": "^(https|ipfs)://.+$"
+          "pattern": "^(https|ipfs)://.+$",
+          "maxBytes": 256
         },
         "avatar": {
           "type": "string",
           "maxLength": 256,
           "position": 3,
           "description": "ipfs:// URI for blog avatar",
-          "pattern": "^(https|ipfs)://.+$"
+          "pattern": "^(https|ipfs)://.+$",
+          "maxBytes": 256
         },
         "themeConfig": {
           "type": "array",
@@ -143,12 +151,16 @@
           "name": "blogAndTime",
           "properties": [
             {
+              "live": "asc"
+            },
+            {
               "blogId": "asc"
             },
             {
               "$createdAt": "asc"
             }
-          ]
+          ],
+          "skipIfAbsent": true
         },
         {
           "name": "blogAndSlug",
@@ -166,16 +178,21 @@
           "name": "timeline",
           "properties": [
             {
+              "live": "asc"
+            },
+            {
               "$createdAt": "asc"
             }
-          ]
+          ],
+          "skipIfAbsent": true
         }
       ],
       "required": [
         "$createdAt",
         "$updatedAt",
         "blogId",
-        "slug"
+        "slug",
+        "publishedAt"
       ],
       "properties": {
         "blogId": {
@@ -195,13 +212,15 @@
           "minLength": 1,
           "maxLength": 128,
           "position": 1,
-          "description": "Post title"
+          "description": "Post title",
+          "maxBytes": 384
         },
         "subtitle": {
           "type": "string",
           "maxLength": 256,
           "position": 2,
-          "description": "Post subtitle"
+          "description": "Post subtitle",
+          "maxBytes": 768
         },
         "data0": {
           "type": "array",
@@ -237,7 +256,8 @@
           "maxLength": 256,
           "position": 7,
           "description": "ipfs:// URI for cover image",
-          "pattern": "^(https|ipfs)://.+$"
+          "pattern": "^(https|ipfs)://.+$",
+          "maxBytes": 256
         },
         "labels": {
           "type": "array",
@@ -273,22 +293,28 @@
         "deleted": {
           "type": "boolean",
           "position": 12
+        },
+        "live": {
+          "type": "boolean",
+          "const": true,
+          "position": 13
         }
       },
       "additionalProperties": false,
-      "description": "A published post. Permanent for its owner (blog v3 keeps no revision history; the contract's moderators may remove it). The author IS $ownerId, which a comment's postOwnerAndTime index reads through blogPostId, so no attested copy is carried.",
+      "description": "A published post (publishedAt is required: drafts stay on the device). Permanent for its owner: an author's delete is a tombstone, which leaves the live listings (timeline, blogAndTime). The contract's moderators may remove it. The author IS $ownerId, which a comment's postOwnerAndTime index reads through blogPostId, so no attested copy is carried.",
       "immutable": [
         "blogId",
-        {
-          "property": "publishedAt",
-          "when": {
-            "present": "$old.publishedAt"
-          }
-        },
+        "publishedAt",
         {
           "property": "deleted",
           "when": {
             "present": "$old.deleted"
+          }
+        },
+        {
+          "property": "live",
+          "when": {
+            "absent": "deleted"
           }
         }
       ],
@@ -388,21 +414,25 @@
           ]
         },
         "publishedNotAhead": {
-          "anyOf": [
+          "lessThanOrEqual": [
+            "publishedAt",
             {
-              "absent": "publishedAt"
-            },
-            {
-              "lessThanOrEqual": [
-                "publishedAt",
-                {
-                  "add": [
-                    "$updatedAt",
-                    600000
-                  ]
-                }
+              "add": [
+                "$updatedAt",
+                600000
               ]
             }
+          ]
+        },
+        "live": {
+          "equal": [
+            {
+              "countPresent": [
+                "deleted",
+                "live"
+              ]
+            },
+            1
           ]
         }
       },
@@ -490,7 +520,8 @@
           "minLength": 1,
           "maxLength": 500,
           "position": 1,
-          "description": "Comment content"
+          "description": "Comment content",
+          "maxBytes": 1500
         }
       },
       "additionalProperties": false,
@@ -573,6 +604,212 @@
       },
       "additionalProperties": false,
       "description": "A follow of a blog, one per (follower, blog). Counted and ranked so discovery reads \"most followed\" and \"trending today\" instead of crawling every blog's followers."
+    },
+    "report": {
+      "type": "object",
+      "documentsMutable": false,
+      "moderatorAbilities": {
+        "delete": true,
+        "deleteKeepsRecord": false,
+        "changeFields": [
+          "status",
+          "resolution"
+        ]
+      },
+      "required": [
+        "$createdAt",
+        "targetOwnerId",
+        "reason"
+      ],
+      "propertyConstraints": {
+        "oneTarget": {
+          "equal": [
+            {
+              "countPresent": [
+                "blogId",
+                "blogPostId",
+                "blogCommentId"
+              ]
+            },
+            1
+          ]
+        },
+        "otherNote": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "reason",
+                8
+              ]
+            },
+            {
+              "present": "note"
+            }
+          ]
+        },
+        "resolvedStatus": {
+          "anyOf": [
+            {
+              "absent": "resolution"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        },
+        "staysResolved": {
+          "ifThen": [
+            {
+              "present": "$old.status"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        }
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 50000000
+        }
+      },
+      "additionalProperties": false,
+      "ttl": 7776000,
+      "deleteConstraints": {
+        "pending": {
+          "absent": "status"
+        }
+      },
+      "properties": {
+        "blogId": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "moderatedDocument",
+            "documentType": "blog",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "blogPostId": {
+          "type": "identifier",
+          "position": 1,
+          "refersTo": {
+            "type": "moderatedDocument",
+            "documentType": "blogPost",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "blogCommentId": {
+          "type": "identifier",
+          "position": 2,
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "blogComment",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "targetOwnerId": {
+          "type": "identifier",
+          "position": 3,
+          "distinctFrom": "$ownerId"
+        },
+        "reason": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31,
+          "position": 4
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "maxBytes": 1500,
+          "position": 5
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "position": 6
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "maxBytes": 600,
+          "position": 7
+        }
+      },
+      "indices": [
+        {
+          "name": "byBlog",
+          "properties": [
+            {
+              "blogId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byPost",
+          "properties": [
+            {
+              "blogPostId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byComment",
+          "properties": [
+            {
+              "blogCommentId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byStatus",
+          "properties": [
+            {
+              "status": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byModerator",
+          "properties": [
+            {
+              "$moderatedBy": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ]
+        }
+      ]
     }
   }
 }

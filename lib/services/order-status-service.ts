@@ -6,7 +6,25 @@
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV2, storefrontIsV6 } from '../constants';
+import {
+  YAPPR_STOREFRONT_CONTRACT_ID,
+  STOREFRONT_DOCUMENT_TYPES,
+  storefrontIsV2,
+  storefrontIsV6,
+  storefrontStatusIsSealed
+} from '../constants';
+import {
+  STATUS_NOTE_CIPHERTEXT_OVERHEAD,
+  buyerOrderDeliveryKey,
+  decodeOrderStatusNote,
+  decryptOrderStatusNote,
+  encodeOrderStatusNote,
+  encryptOrderStatusNote,
+  sellerOrderDeliveryKey,
+  type OrderKeyMaterial
+} from '../crypto/digital-delivery';
+import { normalizeBytes } from '../bytes';
+import { STATUS_NOTE_MAX_BYTES } from '../storefront/storefront-contract';
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import type {
@@ -14,6 +32,91 @@ import type {
   OrderStatusUpdateDocument,
   OrderStatus
 } from '../../types';
+
+/** A status note the seller can fix (unlock the key, shorten the text): its message is written to be shown as is. */
+export class StatusNoteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StatusNoteError';
+  }
+}
+
+/**
+ * The note fields of a stored status. From v10 they are one sealed note and
+ * the plaintext fields are gone; below it they are plaintext as written.
+ */
+function sealedFields(data: OrderStatusUpdateDocument): Partial<OrderStatusUpdate> {
+  if (!storefrontStatusIsSealed()) {
+    return { trackingNumber: data.trackingNumber, trackingCarrier: data.trackingCarrier, message: data.message };
+  }
+  const encryptedPayload = normalizeBytes(data.encryptedPayload);
+  const nonce = normalizeBytes(data.nonce);
+  return encryptedPayload && nonce ? { sealedNote: { encryptedPayload, nonce } } : {};
+}
+
+/**
+ * `update` with its tracking number, carrier and message filled in from its
+ * sealed note (storefront v10). An update with no note, or one that does not
+ * open under `orderKey`, comes back unchanged. Never throws.
+ */
+export function openStatusNote(update: OrderStatusUpdate, orderKey: Uint8Array): OrderStatusUpdate {
+  if (!update.sealedNote) return update;
+  try {
+    const { encryptedPayload, nonce } = update.sealedNote;
+    const note = decodeOrderStatusNote(decryptOrderStatusNote(encryptedPayload, nonce, orderKey, update.orderId));
+    return { ...update, ...note };
+  } catch {
+    return update;
+  }
+}
+
+/** Open each update's sealed note with the key `keyFor` derives for its order (null: leave it sealed). */
+function openStatusNotes(
+  updates: ReadonlyMap<string, OrderStatusUpdate>,
+  keyFor: (orderId: string) => Uint8Array | null
+): Map<string, OrderStatusUpdate> {
+  const opened = new Map<string, OrderStatusUpdate>();
+  for (const [orderId, update] of updates) {
+    let key: Uint8Array | null = null;
+    if (update.sealedNote) {
+      try {
+        key = keyFor(update.orderId);
+      } catch {
+        key = null;
+      }
+    }
+    opened.set(orderId, key ? openStatusNote(update, key) : update);
+  }
+  return opened;
+}
+
+/** The seller's view of `updates`: sealed notes opened with the key from each order's own ECDH secret. */
+export function openStatusNotesAsSeller(
+  updates: ReadonlyMap<string, OrderStatusUpdate>,
+  orders: readonly OrderKeyMaterial[],
+  sellerPrivateKey: Uint8Array
+): Map<string, OrderStatusUpdate> {
+  const byId = new Map(orders.map((order) => [order.id, order]));
+  return openStatusNotes(updates, (orderId) => {
+    const order = byId.get(orderId);
+    return order ? sellerOrderDeliveryKey(order, sellerPrivateKey) : null;
+  });
+}
+
+/** The buyer's view of `updates`: the same key, re-derived from the buyer's key and each order's seller public key. */
+export function openStatusNotesAsBuyer(
+  updates: ReadonlyMap<string, OrderStatusUpdate>,
+  orders: ReadonlyArray<OrderKeyMaterial & { sellerId: string }>,
+  buyerPrivateKey: Uint8Array,
+  sellerPublicKeys: ReadonlyMap<string, Uint8Array>
+): Map<string, OrderStatusUpdate> {
+  const byId = new Map(orders.map((order) => [order.id, order]));
+  return openStatusNotes(updates, (orderId) => {
+    const order = byId.get(orderId);
+    const sellerKey = order ? sellerPublicKeys.get(order.sellerId) : undefined;
+    return order && sellerKey ? buyerOrderDeliveryKey(order, buyerPrivateKey, sellerKey) : null;
+  });
+}
 
 class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
   constructor() {
@@ -33,9 +136,7 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       buyerId: identifierToBase58(data.buyerId) || undefined,
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       status: data.status,
-      trackingNumber: data.trackingNumber,
-      trackingCarrier: data.trackingCarrier,
-      message: data.message
+      ...sealedFields(data)
     };
   }
 
@@ -114,6 +215,8 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       message?: string;
       /** The order's buyer (v2–v5 propertyAgreement against the order's $ownerId; v6 stores none). */
       buyerId: string;
+      /** v10: the order's key (`sellerOrderDeliveryKey`), which tracking and message are sealed under. */
+      orderKey?: Uint8Array;
     }
   ): Promise<OrderStatusUpdate> {
     const documentData: Record<string, unknown> = {
@@ -126,11 +229,45 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       status: data.status
     };
 
+    if (storefrontStatusIsSealed()) {
+      return this.createSealed(sellerId, orderId, documentData, data);
+    }
+
     if (data.trackingNumber) documentData.trackingNumber = data.trackingNumber;
     if (data.trackingCarrier) documentData.trackingCarrier = data.trackingCarrier;
     if (data.message) documentData.message = data.message;
 
     return this.create(sellerId, documentData);
+  }
+
+  /** v10: tracking and message travel only as a note sealed to the order; a status without either carries no payload. */
+  private async createSealed(
+    sellerId: string,
+    orderId: string,
+    documentData: Record<string, unknown>,
+    data: { trackingNumber?: string; trackingCarrier?: string; message?: string; orderKey?: Uint8Array }
+  ): Promise<OrderStatusUpdate> {
+    const note = {
+      trackingNumber: data.trackingNumber || undefined,
+      trackingCarrier: data.trackingCarrier || undefined,
+      message: data.message || undefined
+    };
+    if (!note.trackingNumber && !note.trackingCarrier && !note.message) {
+      return this.create(sellerId, documentData);
+    }
+    if (!data.orderKey) {
+      throw new StatusNoteError('Tracking details are sent privately to the buyer. Unlock your messaging key on this device to send them.');
+    }
+
+    const plaintext = encodeOrderStatusNote(note);
+    const sealedBytes = plaintext.length + STATUS_NOTE_CIPHERTEXT_OVERHEAD;
+    if (sealedBytes > STATUS_NOTE_MAX_BYTES) {
+      throw new StatusNoteError(`That note is too long to send (${sealedBytes.toLocaleString()} of ${STATUS_NOTE_MAX_BYTES.toLocaleString()} bytes). Shorten the tracking details or message.`);
+    }
+    const sealed = encryptOrderStatusNote(plaintext, data.orderKey, orderId);
+    const created = await this.create(sellerId, { ...documentData, ...sealed });
+    // Hand back what was sent, readable by the seller who just wrote it.
+    return { ...created, ...note, sealedNote: sealed };
   }
 
   getTrackingUrl(carrier: string, trackingNumber: string): string | null {

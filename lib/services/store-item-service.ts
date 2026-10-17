@@ -9,7 +9,7 @@
 
 import { BaseDocumentService, StaleRevisionError } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontIsV10, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '../constants';
 import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeIdentifierList, decodeStringList, encodeIdentifierList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
@@ -244,12 +244,16 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   }
 
   /**
-   * Get items for a store
+   * Get items for a store, oldest first. By default every status, for the
+   * owner's management views. `activeOnly` is for the buyer-facing listing: on
+   * v10 it reads just the active items from `storeStatusAndTime`; below v10
+   * there is no such index, so every status comes back and the caller filters.
    */
-  async getByStore(storeId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
+  async getByStore(storeId: string, options: { limit?: number; startAfter?: string; activeOnly?: boolean } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
+    const activeOnly = options.activeOnly === true && storefrontIsV10();
     const { documents } = await this.query({
-      where: [['storeId', '==', storeId]],
-      orderBy: [['storeId', 'asc'], ['$createdAt', 'asc']],
+      where: activeOnly ? [['storeId', '==', storeId], ['status', '==', 'active']] : [['storeId', '==', storeId]],
+      orderBy: activeOnly ? [['storeId', 'asc'], ['status', 'asc'], ['$createdAt', 'asc']] : [['storeId', 'asc'], ['$createdAt', 'asc']],
       limit: options.limit || 20,
       startAfter: options.startAfter
     });

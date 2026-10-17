@@ -17,17 +17,18 @@ import { Spinner } from '@/components/ui/spinner'
 import { OrderStatusBadge, DigitalBadge } from '@/components/store'
 import { OrderItemsList, StatusUpdateForm, DeliverDigitalModal } from '@/components/orders'
 import { DeliveryContents } from '@/components/digital'
-import { storefrontSupportsDigital } from '@/lib/constants'
+import { storefrontStatusIsSealed, storefrontSupportsDigital } from '@/lib/constants'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { itemDeliverableService, type SellerKit } from '@/lib/services/item-deliverable-service'
 import { fulfillOrder, FulfillmentError, KeyRecoveryError, kitsOf, loggableFulfillmentError, newerKits, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
 import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planDelivery, withHeldDeliveries, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import { storeItemService } from '@/lib/services/store-item-service'
+import { sellerOrderDeliveryKey } from '@/lib/crypto/digital-delivery'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeOrderService } from '@/lib/services/store-order-service'
-import { orderStatusService } from '@/lib/services/order-status-service'
+import { orderStatusService, openStatusNotesAsSeller, StatusNoteError } from '@/lib/services/order-status-service'
 import { getPaymentVerificationUrl } from '@/lib/services/insight-api-service'
 import { dpnsService } from '@/lib/services'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
@@ -269,7 +270,9 @@ function SellerOrdersPage() {
 
     setOrders(prev => startAfter ? [...prev, ...pageOrders] : pageOrders)
     setOrderPayloads(prev => startAfter ? new Map([...prev, ...payloadMap]) : payloadMap)
-    setOrderStatuses(prev => startAfter ? new Map([...prev, ...statusMap]) : statusMap)
+    // v10 seals tracking and message to the order: open them with the seller's key.
+    const readableStatuses = storefrontStatusIsSealed() && sellerPrivateKey ? openStatusNotesAsSeller(statusMap, pageOrders, sellerPrivateKey) : statusMap
+    setOrderStatuses(prev => startAfter ? new Map([...prev, ...readableStatuses]) : readableStatuses)
     const names = [...usernameMap].filter((entry): entry is [string, string] => entry[1] !== null)
     setBuyerUsernames(prev => startAfter ? new Map([...prev, ...names]) : new Map(names))
     // Without statuses a cancelled or refunded order looks open: hold the page back from bulk delivery.
@@ -490,12 +493,16 @@ function SellerOrdersPage() {
     try {
       const order = orders.find((candidate) => candidate.id === orderId)
       if (!order) throw new Error('Order not found')
+      // v10 seals tracking and message to the order, so the key is needed only when there is a note to send.
+      const hasNote = Boolean(trackingNumber || trackingCarrier || statusMessage)
+      const sellerPrivateKey = storefrontStatusIsSealed() && hasNote ? getEncryptionKeyBytes(user.identityId) : null
       const update = await orderStatusService.createStatusUpdate(user.identityId, orderId, {
         status: newStatus,
         trackingNumber: trackingNumber || undefined,
         trackingCarrier: trackingCarrier || undefined,
         message: statusMessage || undefined,
-        buyerId: order.buyerId
+        buyerId: order.buyerId,
+        orderKey: sellerPrivateKey ? sellerOrderDeliveryKey(order, sellerPrivateKey) : undefined
       })
 
       setOrderStatuses(prev => new Map(prev).set(orderId, update))
@@ -506,7 +513,7 @@ function SellerOrdersPage() {
       setStatusMessage('')
     } catch (error) {
       logger.error('Failed to update status:', error)
-      toast.error('Failed to update order status. Please try again.')
+      toast.error(error instanceof StatusNoteError ? error.message : 'Failed to update order status. Please try again.')
     } finally {
       setIsSubmitting(false)
     }

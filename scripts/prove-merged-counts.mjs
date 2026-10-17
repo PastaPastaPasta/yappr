@@ -152,6 +152,13 @@
  * reports it as one FAIL line, judges the fixtures by the shape checker and
  * exits 1.
  *
+ * ## Social v17 (`--contract-file contracts/yappr-social-contract-v17.json`)
+ *
+ * `--dry-run` builds and validates the v17 throwaway contract and every fixture (a reply carries
+ * `live`, the author post read pins `live == true`). The live phases still read the global
+ * timeline and tag pages as v16 does, and a self-like is now refused (distinctFrom), so they need
+ * the v17 adaptations before a live run.
+ *
  * ## Social v16 (`--contract-file contracts/yappr-social-contract-v16.json`)
  *
  * v16 (docs/SOCIAL_V16.md) is v15 whose post names up to four tags in the

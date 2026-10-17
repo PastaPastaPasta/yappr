@@ -1112,15 +1112,23 @@ describe('41200 says which product is closed (R-M24)', () => {
 
   it('names the storefront for every type the storefront contract moderates', () => {
     for (const type of Object.keys(storefrontContract.config.moderation.moderators.moderatedDocumentTypes)) {
-      expect(moderationClosedCopy(refusal(type))).toBe(MODERATION_CLOSED_COPY.storefront)
-      expect(categorizeError(refusal(type))).toBe(MODERATION_CLOSED_COPY.storefront)
+      // `report` is every moderated contract's: only the writing product names it.
+      const fallback = type === 'report' ? 'storefront' : undefined
+      expect(moderationClosedCopy(refusal(type), fallback)).toBe(MODERATION_CLOSED_COPY.storefront)
+      if (!fallback) expect(categorizeError(refusal(type))).toBe(MODERATION_CLOSED_COPY.storefront)
     }
   })
 
   it('names blogs for every type the blog contract moderates', () => {
     for (const type of Object.keys(blogContract.config.moderation.moderators.moderatedDocumentTypes)) {
-      expect(moderationClosedCopy(refusal(type))).toBe(MODERATION_CLOSED_COPY.blog)
+      expect(moderationClosedCopy(refusal(type), type === 'report' ? 'blog' : undefined)).toBe(MODERATION_CLOSED_COPY.blog)
     }
+  })
+
+  it('names the writing product for a report, which every moderated contract takes', () => {
+    expect(moderationClosedCopy(refusal('report'))).toBe(MODERATION_CLOSED_COPY.social)
+    expect(moderationClosedCopy(refusal('report'), 'storefront')).toBe(MODERATION_CLOSED_COPY.storefront)
+    expect(moderationClosedCopy(refusal('report'), 'blog')).toBe(MODERATION_CLOSED_COPY.blog)
   })
 
   it('keeps the posting copy for social types, quoted or not', () => {
@@ -1131,6 +1139,7 @@ describe('41200 says which product is closed (R-M24)', () => {
 
   it('keeps the posting copy for every type the social contract moderates', () => {
     for (const type of Object.keys(socialContractV16.config.moderation.moderators.moderatedDocumentTypes)) {
+      if (type === 'report') continue
       expect(moderationClosedCopy(refusal(type), 'storefront')).toBe(MODERATION_CLOSED_COPY.social)
     }
   })
