@@ -25,6 +25,10 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { enrolErrorCopy, lockOutCopy, passkeyDetails, passkeyLabel } from './passkey-copy'
 
+/** The after-sign-in check retries a failed read this often, waiting a little longer each time. */
+const CHECK_ATTEMPTS = 4
+const CHECK_RETRY_MS = 5_000
+
 function InlineError({ children }: { children: React.ReactNode }) {
   return <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-4">{children}</p>
 }
@@ -46,10 +50,26 @@ export function PasskeyPrompts() {
     if (!signedIn || signedInUser !== signedIn.identityId || checkedAt.current === signedIn.at || !passkeysOffered()) return
     checkedAt.current = signedIn.at
     const { identityId, method } = signedIn
+    const stillThisSignIn = () => usePasskeyPrompts.getState().signedIn?.at === signedIn.at
+    /** The passkeys and the session check; a read that failed is retried a few times before the check gives up. */
+    const read = async () => {
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          const [entries, eligibility] = await Promise.all([listPasskeys(identityId), passkeyEligibility(identityId)])
+          if (eligibility !== 'failed' || attempt >= CHECK_ATTEMPTS) return { entries, eligibility }
+        } catch (error) {
+          if (attempt >= CHECK_ATTEMPTS) throw error
+        }
+        await new Promise((resolve) => setTimeout(resolve, CHECK_RETRY_MS * attempt))
+        if (!stillThisSignIn()) return null
+      }
+    }
     const check = async () => {
-      const [entries, eligibility] = await Promise.all([listPasskeys(identityId), passkeyEligibility(identityId)])
+      const result = await read()
+      if (!result) return
+      const { entries, eligibility } = result
       // Another sign-in (or a sign-out) since this one: its own check decides.
-      if (eligibility !== null || usePasskeyPrompts.getState().signedIn?.at !== signedIn.at) return
+      if (eligibility !== null || !stillThisSignIn()) return
       if (entries.some((entry) => entry.needsUpdate)) {
         open('review', identityId)
         return
