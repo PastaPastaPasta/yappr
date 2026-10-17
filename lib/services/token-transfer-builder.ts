@@ -7,7 +7,7 @@
  * token-transition-builder.ts.
  */
 
-import { TokenTransferTransition } from '@dashevo/evo-sdk';
+import { TokenTransferTransition } from '@dashevo/wasm-sdk';
 import { yappIsTransferable } from '../contract-topology';
 import { buildUnsignedTokenBatch, type WalletTransitionRequest } from './token-transition-builder';
 

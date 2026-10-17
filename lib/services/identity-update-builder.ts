@@ -11,7 +11,6 @@
 import type { YapprRegisteredKey } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { getEvoSdk } from './evo-sdk-service'
-import initWasm, * as wasmSdk from '@dashevo/wasm-sdk/compressed'
 import * as secp256k1 from '@noble/secp256k1'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { hash160 } from '../crypto/hash'
@@ -21,14 +20,6 @@ import { KeyPurpose, KeyType, resolveKeyPurpose } from '@/lib/crypto/identity-ke
 import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 
-let wasmInitialized = false
-async function ensureWasmInitialized() {
-  if (!wasmInitialized) {
-    await initWasm()
-    wasmInitialized = true
-  }
-  return wasmSdk
-}
 
 /**
  * Key registration request containing the keys to add
@@ -208,7 +199,8 @@ async function buildUnsignedAddKeysTransition(
   select: (publicKeys: RegisteredIdentityKey[]) => KeyToAdd[],
 ): Promise<UnsignedTransitionResult> {
   const sdk = await getEvoSdk()
-  const wasm = await ensureWasmInitialized()
+  // getEvoSdk initialized this same glue; never compile WASM a second time.
+  const wasm = await import('@dashevo/wasm-sdk')
 
   logger.debug('IdentityUpdateBuilder: Fetching identity', identityId)
   const identity = await sdk.identities.fetch(identityId)

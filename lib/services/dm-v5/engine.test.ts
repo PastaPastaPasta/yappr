@@ -424,8 +424,43 @@ describe('DmEngine unreachable 1:1s (the peer has not set up messaging)', () => 
 })
 
 describe('DmEngine.pause', () => {
+  it('does not start a hidden engine until resume', async () => {
+    const ledger = new MemoryLedger()
+    const alice = engine(ledger, ALICE_ID, ALICE_PRIV)
+    const state = vi.spyOn(alice.ctx.chain, 'selfState')
+    alice.pause()
+    await alice.start()
+    expect(state).not.toHaveBeenCalled()
+    await alice.resume()
+    expect(state).toHaveBeenCalled()
+    expect(alice.getSnapshot().ready).toBe(true)
+  })
+
+  it('backs off failed polls and returns to the usual cadence after success', async () => {
+    vi.useFakeTimers()
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    try {
+      const ledger = new MemoryLedger()
+      const alice = engine(ledger, ALICE_ID, ALICE_PRIV)
+      const state = vi.spyOn(alice.ctx.chain, 'selfState').mockRejectedValueOnce(new Error('offline'))
+      await alice.start()
+      expect(alice.getSnapshot().error).toBe('offline')
+      await vi.advanceTimersByTimeAsync(BACKGROUND_POLL_MS)
+      expect(state).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(BACKGROUND_POLL_MS)
+      expect(alice.getSnapshot().error).toBeNull()
+      const tick = vi.spyOn(alice, 'tick')
+      await vi.advanceTimersByTimeAsync(BACKGROUND_POLL_MS)
+      expect(tick).toHaveBeenCalledTimes(1)
+    } finally {
+      random.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('stops the poll cadence until resume, which polls at once and re-arms it', async () => {
     vi.useFakeTimers()
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5)
     try {
       const ledger = new MemoryLedger()
       const alice = engine(ledger, ALICE_ID, ALICE_PRIV)
@@ -439,6 +474,7 @@ describe('DmEngine.pause', () => {
       await vi.advanceTimersByTimeAsync(BACKGROUND_POLL_MS + 10)
       expect(tick).toHaveBeenCalledTimes(2)
     } finally {
+      random.mockRestore()
       vi.useRealTimers()
     }
   })

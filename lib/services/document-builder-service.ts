@@ -8,8 +8,7 @@
  * Binary properties on this path should stay as `Uint8Array`; this layer does not convert them
  * into JSON-style `number[]`.
  *
- * IMPORTANT: We import the Document class from @dashevo/evo-sdk which re-exports
- * from the shared @dashevo/wasm-sdk module. By calling getEvoSdk() first, we ensure
+ * IMPORTANT: The Document class and evo-sdk share the @dashevo/wasm-sdk glue module. By calling getEvoSdk() first, we ensure
  * the WASM module is initialized before creating any Document objects.
  *
  * BINARY FIELDS: documents are assembled with `Document.fromObject`, never with
@@ -23,7 +22,7 @@
 import { getEvoSdk } from './evo-sdk-service';
 import { documentToPlainObject, requireDocumentIdentifierBytes } from './sdk-helpers';
 import { documentIdForCreate } from '@/lib/document-id';
-import { Document, PlatformVersion } from '@dashevo/evo-sdk';
+import { Document, PlatformVersion } from '@dashevo/wasm-sdk';
 import type { DocumentObject } from '@dashevo/evo-sdk';
 
 /**

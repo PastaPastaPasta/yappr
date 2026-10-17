@@ -22,7 +22,7 @@
  *    under its old id.
  */
 import bs58 from 'bs58'
-import { Document } from '@dashevo/evo-sdk'
+import { Document } from '@dashevo/wasm-sdk'
 
 /**
  * DIP-30: an identity contract nonce is a u64 whose lower 40 bits are the

@@ -14,7 +14,8 @@ import toast from 'react-hot-toast'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { BlogViewer } from './blog-viewer'
+import dynamic from 'next/dynamic'
+
 import { BlogThemeProvider } from './theme-provider'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
@@ -38,6 +39,8 @@ const X_ICON_PATH = 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.8
 const DROPDOWN_ITEM_CLASS = 'flex items-center gap-2 px-4 py-2 text-sm outline-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800'
 const SIDEBAR_BUTTON_ACTIVE_CLASS = 'group rounded-full p-2 transition hover:bg-black/5 dark:hover:bg-white/10'
 const SIDEBAR_BUTTON_PASSIVE_CLASS = 'rounded-full p-2 cursor-default opacity-40'
+
+const BlogViewer = dynamic(() => import('./blog-viewer').then((module) => module.BlogViewer), { ssr: false })
 
 interface BlogPostViewProps {
   blog: Blog

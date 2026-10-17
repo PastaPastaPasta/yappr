@@ -7,6 +7,7 @@
  * It never touches the SDK directly: it is handed a `DmChain`.
  */
 
+import { pollDelay } from '@/lib/poll-scheduling'
 import bs58 from 'bs58'
 import { hexToBytes } from '@/lib/bytes'
 import type { IdentityId, RetentionSetting } from '@/lib/dm/types'
@@ -120,6 +121,7 @@ export class DmEngine {
   private error: string | null = null
   private snapshot: EngineSnapshot | null = null
   private sweeping = false
+  private pollFailures = 0
 
   constructor(options: EngineOptions) {
     this.ctx = createContext({
@@ -176,7 +178,7 @@ export class DmEngine {
   async start(): Promise<void> {
     if (this.started) return
     this.started = true
-    await this.tick()
+    if (!this.paused) await this.tick()
   }
 
   /** The first successful load: the saved conversations, and recovery when the state is lost (§9). */
@@ -254,7 +256,7 @@ export class DmEngine {
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
       this.tick().catch((error) => logger.warn('DM v5 poll failed:', error))
-    }, this.openKey ? OPEN_POLL_MS : BACKGROUND_POLL_MS)
+    }, pollDelay(this.openKey ? OPEN_POLL_MS : BACKGROUND_POLL_MS, this.pollFailures))
   }
 
   /** One poll now, then reschedule. */
@@ -266,7 +268,9 @@ export class DmEngine {
         this.restorePositions()
       })
       this.error = null
+      this.pollFailures = 0
     } catch (error) {
+      this.pollFailures += 1
       this.error = error instanceof Error ? error.message : 'Could not load messages'
       logger.warn('DM v5 poll failed:', error)
     } finally {

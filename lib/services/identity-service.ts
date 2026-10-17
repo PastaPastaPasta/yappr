@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-import { ContractBounds, IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
+import { ContractBounds, IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/wasm-sdk';
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config';
 import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup';
 import { keyNetwork } from '@/lib/constants'
@@ -389,7 +389,7 @@ class IdentityService {
       // Derive public key from private key
       const publicKeyBytes = getPublicKey(encryptionPrivateKey);
 
-      // IMPORTANT: Use IdentityPublicKeyInCreation from @dashevo/evo-sdk (not @dashevo/wasm-sdk)
+      // Use IdentityPublicKeyInCreation from the shared WASM instance.
       // so the WASM object shares the same linear memory as sdk.identities.update().
       logger.debug(`Creating IdentityPublicKeyInCreation: id=${newKeyId}, purpose=ENCRYPTION, securityLevel=MEDIUM, keyType=ECDSA_SECP256K1`);
       logger.debug(`Public key bytes length: ${publicKeyBytes.length}`);
