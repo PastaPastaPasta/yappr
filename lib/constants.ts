@@ -16,6 +16,13 @@ export const YAPPR_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_CONTRACT_ID || '9
  */
 export const YAPPR_BLOCKS_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID ?? ''
 
+/**
+ * The passkey vault (`contracts/yappr-passkey-vault-contract.json`,
+ * docs/PASSKEY_VAULT.md), an App Connect group member. Blank where the
+ * deployment has none: passkey sign-in is then not offered.
+ */
+export const YAPPR_PASSKEY_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID ?? ''
+
 // YAPP token (defined at position 0 of the v2 social contract)
 export const YAPP_TOKEN_POSITION = 0
 // Contract-owner / token authority identity (signs freeze/unfreeze/slash).

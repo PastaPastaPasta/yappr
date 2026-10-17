@@ -15,6 +15,15 @@ import { useLoginModal } from '@/hooks/use-login-modal'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 import { createWalletSignIn } from '@/lib/app-connect/wallet-sign-in'
+import { restorePasskeyMessagingKey, unlockWithPasskey } from '@/lib/auth/passkey-vault'
+import { markPasskeyCriticalKey } from '@/lib/auth/passkey-device'
+import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompts'
+
+/** A passkey that held a wallet sign-in which needs renewing in the wallet before it can sign in again. */
+export interface PasskeyRenewal {
+  identityId: string
+  reason: 'expired' | 'revoked'
+}
 
 export interface AuthUser {
   identityId: string
@@ -41,6 +50,13 @@ interface AuthContextType {
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean }) => Promise<void>
   /** Signs in with a verified App Connect grant (the user already confirmed the identity). Wipes the grant's keys. */
   loginWithAppConnect: (grant: AppConnectGrant) => Promise<PlatformAuthIntent>
+  /**
+   * Signs in with a passkey: the browser's picker, then the session the passkey
+   * holds (docs/PASSKEY_VAULT.md). Resolves null once signed in, or with the
+   * identity whose wallet sign-in needs renewing first. Rejects with a
+   * PasskeyVaultError when the passkey cannot sign in.
+   */
+  loginWithPasskey: () => Promise<PasskeyRenewal | null>
   /** Replaces the signed-in identity's App Connect keys with a renewed grant from the same identity. */
   renewWithAppConnect: (grant: AppConnectGrant) => Promise<void>
   logout: () => Promise<void>
@@ -158,7 +174,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [router])
 
-  const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
+  /** A sign-in finished (not a restore): the passkey prompts decide whether to offer one or ask to update them. */
+  const noteSignIn = useCallback((intent: PlatformAuthIntent, method: SignInMethod) => {
+    if (intent.kind === 'ready' || intent.kind === 'profile-required') usePasskeyPrompts.getState().noteSignIn(intent.identityId, method)
+  }, [])
+
+  const signInWithKey = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}): Promise<PlatformAuthIntent> => {
     // Taken before the key check: a sign-in or sign-out while it runs supersedes this one.
     const since = controller.sessionEpoch()
     // The same rule restore and signing apply, on keys read fresh: a disabled or wrong-level key never starts a session.
@@ -166,13 +187,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!check.isValid) throw new Error(check.error ?? 'This key cannot sign in to this account')
     const result = await controller.loginWithAuthKey(identityId, privateKey, { ...options, since })
     await applyIntent(result.intent)
+    return result.intent
   }, [applyIntent, controller])
 
-  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
+  const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
+    noteSignIn(await signInWithKey(identityId, privateKey, options), 'key')
+  }, [noteSignIn, signInWithKey])
+
+  const signInWithGrant = useCallback(async (grant: AppConnectGrant): Promise<PlatformAuthIntent> => {
     const result = await walletSignIn.signIn(grant)
     await applyIntent(result.intent)
     return result.intent
   }, [applyIntent, walletSignIn])
+
+  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
+    const intent = await signInWithGrant(grant)
+    noteSignIn(intent, 'wallet')
+    return intent
+  }, [noteSignIn, signInWithGrant])
+
+  const loginWithPasskey = useCallback(async (): Promise<PasskeyRenewal | null> => {
+    const unlocked = await unlockWithPasskey()
+    switch (unlocked.kind) {
+      case 'renew':
+        return { identityId: unlocked.identityId, reason: unlocked.reason }
+      case 'key-ring':
+        noteSignIn(await signInWithGrant(unlocked.grant), 'passkey')
+        return null
+      case 'raw-key': {
+        const intent = await signInWithKey(unlocked.identityId, unlocked.signInWif)
+        if (unlocked.critical) markPasskeyCriticalKey(unlocked.identityId)
+        if (unlocked.messagingWif) restorePasskeyMessagingKey(unlocked.identityId, unlocked.messagingWif)
+        noteSignIn(intent, 'passkey')
+        return null
+      }
+    }
+  }, [noteSignIn, signInWithGrant, signInWithKey])
 
   const renewWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
     // A revocation sign-out may still be running: let it finish first, so it
@@ -218,6 +268,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error: controllerState.error,
     login,
     loginWithAppConnect,
+    loginWithPasskey,
     renewWithAppConnect,
     logout,
     updateDPNSUsername,
@@ -231,6 +282,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     controllerState.user,
     login,
     loginWithAppConnect,
+    loginWithPasskey,
     logout,
     refreshBalance,
     refreshDpnsUsernames,

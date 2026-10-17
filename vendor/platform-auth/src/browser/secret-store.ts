@@ -144,10 +144,6 @@ function base64ToBytes(value: string): Uint8Array | null {
   }
 }
 
-export function generatePrfInput(): Uint8Array {
-  return crypto.getRandomValues(new Uint8Array(32))
-}
-
 export function createBrowserSecretStore(options: BrowserSecretStoreOptions) {
   const storage = new BrowserStorage(options.prefix ?? 'platform_auth_secure_')
 

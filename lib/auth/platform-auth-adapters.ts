@@ -35,6 +35,7 @@ import { matchIdentityKey } from '@/lib/crypto/keys'
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { identityService } from '@/lib/services/identity-service'
 import { storedKeyBelongsToIdentity } from '@/lib/auth/session-key'
+import { clearPasskeyCriticalKey } from '@/lib/auth/passkey-device'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { deriveEncryptionKey, deriveLoginEncryptionKey } from '@/lib/crypto/derive-encryption-key'
 import { validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
@@ -122,6 +123,8 @@ async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
  * keep the key as they always have (the mobile engine's secure area relies on it).
  */
 async function storeRawLoginKey(identityId: string, wif: string): Promise<void> {
+  // A passkey sign-in marks its CRITICAL key again once it has stored it; any other key starts unmarked.
+  clearPasskeyCriticalKey(identityId)
   if (!isAppConnectBuild()) {
     storePrivateKey(identityId, wif)
     return
@@ -211,6 +214,7 @@ async function runLogoutCleanup(identityId: string): Promise<void> {
   sessionStorage.removeItem(scopedKey('yappr_skip_dpns'))
   invalidateBlockCache(identityId)
   privateFeedKeyStore.clearAllKeys()
+  clearPasskeyCriticalKey(identityId)
 }
 
 export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies {

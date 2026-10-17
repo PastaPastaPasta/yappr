@@ -9,7 +9,7 @@
  *   APP_ID      = generateId(maker, N)              the anchor contract, the App Connect app id
  *   GROUP_ID    = contractGroupId(maker, N)         registered by the anchor's own create
  *   GROUP_OWNER = maker
- *   member i    = generateId(maker, N + i)          i = 1 … 7, in APP_CONNECT_ENTRIES order
+ *   member i    = generateId(maker, N + i)          i = 1 … 8, in APP_CONNECT_ENTRIES order
  *
  * APP_ID and GROUP_ID depend on N alone. A member's id is only N + i when
  * nothing else spends a maker nonce in between; the publisher's journal
@@ -53,6 +53,8 @@ export const APP_CONNECT_ENTRIES = [
   { name: 'pollr', file: 'pollr-contract.json', envKey: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', sha256: '4b660df8d095f931c9b422714ddb4ed7bcc629ab1ff5a9919d8df4079469b7d4' },
   { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: 'e331d37dae44847ae3f323c365fe51ad027d1358b33f8b2de06ac866f5130cc3' },
   { name: 'authVault', file: 'yappr-auth-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID', sha256: 'cecf0ccca95ab0aff76ccf3142405dadd84c8f4c662419a727c0fa157f9738dd' },
+  // The passkey vault (docs/PASSKEY_VAULT.md). A member so a wallet sign-in's group key can write its own vault entries.
+  { name: 'passkeyVault', file: 'yappr-passkey-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID', sha256: '14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5' },
 ];
 
 /**

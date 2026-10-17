@@ -1,0 +1,211 @@
+'use client'
+
+import { useCallback, useEffect, useState } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
+import { logger } from '@/lib/logger'
+import { useAuth } from '@/contexts/auth-context'
+import { usePasskeyPrompts } from '@/hooks/use-passkey-prompts'
+import { hasAppConnectSession } from '@/lib/auth/signing-keys'
+import { setPasskeyName } from '@/lib/auth/passkey-device'
+import { MAX_PASSKEYS } from '@/lib/auth/passkey-vault-policy'
+import {
+  listPasskeys,
+  passkeyEligibility,
+  passkeysOffered,
+  removePasskeys,
+  walletPasskeysPossible,
+  type PasskeyEntryView,
+  type PasskeyErrorCode,
+} from '@/lib/auth/passkey-vault'
+import { PASSKEYS_CHANGED_EVENT } from '@/components/auth/passkey-prompts'
+import { formatPasskeyDate, passkeyLabel } from '@/components/auth/passkey-copy'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Modal, ModalTitle } from '@/components/ui/modal'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+
+const NOT_ELIGIBLE_COPY: Partial<Record<PasskeyErrorCode, string>> = {
+  'not-eligible': 'To add a passkey, sign in with your Dash wallet or your everyday sign-in key.',
+  'renew-first': 'Renew Yappr in your Dash wallet to add or update passkeys.',
+}
+
+/**
+ * Settings → Privacy & Security → Passkeys: the identity's passkeys, with
+ * this device and any that need updating marked; add, update (after review),
+ * rename (names stay in this browser) and remove. Shown only where passkeys
+ * work.
+ */
+export function PasskeySettings() {
+  const { user } = useAuth()
+  const { openEnrol, openReview } = usePasskeyPrompts()
+  const [offered, setOffered] = useState(false)
+  const [entries, setEntries] = useState<PasskeyEntryView[] | null>(null)
+  const [eligibility, setEligibility] = useState<PasskeyErrorCode | null | undefined>(undefined)
+  const [failed, setFailed] = useState(false)
+  const [renaming, setRenaming] = useState<{ credentialId: string; name: string } | null>(null)
+  const [removing, setRemoving] = useState<PasskeyEntryView | null>(null)
+
+  const identityId = user?.identityId
+  const wallet = identityId ? hasAppConnectSession(identityId) : false
+
+  useEffect(() => setOffered(passkeysOffered()), [])
+
+  const load = useCallback(async () => {
+    if (!identityId) return
+    setFailed(false)
+    try {
+      const [list, check] = await Promise.all([listPasskeys(identityId), passkeyEligibility(identityId)])
+      setEntries(list)
+      setEligibility(check)
+    } catch (error) {
+      logger.warn('Passkeys: could not load them:', error)
+      setFailed(true)
+    }
+  }, [identityId])
+
+  useEffect(() => {
+    if (!offered) return
+    const reload = () => { load().catch(() => undefined) }
+    reload()
+    window.addEventListener(PASSKEYS_CHANGED_EVENT, reload)
+    return () => window.removeEventListener(PASSKEYS_CHANGED_EVENT, reload)
+  }, [load, offered])
+
+  // A wallet sign-in on a build whose wallet keys cannot write passkeys has nothing to manage here.
+  if (!identityId || !offered || (wallet && !walletPasskeysPossible())) return null
+
+  const canAdd = eligibility === null && entries !== null && entries.length < MAX_PASSKEYS
+  const saveName = () => {
+    if (!renaming) return
+    setPasskeyName(renaming.credentialId, renaming.name)
+    setRenaming(null)
+    load().catch(() => undefined)
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Passkeys</CardTitle>
+        <CardDescription>
+          Sign in on any device with Face ID, Touch ID, Windows Hello or your phone.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3" data-testid="passkey-settings">
+        {entries === null && !failed && <Spinner size="sm" />}
+        {failed && (
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm text-gray-600 dark:text-gray-400">Couldn&apos;t load your passkeys.</p>
+            <Button variant="outline" size="sm" onClick={() => { load().catch(() => undefined) }}>Try again</Button>
+          </div>
+        )}
+        {entries?.length === 0 && <p className="text-sm text-gray-600 dark:text-gray-400">You haven&apos;t added a passkey yet.</p>}
+        {entries?.map((entry) => (
+          <div key={entry.entryId} className="rounded-xl ring-1 ring-gray-200 dark:ring-neutral-700 p-3 text-sm" data-testid="passkey-row">
+            {renaming?.credentialId === entry.credentialId ? (
+              <form className="flex items-center gap-2" onSubmit={(event) => { event.preventDefault(); saveName() }}>
+                <input
+                  aria-label="Passkey name"
+                  autoFocus
+                  maxLength={40}
+                  value={renaming.name}
+                  onChange={(event) => setRenaming({ credentialId: entry.credentialId, name: event.target.value })}
+                  className="flex-1 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                />
+                <Button type="submit" size="sm">Save</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setRenaming(null)}>Cancel</Button>
+              </form>
+            ) : (
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-white">{passkeyLabel(entry)}</p>
+                  {entry.name && <p className="text-gray-500">Added {formatPasskeyDate(entry.addedAt)}</p>}
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {entry.thisDevice && <span className="px-2 py-0.5 rounded-full text-xs bg-yappr-100 text-yappr-700 dark:bg-yappr-900/30 dark:text-yappr-300">This device</span>}
+                    {entry.needsUpdate && <span className="px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">Needs update</span>}
+                  </div>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <Button size="sm" variant="ghost" onClick={() => setRenaming({ credentialId: entry.credentialId, name: entry.name ?? '' })}>Rename</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setRemoving(entry)}>Remove</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        {eligibility && NOT_ELIGIBLE_COPY[eligibility] && (
+          <p className="text-sm text-gray-600 dark:text-gray-400">{NOT_ELIGIBLE_COPY[eligibility]}</p>
+        )}
+        <div className="flex flex-wrap gap-2 pt-1">
+          {canAdd && <Button onClick={() => openEnrol(identityId)} data-testid="passkey-settings-add">Add a passkey</Button>}
+          {eligibility === null && entries && entries.length > 0 && (
+            <Button variant="outline" onClick={() => openReview(identityId)}>Update passkeys</Button>
+          )}
+        </div>
+        {entries !== null && entries.length >= MAX_PASSKEYS && (
+          <p className="text-sm text-gray-500">You can have up to {MAX_PASSKEYS} passkeys. Remove one to add another.</p>
+        )}
+        <p className="text-xs text-gray-500">
+          Passkeys are an extra way in. Keep your Dash wallet or your key too: if you lose every passkey, you&apos;ll need it.
+          Names stay on this device.
+        </p>
+      </CardContent>
+      {removing && (
+        <RemovePasskeyDialog
+          identityId={identityId}
+          entry={removing}
+          wallet={wallet}
+          onClose={() => setRemoving(null)}
+          onRemoved={() => {
+            setRemoving(null)
+            load().catch(() => undefined)
+          }}
+        />
+      )}
+    </Card>
+  )
+}
+
+function RemovePasskeyDialog({ identityId, entry, wallet, onClose, onRemoved }: {
+  identityId: string
+  entry: PasskeyEntryView
+  wallet: boolean
+  onClose: () => void
+  onRemoved: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const remove = () => {
+    setBusy(true)
+    setError(null)
+    removePasskeys(identityId, [entry.entryId])
+      .then(({ failed }) => {
+        if (failed > 0) setError('This passkey couldn\'t be removed. Please try again.')
+        else onRemoved()
+      })
+      .catch(() => setError('This passkey couldn\'t be removed. Please try again.'))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <Modal open onOpenChange={(open) => { if (!open && !busy) onClose() }} className="w-[440px] max-w-[92vw]">
+      <ModalTitle>Remove this passkey?</ModalTitle>
+      <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-3">
+        It won&apos;t sign you in to Yappr any more. You can also delete it from your passwords app.
+      </Dialog.Description>
+      <p className="text-sm text-gray-500 mb-5">
+        {wallet
+          ? 'If you think someone else has this passkey, also turn off Yappr in your Dash wallet: copies saved earlier stay on the network, and only that locks them out.'
+          : 'If you think someone else has this passkey, also change your key in your Dash wallet: copies saved earlier stay on the network, and only a new key locks them out.'}
+      </p>
+      {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-4">{error}</p>}
+      <div className="flex flex-col gap-3">
+        <Button className="w-full bg-red-600 hover:bg-red-700 text-white gap-2" onClick={remove} disabled={busy} data-testid="passkey-remove-confirm">
+          {busy && <Spinner size="sm" />}
+          Remove passkey
+        </Button>
+        <Button variant="outline" className="w-full" onClick={onClose} disabled={busy}>Cancel</Button>
+      </div>
+    </Modal>
+  )
+}
