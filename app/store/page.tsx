@@ -25,6 +25,7 @@ import { storeCategoryLabel } from '@/lib/storefront/storefront-contract'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import type { Store, StoreRatingSummary } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
+import { ModerationClosedBanner } from '@/components/moderation/moderation-closed-notice'
 
 type StoreSort = 'newest' | 'topRated' | 'mostOrdered'
 const SORT_OPTIONS: ReadonlyArray<[StoreSort, string]> = [['newest', 'Newest'], ['topRated', 'Top rated'], ['mostOrdered', 'Most ordered']]
@@ -264,6 +265,8 @@ export default function StoreBrowsePage() {
               </div>
             </div>
           </PageHeader>
+
+          <ModerationClosedBanner product="storefront" docType="store" className="m-4" />
 
           {/* Store List */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">

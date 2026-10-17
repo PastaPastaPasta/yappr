@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { logger } from '@/lib/logger'
-import { electedModeration } from '@/lib/contract-topology'
+import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import { moderationElectionService, type CharterReason } from '@/lib/services/moderation-election-service'
 
 export interface SeatedReasonsState {
@@ -26,10 +26,12 @@ const IDLE: SeatedReasonsState = { reasons: [], required: false, loading: false,
  * Reads nothing until `active` (the modal is open, the moderator panel is
  * shown) and reads again every time it becomes active, so a team seated
  * mid-session is picked up on the next open. One team read feeds both the
- * "is a team seated" answer and the reasons.
+ * "is a team seated" answer and the reasons. Each contract seats its own team
+ * (`contract`, social by default).
  */
-export function useSeatedReasons(active: boolean): SeatedReasonsState {
-  const elected = electedModeration() !== null
+export function useSeatedReasons(active: boolean, contract: ModeratedContractKey = 'social'): SeatedReasonsState {
+  const { contractId } = moderatedContract(contract)
+  const elected = moderatedContract(contract).elected() !== null
   const [state, setState] = useState<SeatedReasonsState>(IDLE)
 
   useEffect(() => {
@@ -39,7 +41,7 @@ export function useSeatedReasons(active: boolean): SeatedReasonsState {
     }
     let cancelled = false
     setState({ ...IDLE, loading: true })
-    moderationElectionService.getSeatedTeamAndReasons().then(({ seated, reasons }) => {
+    moderationElectionService.getSeatedTeamAndReasons(contractId).then(({ seated, reasons }) => {
       if (!cancelled) setState({ reasons, required: seated !== null, loading: false, failed: false })
     }).catch((error: unknown) => {
       logger.warn('useSeatedReasons: could not read the seated team or its reasons', error)
@@ -48,7 +50,7 @@ export function useSeatedReasons(active: boolean): SeatedReasonsState {
     return () => {
       cancelled = true
     }
-  }, [active, elected])
+  }, [active, elected, contractId])
 
   return state
 }

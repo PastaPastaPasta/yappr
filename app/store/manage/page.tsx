@@ -45,6 +45,7 @@ import { identityService } from '@/lib/services/identity-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
+import { ModerationClosedBanner } from '@/components/moderation/moderation-closed-notice'
 
 function StoreManagePage() {
   const appConnect = isAppConnectBuild()
@@ -442,6 +443,8 @@ function StoreManagePage() {
               </button>
             </div>
           </PageHeader>
+
+          <ModerationClosedBanner product="storefront" docType="storeItem" className="m-4" />
 
           {/* Setup Warnings */}
           {(hasEncryptionKey === false || (store && (!store.paymentUris || store.paymentUris.length === 0))) && (

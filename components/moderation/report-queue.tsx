@@ -7,7 +7,7 @@ import { CheckCircleIcon, ExclamationTriangleIcon, FlagIcon, LockOpenIcon, Shiel
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
-import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
+import { postRemovalTarget, useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { logger } from '@/lib/logger'
 import {
   OPEN_REPORTS,
@@ -479,7 +479,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
   }
 
   const remove = (group: ReportedTarget, post: Post) => {
-    openModeratorRemoveModal(post, () => {
+    openModeratorRemoveModal(postRemovalTarget(post), () => {
       // The by-id reads cache for two minutes; the next page must not bring it back.
       if (group.kind === 'post') postService.clearCache(group.targetId)
       else replyService.clearCache(group.targetId)

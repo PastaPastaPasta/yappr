@@ -4,6 +4,8 @@ import { logger } from '@/lib/logger'
 import { useEffect, useState } from 'react'
 import { CheckBadgeIcon } from '@heroicons/react/24/solid'
 import { RatingStars } from './rating-stars'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { formatDate } from '@/lib/utils/format'
 import { itemReviewService } from '@/lib/services/item-review-service'
 import { dpnsService } from '@/lib/services/dpns-service'
@@ -57,6 +59,12 @@ export function ItemReviewList({ itemId, limit = 10 }: ItemReviewListProps) {
                   Ordered
                 </span>
               )}
+              <ModeratorContentMenu
+                className="ml-auto"
+                target={documentRemovalTarget('storefront', 'itemReview', 'review', review, review.content ?? '')}
+                ownerId={review.reviewerId}
+                onRemoved={() => setReviews((previous) => previous.filter((r) => r.id !== review.id))}
+              />
             </div>
             {review.content && (
               <p className="mt-1 text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{review.content}</p>

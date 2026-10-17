@@ -8,6 +8,8 @@ import { CheckBadgeIcon } from '@heroicons/react/24/solid'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { RatingStars } from './rating-stars'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { formatDate } from '@/lib/utils/format'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
@@ -16,9 +18,11 @@ import type { StoreReview } from '@/lib/types'
 interface ReviewCardProps {
   review: StoreReview
   index?: number
+  /** Shown to the storefront's moderators: runs once they removed the review. */
+  onRemoved?: () => void
 }
 
-export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
+export function ReviewCard({ review, index = 0, onRemoved }: ReviewCardProps) {
   const [username, setUsername] = useState<string | null>(review.reviewerUsername || null)
   const [displayName, setDisplayName] = useState<string | null>(review.reviewerDisplayName || null)
 
@@ -111,6 +115,14 @@ export function ReviewCard({ review, index = 0 }: ReviewCardProps) {
             <span className="text-sm text-gray-500">
               {formatDate(review.createdAt)}
             </span>
+            {onRemoved && (
+              <ModeratorContentMenu
+                className="ml-auto"
+                target={documentRemovalTarget('storefront', 'storeReview', 'review', review, [review.title, review.content].filter(Boolean).join(' — '))}
+                ownerId={review.reviewerId}
+                onRemoved={onRemoved}
+              />
+            )}
             {review.ordered && (
               <span
                 className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300"

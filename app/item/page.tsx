@@ -15,6 +15,8 @@ import { CheckIcon } from '@heroicons/react/24/solid'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { ImageGallery, QuantityControl, MobileCartFab, RatingStars, ItemReviewList, BlockedOwnerBanner } from '@/components/store'
 import { formatPrice, formatPriceRange } from '@/lib/utils/format'
 import { useAuth } from '@/contexts/auth-context'
@@ -299,7 +301,18 @@ function ItemDetailContent() {
               </button>
             )}
 
-            <h1 className="text-2xl font-bold">{item.title}</h1>
+            <div className="flex items-start gap-1">
+              <h1 className="text-2xl font-bold">{item.title}</h1>
+              <ModeratorContentMenu
+                className="ml-auto"
+                target={documentRemovalTarget('storefront', 'storeItem', 'listing', item, item.title)}
+                ownerId={item.ownerId}
+                onRemoved={() => {
+                  storeItemService.clearCache(item.id)
+                  router.push(store ? `/store/view?id=${store.id}` : '/store')
+                }}
+              />
+            </div>
 
             {rating && rating.reviewCount > 0 && (
               <div className="flex items-center gap-2">

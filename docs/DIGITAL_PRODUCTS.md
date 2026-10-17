@@ -216,19 +216,33 @@ deliver a `javascript:` link.
   every delivery, including orders older than the loaded order history (those
   orders are fetched for decryption).
 
-## Moderation (open questions, not decided here)
+## Moderation
 
-The storefront contract keeps v5's moderation: a contract-owner banlist,
-suspensions and warnings, and moderator delete on reviews only.
+Storefront v7 and later elect their own moderation team (`config.moderation`:
+banlist, suspensions, warnings; `store`, `storeItem`, `storeReview` and
+`itemReview` are moderated types, each `moderatorAbilities.delete`). The
+client moderates it like social, one service instance per contract
+(`moderationServiceFor('storefront')`, lib/moderated-contracts.ts):
 
+- A moderator removes a store, a listing or either kind of review from the
+  shield menu beside it (the same dialog as a post's), or opens Settings >
+  Moderation > Storefront on its author with the document cited, to ban,
+  suspend or warn them there. The removal records, restores and the
+  storefront moderators pot (with its claim) live on that tab. A social ban
+  bars nothing on the storefront.
+- Under a `notYetUsable` interim (testnet, D1) every write of those types is
+  refused 41200 until a team is seated; the store pages say so up front and
+  word the refusal for stores.
+- The storefront contract has no `report` doctype yet, so buyers cannot file
+  an on-chain report against a store, listing or review; a report type can
+  come later as an additive contract update.
 - A banned or suspended seller cannot write an `orderDelivery`, so orders a
   buyer already paid for cannot be delivered until the ban ends.
-- Stores and items have no moderator takedown (41115), and kits and
-  deliveries are encrypted, so a moderator can neither see nor remove what a
-  digital product delivers. The banlist only stops the seller's future
-  writes; the listing stays up.
-- `itemDeliverable` and `orderDelivery` give moderators no ability, so no
-  moderator removal frees their unique slot (unlike the review slots, QA U7).
+- Kits and deliveries are encrypted, so a moderator can neither see nor
+  remove what a digital product delivers. Removing the listing stops new
+  orders; `itemDeliverable` and `orderDelivery` give moderators no ability,
+  so no moderator removal frees their unique slot (unlike the review slots,
+  QA U7).
 
 ## Deploy
 

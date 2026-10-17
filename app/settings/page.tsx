@@ -44,9 +44,8 @@ import { SavedAddressesSettings } from '@/components/settings/saved-addresses-se
 import { StorachaSettings } from '@/components/settings/storacha-settings'
 import { PinataSettings } from '@/components/settings/pinata-settings'
 import { ModerationSettings } from '@/components/settings/moderation-settings'
-import { ContractModerationSettings } from '@/components/settings/contract-moderation-settings'
+import { ContractModerationSections, useModeratedContracts } from '@/components/settings/contract-moderation-sections'
 import { OwnWarningsNotice } from '@/components/moderation/own-warnings-notice'
-import { useIsModerator } from '@/hooks/use-is-moderator'
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import type { PayWith } from '@/lib/store'
 import { DeveloperSettings } from '@/components/settings/developer-settings'
@@ -107,11 +106,12 @@ function SettingsPage() {
   const { user, logout } = useAuth()
   const walletSession = useWalletSession()
   const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID
-  // The contract's moderation team (owner + appointed moderators, read off the
-  // contract) gets contract moderation; the token authority gets YAPP
+  // A contract's moderation team (social, storefront or blog, each read off its
+  // contract) gets that contract's moderation; the token authority gets YAPP
   // freeze/slash. Keep the visible-sections list in one place so the menu, the
   // section title, and the render gate can't drift apart.
-  const isContractModerator = useIsModerator()
+  const moderatedContracts = useModeratedContracts()
+  const isContractModerator = moderatedContracts.length > 0
   const canModerate = isAuthority || isContractModerator
   const visibleSections = canModerate ? [...settingsSections, MODERATION_SECTION] : settingsSections
   const { theme, setTheme } = useTheme()
@@ -800,7 +800,7 @@ function SettingsPage() {
       case 'moderation':
         return canModerate ? (
           <div className="space-y-4">
-            {isContractModerator && <ContractModerationSettings />}
+            {isContractModerator && <ContractModerationSections contracts={moderatedContracts} />}
             {isAuthority && <ModerationSettings />}
           </div>
         ) : renderMainSettings()

@@ -21,6 +21,7 @@ import { parseCountInput } from '@/lib/storefront/variant-editor-model'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { storefrontVariantsAreTyped } from '@/lib/constants'
 import { StaleRevisionError } from '@/lib/services/document-service'
+import { moderationClosedCopy } from '@/lib/error-utils'
 import { combinationStockCap, itemStockCap } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
 
@@ -307,7 +308,7 @@ export function InventoryTable({
       toast.success('Stock saved')
     } catch (err) {
       logger.error('Failed to update stock:', err)
-      toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
+      toast.error(moderationClosedCopy(err, 'storefront') ?? ((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.'))
     } finally {
       setSavingItemId(null)
     }
@@ -340,7 +341,7 @@ export function InventoryTable({
       onItemUpdated?.(item.id, { stockQuantity, $revision: updated.$revision })
     } catch (err) {
       logger.error('Failed to update stock:', err)
-      toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
+      toast.error(moderationClosedCopy(err, 'storefront') ?? ((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.'))
     }
   }, [editingStock, items, ownerId, storeId, onItemUpdated, setStockDraft])
 
@@ -354,7 +355,7 @@ export function InventoryTable({
       setDeleteItemId(null)
     } catch (err) {
       logger.error('Failed to delete item:', err)
-      toast.error('Failed to delete item. Please try again.')
+      toast.error(moderationClosedCopy(err, 'storefront') ?? 'Failed to delete item. Please try again.')
     } finally {
       setIsDeleting(false)
     }

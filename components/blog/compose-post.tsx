@@ -23,6 +23,9 @@ import { BlogEditor } from './blog-editor'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import toast from 'react-hot-toast'
+import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
+import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 
 interface ComposePostProps {
   blog: Blog
@@ -90,6 +93,8 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     resolveInitialBlocks(editPost, savedDraft)
   )
   const [isPublishing, setIsPublishing] = useState(false)
+  // Testnet registers blogs `notYetUsable`: posts open with the first seated blog team (41200 before).
+  const postsOpen = useModeratedTypeOpen('blogPost', true, 'blog')
   const [compressedBytes, setCompressedBytes] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
   const [draftSaved, setDraftSaved] = useState(false)
@@ -319,6 +324,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     } catch (err) {
       logger.error(isEditing ? 'Failed to update blog post:' : 'Failed to publish blog post:', err)
       if (err instanceof ListLimitError || err instanceof BlogFieldError) toast.error(err.message)
+      else if (reportModerationRefusal(err, user.identityId, 'blog')) return
       // Only the pre-publish lookup fails before anything is broadcast; a rate
       // limit later on may follow a write that landed, and a blind retry pays twice.
       else if (isPublishedAheadRefusal(err)) toast.error('This device\'s clock is more than 10 minutes ahead, so the network refused the publish date. Set the clock right and try again.')
@@ -364,7 +370,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
           <Button
             size="sm"
             onClick={handleSubmit}
-            disabled={isPublishing || !title.trim()}
+            disabled={isPublishing || !title.trim() || !postsOpen}
           >
             {isPublishing
               ? isEditing ? 'Saving...' : 'Publishing...'
@@ -372,6 +378,8 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
           </Button>
         </div>
       </div>
+
+      {!postsOpen && <ModerationClosedNotice product="blog" className="mx-4 mt-3" />}
 
       {/* Settings panel — collapsible */}
       {showSettings && (

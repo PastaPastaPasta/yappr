@@ -6,6 +6,8 @@
  * must NOT claim.
  */
 import { describe, expect, it, vi } from 'vitest'
+import blogContract from '@/contracts/yappr-blog-contract.json'
+import storefrontContract from '@/contracts/yappr-storefront-contract.json'
 import {
   UNCONFIRMED_WRITE_MESSAGE,
   sentWriteOutcomeUnknown,
@@ -29,6 +31,9 @@ import {
   isReferencedRuleReadInvalidError,
   isDocumentPropertyRuleError,
   isModerationNotYetSeatedError,
+  MODERATION_CLOSED_COPY,
+  POSTING_CLOSED_COPY,
+  moderationClosedCopy,
   isModeratorsShareMismatchError,
   isPropertyMaxBytesError,
   isReferenceNotFoundError,
@@ -1098,5 +1103,43 @@ describe('v13 propertyConstraints rules', () => {
     expect(categorizeError(broken('minPrice <= maxPrice'))).toMatch(/combination of values/)
     expect(categorizeError(new Error('A document of type "listing" breaks its propertyConstraints rule "media": no'))).toMatch(/combination of values/)
     expect(categorizeError(broken('constructor'))).toMatch(/combination of values/)
+  })
+})
+
+describe('41200 says which product is closed (R-M24)', () => {
+  const refusal = (type: string) => new Error(`Documents of type ${type} on contract 9hZw can not be used until a moderation team is seated`)
+
+  it('names the storefront for every type the storefront contract moderates', () => {
+    for (const type of Object.keys(storefrontContract.config.moderation.moderators.moderatedDocumentTypes)) {
+      expect(moderationClosedCopy(refusal(type))).toBe(MODERATION_CLOSED_COPY.storefront)
+      expect(categorizeError(refusal(type))).toBe(MODERATION_CLOSED_COPY.storefront)
+    }
+  })
+
+  it('names blogs for every type the blog contract moderates', () => {
+    for (const type of Object.keys(blogContract.config.moderation.moderators.moderatedDocumentTypes)) {
+      expect(moderationClosedCopy(refusal(type))).toBe(MODERATION_CLOSED_COPY.blog)
+    }
+  })
+
+  it('keeps the posting copy for social types, quoted or not', () => {
+    expect(moderationClosedCopy(refusal('post'))).toBe(MODERATION_CLOSED_COPY.social)
+    expect(moderationClosedCopy(refusal('"yapprProfile"'))).toBe(MODERATION_CLOSED_COPY.social)
+    expect(categorizeError(refusal('reply'))).toBe(POSTING_CLOSED_COPY)
+  })
+
+  it('falls back to the writing product when the refusal names no type', () => {
+    expect(moderationClosedCopy(new Error('rejected: code=41200'), 'blog')).toBe(MODERATION_CLOSED_COPY.blog)
+    expect(moderationClosedCopy(new Error('rejected: code=41200'))).toBe(MODERATION_CLOSED_COPY.social)
+  })
+
+  it('answers null for anything else, so the caller keeps its own message', () => {
+    expect(moderationClosedCopy(new Error('Identity GuNN is banned on contract 9hZw and can not act on its documents'), 'storefront')).toBeNull()
+  })
+
+  it('says nothing of posts or profiles on a store or blog refusal', () => {
+    for (const copy of [MODERATION_CLOSED_COPY.storefront, MODERATION_CLOSED_COPY.blog]) {
+      expect(copy).not.toMatch(/posts, replies|profile/i)
+    }
   })
 })
