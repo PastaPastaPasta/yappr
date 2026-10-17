@@ -48,6 +48,7 @@ import { useDmV5Badge } from '@/components/messages/use-dm-engine'
 import { startVisibilityPolling } from '@/lib/poll-scheduling'
 import { dmIsV5 } from '@/lib/constants'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { LegalLinks } from './legal-links'
 
 const getNavigation = (isLoggedIn: boolean, userId?: string) => {
   if (!isLoggedIn) {
@@ -373,6 +374,7 @@ export function Sidebar() {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         )}
+        <LegalLinks className="px-3" />
       </div>
     </div>
   )

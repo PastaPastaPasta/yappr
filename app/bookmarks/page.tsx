@@ -166,7 +166,9 @@ function BookmarksPage() {
           <div className="flex items-center justify-between px-4 py-3">
             <div>
               <h1 className="text-xl font-bold">Bookmarks</h1>
-              <p className="text-sm text-gray-500">{bookmarkCount} saved {bookmarkCount === 1 ? 'post' : 'posts'}</p>
+              <p className="text-sm text-gray-500">
+                {bookmarkCount} saved {bookmarkCount === 1 ? 'post' : 'posts'} · Bookmarks are public
+              </p>
             </div>
             
             <DropdownMenu.Root>
@@ -234,7 +236,8 @@ function BookmarksPage() {
             <BookmarkIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <h2 className="text-xl font-semibold mb-2">Save posts for later</h2>
             <p className="text-gray-500 text-sm">
-              Don&apos;t let the good ones fly away! Bookmark posts to easily find them again.
+              Don&apos;t let the good ones fly away! Bookmark posts to easily find them again. Like everything on Dash Platform,
+              bookmarks are public.
             </p>
           </div>
         ) : filteredBookmarks.length === 0 && !list.hasMore ? (
