@@ -223,6 +223,16 @@ describe('IPFS spellings', () => {
     }
   })
 
+  it('refuses an unpaired surrogate instead of throwing, and keeps paired ones', () => {
+    for (const url of ['https://cdn.example/\uD800.png', 'https://cdn.example/a\uDC00b.png', `ipfs://${CID_V1}/\uD800`]) {
+      expect(() => imageSourceFor(url)).not.toThrow()
+      expect(imageSourceFor(url)).toEqual({ kind: 'none' })
+      expect(isDeniedMedia(url)).toBe(true)
+      expect(scriptCid(url)).toBeNull()
+    }
+    expect(imageSourceFor('https://cdn.example/\u{1F600}.png').kind).toBe('proxied')
+  })
+
   it('drops a gateway query string from the IPFS path', () => {
     const cid = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
     expect(imageSourceFor(`https://ipfs.io/ipfs/${cid}?filename=a.png`)).toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${cid}` })

@@ -24,7 +24,7 @@ const PATH_GATEWAY = /^https?:\/\/[^/?#]+\/ipfs\/([^/?#]+)([^?#]*)/i
 const IPNS = /^ipns:|^https?:\/\/(?:[^/?#]+\/ipns\/|[^./?#]+\.ipns\.)/i
 const OTHER_SUBDOMAIN_CID = /^[0-9a-z]{40,}$/i
 // Same as in lib/media/remote-media.ts.
-const CONTROL = /[\u0000-\u001f\u007f]/
+const CONTROL = /[\u0000-\u001f\u007f]|[\uD800-\uDFFF]/u
 const PLAIN_HTTP_AUTHORITY = /^https?:\/\/([a-z0-9.-]+)(?::\d+)?(?:[/?#]|$)/i
 const CANONICAL_IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/
 const IPV4_SHAPED = /(?:^|\.)(?:0x[0-9a-f]*|\d+)\.?$/i

@@ -88,8 +88,12 @@ const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
  * processing maps to ASCII, backslashes or extra slashes before the host…)
  * could route somewhere a pattern doesn't see, and Yappr never writes it.
  */
-/** Control characters, which browsers drop or reject in URLs. */
-const CONTROL = /[\u0000-\u001f\u007f]/
+/**
+ * Characters no usable URL holds: controls, which browsers drop or reject,
+ * and unpaired surrogates, which can't be encoded (encodeURIComponent throws).
+ * In `u` mode a properly paired surrogate is one code point and doesn't match.
+ */
+const CONTROL = /[\u0000-\u001f\u007f]|[\uD800-\uDFFF]/u
 const PLAIN_HTTP_AUTHORITY = /^https?:\/\/([a-z0-9.-]+)(?::\d+)?(?:[/?#]|$)/i
 /**
  * A dotted-decimal IPv4 host as browsers print it. Other spellings of an IPv4
