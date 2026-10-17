@@ -35,13 +35,77 @@ const hasPlainAuthority = (url) => {
 
 const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
-/** Same as isCanonicalCid in lib/media/remote-media.ts: base32's unused last bits must be zero. */
+/** Big-endian bytes of a base58btc string (no BigInt: plain byte arithmetic, fine on Hermes). */
+function base58Bytes(text) {
+  const bytes = []
+  for (const char of text) {
+    let carry = BASE58_ALPHABET.indexOf(char)
+    for (let i = bytes.length - 1; i >= 0; i--) {
+      carry += bytes[i] * 58
+      bytes[i] = carry & 0xff
+      carry >>= 8
+    }
+    while (carry > 0) {
+      bytes.unshift(carry & 0xff)
+      carry >>= 8
+    }
+  }
+  return bytes
+}
+
+/** The bytes of an unpadded lowercase base32 string. */
+function base32Bytes(text) {
+  const bytes = []
+  let buffer = 0
+  let bits = 0
+  for (const char of text) {
+    buffer = ((buffer << 5) | BASE32_ALPHABET.indexOf(char)) & 0xffff
+    bits += 5
+    if (bits >= 8) {
+      bytes.push((buffer >> (bits - 8)) & 0xff)
+      bits -= 8
+    }
+  }
+  return bytes
+}
+
+/**
+ * Same as isCanonicalCid in lib/media/remote-media.ts (a test holds them together).
+ * A CID in one of the two spellings Yappr writes, encoded canonically and
+ * decoding to what it claims, so no other string can name the same content:
+ * - `Qm…` must decode to a CIDv0, a 34-byte sha2-256 multihash;
+ * - `b…` must leave base32's unused trailing bits zero (decoders ignore them,
+ *   so `…a` and `…b` could name the same bytes) and decode to a CIDv1:
+ *   version 1, a codec and a multihash whose digest fills the rest exactly.
+ *   (A base32 string of CIDv0 bytes, `bciq…`, is refused: gateways accept it
+ *   for the same content as `Qm…`.)
+ */
 function isCanonicalCid(cid) {
-  if (!CANONICAL_CID.test(cid) || cid.startsWith('Qm')) return CANONICAL_CID.test(cid)
-  const unusedBits = ((cid.length - 1) * 5) % 8
-  const last = BASE32_ALPHABET.indexOf(cid[cid.length - 1].toLowerCase())
-  return unusedBits < 5 && (last & ((1 << unusedBits) - 1)) === 0
+  if (!CANONICAL_CID.test(cid)) return false
+  if (cid.startsWith('Qm')) {
+    const bytes = base58Bytes(cid)
+    return bytes.length === 34 && bytes[0] === 0x12 && bytes[1] === 0x20
+  }
+  const lower = cid.toLowerCase()
+  const unusedBits = ((lower.length - 1) * 5) % 8
+  const last = BASE32_ALPHABET.indexOf(lower[lower.length - 1])
+  if (unusedBits >= 5 || (last & ((1 << unusedBits) - 1)) !== 0) return false
+  const bytes = base32Bytes(lower.slice(1))
+  let pos = 0
+  const varint = () => {
+    let value = 0
+    for (let shift = 0; shift < 63 && pos < bytes.length; shift += 7) {
+      const byte = bytes[pos++]
+      value += (byte & 0x7f) * 2 ** shift
+      if (!(byte & 0x80)) return value
+    }
+    return -1
+  }
+  if (varint() !== 1 || varint() < 0 || varint() < 0) return false
+  const digestLength = varint()
+  return digestLength > 0 && pos + digestLength === bytes.length
 }
 /** Same as ESCAPING_PATH in lib/media/remote-media.ts: a path that could leave its CID. */
 const ESCAPING_PATH = /(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)|%2f|%5c|\\/i
@@ -161,34 +225,14 @@ export function urlSha256(url) {
   return createHash('sha256').update(canonical, 'utf8').digest('hex')
 }
 
-const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567'
 
-function base58Decode(text) {
-  let value = 0n
-  for (const char of text) {
-    const digit = BASE58.indexOf(char)
-    if (digit < 0) throw new Error(`Not base58: ${text}`)
-    value = value * 58n + BigInt(digit)
-  }
-  const bytes = []
-  while (value > 0n) {
-    bytes.unshift(Number(value % 256n))
-    value /= 256n
-  }
-  for (const char of text) {
-    if (char !== '1') break
-    bytes.unshift(0)
-  }
-  return Uint8Array.from(bytes)
-}
 
 function base58Encode(bytes) {
   let value = 0n
   for (const byte of bytes) value = value * 256n + BigInt(byte)
   let text = ''
   while (value > 0n) {
-    text = BASE58[Number(value % 58n)] + text
+    text = BASE58_ALPHABET[Number(value % 58n)] + text
     value /= 58n
   }
   for (const byte of bytes) {
@@ -206,30 +250,14 @@ function base32Encode(bytes) {
     buffer = (buffer << 8) | byte
     bits += 8
     while (bits >= 5) {
-      text += BASE32[(buffer >>> (bits - 5)) & 31]
+      text += BASE32_ALPHABET[(buffer >>> (bits - 5)) & 31]
       bits -= 5
     }
   }
-  if (bits > 0) text += BASE32[(buffer << (5 - bits)) & 31]
+  if (bits > 0) text += BASE32_ALPHABET[(buffer << (5 - bits)) & 31]
   return text
 }
 
-function base32Decode(text) {
-  let bits = 0
-  let buffer = 0
-  const bytes = []
-  for (const char of text) {
-    const digit = BASE32.indexOf(char)
-    if (digit < 0) throw new Error(`Not base32: ${text}`)
-    buffer = (buffer << 5) | digit
-    bits += 5
-    if (bits >= 8) {
-      bytes.push((buffer >>> (bits - 8)) & 255)
-      bits -= 8
-    }
-  }
-  return Uint8Array.from(bytes)
-}
 
 /** A sha2-256 multihash: what a CIDv0 is, and what a dag-pb CIDv1 wraps. */
 const isSha256Multihash = (bytes) => bytes.length === 34 && bytes[0] === 0x12 && bytes[1] === 0x20
@@ -240,13 +268,13 @@ const isSha256Multihash = (bytes) => bytes.length === 34 && bytes[0] === 0x12 &&
  */
 export function cidForms(cid) {
   if (cid.startsWith('Qm')) {
-    const multihash = base58Decode(cid)
+    const multihash = Uint8Array.from(base58Bytes(cid))
     if (!isSha256Multihash(multihash)) throw new Error(`Not a CIDv0: ${cid}`)
     return [cid, `b${base32Encode(Uint8Array.from([0x01, 0x70, ...multihash]))}`]
   }
   const v1 = cid.toLowerCase()
   if (!v1.startsWith('b')) throw new Error(`Only base32 CIDv1 (b…) is supported: ${cid}`)
-  const bytes = base32Decode(v1.slice(1))
+  const bytes = Uint8Array.from(base32Bytes(v1.slice(1)))
   if (bytes[0] !== 0x01) throw new Error(`Not a CIDv1: ${cid}`)
   const multihash = bytes.subarray(2)
   return bytes[1] === 0x70 && isSha256Multihash(multihash) ? [v1, base58Encode(multihash)] : [v1]

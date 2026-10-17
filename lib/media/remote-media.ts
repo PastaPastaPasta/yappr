@@ -54,18 +54,76 @@ const IPNS = /^ipns:|^https?:\/\/(?:[^/?#]+\/ipns\/|[^./?#]+\.ipns\.)/i
 const CANONICAL_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/i
 
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+/** Big-endian bytes of a base58btc string (no BigInt: plain byte arithmetic, fine on Hermes). */
+function base58Bytes(text: string): number[] {
+  const bytes: number[] = []
+  for (const char of text) {
+    let carry = BASE58_ALPHABET.indexOf(char)
+    for (let i = bytes.length - 1; i >= 0; i--) {
+      carry += bytes[i] * 58
+      bytes[i] = carry & 0xff
+      carry >>= 8
+    }
+    while (carry > 0) {
+      bytes.unshift(carry & 0xff)
+      carry >>= 8
+    }
+  }
+  return bytes
+}
+
+/** The bytes of an unpadded lowercase base32 string. */
+function base32Bytes(text: string): number[] {
+  const bytes: number[] = []
+  let buffer = 0
+  let bits = 0
+  for (const char of text) {
+    buffer = ((buffer << 5) | BASE32_ALPHABET.indexOf(char)) & 0xffff
+    bits += 5
+    if (bits >= 8) {
+      bytes.push((buffer >> (bits - 8)) & 0xff)
+      bits -= 8
+    }
+  }
+  return bytes
+}
 
 /**
- * A CID in one of the two spellings Yappr writes, encoded canonically. Base32
- * leaves `5n mod 8` unused bits in its last character, which decoders ignore,
- * so `…a` and `…b` can name the same bytes: those bits must be zero. (46
- * base58 digits can't overflow a CIDv0's 34 bytes, so `Qm…` is always canonical.)
+ * A CID in one of the two spellings Yappr writes, encoded canonically and
+ * decoding to what it claims, so no other string can name the same content:
+ * - `Qm…` must decode to a CIDv0, a 34-byte sha2-256 multihash;
+ * - `b…` must leave base32's unused trailing bits zero (decoders ignore them,
+ *   so `…a` and `…b` could name the same bytes) and decode to a CIDv1:
+ *   version 1, a codec and a multihash whose digest fills the rest exactly.
+ *   (A base32 string of CIDv0 bytes, `bciq…`, is refused: gateways accept it
+ *   for the same content as `Qm…`.)
  */
 function isCanonicalCid(cid: string): boolean {
-  if (!CANONICAL_CID.test(cid) || cid.startsWith('Qm')) return CANONICAL_CID.test(cid)
-  const unusedBits = ((cid.length - 1) * 5) % 8
-  const last = BASE32_ALPHABET.indexOf(cid[cid.length - 1].toLowerCase())
-  return unusedBits < 5 && (last & ((1 << unusedBits) - 1)) === 0
+  if (!CANONICAL_CID.test(cid)) return false
+  if (cid.startsWith('Qm')) {
+    const bytes = base58Bytes(cid)
+    return bytes.length === 34 && bytes[0] === 0x12 && bytes[1] === 0x20
+  }
+  const lower = cid.toLowerCase()
+  const unusedBits = ((lower.length - 1) * 5) % 8
+  const last = BASE32_ALPHABET.indexOf(lower[lower.length - 1])
+  if (unusedBits >= 5 || (last & ((1 << unusedBits) - 1)) !== 0) return false
+  const bytes = base32Bytes(lower.slice(1))
+  let pos = 0
+  const varint = (): number => {
+    let value = 0
+    for (let shift = 0; shift < 63 && pos < bytes.length; shift += 7) {
+      const byte = bytes[pos++]
+      value += (byte & 0x7f) * 2 ** shift
+      if (!(byte & 0x80)) return value
+    }
+    return -1
+  }
+  if (varint() !== 1 || varint() < 0 || varint() < 0) return false
+  const digestLength = varint()
+  return digestLength > 0 && pos + digestLength === bytes.length
 }
 /**
  * A subdomain gateway's label in another DNS-safe multibase (`k…` base36,
