@@ -383,6 +383,7 @@ class DirectMessageService {
     userId: string,
     options?: { includeParticipantInfo?: boolean }
   ): Promise<Conversation[]> {
+    if (!YAPPR_DM_CONTRACT_ID) return []
     try {
       const includeParticipantInfo = options?.includeParticipantInfo ?? true
       const conversationMap = await this.loadConversationIndex(userId)

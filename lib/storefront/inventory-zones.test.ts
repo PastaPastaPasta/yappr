@@ -38,11 +38,11 @@ describe('Shipping Zones CSV column (storefront v9)', () => {
     const v9 = await under('v9')
     const lines = v9.inventoryToCsv([wallet, mug, cap(v9)], 'USD', ZONES).csv.split('\n')
     const header = lines[0].split(',')
-    expect(header.slice(10, 12)).toEqual(['Weight', 'Shipping Zones'])
+    expect(header.slice(10, 14)).toEqual(['Weight', 'Currency', 'Item SKU', 'Shipping Zones'])
     // In the store's zone order; the name with a comma is quoted.
-    expect(lines[1]).toContain(',90,"Domestic; Europe, incl. UK",')
+    expect(lines[1]).toContain(',90,USD,,"Domestic; Europe, incl. UK",')
     // Blank: the mug ships under every zone.
-    expect(lines[2].split(',').slice(1, 12)).toEqual(['Mug', '', '', '', '', '', '', '5.00', '', '', ''])
+    expect(lines[2].split(',')[header.indexOf('Shipping Zones')]).toBe('')
     expect(lines.filter((line) => line.startsWith('cap,'))).toHaveLength(2)
     for (const line of lines.filter((row) => row.startsWith('cap,'))) expect(line).toContain(',Rest of World,')
   })
@@ -180,7 +180,7 @@ describe('Shipping Zones CSV column (storefront v9)', () => {
   it('has the column in the template: one product with example zones, one with none', async () => {
     const v9 = await under('v9')
     const template = v9.inventoryCsvTemplate()
-    expect(template.split('\n')[0]).toContain(',Weight,Shipping Zones,Option1 Name,')
+    expect(template.split('\n')[0]).toContain(',Weight,Currency,Item SKU,Shipping Zones,Option1 Name,')
     const result = v9.parseInventoryCSV(template, 'USD', [{ id: 'd', name: 'Domestic' }, { id: 'e', name: 'Europe' }])
     expect(result.errors).toEqual([])
     expect(result.items.map((item) => [item.errors, item.shippingZoneIds])).toEqual([[[], ['d', 'e']], [[], undefined]])
@@ -192,8 +192,8 @@ describe('before storefront v9', () => {
     const v8 = await under('v8')
     expect(v8.inventoryToCsv([wallet], 'USD', ZONES).csv).not.toMatch(/Shipping Zones|Domestic/)
     expect(v8.inventoryCsvTemplate()).not.toMatch(/Shipping Zones|Domestic/)
-    // The header is exactly what it was before v9.
-    expect(v8.inventoryToCsv([mug], 'USD').csv.split('\n')[0]).toBe('Group,Title,Description,Section,Category,Subcategory,Tags,SKU,Price,Quantity,Weight,Image URL')
+    // Earlier versions keep the currency and item SKU, without zone columns.
+    expect(v8.inventoryToCsv([mug], 'USD').csv.split('\n')[0]).toBe('Group,Title,Description,Section,Category,Subcategory,Tags,SKU,Price,Quantity,Weight,Currency,Item SKU,Image URL')
   })
 
   it('ignores the column on import, with one file-level warning', async () => {

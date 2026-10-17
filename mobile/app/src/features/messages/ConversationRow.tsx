@@ -29,7 +29,7 @@ export const ConversationRow = memo(function ConversationRow({ conversation, onP
   const preview = previewText(conversation);
   const unread = conversation.unread > 0;
   // The last message's own time (my send shows when I sent it); the order stays by last activity.
-  const time = conversation.lastMessage?.at ?? conversation.lastActivity;
+  const time = conversation.lastMessage?.at ?? (conversation.kind === 'group' ? null : conversation.lastActivity);
   const at = time ? new Date(time) : null;
   const group = conversation.kind === 'group';
   const spokenTime = useRelativeTime(at, 'spoken');

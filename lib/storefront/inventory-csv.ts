@@ -14,8 +14,8 @@ import { findOption } from './variant-codec'
 import { formatPriceInput } from './variant-editor-model'
 import { ZONE_SEPARATOR, itemZones, readZoneCell } from './item-zones'
 
-const ITEM_COLUMNS = ['Group', 'Title', 'Description', 'Section', 'Category', 'Subcategory', 'Tags', 'SKU', 'Price', 'Quantity', 'Weight']
-/** v9: the zone names a product ships under, after `Weight`; blank = every zone. */
+const ITEM_COLUMNS = ['Group', 'Title', 'Description', 'Section', 'Category', 'Subcategory', 'Tags', 'SKU', 'Price', 'Quantity', 'Weight', 'Currency', 'Item SKU']
+/** v9: the zone names a product ships under, after the item columns; blank = every zone. */
 const ZONES_COLUMN = 'Shipping Zones'
 
 /** A value as one CSV cell, quoted when it needs to be. */
@@ -94,7 +94,7 @@ export function inventoryToCsv(allItems: readonly StoreItem[], defaultCurrency: 
     const variants = item.variants
     if (!variants || variants.combinations.length === 0) {
       rows.push([
-        ...itemCells(''), item.sku ?? '', price(item.basePrice ?? 0), text(item.stockQuantity), text(item.weight), ...shipsUnder,
+        ...itemCells(''), item.sku ?? '', price(item.basePrice ?? 0), text(item.stockQuantity), text(item.weight), currency, item.sku ?? '', ...shipsUnder,
         ...Array.from({ length: axisCount * 2 }, () => ''), ...imageCells(true), '',
       ])
       continue
@@ -113,7 +113,7 @@ export function inventoryToCsv(allItems: readonly StoreItem[], defaultCurrency: 
         return axis ? [axis.name, findOption(variants, optionId)?.option.name ?? ''] : ['', '']
       }).flat()
       rows.push([
-        ...itemCells(item.id), combination.sku ?? '', price(combination.price), text(combination.stock), text(combination.weight ?? item.weight), ...shipsUnder,
+        ...itemCells(item.id), combination.sku ?? '', price(combination.price), text(combination.stock), text(combination.weight ?? item.weight), currency, item.sku ?? '', ...shipsUnder,
         ...options, ...imageCells(index === 0), combination.image ? images[combination.image - 1] ?? '' : combination.imageUrl ?? '',
       ])
     }
@@ -135,7 +135,7 @@ export function inventoryToCsv(allItems: readonly StoreItem[], defaultCurrency: 
 export function inventoryCsvTemplate(): string {
   const zoneCell = (names: string) => (storefrontSupportsItemZones() ? [names] : [])
   const roads = (sku: string, color: string, pack: string, price: string, quantity: string, weight: string, image: string, listingImage = '') => [
-    'CATAN-ROADS', 'Catan Roads', 'Replacement roads for Catan', 'Games', 'Board Games', 'Catan', 'catan, roads', sku, price, quantity, weight,
+    'CATAN-ROADS', 'Catan Roads', 'Replacement roads for Catan', 'Games', 'Board Games', 'Catan', 'catan, roads', sku, price, quantity, weight, '', '',
     ...zoneCell(`Domestic${ZONE_SEPARATOR}Europe`), 'Color', color, 'Pack Size', pack, listingImage, image,
   ]
   return toCsv([
@@ -145,7 +145,7 @@ export function inventoryCsvTemplate(): string {
     roads('C-ROAD-GREEN-1', 'Green', 'Single', '0.69', '100', '5', 'https://example.com/road-green.jpg'),
     roads('C-ROAD-GREEN-10', 'Green', '10-Pack', '5.99', '50', '50', 'https://example.com/road-green.jpg'),
     roads('C-ROAD-GREEN-50', 'Green', '50-Pack', '24.99', '(C-ROAD-GREEN-10)*5', '250', 'https://example.com/road-green.jpg'),
-    ['', 'Catan Base Set - Red', 'Complete red player set', 'Games', 'Board Games', 'Catan', 'catan, set, red', 'C-BASE-RED', '6.50', '25', '100', ...zoneCell(''), '', '', '', '', 'https://example.com/base-red.jpg', ''],
+    ['', 'Catan Base Set - Red', 'Complete red player set', 'Games', 'Board Games', 'Catan', 'catan, set, red', 'C-BASE-RED', '6.50', '25', '100', '', '', ...zoneCell(''), '', '', '', '', 'https://example.com/base-red.jpg', ''],
   ])
 }
 

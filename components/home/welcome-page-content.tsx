@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
+import { publicAsset } from '@/lib/public-asset'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -58,14 +59,14 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
             </h1>
             <div className="flex justify-center mb-4">
               <Image
-                src="/pbde-light.png"
+                src={publicAsset('/pbde-light.png')}
                 alt="Powered by Dash Evolution"
                 width={240}
                 height={80}
                 className="dark:hidden"
               />
               <Image
-                src="/pbde-dark.png"
+                src={publicAsset('/pbde-dark.png')}
                 alt="Powered by Dash Evolution"
                 width={240}
                 height={80}
