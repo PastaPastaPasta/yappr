@@ -664,7 +664,8 @@ async function removeEntries(identityId: string, entryIds: readonly string[]): P
   const stillThere = new Set(remaining.map((entry) => entry.$id))
   const gone = entries.filter((entry) => confirmed.has(entry.$id) && !stillThere.has(entry.$id))
   for (const entry of gone) forgetPasskeyHere(identityId, bytesToBase64Url(entry.credentialId))
-  const failed = entries.length - gone.length
+  // Counted over what was asked for: a requested entry this read missed (a node behind) is not known gone either.
+  const failed = new Set(entryIds).size - gone.length
   // An unconfirmed delete leaves the list uncertain: the provider is only told what remains when everything is known.
   if (failed === 0) await signalRemaining(identityId, remaining)
   return { gone: gone.map((entry) => entry.$id), failed }
