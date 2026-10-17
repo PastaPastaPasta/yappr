@@ -1,0 +1,67 @@
+name: Production monitoring
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  deployments: read
+  issues: write
+
+concurrency:
+  group: production-monitoring
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MONITOR_THRESHOLDS: ${{ vars.MONITOR_THRESHOLDS }}
+      MONITOR_CHARTER_LEADERS: ${{ vars.MONITOR_CHARTER_LEADERS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Download expectations from the live Pages deployment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # A Pages deployment can succeed even if a later workflow step
+          # fails or the run is cancelled. Use deployment status, not run status.
+          run_id=
+          for deployment_id in $(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=github-pages&per_page=30" --jq '.[].id'); do
+            log_url=$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses" --jq '[.[] | select(.state == "success")][0].log_url // empty')
+            if [[ "$log_url" =~ /actions/runs/([0-9]+) ]]; then
+              run_id="${BASH_REMATCH[1]}"
+              break
+            fi
+          done
+          test -n "$run_id"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name monitoring-expectations --dir monitoring-deployment
+      - name: Check sites and chains (read-only)
+        if: always()
+        run: node scripts/monitoring/run.mjs --manifest monitoring-deployment/monitoring-expectations.json
+      - name: Open, update, or resolve incident issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        if: always()
+        run: node scripts/monitoring/incidents.mjs monitoring-results.json
+      - name: Save monitoring results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-results
+          path: monitoring-results.json
+          if-no-files-found: warn
+          retention-days: 30

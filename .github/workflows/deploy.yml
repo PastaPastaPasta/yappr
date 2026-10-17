@@ -225,6 +225,20 @@ jobs:
             echo "::warning::devnet build failed or was skipped — deploying without an updated /devnet"
           fi
 
+      # Expectations are kept outside the public site: they describe exactly
+      # which commits, env files and snapshot hashes this deploy built.
+      - name: Record monitoring expectations
+        continue-on-error: true
+        run: node staging/scripts/monitoring/manifest.mjs master staging monitoring-expectations.json
+
+      - name: Save monitoring expectations
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-expectations
+          path: monitoring-expectations.json
+          retention-days: 90
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
