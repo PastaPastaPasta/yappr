@@ -51,23 +51,24 @@ export function activityFilters(schema) {
 }
 
 export async function countActivity(sdk, id, type, schema, since, max) {
-  let count = 0;
+  // Moderation can move a report between partitions while these reads run.
+  const observed = new Set();
   for (const prefix of activityFilters(schema)) {
     let startAfter;
-    while (count <= max) {
+    while (observed.size <= max) {
       const page = await sdk.documents.query({ dataContractId: id, documentTypeName: type, where: [...prefix, ['$createdAt', '>=', since]], orderBy: [['$createdAt', 'asc']], limit: 100, ...(startAfter ? { startAfter } : {}) });
       const docs = [...page.values()].filter(Boolean);
-      count += docs.length;
+      for (const doc of docs) observed.add(doc.id.toBase58());
       const last = docs.at(-1);
       startAfter = last?.id.toBase58();
       for (const doc of docs) doc.free();
       if (page.size < 100) break;
       if (!startAfter) throw new Error('Activity pagination made no progress');
     }
-    if (count > max) break;
+    if (observed.size > max) break;
   }
-  if (count > max) throw new Error(`${type}: at least ${count} documents in window; threshold ${max}`);
-  return `${type}: ${count} retained documents in window (threshold ${max})`;
+  if (observed.size > max) throw new Error(`${type}: at least ${observed.size} documents in window; threshold ${max}`);
+  return `${type}: ${observed.size} retained documents in window (threshold ${max})`;
 }
 
 export async function checkAppConnectGroup(sdk, env, limits) {

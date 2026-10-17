@@ -200,3 +200,15 @@ it('rejects App Connect pins rejected by browser login before probing any group'
   expect(() => contractPins(env)).toThrow('anchor among members');
   await expect(checkAppConnectGroup({}, env, thresholds({}))).rejects.toThrow('anchor among members');
 });
+
+it('counts each report once when moderation moves it between status partitions', async () => {
+  const schema = JSON.parse(readFileSync(new URL('../../contracts/yappr-social-contract-v16.json', import.meta.url), 'utf8')).documentSchemas.report;
+  const document = n => ({ id: { toBase58: () => String(n) }, free: vi.fn() });
+  const query = vi.fn(async ({ where, startAfter }) => {
+    const status = where[0][2];
+    const ids = status === null && !startAfter ? Array.from({ length: 100 }, (_, n) => n) : status === 1 ? [0] : [];
+    return new Map(ids.map(n => [String(n), document(n)]));
+  });
+  await expect(countActivity({ documents: { query } }, id, 'report', schema, 1000, 100)).resolves.toContain('100 retained');
+  expect(query.mock.calls.map(([q]) => q.where[0][2])).toEqual([null, null, 1, 2, 3]);
+});
