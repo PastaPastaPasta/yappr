@@ -1,9 +1,9 @@
 import { queryDocumentBundle } from './document-query-bundle'
 import { mapLimit } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
-import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID, blogIsV7 } from '@/lib/constants'
+import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID, blogIsV7, blogIsV9 } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
-import { identifierToBase58, normalizeBytes, requireDocumentIdentifierBytes } from './sdk-helpers'
+import { identifierToBase58, normalizeBytes, requireDocumentIdentifierBytes, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers'
 import { compressContent, decompressContent, joinChunks, splitIntoChunks } from '@/lib/utils/compression'
 import { generateSlug } from '@/lib/utils/slug'
 import { retryAsync } from '@/lib/retry-utils'
@@ -11,6 +11,15 @@ import { extractErrorMessage, isRateLimitedError } from '@/lib/error-utils'
 import { BLOG_POST_TOMBSTONE, BLOG_POST_TOMBSTONE_KEEPS, isPublishedBlogPost, labelsFromStored, publishedPostsNewestFirst, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { logger } from '@/lib/logger'
 import { tombstoneDocument } from './tombstone-helpers'
+
+/**
+ * Blog v9 keys the post listings (`timeline [live, $createdAt]`, `blogAndTime
+ * [live, blogId, $createdAt]`) on the `live` marker every published post
+ * carries and its tombstone leaves out, both `skipIfAbsent`: a read pins
+ * `live == true` (Drive refuses an unpinned one) and never sees a tombstone.
+ */
+const listingWhere = (): DocumentWhereClause[] => (blogIsV9() ? [['live', '==', true]] : [])
+const listingOrder = (): DocumentOrderByClause[] => (blogIsV9() ? [['live', 'asc']] : [])
 
 export interface BlogPostQueryOptions {
   limit?: number
@@ -86,6 +95,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     }
     // Store the app's label list as the configured cut does.
     if ('labels' in fields) fields.labels = storedLabels(doc.labels, 'post')
+    // v9: an edit of a published post keeps it on the listings; only a tombstone leaves `live` out.
+    if (blogIsV9() && !doc.deleted) fields.live = true
     // Re-compress and chunk content into data0–data3 (only set chunks that exist)
     if (doc.content && Array.isArray(doc.content) && doc.content.length > 0) {
       const compressed = compressContent(doc.content)
@@ -172,6 +183,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
         data0: chunks[0],
         slug: finalSlug,
         publishedAt: data.publishedAt ?? Date.now(),
+        // v9: required on a post until its tombstone, which leaves it out.
+        ...(blogIsV9() ? { live: true } : {}),
       }
       for (let i = 1; i < chunks.length; i++) {
         payload[`data${i}`] = chunks[i]
@@ -264,8 +277,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
   async getPostsByBlog(blogId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {
     const queryOptions: QueryOptions = {
-      where: [['blogId', '==', blogId]],
-      orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']],
+      where: [...listingWhere(), ['blogId', '==', blogId]],
+      orderBy: [...listingOrder(), ['blogId', 'asc'], ['$createdAt', 'desc']],
       limit: options.limit,
       startAfter: options.startAfter,
     }
@@ -281,8 +294,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const ids = Array.from(new Set(blogIds))
     const pages = await queryDocumentBundle(ids.map(blogId => ({
       dataContractId: this.contractId, documentTypeName: this.documentType,
-      where: [['blogId', '==', blogId], ['$createdAt', '>', 0]],
-      orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']], limit,
+      where: [...listingWhere(), ['blogId', '==', blogId], ['$createdAt', '>', 0]],
+      orderBy: [...listingOrder(), ['blogId', 'asc'], ['$createdAt', 'desc']], limit,
     })), true, onBlogReadFailure)
     return new Map(ids.map((id, index) => [id, pages[index].map(doc => this.transformDocument(doc))]))
   }
@@ -316,6 +329,11 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       // Creation order is not publication order, so rank before cutting.
       return publishedPostsNewestFirst(published).slice(0, perBlog)
     })
+  }
+
+  /** The timeline, newest first: `live == true` pinned on v9, where tombstones are not on it. */
+  protected newestFirstPage(limit: number, startAfter?: string): Promise<{ documents: BlogPost[]; nextCursor?: string }> {
+    return this.cursorPage({ where: [...listingWhere(), ['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit, startAfter })
   }
 
   /**

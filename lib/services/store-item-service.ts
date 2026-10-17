@@ -9,11 +9,11 @@
 
 import { BaseDocumentService, StaleRevisionError } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontIsV10, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '../constants';
 import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeIdentifierList, decodeStringList, encodeIdentifierList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
-import { ITEM_SHIPPING_ZONE_LIMIT, LEGACY_STRING_LIST_CAPS, itemImageLimit, itemSizeError, itemStockCap } from '../storefront/storefront-contract';
+import { ITEM_IMAGE_URL_PATTERN, ITEM_SHIPPING_ZONE_LIMIT, LEGACY_STRING_LIST_CAPS, itemImageLimit, itemSizeError, itemStockCap } from '../storefront/storefront-contract';
 import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabel, variantOptionPairs, variantProblems, type VariantOptionPairs } from '../storefront/variant-codec';
 import { decodeLegacyVariants, encodeLegacyVariants } from '../storefront/legacy-variants';
 import type {
@@ -38,8 +38,12 @@ const storedList = (values: readonly string[], limits: ListLimits) => {
   return encodeStringList(values, typed);
 };
 const TAG_LIMITS = LIST_LIMITS.storeTags;
-/** v7 stores up to 12 images (a variant names one by index); v4–v6 up to 8. */
-const imageLimits = (): ListLimits => ({ ...LIST_LIMITS.storeImageUrls, maxItems: Math.max(itemImageLimit(), LIST_LIMITS.storeImageUrls.maxItems) });
+/** v7 stores up to 12 images (a variant names one by index); v4–v6 up to 8. v10 takes https:// and ipfs:// only. */
+const imageLimits = (): ListLimits => ({
+  ...LIST_LIMITS.storeImageUrls,
+  maxItems: Math.max(itemImageLimit(), LIST_LIMITS.storeImageUrls.maxItems),
+  ...(storefrontIsV10() ? { pattern: ITEM_IMAGE_URL_PATTERN, patternHint: 'start with https:// or ipfs://' } : {}),
+});
 /** A stored list (either shape) as the app models it; undefined when empty or absent. */
 const listOf = (stored: unknown): string[] | undefined => {
   const values = decodeStringList(stored);
@@ -244,12 +248,16 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   }
 
   /**
-   * Get items for a store
+   * Get items for a store, oldest first. By default every status, for the
+   * owner's management views. `activeOnly` is for the buyer-facing listing: on
+   * v10 it reads just the active items from `storeStatusAndTime`; below v10
+   * there is no such index, so every status comes back and the caller filters.
    */
-  async getByStore(storeId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
+  async getByStore(storeId: string, options: { limit?: number; startAfter?: string; activeOnly?: boolean } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
+    const activeOnly = options.activeOnly === true && storefrontIsV10();
     const { documents } = await this.query({
-      where: [['storeId', '==', storeId]],
-      orderBy: [['storeId', 'asc'], ['$createdAt', 'asc']],
+      where: activeOnly ? [['storeId', '==', storeId], ['status', '==', 'active']] : [['storeId', '==', storeId]],
+      orderBy: activeOnly ? [['storeId', 'asc'], ['status', 'asc'], ['$createdAt', 'asc']] : [['storeId', 'asc'], ['$createdAt', 'asc']],
       limit: options.limit || 20,
       startAfter: options.startAfter
     });

@@ -4,7 +4,7 @@ import { stateTransitionService, type StateTransitionResult } from './state-tran
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes, RequestDeduplicator } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
-import { blockFollowsAreTyped, blocksContractId } from '../contract-topology'
+import { blockFollowsAreTyped, blocksContractId, privateFeedClientSupported } from '../contract-topology'
 import { decodeBlockFollowIds, encodeBlockFollowIds } from '../typed-array-codecs'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
 import { BlockDocument, BlockFollowData } from '../types'
@@ -228,8 +228,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       // Dynamically import to avoid circular dependencies
       const { privateFeedService, privateFeedKeyStore } = await import('./index')
 
-      // Check if blocker has private feed enabled locally
-      if (!privateFeedKeyStore.hasFeedSeed()) {
+      // Check if blocker has private feed enabled locally (this client has none on social v17)
+      if (!privateFeedClientSupported() || !privateFeedKeyStore.hasFeedSeed()) {
         return false
       }
 

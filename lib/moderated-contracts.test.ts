@@ -24,12 +24,31 @@ describe('storefront moderation by topology', () => {
     ['v6', true],
     ['v7', true],
     ['v9', true],
+    ['v10', true],
   ] as const)('storefront %s: moderated = %s', async (topology, moderated) => {
     const { moderatedContract } = await contractsUnder({ NEXT_PUBLIC_STOREFRONT_TOPOLOGY: topology, NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID: ID })
     const storefront = moderatedContract('storefront')
     expect(storefront.moderated()).toBe(moderated)
     expect(storefront.elected() !== null).toBe(moderated)
     expect(storefront.deletableTypes().length > 0).toBe(moderated)
+  })
+
+  it('takes reports from v10 on: below it the registered cut has no report type, whatever the file declares', async () => {
+    const v9 = (await contractsUnder({ NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v9', NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID: ID })).moderatedContract('storefront')
+    expect(v9.deletableTypes()).not.toContain('report')
+    expect(v9.elected()?.moderatedDocumentTypes.report).toBeUndefined()
+    expect([v9.reportsResolved(), v9.reportTargets()]).toEqual([false, []])
+    const v10 = (await contractsUnder({ NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v10', NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID: ID })).moderatedContract('storefront')
+    expect(v10.deletableTypes()).toContain('report')
+    expect(v10.elected()?.moderatedDocumentTypes.report).toEqual(['deleteDocuments', 'changeDocumentFields'])
+    expect([v10.reportsResolved(), v10.keepsRecord('report')]).toEqual([true, false])
+    expect(v10.reportTargets()).toEqual([
+      { field: 'storeId', docType: 'store' }, { field: 'itemId', docType: 'storeItem' },
+      { field: 'storeReviewId', docType: 'storeReview' }, { field: 'itemReviewId', docType: 'itemReview' },
+    ])
+    // The answers are stable objects (React effects depend on them).
+    expect(v10.deletableTypes()).toBe(v10.deletableTypes())
+    expect(v10.elected()).toBe(v10.elected())
   })
 
   it('is off without a contract id, whatever the topology', async () => {
@@ -46,10 +65,19 @@ describe('blog moderation by topology', () => {
     ['v6', false],
     ['v7', true],
     ['v8', true],
+    ['v9', true],
   ] as const)('blog %s: moderated = %s', async (topology, moderated) => {
     const { moderatedContract } = await contractsUnder({ NEXT_PUBLIC_BLOG_TOPOLOGY: topology, NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID: ID })
     expect(moderatedContract('blog').moderated()).toBe(moderated)
     expect(moderatedContract('blog').listsKept().length > 0).toBe(moderated)
+  })
+
+  it('takes reports of blogs, posts and comments from v9 on', async () => {
+    const v8 = (await contractsUnder({ NEXT_PUBLIC_BLOG_TOPOLOGY: 'v8', NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID: ID })).moderatedContract('blog')
+    expect([v8.deletableTypes().includes('report'), v8.reportsResolved(), v8.reportTargets()]).toEqual([false, false, []])
+    const v9 = (await contractsUnder({ NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9', NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID: ID })).moderatedContract('blog')
+    expect([v9.deletableTypes().includes('report'), v9.reportsResolved()]).toEqual([true, true])
+    expect(v9.reportTargets().map((target) => target.docType)).toEqual(['blog', 'blogPost', 'blogComment'])
   })
 })
 

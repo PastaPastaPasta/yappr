@@ -21,6 +21,7 @@ import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
 import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
 import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
 import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
+import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
@@ -57,6 +58,7 @@ const V13 = socialContractV13.documentSchemas as unknown as Schemas
 const V14 = socialContractV14.documentSchemas as unknown as Schemas
 const V15 = socialContractV15.documentSchemas as unknown as Schemas
 const V16 = socialContractV16.documentSchemas as unknown as Schemas
+const V17 = socialContractV17.documentSchemas as unknown as Schemas
 const BLOCKS = blocksContract as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
 
@@ -72,7 +74,7 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
@@ -134,7 +136,7 @@ describe('contract topology', () => {
   })
 
   it('names like fields and indexes that exist on each contract', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
@@ -232,7 +234,7 @@ describe('contract topology', () => {
   })
 
   it('reads the author index as a counter exactly where the contract keeps one (summableOffCountIndex)', async () => {
-    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16]] as const) {
+    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const shape = m.indexOnlyLikeShapeFor(kind)
@@ -257,7 +259,7 @@ describe('contract topology', () => {
   })
 
   it('lets a barred author tombstone exactly where post and reply declare retractedWhen on deleted', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17]] as const) {
       const m = await topologyModule(topology)
       const declared = (['post', 'reply'] as const).map((kind) => schemas[kind].retractedWhen)
       const retracts = declared.every((rule) => JSON.stringify(rule) === JSON.stringify({ present: 'deleted' }))
@@ -1406,6 +1408,90 @@ describe('contract topology', () => {
         }
       }
       expect(await read('v16')).toEqual(await read('v15'))
+    })
+  })
+
+  describe('v17 (the testnet production cut)', () => {
+    const indexOf = (schemas: Schemas, docType: string, name: string) => schemas[docType].indices?.find((entry) => entry.name === name)
+    const v17Token = socialContractV17.tokens['0'] as unknown as Record<string, { authorizedToMakeChange?: { $type: string }; adminActionTakers?: { $type: string } }>
+    const v16Token = socialContractV16.tokens['0'] as unknown as Record<string, unknown>
+
+    it('keeps follow, follow requests and bookmarks exactly as v16 (D13, D17)', () => {
+      for (const docType of ['bookmark', 'follow', 'followRequest']) expect(V17[docType], docType).toEqual(V16[docType])
+    })
+
+    it('keys the global timeline, the tag pages and the reply author index on the live marker', () => {
+      expect(indexOf(V17, 'post', 'timeline')).toEqual({ name: 'timeline', properties: [{ live: 'asc' }, { $createdAt: 'asc' }], rangeCountable: true, skipIfAbsent: true })
+      expect(indexOf(V17, 'post', 'tagAndTime')).toEqual({ name: 'tagAndTime', properties: [{ live: 'asc' }, { tags: 'asc' }, { $createdAt: 'asc' }], skipIfAbsent: true })
+      expect(indexOf(V17, 'post', 'ownerAndTime')).toEqual(indexOf(V16, 'post', 'ownerAndTime'))
+      expect(indexOf(V17, 'reply', 'ownerAndTime')).toEqual({ name: 'ownerAndTime', properties: [{ live: 'asc' }, { $ownerId: 'asc' }, { $createdAt: 'asc' }], skipIfAbsent: true })
+      // The live-post total is the timeline's count; the type keeps none of every post.
+      expect((V17.post as { documentsCountable?: boolean }).documentsCountable).toBeUndefined()
+      expect(V17.reply.properties.live).toEqual({ type: 'boolean', const: true, position: 12 })
+      expect(V17.reply.propertyConstraints?.live).toEqual(V17.post.propertyConstraints?.live)
+      expect(V17.reply.immutable).toContainEqual({ property: 'live', when: { absent: 'deleted' } })
+      // Thread reads and the notification windows keep tombstones: they anchor live replies.
+      for (const name of ['repliesOf', 'rootOwnerRecent', 'parentOwnerRecent']) expect(indexOf(V17, 'reply', name), name).toEqual(indexOf(V16, 'reply', name))
+    })
+
+    it('refuses a lone quote owner, an empty reply and self-likes', () => {
+      expect(V17.post.propertyConstraints?.quoteOwner).toEqual({ in: [{ countPresent: ['quotedPostId', 'quotedReplyId', 'quotedPostOwnerId'] }, [0, 2]] })
+      expect(V17.reply.propertyConstraints?.notEmpty).toBeDefined()
+      expect((V17.like.properties.postAuthor as { distinctFrom?: string }).distinctFrom).toBe('$ownerId')
+      expect(V17.likeReply.properties.replyId.refersTo?.where).toEqual({ $ownerId: { notEqual: '$ownerId' } })
+    })
+
+    it('takes https and ipfs media only, and https websites', () => {
+      for (const docType of ['post', 'reply']) {
+        expect((V17[docType].properties.mediaUrls as { items: { pattern: string } }).items.pattern, docType).toBe('^(https|ipfs)://.+$')
+      }
+      const profile = V17.yapprProfile.properties as Record<string, { pattern?: string; maxBytes?: number }>
+      expect([profile.bannerUri.pattern, profile.website.pattern]).toEqual(['^(https|ipfs)://.+$', '^https://.+$'])
+      expect(new RegExp(profile.avatar.pattern ?? '').test('{"seed":"s","style":"bottts"}')).toBe(true)
+      expect(new RegExp(profile.avatar.pattern ?? '').test('http://example.com/a.png')).toBe(false)
+      for (const field of ['location', 'website', 'bannerUri', 'pronouns', 'avatar']) expect(profile[field].maxBytes, field).toBeGreaterThan(0)
+    })
+
+    it('lets no one mint, burn, freeze, unfreeze or destroy frozen YAPP (D3), and changes nothing else on the token', () => {
+      const rules = ['manualMintingRules', 'manualBurningRules', 'freezeRules', 'unfreezeRules', 'destroyFrozenFundsRules']
+      for (const rule of rules) {
+        expect([v17Token[rule].authorizedToMakeChange?.$type, v17Token[rule].adminActionTakers?.$type], rule).toEqual(['noOne', 'noOne'])
+      }
+      const rest = (token: Record<string, unknown>) => Object.fromEntries(Object.entries(token).filter(([key]) => !rules.includes(key)))
+      expect(rest(v17Token)).toEqual(rest(v16Token))
+    })
+
+    it('keeps several write-once private feeds per identity, their caps checked on chain', () => {
+      expect(V17.privateFeedState).toBeUndefined()
+      expect(V17.privateFeed.indices).toEqual([{ name: 'feed', properties: [{ $ownerId: 'asc' }, { feed: 'asc' }], unique: true }])
+      expect([V17.privateFeed.documentsMutable, V17.privateFeed.canBeDeleted, V17.privateFeedRekey.canBeDeleted]).toEqual([false, false, false])
+      for (const docType of ['privateFeedGrant', 'privateFeedRekey']) {
+        expect((V17[docType].ownerRefersTo as { findBy: unknown }).findBy, docType).toEqual({ $ownerId: '.', feed: 'feed' })
+      }
+      expect(indexOf(V17, 'privateFeedGrant', 'recipient')?.properties).toEqual([{ recipientId: 'asc' }, { $ownerId: 'asc' }, { feed: 'asc' }])
+      for (const docType of ['post', 'reply']) {
+        expect(V17[docType].propertyConstraints?.private, docType).toEqual({ in: [{ countPresent: ['encryptedContent', 'keyGeneration', 'nonce', 'feed'] }, [0, 4]] })
+        expect(V17[docType].immutable, docType).toContainEqual({ property: 'feed', when: { absent: 'deleted' } })
+      }
+    })
+
+    it('reads the live-keyed listings with live pinned, and keeps every v16 surface', async () => {
+      const v17 = await topologyModule('v17')
+      expect([v17.postListingsCarryLiveMarker(), v17.repliesCarryLiveMarker()]).toEqual([true, true])
+      expect(v17.postListingWherePrefix()).toEqual([['live', '==', true]])
+      expect([v17.replyOwnerIndexPrefix(), v17.replyOwnerIndexOrderPrefix()]).toEqual([[['live', '==', true]], [['live', 'asc']]])
+      expect([v17.yappCanBeFrozen(), v17.privateFeedsAreMultiple(), v17.privateFeedClientSupported()]).toEqual([false, true, false])
+      expect(v17.ownerDistinctProperties('like')).toEqual(['postAuthor'])
+      expect(v17.reportShape().maxReason).toBe(31)
+      const v16 = await topologyModule('v16')
+      expect([v16.postListingsCarryLiveMarker(), v16.repliesCarryLiveMarker(), v16.postListingWherePrefix(), v16.replyOwnerIndexPrefix()]).toEqual([false, false, [], []])
+      expect([v16.yappCanBeFrozen(), v16.privateFeedsAreMultiple(), v16.privateFeedClientSupported()]).toEqual([true, false, true])
+      expect((await topologyModule('v2')).yappCanBeFrozen()).toBe(true)
+      const surfaces = async (topology: string) => {
+        const m = await topologyModule(topology)
+        return { descriptor: { ...m.topologyDescriptor(), topology: null }, tags: m.inlineTags(), mentions: m.inlineMentions(), windows: (['reply', 'quote', 'threadReply'] as const).map((source) => m.notificationWindowFor(source)) }
+      }
+      expect(await surfaces('v17')).toEqual(await surfaces('v16'))
     })
   })
 })

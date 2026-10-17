@@ -25,10 +25,11 @@ export const YAPPR_PASSKEY_VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_PAS
 
 // YAPP token (defined at position 0 of the v2 social contract)
 export const YAPP_TOKEN_POSITION = 0
-// Contract-owner / token authority identity (signs freeze/unfreeze/slash).
-// Per-deployment: the devnet contract is owned by a different maker identity,
-// so the settings moderation gate must compare against that owner there.
-// Mainnet TODO: move moderation to a Group and drop this single-identity gate.
+// Contract-owner / token authority identity (signs freeze/unfreeze/slash on
+// cuts whose YAPP declares them; social v17 lets no one, see
+// `yappCanBeFrozen()` in lib/contract-topology). Per-deployment: the devnet
+// contract is owned by a different maker identity, so the settings moderation
+// gate must compare against that owner there.
 export const YAPP_TOKEN_AUTHORITY_ID = process.env.NEXT_PUBLIC_YAPP_TOKEN_AUTHORITY_ID || 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A'
 // Per-action token cost baked into the contract's tokenCost.create (immutable ratio).
 // Used as the `maximumTokenCost` guard when creating token-paid documents.
@@ -163,7 +164,13 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // own shipment. Only an optional property is added, so a registered v8
 // contract takes it as an update. Below v9 the per-item zone UI and CSV
 // column are hidden, and nothing writes the field (v8 refuses it).
-export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'] as const
+// `v10` (the testnet production cut, docs/STOREFRONT_V10.md) is v9 with no
+// plaintext on a status update: `orderStatusUpdate` drops `trackingNumber`,
+// `trackingCarrier` and `message` and carries them sealed to the order
+// (`encryptedPayload` + `nonce`, keyed like `orderDelivery`); a store's items
+// listed by status (`storeStatusAndTime`); https/ipfs-only item images; and a
+// `report` type the storefront's moderators resolve.
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
@@ -189,6 +196,10 @@ export const storefrontVariantsAreTyped = () => storefrontTopologyAtLeast('v7')
 export const storefrontSupportsDigital = () => storefrontIsV6()
 /** True on v9 and later: a shipped item may name which of its store's shipping zones it ships under. */
 export const storefrontSupportsItemZones = () => storefrontTopologyAtLeast('v9')
+/** True on v10 and later: a store's items can be listed by status (`storeStatusAndTime`), and the contract takes reports. */
+export const storefrontIsV10 = () => storefrontTopologyAtLeast('v10')
+/** True on v10 and later: a status update's tracking and note are sealed to the order, never plaintext. */
+export const storefrontStatusIsSealed = () => storefrontIsV10()
 /** True on v2–v5: store and item reviews cost YAPP (v6 charges an action fee instead). */
 export const storefrontReviewsCostYapp = () => storefrontIsV2() && !storefrontIsV6()
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
@@ -262,7 +273,14 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // `commentsEnabled: {notEqual: {const: false}}` (a post that leaves the flag out
 // takes comments). A comment on a comments-off post, a tombstone included, is
 // refused 40127, and the client writes no copy.
-export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'] as const
+//
+// `v9` (the testnet production cut, docs/NON_SOCIAL_CONTRACTS.md, Blog: "What v9 changed") is
+// v8 with a `live` marker: a post must carry `publishedAt` (no drafts on
+// chain) and `live: true`, its tombstone leaves `live` out, and the global
+// `timeline` and per-blog `blogAndTime` are keyed on it, so every read of them
+// pins `live == true` and never sees a tombstone. Free text gets byte caps,
+// and the contract takes `report`s its moderators resolve.
+export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'] as const
 export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
 export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
@@ -288,6 +306,8 @@ export const blogIsV8 = () => blogTopologyAtLeast('v8')
  * tombstone.
  */
 export const blogIsV7 = () => blogTopologyAtLeast('v7')
+/** True on v9 and later: posts carry `live`, the post listings are keyed on it, and the contract takes reports. */
+export const blogIsV9 = () => blogTopologyAtLeast('v9')
 /** True on v2–v6: a comment costs {@link BLOG_YAPP_TOKEN_COSTS} YAPP (v7 charges an action fee instead). */
 export const blogCommentsCostYapp = () => blogIsV2() && !blogIsV7()
 // ---- profile topology ----
@@ -333,15 +353,19 @@ export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'G
 // delete a poll until its first ballot (`noBallots`; withdrawn ballots count).
 // v5/v6 (slot ballots) were retired with the beta.3/beta.4 sakura chain. The
 // ballot shapes are incompatible, so the switch must match the deployed contract.
-const POLLR_TOPOLOGIES: readonly PollrTopology[] = ['v3', 'v4', 'v7']
+// `v8` (the testnet production cut) is v7 without the two poll indexes
+// (`byCreatedAt`, `ownerAndTime`): a poll is read only by its id, through the
+// post that embeds it, which is all Yappr ever did. Writes and ballots are v7's.
+const POLLR_TOPOLOGIES: readonly PollrTopology[] = ['v3', 'v4', 'v7', 'v8']
 export const POLLR_TOPOLOGY: PollrTopology =
   POLLR_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_POLLR_TOPOLOGY) ?? 'v3'
 export const pollrIsV3 = () => POLLR_TOPOLOGY === 'v3'
 export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
-/** v7: one mutable ballot per voter, editable until the poll closes. */
-export const pollrHasEditableBallots = () => POLLR_TOPOLOGY === 'v7'
-/** v7: a poll's owner may delete it until its first ballot. */
-export const pollrPollsDeletable = () => POLLR_TOPOLOGY === 'v7'
+const pollrIsV7OrLater = () => POLLR_TOPOLOGY === 'v7' || POLLR_TOPOLOGY === 'v8'
+/** v7 and v8: one mutable ballot per voter, editable until the poll closes. */
+export const pollrHasEditableBallots = pollrIsV7OrLater
+/** v7 and v8: a poll's owner may delete it until its first ballot. */
+export const pollrPollsDeletable = pollrIsV7OrLater
 /** False when the deployment blanks NEXT_PUBLIC_POLLR_CONTRACT_ID: polls are off (no embeds read, no polls created). */
 export const pollrIsConfigured = () => POLLR_CONTRACT_ID !== ''
 // Two superseded pollr contracts were abandoned in place (v1 stored options as
@@ -480,6 +504,13 @@ export function keyNetwork(): KeyNetwork {
 // becomes the typed array `post.tags`, and a like repeats the post's list
 // (`where { "tags": "tags" }`), so it is counted under every tag of the post.
 //
+// `v17` — the testnet production cut, `contracts/yappr-social-contract-v17.json`
+// (docs/SOCIAL_V17.md). v16 with a `live` marker on the global `timeline`,
+// `tagAndTime` and the reply author index (tombstones leave them; every read
+// pins `live == true`), no self-likes, https/ipfs-only media, a YAPP no one can
+// mint, burn or freeze, and several write-once private feeds per identity
+// (`privateFeed` replaces `privateFeedState`).
+//
 // The intermediate cuts (v3–v8) are gone: none exists on any chain any more,
 // and the repo does not keep contracts, generators or batteries that cannot be
 // registered. Recover them from git history.
@@ -487,7 +518,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

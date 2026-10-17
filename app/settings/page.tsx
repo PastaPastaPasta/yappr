@@ -51,7 +51,7 @@ import { paymentIsChoosable } from '@/lib/payment-preference'
 import type { PayWith } from '@/lib/store'
 import { DeveloperSettings } from '@/components/settings/developer-settings'
 import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
-import { postsHaveLanguage } from '@/lib/contract-topology'
+import { postsHaveLanguage, privateFeedClientSupported, yappCanBeFrozen } from '@/lib/contract-topology'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useSettingsStore, type SensitiveContentMode } from '@/lib/store'
@@ -110,7 +110,8 @@ function SettingsPage() {
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
   const walletSession = useWalletSession()
-  const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID
+  // Only where the configured YAPP lets its authority freeze or slash (not on social v17).
+  const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID && yappCanBeFrozen()
   // A contract's moderation team (social, storefront or blog, each read off its
   // contract) gets that contract's moderation; the token authority gets YAPP
   // freeze/slash. Keep the visible-sections list in one place so the menu, the
@@ -118,7 +119,8 @@ function SettingsPage() {
   const moderatedContracts = useModeratedContracts()
   const isContractModerator = moderatedContracts.length > 0
   const canModerate = isAuthority || isContractModerator
-  const visibleSections = canModerate ? [...settingsSections, MODERATION_SECTION] : settingsSections
+  const baseSections = privateFeedClientSupported() ? settingsSections : settingsSections.filter((section) => section.id !== 'privateFeed')
+  const visibleSections = canModerate ? [...baseSections, MODERATION_SECTION] : baseSections
   const { theme, setTheme } = useTheme()
   const [encryptionKeyVersion, setEncryptionKeyVersion] = useState(0)
   const handleEncryptionKeyChanged = useCallback(() => {
@@ -760,7 +762,7 @@ function SettingsPage() {
       case 'privacy':
         return renderPrivacySettings()
       case 'privateFeed':
-        return renderPrivateFeedSettings()
+        return privateFeedClientSupported() ? renderPrivateFeedSettings() : renderMainSettings()
       case 'storage':
         return renderStorageSettings()
       case 'appearance':

@@ -4,10 +4,15 @@ import {
   buyerOrderDeliveryKey,
   decryptDigitalFile,
   decryptForSelf,
+  decodeOrderStatusNote,
   decryptOrderDelivery,
+  decryptOrderStatusNote,
+  encodeOrderStatusNote,
   encryptDigitalFile,
   encryptForSelf,
   encryptOrderDelivery,
+  encryptOrderStatusNote,
+  ORDER_STATUS_NOTE_LABEL,
   sellerOrderDeliveryKey,
 } from './digital-delivery'
 import { getPublicKey } from './keys'
@@ -89,5 +94,63 @@ describe('order delivery key', () => {
     // Orders from before the deterministic derivation used a random ephemeral key.
     const legacy = { ...order, encryptedPayload: await privateFeedCryptoService.eciesEncrypt(getPublicKey(seller), utf8('{}'), ORDER_AAD) }
     expect(() => buyerOrderDeliveryKey(legacy, buyer, getPublicKey(seller))).toThrow(/re-derive/)
+  })
+})
+
+describe('order status notes', () => {
+  const note = { trackingCarrier: 'UPS', trackingNumber: '1Z999', message: 'On its way' }
+  const open = (sealed: { encryptedPayload: Uint8Array; nonce: Uint8Array }, key: Uint8Array, orderId: string) =>
+    decodeOrderStatusNote(decryptOrderStatusNote(sealed.encryptedPayload, sealed.nonce, key, orderId))
+
+  it('round-trips for the seller and, through the shared order key, the buyer', async () => {
+    const buyer = randomBytes(32)
+    const seller = randomBytes(32)
+    const order = await placeOrder(buyer, getPublicKey(seller))
+    const sealed = encryptOrderStatusNote(encodeOrderStatusNote(note), sellerOrderDeliveryKey(order, seller), order.id)
+    expect(sealed.nonce).toHaveLength(24)
+    expect(open(sealed, sellerOrderDeliveryKey(order, seller), order.id)).toEqual(note)
+    expect(open(sealed, buyerOrderDeliveryKey(order, buyer, getPublicKey(seller)), order.id)).toEqual(note)
+  })
+
+  it('uses a fresh nonce each time', () => {
+    const key = randomBytes(32)
+    const a = encryptOrderStatusNote(encodeOrderStatusNote(note), key, 'order-1')
+    const b = encryptOrderStatusNote(encodeOrderStatusNote(note), key, 'order-1')
+    expect(a.nonce).not.toEqual(b.nonce)
+  })
+
+  it('is bound to the order id and the order key', () => {
+    const key = randomBytes(32)
+    const sealed = encryptOrderStatusNote(encodeOrderStatusNote(note), key, 'order-1')
+    expect(() => open(sealed, key, 'order-2')).toThrow()
+    expect(() => open(sealed, randomBytes(32), 'order-1')).toThrow()
+    const tampered = sealed.encryptedPayload.slice()
+    tampered[0] ^= 1
+    expect(() => decryptOrderStatusNote(tampered, sealed.nonce, key, 'order-1')).toThrow()
+  })
+
+  it('cannot be confused with a delivery, in either direction', () => {
+    const key = randomBytes(32)
+    const status = encryptOrderStatusNote(encodeOrderStatusNote(note), key, 'order-1')
+    expect(() => decryptOrderDelivery(status.encryptedPayload, status.nonce, key, 'order-1')).toThrow()
+    const delivery = encryptOrderDelivery(encodeOrderStatusNote(note), key, 'order-1')
+    expect(() => decryptOrderStatusNote(delivery.encryptedPayload, delivery.nonce, key, 'order-1')).toThrow()
+    expect(ORDER_STATUS_NOTE_LABEL).toBe('yappr/order-status/v1')
+  })
+
+  it('encodes only what is given, as version 1 JSON', () => {
+    expect(JSON.parse(new TextDecoder().decode(encodeOrderStatusNote({ message: 'Hi', trackingNumber: '' })))).toEqual({ v: 1, message: 'Hi' })
+  })
+
+  it('decodes defensively: ignores unknown keys and non-strings, rejects garbage and other versions', () => {
+    const decode = (value: unknown) => decodeOrderStatusNote(utf8(typeof value === 'string' ? value : JSON.stringify(value)))
+    expect(decode({ v: 1, message: 'Hi', extra: 'x', trackingNumber: 5, trackingCarrier: null })).toEqual({ message: 'Hi' })
+    expect(decode({ v: 1 })).toEqual({})
+    expect(() => decode({ v: 2, message: 'Hi' })).toThrow()
+    expect(() => decode({ message: 'Hi' })).toThrow()
+    expect(() => decode('not json')).toThrow()
+    expect(() => decode('[1]')).toThrow()
+    expect(() => decode('null')).toThrow()
+    expect(() => decodeOrderStatusNote(new Uint8Array([0xff, 0xfe]))).toThrow()
   })
 })

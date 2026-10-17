@@ -32,7 +32,7 @@ import {
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
 import { isAppConnectBuild } from '@/lib/app-connect/config';
-import { contentLimits, isV10, privateFeedKeyFields, privateFeedWritesAreGated } from '@/lib/contract-topology';
+import { contentLimits, isV10, privateFeedClientSupported, privateFeedKeyFields, privateFeedWritesAreGated } from '@/lib/contract-topology';
 import { isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
 import { KeyPurpose, KeyType } from '@/lib/crypto/identity-keys';
@@ -123,6 +123,9 @@ class PrivateFeedService {
   }
 
   private async fetchPrivateFeedState(ownerId: string): Promise<PrivateFeedStateDocument | null> {
+    // Social v17 keeps several `privateFeed` documents per identity instead
+    // (docs/SOCIAL_V17.md); this client reads and offers none there yet.
+    if (!privateFeedClientSupported()) return null;
     try {
       const sdk = await getEvoSdk();
 
@@ -241,6 +244,7 @@ class PrivateFeedService {
     ownerId: string,
     encryptionPrivateKey: Uint8Array
   ): Promise<{ success: boolean; error?: string }> {
+    if (!privateFeedClientSupported()) return { success: false, error: 'Private feeds are not available yet' };
     try {
       // 1. Check if feed already exists
       const existingState = await this.getPrivateFeedState(ownerId);
@@ -940,7 +944,7 @@ class PrivateFeedService {
    * Check if local keys are initialized (owner has enabled private feed locally)
    */
   isLocallyInitialized(): boolean {
-    return privateFeedKeyStore.hasFeedSeed();
+    return privateFeedClientSupported() && privateFeedKeyStore.hasFeedSeed();
   }
 
   // ============================================================

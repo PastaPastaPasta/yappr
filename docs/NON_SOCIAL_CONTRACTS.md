@@ -70,8 +70,8 @@ contract id is an input to every registration.
 `contracts/yappr-storefront-contract.json` — `store`, `storeItem`,
 `shippingZone`, `itemDeliverable`, `storeOrder`, `orderStatusUpdate`,
 `orderDelivery`, `storeReview`, `itemReview`, `savedAddress`. Client gate:
-`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v9`, resolved in `lib/constants.ts`).
-**The file is storefront v9**: v8 plus `storeItem.shippingZoneIds`, the store zones an item ships under ([STOREFRONT_V9.md](STOREFRONT_V9.md)), an update a registered v8 contract takes in place. v8 is the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)). v7 is v6 (below) with `storeItem.variants` as a typed
+`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v10`, resolved in `lib/constants.ts`).
+**The file is storefront v10**, the testnet production cut ([STOREFRONT_V10.md](STOREFRONT_V10.md)): v9 with the order tracking and the seller's note sealed to the order instead of plaintext, a store's items listed by status, https/ipfs-only item images and a `report` type. v9 is v8 plus `storeItem.shippingZoneIds`, the store zones an item ships under ([STOREFRONT_V9.md](STOREFRONT_V9.md)), an update a registered v8 contract takes in place; `/devnet` runs v9. v8 is the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)). v7 is v6 (below) with `storeItem.variants` as a typed
 table instead of a JSON string, and up to 12 image URLs per item
 ([STOREFRONT_V7.md](STOREFRONT_V7.md)). v6, the 5.0.0-beta.2 mainnet-ready cut
 that also carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638), was
@@ -92,6 +92,13 @@ on sakura as `2P2KqWzZXqULWMD1e2tL1dr67YAjNqUTP8cyNGkekzdz` (maker nonce 12,
 | `orderDelivery` | `orderId`→storeOrder **writer-gated to the seller**; permanent, append-only; `buyerDeliveries [orderId.$ownerId, $createdAt]` (derived); payload ≤ 5,120 B | encrypted digital delivery, buyer library |
 | `storeReview` | `orderId`→storeOrder **writer-gated to the buyer**; `storeRating` avg ranked; `storeRatingDistribution` grouped count; 16M action fee | averages, distribution, top rated |
 | `itemReview` | one per (order, item); `itemId`→storeItem `{storeId}`; `orderId` **writer-gated**; `storeItemRating [storeId, itemId]` avg+count, avg ranked; 8M action fee | item averages and counts within a store, top items in a store |
+
+### What v10 changed (from v9)
+
+- **No plaintext on a status update**: `orderStatusUpdate` drops `trackingNumber`, `trackingCarrier` and `message` and carries them as an optional note sealed to the order (`encryptedPayload` ≤ 2,560 B + `nonce`, rule `sealed`), keyed like `orderDelivery`. `buyerFeed` stays.
+- **`storeItem.storeStatusAndTime [storeId, status, $createdAt]`**: a store's active items without reading the rest.
+- **`storeItem.imageUrls`** take `https://` or `ipfs://` only.
+- **Reports**: a `report` type (store, listing, store review or item review) the storefront's moderators resolve, as social's. Signed size 18,704 B (v9 16,522 B). See [STOREFRONT_V10.md](STOREFRONT_V10.md).
 
 ### What v9 changed (from v8)
 
@@ -265,9 +272,9 @@ gated the other way rather than a loosened gate; `immutable` on
 ## Blog
 
 `contracts/yappr-blog-contract.json` — `blog`, `blogPost`, `blogComment`,
-`blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v8`, resolved
+`blogFollow`, and from v9 `report`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v9`, resolved
 in `lib/constants.ts` at call time so unit tests can stub it). **The file is
-blog v8**, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)), not yet registered. v7, the 5.0.0-beta.2 mainnet-ready cut, is registered on sakura as
+blog v9**, the testnet production cut ([below](#what-v9-changed-from-v8-1)). Blog v8, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)), runs `/devnet` on sakura's beta.6 genesis. v7, the 5.0.0-beta.2 mainnet-ready cut, is registered on sakura as
 `4F1Wi4dim7j6eWrFQ3aHWEB9az5dHcJBmdvMvpx7sx1j` (re-registered after the
 2026-10-08 beta.3 wipe); `/devnet` runs it ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
 
@@ -277,6 +284,18 @@ blog v8**, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFO
 | `blogPost` | `blogId`→blog (moderatedDocument, only the blog's owner posts); `timeline [$createdAt]`; `immutable [blogId, {publishedAt when present}, {deleted when present}]`; the tombstone rules; `retractedWhen {present: deleted}`; 80M action fee | "latest posts" across blogs; an author's delete (a tombstone) |
 | `blogComment` | `blogPostId`→blogPost (moderatedDocument, `where {commentsEnabled: {notEqual: {const: false}}}` on v8); `postAndTime [blogPostId, $createdAt]` rangeCountable; `postOwnerAndTime [blogPostId.$ownerId, $createdAt]`; ranked `discussedRecent [$createdAt, blogPostId]` (72h window, a new one every 24h, 7-day ttl); 16M action fee | comment lists and exact counts, "most discussed (3 days)", unforgeable "comments on my posts" |
 | `blogFollow` | `blogId`→blog (moderatedDocument); unique `ownerAndBlog`; `followers [blogId, $createdAt]` rangeCountable, ranked at `blogId`; ranked `followersTrend [$createdAt, blogId]` (72h / 24h / 7-day ttl) | a reader's follows, exact follower counts, "most followed", "trending (3 days)" |
+
+### What v9 changed (from v8)
+
+The testnet production cut (R-S2, R-S3, D14 and the owner's decision to take reports), registered fresh on testnet with social v17 ([SOCIAL_V17.md](SOCIAL_V17.md)):
+
+- **A live marker** (R-S2): `blogPost.live` (`const: true`, position 13) with social's rule (`countPresent(deleted, live) == 1`) and freeze (`{property: live, when: {absent: deleted}}`). `blogPost.timeline` is `[live, $createdAt]` and `blogAndTime` `[live, blogId, $createdAt]`, both `skipIfAbsent`: an author's tombstone and a moderator's removal leave "latest posts" and the blog's own page. Every read pins `live == true` (an unpinned one is refused); `blogAndSlug` still finds a tombstone, so its URL keeps resolving to a "deleted" stub.
+- **`publishedAt` is required**: there are no drafts on chain (Yappr always wrote it; drafts stay on the device). It is now frozen outright, and `publishedNotAhead` has no absent case. Creation order is publication order, so the timeline stays on `$createdAt`: a backdated import keeps its date on the post but is listed when it arrived.
+- **Byte caps** (R-S3, 3 bytes a character for text, so a full-length CJK value fits): `blog.name` 192 B, `description` 768 B, `blogPost.title` 384 B, `subtitle` 768 B, `blogComment.content` 1,500 B; the image URLs 256 B (already `https`/`ipfs` only).
+- **Reports**: a `report` type mirroring social's: exactly one of `blogId`, `blogPostId` (`moderatedDocument`) or `blogCommentId` (`deletableDocument`: a comment is owner-deletable), `targetOwnerId` checked against it (40127) and never the reporter (10419), `reason` 0–31 (8 needs a `note`), moderator-only `status`/`resolution`, withdrawable only while unresolved (40147), a 90-day `ttl`, a 50M moderators fee, one per reporter and target (`byBlog`, `byPost`, `byComment`). It joins `moderatedDocumentTypes` (`deleteDocuments`, `changeDocumentFields`).
+- Client (`blogIsV9()`): a post is written with `live: true` and keeps it through an edit; the tombstone drops it; the timeline and a blog's listing pin it. Below v9 nothing changes, and the registered v8 contract's moderation answers leave `report` out. The report form and queue are WP4 (`moderatedContract('blog').reportTargets()` is their plumbing).
+- Signed size 8,852 B (v8 6,658 B). Registration 36.00e9 by the fee table (5 types, 16 indexes); 36.38e9 measured on sakura (2,183¢).
+- **Proved on sakura** (throwaway `BPY9ctr6CeJhix8y7jN5sv6DDXyVje5kuA7kKYgDzxRX`, 2026-10-17, every case as expected): a blog 148.6M (incl. the 80M action fee); posts 169.7M / 137.8M; a post without `publishedAt` refused 10101, without `live` 10422, with an `http://` cover 10101; a tombstone (refund 29.9M) leaves the timeline and the blog page, and the slug lookup still finds it; unpinned timeline refused; a comment 86.4M; reports of a post and of the blog 60.5M / 60.4M (incl. 50M); a second report of the post refused 40105; "something else" without a note 10422; reporting one's own comment 10419; naming the wrong owner 40127; the interim moderator's resolution 4.3M; withdrawing it afterwards refused 40147, a pending one withdrawn (3.6M).
 
 ### What v8 changed (from v7)
 
@@ -473,7 +492,7 @@ battery probes this and never fails on it.
 
 ## Polls (Pollr)
 
-`contracts/pollr-contract.json` is **pollr v7**, the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)): `poll` and one `vote` doctype, one ballot per voter. Client gate: `NEXT_PUBLIC_POLLR_TOPOLOGY=v7`; the client no longer reads v5/v6 ballots, so `/devnet` has polls off until v7 is registered. v6, v5 plus the owner's delete before the first ballot (below), runs on sakura as
+`contracts/pollr-contract.json` is **pollr v8**, the testnet production cut: pollr v7 (below) with no poll indexes. v7 is the 5.0.0-beta.5 re-cut (below, [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)): `poll` and one `vote` doctype, one ballot per voter, and runs `/devnet`. Client gate: `NEXT_PUBLIC_POLLR_TOPOLOGY=v8` (or `v7`; both read and write the same documents); the client no longer reads v5/v6 ballots, so `/devnet` has polls off until v7 is registered. v6, v5 plus the owner's delete before the first ballot (below), runs on sakura as
 `Fq5yTk2YqJZ2wa7uESKB119nX3ea23QP2gUsLqGtEu8c` since the 2026-10-08 beta.3
 wipe (`/devnet`); `verify-pollr.mjs` passed 64/64 there, the `noBallots`
 delete refusals (40147) included ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
@@ -486,6 +505,13 @@ replaced the v4 cut (indexOnly `vote`/`multiVote`; recover both from git history
 | `vote` | stored, mutable, `canBeDeleted: false`; `immutable: [pollId]`; `pollId` → deletableDocument poll `where {endsAt: {greaterThanOrEqual: $updatedAt}}`; optional `choices` (1-10 distinct of 0-9; absent = withdrawn); rules `choicesAreOptions`, `choicesAreOptionsHigh`, `singleChoice` reading the poll; unique `byPollVoter [pollId, $ownerId]`; `byPollChoice [pollId, choices]` countable per element; `byPoll [pollId]` countable | one editable ballot per voter, tallied in O(1) per option, and counted in O(1) per poll for `noBallots` |
 
 Ballots are free — no `tokenCost`.
+
+### What v8 changed (from v7)
+
+- **No poll indexes** (D15): `poll.byCreatedAt` and `poll.ownerAndTime` are gone. Yappr reads a poll only by its id, through the post that embeds it, and a chronological listing would have been a global browse of unmoderated, mostly undeletable poll text. Ballots, rules and the owner's delete before the first ballot are v7's (`noBallots` still counts `vote.byPoll`).
+- The standalone Pollr app listed polls through those indexes; D15 retires the `POLLR_APP_*` links unless that app moves to its own contract.
+- Signed size 3,568 B (v7 3,705 B); registration 17.00e9 by the fee table (2 types, 3 indexes; v7 19.00e9), 17.14e9 measured on sakura (1,028¢).
+- **Proved on sakura** (throwaway `7XxAZfo5k2uWEigXdQymzhNPQVmqgJR9wMUveoUfJ3y1`, 2026-10-17): a poll 19.4M (1.2¢; v7's estimate 60.9M) and a ballot 76.6M; the poll read by id; listing polls by time or by owner refused (no index); the per-option tally (`containsAny`, grouped) answers; deleting a poll with a ballot refused 40147, one without deleted.
 
 ### What v7 changed (from v6)
 

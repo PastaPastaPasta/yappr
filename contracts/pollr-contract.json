@@ -4,27 +4,6 @@
       "type": "object",
       "documentsMutable": false,
       "canBeDeleted": true,
-      "indices": [
-        {
-          "name": "byCreatedAt",
-          "properties": [
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        },
-        {
-          "name": "ownerAndTime",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        }
-      ],
       "properties": {
         "question": {
           "type": "string",

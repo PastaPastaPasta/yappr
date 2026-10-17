@@ -450,8 +450,10 @@ await runBattery({
     const byPollVoter = index('byPollVoter');
     const byPollChoice = index('byPollChoice');
     const choices = vote.properties.choices ?? {};
-    const shape = reportSelfTest(`contracts/${CONTRACT_FILE} (v7 shapes)`, [
+    const shape = reportSelfTest(`contracts/${CONTRACT_FILE} (v8 shapes)`, [
       ['poll is immutable and canBeDeleted is true', poll.documentsMutable === false && poll.canBeDeleted === true],
+      // v8: nothing lists polls (the app opens one by id), so poll declares no index at all.
+      ['poll declares no indexes (v8)', poll.indices === undefined || poll.indices.length === 0],
       ['poll carries options and multiChoice but no optionCount',
         poll.properties.options !== undefined && poll.properties.multiChoice !== undefined && poll.properties.optionCount === undefined
         && !poll.required.includes('optionCount')],

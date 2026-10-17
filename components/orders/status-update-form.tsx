@@ -2,6 +2,7 @@
 
 import { useId } from 'react'
 import { Button } from '@/components/ui/button'
+import { storefrontStatusIsSealed } from '@/lib/constants'
 import { orderStatusService } from '@/lib/services/order-status-service'
 import type { OrderStatus } from '@/lib/types'
 
@@ -116,6 +117,9 @@ export function StatusUpdateForm({
           rows={2}
           className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
         />
+        {storefrontStatusIsSealed() && (
+          <p className="mt-1 text-xs text-gray-500">Tracking details and your message are sent privately to the buyer.</p>
+        )}
       </div>
 
       <div className="flex gap-2">

@@ -114,7 +114,8 @@ export function refuseIdentities(identities, refused) {
 /**
  * The reads that list `ownerId`'s posts and replies: each type's owner index
  * (`post.ownerAndTime`, `live == true` pinned first from v13, which leaves the
- * tombstones out; `reply.ownerAndTime`, tombstones included), from `since`
+ * tombstones out; `reply.ownerAndTime`, tombstones included up to v16, `live == true`
+ * pinned first from v17), from `since`
  * when given, and up to `until` (inclusive) to resume a capped scan. Newest first: what Recent shows is read before the page cap
  * could cut a long history short.
  *
@@ -126,7 +127,7 @@ export function refuseIdentities(identities, refused) {
 export function ownerQueries(shapes, ownerId, since = null, until = null) {
   const where = [['$ownerId', '==', ownerId], ...createdAtRange(since, until)];
   const orderBy = [['$ownerId', 'asc'], ['$createdAt', 'desc']];
-  return { post: shapes.ownerPosts({ where, orderBy }), reply: { where, orderBy } };
+  return { post: shapes.ownerPosts({ where, orderBy }), reply: shapes.ownerReplies({ where, orderBy }) };
 }
 
 /**
@@ -344,11 +345,15 @@ async function cleanIdentity({ io, contractId, shapes, since, until, after, live
 /**
  * The newest posts on the global `timeline` index, with the live ones by any of
  * `identities` (or by an id in `others`, e.g. `{ [makerId]: 'maker' }`) counted
- * per owner: what a visitor's Recent shows first.
+ * per owner: what a visitor's Recent shows first. `contract` (the registered file) lets the
+ * read follow the cut: from v17 the timeline is `[live, $createdAt]` and is read with
+ * `live == true`, which leaves the tombstones out.
  */
-export async function surveyTimeline({ sdk, contractId, identities, others = {}, limit = 60, reconnect, settleMs = 2500 }) {
+export async function surveyTimeline({ sdk, contractId, contract = null, identities, others = {}, limit = 60, reconnect, settleMs = 2500 }) {
   const io = session({ sdk, contractId, reconnect, settleMs });
-  const page = await io.retrying((s) => s.documents.query({ dataContractId: contractId, documentTypeName: 'post', where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit }));
+  const query = { where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit };
+  const read = contract ? socialShapes(contract).timelinePosts(query) : query;
+  const page = await io.retrying((s) => s.documents.query({ dataContractId: contractId, documentTypeName: 'post', ...read }));
   const labels = new Map([...Object.entries(others), ...identities.map(({ id, label }) => [id, label ?? id])]);
   const survey = { scanned: 0, live: 0, byTestIdentities: 0, byOthers: 0, owners: {} };
   for (const stored of io.docsOf(page).map(storedOf)) {

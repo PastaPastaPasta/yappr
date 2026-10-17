@@ -139,7 +139,7 @@ function StoreDetailContent() {
 
         const [storeData, itemsData, reviewsData, ratingData, rankedItems] = await Promise.all([
           storeService.getById(storeId),
-          storeItemService.getByStore(storeId, { limit: 100 }),
+          storeItemService.getByStore(storeId, { limit: 100, activeOnly: true }),
           storeReviewService.getStoreReviews(storeId, { limit: 20 }),
           // Proved (v2): average tree + one grouped count, not a review scan.
           storefrontIsV2() ? storeStatsService.getStoreRatingSummary(storeId) : Promise.resolve(null),
@@ -221,7 +221,8 @@ function StoreDetailContent() {
     try {
       const moreData = await storeItemService.getByStore(storeId, {
         limit: 100,
-        startAfter: lastCursor
+        startAfter: lastCursor,
+        activeOnly: true
       })
       const activeItems = moreData.items.filter(i => i.status === 'active')
       setItems(prev => [...prev, ...activeItems])
