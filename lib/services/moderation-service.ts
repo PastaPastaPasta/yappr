@@ -1081,15 +1081,19 @@ class ModerationService {
     let snapshotSaved = false;
     let documentGone = false;
     const moderated = await this.moderate(moderatorId, async (sdk, auth, send) => {
-      snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
       try {
-        await send(() => sdk.contracts.moderatorDeleteDocument({
-          ...auth,
-          contractId: YAPPR_CONTRACT_ID,
-          documentTypeName: kind,
-          documentId,
-          reason: reasonOf(reason),
-        }));
+        // The copy is taken under the same lock as the deletion, so a restore
+        // from another tab cannot land between them.
+        await send(async () => {
+          snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
+          return sdk.contracts.moderatorDeleteDocument({
+            ...auth,
+            contractId: YAPPR_CONTRACT_ID,
+            documentTypeName: kind,
+            documentId,
+            reason: reasonOf(reason),
+          });
+        });
       } catch (error) {
         // 40101: another moderator removed it first (or its author deleted it,
         // where authors can): the goal is met, and nothing was deleted here.

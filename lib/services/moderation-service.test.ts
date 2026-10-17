@@ -46,11 +46,16 @@ const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
 // The nonce lock reads Platform's nonce; these tests are about moderation, so it just runs the write.
-const sdkSignedWrites = vi.hoisted(() => ({ count: 0 }))
+const sdkSignedWrites = vi.hoisted(() => ({ count: 0, locked: false }))
 vi.mock('./identity-nonce', () => ({
-  withSdkSignedWrite: (...args: [string, string, () => Promise<unknown>]) => {
+  withSdkSignedWrite: async (...args: [string, string, () => Promise<unknown>]) => {
     sdkSignedWrites.count++
-    return args[2]()
+    sdkSignedWrites.locked = true
+    try {
+      return await args[2]()
+    } finally {
+      sdkSignedWrites.locked = false
+    }
   },
 }))
 vi.mock('./sdk-helpers', () => ({ identifierToBase58: (value: unknown) => String(value) }))
@@ -376,6 +381,11 @@ describe('remove then restore', () => {
     const contract = { id: 'C' }
     sdk.contracts.fetch.mockResolvedValue(contract)
     sdk.documents.get.mockResolvedValue({ toBytes: (c: unknown) => { expect(c).toBe(contract); return bytes } })
+    // Under the write lock with the deletion, so a restore from another tab cannot land in between.
+    sdk.documents.get.mockImplementationOnce(async () => {
+      expect(sdkSignedWrites.locked).toBe(true)
+      return { toBytes: (c: unknown) => { expect(c).toBe(contract); return bytes } }
+    })
     sdk.contracts.moderatorDeleteDocument.mockResolvedValue({})
     const result = await moderationService.removeDocument(MODERATOR, 'post', 'D1', 'spam')
     expect(result).toMatchObject({ success: true, snapshotSaved: true })

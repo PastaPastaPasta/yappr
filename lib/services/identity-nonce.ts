@@ -70,9 +70,11 @@ export interface NonceReservation {
 
 /**
  * How long an SDK-signed transition that Platform never shows settled holds
- * other writes back, counted from when its answer was lost. It is settled as
- * soon as a nonce it may carry is consumed, so this is only reached by one
- * that never took one: dropped, or refused without an answer. Tenderdash
+ * other writes back, counted from when the page sending it last worked on it
+ * (its answer was lost, or the page closed). It is settled as soon as a nonce
+ * it may carry is consumed, so this is only reached by one that never took
+ * one: dropped, or refused without an answer. One that expires still counts
+ * the nonces it may carry as spent (see `floorAfterSettling`). Tenderdash
  * re-checks its mempool after every block and a valid transition executes in
  * the next one, so a minute is many blocks past the one it would have
  * executed in. A transition whose nonce is known (a create, a wallet request)
@@ -268,7 +270,8 @@ export function reserveNonce(
 ): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
   const mark = previous?.mark ?? BigInt(0);
-  const floor = max(previous?.floor ?? raisedFloors.get(reservationKey(ownerId, contractId)) ?? BigInt(0), tipOf(current));
+  const live = stillPending(current, previous);
+  const floor = floorAfterSettling(current, previous, live) ?? max(raisedFloors.get(reservationKey(ownerId, contractId)) ?? BigInt(0), tipOf(current));
   // Unique across tabs: releasing one must never release another.
   const id = crypto.randomUUID();
   const entry: PendingTransition = nonce === null
@@ -278,9 +281,24 @@ export function reserveNonce(
   saveReservation(ownerId, contractId, {
     mark: max(mark, entry.nonce ?? entry.signedAtMost ?? BigInt(0)),
     floor,
-    pending: [...stillPending(current, previous), entry],
+    pending: [...live, entry],
   });
   return entry;
+}
+
+/**
+ * The floor once `current` was read and the entries not in `live` dropped:
+ * at least the tip, and at least the last nonce of an SDK-signed entry that
+ * expired. That one never showed landing, but it was never refused either
+ * (its page may have closed mid-write), so it may still take any nonce in its
+ * range; nothing in that range may then settle a later write. Null without
+ * a reservation.
+ */
+function floorAfterSettling(current: bigint | undefined | null, reservation: NonceReservation | null, live: PendingTransition[]): bigint | null {
+  if (!reservation) return null;
+  return reservation.pending
+    .filter((p) => !live.includes(p) && p.nonce === null && p.signedAtMost !== undefined && !anyConsumed(current, (p.signedAfter ?? BigInt(0)) + BigInt(1), p.signedAtMost))
+    .reduce((floor, p) => max(floor, p.signedAtMost ?? floor), max(reservation.floor, tipOf(current)));
 }
 
 /**
@@ -312,9 +330,9 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
 }
 
 /**
- * An SDK-signed transition's answer was lost: its lifetime starts now, not
- * when it was reserved, since the SDK's own fetches and retries can take most
- * of it. Best effort: when localStorage refuses, it expires a little sooner.
+ * Start an SDK-signed transition's lifetime over: the page is still waiting on
+ * the SDK, or has just lost the answer. Best effort: when localStorage
+ * refuses, it expires a little sooner.
  */
 function renewPending(ownerId: string, contractId: string, entry: PendingTransition): void {
   try {
@@ -414,14 +432,19 @@ export async function withSdkSignedWrite<T>(
     const sdk = await getEvoSdk();
     try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
     const entry = reserveNonce(ownerId, contractId, null, current, scope);
+    // While the SDK works, its lifetime keeps starting over: it runs out only
+    // a minute after this page stopped (closed, or the answer was lost).
+    const alive = setInterval(() => renewPending(ownerId, contractId, entry), PENDING_LIFETIME_MS / 4);
     let result: T;
     try {
       result = await write();
     } catch (error) {
+      clearInterval(alive);
       if (isVerdict(error)) releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, false, tipOf(current)));
       else renewPending(ownerId, contractId, entry);
       throw error;
     }
+    clearInterval(alive);
     releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, true, tipOf(current)));
     return result;
   });
@@ -450,7 +473,7 @@ export async function settlePendingWrites(ownerId: string, contractId: string): 
     }
     const pending = stillPending(current, reservation);
     const settled = reservation.pending.length - pending.length;
-    if (settled > 0) saveReservation(ownerId, contractId, { mark: reservation.mark, floor: max(reservation.floor, tipOf(current)), pending });
+    if (settled > 0) saveReservation(ownerId, contractId, { mark: reservation.mark, floor: floorAfterSettling(current, reservation, pending) ?? reservation.floor, pending });
     return settled;
   });
 }

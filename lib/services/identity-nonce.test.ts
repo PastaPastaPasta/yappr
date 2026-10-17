@@ -267,6 +267,26 @@ describe('an SDK-signed write whose answer was lost (#644)', () => {
     expect(loadReservation(OWNER, CONTRACT)?.floor).toBe(n(102))
   })
 
+  it('keeps holding writes back while the SDK is still at work, however long it takes', async () => {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const slow = withSdkSignedWrite(OWNER, CONTRACT, () => new Promise<string>((resolve) => setTimeout(() => resolve('sent'), 3 * MINUTE)))
+    await vi.advanceTimersByTimeAsync(2 * MINUTE)
+    expect(stillPending(n(100), loadReservation(OWNER, CONTRACT))).toHaveLength(1)
+    await vi.runAllTimersAsync()
+    expect(await slow).toBe('sent')
+  })
+
+  it('counts the nonces of a write whose page closed mid-write as spent once it expires', () => {
+    // W1 reserved at 100 (it may take 101), and its page closed before any answer.
+    reserveNonce(OWNER, CONTRACT, null, n(100))
+    vi.setSystemTime(Date.now() + MINUTE + 1)
+    // Another tab, reading a node still at 100, reserves W2.
+    expect(reserveNonce(OWNER, CONTRACT, null, n(100))).toMatchObject({ signedAfter: n(101), signedAtMost: n(102) })
+    // W1 landing late at 101 does not settle W2.
+    expect(stillPending(n(101), loadReservation(OWNER, CONTRACT))).toHaveLength(1)
+    expect(stillPending(n(102), loadReservation(OWNER, CONTRACT))).toEqual([])
+  })
+
   it('counts its minute from when the answer was lost, however long the SDK took to lose it', async () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const slow = () => new Promise<string>((_, reject) => setTimeout(() => reject(new Error('transport error: Failed to fetch')), 70_000))
