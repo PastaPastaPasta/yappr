@@ -462,4 +462,10 @@ describe('private feeds v2: every authorised path to history', () => {
     expect(await s.move.runMove(P, keys[P])).toEqual({ success: true })
     expect((await post('open', P)).feed).toBeGreaterThan(0)
   })
+
+  it('after a renewal, a request older than a removal in an earlier feed still cannot be approved', async () => {
+    expect(grantsIn(4)).not.toContain('F2')
+    expect(await s.owner.privateFeedService.approveFollower(P, F2, getPublicKey(keys[F2]), keys[P])).toMatchObject({ success: false })
+    expect((await s.owner.privateFeedService.getPendingRequests(P)).map((r) => r.$ownerId)).not.toContain(F2)
+  })
 })

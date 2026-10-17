@@ -13,7 +13,7 @@ describe('private-feed access notifications (R-S14)', () => {
   it('announces a new owner, and one whose every grant went away', () => {
     const previous: AccessSnapshot = { a: { g: 'ga', r: false, t: 0 }, b: { g: 'gb', r: false, t: 0 } }
     const diff = diffAccess(previous, grants(['b', 1, 'gb'], ['c', 3, 'gc3'], ['c', 4, 'gc4']), new Map([['c', false]]), 5)
-    expect([diff.approved, diff.removed]).toEqual([[{ ownerId: 'c', feed: 4 }], ['a']])
+    expect([diff.approved, diff.removed]).toEqual([[{ ownerId: 'c', feed: 4, grantId: 'gc4' }], ['a']])
   })
 
   it('announces a removal when the kept grant turns revoked, and the re-approval after it', () => {
@@ -21,7 +21,7 @@ describe('private-feed access notifications (R-S14)', () => {
     const removed = diffAccess(before, grants(['a', 1, 'ga']), new Map([['a', true]]), REVOKE_CHECK_MS)
     expect(removed.removed).toEqual(['a'])
     const back = diffAccess(removed.snapshot, grants(['a', 1, 'ga2']), new Map([['a', false]]), REVOKE_CHECK_MS + 1)
-    expect(back.approved).toEqual([{ ownerId: 'a', feed: 1 }])
+    expect(back.approved).toEqual([{ ownerId: 'a', feed: 1, grantId: 'ga2' }])
   })
 
   it('stays quiet when a renewal moves the follower to the owner\'s next feed', () => {

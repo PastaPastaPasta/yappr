@@ -421,9 +421,15 @@ class PrivateFeedService {
       const { state } = synced
       const members = await fetchMembers(ownerId, state.feed.feed)
       const existing = members.find((grant) => grant.recipientId === requesterId)
-      const answered = existing ? await answeredThrough(existing) : null
-      if (existing && answered && request.$createdAt <= answered.at) {
-        return answered.revoked ? { success: false, error: 'You removed this person. They can ask again from your profile.' } : { success: true }
+      // Every grant they hold from this owner, in any feed, answers the request until it was written or revoked.
+      const answers = await Promise.all((await fetchGrantsTo(ownerId, requesterId)).map((grant) => answeredThrough(grant)))
+      const cutoff = Math.max(0, ...answers.map((answer) => answer.at))
+      if (request.$createdAt <= cutoff) {
+        const current = existing ? await answeredThrough(existing) : null
+        if (current && !current.revoked) return { success: true }
+        if (current?.revoked || answers.some((answer) => answer.revoked)) {
+          return { success: false, error: 'You removed this person. They can ask again from your profile.' }
+        }
       }
       if (existing) {
         const removed = await stateTransitionService.deleteDocument(this.contractId, DOCUMENT_TYPES.PRIVATE_FEED_GRANT, existing.$id, ownerId)

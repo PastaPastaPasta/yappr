@@ -300,7 +300,7 @@ class NotificationService {
     const diff = diffAccess(previous, newest, new Map(checks), now);
     if (!writeScoped(key, JSON.stringify(diff.snapshot))) return [];
     return [
-      ...diff.approved.map(({ ownerId, feed }) => ({ id: `pf-approved:${ownerId}:${feed}`, type: 'privateFeedApproved' as const, fromUserId: ownerId, createdAt: now, timeless: true })),
+      ...diff.approved.map(({ ownerId, grantId }) => ({ id: `pf-approved:${ownerId}:${grantId}`, type: 'privateFeedApproved' as const, fromUserId: ownerId, createdAt: now, timeless: true })),
       ...diff.removed.map((ownerId) => ({ id: `pf-removed:${ownerId}:${now}`, type: 'privateFeedRevoked' as const, fromUserId: ownerId, createdAt: now, timeless: true })),
     ];
   }

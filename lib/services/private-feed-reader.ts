@@ -195,8 +195,14 @@ export async function contentKeyFor(
       } else if (opened === 'needs-key') note('needs-key')
     }
 
-    for (const later of mainFeeds(feeds).filter((doc) => doc.feed > feed)) {
-      if (!isOwner && !grantIn(later.feed) && !privateFeedKeyStore.memberKeys(viewerId, ownerId, later.feed) && !privateFeedKeyStore.historyKeys(viewerId, ownerId, later.feed)) continue
+    // Walk starts: the newest main feeds, plus any feed the viewer holds a grant or keys in (past the discovery window too).
+    const starts = new Set(mainFeeds(feeds).map((doc) => doc.feed))
+    for (const grant of grants) starts.add(grant.feed)
+    if (!isOwner) for (const entry of privateFeedKeyStore.memberFeeds(viewerId)) if (entry.ownerId === ownerId) starts.add(entry.feed)
+    for (const number of [...starts].filter((candidate) => candidate > feed).sort((a, b) => b - a)) {
+      if (!isOwner && !grantIn(number) && !privateFeedKeyStore.memberKeys(viewerId, ownerId, number) && !privateFeedKeyStore.historyKeys(viewerId, ownerId, number)) continue
+      const later = await feedDoc(feeds, ownerId, number)
+      if (!later || later.audience !== undefined) continue
       if (heldHistoryKey(viewerId, ownerId, later.feed) === null) {
         const opened = await openFeedKeys(viewerId, ownerId, later, grantIn(later.feed), encryptionPrivateKey)
         if (opened === 'needs-key') note('needs-key')

@@ -72,8 +72,8 @@ export function ownersToCheck(previous: AccessSnapshot | null, newest: ReadonlyM
 
 export interface AccessDiff {
   snapshot: AccessSnapshot
-  /** Owners who granted access since the last look, with that grant's feed. */
-  approved: { ownerId: string; feed: number }[]
+  /** Owners who granted access since the last look, with that grant (each approval is its own grant). */
+  approved: { ownerId: string; feed: number; grantId: string }[]
   /** Owners who took access away since the last look. */
   removed: string[]
 }
@@ -95,7 +95,7 @@ export function diffAccess(previous: AccessSnapshot | null, newest: ReadonlyMap<
   const removed: string[] = []
   for (const [ownerId, entry] of Object.entries(snapshot)) {
     const known = previous[ownerId]
-    if (!entry.r && (!known || known.r)) approved.push({ ownerId, feed: newest.get(ownerId)?.feed ?? 0 })
+    if (!entry.r && (!known || known.r)) approved.push({ ownerId, feed: newest.get(ownerId)?.feed ?? 0, grantId: entry.g })
     if (entry.r && known && !known.r) removed.push(ownerId)
   }
   for (const [ownerId, known] of Object.entries(previous)) if (!snapshot[ownerId] && !known.r) removed.push(ownerId)

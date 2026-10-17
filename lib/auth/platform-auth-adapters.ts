@@ -185,10 +185,12 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
       // A follower move this device started and did not finish (a reload or a crash), or one the
       // chain shows unfinished (another device, an open confirmed late), picks up again (PF4).
       const { adoptUnfinishedMove, runMove } = await import('@/lib/services/private-feed-move')
-      if ((await adoptUnfinishedMove(identityId)) > 0) {
+      if (context.isSessionActive() && (await adoptUnfinishedMove(identityId)) > 0) {
         const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
         const moved = await runMove(identityId, getEncryptionKeyBytes(identityId) ?? undefined)
         if (!moved.success) logger.debug('Auth: Private feed follower move paused:', moved.error)
+        // Signed out while it ran: whatever keys it recovered meanwhile go with the session.
+        if (!context.isSessionActive()) privateFeedKeyStore.clearIdentity(identityId)
       }
 
       if (result.synced.length > 0 || result.failed.length > 0) {
