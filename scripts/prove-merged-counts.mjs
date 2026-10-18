@@ -505,6 +505,16 @@ async function createDocument(contractId, who, docType, data, retried = false) {
   return { ok: false, error: error ?? 'no document after the write' };
 }
 
+/** A proved create can be followed by a stale node read; retry only the read, never the write. */
+async function requireDocument(contractId, docType, documentId) {
+  for (let attempt = 0; attempt <= 12; attempt++) {
+    const document = await withReconnect(() => sdk.documents.get(contractId, docType, documentId));
+    if (document) return document;
+    if (attempt < 12) await sleep(5000);
+  }
+  throw new Error(`${docType} ${documentId} was created but could not be read back after 13 reads`);
+}
+
 // ---- Result decoding --------------------------------------------------------
 
 const toBase58 = (value) => {
@@ -1346,7 +1356,7 @@ async function main() {
     const settledFrom = Date.now();
     const Pk = await mustCreate('Pk (D, #kept)', D, 'post', { content: 'kept fields', ...shapes.tags(['kept']) });
     const Rk = await mustCreate('Rk (D replies to SR)', D, 'reply', { content: 'kept reply', rootPostId: id(SR), parentOwnerId: id(D.ownerId) });
-    const created = async (docType, docId) => createdAtOf(await sdk.documents.get(contractId, docType, docId));
+    const created = async (docType, docId) => createdAtOf(await requireDocument(contractId, docType, docId));
     const [pkAt, rkAt] = await Promise.all([created('post', Pk), created('reply', Rk)]);
     const moderatorA = { identity: await sdk.identities.fetch(A.ownerId), signer: A.signer };
     await attempt('kf-1', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: Pk, reason: { text: 'kf-1 proof' } }), (record) => {
@@ -1826,7 +1836,7 @@ async function proveTeam(sdk, args, actors, source) {
     const now = await actionCounts();
     return Object.fromEntries([L, M1, M2].map((who) => [who.label, (now[who.ownerId] ?? 0) - (countsBefore[who.ownerId] ?? 0)]));
   };
-  const S1doc = await sdk.documents.get(contractId, 'post', state.S1);
+  const S1doc = await requireDocument(contractId, 'post', state.S1);
   await expectCode('tm-2 a member\'s lone delete of the settled S1 is refused', '41116', async () => sdk.contracts.moderatorDeleteDocument({ ...(await asModerator(M1)), contractId, documentTypeName: 'post', documentId: state.S1, reason: reason('tm-2') }));
   let actionId = null;
   await attempt('tm-3', async () => sdk.contracts.moderatorDeleteSettledDocument({ ...(await asModerator(M1)), contractId, documentTypeName: 'post', documentId: state.S1, reason: reason('tm-3 proof: settled post') }), (result) => {

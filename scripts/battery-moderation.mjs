@@ -24,6 +24,11 @@ import { REPO_ROOT, describeErr, sleep } from './seed/seed-lib.mjs';
  */
 const describeValue = (value) => JSON.stringify(value, (_k, v) => (typeof v === 'bigint' ? String(v) : v));
 
+/** Seated teams must cite a reason listed in their elected charter. */
+export function moderationReason(ctx, text) {
+  const reasonDocumentId = ctx.args?.['reason-doc'];
+  return { text, ...(reasonDocumentId ? { reasonDocumentId } : {}) };
+}
 
 /**
  * battery-lib's offline `selfTest`, extended with the declarations a moderated
@@ -103,7 +108,7 @@ export async function caseBan(ctx, { prefix, target, writeWhileBanned, writeAfte
   console.log(`\n--- ${prefix}. ban ${target.label}: writes refused (41107) until the unban ---`);
   let banError = null;
   try {
-    await sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: target.ownerId, reason: { text: `${prefix} battery ban` }, signer: moderator.signer });
+    await sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: target.ownerId, reason: moderationReason(ctx, `${prefix} battery ban`), signer: moderator.signer });
     battery.check(`${prefix}a moderator bans ${target.label}`, true);
   } catch (e) {
     banError = e;
@@ -158,7 +163,7 @@ export async function caseModeratorDelete(ctx, { prefix, docType, documentId, ow
   console.log(`\n--- ${prefix}. moderator deletes a ${docType}: absent document, removal record ---`);
   if (!documentId) { battery.check(`${prefix} fixture`, false, `no ${docType} fixture`); return; }
   try {
-    const result = await sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: docType, documentId, reason: { text: `${prefix} battery takedown` }, signer: moderator.signer });
+    const result = await sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: docType, documentId, reason: moderationReason(ctx, `${prefix} battery takedown`), signer: moderator.signer });
     battery.check(`${prefix}a moderator deletes the ${docType}; the proof names its owner`, String(result.documentOwnerId) === ownerId || result.documentOwnerId?.toBase58?.() === ownerId, `owner=${result.documentOwnerId} removedAt=${result.removedAt}`);
   } catch (e) {
     battery.check(`${prefix}a moderator deletes the ${docType}`, false, describeErr(e).slice(0, 220));
@@ -206,7 +211,7 @@ export async function caseWarn(ctx, { prefix, target, writeWhileWarned }) {
   try { await sdk.contracts.clearUserWarnings(auth); } catch { /* nothing to clear */ }
   for (const [index, text] of [[1, `${prefix} battery warning 1`], [2, `${prefix} battery warning 2`]]) {
     try {
-      await sdk.contracts.warnUser({ ...auth, reason: { text } });
+      await sdk.contracts.warnUser({ ...auth, reason: moderationReason(ctx, text) });
       battery.check(`${prefix}a${index} moderator warns ${target.label}`, true);
     } catch (e) {
       battery.check(`${prefix}a${index} moderator warns ${target.label}`, false, describeErr(e).slice(0, 220));

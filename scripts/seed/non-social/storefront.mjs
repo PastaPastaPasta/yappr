@@ -19,9 +19,12 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { getPublicKey, getSharedSecret } from '@noble/secp256k1';
 import { decodeIntGroupKey, id32, normalizeId, reportSelfTest } from '../../battery-lib.mjs';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT, YAPP_TOKEN_POSITION, addressFor, feeAgreementFor, ledgerEntry } from '../seed-lib.mjs';
+import { envValue } from '../../sdk-env.mjs';
+import { deriveSeedAppConnectEncryptionKey } from '../app-connect-keys.mjs';
+import { CRITICAL_AUTH_KEY_ID } from '../../derive-identities.mjs';
 import {
   actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, fakeId, loadCheckpoint,
   loadLedger, network, personaKeys, phaseRunner, pick, printTable, rngFrom, topologyAtLeast, utf8,
@@ -408,7 +411,7 @@ function openOrder(sharedX, ciphertext) {
 const orderNonce = (key) => digest(`nonce/${key}`).slice(0, NONCE_SIZE);
 
 /** Encrypts and proves the ciphertext opens as BOTH parties, the way the app will. */
-function sealOrder(order, payload, keys, storeId) {
+export function sealOrder(order, payload, keys, storeId) {
   const nonce = orderNonce(order.key);
   const encryptedPayload = encryptOrderPayload(payload, keys.buyerPriv, keys.sellerPub, nonce, storeId);
   const asSeller = openOrder(ecdhSharedX(keys.sellerPriv, encryptedPayload.slice(0, PUBKEY_SIZE)), encryptedPayload);
@@ -582,7 +585,7 @@ function buildPlan() {
   };
 }
 
-function printPlan(plan) {
+function printPlan(plan, actorMap = {}) {
   console.log(counts({ store: plan.stores, storeItem: plan.items, shippingZone: plan.zones, storeOrder: plan.orders,
     orderStatusUpdate: plan.statuses, storeReview: plan.storeReviews, itemReview: plan.itemReviews },
   ` — ${plan.stores + plan.items + plan.zones + plan.orders + plan.statuses + plan.storeReviews + plan.itemReviews} documents, `
@@ -590,16 +593,52 @@ function printPlan(plan) {
   printTable([['store', 24], ['persona', -7], ['items', -5], ['orders', -6], ['reviews', -7], ['expected avg', -12]],
     STORES.map((store) => {
       const bucket = plan.perStore.get(store.key);
-      return [store.name, store.persona, store.items.length, bucket.orders, bucket.ratings.length,
+      return [store.name, actorMap[store.persona] ?? store.persona, store.items.length, bucket.orders, bucket.ratings.length,
         bucket.ratings.length ? plan.average(bucket).toFixed(2) : '—'];
     }));
 }
 
 /** Buyer/seller ECIES key material; offline runs fall back to deterministic stand-ins. */
-function orderKeys(ledger, order, offline) {
-  const buyer = personaKeys(ledger, BUYERS[order.buyer].persona, { purpose: 'encryption', offline });
-  const seller = personaKeys(ledger, storeOf(order).persona, { purpose: 'encryption', offline });
+export function orderKeys(ledger, order, offline, { actorMap = {}, appId = null } = {}) {
+  const keys = (idx) => {
+    const actual = actorMap[idx] ?? idx;
+    if (!appId) return personaKeys(ledger, actual, { purpose: 'encryption', offline });
+    return appConnectKeys(ledger, actual, appId, offline);
+  };
+  const buyer = keys(BUYERS[order.buyer].persona);
+  const seller = keys(storeOf(order).persona);
   return { buyerPriv: buyer.privateKey, sellerPub: seller.publicKey, sellerPriv: seller.privateKey };
+}
+
+const actorIndices = () => [...new Set([...STORES.map(s => s.persona), ...Object.values(BUYERS).map(b => b.persona)])].sort((a, b) => a - b);
+export function loadActorMap(file) {
+  const input = file ? JSON.parse(readFileSync(file, 'utf8')) : {};
+  const indices = actorIndices();
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !indices.some(i => String(i) === k))) throw new Error('--actor-map must map known storefront persona indices');
+  const map = Object.fromEntries(indices.map(i => [i, Object.hasOwn(input, i) ? input[i] : i]));
+  if (Object.values(map).some(i => !Number.isSafeInteger(i) || i < 0) || new Set(Object.values(map)).size !== indices.length) throw new Error('--actor-map needs distinct nonnegative integer personas');
+  return map;
+}
+
+function appConnectKeys(ledger, idx, appId, offline = false) {
+  const base = personaKeys(ledger, idx, { keyId: CRITICAL_AUTH_KEY_ID, offline });
+  const privateKey = deriveSeedAppConnectEncryptionKey(base.privateKey, base.identityId, appId);
+  return { identityId: base.identityId, privateKey, publicKey: getPublicKey(privateKey, true) };
+}
+
+/** Match exactly the anchor's currently advertised key before creating immutable orders. */
+export async function verifySeedEncryptionKeys(battery, ledger, actorMap, appId) {
+  for (const idx of Object.values(actorMap)) {
+    const expected = appConnectKeys(ledger, idx, appId);
+    const result = await battery.readback(() => battery.sdk.identities.contractKeys({ identityIds: [expected.identityId], contractId: appId, purposes: [1] }));
+    const keys = result.find(r => normalizeId(r.identityId) === expected.identityId)?.keys ?? [];
+    const actual = keys[0]?.data;
+    if (keys.length !== 1 || keys[0].disabledAt !== undefined || !Buffer.from(typeof actual === 'string' ? Buffer.from(actual, 'hex') : actual ?? []).equals(Buffer.from(expected.publicKey))) throw new Error(`persona ${idx}: test wallet encryption key does not match an enabled advertised App Connect key`);
+  }
+}
+
+export function verifyStorefrontCheckpoint(prior, appId, actorStamp) {
+  if ((Object.keys(prior.docs ?? {}).length || Object.keys(prior.pendingCreates ?? {}).length) && (prior.encryptionAppId !== appId || prior.actorMap !== actorStamp)) throw new Error('Storefront checkpoint has different or unverified encryption keys/actors; immutable orders require isolated actors and a fresh checkpoint');
 }
 
 async function run({ args, handle, battery, socialId, contractId }) {
@@ -611,14 +650,27 @@ async function run({ args, handle, battery, socialId, contractId }) {
   });
   const tokenId = isV6() ? null : await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
   const ledger = loadLedger();
-  const actors = await actorsFor(battery, [...STORES.map((s) => s.persona), ...Object.values(BUYERS).map((b) => b.persona)]);
+  const actorMap = args.actorMap;
+  const mapped = await actorsFor(battery, Object.values(actorMap));
+  const actors = new Map(actorIndices().map(idx => [idx, mapped.get(actorMap[idx])]));
+  const appConnect = envValue('NEXT_PUBLIC_LOGIN_PROTOCOL') === 'app-connect';
+  const configuredAppId = envValue('NEXT_PUBLIC_APP_CONNECT_APP_ID');
+  if (configuredAppId && !appConnect) throw new Error('An App Connect anchor is configured; set NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect before seeding');
+  const appId = appConnect ? configuredAppId : null;
+  if (appConnect && !appId) throw new Error('App Connect seeding requires its anchor id');
+  const keyOptions = { actorMap, appId };
+  console.log(`Storefront encryption: ${appId ? `App Connect anchor ${appId}` : 'identity encryption keys'}`);
+  // A local round trip alone cannot establish compatibility with the keys the app resolves.
+  if (appId) await verifySeedEncryptionKeys(battery, ledger, actorMap, appId);
+  const actorStamp = JSON.stringify(actorMap);
+  if (existsSync(args.state)) verifyStorefrontCheckpoint(JSON.parse(readFileSync(args.state, 'utf8')), appId, actorStamp);
   const payoutAddress = (idx) => {
-    const key = ledgerEntry(ledger, idx)?.identityKeys?.find((k) => k.purpose === 'transfer');
-    if (!key) throw new Error(`persona ${idx} has no transfer key in the ledger`);
+    const key = ledgerEntry(ledger, actorMap[idx])?.identityKeys?.find((k) => k.purpose === 'transfer');
+    if (!key) throw new Error(`persona ${actorMap[idx]} has no transfer key in the ledger`);
     return addressFor(key.publicKeyHex);
   };
   console.log(`actors: ${[...actors.values()].map((actor) => actor.label).join(', ')}`);
-  const state = loadCheckpoint(args.state, { network: network(), contractId }, { docs: {} });
+  const state = loadCheckpoint(args.state, { network: network(), contractId, encryptionAppId: appId, actorMap: actorStamp }, { docs: {} });
   const recorder = createRecorder({ writer, state, file: args.state });
   const { createDoc, id: idOf } = recorder;
   const storeIds = new Map();
@@ -694,7 +746,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
       const storeId = storeIds.get(store.key);
       const payload = orderPayload(order, store, BUYERS[order.buyer], `dash:${payoutAddress(store.persona)}`,
         (itemKey) => itemIds.get(`${store.key}/${itemKey}`) ?? '');
-      const { encryptedPayload, nonce } = sealOrder(order, payload, orderKeys(ledger, order, false), storeId);
+      const { encryptedPayload, nonce } = sealOrder(order, payload, orderKeys(ledger, order, false, keyOptions), storeId);
       sealed += 1;
       // `sellerId` must equal the store's own $ownerId or consensus rejects (40127). On storefront v5-v7
       // (QA D-25) `storeStatus` must equal the store's status, and only an active store takes orders;
@@ -720,7 +772,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
           };
           await createDoc(actors.get(store.persona), 'orderStatusUpdate', `status/${order.key}/${status}`, {
             orderId: id32(orderIds.get(order.key)), ...(isV6() ? {} : { buyerId: id32(actors.get(BUYERS[order.buyer].persona).ownerId) }), status,
-            ...(statusNotesSealed() ? sealStatus(order, status, note, orderKeys(ledger, order, false), storeIds.get(store.key), orderIds.get(order.key)) : note),
+            ...(statusNotesSealed() ? sealStatus(order, status, note, orderKeys(ledger, order, false, keyOptions), storeIds.get(store.key), orderIds.get(order.key)) : note),
           }, {
             scope: { where: [['orderId', '==', orderIds.get(order.key)]], orderBy: [['orderId', 'desc'], ['$createdAt', 'desc']] },
           });
@@ -853,14 +905,15 @@ async function run({ args, handle, battery, socialId, contractId }) {
 }
 
 /** Offline, but the ECIES is real: every order payload is sealed and reopened as both parties. */
-function dryRun(plan) {
-  printPlan(plan);
+function dryRun(plan, args) {
+  printPlan(plan, args.actorMap);
   const ledger = loadLedger();
+  const keyOptions = { actorMap: args.actorMap, appId: envValue('NEXT_PUBLIC_LOGIN_PROTOCOL') === 'app-connect' ? envValue('NEXT_PUBLIC_APP_CONNECT_APP_ID') : null };
   for (const order of ORDERS) {
     const store = storeOf(order);
     const payload = orderPayload(order, store, BUYERS[order.buyer], `dash:${fakeId(`payout/${store.persona}`)}`,
       (itemKey) => fakeId(`item/${store.key}/${itemKey}`));
-    sealOrder(order, payload, orderKeys(ledger, order, true), fakeId(`store/${store.key}`));
+    sealOrder(order, payload, orderKeys(ledger, order, true, keyOptions), fakeId(`store/${store.key}`));
   }
   console.log(`\n${ORDERS.length}/${ORDERS.length} order payloads encrypted and reopened as BOTH seller (plain ECIES) `
     + 'and buyer (re-derived ephemeral), offline.');
@@ -998,6 +1051,8 @@ export default {
   state: '.seed-storefront.local.json',
   contractEnv: ['STOREFRONT_CONTRACT_ID', 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID'],
   defaults: { concurrency: 8 },
+  flags: { '--actor-map': ['actorMapFile', 'string'] },
+  check(args) { args.actorMap = loadActorMap(args.actorMapFile); },
   plan: buildPlan,
   dryRun,
   selfTest,

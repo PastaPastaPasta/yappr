@@ -384,9 +384,17 @@ import { BLOCK_TYPES, MEDIA_DIGEST_BYTES, socialShapes } from './social-shapes.m
 import { cleanTestContent } from './test-content-cleanup.mjs';
 import { envValue } from './sdk-env.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
+import { withInterim } from './register-lib.mjs';
+import { parseElectionWindows, withElectionWindows } from './registration-policy.mjs';
 
 const CONTRACT_FILE = takeFlag('--contract-file', 'contracts/yappr-social-contract-v10.json');
 const V10 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
+const electionWindowsFlag = takeFlag('--election-windows', null);
+const electionWindows = electionWindowsFlag === null ? null : parseElectionWindows(electionWindowsFlag);
+if (electionWindowsFlag !== null && !electionWindows) throw new Error('--election-windows needs <joinSeconds>,<voteSeconds>');
+const expectedModerators = withElectionWindows(withInterim(V10.config, {
+  interim: takeFlag('--interim', undefined),
+}), electionWindows).moderation.moderators;
 const CONTRACT_NAME = CONTRACT_FILE.replace(/^.*\//, '');
 /** Every document this battery writes, built for the cut the file declares (v13: live, rootOwnerId, media arrays…). */
 const SOCIAL = socialShapes(V10);
@@ -742,11 +750,17 @@ const unpricedProbe = (ctx, who) => attemptCreate(ctx.sdk, who, SOCIAL.cut.block
   ? { contractId: ctx.contractId, docType: 'block', data: blockData({ blockedId: randomIdBytes() }) }
   : { contractId: ctx.contractId, docType: 'followRequest', data: followRequestData({ targetId: randomIdBytes() }) });
 
-/** Skips a moderator case when a charter is seated: the interim owner is refused 41101 there, correctly. */
+/** Interim-owner cases apply only before seating and when the declaration grants that authority. */
 function interimOnly(ctx, key) {
-  if (!ctx.seated) return false;
-  console.log(`SKIP  ${key}: a moderation charter is seated on this contract, so the interim owner may no longer moderate (41101). Run the election script's team cases instead.`);
-  return true;
+  if (ctx.seated) {
+    console.log(`SKIP  ${key}: a charter is seated; run the seated-team cases for moderation authority.`);
+    return true;
+  }
+  if (expectedModerators.interim.$type !== 'contractOwner') {
+    console.log(`SKIP  ${key}: interim ${expectedModerators.interim.$type} grants no moderation authority to the owner.`);
+    return true;
+  }
+  return false;
 }
 
 /** The fresh identity of x3a/y1d (no DashPay profile, no starter claim), or null. */
@@ -763,14 +777,14 @@ async function freshActor(ctx) {
 
 async function caseE0Declaration(ctx) {
   const { sdk, contractId } = ctx;
-  console.log('\n--- e0. the published contract declares elected moderation, interim owner, three lists ---');
+  console.log('\n--- e0. the published contract declares elected moderation, the expected interim policy, and three lists ---');
   const moderation = ctx.contract.config.moderation;
   const moderators = moderation?.moderators;
   check('e0a the parsed config keeps banlist, suspensions and warnings',
     moderation?.banlist === true && moderation?.suspensions === true && moderation?.warnings === true, describeValue(moderation));
-  check('e0b the moderators are elected with the contract owner as the interim',
-    moderators?.$type === 'elected' && moderators?.interim?.$type === 'contractOwner', describeValue(moderators));
-  const declared = V10.config.moderation.moderators;
+  check(`e0b the moderators are elected with the expected ${expectedModerators.interim.$type} interim`,
+    moderators?.$type === 'elected' && moderators?.interim?.$type === expectedModerators.interim.$type, describeValue(moderators));
+  const declared = expectedModerators;
   check('e0c the published declaration is the committed one (windows, seat, additions, abilities incl. report changeDocumentFields, owner protection)',
     moderators?.joinWindow === declared.joinWindow && moderators?.voteWindow === declared.voteWindow
       && moderators?.seatContestable === declared.seatContestable && moderators?.maxAddedModerators === declared.maxAddedModerators
@@ -779,7 +793,7 @@ async function caseE0Declaration(ctx) {
     describeValue(moderators));
   const seated = await readback(() => sdk.moderationCharters.seatedCharter(contractId));
   ctx.seated = seated !== undefined && seated !== null;
-  check(`e0d the seat is read (${ctx.seated ? 'a charter IS seated: moderator cases will skip' : 'no charter seated: the interim owner moderates'})`, true);
+  check(`e0d the seat is read (${ctx.seated ? 'a charter IS seated: interim-owner cases will skip' : `no charter seated: interim ${expectedModerators.interim.$type}`})`, true);
 }
 
 async function caseD1DistinctFrom(ctx) {
@@ -3222,7 +3236,7 @@ await runBattery({
   contractEnvVar: 'V10_CONTRACT_ID',
   usage:
     'Usage: node scripts/verify-v10.mjs --contract <id> [--bot <n>] [--bot2 <n>] [--fresh-bot <n> [--fresh-owner <id>]]\n' +
-    '       [--moderator maker] [--owner <id>] [--owner2 <id>] [--team-member bot:<n> --reason-doc <id>] [--only e0,x1] [--keep-content] [--dry-run|--self-test]',
+    '       [--interim contractOwner|notYetUsable] [--election-windows joinSeconds,voteSeconds] [--moderator maker] [--owner <id>] [--owner2 <id>] [--team-member bot:<n> --reason-doc <id>] [--only e0,x1] [--keep-content] [--dry-run|--self-test]',
   cases: CASES,
   cleanup: cleanUpRun,
   shapes: SHAPES,

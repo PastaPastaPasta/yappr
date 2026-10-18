@@ -1,5 +1,5 @@
 /**
- * Pollr v7 (5.0.0-beta.5): per bank entry a `poll` (credits only; `{ question, options, multiChoice, endsAt }`,
+ * Pollr v7/v8: per bank entry a `poll` (credits only; `{ question, options, multiChoice, endsAt }`,
  * multiChoice always written, and a required endsAt within 31 days of creation), an embedding `post` on the SOCIAL
  * contract (10 YAPP, the `embedContractId`/`embedDocType`/`embedId` triple lib/poll-embed.ts builds), and the
  * ballots. A voter holds ONE stored, mutable `vote` per poll (unique byPollVoter): `{ pollId, choices }` where
@@ -491,10 +491,10 @@ export default {
   defaults: { seed: '20260917', concurrency: 6, nowMs: Date.now(), closeInMs: 10 * 60_000 },
   flags: { '--now': ['nowMs', 'number'], '--close-in': ['closeInMs', 'number'] },
   check(args) {
-    // The poll and ballot shapes here are v7's (no optionCount, one `vote` per voter and poll
-    // holding a `choices` array): refuse any other topology. Nothing here deletes a poll.
+    // v8 keeps v7's poll/ballot fields and ballot indexes, and removes both unused poll
+    // listing indexes. This seeder only fetches polls by id and never deletes them.
     const topology = envValue('NEXT_PUBLIC_POLLR_TOPOLOGY');
-    if (topology && topology !== 'v7') throw new Error(`this seeder writes v7 poll and ballot shapes, but NEXT_PUBLIC_POLLR_TOPOLOGY is ${topology}`);
+    if (topology && !['v7', 'v8'].includes(topology)) throw new Error(`this seeder writes v7/v8 poll and ballot shapes, but NEXT_PUBLIC_POLLR_TOPOLOGY is ${topology}`);
     if (!(args.closeInMs >= 60_000 && args.closeInMs <= MAX_POLL_MS)) throw new Error('--close-in takes milliseconds between 60000 and 31 days');
   },
   plan: (args) => buildPlan({ seed: args.seed, nowMs: args.nowMs }),

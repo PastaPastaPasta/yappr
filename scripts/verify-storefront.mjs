@@ -6,7 +6,7 @@
  * (credits) instead of YAPP, so the actors need credits only.
  *
  *   NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> \
- *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator maker|personal|<persona>] [--only s5,s7] [--keep-content]
+ *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator maker|personal|<persona>] [--only s5,s7] [--reason-doc <seated-charter-reason-id>] [--keep-content]
  *
  * `--moderator` is the contract's owner or one it appointed at publish time:
  * `maker` (the default; it publishes and is appointed), `personal` (ledger
@@ -870,7 +870,7 @@ await runBattery({
   cleanup: cleanUpRun,
   cases: CASES,
   actors: { seller: 200, buyer: 201, stranger: 202 },
-  flags: { moderator: { ...MODERATOR_FLAG, default: 'maker' } },
+  flags: { moderator: { ...MODERATOR_FLAG, default: 'maker' }, 'reason-doc': null },
   // Every create of a priced type (store, storeItem, storeReview, itemReview) carries the declared
   // agreement, unless a case opts out (`noAgreement`, s5e/s12a) or names its own (`agreement`, s12b).
   agreementFor: (sdk, docType) => feeAgreementFor(sdk, docType, SCHEMAS),
