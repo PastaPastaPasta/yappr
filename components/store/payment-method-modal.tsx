@@ -6,8 +6,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon, WalletIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { PaymentSchemeIcon, PAYMENT_SCHEME_LABELS, TDASH_NETWORK_LABEL } from '@/components/ui/payment-icons'
-import { APPROVED_PAYMENT_SCHEMES } from '@/lib/services/unified-profile-service'
-import { isValidPaymentAddress } from '@/lib/utils/payment-uri'
+import { APPROVED_PAYMENT_SCHEMES, parsePaymentUri } from '@/lib/utils/payment-uri'
 
 // Supported payment schemes with their details
 const PAYMENT_SCHEMES = [
@@ -29,16 +28,6 @@ const PAYMENT_SCHEMES = [
   { scheme: 'lightning:', label: 'Lightning', placeholder: 'lnbc1xxxxxxxxxxxxxxxxx', hint: 'Your Lightning address or invoice' },
 ] as const
 
-function parseCustomUri(uri: string): { scheme: string; address: string } | null {
-  const colonIndex = uri.indexOf(':')
-  if (colonIndex <= 0) return null
-  const s = uri.substring(0, colonIndex + 1).toLowerCase()
-  const addr = uri.substring(colonIndex + 1)
-  if (!addr.trim()) return null
-  if (!APPROVED_PAYMENT_SCHEMES.includes(s as typeof APPROVED_PAYMENT_SCHEMES[number])) return null
-  return { scheme: s, address: addr.trim() }
-}
-
 interface PaymentMethodModalProps {
   isOpen: boolean
   onClose: () => void
@@ -52,7 +41,6 @@ interface PaymentMethodModalProps {
 export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodModalProps) {
   const [scheme, setScheme] = useState('tdash:')
   const [address, setAddress] = useState('')
-  const [label, setLabel] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const openerRef = useRef<HTMLElement | null>(null)
   const [customMode, setCustomMode] = useState(false)
@@ -65,26 +53,9 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
   const selectedScheme = PAYMENT_SCHEMES.find(s => s.scheme === scheme) || PAYMENT_SCHEMES[0]
 
   const handleSubmit = async () => {
-    let resolvedScheme: string
-    let resolvedAddress: string
-
-    if (customMode) {
-      const parsed = parseCustomUri(customUri.trim())
-      if (!parsed) return
-      resolvedScheme = parsed.scheme
-      resolvedAddress = parsed.address
-    } else {
-      if (!address.trim()) return
-      resolvedScheme = scheme
-      resolvedAddress = address.trim()
-    }
-
-    if (!isValidPaymentAddress(resolvedScheme, resolvedAddress)) {
-      const message = resolvedScheme === 'tdash:'
-        ? `Enter a valid Dash ${TDASH_NETWORK_LABEL.toLowerCase()} address (tdash:).`
-        : resolvedScheme === 'dash:'
-          ? 'Enter a valid Dash mainnet address (dash:).'
-          : 'Enter a valid payment address.'
+    const parsed = parsePaymentUri(customMode ? customUri : `${scheme}${address.trim()}`)
+    if (!parsed) {
+      const message = 'Enter a valid payment URI or address.'
       if (customMode) setCustomError(message)
       else setAddressError(message)
       return
@@ -93,12 +64,11 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
     setIsSubmitting(true)
     try {
       await onSave({
-        scheme: resolvedScheme,
-        address: resolvedAddress,
-        label: label.trim() || undefined
+        scheme: parsed.scheme,
+        address: parsed.uri.slice(parsed.scheme.length),
+        label: parsed.label
       })
       setAddress('')
-      setLabel('')
       setScheme('tdash:')
       setCustomUri('')
       setCustomError('')
@@ -183,13 +153,13 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                         onChange={(e) => {
                           setCustomUri(e.target.value)
                           if (customError) {
-                            const parsed = parseCustomUri(e.target.value.trim())
+                            const parsed = parsePaymentUri(e.target.value.trim())
                             if (parsed) setCustomError('')
                           }
                         }}
                         onBlur={() => {
                           const trimmed = customUri.trim()
-                          if (trimmed && !parseCustomUri(trimmed)) {
+                          if (trimmed && !parsePaymentUri(trimmed)) {
                             setCustomError('Enter a valid URI in scheme:address format (e.g., dash:Xabc123...)')
                           } else if (!trimmed) {
                             setCustomError('')
@@ -270,19 +240,6 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                   </>
                 )}
 
-                {/* Label input */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Label (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={label}
-                    onChange={(e) => setLabel(e.target.value)}
-                    placeholder="e.g., Main Wallet, Business Account"
-                    className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
-                  />
-                </div>
               </div>
 
               <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800">
@@ -296,7 +253,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
                 <Button
                   className="flex-1"
                   onClick={handleSubmit}
-                  disabled={isSubmitting || (customMode ? !parseCustomUri(customUri.trim()) : !address.trim())}
+                  disabled={isSubmitting || (customMode ? !parsePaymentUri(customUri.trim()) : !address.trim())}
                 >
                   {isSubmitting ? 'Adding...' : 'Add Payment'}
                 </Button>

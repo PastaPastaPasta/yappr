@@ -1,3 +1,4 @@
+import { filterPaymentUris } from '../utils/payment-uri';
 import { logger } from '@/lib/logger';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { BaseDocumentService, withCreationTime } from './document-service';
@@ -47,25 +48,6 @@ export function paymentUriScheme(uri: string): string {
   return colonIndex > 0 ? uri.substring(0, colonIndex + 1).toLowerCase() : '';
 }
 
-// Approved payment URI schemes (whitelist)
-export const APPROVED_PAYMENT_SCHEMES = [
-  'dash:',           // Dash
-  'tdash:',          // Dash (Testnet)
-  'bitcoin:',        // Bitcoin
-  'litecoin:',       // Litecoin
-  'ethereum:',       // Ethereum
-  'monero:',         // Monero
-  'dogecoin:',       // Dogecoin
-  'bitcoincash:',    // Bitcoin Cash
-  'zcash:',          // Zcash
-  'stellar:',        // Stellar (XLM)
-  'ripple:',         // XRP
-  'solana:',         // Solana
-  'cardano:',        // Cardano (ADA)
-  'polkadot:',       // Polkadot (DOT)
-  'tron:',           // Tron (TRX)
-  'lightning:',      // Bitcoin Lightning Network
-] as const;
 
 // DiceBear styles (ported from avatar-utils)
 export const DICEBEAR_STYLES = [
@@ -644,22 +626,8 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * filter to approved schemes.
    */
   parsePaymentUris(stored: unknown): ParsedPaymentUri[] {
-    return decodePaymentUriList(stored)
-      .filter(uri => this.isApprovedPaymentScheme(uri))
-      .map(uri => ({
-        scheme: paymentUriScheme(uri),
-        uri,
-      }));
+    return filterPaymentUris(decodePaymentUriList(stored));
   }
-
-  /**
-   * Check if a URI has an approved payment scheme
-   */
-  isApprovedPaymentScheme(uri: string): boolean {
-    const lowerUri = uri.toLowerCase();
-    return APPROVED_PAYMENT_SCHEMES.some(scheme => lowerUri.startsWith(scheme));
-  }
-
 
   /**
    * Payment URIs as the configured profile cut stores them (a list on v2, JSON

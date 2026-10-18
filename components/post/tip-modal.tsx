@@ -1,5 +1,6 @@
 'use client'
 
+import { filterPaymentUris } from '@/lib/utils/payment-uri'
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -192,7 +193,7 @@ export function TipModal() {
     import('@/lib/services/unified-profile-service')
       .then(({ unifiedProfileService }) => unifiedProfileService.getPaymentUris(recipientInfo.id))
       .then((uris) => {
-        if (!cancelled) setPaymentUris(uris)
+        if (!cancelled) setPaymentUris(filterPaymentUris(uris))
       })
       .catch((error) => {
         logger.warn('Tip: could not load payment addresses', error)

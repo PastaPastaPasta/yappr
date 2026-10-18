@@ -5,7 +5,7 @@ vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }));
 import { storeService } from './store-service';
 
-const paymentUris = [{ scheme: 'dash:', uri: 'dash:Xabc', label: 'Main' }];
+const paymentUris = [{ scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' }];
 const contactMethods = [{ platform: 'email', handle: 'shop@example.com' }];
 const raw = {
   $id: 'store', $ownerId: 'owner', $revision: 3, $createdAt: 1700000000000,
@@ -127,3 +127,19 @@ describe('storefront v6: categories and indexed discovery', () => {
     expect(updateDocument.mock.calls[0][4]).toMatchObject({ category: 'books', description: 'Rare books' })
   })
 })
+
+
+describe('untrusted stored payment JSON (SEC-02)', () => {
+  it('drops unsafe URIs and rebuilds metadata from the actual currency', async () => {
+    get.mockResolvedValue({ ...raw, paymentUris: JSON.stringify([
+      { scheme: 'dash:', label: 'Verified Dash payment', uri: 'javascript:document.body.textContent="SECURITY_QA_EXECUTED"' },
+      { scheme: 'dash:', uri: 'data:text/html,SECURITY_QA' },
+      { scheme: 'dash:', label: 'Verified Dash payment', uri: 'bitcoin:1BoatSLRHtKNngkdXEeobR76b53LETtpyT' },
+      { scheme: 'dash:', uri: 'dash:not-an-address' },
+      null, 42,
+    ]) });
+    expect((await storeService.getById('store'))?.paymentUris).toEqual([
+      { scheme: 'bitcoin:', label: 'Bitcoin', uri: 'bitcoin:1BoatSLRHtKNngkdXEeobR76b53LETtpyT' },
+    ]);
+  });
+});

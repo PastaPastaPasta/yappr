@@ -1,3 +1,4 @@
+import { filterPaymentUris } from '../utils/payment-uri';
 import { logger } from '@/lib/logger';
 /**
  * Store Service
@@ -8,7 +9,6 @@ import { logger } from '@/lib/logger';
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6 } from '../constants';
-import { parseJsonArray } from '../utils/json-parsing';
 import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils';
 import { storeStatsService } from './store-stats-service';
 import type {
@@ -92,7 +92,7 @@ class StoreService extends BaseDocumentService<Store> {
       logoUrl: data.logoUrl,
       bannerUrl: data.bannerUrl,
       status: data.status,
-      paymentUris: parseJsonArray<ParsedPaymentUri>(data.paymentUris, 'paymentUris'),
+      paymentUris: filterPaymentUris(data.paymentUris),
       defaultCurrency: data.defaultCurrency,
       policies: data.policies,
       location: data.location,

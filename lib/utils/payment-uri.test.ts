@@ -1,6 +1,6 @@
 import bs58check from 'bs58check'
 import { describe, expect, it } from 'vitest'
-import { isValidDashAddress, isValidPaymentAddress } from './payment-uri'
+import { isValidDashAddress, isValidPaymentAddress, parsePaymentUri, filterPaymentUris } from './payment-uri'
 
 const mainnetAddress = 'XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ'
 const testnetAddress = 'yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw'
@@ -106,5 +106,39 @@ describe('isValidPaymentAddress', () => {
     ['lightning:', 'hello'],
   ])('rejects an obviously invalid %s destination %s', (scheme, address) => {
     expect(isValidPaymentAddress(scheme, address)).toBe(false)
+  })
+})
+
+
+describe('untrusted payment URIs (SEC-02)', () => {
+  it.each([
+    'javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'data:text/html,SECURITY_QA',
+    'vbscript:msgbox(1)', 'file:///etc/passwd', 'https://wallet.example/pay',
+    'http://wallet.example/pay', 'unknown:recipient', '//wallet.example/pay',
+    'dash:', 'dash:invalid', 'dash://XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ',
+    `dash:${testnetAddress}`, `tdash:${mainnetAddress}`, `dash:${mainnetAddress}#fragment`,
+    `dash:${mainnetAddress}?message=bad%escape`, `dash:${mainnetAddress}?message=bad\nvalue`,
+    'java\tscript:alert(1)', 'bitcoin:javascript:alert(1)',
+  ])('rejects %j even with trusted-looking metadata', (uri) => {
+    expect(parsePaymentUri({ scheme: 'dash:', label: 'Verified Dash payment', uri })).toBeNull()
+  })
+
+  it('canonicalizes the real scheme and ignores all stored label/scheme fields', () => {
+    expect(parsePaymentUri({ scheme: 'dash:', label: 'Verified Dash payment',
+      uri: '  BITCOIN:1BoatSLRHtKNngkdXEeobR76b53LETtpyT?label=Dash  ' })).toEqual({
+      scheme: 'bitcoin:', label: 'Bitcoin', uri: 'bitcoin:1BoatSLRHtKNngkdXEeobR76b53LETtpyT?label=Dash',
+    })
+  })
+
+  it.each([null, 42, {}, { uri: 42 }, 'invalid JSON', '{}', '[null,42,{}]'])('handles malformed lists %j', (value) => {
+    expect(filterPaymentUris(value)).toEqual([])
+  })
+
+  it('preserves supported destinations and optional encoded payment parameters', () => {
+    const uri = `dash:${mainnetAddress}?amount=0.25&message=Thanks%20a%20lot`
+    expect(filterPaymentUris(JSON.stringify([{ scheme: 'javascript:', label: 'Other', uri }]))).toEqual([
+      { scheme: 'dash:', uri, label: 'Dash' },
+    ])
+    expect(isValidPaymentAddress('unknown:', 'recipient')).toBe(false)
   })
 })
