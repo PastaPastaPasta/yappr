@@ -160,7 +160,7 @@ export const copy = {
   },
   terms: {
     title: 'Before you start',
-    intro: 'Yappr is a public network. By continuing you agree to:',
+    intro: 'By continuing, you accept the Terms of Use and Community Rules. Here is what to know:',
     termsOfUse: 'Terms of Use',
     privacyPolicy: 'Privacy Policy',
     communityRules: 'Community rules',

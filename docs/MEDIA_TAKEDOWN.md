@@ -1,10 +1,16 @@
 # Media takedown runbook
 
-How to stop Yappr's own apps from showing a piece of media: illegal content,
-doxxing, a court order, or anything else that has to come down. This is the
-minimal static denylist (backlog R-M27). The signed, runtime-updatable list
-(Y7a in `docs/mobile/COMPLIANCE.md`) replaces it before any mobile store
-submission.
+This documents the existing source-maintained media denylist, not a promise to
+review reports or remove content. D35 says Yappr has no centralized moderation:
+it is open-source code for Dash Platform, and its authors cannot change, remove
+or recover data on the network. On-chain moderation belongs to independent teams
+elected by the community through masternode votes. General contact:
+`support@dash.org`; email does not file an on-chain report or guarantee action.
+
+**Owner question:** does this team-maintained client display filter conflict
+with “no centralized moderation”? The mechanism remains unchanged pending that
+decision. Earlier plans for a signed runtime moderation list or a response SLA
+are superseded by D35 and are not release gates.
 
 ## What the denylist does and doesn't do
 
@@ -40,8 +46,7 @@ The list matches two things:
   Only the hash goes in the public repository, never the URL.
 
 It does **not** remove anything from the chain or from IPFS. Other clients
-and public gateways still serve the bytes. Pair every entry with the steps in
-"Also do" below.
+and public gateways still serve the bytes. The app may not display some media, while the original remains available elsewhere.
 
 ## Add an entry
 
@@ -66,32 +71,24 @@ and public gateways still serve the bytes. Pair every entry with the steps in
 ## Ship it
 
 - **Web.** The list takes effect when the build that contains it is deployed.
-  Production (`yap.pr`) deploys from `master`, so an urgent takedown needs the
+  Production (`yap.pr`) deploys from `master`, so a display-filter update needs the
   owner to merge the denylist commit to `master` (or promote `staging`) and
   confirm the Pages deploy ran. The `/testing` and `/devnet` builds pick it up
   on their next deploy.
 - **Mobile.** The list is in the JS bundle, so it takes effect with the next
-  app build. Until the signed runtime list (Y7a) exists, an urgent takedown
+  app build. A display-filter update
   means a new build to TestFlight and Play internal testing.
 - **Check it.** After the deploy, open the post, profile or store that showed
   the media. The placeholder should appear and the network panel should show
   no request for the item.
 
-## Also do
+## Other services and on-chain content
 
-1. **On chain.** If a moderator can still delete the document (posts and
-   replies within 7 days), delete it. After that window, only the seated
-   elected team can delete it.
-2. **The pinning provider.** Report the CID through the abuse channel of the
-   uploader's provider, Pinata or Storacha.
-3. **Public gateways.** Report the CID to the IPFS Foundation's "badbits"
-   denylist, which ipfs.io and dweb.link apply, and to 4everland.
-4. **Illegal content.** For child sexual abuse material, report to NCMEC
-   (CyberTipline), as the report dialog already links. Don't download or keep
-   a copy beyond what the report needs.
-5. **Image proxy.** wsrv.nl caches proxied images for up to 31 days and has no
-   purge yet. The denylist stops Yappr asking for the URL; if the host has to
-   take it down too, contact the host.
+Only the community-elected teams can use the moderation powers in their
+contracts. App maintainers do not direct them. Hosts, pinning providers, public
+gateways and image proxies have their own policies and support channels; a
+client denylist entry does not delete their copies or purge their caches.
+If a child is in danger, contact local police or the NCMEC CyberTipline.
 
 ## Removing an entry
 

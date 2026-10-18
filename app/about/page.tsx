@@ -77,9 +77,9 @@ export default function AboutPage() {
     <InfoPage icon={InformationCircleIcon} title="About Yappr" subtitle="Decentralized social media on Dash Platform" updated={LEGAL_UPDATED}>
       <InfoSection title="What is Yappr?">
         <Prose>
-          Yappr is a social app for Dash Platform. Instead of a company database, your identity, posts and connections live on a
-          public network, signed with keys only you hold. Any app can read them, so you can take them with you, and the rules are
-          enforced in the open by elected community moderators rather than by a company behind closed doors.
+          Yappr is open-source software for using Dash Platform, a decentralized system. Your identity, posts and connections live
+          on a public network, signed with your keys. Yappr has no centralized moderation, and its authors cannot change, remove
+          or recover your data on the network.
         </Prose>
       </InfoSection>
 
@@ -125,12 +125,15 @@ export default function AboutPage() {
       <InfoSection title="Moderated in the Open" icon={ScaleIcon}>
         <Prose className="space-y-3">
           <p>
-            Yappr&apos;s social network, blogs and stores each get a moderation team, elected on Dash Platform. Moderators can remove
+            The social, blog and storefront contracts each have an on-chain moderation team, elected by the community through
+            masternode votes. These teams are independent of Yappr. Moderators can remove
             content and warn, suspend or ban accounts, but only for a reason listed in their team&apos;s published charter, and every
             removal, warning, suspension or ban leaves a public record.
           </p>
           <p>
-            Anyone can report a post, reply or profile, and you can block anyone. Read the{' '}
+            Use Report where available to publish a report for the elected team, or block anyone to control what you see.
+            The app may not display some media because web and mobile builds include a media denylist maintained in the source
+            repository. It does not remove anything from the network. Read the{' '}
             <Link href={COMMUNITY_RULES_HREF} className="underline">Community Rules</Link>.
           </p>
         </Prose>
@@ -164,7 +167,7 @@ export default function AboutPage() {
       <InfoSection title="Contact" icon={ChatBubbleLeftRightIcon}>
         <Prose className="space-y-2">
           <p>
-            Questions, abuse reports, or legal requests: <SupportEmailLink />.
+            General questions: <SupportEmailLink />.
           </p>
           <p>
             Found a bug or have an idea?{' '}

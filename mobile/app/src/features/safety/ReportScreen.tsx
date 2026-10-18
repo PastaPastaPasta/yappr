@@ -353,7 +353,7 @@ function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; 
 }
 
 /**
- * The viewer's report: when, why and where it stands ("Under review", or how
+ * The viewer's report: when, why and where it stands ("Awaiting moderator action", or how
  * the moderators resolved it), the note, when reports close, and "Withdraw
  * report" (PRD SAFE-04) with "Done". On v14 a resolved report cannot be
  * withdrawn (`withdrawable` false), and the sheet says so instead.

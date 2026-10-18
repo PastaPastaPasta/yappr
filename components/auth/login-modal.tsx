@@ -144,7 +144,7 @@ export function LoginModal() {
               <p className="mt-3 text-xs text-center text-gray-600 dark:text-gray-400">
                 By continuing, you agree to the <ConsentLink href="/terms">Terms</ConsentLink> and{' '}
                 <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink> and confirm you are {MINIMUM_AGE} or
-                older. The <ConsentLink href="/privacy">Privacy Policy</ConsentLink> explains what is public.
+                older. The <ConsentLink href="/privacy">Privacy Policy</ConsentLink> explains what is public. Yappr has no centralized moderation.
               </p>
 
               {/* New users */}

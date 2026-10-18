@@ -7,14 +7,24 @@ review. Sources are the App Store Review Guidelines (last updated
 secondary sources or reports of rejections, and should be checked again before
 submission.
 
-## Summary checklist (release blockers)
+## D35 supersedes earlier moderation plans
+
+Yappr has no centralized moderation. It is open-source software for Dash
+Platform, a decentralized system. Its authors cannot change, remove or recover
+network data. On-chain teams are elected by the community through masternode
+votes and are independent of Yappr. Contact: `support@dash.org`.
+
+External store policies below are planning references, not commitments to run
+moderation or legal/entity/governing-law gates for the testnet release.
+
+## App-store planning checklist
 
 | # | Requirement | iOS | Play | Owner | Phase |
 | --- | --- | --- | --- | --- | --- |
 | C1 | Organization developer accounts (legal entity, D-U-N-S), held by the Dash-affiliated publisher (D12); Play developer verification of the package (in force since 2026-09-30) | 3.1.5(i), 5.1.1(ix) | Crypto wallet declaration, developer verification, and it avoids the new-personal-account 12-tester/14-day rule | Product owner | 0 |
 | C2 | No crypto-gated functionality and no crypto paid to the developer to unlock features on iOS: YAPP is never required, and the **action fees go only to elected moderators** (D5) | 3.1.1 | Tokenized-asset declaration, Billing policy | Yappr contracts (Y1/Y2) plus mobile | 0 decision, 3 verify |
 | C3 | No tips attached to posts on iOS; profile tips only, optional, 100% to recipient | 3.1.1, 3.2.1(vii) | OK (P2P exception) | Mobile | 1 |
-| C4 | UGC safeguards: report (posts, replies, profiles, DMs), block, filter, EULA, contact, acting on reports within 24 h | 1.2 | UGC policy | Yappr (Y1, Y7) plus mobile plus moderation ops | 1 to 3 |
+| C4 | UGC controls: report, block, sensitive-content filter, terms and contact. D35 makes no report-response commitment. | 1.2 | UGC policy | Mobile; on-chain moderation is independent | Reassess before public store submission |
 | C5 | Account deletion in the app, plus a web URL | 5.1.1(v) | Account deletion policy | Yappr (Y7) plus mobile | 2 |
 | C6 | Non-custodial only; no exchange features | 3.1.5 | Out of scope of the crypto wallet licensing policy if non-custodial | Architecture (by design) | — |
 | C7 | Age rating questionnaire incl. social-media questions (answers required from September 2026); Declared Age Range API (Texas SB 2420) | Required | Content rating (IARC) | Mobile plus product owner | 3 |
@@ -121,26 +131,20 @@ moderation plan for decentralized content.
 | Filter objectionable content | Author-flagged `sensitive` posts hidden until the user consents (`lib/sensitive-content.ts`) | The same, **hidden by default**, plus local muted words in 1.1. Needs two deliberate steps to turn off (Play). |
 | Report content and users | v10: on-chain reports of posts and replies, with a moderator queue that resolves them (`lib/reports.ts`, `components/moderation/`). Testnet v2: none. | Reports of posts, replies, **profiles** and **DMs** on the Y1 cut (see [Reports](#reports)), in the apps and on web |
 | Block abusive users | `block` document, plus `blockFilter`/`blockFollow` | The same. Blocking hides content everywhere at once and also stops DMs, mentions and notifications from that user. |
-| Act on reports within 24 h; remove content; eject users | v10: moderators can delete posts, replies, reports and `yapprProfile`, and ban, suspend and warn (contract `config.moderation`). The DashPay profile (name, avatar, bio) is a system contract that moderators cannot touch. Once a charter is seated, the interim is refused (41101), so Yappr staff cannot guarantee action on chain. | 1. Launch on the Y2 cut with a seated charter. 2. A **Yappr moderation denylist** that every official client enforces (below), for what on-chain moderation cannot reach. 3. A moderation rota with a documented SLA. |
+| External policy expectations for report handling | On-chain removals, bans, suspensions and warnings belong to independent teams elected by the community through masternode votes. | D35 does not authorize Yappr report triage, a response SLA or a broader denylist. Store acceptance must be assessed against the actual app behavior. |
 | Published contact info | Not visible | Support email and URL in the app (Settings → About) and in store listings |
 | EULA with zero tolerance | Terms page exists (`app/terms`), no zero-tolerance clause | Add a zero-tolerance clause, a Community guidelines page, and acceptance before first post (gate stored per identity) |
 
-### Moderation denylist (new, Y7)
+### Existing media display filter (D35)
 
-This is a client-enforced list of hidden identities, documents and media CIDs,
-signed by a Yappr moderation key.
+Web and mobile builds bundle `lib/media/media-denylist.json`. The app may not
+display listed media; it does not remove anything from Dash Platform, IPFS or
+other services. See [MEDIA_TAKEDOWN.md](../MEDIA_TAKEDOWN.md).
 
-- **Where it lives.** The list is published as a document owned by a Yappr
-  moderation identity, and mirrored at `https://yap.pr/moderation/denylist.json`
-  with a detached signature.
-- **Client behavior.** Clients fetch it on start and then every 6 hours, verify
-  the signature, and hide matches everywhere: feeds, profiles (DashPay name,
-  avatar and bio replaced), search, notifications, and DM requests from listed
-  identities.
-- **Scope.** It covers what on-chain moderation cannot: the DashPay profile,
-  media, and anything the seated charter has not acted on within the SLA.
-- **Transparency.** The list is public. Web shows "Hidden by Yappr moderation"
-  with a link to the policy.
+**Owner question:** does this source-maintained filter conflict with “no
+centralized moderation”? Leave the existing mechanism unchanged. The earlier
+signed identity/document denylist and moderation rota are superseded by D35;
+there is no Yappr report-triage or 24-hour response commitment.
 
 ### Reports
 
@@ -166,32 +170,24 @@ and are public; the reported person can see that a report exists and who made
 it. The report sheet says so. A public DM report also reveals that the two
 people have a conversation, which weakens DM v5's unlinkability. For a DM
 report the sheet says: "Moderators will be able to read this conversation,
-including messages sent after this report." The email channel below is
-offered as the private alternative.
+including messages sent after this report." Emailing support does not file a network report or promise moderator action.
 
 **Before a charter is seated.** `report` is a moderated type, so on testnet
 and mainnet it is refused (41200) until seating, while DMs, follows and likes
-already work. In that window, the app routes every report to the email
-channel and the denylist.
+already work. In that window, on-chain reports cannot be filed. The app may offer general support contact without promising moderation.
 
 - **Moderator queue.** The existing web queue gains profile and DM targets; for
   a DM report it decrypts the envelope with the moderator's key and shows the
   conversation read-only.
-- **Out-of-band channel.** For urgent illegal content, the in-app report
-  flow also offers "Email the Yappr team", which opens an email to the support
-  address with a prefilled link.
-- **CSAM.** The minors reason routes straight to the urgent path. The
-  moderation runbook must cover NCMEC reporting obligations **[verify with
-  counsel]**.
+- **Support contact.** "Email support" opens a draft to `support@dash.org` with a link. This is not on-chain reporting, and does not guarantee moderator action.
+- **Child safety.** The minors reason links to the NCMEC CyberTipline and advises contacting local police if a child is in danger.
 
 **App Review notes should explain:**
 - The contract gives elected moderators consensus-enforced delete (posts,
   replies, Yappr profile fields), ban and suspend, and reports are resolved on
   chain with an outcome and a moderator stamp. That is a real removal power,
   unlike most decentralized clients.
-- The signed Yappr denylist, enforced by every official client, covers
-  everything else (DashPay profile content, media, identities) within the 24 h
-  SLA.
+- The existing bundled media denylist only affects display in web and mobile builds. There is no Yappr response SLA. Its fit with D35 is an open owner question.
 - Clients also hide content from blocked users on the device.
 
 ## Account deletion
@@ -304,7 +300,7 @@ The package submitted with each review:
 - **Written notes** explaining:
   - the decentralized architecture;
   - where the report, block and filter controls are;
-  - the moderation powers and 24 h SLA;
+  - the independent teams’ on-chain moderation powers, without a Yappr response SLA;
   - that fees are network fees plus a moderation fee that only elected
     moderators can claim;
   - that there are no post tips on iOS;

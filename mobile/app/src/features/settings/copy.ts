@@ -1,5 +1,6 @@
 import type { SettingsDTO } from '@engine/api';
 
+import { TERMS_SUMMARY } from '~/features/auth/terms-copy';
 import type { ThemePreference } from '~/state/appearance';
 
 type NsfwMode = SettingsDTO['sensitiveContentMode'];
@@ -119,14 +120,9 @@ export const copy = {
     licenses: 'Open-source licenses',
     web: 'Yappr on the web',
     supportCopied: 'Support address copied. Send it from any email app.',
-    rulesIntro: 'Yappr is a public network. By using it you agree to:',
-    // UX_SPEC §5.1 terms.rule1–4: the same summary the terms gate shows.
-    rulesSummary: [
-      'No harassment, hate, threats or illegal content. There is zero tolerance for abuse.',
-      "Reported content can be removed by the community's moderators, and abusive accounts can be banned.",
-      'You can block anyone, and report posts that break these rules.',
-      'What you post is public and permanent on Dash Platform.',
-    ],
+    rulesIntro: 'Using Yappr on Dash Platform:',
+    // The same legal and community-rules summary the terms gate shows.
+    rulesSummary: TERMS_SUMMARY,
   },
 
   saveFailed: "Couldn't save that setting. Please try again.",

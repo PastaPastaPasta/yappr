@@ -847,8 +847,18 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ```
 ┌─────────────────────────────────┐
 │  Before you start               │  title.large
-│  Yappr is a public network.     │  body
-│  By continuing you agree to:    │
+│  By continuing, you accept the  │  body
+│  Terms of Use and Community    │
+│  Rules. Here is what to know:  │
+│  • You must be 18 or older.    │
+│  • Yappr is open-source code   │
+│    for Dash Platform. Its      │
+│    authors cannot change,      │
+│    remove or recover your data.│
+│  • No centralized moderation.  │
+│    Independent on-chain teams │
+│    are elected by the community│
+│    through masternode votes.   │
 │  • No harassment, hate, threats │  body, bulleted (copy 5.1)
 │    or illegal content. There is │
 │    zero tolerance for abuse.    │
@@ -1311,8 +1321,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - Header block: 48 app icon, "Yappr", "Decentralized social media on Dash Platform", version line. No "Powered by Dash Platform" footer: the tagline says it.
 - One info row above the links: "Version" (version and build, "1.0.0 (123)"). A long press copies the build details, "Yappr 1.0.0 (123) · 9f8e7d6c · evo-sdk 3.0.0 · testnet" (the commit's first 8 characters, baked in at build time and never fetched; a part the build doesn't know is left out), with the toast "Version info copied". A tap does nothing; screen readers hear the hint "Long press to copy version info". No Network, Engine or Commit rows.
 - Rows: "Terms of Use", "Privacy Policy", "Community rules", then "Support" (mail), "Send diagnostics", "Open-source licenses", "Yappr on the web".
-- "Community rules" opens one sheet: the 4.7 summary first (`about.rulesIntro` and its 4 bullets), then the full rules the 4.7 gate expands under "Community rules", until yap.pr publishes a rules page (COMPLIANCE C4); then it opens that page in the in-app browser like Terms and Privacy.
-- "Send diagnostics" opens the mail composer to the support address (PRD §11.1 OQ-1) with the redacted 4.32 text as the body, sized for a mail link: its newest 10 errors (each clipped to 300 characters) and last 40 log lines, within 5,000 characters (the oldest log lines go first). With no mail app, the native share sheet offers the same text, led by "Send to support@yap.pr" so a message or note still says where it goes. The row is disabled until the composer or share sheet opens (up to 2 s while the engine's live figures load), so a second tap sends nothing.
+- "Community rules" opens one sheet: the 4.7 summary first (`about.rulesIntro` and its legal and community-rules summary), then the full rules the 4.7 gate expands under "Community rules", until yap.pr publishes a rules page (COMPLIANCE C4); then it opens that page in the in-app browser like Terms and Privacy.
+- "Send diagnostics" opens the mail composer to the support address (PRD §11.1 OQ-1) with the redacted 4.32 text as the body, sized for a mail link: its newest 10 errors (each clipped to 300 characters) and last 40 log lines, within 5,000 characters (the oldest log lines go first). With no mail app, the native share sheet offers the same text, led by "Send to support@dash.org" so a message or note still says where it goes. The row is disabled until the composer or share sheet opens (up to 2 s while the engine's live figures load), so a second tap sends nothing.
 - Last, a muted row "Troubleshooting" (`subhead`, `text.secondary`, centered, 44 tall) opens 4.32. It is there signed out and in every build, and is the only way in.
 - "Open-source licenses" pushes a native list (`/settings/licenses`) generated at build time from the app's production lockfile and the packages the engine bundles (`mobile/engine/bundled-packages.json`, from esbuild's metafiles): one row per package with its version and license; a row opens to the package's license text.
 
@@ -1423,8 +1433,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ### 4.39 Report sheet and block sheet
 
 - **Report** (SAFE-04): bottom sheet, large detent, scrollable. Title "Report post" / "Report reply". The form shows at once: the one-line disclosure `report.disclosure` (`subhead`, `text.secondary`), "What is wrong with it?" with 9 radio rows (label `body.strong`, hint `subhead` `text.secondary`), "Details (optional)" text area with counter "0/500", "Report post" (primary block, `destructive.fill` is **not** used: reporting is not destructive). The viewer's existing report is read beside the form, never in front of it; found, it replaces the form. A failed read never blocks the report: a `DUPLICATE` refusal toasts `report.duplicate` and shows the existing report. "Reporting…" until the engine has the report; then, confirmed or not confirmed yet, `report.sent` with "Also block @x" (outline) and "Done". The network's answer is reconciled in the background; only a report proven not to have landed (or refused) brings the form back, with the toast `toast.reportFailed`. A post that cannot be read shows `report.loadFailed` with "Try again".
-- **Existing report**: `report.existing` (date, reason, "Under review" or "Resolved: {outcome}"), the note, the moderators' resolution text when there is one, `report.expiry` (muted), "Withdraw report" (outline) and "Done" (primary). "Withdraw report" asks first (confirm dialog, `report.withdrawConfirm`), then withdraws optimistically: toast "Report withdrawn" and the sheet closes at once. A withdrawal proven not to have landed brings the report back with `toast.withdrawFailed`; a report already gone toasts `toast.reportGone` (neutral). A sheet reopened while a withdrawal is still settling shows "Report withdrawn", never Withdraw again.
-- **Report by email** (SAFE-05): where the contract takes no reports (testnet), and where it waits for an elected moderation team that is not seated (decided before the form, `safety.reportsOpen`): title `report.emailTitle`, body `report.emailBody`, the same reasons and details, and "Email the Yappr team" (disabled until valid), which opens the mail composer prefilled with the post's link, the reason and the details. The link is never shown on the sheet. A late `MODERATION_NOT_SEATED` refusal shows the same view with the warning `report.notSeated` above it, keeping what was chosen.
+- **Existing report**: `report.existing` (date, reason, "Awaiting moderator action" or "Resolved: {outcome}"), the note, the moderators' resolution text when there is one, `report.expiry` (muted), "Withdraw report" (outline) and "Done" (primary). "Withdraw report" asks first (confirm dialog, `report.withdrawConfirm`), then withdraws optimistically: toast "Report withdrawn" and the sheet closes at once. A withdrawal proven not to have landed brings the report back with `toast.withdrawFailed`; a report already gone toasts `toast.reportGone` (neutral). A sheet reopened while a withdrawal is still settling shows "Report withdrawn", never Withdraw again.
+- **Report by email** (SAFE-05): where the contract takes no reports (testnet), and where it waits for an elected moderation team that is not seated (decided before the form, `safety.reportsOpen`): title `report.emailTitle`, body `report.emailBody`, the same reasons and details, and "Email support" (disabled until valid), which opens the mail composer prefilled with the post's link, the reason and the details. The link is never shown on the sheet. A late `MODERATION_NOT_SEATED` refusal shows the same view with the warning `report.notSeated` above it, keeping what was chosen.
 - **Block** (SAFE-01): bottom sheet, medium detent. Title "Block @x?", the body for the network's Messages (`block.body*`), an "Add a note" link that opens the note field (counter at 260+/280, hint "Anyone can see this note."), "Block" (destructive block), "Cancel" (ghost). On DM v5 the Block also blocks them in Messages (and Unblock lifts both), so one Block covers everything; from a conversation's menu it opens the same sheet.
 
 ---
@@ -1487,11 +1497,14 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | key.mismatch | Private key does not match this identity **(web)** (also a key of the identity with another purpose, e.g. an encryption key) |
 | key.show / hide | Show key / Hide key |
 | terms.title | Before you start |
-| terms.intro | Yappr is a public network. By continuing you agree to: |
-| terms.rule1 | No harassment, hate, threats or illegal content. There is zero tolerance for abuse. |
-| terms.rule2 | Reported content can be removed by the community's moderators, and abusive accounts can be banned. |
-| terms.rule3 | You can block anyone, and report posts that break these rules. |
-| terms.rule4 | What you post is public and permanent on Dash Platform. |
+| terms.intro | By continuing, you accept the Terms of Use and Community Rules. Here is what to know: |
+| terms.rule1 | You must be 18 or older to use Yappr. |
+| terms.rule2 | No harassment, hate, threats or illegal content. There is zero tolerance for abuse. |
+| terms.rule3 | Yappr is open-source software for Dash Platform. Its authors cannot change, remove or recover your data on the network. |
+| terms.rule4 | Yappr has no centralized moderation. On-chain teams are elected by the community through masternode votes and are independent of Yappr. |
+| terms.rule5 | Reported content can be removed by the community's moderators, and abusive accounts can be banned. |
+| terms.rule6 | You can block anyone, and report posts that break these rules. |
+| terms.rule7 | What you post is public and permanent on Dash Platform. |
 | terms.agree | Agree and continue |
 | terms.notNow | Not now |
 | username.cardTitle | Get a username |
@@ -1862,13 +1875,13 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | report.details | Details (optional) / Details (required) **(web)** |
 | report.placeholder | Anything the moderators should know **(web)** |
 | report.submit / busy | Report {post} / Reporting… **(web)** |
-| report.sent | Report sent / Thanks for letting us know. |
+| report.sent | Report sent / Your report is public on Dash Platform for the community-elected moderators. |
 | toast.reportSent | Report sent (only when the sheet closed before it could say so: before the engine took the report, or while it was on its way; once per report) |
 | toast.reportFailed | Couldn't send your report. Try again. |
 | report.duplicate | You already reported this. |
 | report.gone | This {post\|reply} no longer exists. |
 | report.loadFailed | Couldn't load this {post\|reply}. Try again. |
-| report.existing | You reported this on {date} for {reason} · Under review / · Resolved: {No action taken \| Content removed \| Author actioned} |
+| report.existing | You reported this on {date} for {reason} · Awaiting moderator action / · Resolved: {No action taken \| Content removed \| Author actioned} |
 | report.expiry | Reports close after 90 days. |
 | report.withdraw / withdrawing | Withdraw report / Withdrawing… **(web)** |
 | toast.reportWithdrawn | Report withdrawn **(web)** |
@@ -1876,11 +1889,11 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | toast.reportGone | This report was already closed. |
 | toast.withdrawFailed | Couldn't withdraw your report. Try again. |
 | report.emailTitle | Report by email |
-| report.emailBody | Reports go to the Yappr team by email for now. Your email app opens with a link to the post and the reason you chose. |
-| report.email | Email the Yappr team |
+| report.emailBody | You can email support@dash.org with a link and the reason you chose. Email does not file an on-chain report or guarantee moderator action. |
+| report.email | Email support |
 | report.emailSubject | Report: post {id} |
 | report.emailBodyDraft | {link} / Reason: {reason} / {details} (the mail's body, prefilled) |
-| report.notSeated | Your report wasn't sent. Send it by email instead. |
+| report.notSeated | Your report wasn't sent because no moderation team is elected yet. |
 | toast.reportCopied | Report address copied. Send it from any email app. |
 | report.alsoBlock | Also block @{handle} |
 | nsfw.cover | NSFW · The author flagged this post **(web)** |

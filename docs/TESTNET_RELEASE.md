@@ -77,6 +77,7 @@ Once a contract is registered, the shape of its existing document types cannot c
 - **D9, legacy contracts.** None of key exchange, the old vault, key backup or DM v4 is registered. Their ids are blanked in the release environment and the legacy code paths are deleted.
 - **D21/D22, migration.** Clean start with no notice. Browser storage starts clean under a new root scope, and old sessions and caches are ignored. There is no in-app notice on the old site, and no legacy link or archive link (`LegacyYapprLink` is dropped). The "Data may be reset" banner becomes a small Testnet pill (an audit recommendation the owner did not separately confirm).
 - **D23, product flags.** Social, DM v5 and polls are fully released. Store and Blog carry a Beta pill. Credit tips are hidden until wallets can send them; payment-URI tips stay.
+- **D35, legal stance.** Yappr is open-source code for interacting with Dash Platform, a decentralized system. There is no centralized moderation. Its authors cannot change, remove or recover network data. On-chain teams are elected by the community through masternode votes and are independent of Yappr. General contact: `support@dash.org`; email is not a moderation or recovery service. No operator entity, governing-law choice or legal-review item is a release gate.
 - **D24, uploads.** Bring-your-own Storacha or Pinata as-is for launch. Follow-up: model a Yappr-run bucket on R2 (paid by users or provided free). That needs costs, an abuse and takedown model, and an upload-authorisation path, and presigned uploads need a Worker, which is in tension with the "no backend" rule. Media from our own domain would not need the wsrv proxy (D14b).
 - **D25, telemetry.** The Cloudflare Web Analytics beacon stays and is disclosed in Privacy and Cookies. No error reporting is added.
 - **D26, mobile.** TestFlight and Play internal-testing betas of the testnet variant ship together with the web launch. That pulls into the release: the owner's Apple and Play organisation accounts and Team ID, the testnet engine environment (R-B1), mobile QA on testnet, rebuilds with the release contract pins, and `mobile-release` environment protection. The public store listing comes later.
@@ -314,7 +315,6 @@ The owner signs this before Phase 7. Every line is yes or no.
 **Product and legal**
 - [ ] Terms, Privacy and Cookies are rewritten and linked from the footer, the mobile menu and sign-in. They disclose the analytics beacon, wsrv.nl, public bookmarks, the report-box scope, moderation and key storage. The DCG quorum service is deliberately not disclosed in this release (D27).
 - [ ] Password login is gone, and a fresh user can sign in with a raw key after onboarding through the bridge.
-- [ ] A static media denylist exists, and there is a takedown contact and runbook.
 - [ ] Credit tips are hidden, Store and Blog carry Beta pills, and the Testnet pill replaces the data-reset banner.
 
 **Mobile (D26)**
@@ -322,6 +322,8 @@ The owner signs this before Phase 7. Every line is yes or no.
 
 **Not required for the soft launch**
 - A released wallet that speaks App Connect v2 (needed for the public announcement only).
+
+**Existing media filter (owner question, not a release gate):** The web and mobile apps currently ship a source-maintained media denylist; [MEDIA_TAKEDOWN.md](MEDIA_TAKEDOWN.md) records its behavior. It is unchanged in D35. **Owner question:** does this client display filter conflict with “no centralized moderation”? No takedown or response-time promise is made.
 
 ## 5. Rollback
 

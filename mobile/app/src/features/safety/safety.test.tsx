@@ -872,7 +872,7 @@ describe('ReportScreen', () => {
 
     expect(
       screen.getByText(
-        'Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.',
+        'Reports go to on-chain teams, elected by the community through masternode votes and independent of Yappr. Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.',
       ),
     ).toBeTruthy();
     expect(screen.getByTestId('report-submit')).toBeDisabled();
@@ -887,7 +887,7 @@ describe('ReportScreen', () => {
 
     act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
     expect(screen.getByTestId('report-sent')).toBeTruthy();
-    expect(screen.getByText('Thanks for letting us know.')).toBeTruthy();
+    expect(screen.getByText('Your report is public on Dash Platform for the community-elected moderators.')).toBeTruthy();
     // The sheet says it; no toast on top.
     expect(toastMessage()).toBeUndefined();
     expect(screen.getByText('Also block @bob')).toBeTruthy();
@@ -1115,7 +1115,7 @@ describe('ReportScreen', () => {
 
   it.each([
     [2, null, 'You reported this on Sep 30, 2026 for spam or scam · Resolved: Content removed'],
-    [null, null, 'You reported this on Sep 30, 2026 for spam or scam · Under review'],
+    [null, null, 'You reported this on Sep 30, 2026 for spam or scam · Awaiting moderator action'],
   ] as const)('shows an existing report instead of the form (status %s)', async (status, _resolution, line) => {
     const report: OwnReportDTO = {
       id: 'r1',
@@ -1334,7 +1334,7 @@ describe('ReportScreen', () => {
     expect(screen.getByText('Report by email')).toBeTruthy();
     expect(
       screen.getByText(
-        'Reports go to the Yappr team by email for now. Your email app opens with a link to the post and the reason you chose.',
+        'You can email support@dash.org with a link and the reason you chose. Email does not file an on-chain report or guarantee moderator action.',
       ),
     ).toBeTruthy();
     // The link stays inside the email.
@@ -1359,7 +1359,7 @@ describe('ReportScreen', () => {
     await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
     act(() => fakeEngine.emit('write.status', advance(pending, refused('MODERATION_NOT_SEATED'))));
     expect(screen.getByTestId('report-refused')).toBeTruthy();
-    expect(screen.getAllByText("Your report wasn't sent. Send it by email instead.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Your report wasn't sent because no moderation team is elected yet.").length).toBeGreaterThan(0);
     expect(screen.getByTestId('report-email-send')).toBeEnabled();
     expect(screen.queryByText(/elects its moderation team|Nothing was posted/)).toBeNull();
   });
@@ -1385,9 +1385,9 @@ describe('ReportScreen', () => {
     await act(async () => fireEvent.press(screen.getByTestId('report-email-send')));
 
     const url = openURL.mock.calls[0]?.[0] ?? '';
-    expect(url).toMatch(/^mailto:support@yap\.pr\?subject=Report%3A%20post%20p1&body=/);
+    expect(url).toMatch(/^mailto:support@dash\.org\?subject=Report%3A%20post%20p1&body=/);
     expect(decodeURIComponent(url)).toContain('/post?id=p1\n\nReason: Harassment or bullying');
-    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining('support@yap.pr'));
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining('support@dash.org'));
     expect(toastMessage()).toBe(copy.toast.reportCopied);
     expect(fakeEngine.method('safety.report')).not.toHaveBeenCalled();
     expect(fakeEngine.method('safety.reportsOpen')).not.toHaveBeenCalled();

@@ -9,8 +9,8 @@ import { toast } from '~/ui/toast';
 
 import { copy } from './copy';
 
-/** PRD §11.1 OQ-1: the support address (a placeholder the release check flags). */
-export const SUPPORT_EMAIL = 'support@yap.pr';
+/** General support contact, per the D35 legal stance. */
+export const SUPPORT_EMAIL = 'support@dash.org';
 
 /** This variant's yap.pr (devnet: under `/devnet`). */
 const site = `https://yap.pr${config.webBasePath}`;

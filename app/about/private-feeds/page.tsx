@@ -143,7 +143,7 @@ export default function PrivateFeedsPage() {
                 &quot;only show this to my approved followers.&quot;
               </p>
               <p>
-                The answer is cryptography. Instead of controlling <em>who can access</em> the data, we control{' '}
+                The answer is cryptography. Instead of limiting <em>who can access</em> the data, encryption limits{' '}
                 <em>who can understand</em> it. Private posts are encrypted before they&apos;re stored on the
                 blockchain. Only approved followers have the keys to decrypt them, plus the moderators, if someone reports
                 a private post.

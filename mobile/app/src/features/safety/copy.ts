@@ -1,6 +1,6 @@
 /** The safety strings (UX_SPEC §5.9, PRD SAFE-01 – SAFE-07). */
 
-export const SUPPORT_EMAIL = 'support@yap.pr';
+export const SUPPORT_EMAIL = 'support@dash.org';
 
 export type ReportNoun = 'post' | 'reply';
 
@@ -68,7 +68,7 @@ export const copy = {
   report: {
     title: (noun: ReportNoun) => `Report ${noun}`,
     /** The one required disclosure: a report is a public document, and its author sees who filed it. */
-    disclosure: 'Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.',
+    disclosure: 'Reports go to on-chain teams, elected by the community through masternode votes and independent of Yappr. Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.',
     /** v13: the moderators' action fee every report pays, scaled by the network's fee multiplier. */
     fee: (dash: string) => `Reporting pays a moderation fee of about ${dash} to the moderators, plus the network fee.`,
     question: 'What is wrong with it?',
@@ -81,27 +81,27 @@ export const copy = {
     gone: (noun: ReportNoun) => `This ${noun} no longer exists.`,
     /** `status`: how the moderators resolved it, null while open. */
     existing: (date: string, reason: string, status: string | null) =>
-      `You reported this on ${date} for ${reason} · ${status === null ? 'Under review' : `Resolved: ${status}`}`,
+      `You reported this on ${date} for ${reason} · ${status === null ? 'Awaiting moderator action' : `Resolved: ${status}`}`,
     expiry: 'Reports close after 90 days.',
     sentTitle: 'Report sent',
-    sentBody: 'Thanks for letting us know.',
+    sentBody: 'Your report is public on Dash Platform for the community-elected moderators.',
     alsoBlock: (handle: string) => `Also block ${handle}`,
     withdraw: 'Withdraw report',
     /** v14: the network keeps a report once the moderators resolved it. */
     resolvedKept: "A resolved report can't be withdrawn. It closes 90 days after you sent it.",
     withdrawing: 'Withdrawing…',
     withdrawTitle: 'Withdraw your report?',
-    withdrawBody: 'The moderators will no longer see it.',
+    withdrawBody: 'Your report will be removed.',
     withdrawConfirm: 'Withdraw',
     done: 'Done',
     own: (noun: ReportNoun) => `You cannot report your own ${noun}`,
     signIn: 'Sign in to report posts',
-    email: 'Email the Yappr team',
+    email: 'Email support',
     emailTitle: 'Report by email',
     emailBody:
-      'Reports go to the Yappr team by email for now. Your email app opens with a link to the post and the reason you chose.',
+      'You can email support@dash.org with a link and the reason you chose. Email does not file an on-chain report or guarantee moderator action.',
     /** A report the network refused because no moderation team is seated yet: the sheet offers email instead. */
-    notSeated: "Your report wasn't sent. Send it by email instead.",
+    notSeated: "Your report wasn't sent because no moderation team is elected yet.",
     emailSubject: (id: string) => `Report: post ${id}`,
   },
   cancel: 'Cancel',

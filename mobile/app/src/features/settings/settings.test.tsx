@@ -821,7 +821,7 @@ describe('About (SET-06, SET-07)', () => {
     fireEvent.press(byId('about-send-diagnostics'));
     await waitFor(() => expect(openURL).toHaveBeenCalledTimes(1));
     const url = openURL.mock.calls[0][0];
-    expect(url).toMatch(/^mailto:support@yap\.pr\?subject=Yappr%201\.0\.0%20\(devnet\)%20diagnostics&body=/);
+    expect(url).toMatch(/^mailto:support@dash\.org\?subject=Yappr%201\.0\.0%20\(devnet\)%20diagnostics&body=/);
     expect(decodeURIComponent(url.split('&body=')[1])).toContain('wasm compile: 2180 ms');
     expect(share).not.toHaveBeenCalled();
 
@@ -830,8 +830,8 @@ describe('About (SET-06, SET-07)', () => {
     await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
     // Messages, Notes or Slack get no subject: the text itself says where it goes.
     expect(share).toHaveBeenCalledWith(
-      { message: expect.stringMatching(/^Send to support@yap\.pr\n\nYappr [\s\S]*wasm compile: 2180 ms/) },
-      { subject: 'Yappr diagnostics for support@yap.pr' },
+      { message: expect.stringMatching(/^Send to support@dash\.org\n\nYappr [\s\S]*wasm compile: 2180 ms/) },
+      { subject: 'Yappr diagnostics for support@dash.org' },
     );
   });
 

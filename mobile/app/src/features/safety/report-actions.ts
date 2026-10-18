@@ -193,7 +193,7 @@ export interface MailReport {
 }
 
 /**
- * The mail draft to the Yappr team (PRD SAFE-05, PD-13): subject "Report:
+ * The mail draft to the general support contact (PRD SAFE-05, PD-13): subject "Report:
  * post {id}", the link, the "Reason:" line and the details, prefilled from
  * the sheet. The link lives only here, never on the sheet.
  */

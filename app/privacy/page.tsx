@@ -97,9 +97,9 @@ export default function PrivacyPage() {
           <BulletList>
             <li>Almost everything you do on Yappr is public and permanent, because it is written to Dash Platform.</li>
             <li>Messages, private-feed posts, what you order and shipping addresses are encrypted, but some facts about them are still visible.</li>
-            <li>We have no accounts database, no ads, and we don&apos;t sell or share your data.</li>
-            <li>Your keys stay on your device, or, if you add a passkey, on the network encrypted so only that passkey can open them. We never receive them.</li>
-            <li>We use Cloudflare Web Analytics to count visits. It sets no cookies.</li>
+            <li>Yappr has no accounts database or ads, and does not sell your data. Your device reads and writes records directly to Dash Platform.</li>
+            <li>Your keys stay on your device, or, if you add a passkey, on the network encrypted so only that passkey can open them. Yappr’s authors never receive them.</li>
+            <li>The website uses Cloudflare Web Analytics to count visits. It sets no cookies.</li>
           </BulletList>
         </Prose>
       </InfoSection>
@@ -188,8 +188,8 @@ export default function PrivacyPage() {
       <InfoSection title="Reports">
         <Prose>
           A report is public. The person you report can see that you reported them, the reason you chose and anything you wrote. How
-          the moderators resolved it is public too. Reports expire after 90 days. To report something privately, email{' '}
-          <SupportEmailLink />.
+          the community-elected moderators resolved it is public too. Reports expire after 90 days. The teams are elected by the
+          community through masternode votes and are independent of Yappr. Emailing support does not file an on-chain report.
         </Prose>
       </InfoSection>
 
@@ -231,9 +231,9 @@ export default function PrivacyPage() {
 
       <InfoSection title="Contact">
         <Prose>
-          Questions about privacy, or a request about your data: <SupportEmailLink />. We can&apos;t change or delete what is on Dash
-          Platform, but we will explain what is possible and pass requests to the moderators where they can help. If you email us,
-          we keep your message to handle it, and may share the reported content (not your email address) with the moderators.
+          Questions about privacy: <SupportEmailLink />. Yappr is
+          open-source software for Dash Platform, a decentralized system. Its authors cannot change, remove or recover data on
+          that network, and do not handle moderation requests.
         </Prose>
       </InfoSection>
     </InfoPage>
