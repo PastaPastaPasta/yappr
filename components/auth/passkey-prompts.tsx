@@ -31,6 +31,7 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { enrolErrorCopy, lockOutCopy, passkeyDetails, passkeyLabel } from './passkey-copy'
+import { enrolmentOwner } from '@/lib/auth/passkey-enrolment-owner'
 
 /** Resolves once the username prompt (opened by a sign-in without a Dash username) is closed. */
 function usernamePromptClosed(): Promise<void> {
@@ -148,19 +149,13 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
   })
   const busy = step.kind === 'creating' || step.kind === 'saving' || (step.kind === 'pending' && step.checking)
 
-  // Made but never saved when the dialog goes (closed, or the session ended): its PRF output is wiped and
-  // the passkey, which signs in to nothing, is dropped from the provider.
-  const stepRef = useRef(step)
-  stepRef.current = step
-  const mounted = useRef(true)
+  // A passkey made but never saved when the dialog goes (closed, or the session ended) has its PRF output
+  // wiped and is dropped from the provider; ownership is kept as each step resolves, not from what rendered.
+  const [owner] = useState(() => enrolmentOwner(abandon))
   useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      const last = stepRef.current
-      if (last.kind === 'confirm') abandon(last.pending)
-    }
-  }, [])
+    owner.reopen()
+    return () => owner.close()
+  }, [owner])
   // A check can take a minute; the enrolment outlives the dialog (reopening resumes it), so it may close meanwhile.
   const closable = step.kind === 'pending' || !busy
 
@@ -181,14 +176,18 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
     setStep({ kind: 'creating' })
     startPasskeyEnrolment({ identityId, username })
       // Made after the dialog went (closed, or the session ended): dropped like one left unconfirmed.
-      .then((pending) => { if (mounted.current) setStep({ kind: 'confirm', pending }); else abandon(pending) })
+      .then((pending) => {
+        owner.created(pending)
+        if (owner.open) setStep({ kind: 'confirm', pending })
+      })
       .catch((error: unknown) => { if (!resume(error)) fail(error, { kind: 'intro' }) })
-  }, [fail, identityId, resume, username])
+  }, [fail, identityId, owner, resume, username])
 
   const confirm = useCallback((pending: PendingPasskey) => {
     setStep({ kind: 'saving' })
     // A sheet closed after the dialog went is not tapped again: the vault drops that passkey.
-    finishPasskeyEnrolment(pending, () => mounted.current)
+    owner.confirming()
+    finishPasskeyEnrolment(pending, () => owner.open)
       .then(() => {
         changed()
         setStep({ kind: 'done' })
@@ -200,9 +199,11 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           changed()
           return
         }
+        // A closed sheet hands it back for another tap (or drops it, if the dialog went meanwhile).
+        if (error instanceof PasskeyVaultError && error.code === 'cancelled') owner.cancelled(pending)
         fail(error, { kind: 'confirm', pending })
       })
-  }, [changed, fail, resume])
+  }, [changed, fail, owner, resume])
 
   /** `confirming`: saving it again behind the passkey's own confirmation, which the user may close. */
   const settle = useCallback((pending: PendingPasskey, confirming = false) => {

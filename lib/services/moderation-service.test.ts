@@ -187,11 +187,9 @@ describe('who moderates (mirrors Drive ContractModerators::may_moderate)', () =>
     expect((await moderationService.getTeam({ fresh: true }))?.appointed).toEqual([LEADER])
   })
 
-  it('reads the contract itself from a proved answer on a fresh request, never from the SDK\'s contract cache', async () => {
-    const contract = (appointed: string[]) => ({ ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: { $type: 'appointedModerators', identities: appointed } } } })
-    // The cache still holds the version that appointed MEMBER; the network's current one has removed them.
-    sdk.contracts.fetch.mockResolvedValue(contract([LEADER, MEMBER]))
-    sdk.contracts.fetchWithProof.mockResolvedValue({ data: contract([LEADER]), metadata: {} })
+  it('reads the contract itself through the proved call on a fresh request', async () => {
+    const contract = { ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: { $type: 'appointedModerators', identities: [LEADER] } } } }
+    sdk.contracts.fetchWithProof.mockResolvedValue({ data: contract, metadata: {} })
     const team = await moderationService.getTeam({ fresh: true })
     expect(sdk.contracts.fetchWithProof).toHaveBeenCalledTimes(1)
     expect(sdk.contracts.fetch).not.toHaveBeenCalled()

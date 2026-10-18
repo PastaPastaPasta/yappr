@@ -666,9 +666,11 @@ class ModerationService {
   }
 
   /**
-   * `fresh`: the contract comes from a proved network answer, never from the
-   * SDK's contract cache (which keeps fetched and bundled contracts, and could
-   * still hold an appointed moderator a later contract update removed).
+   * `fresh`: the contract comes from a proved network answer read now. On
+   * 5.0.0-rc.3 `contracts.fetch` also reads the network (it seeds the SDK's
+   * contract cache after fetching, never answers from it), so this states the
+   * guarantee a moderator check relies on rather than leaving it to that
+   * detail of the SDK.
    */
   private readTeam(fresh = false): Promise<TeamRead> | null {
     if (!this.contract.moderated()) return null;
