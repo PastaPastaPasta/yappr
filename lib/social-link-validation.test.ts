@@ -31,7 +31,7 @@ describe('social handle validation', () => {
 describe('adding a social link', () => {
   it('counts UTF-8 bytes, not characters, against the 256-byte contract limit', () => {
     // 200 characters but 400 bytes; the stored "other:" string is 406 bytes.
-    expect(socialLinkAddProblem([], { platform: 'other', handle: 'é'.repeat(200) }, 'Other')).toMatch(/at most 250 bytes/)
+    expect(socialLinkAddProblem([], { platform: 'other', handle: 'é'.repeat(200) }, 'Other')).toMatch(/too long for Other/)
     expect(socialLinkAddProblem([], { platform: 'other', handle: 'é'.repeat(125) }, 'Other')).toBeNull()
     expect(socialLinkAddProblem([], { platform: 'other', handle: 'x'.repeat(250) }, 'Other')).toBeNull()
     expect(socialLinkAddProblem([], { platform: 'other', handle: 'é'.repeat(126) }, 'Other')).not.toBeNull()

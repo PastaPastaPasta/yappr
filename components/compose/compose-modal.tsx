@@ -22,7 +22,7 @@ import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsConfigured, pollrIsV4 } from '@/lib/constants'
 import { privateFeedClientSupported } from '@/lib/contract-topology'
 import { planPosts, publishThread, threadTagProblem } from '@/lib/compose/publish-thread'
-import { characterCount, contentOverage, firstPostMentionHints, hasVisibleContent, isOverContentLimit, mentionLimitHint } from '@/lib/compose/limits'
+import { characterCount, firstPostMentionHints, hasVisibleContent, isOverContentLimit, mentionLimitHint } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { mediaTypeOfMime } from '@/lib/media/media-fields'
 import { POSTING_CLOSED_COPY } from '@/lib/error-utils'
@@ -165,8 +165,6 @@ export function ComposeModal() {
   const hasOverLimit = unpostedWithContent.some((p, i) => isOverContentLimit(p.content, i === 0 ? imageUrlExtraLength : 0)) || hasTeaserOverLimit
   const isOverLimitDueToImage =
     !!firstUnposted && imageUrlExtraLength > 0 && !isOverContentLimit(firstUnposted.content) && isOverContentLimit(firstUnposted.content, imageUrlExtraLength)
-  const imageOverageBy = isOverLimitDueToImage ? contentOverage(firstUnposted.content, imageUrlExtraLength) : null
-  const imageOverage = imageOverageBy ? Math.max(imageOverageBy.charactersOver, imageOverageBy.bytesOver) : 0
 
   // v16: a post holds at most four tags (`post.tags`); a fifth refuses the
   // post. Judged on the part the thread creates as a post, which is not the
@@ -240,10 +238,8 @@ export function ComposeModal() {
       const mediaUrlField = uploadedUrl && !mediaInEncryptedContent ? mediaUrlForContract(uploadedUrl) : undefined
       const posts = planPosts(threadPosts, uploadedUrl, mediaInEncryptedContent)
 
-      const firstOverage = posts.length > 0 ? contentOverage(posts[0].content) : { charactersOver: 0, bytesOver: 0 }
-      if (firstOverage.charactersOver > 0 || firstOverage.bytesOver > 0) {
-        const over = firstOverage.charactersOver > 0 ? `${firstOverage.charactersOver} characters` : `${firstOverage.bytesOver} bytes`
-        toast.error(`Post is ${over} over the limit once the image URL is included. Trim your text.`)
+      if (posts.length > 0 && isOverContentLimit(posts[0].content)) {
+        toast.error('Your post is too long once the image is included. Shorten it and try again.')
         return
       }
       if (willBeEncrypted && posts.length > 1) {
@@ -606,7 +602,7 @@ export function ComposeModal() {
                               {imageUrlExtraLength > 0 && (
                                 <div className={`mt-2 text-xs ${isOverLimitDueToImage ? 'text-red-600 dark:text-red-400' : 'text-gray-500'}`}>
                                   Image URL adds {imageUrlExtraLength} characters to your private post.
-                                  {isOverLimitDueToImage && <span className="ml-1">Over limit by {imageOverage}. Trim your text.</span>}
+                                  {isOverLimitDueToImage && <span className="ml-1">Too long. Shorten your post.</span>}
                                 </div>
                               )}
                             </>

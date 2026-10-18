@@ -504,8 +504,8 @@ export function toModerationReason(input: ModerationReasonInput): ContractModera
   }
   const textBytes = new TextEncoder().encode(input.text).length;
   if (textBytes > MAX_REASON_TEXT_BYTES) {
-    // Drive's own wording (10903), so the refusal classifies the same either way.
-    throw new Error(`The text of a contract moderation reason is ${textBytes} bytes long, the maximum is ${MAX_REASON_TEXT_BYTES}`);
+    // Keep the refusal code (10903) so callers classify this like Drive's refusal.
+    throw Object.assign(new Error('The reason is too long. Use fewer characters and try again.'), { code: 10903 });
   }
   return {
     text: input.text,
@@ -1649,7 +1649,7 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   SUSPENSION_NOT_IN_FUTURE: 'A suspension must end after the current block time: pick a later end',
   TARGET_NOT_FOUND: 'That identity does not exist',
   SELF_TARGET: 'A moderator cannot moderate itself',
-  REASON_TOO_LONG: 'The reason is too long: at most 1024 bytes (characters outside ASCII take more than one)',
+  REASON_TOO_LONG: 'The reason is too long. Use fewer characters and try again.',
 };
 
 export type { ModerationService };

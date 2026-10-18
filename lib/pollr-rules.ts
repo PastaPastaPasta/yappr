@@ -81,7 +81,7 @@ function utf8Length(value: string): number {
  */
 function lengthProblem(value: string, maxChars: number, maxBytes: number | null): string | null {
   if (charCount(value) > maxChars) return `${maxChars} characters or fewer`
-  if (maxBytes !== null && utf8Length(value) > maxBytes) return `shorter: emoji and non-Latin letters take extra room (${maxBytes} bytes at most)`
+  if (maxBytes !== null && utf8Length(value) > maxBytes) return `shorter. Use fewer characters`
   return null
 }
 

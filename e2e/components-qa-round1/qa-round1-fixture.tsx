@@ -9,6 +9,8 @@ import CheckoutPage from '@/app/checkout/page'
 import ManagePage from '@/app/store/manage/page'
 import StorePage from '@/app/store/view/page'
 import { NetworkPill } from '@/components/layout/network-pill'
+import { ThreadPostEditor } from '@/components/compose/thread-post-editor'
+import { StatusUpdateForm } from '@/components/orders/status-update-form'
 import { ConversationList } from '@/components/messages/conversation-list'
 import { GroupSettingsDialog } from '@/components/messages/group-settings-dialog'
 import { PrivateFeedDashboard } from '@/components/settings/private-feed-dashboard'
@@ -31,8 +33,31 @@ function InboxFixture() {
 function GroupFixture() {
   return <GroupSettingsDialog open onOpenChange={noop} viewerId="owner" details={details} group={{ ...row, isOwner: true, lastMessage: null, unsaved: false, unreadable: false, removed: false, ended: false, blocked: false, draft: false, unreachable: false }} actions={{ rename: async () => undefined, add: async () => undefined, remove: async () => undefined, resendKeys: async () => undefined, leave: async () => undefined, end: async () => undefined }} />
 }
+function ComposerFixture() {
+  const [content, setContent] = useState(params.get('oversized') ? '😀'.repeat(501) : '')
+  const [pollAttached, setPollAttached] = useState(false)
+  const [preview, setPreview] = useState(false)
+  return <main className="max-w-xl p-6">
+    <button onClick={() => setPreview(!preview)}>Toggle preview</button>
+    <ThreadPostEditor post={{ id: 'draft', content }} index={0} isActive isOnly showPreview={preview}
+      onActivate={noop} onRemove={noop} onContentChange={setContent}
+      extraCharacters={Number(params.get('extra') ?? 0)}
+      onPollClick={() => setPollAttached(!pollAttached)} pollAttached={pollAttached} />
+  </main>
+}
+function StatusFixture() {
+  const [message, setMessage] = useState('')
+  const [trackingNumber, setTrackingNumber] = useState('')
+  const [trackingCarrier, setTrackingCarrier] = useState('')
+  return <StatusUpdateForm currentStatus="shipped" onStatusChange={noop}
+    trackingNumber={trackingNumber} onTrackingNumberChange={setTrackingNumber}
+    trackingCarrier={trackingCarrier} onTrackingCarrierChange={setTrackingCarrier}
+    message={message} onMessageChange={setMessage} onSubmit={noop} onCancel={noop} isSubmitting={false} />
+}
 const count = Number(params.get('count') ?? 1)
 const content = fixture === 'messages' ? <><NetworkPill /><MessagesPage /></>
+  : fixture === 'composer' ? <ComposerFixture />
+  : fixture === 'status' ? <StatusFixture />
   : fixture === 'profile-page' ? <UserPage />
   : fixture === 'export' ? <InventoryPage />
   : fixture === 'inbox' ? <InboxFixture />

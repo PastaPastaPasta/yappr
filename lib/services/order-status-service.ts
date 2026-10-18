@@ -262,7 +262,7 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
     const plaintext = encodeOrderStatusNote(note);
     const sealedBytes = plaintext.length + STATUS_NOTE_CIPHERTEXT_OVERHEAD;
     if (sealedBytes > STATUS_NOTE_MAX_BYTES) {
-      throw new StatusNoteError(`That note is too long to send (${sealedBytes.toLocaleString()} of ${STATUS_NOTE_MAX_BYTES.toLocaleString()} bytes). Shorten the tracking details or message.`);
+      throw new StatusNoteError(`That note is too long to send. Shorten the tracking details or message.`);
     }
     const sealed = encryptOrderStatusNote(plaintext, data.orderKey, orderId);
     const created = await this.create(sellerId, { ...documentData, ...sealed });

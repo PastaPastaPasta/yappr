@@ -153,7 +153,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   async createPost(ownerId: string, data: CreateBlogPostData): Promise<BlogPost> {
     const compressed = compressContent(data.content)
     if (compressed.byteLength > BLOG_POST_SIZE_LIMIT) {
-      throw new Error(`Compressed content exceeds ${BLOG_POST_SIZE_LIMIT} bytes`)
+      throw new Error(`This post is too long. Shorten it and try again.`)
     }
 
     const coverImage = storedImageUrl(data.coverImage, 'cover image')
@@ -227,7 +227,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     if (typeof data.content !== 'undefined') {
       const compressed = compressContent(data.content)
       if (compressed.byteLength > BLOG_POST_SIZE_LIMIT) {
-        throw new Error(`Compressed content exceeds ${BLOG_POST_SIZE_LIMIT} bytes`)
+        throw new Error(`This post is too long. Shorten it and try again.`)
       }
       const chunks = splitIntoChunks(compressed, BLOG_CHUNK_SIZE)
       // Set all chunk slots — undefined for missing ones clears stale chunks after merge
