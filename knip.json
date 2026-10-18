@@ -7,6 +7,7 @@
     "scripts/bench-dm-scan-core.mjs",
     "scripts/bench-dm-scan-worker.mjs",
     "scripts/build-asset-lock.mjs",
+    "scripts/build-release.mjs",
     "scripts/check-export-sizes.mjs",
     "scripts/clean-test-content.mjs",
     "scripts/derive-identities.mjs",

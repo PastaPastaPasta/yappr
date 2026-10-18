@@ -63,12 +63,14 @@ export const RENEW_COPY: Record<PasskeyRenewal['reason'], string> = {
 
 /**
  * The honest part of removing passkeys: removal stops them signing in, but
- * copies sealed earlier stay on the network until the keys inside are turned off.
+ * copies sealed earlier stay on the network until the keys inside are turned
+ * off, the messaging key among them (on a key sign-in it is usually made from
+ * the sign-in key, so changing that key alone leaves it readable).
  */
 export function lockOutCopy(wallet: boolean): string {
   return wallet
-    ? 'If you think someone else has your passkey, also turn off Yappr in your Dash wallet: copies saved earlier stay on the network until you do. Then remove, don\'t update, any passkey you don\'t recognise.'
-    : 'If you think someone else has your passkey or key, also change your key in your Dash wallet: copies saved earlier stay on the network until you do. Then remove, don\'t update, any passkey you don\'t recognise.'
+    ? 'If you think someone else has your passkey, also turn off Yappr in your Dash wallet and change your messaging key there: copies saved earlier stay on the network until you do, and they can read your private messages. Then remove, don\'t update, any passkey you don\'t recognise.'
+    : 'If you think someone else has your passkey or key, also change your key and your messaging key in your Dash wallet (your messaging key is usually made from your key): copies saved earlier stay on the network until you do, and they can read your private messages. Then remove, don\'t update, any passkey you don\'t recognise.'
 }
 
 export function formatPasskeyDate(ms: number): string {

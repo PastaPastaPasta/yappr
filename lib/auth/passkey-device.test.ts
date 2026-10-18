@@ -50,7 +50,52 @@ describe('unsettled passkeys', () => {
     device.rememberUnsettledPasskey(IDENTITY, { ...UNSETTLED, receipts: [{ ...UNSETTLED.receipts[0], nonce: '-1' }] })
     expect(device.unsettledPasskey(IDENTITY)).toBeNull()
 
-    localStorage.setItem('yappr_passkey_unsettled', JSON.stringify({ [IDENTITY]: { vault: 1 } }))
+    localStorage.setItem(`yappr_passkey_unsettled:${IDENTITY}`, JSON.stringify({ vault: 1 }))
     expect(device.unsettledPasskey(IDENTITY)).toBeNull()
+  })
+})
+
+/**
+ * Runs `other` (another tab's write) inside this tab's next write, after
+ * anything this tab read and right before its own value lands: exactly where
+ * a read-modify-write of a shared value would overwrite it.
+ */
+function racing(other: () => void): void {
+  const setItem = localStorage.setItem.bind(localStorage)
+  let raced = false
+  localStorage.setItem = (key: string, value: string) => {
+    if (!raced) {
+      raced = true
+      other()
+    }
+    setItem(key, value)
+  }
+}
+
+describe('records kept per fact', () => {
+  it('never lose another tab\'s write that lands in the middle of this one', async () => {
+    const device = await load()
+    racing(() => device.rememberPasskeyHere(IDENTITY, 'cred2.bb'))
+    device.rememberPasskeyHere(IDENTITY, 'cred1.aa')
+    racing(() => device.rememberUnsettledPasskey('identity-2', { ...UNSETTLED, credentialId: 'b3RoZXI' }))
+    device.rememberUnsettledPasskey(IDENTITY, UNSETTLED)
+    racing(() => device.setPasskeyName('cred2.bb', 'Phone'))
+    device.setPasskeyName('cred1.aa', 'Laptop')
+    racing(() => device.rememberPasskeyHere('identity-2', 'cred3.cc'))
+    device.forgetPasskeyHere(IDENTITY, 'nothing-here')
+    device.rememberPasskeyHere('identity-2', 'cred3.cc')
+
+    const after = await load()
+    expect(after.passkeysHere(IDENTITY).sort()).toEqual(['cred1.aa', 'cred2.bb'])
+    expect(after.passkeysHere('identity-2')).toEqual(['cred3.cc'])
+    expect(after.unsettledPasskey(IDENTITY)).toEqual(UNSETTLED)
+    expect(after.unsettledPasskey('identity-2')?.credentialId).toBe('b3RoZXI')
+    expect([after.passkeyName('cred1.aa'), after.passkeyName('cred2.bb')]).toEqual(['Laptop', 'Phone'])
+
+    after.forgetPasskeyHere(IDENTITY, 'cred1')
+    expect(after.passkeysHere(IDENTITY)).toEqual(['cred2.bb'])
+    expect(after.passkeysHere('identity-2')).toEqual(['cred3.cc'])
+    after.setPasskeyName('cred1.aa', '  ')
+    expect(after.passkeyName('cred1.aa')).toBeNull()
   })
 })

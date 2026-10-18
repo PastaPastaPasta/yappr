@@ -1,5 +1,7 @@
 const { execSync } = require('child_process')
 const path = require('path')
+const { PHASE_PRODUCTION_BUILD } = require('next/constants')
+const { assertReleaseConfig, storageScope } = require('./scripts/release-config.cjs')
 
 // Get git info at build time
 const getGitInfo = () => {
@@ -32,7 +34,8 @@ const nextConfig = {
     NEXT_PUBLIC_GIT_BRANCH: gitInfo.branch,
     // Subpath deployments share the origin with the root deployment, so
     // client-side storage keys are namespaced by the base path (lib/storage-scope.ts).
-    NEXT_PUBLIC_STORAGE_SCOPE: basePath ? basePath.replace(/^\//, '') : '',
+    // STORAGE_EPOCH stays blank until the registered release cut-over (D21).
+    NEXT_PUBLIC_STORAGE_SCOPE: storageScope(basePath, process.env.STORAGE_EPOCH),
   },
   reactStrictMode: true,
   output: 'export',
@@ -75,4 +78,9 @@ const nextConfig = {
   }
 }
 
-module.exports = nextConfig
+module.exports = (phase) => {
+  // Next has loaded env files before evaluating this config. Keep the check
+  // out of application module scope and out of next dev / lint / unit tests.
+  if (phase === PHASE_PRODUCTION_BUILD) assertReleaseConfig(process.env)
+  return nextConfig
+}

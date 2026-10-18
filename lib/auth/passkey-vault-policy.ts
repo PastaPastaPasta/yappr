@@ -101,16 +101,19 @@ export function identityOfUserHandle(handle: Uint8Array | null, contractId: Uint
  * A raw sign-in key, at enrolment or after opening a bundle, against the
  * identity read fresh: an enabled AUTHENTICATION key at the slot's level,
  * HIGH or CRITICAL, whose public key the private key matches. A CRITICAL key
- * may be kept only for a moderator (`needsModerator`) unless it is bound to a
- * contract group, like a wallet's group key, which signs only for the group.
+ * may be kept only for a moderator (`needsModerator`) unless it is bound to
+ * this build's pinned App Connect group (`groupId`), like a wallet's group
+ * key, which signs only for that group. A key bound to any other group, or
+ * any group on a build with no pins, is no wallet key of Yappr's.
  */
-export function checkSignInKey(slot: VaultKey, keys: readonly AppConnectIdentityKey[], now: number): SignInKeyCheck {
+export function checkSignInKey(slot: VaultKey, keys: readonly AppConnectIdentityKey[], now: number, groupId: string | null): SignInKeyCheck {
   const key = keys.find((candidate) => candidate.id === slot.keyId)
   if (!key || !live(key, now)) return { ok: false }
   if (key.purpose !== KeyPurpose.AUTHENTICATION || key.securityLevel !== slot.securityLevel || key.type !== slot.keyType) return { ok: false }
   if (key.securityLevel !== KeySecurityLevel.CRITICAL && key.securityLevel !== KeySecurityLevel.HIGH) return { ok: false }
   if (!privateKeyMatches(slot.privateKey, key)) return { ok: false }
-  return { ok: true, key, needsModerator: key.securityLevel === KeySecurityLevel.CRITICAL && key.bounds?.kind !== 'contractGroup' }
+  const pinnedGroupKey = groupId !== null && key.bounds?.kind === 'contractGroup' && key.bounds.groupId === groupId
+  return { ok: true, key, needsModerator: key.securityLevel === KeySecurityLevel.CRITICAL && !pinnedGroupKey }
 }
 
 /** A grant's primary key: the group key answering binding 0. */

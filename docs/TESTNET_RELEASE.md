@@ -7,6 +7,7 @@ This is the committed record of Yappr's first true release on Dash testnet. It h
 - **[O]** marks a step only the owner can do or approve. **[A]** marks work an agent does.
 - **Pre-cut-over cleanup:** [RELEASE_CLEANUP.md](RELEASE_CLEANUP.md) records removals and the legacy paths retained until production configuration changes. [The archive index](archive/README.md) locates historical contract and deployment evidence.
 - **Monitoring and incident response:** [MONITORING.md](MONITORING.md) describes the scheduled site/chain probes, thresholds, incident issues, and recurring operator tasks. Production-chain coverage stays pending until `.env.testnet` contains the registered release IDs.
+- **Configuration and cut-over:** [TESTNET_DEPLOY.md](TESTNET_DEPLOY.md) documents the opt-in release build, public env template, exact build switch, all web/mobile/mirror call sites, storage epoch and post-registration deployment order. The preparation mechanism leaves today's sites unchanged.
 
 ## 1. Goal and scope
 
@@ -227,6 +228,12 @@ For example, when preparing blog after social with shared actors, append `--prio
 6. **Prove seating before opening the release.** After chain time crosses the deadline, read the canonical winner, `seatedCharter`, and every elected identity for all three contracts; perform a real moderated write and refresh each app gate. A sole applicant seats after join closes without needing a vote window. With `notYetUsable`, registration alone opens nothing: no application means no election clock. Protocol 14 does not implement challenges even when `seatContestable` and a 30-day cool-down are declared. `ownerProtected` protects the owner from lists; it gives no post-seat rescue authority.
 
 ### Phase 5: Cut-over configuration PR on staging [A]
+
+The mechanism can land before registration: `.env.testnet.template`,
+`build:release`, release-only validation in `next.config.js`, and an opt-in
+storage epoch. Activation remains a separate post-registration PR following
+[TESTNET_DEPLOY.md](TESTNET_DEPLOY.md). Issue [#784](https://github.com/PastaPastaPasta/yappr/issues/784)
+stays open until the built production configuration proves DM v5 is active.
 
 - A checked-in `.env.testnet` (ids are public) sourced by the `build` script itself, so every bare `npm run build` call site inherits it.
 - A fail-closed check in `next.config.js`: on testnet or mainnet the build fails if any required id, topology, login protocol, token authority or App Connect pin is unset. The testnet fallbacks are removed from `lib/constants.ts`, and `dev` sources an explicit env file.
