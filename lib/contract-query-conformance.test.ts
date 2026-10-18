@@ -60,9 +60,12 @@
  *   feeds             loadCompositeFeedPage (timeline page, explicit ids, replies),
  *                     loadForYouFeed, loadPostEnrichment, fetchReplyParents,
  *                     provenAbsent (post/reply), loadHomepage
- *   private feed      privateFeedService getLatestKeyGeneration, getPrivateFollowers,
- *                     getPrivateFollowerCount; privateFeedFollowerService
- *                     getFollowRequestsForOwner, getFollowRequest, getGrant
+ *   private feed      private-feed-reads fetchFeeds, fetchFeed, fetchLatestKeyGeneration,
+ *                     fetchRekeys, fetchMembers, fetchGrant, fetchNewestGrant,
+ *                     fetchGrantsHeldBy, fetchGrantsTo, fetchFollowRequest,
+ *                     fetchFollowRequestsTo; privateFeedService getPrivateFollowers,
+ *                     getOverview; privateFeedFollowerService
+ *                     getAccessStatus
  *   blog              blog-post-service getLatestPosts, getPostsByBlog, getPostsByBlogs,
  *                     getPostBySlug, getPost, getRecentPosts; blog-service getBlog,
  *                     getBlogsByOwner, getBlogTimelinePage, getNewestBlogs;
@@ -102,9 +105,7 @@
  *     inline, `hashtagsAreInline()`/`mentionsAreInline()`), report-service
  *     listRecent (only reached when `!reportsAreResolved()`),
  *     likeService.getLikesOnMyPosts (v17 likes carry no author-time index; the
- *     like notifications read getRecentTargetLikeCounts and getLikersOf),
- *     privateFeedService.hasPrivateFeed/getPrivateFeedState (no reads on v17,
- *     `privateFeedClientSupported()`).
+ *     like notifications read getRecentTargetLikeCounts and getLikersOf).
  *   - followService.getFollowStatusBatch, blogFollowService.getFollowStatusBatch:
  *     they reuse getFollowing / getFollowedBlogIds (driven, deduplicated).
  *   - moderation-service / moderation-election-service: they read moderation
@@ -118,9 +119,10 @@
  *     e.g. loadUserStats's counts, are judged).
  *   - direct-message-service (DM v3/v4) and the DM v5 engine above SdkDmChain:
  *     the release reads DM v5 only through SdkDmChain, driven directly.
- *   - private-feed key recovery and catch-up (catchUp, recover*, sync*): they
- *     read behind decrypted key state the node harness cannot hold, and on v17
- *     the client offers no private feed.
+ *   - private-feed key recovery, catch-up, renewal and the follower move
+ *     (catchUp, recover*, sync*, renewPrivateFeed, runMove): they read through
+ *     the private-feed-reads functions driven above, behind decrypted key state
+ *     the node harness cannot hold.
  *   - cart-service: it reads items through store-item-service (getManyOrThrow
  *     and `$id ==` reads, driven).
  *   - load-following-feed: drives followService.getFollowing and
@@ -193,22 +195,6 @@ const MODELS: Record<ContractKey, ModelContract> = {
 const CONTRACT_BY_ID = new Map<string, ContractKey>(
   (Object.entries(CONTRACT_IDS) as [ContractKey, string][]).map(([key, id]) => [id, key]),
 )
-
-/**
- * Social v17 private-feed reads EXPECTED to be refused until the multi-feed
- * private feed client lands: v17 replaces `privateFeedState` with
- * `privateFeed` and keys grants and rekeys by `(owner, feed)`, and this
- * build's private-feed client still speaks the single-state shape
- * (docs/SOCIAL_V17.md, `privateFeedClientSupported()` in
- * lib/contract-topology.ts). Scoped by doctype AND reader; each entry must
- * still be refused (the allowlist test fails on a stale one), and anything
- * else refused on these doctypes fails the main assertion.
- */
-const PRIVATE_FEED_ALLOWLIST: readonly { docType: string; reader: string }[] = [
-  { docType: 'privateFeedRekey', reader: 'privateFeedService.getLatestKeyGeneration' },
-  { docType: 'privateFeedGrant', reader: 'privateFeedService.getPrivateFollowers' },
-  { docType: 'privateFeedGrant', reader: 'privateFeedService.getPrivateFollowerCount' },
-]
 
 /**
  * Client shapes Drive refuses on the release cut that a builder still has to
@@ -307,6 +293,7 @@ async function readers(): Promise<Reader[]> {
   const { loadHomepage } = await import('@/lib/home/load-homepage')
   const { privateFeedService } = await import('@/lib/services/private-feed-service')
   const { privateFeedFollowerService } = await import('@/lib/services/private-feed-follower-service')
+  const pfReads = await import('@/lib/services/private-feed-reads')
   const { blogPostService } = await import('@/lib/services/blog-post-service')
   const { blogService } = await import('@/lib/services/blog-service')
   const { blogCommentService } = await import('@/lib/services/blog-comment-service')
@@ -463,12 +450,20 @@ async function readers(): Promise<Reader[]> {
     { name: 'provenAbsent (reply)', run: () => provenAbsent('reply', [REPLY]) },
     { name: 'loadHomepage', run: () => loadHomepage() },
     // ---- private feed ----
-    { name: 'privateFeedService.getLatestKeyGeneration', run: () => privateFeedService.getLatestKeyGeneration(OTHER) },
+    { name: 'pfReads.fetchFeeds', run: () => pfReads.fetchFeeds(OTHER, { fresh: true }) },
+    { name: 'pfReads.fetchFeed', run: () => pfReads.fetchFeed(OTHER, 2) },
+    { name: 'pfReads.fetchLatestKeyGeneration', run: () => pfReads.fetchLatestKeyGeneration(OTHER, 1) },
+    { name: 'pfReads.fetchRekeys', run: () => pfReads.fetchRekeys(OTHER, 1, 3) },
+    { name: 'pfReads.fetchMembers', run: () => pfReads.fetchMembers(ME, 1) },
+    { name: 'pfReads.fetchGrant', run: () => pfReads.fetchGrant(OTHER, 1, ME) },
+    { name: 'pfReads.fetchNewestGrant', run: () => pfReads.fetchNewestGrant(OTHER, ME) },
+    { name: 'pfReads.fetchGrantsHeldBy', run: () => pfReads.fetchGrantsHeldBy(ME) },
+    { name: 'pfReads.fetchGrantsTo', run: () => pfReads.fetchGrantsTo(ME, OTHER) },
+    { name: 'pfReads.fetchFollowRequest', run: () => pfReads.fetchFollowRequest(OTHER, ME) },
+    { name: 'pfReads.fetchFollowRequestsTo', run: () => pfReads.fetchFollowRequestsTo(ME) },
     { name: 'privateFeedService.getPrivateFollowers', run: () => privateFeedService.getPrivateFollowers(ME) },
-    { name: 'privateFeedService.getPrivateFollowerCount', run: () => privateFeedService.getPrivateFollowerCount(ME) },
-    { name: 'privateFeedFollowerService.getFollowRequestsForOwner', run: () => privateFeedFollowerService.getFollowRequestsForOwner(ME) },
-    { name: 'privateFeedFollowerService.getFollowRequest', run: () => privateFeedFollowerService.getFollowRequest(OTHER, ME) },
-    { name: 'privateFeedFollowerService.getGrant', run: () => privateFeedFollowerService.getGrant(OTHER, ME) },
+    { name: 'privateFeedService.getOverview', run: () => privateFeedService.getOverview(ME) },
+    { name: 'privateFeedFollowerService.getAccessStatus', run: () => privateFeedFollowerService.getAccessStatus(OTHER, ME) },
     // ---- blog ----
     { name: 'blogPostService.getOwnerPostsPage', run: () => blogPostService.getOwnerPostsPage(ME, { limit: 20 }) },
     { name: 'blogPostService.getLatestPosts', run: () => blogPostService.getLatestPosts({ limit: 20 }) },
@@ -642,8 +637,6 @@ describe('client query shapes on the v17 release cut', () => {
   }, 120_000)
 
   const refused = () => judged.filter((entry) => entry.verdict === 'unknownDoctype' || !entry.verdict.servable)
-  const allowlisted = (entry: Judged) => entry.contract === 'social' &&
-    PRIVATE_FEED_ALLOWLIST.some(({ docType, reader }) => docType === entry.request.documentTypeName && reader === entry.reader)
   const pending = (entry: Judged) => PENDING_BUILDER_FIXES.some((fix) => fix.signature === signature(entry.contract, entry.request))
 
   it('drives every listed reader to at least one request, with no read failing', () => {
@@ -661,15 +654,8 @@ describe('client query shapes on the v17 release cut', () => {
   })
 
   it('serves every captured request through an index of its contract', () => {
-    const failures = refused().filter((entry) => !allowlisted(entry) && !pending(entry)).map(failureLine)
+    const failures = refused().filter((entry) => !pending(entry)).map(failureLine)
     expect([...new Set(failures)]).toEqual([])
-  })
-
-  it('still refuses every allowlisted private-feed read (docs/SOCIAL_V17.md); a stale entry must go', () => {
-    const refusedEntries = refused().filter(allowlisted)
-    const stale = PRIVATE_FEED_ALLOWLIST.filter(({ docType, reader }) =>
-      !refusedEntries.some((entry) => entry.request.documentTypeName === docType && entry.reader === reader))
-    expect(stale).toEqual([])
   })
 
   it('still refuses every pending builder fix; a fixed one must leave PENDING_BUILDER_FIXES', () => {

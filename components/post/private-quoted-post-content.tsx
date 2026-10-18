@@ -10,21 +10,15 @@ import { PostContent } from './post-content'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { cn } from '@/lib/utils'
 import { useRelativeTime } from '@/hooks/use-relative-time'
-import { identifierToBytes } from '@/lib/services/sdk-helpers'
+import { privateContentOf } from '@/lib/services/private-feed-reader'
 import { useAuth } from '@/contexts/auth-context'
 import { useMediaGate } from '@/hooks/use-media-gate'
+import { decryptQuote, useRetryWhenKeysArrive, type QuoteDecryptionState } from '@/hooks/use-quote-decryption'
 
 interface PrivateQuotedPostContentProps {
   quotedPost: Post
   className?: string
 }
-
-type DecryptionState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'decrypted'; content: string }
-  | { status: 'locked' }
-  | { status: 'error' }
 
 /**
  * Renders quoted private post content.
@@ -36,7 +30,7 @@ export function PrivateQuotedPostContent({
   className = '',
 }: PrivateQuotedPostContentProps) {
   const { user } = useAuth()
-  const [state, setState] = useState<DecryptionState>({ status: 'idle' })
+  const [state, setState] = useState<QuoteDecryptionState>({ status: 'idle' })
   // No enrichment hint for quoted authors; cache/own-post checks still apply.
   const mediaGate = useMediaGate(quotedPost.author.id)
 
@@ -49,89 +43,17 @@ export function PrivateQuotedPostContent({
   const authorDisplay = getAuthorDisplay(quotedPost.author)
 
   const attemptDecryption = useCallback(async () => {
-    // Safety check: ensure this is a private post
-    if (!quotedPost.encryptedContent || quotedPost.keyGeneration == null || !quotedPost.nonce) {
+    if (!privateContentOf(quotedPost)) {
       setState({ status: 'error' })
       return
     }
-
-    // If not logged in, show locked state
     if (!user) {
       setState({ status: 'locked' })
       return
     }
-
     setState({ status: 'loading' })
-
     try {
-      const { privateFeedFollowerService } = await import('@/lib/services')
-      const { privateFeedKeyStore } = await import('@/lib/services')
-
-      // For quoted posts, the encryption source is always the post author
-      // (Replies use inherited encryption but quoted posts are always top-level posts)
-      const encryptionSourceOwnerId = quotedPost.author.id
-
-      // Check if user is the encryption source owner (can decrypt with their own feed keys)
-      const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
-
-      if (isEncryptionSourceOwner) {
-        const feedSeed = privateFeedKeyStore.getFeedSeed()
-        if (!feedSeed) {
-          setState({ status: 'locked' })
-          return
-        }
-
-        const { privateFeedCryptoService, MAX_KEY_GENERATION } = await import('@/lib/services')
-
-        const cached = privateFeedKeyStore.getCachedCEK(encryptionSourceOwnerId)
-        let cek: Uint8Array
-
-        if (cached && cached.keyGeneration === quotedPost.keyGeneration) {
-          cek = cached.cek
-        } else if (cached && cached.keyGeneration > quotedPost.keyGeneration) {
-          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, quotedPost.keyGeneration)
-        } else {
-          const chain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION)
-          cek = chain[quotedPost.keyGeneration]
-        }
-
-        const ownerIdBytes = identifierToBytes(encryptionSourceOwnerId)
-
-        const decryptedContent = privateFeedCryptoService.decryptPostContent(
-          cek,
-          {
-            ciphertext: quotedPost.encryptedContent,
-            nonce: quotedPost.nonce,
-            keyGeneration: quotedPost.keyGeneration,
-          },
-          ownerIdBytes
-        )
-
-        setState({ status: 'decrypted', content: decryptedContent })
-        return
-      }
-
-      // Check if follower can decrypt using encryption source owner's keys
-      const canDecrypt = await privateFeedFollowerService.canDecrypt(encryptionSourceOwnerId)
-
-      if (!canDecrypt) {
-        setState({ status: 'locked' })
-        return
-      }
-
-      // Attempt to decrypt using encryption source owner's keys
-      const result = await privateFeedFollowerService.decryptPost({
-        encryptedContent: quotedPost.encryptedContent,
-        keyGeneration: quotedPost.keyGeneration,
-        nonce: quotedPost.nonce,
-        $ownerId: encryptionSourceOwnerId,
-      }, user?.identityId)
-
-      if (result.success && result.content) {
-        setState({ status: 'decrypted', content: result.content })
-      } else {
-        setState({ status: 'locked' })
-      }
+      setState(await decryptQuote(quotedPost, user.identityId))
     } catch (error) {
       logger.error('Error decrypting quoted private post:', error)
       setState({ status: 'error' })
@@ -142,7 +64,7 @@ export function PrivateQuotedPostContent({
   // Must watch all encryption-relevant fields to avoid stale decryption data
   useEffect(() => {
     setState({ status: 'idle' })
-  }, [quotedPost.id, quotedPost.encryptedContent, quotedPost.keyGeneration, quotedPost.nonce, user?.identityId])
+  }, [quotedPost.id, quotedPost.encryptedContent, quotedPost.keyGeneration, quotedPost.nonce, quotedPost.feed, user?.identityId])
 
   // Attempt decryption on mount
   useEffect(() => {
@@ -151,10 +73,20 @@ export function PrivateQuotedPostContent({
     }
   }, [state.status, attemptDecryption])
 
-  // Common link wrapper class for all states
-  const linkClass = cn(
-    'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
-    className
+  useRetryWhenKeysArrive(state, setState)
+
+  // Common link wrapper for all states
+  const renderLink = (children: React.ReactNode) => (
+    <Link
+      href={`/post?id=${quotedPost.id}`}
+      onClick={(e) => e.stopPropagation()}
+      className={cn(
+        'mt-3 block border border-gray-200 dark:border-gray-700 rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-900/50 hover:border-gray-400 dark:hover:border-gray-500 transition-all cursor-pointer',
+        className
+      )}
+    >
+      {children}
+    </Link>
   )
 
   // Common header for quoted post
@@ -189,8 +121,8 @@ export function PrivateQuotedPostContent({
 
   // Loading state
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
+    return renderLink(
+      <>
         {renderHeader()}
         <div className="mt-2 flex items-center gap-2 text-gray-500">
           <LockOpenIcon className="h-4 w-4 animate-pulse" />
@@ -201,14 +133,14 @@ export function PrivateQuotedPostContent({
             {quotedPost.content}
           </div>
         )}
-      </Link>
+      </>
     )
   }
 
   // Decrypted state
   if (state.status === 'decrypted') {
-    return (
-      <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
+    return renderLink(
+      <>
         {renderHeader()}
         {hasTeaser && (
           <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-1">
@@ -218,14 +150,14 @@ export function PrivateQuotedPostContent({
         <div className="mt-1">
           <PostContent content={state.content} className="text-sm line-clamp-3" disableInternalPostEmbed mediaGate={mediaGate} />
         </div>
-      </Link>
+      </>
     )
   }
 
   // Locked state - per PRD §5.3: Non-followers see "[Private post from @user]"
   if (state.status === 'locked') {
-    return (
-      <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
+    return renderLink(
+      <>
         {renderHeader()}
         {hasTeaser && (
           <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
@@ -233,16 +165,16 @@ export function PrivateQuotedPostContent({
           </div>
         )}
         {renderLockedIndicator()}
-      </Link>
+      </>
     )
   }
 
   // Error state - show as locked
-  return (
-    <Link href={`/post?id=${quotedPost.id}`} onClick={(e) => e.stopPropagation()} className={linkClass}>
+  return renderLink(
+    <>
       {renderHeader()}
       {renderLockedIndicator()}
-    </Link>
+    </>
   )
 }
 

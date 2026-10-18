@@ -590,11 +590,11 @@ export const DOCUMENT_TYPES = {
   BLOCK_FOLLOW: 'blockFollow',
   POST_HASHTAG: 'postHashtag',
   POST_MENTION: 'postMention',
-  // Private feed document types
+  // Private feed document types (social v17: several write-once feeds per identity)
   FOLLOW_REQUEST: 'followRequest',
+  PRIVATE_FEED: 'privateFeed',
   PRIVATE_FEED_GRANT: 'privateFeedGrant',
   PRIVATE_FEED_REKEY: 'privateFeedRekey',
-  PRIVATE_FEED_STATE: 'privateFeedState',
   // Key exchange protocol document types (separate contract)
   LOGIN_KEY_RESPONSE: 'loginKeyResponse',
   BLOG: 'blog',

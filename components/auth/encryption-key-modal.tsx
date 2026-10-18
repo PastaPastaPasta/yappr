@@ -241,11 +241,10 @@ function KeyEntryEncryptionKeyModal() {
   }, [])
 
   const handleLostKeyResetFeed = useCallback(() => {
-    // User wants to reset their private feed - close both modals and navigate to settings
+    // The owner lost their key: close both modals and open the private feed renewal
     setShowLostKeyModal(false)
     close()
-    // Navigate to private feed settings with reset param
-    router.push('/settings?section=privateFeed&action=reset')
+    router.push('/settings?section=privateFeed&action=renew')
   }, [close, router])
 
   const handleAddKeySuccess = useCallback(() => {

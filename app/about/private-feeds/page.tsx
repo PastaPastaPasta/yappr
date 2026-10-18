@@ -3,7 +3,7 @@
 import { LockClosedIcon, KeyIcon, ShieldCheckIcon, QuestionMarkCircleIcon, CpuChipIcon, ArrowPathIcon, ExclamationTriangleIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
 import { InfoPage } from '@/components/layout/info-page'
 import { SOURCE_URL } from '@/lib/legal'
-import { contentLimits, privateFeedKeyFields } from '@/lib/contract-topology'
+import { contentLimits } from '@/lib/contract-topology'
 
 /** A full-length post's characters; at about a byte each, 1,000 follower copies cost this many KB. */
 const POST_MAX_LENGTH = contentLimits().maxLength
@@ -119,7 +119,6 @@ function SubSection({ title, children }: { title: string; children: React.ReactN
 }
 
 export default function PrivateFeedsPage() {
-  const keyField = privateFeedKeyFields().generation
   return (
     <InfoPage
       icon={LockClosedIcon}
@@ -298,7 +297,7 @@ export default function PrivateFeedsPage() {
             {/* Section 4: The Binary Key Tree */}
             <Section title="The Key Tree Structure">
               <p>
-                The key tree is a binary tree with 1,024 leaf positions—each leaf can be assigned to
+                The key tree is a binary tree with 4,096 leaf positions—each leaf can be assigned to
                 one follower. The tree looks like this:
               </p>
 
@@ -387,11 +386,11 @@ export default function PrivateFeedsPage() {
                   </g>
                   <g transform="translate(540, 290)">
                     <rect x="-35" y="-15" width="70" height="26" rx="5" className="fill-orange-500 dark:fill-orange-600" />
-                    <text x="0" y="3" textAnchor="middle" className="fill-white text-xs font-medium">Slot 1024</text>
+                    <text x="0" y="3" textAnchor="middle" className="fill-white text-xs font-medium">Slot 4096</text>
                   </g>
                   <text x="540" y="315" textAnchor="middle" className="fill-orange-600 dark:fill-orange-400 text-xs font-medium">Bob</text>
                 </svg>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 text-center">Binary key tree structure with 1,024 leaf slots</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 text-center">Binary key tree structure with 4,096 leaf slots</p>
               </div>
 
               <p>
@@ -484,10 +483,10 @@ export default function PrivateFeedsPage() {
               <div className="my-6 p-6 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-center text-gray-500 dark:text-gray-400 mb-6">Hash Chain</h4>
                 <div className="flex flex-col items-center">
-                  {/* CEK[2000] */}
+                  {/* CEK[4095] */}
                   <div className="flex items-center gap-4">
                     <div className="px-4 py-2 bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg font-mono text-sm">
-                      CEK[2000]
+                      CEK[4095]
                     </div>
                     <span className="text-xs text-gray-400 dark:text-gray-500">Pre-generated at setup</span>
                   </div>
@@ -504,7 +503,7 @@ export default function PrivateFeedsPage() {
                     <div className="px-4 py-2 bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg font-mono text-sm">
                       CEK[1999]
                     </div>
-                    <span className="text-xs text-gray-400 dark:text-gray-500">= SHA256(CEK[2000])</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500">= SHA256(CEK[4095])</span>
                   </div>
 
                   {/* Arrow with SHA256 */}
@@ -814,7 +813,7 @@ export default function PrivateFeedsPage() {
               <CalloutBox title="Cost comparison">
                 <ul className="space-y-1">
                   <li><strong>Naive approach:</strong> Contact 999 followers individually = O(N)</li>
-                  <li><strong>LKH approach:</strong> Post ~20 packets = O(log N)</li>
+                  <li><strong>LKH approach:</strong> Post ~23 packets = O(log N)</li>
                 </ul>
               </CalloutBox>
             </Section>
@@ -831,10 +830,10 @@ export default function PrivateFeedsPage() {
                 steps={[
                   'Generate random 256-bit seed (master secret)',
                   'Derive tree node keys from seed',
-                  'Pre-compute hash chain: CEK[2000] → CEK[1]',
+                  'Derive the hash chain: CEK[4095] → CEK[1]',
                   'Encrypt seed to your own public key (for recovery)',
                   'Store encrypted seed on blockchain',
-                  'Local state: key generation 1, all 1024 slots available',
+                  'Local state: key generation 1, all 4,096 slots available',
                 ]}
               />
 
@@ -848,7 +847,19 @@ export default function PrivateFeedsPage() {
                   'Store grant document on blockchain',
                   'Mark slot 2 as assigned to Bob',
                 ]}
-                note="Bob receives ~500 bytes containing everything needed to decrypt all current and past private posts."
+                note="Bob receives about 600 bytes containing everything needed to decrypt all current and past private posts."
+              />
+
+              <FlowBox
+                title="Renew Private Feed (new keys)"
+                steps={[
+                  'Open the next feed with a fresh seed, sealed to your current key',
+                  { text: 'Optionally link history:', sub: ['seal the old feed\'s last CEK and history key under the new feed\'s history key'] },
+                  'Re-grant every follower into the new feed automatically, one grant each',
+                  'Private posting pauses until everyone has been moved',
+                  'With a history link, delete the old feed\'s grants; without one, keep them',
+                ]}
+                note="Followers do nothing: their original request is their standing consent. A moderator holding a report's key cannot follow the history link, which needs the feed's history key."
               />
 
               <FlowBox
@@ -858,7 +869,7 @@ export default function PrivateFeedsPage() {
                   'Generate random nonce (prevents duplicate keys)',
                   { text: 'Derive post key:', sub: ['HKDF(CEK, "post" || nonce || authorId)'] },
                   { text: 'Encrypt with XChaCha20-Poly1305' },
-                  { text: 'Store on blockchain:', sub: ['encryptedContent (ciphertext)', `${keyField} (which CEK version)`, 'nonce (for key derivation)', 'teaser (optional public preview)'] },
+                  { text: 'Store on blockchain:', sub: ['encryptedContent (ciphertext)', 'feed and keyGeneration (which key)', 'nonce (for key derivation)', 'teaser (optional public preview)'] },
                 ]}
               />
 
@@ -881,7 +892,7 @@ export default function PrivateFeedsPage() {
                   'Increment key generation: 1 → 2',
                   'Compute Bob\'s path to root',
                   'Generate new versions for each node on path',
-                  { text: 'Create rekey packets (~20 packets):', sub: ['Each new key encrypted under sibling subtree keys'] },
+                  { text: 'Create rekey packets (~23 packets):', sub: ['Each new key encrypted under sibling subtree keys'] },
                   'Encrypt new CEK under new root key',
                   'Store rekey document on blockchain',
                   'Delete Bob\'s grant document',
@@ -994,7 +1005,7 @@ export default function PrivateFeedsPage() {
                     <span className="text-xs ml-2 text-gray-500">(extended)</span>
                     <p className="text-sm mt-1">
                       Private posts add fields to the standard post document: <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">encryptedContent</code>,{' '}
-                      <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">{keyField}</code>,{' '}
+                      <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">keyGeneration</code>,{' '}
                       <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">nonce</code>, and optional public{' '}
                       <code className="text-xs bg-gray-200 dark:bg-gray-800 px-1 rounded">teaser</code>.
                     </p>
@@ -1030,7 +1041,7 @@ export default function PrivateFeedsPage() {
                         <td className="p-3 border border-gray-200 dark:border-gray-700 align-top">CEK chain</td>
                         <td className="p-3 border border-gray-200 dark:border-gray-700">
                           <div className="font-mono text-sm">SHA256 hash chain</div>
-                          <div className="text-xs text-gray-500 mt-1">2000 key generations pre-generated</div>
+                          <div className="text-xs text-gray-500 mt-1">4,095 key generations per feed</div>
                         </td>
                       </tr>
                       <tr className="bg-gray-50 dark:bg-gray-900">
@@ -1056,20 +1067,20 @@ export default function PrivateFeedsPage() {
                     </thead>
                     <tbody>
                       <tr>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">Maximum private followers</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">1,024</td>
+                        <td className="p-3 border border-gray-200 dark:border-gray-700">Private followers per feed</td>
+                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">4,096 (renewing can grow it to 32,768)</td>
                       </tr>
                       <tr className="bg-gray-50 dark:bg-gray-900">
-                        <td className="p-3 border border-gray-200 dark:border-gray-700">Maximum key generations (revocations)</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">2,000</td>
+                        <td className="p-3 border border-gray-200 dark:border-gray-700">Removals per feed</td>
+                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">4,094, then renew</td>
                       </tr>
                       <tr>
                         <td className="p-3 border border-gray-200 dark:border-gray-700">Rekey packets per revocation</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">~20</td>
+                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">~23</td>
                       </tr>
                       <tr className="bg-gray-50 dark:bg-gray-900">
                         <td className="p-3 border border-gray-200 dark:border-gray-700">Grant document size</td>
-                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">~500 bytes</td>
+                        <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">~600 bytes</td>
                       </tr>
                       <tr>
                         <td className="p-3 border border-gray-200 dark:border-gray-700">Rekey document size</td>
@@ -1119,7 +1130,7 @@ export default function PrivateFeedsPage() {
                   </p>
                 </a>
               </div>
-              <p className="text-sm text-gray-500 mt-6">Last updated: January 2026</p>
+              <p className="text-sm text-gray-500 mt-6">Last updated: October 2026</p>
             </div>
     </InfoPage>
   )

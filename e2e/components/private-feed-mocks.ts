@@ -58,29 +58,28 @@ export function useAuth() {
   return { user }
 }
 
-export const TREE_CAPACITY = 65536
-export const MAX_KEY_GENERATION = 65535
+// Stored per feed on chain; the settings card reads them off the feed, never constants.
+const feed = { feed: 1, createdAt: 1700000000000, treeCapacity: 4096, maxKeyGeneration: 4095, keyId: 2 }
 export const privateFeedService = {
-  getPrivateFeedState: async () => {
+  getOverview: async () => {
     state.statusReads += 1
-    return state.enabled ? { $createdAt: 1700000000000 } : null
+    return state.enabled ? { feed, feeds: [feed], followers: [], keyGeneration: 1, keyRotated: false } : null
   },
   enablePrivateFeed: async () => {
     state.enableCalls += 1
     state.enabled = true
     return { success: true }
   },
-  getLatestKeyGeneration: async () => 1,
-  getPrivateFollowers: async () => [],
 }
-export const privateFeedKeyStore = { hasFeedSeed: () => false, getRecipientMap: () => ({}) }
+export const adoptUnfinishedMove = async () => 0
+export const usePrivateFeedMove = () => null
 export const identityService = { hasEncryptionKey: async () => true }
 export const validateEncryptionKey = async () => ({
   isValid: true,
   privateKey: Uint8Array.from({ length: 32 }, (_, index) => index === 31 ? 1 : 0),
 })
 export const useEncryptionKeyModal = () => ({ open: () => undefined })
-export const ResetPrivateFeedDialog = () => null
+export const RenewPrivateFeedDialog = () => null
 export const AddEncryptionKeyModal = () => null
 
 export { blogService, blogPostService } from './blog-management-mocks'

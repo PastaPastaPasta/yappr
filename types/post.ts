@@ -117,6 +117,7 @@ export interface Post {
   encryptedContent?: Uint8Array  // XChaCha20-Poly1305 ciphertext
   keyGeneration?: number         // Revocation key generation at post creation
   nonce?: Uint8Array             // Random nonce for encryption
+  feed?: number                  // Which of the author's private feeds encrypted it (social v17)
 }
 
 /** A reply to a post or another reply */
@@ -148,6 +149,8 @@ export interface Reply {
   encryptedContent?: Uint8Array
   keyGeneration?: number
   nonce?: Uint8Array
+  /** The feed that encrypted it: the root owner's for a reply in a private thread, else the replier's own */
+  feed?: number
 }
 
 /** Reply thread structure for threaded post display */

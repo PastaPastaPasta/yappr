@@ -15,6 +15,8 @@ vi.mock('./unified-profile-service', () => ({ unifiedProfileService: {} }))
 vi.mock('./private-feed-service', () => ({ prepareOwnerEncryption, prepareInheritedEncryption }))
 
 const BOB = bs58.encode(new Uint8Array(32).fill(7))
+/** What an encryption helper hands back for a private write on v17. */
+const SEALED = { encryptedContent: new Uint8Array(1), keyGeneration: 1, nonce: new Uint8Array(24), feed: 2 }
 
 beforeEach(() => {
   vi.resetModules()
@@ -51,15 +53,16 @@ describe('inline post mention (v10)', () => {
     expect(resolveIdentity).toHaveBeenCalledWith('carol')
   })
 
-  it('indexes a private post from its public teaser, never from the encrypted text', async () => {
-    prepareOwnerEncryption.mockResolvedValue({ success: true, data: { encryptedContent: new Uint8Array(1), epoch: 1, nonce: new Uint8Array(1), teaser: 'teaser for @bob' } })
-    const withTeaser = await written('v10', 'secret for @carol', { encryption: { type: 'owner', teaser: 'teaser for @bob' } })
-    expect(withTeaser.mentionedUserId).toEqual(bs58.decode(BOB))
+  it('indexes a private post (v17) from its public teaser, never from the encrypted text', async () => {
+    prepareOwnerEncryption.mockResolvedValue({ success: true, data: { ...SEALED, teaser: 'teaser for @bob' } })
+    const withTeaser = await written('v17', 'secret for @carol', { encryption: { type: 'owner', teaser: 'teaser for @bob' } })
+    expect(withTeaser.mentionedUserIds).toEqual([bs58.decode(BOB)])
+    expect(withTeaser).toMatchObject({ feed: 2, keyGeneration: 1 })
     expect(resolveIdentity).not.toHaveBeenCalledWith('carol')
 
-    prepareOwnerEncryption.mockResolvedValue({ success: true, data: { encryptedContent: new Uint8Array(1), epoch: 1, nonce: new Uint8Array(1) } })
-    const noTeaser = await written('v10', 'secret for @bob', { encryption: { type: 'owner' } })
-    expect(noTeaser).not.toHaveProperty('mentionedUserId')
+    prepareOwnerEncryption.mockResolvedValue({ success: true, data: SEALED })
+    const noTeaser = await written('v17', 'secret for @bob', { encryption: { type: 'owner' } })
+    expect(noTeaser).not.toHaveProperty('mentionedUserIds')
   })
 
   it('writes no inline mention on v9 or v2', async () => {
@@ -94,15 +97,15 @@ describe('inline reply mention (v10)', () => {
     expect(await writtenReply('v10', '@carol then @bob')).not.toHaveProperty('mentionedUserId')
   })
 
-  it('never indexes a mention out of an encrypted reply: only its public teaser or placeholder', async () => {
-    prepareInheritedEncryption.mockResolvedValue({ success: true, data: { encryptedContent: new Uint8Array(1), epoch: 1, nonce: new Uint8Array(1) } })
-    const inherited = await writtenReply('v10', 'secret for @bob', { encryption: { type: 'inherited', source: { ownerId: BOB, epoch: 1 } } })
-    expect(inherited).not.toHaveProperty('mentionedUserId')
+  it('never indexes a mention out of an encrypted reply (v17): only its public teaser or placeholder', async () => {
+    prepareInheritedEncryption.mockResolvedValue({ success: true, data: SEALED })
+    const inherited = await writtenReply('v17', 'secret for @bob', { encryption: { type: 'inherited', source: { ownerId: BOB } } })
+    expect(inherited).not.toHaveProperty('mentionedUserIds')
     expect(resolveIdentity).not.toHaveBeenCalled()
 
-    prepareOwnerEncryption.mockResolvedValue({ success: true, data: { encryptedContent: new Uint8Array(1), epoch: 1, nonce: new Uint8Array(1), teaser: 'teaser for @bob' } })
-    const withTeaser = await writtenReply('v10', 'secret for @carol', { encryption: { type: 'owner', teaser: 'teaser for @bob' } })
-    expect(withTeaser.mentionedUserId).toEqual(bs58.decode(BOB))
+    prepareOwnerEncryption.mockResolvedValue({ success: true, data: { ...SEALED, teaser: 'teaser for @bob' } })
+    const withTeaser = await writtenReply('v17', 'secret for @carol', { encryption: { type: 'owner', teaser: 'teaser for @bob' } })
+    expect(withTeaser.mentionedUserIds).toEqual([bs58.decode(BOB)])
     expect(resolveIdentity).not.toHaveBeenCalledWith('carol')
   })
 
@@ -193,12 +196,16 @@ describe('inline mentions on v15 (mentionedUserIds, up to 8)', () => {
 })
 
 describe('the reply live marker (v17)', () => {
-  it('writes live: true on v17 only, and refuses a private reply there (no multi-feed client yet)', async () => {
+  it('writes live: true on v17 only; a private reply names its feed there, and v16 offers none', async () => {
     vi.resetModules()
     expect(await writtenReply('v17', 'live reply')).toMatchObject({ live: true })
     vi.resetModules()
     expect(await writtenReply('v16', 'old reply')).not.toHaveProperty('live')
     vi.resetModules()
-    await expect(writtenReply('v17', 'secret', { encryption: { type: 'owner' } })).rejects.toThrow(/not available yet/)
+    prepareOwnerEncryption.mockResolvedValue({ success: true, data: SEALED })
+    expect(await writtenReply('v17', 'secret', { encryption: { type: 'owner' } })).toMatchObject({ live: true, feed: 2, keyGeneration: 1 })
+    expect(prepareOwnerEncryption).toHaveBeenLastCalledWith('owner', 'secret', 'reply', undefined, undefined)
+    vi.resetModules()
+    await expect(writtenReply('v16', 'secret', { encryption: { type: 'owner' } })).rejects.toThrow(/not available yet/)
   })
 })

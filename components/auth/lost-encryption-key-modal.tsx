@@ -52,9 +52,9 @@ export function LostEncryptionKeyModal({
         const hasFeed = await privateFeedService.hasPrivateFeed(user.identityId)
         setHasPrivateFeed(hasFeed)
 
-        // Check what feeds the user follows privately (by checking local keys)
-        const followedOwners = privateFeedKeyStore.getFollowedFeedOwners()
-        setFollowedPrivateFeeds(followedOwners)
+        // The private feeds this account holds keys for on this device
+        const followedOwners = privateFeedKeyStore.memberFeeds(user.identityId).map((entry) => entry.ownerId)
+        setFollowedPrivateFeeds([...new Set(followedOwners)])
       } catch (error) {
         logger.error('Error checking private feed status:', error)
         setHasPrivateFeed(false)
@@ -138,11 +138,12 @@ export function LostEncryptionKeyModal({
                               </div>
                               <div className="flex-1">
                                 <h3 className="font-semibold text-gray-900 dark:text-white">
-                                  Reset Is Unavailable
+                                  Renew Your Private Feed
                                 </h3>
                                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                                  Your existing private feed cannot be reset. Use your original encryption key
-                                  to recover access. Your feed and followers are preserved.
+                                  Add a new encryption key to your identity, then renew your private feed. Your
+                                  followers are moved over automatically. Posts from before this change stay visible
+                                  only to people who already follow you.
                                 </p>
                                 <Button
                                   onClick={onResetPrivateFeed}
@@ -151,7 +152,7 @@ export function LostEncryptionKeyModal({
                                   className="mt-3 text-red-600 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950"
                                 >
                                   <KeyIcon className="h-4 w-4 mr-2" />
-                                  View Recovery Information
+                                  Renew Private Feed
                                 </Button>
                               </div>
                             </div>
@@ -178,10 +179,10 @@ export function LostEncryptionKeyModal({
                                 </p>
                                 <ol className="text-sm text-amber-700 dark:text-amber-300 mt-1 space-y-1 list-decimal list-inside">
                                   <li>Add a new encryption key to your identity</li>
-                                  <li>Ask each feed owner to revoke and re-approve you</li>
+                                  <li>Ask each person for access again from their profile</li>
                                 </ol>
                                 <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-                                  This requires the feed owner&apos;s cooperation.
+                                  Each person approves you again when they next check their requests.
                                 </p>
                               </div>
                             </div>

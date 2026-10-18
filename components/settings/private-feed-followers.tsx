@@ -16,7 +16,6 @@ import {
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
-import { TREE_CAPACITY } from '@/lib/services'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { resolveUserDetailsBatch, type UserDetails } from '@/lib/utils/resolve-user-details'
 import { withoutRevokedGrants } from '@/lib/utils/revoked-grants'
@@ -43,6 +42,7 @@ export function PrivateFeedFollowers() {
   const [revokingId, setRevokingId] = useState<string | null>(null)
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
   const [hasPrivateFeed, setHasPrivateFeed] = useState(false)
+  const [treeCapacity, setTreeCapacity] = useState(0)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
   const markGrantRevoked = usePrivateFeedRefreshStore((s) => s.markGrantRevoked)
 
@@ -56,18 +56,18 @@ export function PrivateFeedFollowers() {
       setIsLoading(true)
       const { privateFeedService } = await import('@/lib/services')
 
-      // Check if user has private feed enabled
-      const hasFeed = await privateFeedService.hasPrivateFeed(user.identityId)
-      setHasPrivateFeed(hasFeed)
+      // The current feed and its followers
+      const overview = await privateFeedService.getOverview(user.identityId)
+      setHasPrivateFeed(overview !== null)
 
-      if (!hasFeed) {
+      if (!overview) {
         setFollowers([])
         return
       }
+      setTreeCapacity(overview.feed.treeCapacity)
 
-      // Get all private followers
       const grants = withoutRevokedGrants(
-        await privateFeedService.getPrivateFollowers(user.identityId),
+        overview.followers,
         usePrivateFeedRefreshStore.getState().revokedGrantsFor(user.identityId)
       )
 
@@ -157,8 +157,13 @@ export function PrivateFeedFollowers() {
         // and dashboard, since the revocation advanced the key generation.
         markGrantRevoked(user.identityId, follower.id, follower.grantedAt.getTime())
       } else {
+        if (result.errorCode === 'MOVE_IN_PROGRESS' || result.errorCode === 'GENERATIONS_USED' || result.errorCode === 'KEY_CHANGED') {
+          toast.error(result.error ?? 'Could not remove this follower')
+          setRevokingId(null)
+          return
+        }
         // Check if this is a sync required error
-        if (result.error?.startsWith('SYNC_REQUIRED:')) {
+        if (result.errorCode === 'SYNC_REQUIRED') {
           const { useEncryptionKeyModal } = await import('@/hooks/use-encryption-key-modal')
           useEncryptionKeyModal.getState().open('sync_state', () => {
             toast('Please try revoking again now that your keys are synced')
@@ -239,7 +244,7 @@ export function PrivateFeedFollowers() {
           <UserGroupIcon className="h-5 w-5" />
           Private Followers
           <span className="ml-auto text-sm font-normal text-gray-500">
-            {followers.length}/{TREE_CAPACITY}
+            {followers.length}/{treeCapacity.toLocaleString()}
           </span>
         </CardTitle>
         <CardDescription>Manage who can access your private posts</CardDescription>

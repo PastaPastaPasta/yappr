@@ -160,8 +160,8 @@ export default function PrivacyPage() {
             <p className="font-medium text-gray-700 dark:text-gray-300">Private feeds</p>
             <p className="mt-1">
               Private posts can only be read by the followers you approve. That you posted, when, who you approved, and who asked to
-              follow are public. Followers you approve can also read all your earlier private posts. Followers you remove keep
-              whatever they could already read.
+              follow are public. Followers you approve can also read your earlier private posts, unless you renewed your private
+              feed with a fresh start. Followers you remove keep whatever they could already read.
             </p>
             <p className="mt-2">
               <strong>Images are not encrypted.</strong> A private post&apos;s text and the link to its image are encrypted, but the
@@ -170,8 +170,7 @@ export default function PrivacyPage() {
             </p>
             <p className="mt-2">
               <strong>Reports open private posts to moderators.</strong> If someone reports one of your private posts, the report gives
-              the moderators the key to read it. That key also opens your other private posts from the same period and all earlier
-              ones.
+              the moderators the key to read it. That key also opens the earlier posts in the same private feed.
             </p>
           </div>
           <div>

@@ -176,11 +176,21 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
     }
 
     try {
-      const result = await privateFeedFollowerService.syncFollowedFeeds()
+      const result = await privateFeedFollowerService.syncFollowedFeeds(identityId)
       if (!context.isSessionActive()) {
         logger.debug('Auth: Private feed sync completed but session ended - clearing keys')
-        privateFeedKeyStore.clearAllKeys()
+        privateFeedKeyStore.signOut(identityId)
         return
+      }
+      // A follower move this device started and did not finish (a reload or a crash), or one the
+      // chain shows unfinished (another device, an open confirmed late), picks up again (PF4).
+      const { adoptUnfinishedMove, runMove } = await import('@/lib/services/private-feed-move')
+      if (context.isSessionActive() && (await adoptUnfinishedMove(identityId)) > 0) {
+        const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+        const moved = await runMove(identityId, getEncryptionKeyBytes(identityId) ?? undefined)
+        if (!moved.success) logger.debug('Auth: Private feed follower move paused:', moved.error)
+        // Signed out while it ran: the sign-out stopped its key writes; this covers a session ended without one.
+        if (!context.isSessionActive()) privateFeedKeyStore.signOut(identityId)
       }
 
       if (result.synced.length > 0 || result.failed.length > 0) {
@@ -209,7 +219,7 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
 async function runLogoutCleanup(identityId: string): Promise<void> {
   sessionStorage.removeItem(scopedKey('yappr_dpns_username'))
   invalidateBlockCache(identityId)
-  privateFeedKeyStore.clearAllKeys()
+  privateFeedKeyStore.signOut(identityId)
 }
 
 export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies {
@@ -222,6 +232,8 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       getSession: readStoredSession,
       setSession(snapshot) {
         if (typeof window === 'undefined') return
+        // Every login commits here (post-login work is skipped behind the username prompt): lift a sign-out's key fence.
+        privateFeedKeyStore.signIn(snapshot.user.identityId)
         localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(toStoredSession(snapshot)))
       },
       clearSession() {
