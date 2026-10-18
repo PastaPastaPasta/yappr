@@ -2,6 +2,8 @@ const { execSync } = require('child_process')
 const path = require('path')
 const { PHASE_PRODUCTION_BUILD } = require('next/constants')
 const { assertReleaseConfig, storageScope } = require('./scripts/release-config.cjs')
+const { sdkWasmAsset } = require('./scripts/sdk-wasm-asset.cjs')
+const wasmAsset = sdkWasmAsset(__dirname)
 
 // Get git info at build time
 const getGitInfo = () => {
@@ -28,6 +30,7 @@ const nextConfig = {
   trailingSlash: true,
   generateBuildId: async () => gitInfo.commitHash,
   env: {
+    NEXT_PUBLIC_SDK_WASM_URL: `${basePath}/_next/${wasmAsset.name}`,
     NEXT_PUBLIC_BASE_PATH: basePath,
     NEXT_PUBLIC_GIT_COMMIT_HASH: gitInfo.commitHash,
     NEXT_PUBLIC_GIT_COMMIT_DATE: gitInfo.commitDate,
@@ -42,7 +45,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  webpack: (config) => {
+  webpack: (config, { isServer, webpack }) => {
     // Keep Next's chunk splitting: merging every @dashevo module into one
     // chunk pulls the async WASM initializer into the eager class imports.
     // @dashevo/evo-sdk's published entry is a webpack bundle that inlines its own
@@ -52,7 +55,20 @@ const nextConfig = {
       ...config.resolve.alias,
       // Class-only imports need the shared glue, never the uncompressed inline initializer.
       '@dashevo/wasm-sdk$': path.resolve(__dirname, 'node_modules/@dashevo/wasm-sdk/dist/raw/wasm_sdk.no_url.js'),
+      '@dashevo/wasm-sdk/compressed$': path.resolve(__dirname, 'lib/web-wasm-sdk.ts'),
       '@dashevo/evo-sdk$': path.resolve(__dirname, 'node_modules/@dashevo/evo-sdk/dist/sdk.js'),
+    }
+    if (!isServer) {
+      config.plugins.push({
+        apply(compiler) {
+          compiler.hooks.thisCompilation.tap('SdkWasmAsset', compilation => {
+            compilation.hooks.processAssets.tap(
+              { name: 'SdkWasmAsset', stage: webpack.Compilation.PROCESS_ASSETS_STAGE_ADDITIONAL },
+              () => compilation.emitAsset(wasmAsset.name, new webpack.sources.RawSource(wasmAsset.bytes))
+            )
+          })
+        }
+      })
     }
     // Handle WASM files (required for @dashevo/evo-sdk)
     config.experiments = {

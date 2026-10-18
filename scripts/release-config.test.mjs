@@ -32,7 +32,7 @@ function completeEnv() {
 
 describe('release build configuration', () => {
   it('documents every public application env reader except Next-generated metadata', () => {
-    const generated = new Set(['BASE_PATH', 'GIT_BRANCH', 'GIT_COMMIT_DATE', 'GIT_COMMIT_HASH', 'STORAGE_SCOPE']
+    const generated = new Set(['BASE_PATH', 'GIT_BRANCH', 'GIT_COMMIT_DATE', 'GIT_COMMIT_HASH', 'STORAGE_SCOPE', 'SDK_WASM_URL']
       .map(name => `NEXT_PUBLIC_${name}`))
     for (const dir of ['app', 'components', 'contexts', 'hooks', 'lib', 'vendor/platform-auth/src']) {
       const root = new URL(`../${dir}/`, import.meta.url)

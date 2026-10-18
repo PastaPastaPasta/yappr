@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast'
 import { RouteRuntime } from '@/components/route-runtime'
 import ErrorBoundary from '@/components/error-boundary'
 import { FrameGuard } from '@/components/layout/frame-guard'
+import { SdkWasmPreload } from '@/components/sdk-wasm-preload'
 import { APP_URL } from '@/lib/constants'
 import { monitoringContractConfig } from '@/lib/monitoring-contract-config'
 import { IMG_SRC, MEDIA_SRC } from '@/lib/media/media-csp'
@@ -54,6 +55,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full" suppressHydrationWarning>
       <head>
+        <SdkWasmPreload />
         <meta name="yappr-contract-config" content={JSON.stringify(monitoringContractConfig)} />
         <meta
           httpEquiv="Content-Security-Policy"

@@ -1,5 +1,143 @@
 # Release performance and request load
 
+## UX-01: external streaming WASM (2026-10-18)
+
+The UX/a11y lane measured the hosted `520c72ba` feed at 12.362–13.009 s on
+Fast 4G / 4× CPU, dominated by the SDK initializer download. This follow-up
+keeps the editor and SDK lazy-loading work below, but replaces the SDK's
+base64/gzip JavaScript initializer with a content-addressed `.wasm.gz` asset.
+The asset is emitted by webpack, so every export includes the matching bytes
+and the version changes automatically with the installed SDK.
+
+The raw rc.4 WASM is **26,458,473 B**, exceeding Cloudflare Pages' 25 MiB file
+limit. The explicit gzip asset is **8,973,985 B** and stays below the limit
+without depending on the host compressing `application/wasm`. Both Cloudflare
+and the GitHub Pages origin were checked: the old embedded initializer is
+already HTTP-gzipped (Cloudflare `max-age=14400`, origin `max-age=600`, with
+`Vary: Accept-Encoding`). Brotli was offered, but both returned gzip. Merely
+turning on HTTP compression would not fix the bottleneck. A local Brotli
+experiment produced 6,872,245 B at quality 5, but Chromium 151 does not support
+`DecompressionStream('brotli')`; adding a decoder is outside this change.
+
+The root document head includes a path-filtered bootstrap: feed, post and
+profile HTML start the download while the document parses, before hydration.
+It stays outside the frame guard that suppresses application HTML during SSR;
+other routes do not prefetch. The SDK consumes that same promise and streams
+decompression
+into wasm-bindgen's `WebAssembly.instantiateStreaming`. Download and compile
+can overlap; there is no base64 decode, worker handoff or second WASM instance.
+Already HTTP-decoded WASM is accepted too. Cache Storage keeps the versioned
+asset across visits, namespaced by deployment base path. Only successfully
+initialized bytes are stored; older versions are removed after that write.
+Storage failure falls back to the HTTP
+cache/network. A corrupt entry or failed speculative download gets one fresh
+network attempt; retries remain bounded. No service worker controls pages or
+application HTML. On static hosts, Next's `headers()` cannot change cache
+headers; the versioned Cache Storage entry avoids reliance on that policy.
+
+Quorum/node caching was evaluated and deliberately left to the SDK. On devnet,
+the address pool is already configured, so no masternode-discovery request
+blocks startup. Current and previous quorum lists are fetched concurrently
+on every navigation, including warm visits. Their ~0.2 s cold interval is much
+smaller than the payload transfer. Persisting a trusted list would require a
+separate rotation/revalidation policy; this change stores executable bytes
+only and preserves all proof verification. Contract preloading and first
+queries remain unchanged. The existing profile header decorations contain
+additional sequential work, which remains a possible follow-up. Feed loading
+copy now says “Loading posts…” instead of describing the Platform connection.
+
+Measurements below use separate static exports of baseline
+`520c72ba361b78bab3c4c832b68c45571a756609` and streaming/cache implementation
+`b78353ee2568c5b6270a220038ab93c2558ef8ba`, before integration with later staging
+changes, the same live Sakura
+read-only routes, Chromium 151, and a local gzip server with a four-hour HTTP
+cache policy for hashed assets. This reproduces the hosted transfer shape;
+it does not measure Cloudflare/origin latency. Mobile: 390×844, 9 Mbps down,
+1 Mbps up, 60 ms latency, 4× CPU. Desktop: 1440×900, unthrottled. Each route
+gets a fresh browser context (cold) then a second full navigation retaining
+HTTP/Cache Storage (warm), without retaining application memory. The metric
+is first `article` insertion, not complete author/media enrichment. One paired
+sample per cell, with other release work active; small desktop differences
+are noise and these are not production percentiles. The public data can change
+between probes. The earlier lane's hosted samples are context, not the
+baseline for this paired comparison.
+
+After merging staging `14d76e5b`, its new frame guard suppressed the route-level
+bootstrap in server HTML. The bootstrap was moved to the root head and the
+export-size check now requires a real head script and matching WASM file on
+all three data routes. A fresh paired rerun was attempted against `14d76e5b`,
+but both the baseline and integrated build produced no article within 90 seconds:
+proof verification
+reported quorum `107:08a5c9d8884b6b574556bf8b2cb1fe0fc276c1e7170c63b1e5afef79c935e39f`
+missing from both freshly fetched quorum lists. Verification was kept intact.
+The earlier successful table below is retained with its exact revisions;
+it is not a complete first-data measurement of the final integrated head.
+The integrated mobile probe still confirms the parser-time asset starts at
+0.309 s, finishes downloading at 9.889 s, and streaming instantiation spans
+2.736–9.986 s. Queries then fail on the missing quorum key. These are an
+additional diagnostic sample, not a replacement paired first-content result.
+
+| Profile / route | Cold before → after, s | Warm before → after, s |
+| --- | ---: | ---: |
+| Mobile / feed | 12.811 → 11.600 | 1.891 → 1.692 |
+| Mobile / post | 11.796 → 10.919 | 1.435 → 1.064 |
+| Mobile / profile | 12.610 → 11.567 | 1.837 → 1.594 |
+| Desktop / feed | 1.276 → 1.166 | 1.102 → 0.941 |
+| Desktop / post | 1.022 → 0.884 | 0.626 → 0.633 |
+| Desktop / profile | 1.480 → 1.212 | 1.268 → 0.946 |
+
+Mobile feed improved **1.211 s (9.5%) cold** and **0.199 s (10.5%) warm**.
+The post's ~7 ms desktop warm increase is within measurement noise.
+
+Cold mobile feed stage boundaries, seconds after navigation start (overlapping
+intervals must not be summed):
+
+| Part | Before | After |
+| --- | --- | --- |
+| HTML / JS shell | HTML received 0.080; shell FCP 0.240; load event 1.821 | HTML received 0.081; shell FCP 0.272; load event 2.269 |
+| WASM download plus preparation/compile | SDK JS download 1.895–10.370; native instantiation 10.904–10.917 | gzip download 0.298–9.743; streaming instantiate/compile 2.457–9.823, overlapping download |
+| Quorums / node discovery | current + previous lists 10.939–11.148; no node discovery request | current + previous lists 9.845–10.090; no node discovery request |
+| First queries | contracts 11.376–11.616; revalidation/read 11.716–11.971; posts 12.037–12.419; first article 12.811 | contracts 10.289–10.522; revalidation/read 10.613–10.866; posts 10.926–11.312; first article 11.600 |
+
+The old initializer compiles in a worker that the page's native-call wrappers
+cannot time directly. Its 0.547 s download-to-instantiation-end gap includes
+JS evaluation, decoding, worker compilation and scheduling; the 13 ms native
+instantiation alone is not its total compile cost. The new streaming interval
+includes waiting for the download and is not 7.37 s of CPU work. Starting WASM
+earlier shares bandwidth with shell JS (hence its later load event), while
+removing the sequential post-download preparation. Detailed cross-origin
+TTFB/body sizes remain unavailable without Timing-Allow-Origin.
+
+Final validation: web lint, dead-code check, 251 test files / 3,737 tests,
+production and devnet exports, and export-size budgets pass. Both mobile
+engine variants build and the engine typecheck passes. The final exported
+head bootstrap was checked for all three routes: it has no speculative cache write
+and remains self-contained. Executing the exported script across 32 route cases
+verified its allowlist; removing the head script makes the export check fail.
+Independent Opus review approved the integration;
+Sonnet simplification review found no remaining blockers.
+
+The read-only probe is `scripts/measure-first-content.mjs URL/devnet result.json`.
+It records browser-clock resource timings, WASM calls, console milestones,
+paint entries, errors and article timestamps for all twelve route/profile/cache
+combinations. A failed sample saves its diagnostics and stops the probe. The post
+and profile IDs are fixed in that script. Local evidence
+(including the gzip server, full exports and raw JSON) is retained under
+`~/.local/share/yappr-release-audit-20261016/perf2/`.
+`before.json` / `final-after.json` contain the successful paired results;
+`head-after.json` and `head-baseline-quorum-failure.json` document the later
+quorum failure. `head-after-export/` preserves the corrected devnet HTML.
+
+An extra browser check cleared the HTTP cache, disabled it, blocked WASM
+network requests, and reloaded the feed: 20 articles rendered from Cache Storage
+with zero attempted WASM network requests, while both quorum lists were fetched
+fresh. This distinguishes persistent asset reuse from a fast HTTP cache hit.
+
+The remaining large cold transfer is real: this change makes it start earlier
+and compile during transfer, rather than removing the ~9 MB requirement.
+
+## Earlier release performance work
+
 Measured 2026-10-17 with Platform SDK 5.0.0-rc.3 and the committed Sakura
 `build:devnet` environment. The baseline is staging `9f0e6fb5`, rebuilt separately
 from an archive of that revision. Both exports use `/devnet` and the same contract
