@@ -17,6 +17,17 @@ afterEach(() => {
 });
 
 describe('blog rankings', () => {
+  it.each(['mostFollowedBlogs', 'trendingBlogs', 'mostDiscussedPosts'] as const)(
+    'contains indexed-target failures in %s and retries after recovery', async (method) => {
+      sdk.documents.ranked.mockRejectedValueOnce(new Error('indexed target chain: primary entry 0101 is missing'))
+        .mockResolvedValue({ entries: [{ groupValue: 'blog', value: 2n }] });
+      expect(await blogStatsService[method]()).toEqual([]);
+      sdk.documents.ranked.mockRejectedValueOnce(new Error('indexed target chain: primary entry 0101 is missing'));
+      await expect(blogStatsService[method](20, { throwOnError: true })).rejects.toThrow('indexed target chain');
+      expect(await blogStatsService[method]()).toEqual([{ id: 'blog', count: 2 }]);
+      expect(sdk.documents.ranked).toHaveBeenCalledTimes(3);
+    }
+  );
   it('maps ranked entries to counts and drops zero groups', async () => {
     sdk.documents.ranked.mockResolvedValue({
       entries: [

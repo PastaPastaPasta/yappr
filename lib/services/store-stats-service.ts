@@ -193,7 +193,8 @@ class StoreStatsService {
       aggregate: { type: 'count' } | { type: 'avg'; property: string };
       where?: [string, '==', unknown][];
       limit: number;
-    }
+    },
+    throwOnError = false
   ): Promise<RankedEntry[]> {
     const cached = this.rankings.get(key) as RankedEntry[] | undefined;
     if (cached) return cached;
@@ -215,23 +216,26 @@ class StoreStatsService {
       this.rankings.set(key, entries);
       return entries;
     } catch (error) {
+      // Directory callers need to distinguish an unavailable ranking from a
+      // genuinely empty one so they can show the ordinary store listing.
+      if (throwOnError) throw error;
       logger.error(`storeStats: ranked ${query.documentTypeName}.${query.groupBy} failed`, error);
       return [];
     }
   }
 
   /** Stores ranked by proved average rating (the `storeRating` average axis). */
-  topRatedStores(limit = 20): Promise<RankedEntry[]> {
+  topRatedStores(limit = 20, { throwOnError = false } = {}): Promise<RankedEntry[]> {
     return this.rankedPage(`stores:avg:${limit}`, {
       documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, groupBy: 'storeId', aggregate: { type: 'avg', property: 'rating' }, limit,
-    });
+    }, throwOnError);
   }
 
   /** Stores ranked by order count (`storeOrderCount`; v6 ranks the merged `storeOrders` at `storeId`). */
-  mostOrderedStores(limit = 20): Promise<RankedEntry[]> {
+  mostOrderedStores(limit = 20, { throwOnError = false } = {}): Promise<RankedEntry[]> {
     return this.rankedPage(`stores:orders:${limit}`, {
       documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_ORDER, groupBy: 'storeId', aggregate: { type: 'count' }, limit,
-    });
+    }, throwOnError);
   }
 
   /**

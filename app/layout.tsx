@@ -3,6 +3,7 @@ import './globals.css'
 import { Toaster } from 'react-hot-toast'
 import { RouteRuntime } from '@/components/route-runtime'
 import ErrorBoundary from '@/components/error-boundary'
+import { FrameGuard } from '@/components/layout/frame-guard'
 import { APP_URL } from '@/lib/constants'
 import { monitoringContractConfig } from '@/lib/monitoring-contract-config'
 import { IMG_SRC, MEDIA_SRC } from '@/lib/media/media-csp'
@@ -60,26 +61,28 @@ export default function RootLayout({
         />
       </head>
       <body className="font-sans h-full bg-white dark:bg-neutral-900">
-        <ErrorBoundary level="app">
-          <RouteRuntime>
-            <ErrorBoundary level="page">
-              {children}
-            </ErrorBoundary>
-          </RouteRuntime>
-        </ErrorBoundary>
-        <Toaster
-          position="top-center"
-          toastOptions={{
-            duration: 3000,
-            style: {
-              background: '#1f2937',
-              color: '#fff',
-              borderRadius: '8px',
-              padding: '12px 16px',
-              fontSize: '14px',
-            },
-          }}
-        />
+        <FrameGuard basePath={basePath}>
+          <ErrorBoundary level="app">
+            <RouteRuntime>
+              <ErrorBoundary level="page">
+                {children}
+              </ErrorBoundary>
+            </RouteRuntime>
+          </ErrorBoundary>
+          <Toaster
+            position="top-center"
+            toastOptions={{
+              duration: 3000,
+              style: {
+                background: '#1f2937',
+                color: '#fff',
+                borderRadius: '8px',
+                padding: '12px 16px',
+                fontSize: '14px',
+              },
+            }}
+          />
+        </FrameGuard>
       </body>
     </html>
   )

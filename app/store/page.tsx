@@ -49,6 +49,8 @@ export default function StoreBrowsePage() {
   const [categories, setCategories] = useState<RankedEntry[]>([])
   // `newest` sorted only the first DISCOVERY_SCAN_LIMIT stores read.
   const [scanIncomplete, setScanIncomplete] = useState(false)
+  const [rankingUnavailable, setRankingUnavailable] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
 
   // Check if user has a store
   useEffect(() => {
@@ -81,24 +83,15 @@ export default function StoreBrowsePage() {
     const loadStores = async () => {
       try {
         setIsLoading(true)
+        setLoadFailed(false)
         let activeStores: Store[]
         let complete = true
+        let fallback = false
         if (category) {
           // v6 `byCategory`: only active stores in the category, newest first.
           activeStores = await storeService.getNewestActiveStoresInCategory(category, 50)
-        } else if (sort === 'newest') {
-          // v6 reads `byStatus` (active only, complete); earlier cuts scan and filter.
-          ({ stores: activeStores, complete } = await storeService.getNewestActiveStores(50))
         } else {
-          // One proved ranked page (top rated by average, or most ordered),
-          // then the stores by id.
-          const ranked = sort === 'topRated'
-            ? await storeStatsService.topRatedStores(50)
-            : await storeStatsService.mostOrderedStores(50)
-          const byId = new Map((await storeService.getMany(ranked.map((entry) => entry.id))).map((store) => [store.id, store]))
-          activeStores = ranked
-            .map((entry) => byId.get(entry.id))
-            .filter((store): store is Store => store !== undefined && store.status === 'active')
+          ({ stores: activeStores, complete, rankingUnavailable: fallback } = await storeService.getDiscoveryStores(sort, 50))
         }
         // Proved averages (v2 only): one average-tree read per store, no review scans.
         const ratings = storefrontIsV2()
@@ -108,8 +101,16 @@ export default function StoreBrowsePage() {
         setStores(activeStores)
         setStoreRatings(ratings)
         setScanIncomplete(!complete)
+        setRankingUnavailable(fallback)
       } catch (error) {
         logger.error('Failed to load stores:', error)
+        if (active) {
+          setStores([])
+          setStoreRatings(new Map())
+          setScanIncomplete(false)
+          setRankingUnavailable(false)
+          setLoadFailed(true)
+        }
       } finally {
         if (active) setIsLoading(false)
       }
@@ -272,11 +273,20 @@ export default function StoreBrowsePage() {
 
           {/* Store List */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
+            {!isLoading && !isBlockCheckPending && rankingUnavailable && (
+              <p className="px-4 py-2 text-center text-sm text-gray-500" role="status">
+                Rankings are unavailable right now. Showing newest stores.
+              </p>
+            )}
             {isLoading || isBlockCheckPending ? (
               <div className="p-8 text-center">
                 <Spinner className="mx-auto mb-4" />
                 <p className="text-gray-500">Loading stores...</p>
               </div>
+            ) : loadFailed ? (
+              <p className="p-8 text-center text-sm text-gray-500" role="status">
+                Stores are unavailable right now. Please try again.
+              </p>
             ) : filteredStores.length === 0 ? (
               <div className="p-8 text-center">
                 <BuildingStorefrontIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
@@ -302,7 +312,7 @@ export default function StoreBrowsePage() {
               </div>
             ) : (
               <>
-              {scanIncomplete && sort === 'newest' && (
+              {scanIncomplete && (
                 <p className="px-4 py-2 text-center text-xs text-gray-500">
                   Newest among the first {DISCOVERY_SCAN_LIMIT.toLocaleString()} stores found; there are more.
                 </p>

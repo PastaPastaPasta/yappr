@@ -212,12 +212,14 @@ class DocumentCache<T> extends TtlMap<string, T> {
    */
   async fencedRead<R>(read: (fill: (id: string, value: T) => void) => Promise<R>): Promise<R> {
     const startedAt = this.invalidations;
+    let active = true;
     this.readsInFlight += 1;
     try {
       return await read((id, value) => {
-        if (this.clearedAt <= startedAt && (this.deletedAt.get(id) ?? 0) <= startedAt) this.set(id, value);
+        if (active && this.clearedAt <= startedAt && (this.deletedAt.get(id) ?? 0) <= startedAt) this.set(id, value);
       });
     } finally {
+      active = false;
       this.readsInFlight -= 1;
       // No read left to fence, and later ones start past every number here.
       if (this.readsInFlight === 0) this.deletedAt.clear();
@@ -350,8 +352,9 @@ export abstract class BaseDocumentService<T> {
    * instead of a `get()` round trip each. Fresh cache entries are served
    * without a query; fetched documents are cached like `get()` caches them.
    * Missing ids are simply absent from the result (order not guaranteed).
+   * `throwOnError` propagates failed reads instead of returning partial results.
    */
-  async getMany(documentIds: string[]): Promise<T[]> {
+  async getMany(documentIds: string[], { throwOnError = false } = {}): Promise<T[]> {
     const uniqueIds = Array.from(new Set(documentIds.filter(Boolean)));
     if (uniqueIds.length === 0) return [];
 
@@ -367,11 +370,11 @@ export abstract class BaseDocumentService<T> {
     }
     if (uncachedIds.length === 0) return results;
 
-    return this.cache.fencedRead((fill) => this.fetchMany(uncachedIds, results, fill));
+    return this.cache.fencedRead((fill) => this.fetchMany(uncachedIds, results, fill, throwOnError));
   }
 
   /** {@link getMany}'s reads of the ids it had no fresh cache entry for, added to `results`. */
-  private async fetchMany(uncachedIds: string[], results: T[], fill: (id: string, value: T) => void): Promise<T[]> {
+  private async fetchMany(uncachedIds: string[], results: T[], fill: (id: string, value: T) => void, throwOnError: boolean): Promise<T[]> {
     try {
       const sdk = await getEvoSdk();
 
@@ -400,7 +403,7 @@ export abstract class BaseDocumentService<T> {
           // shape as getPostsByIds' fallback) rather than dropping up to 100
           // documents from the result on one failed query.
           logger.warn(`getMany: batched $id-in ${this.documentType} query failed, falling back to per-id fetches:`, error);
-          const fetched = await mapLimit(batch, 5, (id) => this.get(id));
+          const fetched = await mapLimit(batch, 5, (id) => throwOnError ? this.getOrThrow(id) : this.get(id));
           for (const doc of fetched) {
             if (doc !== null) results.push(doc);
           }
@@ -409,6 +412,7 @@ export abstract class BaseDocumentService<T> {
 
       return results;
     } catch (error) {
+      if (throwOnError) throw error;
       logger.error(`Error batch getting ${this.documentType} documents:`, error);
       return results;
     }

@@ -33,6 +33,14 @@ beforeEach(() => {
 });
 
 describe('ranked page failures', () => {
+  it('contains a missing indexed target without caching an empty social feed', async () => {
+    const { topLikedPostsHydrated } = await import('./ranked-likes');
+    ranked.mockRejectedValueOnce(new Error('indexed target chain: primary entry 0101 is missing'));
+    expect(await topLikedPostsHydrated({ limit: 20 })).toEqual([]);
+    expect(loadCompositeFeedPage).not.toHaveBeenCalled();
+    expect(await topLikedPostsHydrated({ limit: 20 })).toHaveLength(20);
+    expect(ranked).toHaveBeenCalledTimes(2);
+  });
   it.each(['ranking', 'hydration'] as const)('rejects a failed %s expansion and retries the same limit', async (failure) => {
     const { topLikedPostsHydrated } = await import('./ranked-likes');
     const firstPage = await topLikedPostsHydrated({ limit: 20, throwOnError: true });
