@@ -1,8 +1,8 @@
 /**
  * Shared infrastructure for the registration-day contract batteries.
  *
- * `scripts/verify-v8.mjs` and `scripts/verify-v9.mjs` are thin files of CASES
- * on top of this module (the moderated write path they share is
+ * `scripts/verify-v10.mjs` and the feature batteries define cases on top of
+ * this module (the moderated social write path is
  * `social-battery-lib.mjs`): the devnet SDK with its quorum-rotation
  * reconnect, the readback-decided write helpers, the strict wrong-reason-fails
  * rejection matchers, the PASS/FAIL ledger and the CLI/dry-run/report shell
@@ -254,13 +254,6 @@ export async function readback(fn) {
 
 export async function fetchDocument(sdk, contractId, docType, id) {
   return readback(async () => (await sdk.documents.get(contractId, docType, id)) ?? null);
-}
-
-/** Identifier values arrive as bytes or base58 depending on the surface. */
-export function asBase58(value) {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'string') return value;
-  return bs58.encode(Uint8Array.from(value));
 }
 
 /**
@@ -532,8 +525,6 @@ export const likeData = ({ postId, hashtag, tags, postAuthor }) => ({
   ...(tags === undefined ? {} : { tags }),
   postAuthor,
 });
-/** `replyAuthor` is left out when not given: social v13 likes a reply by its id alone (social-shapes `likeReply`). */
-export const likeReplyData = ({ replyId, replyAuthor }) => ({ replyId, ...(replyAuthor === undefined ? {} : { replyAuthor }) });
 export const followData = ({ followingId }) => ({ followingId });
 // ---- Identities -------------------------------------------------------------
 

@@ -1,8 +1,8 @@
 /**
- * What the moderated social-contract batteries (verify-v8, verify-v9) share:
+ * Moderated social-contract write helpers used by verify-v10:
  * the hand-built create that carries `$actionFeeAgreement`, the moderator
- * signer, and the small helpers around them. verify-lib is the machinery both
- * run on; this is the v8+ layer above it.
+ * signer, and the small helpers around them. verify-lib supplies the shared
+ * battery machinery; this is the moderated-write layer above it.
  */
 import bs58 from 'bs58';
 import {

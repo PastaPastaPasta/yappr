@@ -365,10 +365,10 @@ export function isFrozenBalanceError(error: unknown): boolean {
  * contract-authoring mistakes rather than user situations, but are matched too
  * so they never fall through to a retry.
  *
- * These strings are dormant on testnet (protocol v13 has no `refersTo`) and will
- * be tightened to whatever `scripts/verify-refersto.mjs` actually observes on
- * devnet. Until then they are pinned to the `#[error(...)]` formats in
- * rs-dpp's `errors/consensus/state/document/referenced_*_error.rs`.
+ * Testnet and sakura support these PV14 reference checks. The matchers use
+ * rs-dpp's `#[error(...)]` formats in
+ * `errors/consensus/state/document/referenced_*_error.rs`; the current social
+ * battery (`scripts/verify-v10.mjs`) exercises reference rejections.
  */
 export function isReferenceNotFoundError(error: unknown): boolean {
   // A reference whose target EXISTS but misses a declared requirement (40135,
