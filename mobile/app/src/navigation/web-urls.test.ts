@@ -28,6 +28,10 @@ describe.each(Object.keys(VARIANTS) as Variant[])('%s web handoffs', (variant) =
     expect(webHandoffUrl(config, 'https://yap.pr/testing/store?id=x')).toBe('https://yap.pr/testing/store?id=x');
   });
 
+  it.each(['https://foo.com:x', 'https://a:b:c', 'https://ex%zz.com'])('leaves malformed content links to the browser: %s', (url) => {
+    expect(webHandoffUrl(config, url)).toBe(url);
+  });
+
   it('encodes identifiers and omits absent query values', () => {
     expect(webUrl(config, '/post', { id: 'id/&?#', reply: undefined })).toBe(`${v.webBaseUrl}/post?id=id%2F%26%3F%23`);
   });

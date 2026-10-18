@@ -13,7 +13,12 @@ export function webUrl(
 
 /** Root-form links in post content refer to this app's deployment. Explicit prefixes stay explicit. */
 export function webHandoffUrl(config: { webBaseUrl: string }, url: string): string {
-  const parsed = new URL(url);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
   if (parsed.origin !== 'https://yap.pr') return url;
   if (['/staging', '/devnet', '/testing'].some((prefix) => parsed.pathname === prefix || parsed.pathname.startsWith(`${prefix}/`))) {
     return url;

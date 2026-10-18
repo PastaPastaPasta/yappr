@@ -2,7 +2,7 @@
 const { readFileSync } = require('node:fs')
 const path = require('node:path')
 const { parseEnv } = require('node:util')
-const { loadReleaseEnv } = require('../../scripts/release-config.cjs')
+const { loadReleaseEnv, assertStagingSnapshot } = require('../../scripts/release-config.cjs')
 
 const VARIANTS = {
   testnet: { envFile: '.env.testnet', basePath: '' },
@@ -22,6 +22,9 @@ function variantConfig(root, variant) {
   if (configured.NEXT_PUBLIC_NETWORK !== network) throw new Error(`${selected.envFile} must select ${network}`)
   if (configured.BASE_PATH !== undefined && configured.BASE_PATH !== selected.basePath) {
     throw new Error(`${selected.envFile} BASE_PATH must match ${selected.basePath || 'the root deployment'}`)
+  }
+  if (variant === 'staging-testnet') {
+    assertStagingSnapshot(JSON.parse(readFileSync(path.join(root, 'lib/contracts/snapshots/testnet-staging.json'), 'utf8')), configured)
   }
   const env = Object.fromEntries(Object.entries(configured).filter(([key]) => key.startsWith('NEXT_PUBLIC_')))
   const storageEpoch = configured.STORAGE_EPOCH ?? ''
