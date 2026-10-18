@@ -1,11 +1,11 @@
 import fs from 'fs';
 import buildConfig from '../../../engine/build-config.cjs';
+import { engineExtra } from '../../plugins/engine-assets';
 
 jest.mock('fs', () => ({ existsSync: jest.fn(), readFileSync: jest.fn() }));
 jest.mock('expo/config-plugins', () => ({}));
 jest.mock('../../../engine/build-config.cjs', () => ({ variantConfig: jest.fn() }));
 
-const { engineExtra } = require('../../plugins/engine-assets');
 const expected = {
   env: { NEXT_PUBLIC_NETWORK: 'testnet', NEXT_PUBLIC_STORAGE_SCOPE: '', NEXT_PUBLIC_BASE_PATH: '' },
   storageEpoch: 'release-1',
