@@ -1,5 +1,5 @@
 /**
- * Live proof of the beta.7 social v10 count consolidation (docs/SOCIAL_V10.md,
+ * Live proof of the beta.7 social v10 count consolidation (docs/archive/SOCIAL_V10.md,
  * "Merged count indexes"). The re-cut drops every count-only index whose list
  * twin can carry the count, and the app then counts through the twins:
  *
@@ -62,7 +62,7 @@
  *
  * ## Social v11 (`--contract-file contracts/yappr-social-contract-v11.json`)
  *
- * v11 (docs/SOCIAL_V11.md) keeps every v10 index but the like author index,
+ * v11 (docs/archive/SOCIAL_V11.md) keeps every v10 index but the like author index,
  * which drops `$createdAt` (byAuthorPost / byAuthorReply), and marks the two
  * trend windows `outlivesDelete`. The proof contract then also keeps the
  * post/reply moderator abilities (deleteKeepsFields, deleteWithin,
@@ -89,7 +89,7 @@
  *
  * ## Social v12 (`--contract-file contracts/yappr-social-contract-v12.json`)
  *
- * v12 (docs/SOCIAL_V12.md) is v11 whose like author and hashtag indexes are
+ * v12 (docs/archive/SOCIAL_V12.md) is v11 whose like author and hashtag indexes are
  * `summableOffCountIndex` counters of byPost / byReply (one SumItem per post,
  * no like documents; platform#5250) and whose post and reply declare
  * `retractedWhen` (#5253). Every v11 phase runs; what the file declares
@@ -123,7 +123,7 @@
  *
  * ## Social v13 (`--contract-file contracts/yappr-social-contract-v13.json`)
  *
- * v13 (docs/SOCIAL_V13.md) is v12 with new document shapes, so every v12 phase
+ * v13 (docs/archive/SOCIAL_V13.md) is v12 with new document shapes, so every v12 phase
  * runs on it; the fixture is written in v12's shape and adapted by
  * scripts/social-shapes.mjs (`fit`): posts carry `live: true` (tombstones
  * leave it out), replies name `rootOwnerId` (a nested reply names it
@@ -139,7 +139,7 @@
  *
  * ## Social v14 (`--contract-file contracts/yappr-social-contract-v14.json`)
  *
- * v14 (docs/SOCIAL_V14.md) is v13 whose replies store no owner, so every v13
+ * v14 (docs/archive/SOCIAL_V14.md) is v13 whose replies store no owner, so every v13
  * phase runs on it: `fit` drops `parentOwnerId` and `rootOwnerId` from the
  * v12-shaped fixture. The reply windows derive the owner by consensus:
  *   - n1 reads `rootOwnerRecent` (`rootPostId.$ownerId == A`): every reply in

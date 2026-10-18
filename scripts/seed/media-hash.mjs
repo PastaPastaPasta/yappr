@@ -1,9 +1,9 @@
 /**
  * The media hashes a v10 post or reply carries beside `mediaUrl`
- * (docs/SOCIAL_V10.md, "Media"): `mediaHash` is the sha256 of the exact bytes
+ * (docs/archive/SOCIAL_V10.md, "Media"): `mediaHash` is the sha256 of the exact bytes
  * at the URL, `mediaFingerprint` the 64-bit difference hash (dHash) of the
  * decoded image. Both are required whenever `mediaUrl` is set, and neither may
- * appear without it (dependentRequired, 10101). Social v13 (docs/SOCIAL_V13.md)
+ * appear without it (dependentRequired, 10101). Social v13 (docs/archive/SOCIAL_V13.md)
  * keeps both per item, concatenated as one 40-byte `mediaDigests` entry (sha256
  * then dHash) beside `mediaUrls` and `mediaKinds`; `SOCIAL_SHAPES.media`
  * (scripts/social-shapes.mjs) lays them out for the configured cut.

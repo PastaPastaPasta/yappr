@@ -44,7 +44,7 @@ import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
  * - readReceipt has single index (userConversation) - query other party directly
  * - encryptedContent max reduced to 5000 bytes
  *
- * v4 changes (NEXT_PUBLIC_DM_TOPOLOGY=v4, docs/NON_SOCIAL_CONTRACTS.md) — READS ONLY, writes
+ * v4 changes (NEXT_PUBLIC_DM_TOPOLOGY=v4, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md) — READS ONLY, writes
  * are identical:
  * - directMessage's conversation index is countable + rangeCountable, so unread
  *   is `count(conversationId == C, $createdAt > lastReadAt)` and the list fetches

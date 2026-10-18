@@ -46,7 +46,7 @@
  * Several cuts in one run (`--contract-file` repeated) are measured one after
  * the other by the same identities on the same network, then compared side by
  * side: v12 (counter author/hashtag indexes) against a v11 copy registered on
- * the same 5.0.0-beta.2 chain is the comparison docs/SOCIAL_V12.md records.
+ * the same 5.0.0-beta.2 chain is the comparison docs/archive/SOCIAL_V12.md records.
  * What the file declares picks the writes (a tombstone when post has
  * `deleted`); nothing keys on the file's name.
  *

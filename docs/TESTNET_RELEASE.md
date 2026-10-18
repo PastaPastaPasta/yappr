@@ -5,6 +5,7 @@ This is the committed record of Yappr's first true release on Dash testnet. It h
 - Written: 2026-10-16, against staging `4f8306f9` and Platform `5.0.0-rc.3` (protocol version 14).
 - Conventions: **D-numbers** are the owner's release decisions (section 2). **R-numbers** are backlog items from the pre-release audit. Neither is related to the D-numbers in `docs/mobile/` (those are older, mobile-only decisions).
 - **[O]** marks a step only the owner can do or approve. **[A]** marks work an agent does.
+- **Pre-cut-over cleanup:** [RELEASE_CLEANUP.md](RELEASE_CLEANUP.md) records removals and the legacy paths retained until production configuration changes. [The archive index](archive/README.md) locates historical contract and deployment evidence.
 - **Monitoring and incident response:** [MONITORING.md](MONITORING.md) describes the scheduled site/chain probes, thresholds, incident issues, and recurring operator tasks. Production-chain coverage stays pending until `.env.testnet` contains the registered release IDs.
 
 ## 1. Goal and scope

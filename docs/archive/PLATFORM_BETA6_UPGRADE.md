@@ -1,7 +1,7 @@
 # Platform 4.2.0-beta.6: consensus codes in JS, the propertyConstraints language, generatedFrom
 
 Investigation date: 2026-09-28. This document covers the beta.5 → beta.6 range
-only. Everything earlier is in [`PLATFORM_BETA5_UPGRADE.md`](./PLATFORM_BETA5_UPGRADE.md).
+only. Everything earlier is in [`PLATFORM_BETA5_UPGRADE.md`](PLATFORM_BETA5_UPGRADE.md).
 It records the SDK pin PR (`beta6/sdk`): the SDK version bump, the numeric
 consensus codes, a check that the hand-built create still decodes exactly, the
 beta.6 document meta-schema, and an offline check of every contract. **No

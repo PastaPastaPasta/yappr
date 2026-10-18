@@ -104,7 +104,7 @@ token-write stays on web.
 
 **Risks flagged for the spike.** `documents.ranked`, `documents.composite`,
 `timeRange` selectors (`newest`, `byStart`) and the beta.7 count-picker forms
-(prefix-to-last, at-chain; `docs/SOCIAL_V10.md`) are recent query types;
+(prefix-to-last, at-chain; `docs/archive/SOCIAL_V10.md`) are recent query types;
 confirm that `rs-sdk` exposes them at the pinned tag. If they are only in
 `wasm-sdk`, port the thin wrappers.
 

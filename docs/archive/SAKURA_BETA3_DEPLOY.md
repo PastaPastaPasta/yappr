@@ -1,6 +1,6 @@
 # Sakura after the 5.0.0-beta.3 wipe (2026-10-08)
 
-Sakura's Platform chain was wiped for 5.0.0-beta.3 at about 18:12Z on 2026-10-08 and restarted at height 1. Core was kept (chainlocked ~68.6k), so the treasury's UTXOs survived. Every Yappr identity, contract, DPNS name, the contract group, YAPP, the seed data and election E1 were gone. This record covers the rebuild and the `/devnet` cut-over to the new ids: social v14 ([SOCIAL_V14.md](SOCIAL_V14.md)), pollr v6 and the unchanged blocks, blog v7, storefront v6, DM v4/v5, key backup, key exchange, vault and auth vault ([NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md)). The SDK is 5.0.0-beta.3 ([PLATFORM_V5_BETA3_UPGRADE.md](PLATFORM_V5_BETA3_UPGRADE.md)). Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
+Sakura's Platform chain was wiped for 5.0.0-beta.3 at about 18:12Z on 2026-10-08 and restarted at height 1. Core was kept (chainlocked ~68.6k), so the treasury's UTXOs survived. Every Yappr identity, contract, DPNS name, the contract group, YAPP, the seed data and election E1 were gone. This record covers the rebuild and the `/devnet` cut-over to the new ids: social v14 ([SOCIAL_V14.md](SOCIAL_V14.md)), pollr v6 and the unchanged blocks, blog v7, storefront v6, DM v4/v5, key backup, key exchange, vault and auth vault ([NON_SOCIAL_CONTRACTS.md](../NON_SOCIAL_CONTRACTS.md)). The SDK is 5.0.0-beta.3 ([PLATFORM_V5_BETA3_UPGRADE.md](PLATFORM_V5_BETA3_UPGRADE.md)). Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
 ## Identities
 

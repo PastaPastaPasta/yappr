@@ -1,5 +1,12 @@
 # Digital products (storefront v6)
 
+Deployment scope: the planned release uses storefront **v10**; current
+`/devnet` uses **v9**, while production defaults still select the old v1
+contract. [NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md) distinguishes
+these deployments. Store, listing and review takedowns use the storefront's
+own elected moderation team; the old “no moderator takedown” limitation no
+longer applies. Release v10 also supports on-chain reports.
+
 Stores can sell **digital products** alongside shipped ones: links (to
 wherever the seller already hosts the goods), access codes, unique codes
 such as license keys, downloadable files and redemption instructions. Delivery
@@ -38,7 +45,7 @@ new property is written, and the v5 write surface is byte-identical.
 Digital products add one property and two doctypes. v6 is also the mainnet
 re-cut (action fees instead of YAPP, elected moderation, store categories, no
 stored buyer ids, smaller payloads: see
-[NON_SOCIAL_CONTRACTS.md](./NON_SOCIAL_CONTRACTS.md#what-v6-changed-from-v5)),
+[NON_SOCIAL_CONTRACTS.md](archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md#what-v6-changed-from-v5)),
 so v5 writes do not all carry over. A new contract id is a fresh start either
 way.
 

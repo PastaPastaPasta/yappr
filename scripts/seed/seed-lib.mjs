@@ -57,14 +57,14 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 export const YAPP_TOKEN_POSITION = 0;
 
 /**
- * The social topologies the seeder writes: v10, v11, v12 and v13. v11 (docs/SOCIAL_V11.md) keeps every
+ * The social topologies the seeder writes: v10, v11, v12 and v13. v11 (docs/archive/SOCIAL_V11.md) keeps every
  * create shape the seeder writes; it differs in deletes (tombstones), unlikes and moderation,
- * which the seeder never does. v12 (docs/SOCIAL_V12.md) changes only how the like author and
+ * which the seeder never does. v12 (docs/archive/SOCIAL_V12.md) changes only how the like author and
  * hashtag indexes store (counters) and who may tombstone, not what a create carries. v13
- * (docs/SOCIAL_V13.md) does change creates: posts carry `live`, replies `rootOwnerId`, a reply like
+ * (docs/archive/SOCIAL_V13.md) does change creates: posts carry `live`, replies `rootOwnerId`, a reply like
  * no `replyAuthor`, media are arrays; `SOCIAL_SHAPES` builds them off the configured file. v14
- * (docs/SOCIAL_V14.md) is v13 whose replies store no owner (`{ rootPostId, replyToReplyId? }`: the
- * notification windows derive the root and parent owners). v15 (docs/SOCIAL_V15.md) writes what v14
+ * (docs/archive/SOCIAL_V14.md) is v13 whose replies store no owner (`{ rootPostId, replyToReplyId? }`: the
+ * notification windows derive the root and parent owners). v15 (docs/archive/SOCIAL_V15.md) writes what v14
  * writes; only its YAPP differs (not transferable, costs burn). v16 (docs/SOCIAL_V16.md) is v15 whose
  * post carries up to four tags in the typed array `tags` (one `hashtag` before) and whose like repeats
  * the post's list exactly (`SOCIAL_SHAPES.tags`). v17 (docs/SOCIAL_V17.md) writes what v16 writes

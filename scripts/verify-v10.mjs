@@ -1,7 +1,7 @@
 /**
  * Registration-day battery for **contract v10** and its 5.0.0-beta.1 successor
  * **v11** (`--contract-file contracts/yappr-social-contract-v11.json`,
- * docs/SOCIAL_V11.md). v11 keeps every v10 case; where it differs the case
+ * docs/archive/SOCIAL_V11.md). v11 keeps every v10 case; where it differs the case
  * switches on the file:
  *
  *   - likes are timeless (`outlivesDelete` trend windows, byAuthorPost /
@@ -25,7 +25,7 @@
  *     minutes, since a week cannot pass in a battery).
  *
  * Its 5.0.0-beta.2 successor **v12** (`--contract-file
- * contracts/yappr-social-contract-v12.json`, docs/SOCIAL_V12.md) keeps every
+ * contracts/yappr-social-contract-v12.json`, docs/archive/SOCIAL_V12.md) keeps every
  * v11 case. The behaviour switches on what the file declares, never on its
  * name:
  *
@@ -42,7 +42,7 @@
  *     refused with the bar. On a file without `retractedWhen` x4 skips.
  *
  * The mainnet candidate **v13** (`--contract-file
- * contracts/yappr-social-contract-v13.json`, docs/SOCIAL_V13.md) keeps every
+ * contracts/yappr-social-contract-v13.json`, docs/archive/SOCIAL_V13.md) keeps every
  * v12 case; every document is built by scripts/social-shapes.mjs off the file,
  * so the shapes switch on what it declares:
  *
@@ -66,7 +66,7 @@
  *     self-test pins the mainnet election windows.
  *
  * Its 5.0.0-beta.3 successor **v14** (`--contract-file
- * contracts/yappr-social-contract-v14.json`, docs/SOCIAL_V14.md) keeps every
+ * contracts/yappr-social-contract-v14.json`, docs/archive/SOCIAL_V14.md) keeps every
  * v13 case; the switches read the file (the reply's properties, the windows,
  * `deleteConstraints`, the token's `startAsPaused`), never its name:
  *
@@ -99,7 +99,7 @@
  *     as one FAIL line and exits 1 after every other offline check ran.
  *
  * Its 5.0.0-beta.4 successor **v15** (`--contract-file
- * contracts/yappr-social-contract-v15.json`, docs/SOCIAL_V15.md) keeps every
+ * contracts/yappr-social-contract-v15.json`, docs/archive/SOCIAL_V15.md) keeps every
  * v14 case; only YAPP changes (read off `tokens["0"].transferable`):
  *
  *   - y1a's 1-YAPP transfer is refused 40726 (the token is not transferable);
@@ -176,7 +176,7 @@
  * The rest of this header describes v10.
  *
  * Registration-day battery for **contract v10**
- * (`contracts/yappr-social-contract-v10.json`, docs/SOCIAL_V10.md): the
+ * (`contracts/yappr-social-contract-v10.json`, docs/archive/SOCIAL_V10.md): the
  * 4.2.0-beta.7 cut, exercised against a freshly registered contract on a
  * beta.7 devnet (bonsia). The machinery is verify-lib; the moderated write path
  * (manual batches carrying `$actionFeeAgreement`) is social-battery-lib. It

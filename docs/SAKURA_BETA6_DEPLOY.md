@@ -1,6 +1,6 @@
 # Sakura after the 5.0.0-beta.6 wipe (2026-10-13)
 
-Sakura's Platform chain was wiped for 5.0.0-beta.6 at about 14:10Z on 2026-10-13 and restarted at height 1, with all 13 nodes on Drive/DAPI 5.0.0-beta.6 (protocol 14). Core was kept. This record covers the rebuild and the `/devnet` cut-over to social v16 ([SOCIAL_V16.md](SOCIAL_V16.md)); [PLATFORM_V5_BETA6_UPGRADE.md](PLATFORM_V5_BETA6_UPGRADE.md) covers the release itself. Every other contract is registered from the same file and sha256 pin as on beta.5.
+Sakura's Platform chain was wiped for 5.0.0-beta.6 at about 14:10Z on 2026-10-13 and restarted at height 1, with all 13 nodes on Drive/DAPI 5.0.0-beta.6 (protocol 14). Core was kept. This record covers the rebuild and the `/devnet` cut-over to social v16 ([SOCIAL_V16.md](SOCIAL_V16.md)); [PLATFORM_V5_BETA6_UPGRADE.md](archive/PLATFORM_V5_BETA6_UPGRADE.md) covers the release itself. Every other contract is registered from the same file and sha256 pin as on beta.5.
 
 The SDK is 5.0.0-beta.6. Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 

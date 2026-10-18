@@ -4,9 +4,9 @@
  *
  * `v2` is the testnet contract (staging, production, /testing). `v9` is the
  * beta.4-beta.6 devnet contract (`contracts/yappr-social-contract-v9.json`,
- * docs/SOCIAL_V9.md), which replaces every polymorphic identifier field with a
+ * docs/archive/SOCIAL_V9.md), which replaces every polymorphic identifier field with a
  * mono-typed, `refersTo`-checked one. `v10` is the 4.2.0-beta.7 devnet contract
- * (`contracts/yappr-social-contract-v10.json`, docs/SOCIAL_V10.md): v9's
+ * (`contracts/yappr-social-contract-v10.json`, docs/archive/SOCIAL_V10.md): v9's
  * interaction surfaces with real deletes instead of tombstones, no `beat`
  * companion, moderator-resolved reports and the DashPay profile extension. That splits what used to be a single
  * query surface in two: a like of a post lands in `like`, a like of a reply in
@@ -293,7 +293,7 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
 
 /**
  * v9 — `contracts/yappr-social-contract-v9.json`, the moutai devnet
- * (docs/SOCIAL_V9.md).
+ * (docs/archive/SOCIAL_V9.md).
  *
  * - **Flat threads.** A reply names its thread root (`rootPostId`) and the
  *   reply it nests under (`replyToReplyId`) separately; a post's reply count
@@ -350,7 +350,7 @@ const V9_DESCRIPTOR: ContractTopologyDescriptor = {
 
 /**
  * v10 — `contracts/yappr-social-contract-v10.json`, the 4.2.0-beta.7 devnet
- * (docs/SOCIAL_V10.md). Likes, bookmarks, quotes and the reply linkage FIELDS
+ * (docs/archive/SOCIAL_V10.md). Likes, bookmarks, quotes and the reply linkage FIELDS
  * are v9's; what differs:
  *
  * - **Reposts are quotes.** There is no `repost` doctype: a repost is a `post`
@@ -403,7 +403,7 @@ const V10_DESCRIPTOR: ContractTopologyDescriptor = {
 
 /**
  * v11 — `contracts/yappr-social-contract-v11.json`, the 5.0.0-beta.1 devnet
- * (docs/SOCIAL_V11.md). Every v10 surface, with likes made cheaper by
+ * (docs/archive/SOCIAL_V11.md). Every v10 surface, with likes made cheaper by
  * `outlivesDelete` (#5232/#5233):
  *
  * - `like.byAuthorPost [postAuthor, postId]` (ranked at `[postAuthor,
@@ -445,7 +445,7 @@ const V11_DESCRIPTOR: ContractTopologyDescriptor = {
 
 /**
  * v12 — `contracts/yappr-social-contract-v12.json`, the 5.0.0-beta.2 devnet
- * (docs/SOCIAL_V12.md). v11 with two beta.2 keywords:
+ * (docs/archive/SOCIAL_V12.md). v11 with two beta.2 keywords:
  *
  * - **Counter author indexes** (`summableOffCountIndex`, platform#5250).
  *   `like.byAuthorPost`, `like.byHashtagPost` and `likeReply.byAuthorReply`
@@ -474,7 +474,7 @@ const V12_DESCRIPTOR: ContractTopologyDescriptor = {
 
 /**
  * v13 — `contracts/yappr-social-contract-v13.json`, the mainnet candidate
- * (docs/SOCIAL_V13.md). v12 with:
+ * (docs/archive/SOCIAL_V13.md). v12 with:
  *
  * - **Replies bound to their thread.** A reply carries `rootOwnerId` (the root
  *   post's owner, `where`-checked), a top-level reply's `parentOwnerId` must be
@@ -503,7 +503,7 @@ const V13_DESCRIPTOR: ContractTopologyDescriptor = {
 
 /**
  * v14 — `contracts/yappr-social-contract-v14.json`, the 5.0.0-beta.3 re-cut
- * (docs/SOCIAL_V14.md). v13's surfaces, with:
+ * (docs/archive/SOCIAL_V14.md). v13's surfaces, with:
  *
  * - **Replies that store no owner.** `parentOwnerId`, `rootOwnerId` and
  *   `parentIsRoot` are gone ({@link replyOwnersAreDerived}). The notification
@@ -525,8 +525,8 @@ const V14_DESCRIPTOR: ContractTopologyDescriptor = {
 
 /**
  * v15 — `contracts/yappr-social-contract-v15.json`, the 5.0.0-beta.4 re-cut,
- * re-cut again in place for 5.0.0-beta.5 (docs/SOCIAL_V15.md,
- * docs/PLATFORM_V5_BETA5_UPGRADE.md). Every v14 surface but two, outside this descriptor:
+ * re-cut again in place for 5.0.0-beta.5 (docs/archive/SOCIAL_V15.md,
+ * docs/archive/PLATFORM_V5_BETA5_UPGRADE.md). Every v14 surface but two, outside this descriptor:
  * YAPP cannot be transferred ({@link yappIsTransferable} is false), so it is
  * locked ({@link yappIsLocked}), and a post, reply or like paid in YAPP burns
  * it instead of paying the contract owner; and a post or reply mentions up to

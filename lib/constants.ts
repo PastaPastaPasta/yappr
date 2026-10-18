@@ -50,7 +50,7 @@ export const STOREFRONT_YAPP_TOKEN_COSTS = {
 // into it for every transfer of a token whose config sets
 // `keepsTransferHistory` (YAPP does), owned by the sender and carrying the
 // exact amount, the recipient and the sender's `publicNote`. That document IS
-// the tip proof — see docs/NON_SOCIAL_CONTRACTS.md.
+// the tip proof — see docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md.
 //
 // System contracts share an id across chains, so this is hardcoded; overridable
 // all the same for a devnet genesised with a different registration.
@@ -72,7 +72,7 @@ export const YAPPR_DM_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID
 // ---- DM topology — owned by the DM v4 work, edit here only ----
 // `v3` is the testnet contract: no count flags, so the conversation list has to
 // download a 100-message page per conversation and count unread in JS. `v4`
-// (contracts/yappr-dm-contract.json, docs/NON_SOCIAL_CONTRACTS.md) adds countable +
+// (contracts/yappr-dm-contract.json, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md) adds countable +
 // rangeCountable to directMessage's conversation index, so unread is a count
 // query and the list fetches only each conversation's newest message.
 //
@@ -107,21 +107,21 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // no reference integrity, no itemReview, no token cost — aggregates are
 // client-side scans, and nothing stops a stranger writing a status update or a
 // review on someone else's order. `v2` (contracts/yappr-storefront-contract.json,
-// docs/NON_SOCIAL_CONTRACTS.md) adds the proved rating trees, the refersTo chain with
+// docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md) adds the proved rating trees, the refersTo chain with
 // WRITER GATES (only a store's owner lists under it, only an order's seller
 // posts its status, only its buyer reviews it) and YAPP-priced reviews; writes
 // differ and consensus rejects v2 writes on a v1 contract, so the switch must
 // match the deployed contract.
 // `v3` (4.2.0-beta.3) is v2's write surface exactly, plus contract moderation:
 // the contract keeps a banlist and a suspension list, and `storeReview`/
-// `itemReview` are moderator-deletable (docs/SOCIAL_V8.md). Nothing references
+// `itemReview` are moderator-deletable (docs/archive/SOCIAL_V8.md). Nothing references
 // a review, so no read or write changes: the value records which cut is
 // deployed (the moderation UI for feature contracts is a follow-up).
-// `v4` (4.2.0-beta.4, docs/SOCIAL_V9.md) is v3 plus a warning list,
+// `v4` (4.2.0-beta.4, docs/archive/SOCIAL_V9.md) is v3 plus a warning list,
 // `storeItem.tags`/`imageUrls` as typed string ARRAYS (v1–v3 store JSON
 // strings; each cut refuses the other's encoding) and `storeReview.sellerId`
 // distinct from the reviewer.
-// `v5` (4.2.0-beta.7, docs/SOCIAL_V10.md) is v4 in the beta.7 grammar plus
+// `v5` (4.2.0-beta.7, docs/archive/SOCIAL_V10.md) is v4 in the beta.7 grammar plus
 // QA D-25: an order carries `storeStatus`, consensus-bound to its store's
 // `status` and required to be `active`, so a paused or closed store cannot be
 // ordered from (10422 `storeIsOpen`; 40127 if the copy is stale). v8 drops the
@@ -132,7 +132,7 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // `orderDelivery` that carries the encrypted goods (docs/DIGITAL_PRODUCTS.md).
 // Below v6 the digital UI is hidden: the doctypes do not exist and v5 refuses
 // the unknown `fulfillment` property.
-// v6 is also the mainnet re-cut (docs/NON_SOCIAL_CONTRACTS.md): no YAPP at
+// v6 is also the mainnet re-cut (docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md): no YAPP at
 // all (`store`/`storeItem`/`storeReview`/`itemReview` creates carry an
 // action-fee agreement instead), elected moderators who may delete stores
 // and items, a required `store.category` slug with proved discovery indexes
@@ -141,7 +141,7 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // derived `orderId.$ownerId` indexes), item ratings only per store
 // (`storeItemRating`), smaller encrypted payloads and variants (5,120 B),
 // and an order's seller can never be its buyer.
-// `v7` (docs/STOREFRONT_V7.md) is v6 with `storeItem.variants` as a typed
+// `v7` (docs/archive/STOREFRONT_V7.md) is v6 with `storeItem.variants` as a typed
 // table instead of a JSON string: options with stable ids, one byte-array
 // selector per combination, and aligned price, stock, SKU, weight and image
 // lists, kept aligned by consensus (10422); up to 12 image URLs. v1–v6 keep
@@ -202,7 +202,7 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // `v1` is the testnet contract: plain indexes, no reference integrity, no token
 // cost — comment counts and follower counts are client-side page scans, and a
 // comment can name any post owner it likes. `v2`
-// (contracts/yappr-blog-contract.json, docs/NON_SOCIAL_CONTRACTS.md) adds the refersTo
+// (contracts/yappr-blog-contract.json, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md) adds the refersTo
 // chain (a comment's `blogPostOwnerId` is bound by consensus to the post's own
 // `$ownerId`), the countable/ranked comment and follower trees, frozen
 // `blogId`/`publishedAt`, and YAPP-priced comments; writes carry the v2 fields
@@ -217,20 +217,20 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // `blog`/`blogPost`/`blogComment` are moderator-deletable, every reference at
 // them is a `deletableDocument` reference (a followed blog or a commented post
 // may resolve to nothing after a takedown), and `documentsKeepHistory` is
-// GONE from blog/blogPost — the edit-history viewer with it. See docs/SOCIAL_V8.md.
+// GONE from blog/blogPost — the edit-history viewer with it. See docs/archive/SOCIAL_V8.md.
 //
-// `v4` (4.2.0-beta.4, docs/SOCIAL_V9.md) is v3 plus a warning list and
+// `v4` (4.2.0-beta.4, docs/archive/SOCIAL_V9.md) is v3 plus a warning list and
 // `blog.labels`/`blogPost.labels` as typed string ARRAYS (v1–v3: a
 // comma-separated string; each cut refuses the other's encoding).
 //
-// `v5` (4.2.0-beta.6, docs/CONTRACTS_BETA6.md) is v4 plus two gates: a comment
+// `v5` (4.2.0-beta.6, docs/archive/CONTRACTS_BETA6.md) is v4 plus two gates: a comment
 // copies its post's `commentsEnabled` into `postCommentsEnabled` (bound by
 // the `blogPostId` agreement, and `false` refused by the `commentsOpen` rule),
 // and only a blog's owner may post to it. v4 has no `postCommentsEnabled`, so
 // a v5 comment would be refused there (and a v4 comment on a v5 contract is
 // refused whenever the post stores the flag). v8 drops the copy (below).
 //
-// `v6` (5.0.0-beta.1, docs/PLATFORM_V5_BETA1_UPGRADE.md) is v5 in the 5.0
+// `v6` (5.0.0-beta.1, docs/archive/PLATFORM_V5_BETA1_UPGRADE.md) is v5 in the 5.0
 // grammar plus one write change: a comment no longer carries
 // `blogPostOwnerId`. `postOwnerAndTime` indexes `blogPostId.$ownerId`, a
 // derived index property read through the post reference, so "comments on my
@@ -240,7 +240,7 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // record), and `publishedAt` is frozen by a conditional `immutable` entry
 // instead of `immutableAllowSetting`, which 5.0 refuses.
 //
-// `v7` (5.0.0-beta.2, the mainnet-ready cut; docs/NON_SOCIAL_CONTRACTS.md) is
+// `v7` (5.0.0-beta.2, the mainnet-ready cut; docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md) is
 // v6 with ELECTED moderation and these client-visible changes:
 //   - no YAPP on comments: `blog`, `blogPost` and `blogComment` creates carry
 //     an action fee agreement instead (40132 without it), read off the
@@ -267,7 +267,7 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // takes comments). A comment on a comments-off post, a tombstone included, is
 // refused 40127, and the client writes no copy.
 //
-// `v9` (the testnet production cut, docs/NON_SOCIAL_CONTRACTS.md, Blog: "What v9 changed") is
+// `v9` (the testnet production cut, docs/BLOG_V9.md) is
 // v8 with a `live` marker: a post must carry `publishedAt` (no drafts on
 // chain) and `live: true`, its tombstone leaves `live` out, and the global
 // `timeline` and per-blog `blogAndTime` are keyed on it, so every read of them
@@ -306,7 +306,7 @@ export const blogCommentsCostYapp = () => blogIsV2() && !blogIsV7()
 // ---- profile topology ----
 // `v1` is the unified profile contract live on testnet/production:
 // `paymentUris` and `socialLinks` are JSON strings. `v2` (4.2.0-beta.4,
-// contracts/yappr-profile-contract.json, docs/SOCIAL_V9.md) stores both as
+// contracts/yappr-profile-contract.json, docs/archive/SOCIAL_V9.md) stores both as
 // typed string ARRAYS (`socialLinks` as "platform:handle"); each cut refuses
 // the other's encoding. Read at call time so tests can stub it.
 export const PROFILE_TOPOLOGIES = ['v1', 'v2'] as const
@@ -429,7 +429,7 @@ export function keyNetwork(): KeyNetwork {
 // are ordinary deletable documents.
 //
 // `v9` — the moutai devnet, `contracts/yappr-social-contract-v9.json`
-// (docs/SOCIAL_V9.md, docs/PLATFORM_BETA4_UPGRADE.md). Flat threads
+// (docs/archive/SOCIAL_V9.md, docs/archive/PLATFORM_BETA4_UPGRADE.md). Flat threads
 // (`rootPostId` + `replyToReplyId`) with a separate `likeReply` doctype,
 // posts-only repost/bookmark and dual quote fields, each reference
 // `refersTo`-checked; indexOnly `like`/`likeReply`/`beat` with ranked, count
@@ -444,7 +444,7 @@ export function keyNetwork(): KeyNetwork {
 // identifier array.
 //
 // `v10` — the 4.2.0-beta.7 devnet, `contracts/yappr-social-contract-v10.json`
-// (docs/SOCIAL_V10.md). v9's interaction surfaces in the beta.7 grammar
+// (docs/archive/SOCIAL_V10.md). v9's interaction surfaces in the beta.7 grammar
 // (`moderatorAbilities`, `refersTo.where`/`findBy`), with real deletes of
 // immutable posts and replies instead of tombstones, content up to 1000
 // characters / 2000 bytes, no `language` (one global `timeline`), media
@@ -456,7 +456,7 @@ export function keyNetwork(): KeyNetwork {
 // retired, but nothing may read a topology whose contract file is gone.
 //
 // `v11` — the 5.0.0-beta.1 devnet (sakura), `contracts/yappr-social-contract-v11.json`
-// (docs/SOCIAL_V11.md). Every v10 surface, plus three 5.0 keywords: the like
+// (docs/archive/SOCIAL_V11.md). Every v10 surface, plus three 5.0 keywords: the like
 // trend windows `outlivesDelete`, so no like index carries `$createdAt` any
 // more (an unlike names no time, and like notifications are timeless); a
 // moderator removal of a post or reply keeps its hashtag or thread root and
@@ -465,13 +465,13 @@ export function keyNetwork(): KeyNetwork {
 // (`deleteWithin` + `deleteSettled`).
 //
 // `v12` — the 5.0.0-beta.2 devnet (sakura after its 2026-10-06 wipe),
-// `contracts/yappr-social-contract-v12.json` (docs/SOCIAL_V12.md). v11 with
+// `contracts/yappr-social-contract-v12.json` (docs/archive/SOCIAL_V12.md). v11 with
 // the like and reply-like author indexes (and the hashtag index) kept as one
 // counter per post (`summableOffCountIndex`), and `retractedWhen` on post and
 // reply so a banned or suspended author can still tombstone its own writing.
 //
 // `v13` — the mainnet candidate, `contracts/yappr-social-contract-v13.json`
-// (docs/SOCIAL_V13.md). v12 with replies bound to their thread (`rootOwnerId`),
+// (docs/archive/SOCIAL_V13.md). v12 with replies bound to their thread (`rootOwnerId`),
 // no reply-like author counter, reports of profiles and private content (a
 // moderators' `box`) carrying a 50M action fee, media arrays (`mediaUrls`,
 // `mediaDigests`, `mediaKinds`), a `live` marker that takes tombstones out of
@@ -479,7 +479,7 @@ export function keyNetwork(): KeyNetwork {
 // `blockFollow` moved to the blocks contract (`NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`).
 //
 // `v14` — the 5.0.0-beta.3 re-cut, `contracts/yappr-social-contract-v14.json`
-// (docs/SOCIAL_V14.md). v13 with the rules rewritten in `countPresent`, reports
+// (docs/archive/SOCIAL_V14.md). v13 with the rules rewritten in `countPresent`, reports
 // withdrawable only while no moderator resolved them (`deleteConstraints`,
 // 40147), replies that store no owner (`rootOwnerRecent` and
 // `parentOwnerRecent` read `rootPostId.$ownerId` / `replyToReplyId.$ownerId`
@@ -487,7 +487,7 @@ export function keyNetwork(): KeyNetwork {
 // optional YAPP token costs can be paid again under beta.3.
 //
 // `v15` — the 5.0.0-beta.4 re-cut, `contracts/yappr-social-contract-v15.json`
-// (docs/SOCIAL_V15.md). v14 with a YAPP that cannot be transferred
+// (docs/archive/SOCIAL_V15.md). v14 with a YAPP that cannot be transferred
 // (`transferable: false`), whose costs burn (`effect: 1`) instead of paying the
 // contract owner, and that starts with no supply; the byte arrays are written
 // as property type shorthands.

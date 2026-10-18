@@ -75,7 +75,7 @@ describe('blog optional-field updates', () => {
   })
 })
 
-describe('blog v4 typed labels (docs/SOCIAL_V9.md)', () => {
+describe('blog v4 typed labels (docs/archive/SOCIAL_V9.md)', () => {
   it('writes labels as a list on blog v4 and reads a stored list back as a list', async () => {
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v4')
     try {

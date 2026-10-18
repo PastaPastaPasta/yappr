@@ -1,5 +1,5 @@
 /**
- * Registration-day battery for **tips** (docs/NON_SOCIAL_CONTRACTS.md).
+ * Registration-day battery for **tips** (docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md).
  *
  * Tips are not a Yappr contract at all. Which kind a chain gets follows the
  * app's `yappIsLocked()` (lib/contract-topology.ts), read here off the DEPLOYED

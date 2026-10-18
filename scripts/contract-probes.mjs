@@ -944,7 +944,7 @@ const PROBES = [
   } },
   { label: 'v13 update: the media rule relaxed (rules are fixed)', file: SOCIAL_V13, expect: 'update', node: '10246', why: /propertyConstraints/i, update: (s) => { types(s).post.propertyConstraints.media = { equal: [{ count: 'mediaUrls' }, { count: 'mediaKinds' }] }; } },
 
-  // Social v14 (5.0.0-beta.3, docs/SOCIAL_V14.md): countPresent rules, the report deleteConstraints,
+  // Social v14 (5.0.0-beta.3, docs/archive/SOCIAL_V14.md): countPresent rules, the report deleteConstraints,
   // the derived reply-owner windows and an unpaused YAPP. Every refusal below was first measured
   // with rs-dpp at the v5.0.0-beta.3 tag; `why` pins the rule that speaks.
   { label: 'control: social v14 as committed (devnet: interim contractOwner)', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
@@ -992,7 +992,7 @@ const PROBES = [
   { label: 'v14 update: the report delete rule relaxed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { types(s).report.deleteConstraints.pending = { notEqual: ['status', 2] }; } },
   { label: 'v14 update: the report delete rule removed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { delete types(s).report.deleteConstraints; } },
 
-  // Social v15 (5.0.0-beta.4, docs/SOCIAL_V15.md): v14 with a non-transferable YAPP whose costs
+  // Social v15 (5.0.0-beta.4, docs/archive/SOCIAL_V15.md): v14 with a non-transferable YAPP whose costs
   // burn, written with the property type shorthands.
   { label: 'control: social v15 as committed (devnet: interim contractOwner)', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
   { label: 'control: social v15 as mainnet registers it (interim notYetUsable)', file: SOCIAL_V15, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },

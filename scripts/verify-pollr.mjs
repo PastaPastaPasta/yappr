@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for the **Pollr v7 contract** (5.0.0-beta.5,
- * `contracts/pollr-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run live on a
+ * `contracts/pollr-contract.json`, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md), run live on a
  * devnet. Actors are seed-ledger personas: a CREATOR (who owns the polls) and two
  * VOTERS. Ballots are free.
  *
