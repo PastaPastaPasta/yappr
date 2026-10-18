@@ -16,6 +16,19 @@ beforeEach(() => {
 });
 
 describe('strict document hydration', () => {
+  it('exposes single-document read failures without caching them as missing', async () => {
+    const service = new DocumentService();
+    sdk.get.mockRejectedValueOnce(new Error('DAPI unavailable')).mockResolvedValueOnce({ $id: 'post' });
+    await expect(service.getOrThrow('post')).rejects.toThrow('DAPI unavailable');
+    await expect(service.getOrThrow('post')).resolves.toEqual({ id: 'post' });
+    expect(sdk.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns null for a successful single-document absence proof', async () => {
+    sdk.get.mockResolvedValue(null);
+    await expect(new DocumentService().getOrThrow('missing')).resolves.toBeNull();
+  });
+
   it('retries a failed batch with individual reads and preserves proven absence', async () => {
     sdk.query.mockRejectedValue(new Error('batch offline'));
     sdk.get.mockImplementation(async (_contract, _type, id) => id === 'missing' ? null : { $id: id });

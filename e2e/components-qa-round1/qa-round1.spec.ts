@@ -132,6 +132,39 @@ test('SOC-002: deleted threads have a neutral empty state, live threads invite r
   await page.goto('/qa-round1.html?fixture=post&state=live')
   await expect(page.getByText('No replies yet. Be the first to reply!', { exact: true })).toBeVisible()
 })
+for (const failure of ['post', 'replies', 'refresh']) {
+  test(`DAPI recovery hook: ${failure} rejects failed reads and recovers without losing the last thread`, async ({ page }) => {
+    await page.goto(`/qa-round1.html?fixture=post-recovery-hook&state=live&failure=${failure}`)
+    const error = page.getByTestId('hook-error')
+    const replies = page.getByTestId('hook-replies')
+    if (failure === 'refresh') {
+      await expect(replies).toHaveText('Existing reply')
+      await page.getByRole('button', { name: 'Refresh thread' }).click()
+    }
+    await expect(error).toHaveText('DAPI unavailable')
+    await expect(page.getByTestId('hook-loading')).toHaveText('false')
+    if (failure === 'refresh') await expect(replies).toHaveText('Existing reply')
+    await page.getByRole('button', { name: 'Refresh thread' }).click()
+    await expect(error).toBeEmpty()
+    await expect(replies).toHaveText('Existing reply')
+    await expect(page.getByTestId('hook-post')).toHaveText('post')
+    await expect(page.getByTestId('hook-loading')).toHaveText('false')
+  })
+  test(`DAPI recovery: ${failure} failure offers a working retry without claiming missing content`, async ({ page }) => {
+    await page.goto(`/qa-round1.html?fixture=post&state=live&failure=${failure}`)
+    const alert = page.getByRole('alert')
+    await expect(alert).toContainText(failure === 'post' ? 'Couldn’t load this post.' : 'Couldn’t refresh this thread.')
+    await expect(page.getByText('Post not found', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('No replies yet. Be the first to reply!', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('transport error', { exact: false })).toHaveCount(0)
+    if (failure === 'refresh') await expect(page.getByText('Existing reply')).toBeVisible()
+    await alert.getByRole('button', { name: 'Try again' }).click()
+    await expect(alert).toHaveCount(0)
+    await expect(page.getByText('Loading replies...', { exact: true })).toHaveCount(0)
+    if (failure === 'refresh') await expect(page.getByText('Existing reply')).toBeVisible()
+    else await expect(page.getByText('No replies yet. Be the first to reply!', { exact: true })).toBeVisible()
+  })
+}
 test('STORE-02: checkout controls can be found and filled by their visible labels', async ({ page }) => {
   await page.goto('/qa-round1.html?fixture=checkout')
   await page.getByRole('button', { name: 'Continue', exact: true }).click()

@@ -235,7 +235,7 @@ export function usePostDetail({
 
     if (hasFlatThreads()) {
       const rootId = threadRootIdOf(mainPost)
-      const rootPost = await postService.getPostById(rootId, { skipEnrichment: true })
+      const rootPost = await postService.getOrThrow(rootId)
       if (rootPost) chain.push(rootPost)
       // The reply's `rootPostId` is a deletableDocument reference on v9: a
       // missing root is a moderator takedown (or on v10 its author's delete),
@@ -248,11 +248,11 @@ export function usePostDetail({
 
       while (currentParentId && chain.length < MAX_DEPTH) {
         // First try as a post
-        let parent = await postService.getPostById(currentParentId, { skipEnrichment: true })
+        let parent = await postService.getOrThrow(currentParentId)
 
         if (!parent) {
           // Try as a reply
-          const reply = await replyService.getReplyById(currentParentId, { skipEnrichment: true })
+          const reply = await replyService.getOrThrow(currentParentId)
           if (reply) {
             // The adapter (not a spread) so the Post shape is complete — a spread
             // leaves `quotes` undefined in a `quotes: number` field.
@@ -311,11 +311,14 @@ export function usePostDetail({
     try {
       // Load post (transformDocument returns post with defaults, no enrichment)
       // Try post first, then reply if not found (replies are a separate document type)
-      loadedPost = await postService.getPostById(postId, { skipEnrichment: true })
+      // The convenience getPostById/getReplyById helpers turn transport errors
+      // into null. Use the underlying read so an outage reaches the retry UI
+      // instead of looking like a proved missing document.
+      loadedPost = await postService.getOrThrow(postId)
 
       if (!loadedPost) {
         // Not a post - check if it's a reply
-        const reply = await replyService.getReplyById(postId, { skipEnrichment: true })
+        const reply = await replyService.getOrThrow(postId)
         if (reply) {
           // Treat the reply as the main "post" for this detail view, tagged with
           // the doctype it actually came from.
@@ -356,7 +359,15 @@ export function usePostDetail({
       setRootCheckedFor(postId)
 
       // Show the main post as soon as it's available
-      setState({ post: loadedPost, replies: [], replyThreads: [], replyChain })
+      setState(current => {
+        const sameThread = current.post?.id === postId
+        return {
+          post: loadedPost,
+          replies: sameThread ? current.replies : [],
+          replyThreads: sameThread ? current.replyThreads : [],
+          replyChain
+        }
+      })
       setIsLoading(false)
 
       // Enrich the main post without blocking replies or UI
@@ -367,10 +378,10 @@ export function usePostDetail({
       if (!isCurrent()) return
       logger.error('usePostDetail: Failed to load post:', err)
       setError(err instanceof Error ? err.message : 'Failed to load post')
-      // Only clear state if we don't have navigation data to show
-      if (!usedNavigationDataRef.current) {
-        setState({ post: null, replies: [], replyThreads: [], replyChain: [] })
-      }
+      // Keep this thread's last successful data during a failed refresh.
+      setState(current => current.post?.id === postId
+        ? current
+        : { post: null, replies: [], replyThreads: [], replyChain: [] })
       setIsLoading(false)
       setIsLoadingReplies(false)
       return

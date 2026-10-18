@@ -1,5 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { useState } from 'react'
+// Bypass the page fixture's mocked @/hooks/use-post-detail alias.
+import { usePostDetail as useRealPostDetail } from '../../hooks/use-post-detail'
 import { Toaster } from 'react-hot-toast'
 import InventoryPage from '@/app/store/inventory/page'
 import UserPage from '@/app/user/page'
@@ -23,6 +25,16 @@ import '@/app/globals.css'
 const noop = () => undefined
 const params = new URLSearchParams(window.location.search)
 const fixture = params.get('fixture')
+function PostRecoveryFixture() {
+  const detail = useRealPostDetail({ postId: 'post' })
+  return <>
+    <div data-testid="hook-post">{detail.post?.id}</div>
+    <div data-testid="hook-error">{detail.error}</div>
+    <div data-testid="hook-replies">{detail.replies.map(reply => reply.content).join(',')}</div>
+    <div data-testid="hook-loading">{String(detail.isLoading || detail.isLoadingReplies)}</div>
+    <button onClick={detail.refresh}>Refresh thread</button>
+  </>
+}
 // Public scalar 1, for the offline checkout readiness check only.
 storeEncryptionKey('buyer', 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA')
 function InboxFixture() {
@@ -64,6 +76,7 @@ const content = fixture === 'messages' ? <><NetworkPill /><MessagesPage /></>
   : fixture === 'group' ? <GroupFixture />
   : fixture === 'private-activity' ? <PrivateFeedDashboard />
   : fixture === 'post' ? <PostPage />
+  : fixture === 'post-recovery-hook' ? <PostRecoveryFixture />
   : fixture === 'checkout' ? <CheckoutPage />
   : fixture === 'shipping' ? <ManagePage />
   : fixture === 'store' ? <StorePage />
