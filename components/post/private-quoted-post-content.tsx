@@ -11,22 +11,14 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { cn } from '@/lib/utils'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { privateContentOf } from '@/lib/services/private-feed-reader'
-import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
-import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useAuth } from '@/contexts/auth-context'
 import { useMediaGate } from '@/hooks/use-media-gate'
+import { decryptQuote, useRetryWhenKeysArrive, type QuoteDecryptionState } from '@/hooks/use-quote-decryption'
 
 interface PrivateQuotedPostContentProps {
   quotedPost: Post
   className?: string
 }
-
-type DecryptionState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'decrypted'; content: string }
-  | { status: 'locked'; needsKey?: boolean }
-  | { status: 'error' }
 
 /**
  * Renders quoted private post content.
@@ -38,7 +30,7 @@ export function PrivateQuotedPostContent({
   className = '',
 }: PrivateQuotedPostContentProps) {
   const { user } = useAuth()
-  const [state, setState] = useState<DecryptionState>({ status: 'idle' })
+  const [state, setState] = useState<QuoteDecryptionState>({ status: 'idle' })
   // No enrichment hint for quoted authors; cache/own-post checks still apply.
   const mediaGate = useMediaGate(quotedPost.author.id)
 
@@ -61,14 +53,7 @@ export function PrivateQuotedPostContent({
     }
     setState({ status: 'loading' })
     try {
-      const { decryptPostOrReply } = await import('@/lib/services/private-feed-reader')
-      const opened = await decryptPostOrReply(quotedPost, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
-      if (!opened) {
-        setState({ status: 'error' })
-        return
-      }
-      const { outcome } = opened
-      setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked', needsKey: outcome.reason === 'needs-key' })
+      setState(await decryptQuote(quotedPost, user.identityId))
     } catch (error) {
       logger.error('Error decrypting quoted private post:', error)
       setState({ status: 'error' })
@@ -88,12 +73,7 @@ export function PrivateQuotedPostContent({
     }
   }, [state.status, attemptDecryption])
 
-  // Waiting on keys this device does not hold yet: opens once they are recovered elsewhere (another post, another tab).
-  const awaitingKeys = state.status === 'locked' && state.needsKey === true
-  useEffect(() => {
-    if (!awaitingKeys) return
-    return privateFeedKeyStore.subscribe(() => setState({ status: 'idle' }))
-  }, [awaitingKeys])
+  useRetryWhenKeysArrive(state, setState)
 
   // Common link wrapper for all states
   const renderLink = (children: React.ReactNode) => (

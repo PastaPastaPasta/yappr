@@ -73,9 +73,9 @@ async function moderatorKeys(): Promise<{ keys: Uint8Array[]; missing: number }>
  * not a cached or tombstoned root, decides; null when no candidate's key does.
  */
 async function feedKeyOf(target: Post, reporterId: string): Promise<{ feedOwnerId: string; cek: Uint8Array } | null> {
-  const { privateFeedOwnerOf } = await import('./private-feed-reader')
+  const { privateFeedOwnerOf, otherFeedOwner } = await import('./private-feed-reader')
   const { owner: likely, certain } = await privateFeedOwnerOf(target)
-  const other = certain ? undefined : likely !== target.author.id ? target.author.id : target.rootOwnerId
+  const other = certain ? undefined : otherFeedOwner(target, likely)
   for (const feedOwnerId of new Set([likely, other])) {
     if (!feedOwnerId) continue
     const cek = await contentKeyOf(feedOwnerId, target.feed as number, target.keyGeneration as number, reporterId)

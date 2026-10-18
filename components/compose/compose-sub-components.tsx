@@ -6,8 +6,7 @@ import type { Post } from '@/lib/types'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { getInitials, formatTime, truncateId } from '@/lib/utils'
 import { privateContentOf } from '@/lib/services/private-feed-reader'
-import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
-import { getEncryptionKeyBytes } from '@/lib/secure-storage'
+import { decryptQuote, useRetryWhenKeysArrive, type QuoteDecryptionState } from '@/hooks/use-quote-decryption'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
 import { Spinner } from '@/components/ui/spinner'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
@@ -272,13 +271,6 @@ interface QuotedPostPreviewProps {
   post: Post
 }
 
-type DecryptionState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'decrypted'; content: string }
-  | { status: 'locked'; needsKey?: boolean }
-  | { status: 'error' }
-
 // Shared header component for post previews
 interface PostPreviewHeaderProps {
   author: Post['author']
@@ -333,7 +325,7 @@ function QuotedPostContainer({ children }: { children: React.ReactNode }) {
  */
 export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
   const { user } = useAuth()
-  const [state, setState] = useState<DecryptionState>({ status: 'idle' })
+  const [state, setState] = useState<QuoteDecryptionState>({ status: 'idle' })
 
   // Request ID ref to prevent stale async updates
   const requestIdRef = useRef(0)
@@ -358,14 +350,8 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
     setState({ status: 'loading' })
 
     try {
-      const { decryptPostOrReply } = await import('@/lib/services/private-feed-reader')
-      const opened = await decryptPostOrReply(post, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
-      if (!opened) {
-        if (isCurrent()) setState({ status: 'error' })
-        return
-      }
-      const { outcome } = opened
-      if (isCurrent()) setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked', needsKey: outcome.reason === 'needs-key' })
+      const next = await decryptQuote(post, user.identityId)
+      if (isCurrent()) setState(next)
     } catch (error) {
       logger.error('Error decrypting quoted post preview:', error)
       if (isCurrent()) setState({ status: 'error' })
@@ -385,12 +371,7 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
     }
   }, [isPrivate, state.status, attemptDecryption])
 
-  // Waiting on keys this device does not hold yet: opens once they are recovered elsewhere.
-  const awaitingKeys = state.status === 'locked' && state.needsKey === true
-  useEffect(() => {
-    if (!awaitingKeys) return
-    return privateFeedKeyStore.subscribe(() => setState({ status: 'idle' }))
-  }, [awaitingKeys])
+  useRetryWhenKeysArrive(state, setState)
 
   // Get author display for private posts (shows truncated ID as fallback)
   const authorDisplay = post.author.username && !post.author.username.startsWith('user_')

@@ -77,11 +77,13 @@ async function movableFollowers(ownerId: string, feed: number): Promise<string[]
   return (await feedFollowers(ownerId, feed)).movable
 }
 
+const askedAtOf = (requests: readonly FollowRequestDocument[]) => new Map(requests.map((request) => [request.$ownerId, request.$createdAt]))
+
 /** {@link movableFollowers}, with the reads it was taken from. */
 async function feedFollowers(ownerId: string, feed: number) {
   const [grants, rekeys, requests, blocked] = await Promise.all([fetchMembers(ownerId, feed), fetchRekeys(ownerId, feed, 1), fetchFollowRequestsTo(ownerId), blockedBy(ownerId)])
   // Only a request the grant answered: one made since (they left and asked again) waits for the owner's approval.
-  const askedAt = new Map(requests.map((request) => [request.$ownerId, request.$createdAt]))
+  const askedAt = askedAtOf(requests)
   const movable = activeGrants(grants, rekeys)
     .filter((grant) => (askedAt.get(grant.recipientId) ?? Infinity) <= grant.createdAt && !blocked.has(grant.recipientId))
     .map((grant) => grant.recipientId)
@@ -97,7 +99,7 @@ async function feedFollowers(ownerId: string, feed: number) {
 async function movedThenRemoved(
   ownerId: string, to: number, moved: readonly GrantDocument[], old: { grants: readonly GrantDocument[]; rekeys: readonly RekeyDocument[]; requests: readonly FollowRequestDocument[] },
 ): Promise<string[]> {
-  const askedAt = new Map(old.requests.map((request) => [request.$ownerId, request.$createdAt]))
+  const askedAt = askedAtOf(old.requests)
   const removedAt = new Map<string, number>()
   for (const grant of old.grants) {
     const answer = await answeredThrough(grant, old.rekeys)

@@ -261,13 +261,17 @@ export async function privateFeedOwnerOf(reply: ThreadedContent, rootOwnerHint?:
   return { owner: root?.author.id ?? reply.rootOwnerId ?? rootOwnerHint ?? reply.author.id, certain: false }
 }
 
+/** The other feed a guessed `owner` could be: the replier's own, or (when `owner` is the replier) the thread's root owner. */
+export function otherFeedOwner(post: { author: { id: string }; rootOwnerId?: string }, owner: string, rootOwnerHint?: string): string | undefined {
+  return owner !== post.author.id ? post.author.id : post.rootOwnerId ?? rootOwnerHint
+}
+
 /**
  * Decrypt a post or reply, working out whose feed encrypted it (see
  * {@link privateFeedOwnerOf}). When that owner is a guess and does not open it,
- * a reply's other candidate is tried: the replier's own feed, or the thread's
- * root owner. The
- * content binding rejects a wrong owner. Returns the outcome and the owner it
- * is about (the one that opened it, else the likelier one); null when the
+ * a reply's other candidate is tried ({@link otherFeedOwner}). The content
+ * binding rejects a wrong owner. Returns the outcome and the owner it is
+ * about (the one that opened it, else the likelier one); null when the
  * content is not private.
  */
 export async function decryptPostOrReply(
@@ -277,7 +281,7 @@ export async function decryptPostOrReply(
   if (!content) return null
   const { owner, certain } = await privateFeedOwnerOf(post, rootOwnerHint)
   const outcome = await decryptPrivateContent({ ...content, feedOwnerId: owner }, viewerId, encryptionPrivateKey)
-  const other = owner !== post.author.id ? post.author.id : post.rootOwnerId ?? rootOwnerHint
+  const other = otherFeedOwner(post, owner, rootOwnerHint)
   if (outcome.ok || certain || !other || other === owner) return { outcome, feedOwnerId: owner }
   const second = await decryptPrivateContent({ ...content, feedOwnerId: other }, viewerId, encryptionPrivateKey)
   return second.ok ? { outcome: second, feedOwnerId: other } : { outcome, feedOwnerId: owner }
