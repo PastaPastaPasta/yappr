@@ -66,24 +66,22 @@ async function moderatorKeys(): Promise<{ keys: Uint8Array[]; missing: number }>
 }
 
 /**
- * The identity whose private feed encrypted `target`, or null when that cannot
- * be told for certain: a post's author; for a reply in a private thread the
- * thread root's author (its replies inherit the root's encryption), and for a
- * private reply under a root read back public its own author (encrypted to
- * the replier's feed). A root that cannot be read, or a tombstone that no
- * longer says whether it was private, is uncertain: no key is chosen.
+ * Whose feed encrypted `target`, and this device's key for it: the reader's
+ * likelier owner (see privateFeedOwnerOf), then for a reply the other
+ * candidate (its author, or the thread's root owner). A key counts only once
+ * it decrypts the target itself ({@link openTarget}), so the content binding,
+ * not a cached or tombstoned root, decides; null when no candidate's key does.
  */
-async function feedOwnerOf(target: Post): Promise<string | null> {
-  // The root may come from a cache, and so may the CEK below. Neither needs a
-  // fresh read: the key is sealed only after it decrypts the target itself
-  // ({@link openTarget}), so a stale answer can only leave the box out.
-  if (targetKindOf(target) !== 'reply') return target.author.id
-  const rootId = target.rootPostId
-  if (!rootId) return null
-  const { postService } = await import('./post-service')
-  const root = await postService.getPostById(rootId, { skipEnrichment: true })
-  if (!root || root.deleted) return null
-  return root.encryptedContent?.length ? root.author.id : target.author.id
+async function feedKeyOf(target: Post, reporterId: string): Promise<{ feedOwnerId: string; cek: Uint8Array } | null> {
+  const { privateFeedOwnerOf } = await import('./private-feed-reader')
+  const likely = await privateFeedOwnerOf(target)
+  const other = targetKindOf(target) !== 'reply' ? undefined : likely !== target.author.id ? target.author.id : target.rootOwnerId
+  for (const feedOwnerId of new Set([likely, other])) {
+    if (!feedOwnerId) continue
+    const cek = await contentKeyOf(feedOwnerId, target.feed as number, target.keyGeneration as number, reporterId)
+    if (cek && (await openTarget(cek, feedOwnerId, target)) !== null) return { feedOwnerId, cek }
+  }
+  return null
 }
 
 /** The text of `target` under `cek` of `feedOwnerId`'s feed, or null when the key does not open it. */
@@ -121,10 +119,10 @@ export async function buildReportBox(reporterId: string, target: Post): Promise<
   if (maxBytes === null || !reportNeedsBox(target)) return { kind: 'not-needed' }
   const keyGeneration = target.keyGeneration as number
   const feed = target.feed as number
-  const feedOwnerId = await feedOwnerOf(target)
-  const cek = feedOwnerId ? await contentKeyOf(feedOwnerId, feed, keyGeneration, reporterId) : null
   // A key of the wrong feed would hand the moderators someone else's posts and still not open this one.
-  if (!feedOwnerId || !cek || (await openTarget(cek, feedOwnerId, target)) === null) return { kind: 'no-key' }
+  const found = await feedKeyOf(target, reporterId)
+  if (!found) return { kind: 'no-key' }
+  const { feedOwnerId, cek } = found
   const { keys, missing } = await moderatorKeys()
   if (keys.length === 0) return { kind: 'no-recipients' }
   const room = maxReportBoxRecipients(maxBytes)

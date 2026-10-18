@@ -167,18 +167,21 @@ describe('the report box service', () => {
     it.each([
       ['cannot be read', null],
       ['is a tombstone', { ...privatePost, deleted: true, encryptedContent: undefined, nonce: undefined, keyGeneration: undefined }],
-    ])('seals nothing when its root %s, even with keys to both feeds', async (_case, root) => {
+      // Read back public, though the reply was encrypted under the thread owner's feed: the replier's key does not open it.
+      ['reads back public', { ...privatePost, encryptedContent: undefined, nonce: undefined, keyGeneration: undefined }],
+    ])('seals the thread owner\'s key when its root %s, once that key opens the reply', async (_case, root) => {
       const { buildReportBox } = await import('./report-box-service')
       mocks.getPostById.mockResolvedValue(root)
-      await expect(buildReportBox(REPORTER, reply(AUTHOR))).resolves.toEqual({ kind: 'no-key' })
-      expect(mocks.contentKeyFor).not.toHaveBeenCalled()
+      await expect(buildReportBox(REPORTER, reply(AUTHOR))).resolves.toMatchObject({ kind: 'sealed' })
+      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(REPORTER, AUTHOR, FEED, 3, undefined)
     })
 
-    it('seals nothing when the chosen feed\'s key does not open it', async () => {
+    it('seals nothing when no candidate feed\'s key opens it', async () => {
       const { buildReportBox } = await import('./report-box-service')
-      // The root reads back public, but the reply was encrypted under the thread owner's feed.
-      mocks.getPostById.mockResolvedValue({ ...privatePost, encryptedContent: undefined, nonce: undefined, keyGeneration: undefined })
+      mocks.getPostById.mockResolvedValue(privatePost)
+      mocks.contentKeyFor.mockResolvedValue({ cek: cekAt(secret(78), 10, 3) })
       await expect(buildReportBox(REPORTER, reply(AUTHOR))).resolves.toEqual({ kind: 'no-key' })
+      expect(mocks.contentKeyFor).toHaveBeenCalledTimes(2)
     })
   })
 
