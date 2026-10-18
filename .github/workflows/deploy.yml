@@ -228,7 +228,9 @@ jobs:
       # Pages serves only site/404.html for every missing path. Generate it from
       # staging even while master still contains the older application's 404.
       - name: Install network-free deployment-aware fallback
-        run: node staging/scripts/write-static-404.mjs site ''
+        env:
+          BASE_PATH: ${{ vars.BASE_PATH }}
+        run: node staging/scripts/write-static-404.mjs site
 
       # Expectations are kept outside the public site: they describe exactly
       # which commits, env files and snapshot hashes this deploy built.

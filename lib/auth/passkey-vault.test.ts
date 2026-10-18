@@ -11,6 +11,7 @@ import { bytesToBase64Url, bytesToHex } from '@/lib/bytes'
 import { keyNetwork } from '@/lib/constants'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { privateKeyToWif } from '@/lib/crypto/wif'
+import type { VaultEntryDocument } from '@/lib/services/passkey-vault-service'
 import { stubBrowserStorage } from '../test-storage'
 
 const IDENTITY = bs58.encode(new Uint8Array(32).fill(4))
@@ -31,7 +32,8 @@ const vault = vi.hoisted(() => ({
   find: vi.fn(async (): Promise<unknown> => null),
   add: vi.fn(),
   settleAdd: vi.fn(),
-  list: vi.fn(async () => []),
+  list: vi.fn(async (): Promise<VaultEntryDocument[]> => []),
+  remove: vi.fn(),
 }))
 const stores = vi.hoisted(() => ({
   expectPasskeyCriticalKey: vi.fn(),
@@ -75,6 +77,7 @@ import {
   forgetPendingEnrolments,
   pendingEnrolmentFor,
   rawKeyStoreHooks,
+  removePasskeys,
   type PendingPasskey,
 } from './passkey-vault'
 import { lockOutCopy } from '@/components/auth/passkey-copy'
@@ -445,5 +448,32 @@ describe('removal copy', () => {
   it('tells both wallet and key users to change the messaging key too', () => {
     for (const wallet of [true, false]) expect(lockOutCopy(wallet)).toMatch(/messaging key/)
     expect(lockOutCopy(false)).toMatch(/usually made from your key/)
+  })
+})
+
+
+describe('confirmed passkey removal', () => {
+  const entry: VaultEntryDocument = {
+    $id: 'removed-entry', $ownerId: IDENTITY, $revision: 1, $createdAt: 1, $updatedAt: 1,
+    version: 1, authKeyId: 2, credentialId: CREDENTIAL,
+    recipientKey: new Uint8Array(32), enc: new Uint8Array(32), sealed: new Uint8Array(32),
+  }
+
+  it.each(['stale', 'failed'])('keeps a confirmed deletion authoritative over %s read-back', async (readBack) => {
+    vault.list.mockResolvedValueOnce([entry])
+    if (readBack === 'stale') vault.list.mockResolvedValueOnce([entry])
+    else vault.list.mockRejectedValueOnce(new Error('Replica unavailable'))
+    vault.remove.mockResolvedValueOnce(undefined)
+
+    await expect(removePasskeys(IDENTITY, [entry.$id])).resolves.toEqual({ removed: 1, failed: 0 })
+    expect(vault.list).toHaveBeenCalledTimes(1)
+    expect(vault.remove).toHaveBeenCalledExactlyOnceWith(entry)
+    vault.list.mockReset().mockResolvedValue([])
+  })
+
+  it('counts refused and unread requested entries as failures', async () => {
+    vault.list.mockResolvedValueOnce([entry])
+    vault.remove.mockRejectedValueOnce(new Error('Delete refused'))
+    await expect(removePasskeys(IDENTITY, [entry.$id, 'not-read'])).resolves.toEqual({ removed: 0, failed: 2 })
   })
 })

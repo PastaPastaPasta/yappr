@@ -1,13 +1,14 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { appUrl, scopedKey } from '../fixtures/app'
+import { expectedStorefrontTopology } from '../fixtures/contracts'
 
 for (const theme of ['light', 'dark'] as const) {
   test(`Explore AA contrast in ${theme} mode`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.addInitScript((value) => localStorage.setItem('theme', value), theme)
     await page.goto(appUrl('/explore/'))
-    await expect(page.getByRole('button', { name: 'All time', exact: true })).toBeVisible()
+    await expect(page.getByPlaceholder('Search posts and blog articles')).toBeVisible()
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([])
   })
 }
@@ -36,7 +37,12 @@ for (const route of ['/terms/', '/privacy/', '/cookies/', '/about/', '/about/pri
     })
     await page.goto(appUrl(route))
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
-    if (route === '/privacy/') await expect(page.getByText(/Tracking numbers, carrier details and seller notes are encrypted for you and the seller/)).toBeVisible()
+    if (route === '/privacy/') {
+      const sealed = await expectedStorefrontTopology() === 'v10'
+      await expect(page.getByText(sealed
+        ? /Tracking numbers, carrier details and seller notes are encrypted for you and the seller/
+        : /Tracking numbers, carrier details and seller notes are public/)).toBeVisible()
+    }
     await page.waitForTimeout(1500)
     expect(platform).toEqual([])
   })

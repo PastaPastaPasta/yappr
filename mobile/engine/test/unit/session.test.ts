@@ -265,18 +265,15 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
     await expect(session.switchAccount(randomId())).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
-  it('reports `key-invalid` when the stored key no longer signs for the session identity', async () => {
-    const saved = localStorage.getItem(`yappr_secure_pk_${idA}`)
-    localStorage.setItem(`yappr_secure_pk_${idA}`, JSON.stringify(privateKeyToWif(secp256k1.utils.randomSecretKey(), 'testnet')))
-    const before = localStorage.getItem('yappr_session')
+  it.each(['missing', 'mismatched'])('reauthenticates after a %s stored key prevents restoration', async (kind) => {
+    if (kind === 'missing') localStorage.removeItem(`yappr_secure_pk_${idA}`)
+    else localStorage.setItem(`yappr_secure_pk_${idA}`, JSON.stringify(privateKeyToWif(secp256k1.utils.randomSecretKey(), 'testnet')))
     session = boot()
     expect(await session.restore()).toBeNull()
     expect(emitted).toContainEqual({ event: 'session.changed', payload: { session: null, reason: 'key-invalid' } })
-    // Put A back for the sign-out cases.
-    localStorage.setItem(`yappr_secure_pk_${idA}`, saved ?? '')
-    localStorage.setItem('yappr_session', before ?? '')
-    session = boot()
-    expect((await session.restore())?.identityId).toBe(idA)
+    expect(localStorage.getItem('yappr_session')).toBeNull()
+    expect(getCurrentUserId()).toBeNull()
+    expect((await session.signInWithKey({ key: bytesToHex(keyA) })).identityId).toBe(idA)
     expect(getCurrentUserId()).toBe(idA)
   })
 
