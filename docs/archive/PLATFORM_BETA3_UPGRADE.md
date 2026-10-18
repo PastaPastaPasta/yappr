@@ -4,10 +4,10 @@
 > (`build-vN-contract.py`) and their batteries (`verify-v4/v5/v7.mjs`) were
 > removed from the tree; the files this page names are in git history. The
 > live social contracts are v2 (testnet) and v9 (moutai), see
-> [`contracts/README.md`](../contracts/README.md).
+> [`contracts/README.md`](../../contracts/README.md).
 
 Investigation date: 2026-09-20. This document covers the beta.2 → beta.3 range
-only; everything earlier is in [`PLATFORM_BETA2_UPGRADE.md`](./PLATFORM_BETA2_UPGRADE.md).
+only; everything earlier is in [`PLATFORM_BETA2_UPGRADE.md`](PLATFORM_BETA2_UPGRADE.md).
 It is the record of **PR A** (`beta3/sdk-and-ids`): the SDK pin, the change every
 write path needed to keep working on protocol 14 as shipped in beta.3, and the
 new consensus errors the app classifies. The contract re-cuts that *adopt* the
@@ -142,7 +142,7 @@ replay cache, which makes a timed-out write idempotent by rebroadcasting the
 2. draw 32 bytes of entropy and derive the id in JS —
    `lib/document-id.ts` `deriveDocumentId`, `@noble/hashes` sha256, `TextEncoder`
    for the type name, 8-byte big-endian nonce (**retired in beta.4**: wasm-dpp2
-   now derives it, see [`PLATFORM_BETA4_UPGRADE.md`](./PLATFORM_BETA4_UPGRADE.md));
+   now derives it, see [`PLATFORM_BETA4_UPGRADE.md`](PLATFORM_BETA4_UPGRADE.md));
 3. build the `Document` with `Document.fromObject` carrying that id and entropy
    (`documentBuilderService.buildDocumentForCreate`, which now REQUIRES
    `{ entropy, identityContractNonce }` — there is no way left to build a

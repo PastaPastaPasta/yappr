@@ -1,6 +1,6 @@
 # Social v16, the Platform 5.0.0-beta.6 cut
 
-Social v16 is social v15 ([SOCIAL_V15.md](SOCIAL_V15.md)) with up to four tags per post. Through v15 a post is indexed under one tag (`post.hashtag`), and every other tag in its text is plain text. Platform 5.0.0-beta.6 adds what a tag list needs:
+Social v16 is social v15 ([SOCIAL_V15.md](archive/SOCIAL_V15.md)) with up to four tags per post. Through v15 a post is indexed under one tag (`post.hashtag`), and every other tag in its text is plain text. Platform 5.0.0-beta.6 adds what a tag list needs:
 
 - a `refersTo` `where` entry may compare two typed arrays, as lists (dashpay/platform#5388);
 - an indexOnly type may index the elements of a typed array (#5390);

@@ -468,7 +468,7 @@ class ReplyService extends BaseDocumentService<Reply> {
    * The root window holds every reply of the user's threads, so a busy thread
    * fills it: each window read stops at `NOTIFICATION_WINDOW_MAX_PAGES` pages
    * (notification-windows.ts), in id order, and past that top-level replies
-   * can be missed (docs/SOCIAL_V14.md).
+   * can be missed (docs/archive/SOCIAL_V14.md).
    */
   private async repliesToMeOnV14(userId: string, since: number): Promise<Reply[]> {
     const toMyReplies = notificationWindowFor('reply');

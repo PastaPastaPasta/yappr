@@ -126,7 +126,7 @@ export interface UnifiedProfileDocument {
   website?: string;
   bannerUri?: string;
   avatar?: string;       // JSON string or URI
-  /** profile v1: a JSON string of a list; profile v2: a typed list (docs/SOCIAL_V9.md). */
+  /** profile v1: a JSON string of a list; profile v2: a typed list (docs/archive/SOCIAL_V9.md). */
   paymentUris?: string | string[];
   pronouns?: string;
   nsfw?: boolean;

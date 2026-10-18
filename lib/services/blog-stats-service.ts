@@ -2,7 +2,7 @@
  * Proved blog rankings on the v2+ blog contract.
  *
  * Each read here is one DAPI request against a ranked count tree
- * (docs/NON_SOCIAL_CONTRACTS.md):
+ * (docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md):
  *
  * - "most followed blogs": `blogFollow.followerCount [blogId]` up to v6, the
  *   merged `followers [blogId, $createdAt]` ranked at `blogId` on v7 (the

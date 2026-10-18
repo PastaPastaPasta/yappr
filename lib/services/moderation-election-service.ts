@@ -8,7 +8,7 @@ import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 
 /**
  * The election of the social contract's moderation team (v9 declares elected
- * moderation; docs/SOCIAL_V9.md). Read-only: filing charters, joining and
+ * moderation; docs/archive/SOCIAL_V9.md). Read-only: filing charters, joining and
  * voting are the election script's and the masternodes' business.
  *
  * Everything lives in the moderation charters system contract

@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for the **blog contract**
- * (`contracts/yappr-blog-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run live on
+ * (`contracts/yappr-blog-contract.json`, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md), run live on
  * a 5.0.0-beta.2+ devnet. Actors are seed-ledger personas: an AUTHOR, a READER and a
  * STRANGER. Every fixture is fresh per run under a new blog, so blog- and
  * post-level aggregates are exact without a baseline.

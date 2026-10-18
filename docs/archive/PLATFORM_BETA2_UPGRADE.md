@@ -4,10 +4,10 @@
 > (`build-vN-contract.py`) and their batteries (`verify-v4/v5/v7.mjs`) were
 > removed from the tree; the files this page names are in git history. The
 > live social contracts are v2 (testnet) and v9 (moutai), see
-> [`contracts/README.md`](../contracts/README.md).
+> [`contracts/README.md`](../../contracts/README.md).
 
 Investigation date: 2026-09-18. This document covers the beta.1 → beta.2 range only;
-everything earlier is in [`PLATFORM_BETA1_UPGRADE.md`](./PLATFORM_BETA1_UPGRADE.md).
+everything earlier is in [`PLATFORM_BETA1_UPGRADE.md`](PLATFORM_BETA1_UPGRADE.md).
 Deployment evidence belongs at the end; the release tag alone does not establish
 that a particular network was reset or that a contract was registered.
 
@@ -46,7 +46,7 @@ a split between the two packages loads two WASM modules into one page.
 
 Nothing in this range changes a query shape, a ranked/count/timeRange grammar, or
 a proof format. **v7's read surface is byte-for-byte v6's**, which is why
-[`V6_WINDOWED_RANKINGS.md`](./V6_WINDOWED_RANKINGS.md) still describes it in full.
+[`V6_WINDOWED_RANKINGS.md`](V6_WINDOWED_RANKINGS.md) still describes it in full.
 
 ## Contract v7
 

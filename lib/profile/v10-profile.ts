@@ -6,7 +6,7 @@ import { ListLimitError } from '@/lib/typed-array-codecs'
 
 /**
  * Where a profile lives, and how the v10 split maps onto the one profile
- * shape the app reads (docs/SOCIAL_V10.md, "The DashPay profile and the
+ * shape the app reads (docs/archive/SOCIAL_V10.md, "The DashPay profile and the
  * extension").
  *
  * On v2 and v9 a profile is one `profile` document in the profile contract.
@@ -347,7 +347,7 @@ const CONTRACT_BOUNDED_KEY_OUT_OF_BOUNDS = 20014
  * The refusal of a DashPay profile write signed with a key bound to another
  * contract (an app key scoped to the social contract), as a message for the
  * user; null for any other error. The login does not yet ask the wallet for a
- * `DashPay/profile` binding (docs/SOCIAL_V10.md), so such a key cannot create
+ * `DashPay/profile` binding (docs/archive/SOCIAL_V10.md), so such a key cannot create
  * or edit the DashPay half of a profile.
  */
 export function dashpayKeyBoundsRefusal(error: unknown): ListLimitError | null {

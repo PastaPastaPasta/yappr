@@ -1,170 +1,77 @@
-# Yappr Data Contracts
+# Yappr data contracts
 
-Dash Platform data contracts used by the Yappr dapp. The JSON here is the
-source of record for what was registered; deployed contract ids live in
-`lib/constants.ts` (testnet defaults) and the `.env.*` files (per-deployment
-overrides).
+The JSONs here are authored schemas, not a claim that each file is deployed.
+The current production default still uses social v2; `.env.devnet` selects
+Sakura social v16, blog v8, storefront v9, pollr v7 and DM v5. The planned
+clean-start testnet release selects social v17, blog v9, storefront v10,
+pollr v8 and DM v5, behind an App Connect anchor and group.
 
-## Social contract
+Registration ids and pinned member versions come from the deployment env and
+[release record](../docs/TESTNET_RELEASE.md). Until WP14/WP15 record registration
+and cut over configuration, do not describe the release set as live.
 
-| File | Status |
-|------|--------|
-| `yappr-social-contract-v2.json` | **Deployed** on testnet (`9oDC6xdg…`, staging/prod). 16 document types + the YAPP token. Topology `v2`: replies chain through a polymorphic `parentId`; like/repost/bookmark/quote share one `postId` keyspace. The on-chain copy has since gained the optional `post.embedContractId`/`embedDocType`/`embedId` fields via `scripts/update-social-contract.mjs`, and its YAPP token carries `keepsHistory` (transfer/freeze/mint/burn/pricing/purchase, all true — verified on chain 2026-09-18) which this file predates; `lib/contracts/bundled/testnet.json` is the faithful snapshot. |
-| `yappr-social-contract-v10.json` | **The 4.2.0-beta.7 cut** for the bonsia devnet (topology `v10`, not yet registered). v9's interaction surfaces in the beta.7 grammar (`moderatorAbilities`, `refersTo.where`/`findBy`), with real deletes of immutable posts and replies instead of tombstones, content up to 1000 characters / 2000 bytes, no `language` (one global `timeline`), `mediaHash` + `mediaFingerprint` required with `mediaUrl`, `keyGeneration` for the private feed, no `beat` (rolling trending on `like.byTrendHashtagPost` 24h/6h and `like.byTrendPost` 72h/24h), `skipIfAbsent` on every stored index over an optional property, reports the moderators resolve (`status`/`resolution` through `changeFields`), the `yapprProfile` extension of the DashPay profile (the profile contract is retired on v10), and a YAPP that starts paused with no price or unpause authority. Counts read from the list indexes (made `rangeCountable`; no count-only twins), one `repliesOf` index carries threads and their counts, and reposts are content-less quotes (no `repost` doctype; one quote or repost per author per target; a post must have a body). A post or reply carries at most one mention (`mentionedUserId`, shaped like `hashtag`; no `postMention` doctype), the reply and quote notification indexes are 3.5-day windows written once and kept a week (processing only); mentions and likes keep permanent indexes; likes have no `byLiker` (the heart state reads `byPost`, and one time-last author index serves counts, rankings, notifications and the unlike). 17,110 B signed. See [docs/SOCIAL_V10.md](../docs/SOCIAL_V10.md). |
-| `yappr-social-contract-v11.json` | **The 5.0.0-beta.1 cut**, was live on the sakura devnet until its 2026-10-06 wipe (topology `v11`). v10 plus D1: the like trend windows `outlivesDelete`, and the author indexes drop `$createdAt`, so an unlike names no time. D3: past 7 days only the seated team (the leader plus two members) deletes a post or reply. D4: removal records keep hashtag or root and `$createdAt`. Then **design M**: post and reply are moderated (`canBeDeleted: false`); every reference at them is `moderatedDocument`; the like trees are `preallocated` by the post's creator; and an author deletes with a tombstone (`deleted`, every content field cleared, conditional `immutable`). About 19,639 B signed, sha256 `374745b4…`. See [docs/SOCIAL_V11.md](../docs/SOCIAL_V11.md). |
-| `yappr-social-contract-v12.json` | **The 5.0.0-beta.2 cut**, live on the sakura devnet from its 2026-10-06 wipe as `78osKsoZ…` (topology `v12`) until the 2026-10-07 cut-over to v13; still on chain. v11 plus: `like.byAuthorPost`, `like.byHashtagPost` and `likeReply.byAuthorReply` are `summableOffCountIndex` counters of `byPost`/`byReply` (one counter per post instead of an entry per like; counts and rankings read the same, likers only through the target index), and `retractedWhen: {present: "deleted"}` on post and reply, so a banned or suspended author can still tombstone. 19,877 B signed, sha256 `5b9cf0cc…`. See [docs/SOCIAL_V12.md](../docs/SOCIAL_V12.md). |
-| `yappr-social-contract-v13.json` | **The mainnet candidate** (5.0.0-beta.2 grammar), was live on the sakura devnet from 2026-10-07 as `6ABCzyyX…` (topology `v13`; [docs/SAKURA_V13_DEPLOY.md](../docs/SAKURA_V13_DEPLOY.md)) until the 2026-10-08 beta.3 wipe. v12 plus: mainnet moderation (elected, contestable seat with a 30-day cool-down, 7-day join and 3-day vote windows); the file's interim is `contractOwner` and **mainnet registers `notYetUsable`** (`withInterim` in `scripts/register-lib.mjs`, applied by `register-feature-contract.mjs` and `validate-contract-offline.mjs --network mainnet`); a required immutable `reply.rootOwnerId` bound to the root post's owner, with `parentIsRoot` and a same-thread `where` on nested replies (no forged "replied to you", no reply crossing threads); no `likeReply.byAuthorReply`; reports with unique `[target, $ownerId]` indexes, profile reports (`about`), a moderators' key `box` on private post/reply reports, reason 9 and a 50M action fee; media arrays (`mediaUrls`/`mediaDigests`/`mediaKinds`, up to 4); a `live` marker so tombstones leave `ownerAndTime`; the block types moved to `yappr-blocks-contract.json`; defaults, rule names and unread index names compacted. ~18,824 B signed, sha256 `d58a25cb…`. See [docs/SOCIAL_V13.md](../docs/SOCIAL_V13.md). |
-| `yappr-social-contract-v14.json` | **The 5.0.0-beta.3 re-cut** (topology `v14`), was live on the sakura devnet from 2026-10-08 as `6GrRBNDe…` ([docs/SAKURA_BETA3_DEPLOY.md](../docs/SAKURA_BETA3_DEPLOY.md)) until the 2026-10-12 beta.5 wipe. v13 plus: YAPP starts unpaused (beta.3 refuses a `tokenCost` paid in a paused token with a paid 40711; beta.3 has no non-transferable flag, so YAPP is transferable on devnet); the post, reply and report rules rewritten with `countPresent` (same names, same behaviour); `report.deleteConstraints` `pending` (a reporter can withdraw a report only while no moderator has resolved it, 40147); and replies that store no owner (`parentOwnerId`, `rootOwnerId` and `parentIsRoot` dropped) with two derived notification windows, `rootOwnerRecent [$createdAt, rootPostId.$ownerId]` and `parentOwnerRecent [$createdAt, replyToReplyId.$ownerId]` (skipIfAbsent). Needs the 5.0.0-beta.3 SDK to parse. ~17,975 B signed, sha256 `b18f7c82…`. See [docs/SOCIAL_V14.md](../docs/SOCIAL_V14.md). |
-| `yappr-social-contract-v15.json` | **The 5.0.0-beta.4 re-cut, re-cut again in place for 5.0.0-beta.5** (topology `v15`), was live on the sakura devnet from 2026-10-12 as `BVW1hBXx…`, a member of the App Connect group ([docs/SAKURA_BETA5_DEPLOY.md](../docs/SAKURA_BETA5_DEPLOY.md)), until the 2026-10-13 beta.6 wipe. v14 plus: a **non-transferable YAPP** (token configuration `$formatVersion: "1"`, `transferable: false`; a transfer is refused 40726, and so is registering another contract that charges YAPP), the four YAPP costs **burn** (`effect: 1`; a cost paying the owner is refused 10280 with a non-transferable token), `baseSupply: 0`, still unpaused and unpausable; every fixed-size byte array written as a property type shorthand (`"identifier"`, `"bytes"` + `size`), which Platform stores short. The beta.5 re-cut adds up to 8 `mentionedUserIds` per post or reply (an element index) and the report rule `staysResolved`. Needs the 5.0.0-beta.5 SDK to register. 16,458 B signed, sha256 `9b6c7eed…`. See [docs/SOCIAL_V15.md](../docs/SOCIAL_V15.md). |
-| `yappr-social-contract-v16.json` | **The 5.0.0-beta.6 cut** (topology `v16`), live on the sakura devnet since 2026-10-13 as `4qctQYg3…` (maker nonce 25), a member of the App Connect group ([docs/SAKURA_BETA6_DEPLOY.md](../docs/SAKURA_BETA6_DEPLOY.md)). v15 plus up to **four tags per post**: `post.hashtag` becomes the typed array `post.tags` (1 to 4 distinct tags, `^[a-z0-9_]{1,61}$`, frozen and kept by a removal record), and `like.tags` repeats the post's list exactly (`where {"tags": "tags", "$ownerId": "postAuthor"}`: same elements, same order, 40127 otherwise). `tagAndTime`, `byHashtagPost` and `byTrendHashtagPost` keep their names, key `tags` and enter a document once per tag, so a like counts under every tag of its post; `byHashtagPost` stays a preallocated counter of `byPost`; `skipIfAbsent` is gone from all three (an empty list is never entered). Reads pin one tag with `contains`. The web client refuses a post naming more than four tags. Needs the 5.0.0-beta.6 SDK and nodes. ~16,498 B signed (the validator's estimate), sha256 `63dcfa91…`. See [docs/SOCIAL_V16.md](../docs/SOCIAL_V16.md). |
-| `yappr-social-contract-v17.json` | **The testnet production cut** (topology `v17`), not yet registered (a throwaway copy was probed on sakura). v16 plus a `live` marker on `post.timeline` `[live, $createdAt]` (rangeCountable; `documentsCountable` dropped), `post.tagAndTime` `[live, tags, $createdAt]` and `reply.ownerAndTime` `[live, $ownerId, $createdAt]` (all `skipIfAbsent`: every read pins `live == true`), a reply `notEmpty` rule, the `quoteOwner` count rule, no self-likes, https/ipfs-only media and an https website, byte caps on profile and report text, report reasons up to 31, a YAPP no one can mint, burn or freeze, and several write-once private feeds per identity (`privateFeed` replaces `privateFeedState`; grants and rekeys name their feed, caps checked on chain). ~18,019 B signed, sha256 `b21d61f7…`. See [docs/SOCIAL_V17.md](../docs/SOCIAL_V17.md). |
-| `yappr-social-contract-v9.json` | Was **deployed** on the moutai devnet (retired; topology `v9`), and cannot be read by a beta.7 SDK (it uses the removed beta.6 grammar). Kept while the client still has a `v9` topology. The 4.2.0-beta.4 cut: flat threads with `likeReply`, posts-only repost/bookmark and dual quote fields, all `refersTo`-checked; indexOnly `like`/`likeReply`/`beat` with ranked, count and daily-windowed axes; an optional inline `post.hashtag`; permanent post/reply with consensus `immutable` lists (tombstone deletes); contract moderation with an elected team (the owner moderates until one is seated) and a warning list; optional YAPP costs with contract-owner gas sponsorship, a 100 YAPP once-per-identity starter grant and credit action fees on post/reply; `distinctFrom: $ownerId` on relationship identifiers; private-feed writer gates; and `blockFollow.followedBlockers` as a typed identifier array. Needs protocol v14 on **4.2.0-beta.4**. See [docs/SOCIAL_V9.md](../docs/SOCIAL_V9.md). |
+## Planned release set
 
-**The 4.2.0-beta.5 re-cut** (moutai was wiped) edits v9, storefront, blog and
-pollr in place with `propertyConstraints` co-occurrence rules and keeps every
-other file byte-identical; no topology label moves and no contract takes a
-document `ttl`. See [docs/CONTRACTS_BETA5.md](../docs/CONTRACTS_BETA5.md) for
-the rules, the rejected candidates (key-exchange TTL among them) and the
-sha256 of every file.
+[`scripts/app-connect-set.mjs`](../scripts/app-connect-set.mjs) owns the
+registration order and complete SHA-256 pins. Hashes below are the source-file
+hashes at this revision; the publisher also verifies them before rendering
+network-specific moderation configuration.
 
-**The 4.2.0-beta.6 re-cut** (moutai was wiped again) edits only social v9 and
-blog in place. v9 gains the `report` type (readers report a post or reply to
-the moderators, who dismiss a report by deleting it), one-hour election
-windows for devnet, quote and nested-reply owner bindings, and countable
-tombstone buckets for quote and reply counts. Blog (topology `v5`) refuses a
-comment on a comments-off post and a post by anyone but the blog's owner.
-Every other file is byte-identical to beta.5. See
-[docs/CONTRACTS_BETA6.md](../docs/CONTRACTS_BETA6.md).
+| Role | Source file | SHA-256 |
+| --- | --- | --- |
+| app | [yappr-app-contract.json](yappr-app-contract.json) | `d3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41` |
+| social | [yappr-social-contract-v17.json](yappr-social-contract-v17.json) | `b21d61f7cbfe37d5b784bae52884c9ac0db42b87a97152d2a1519c7c2f605bcf` |
+| blocks | [yappr-blocks-contract.json](yappr-blocks-contract.json) | `ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677` |
+| dmV5 | [yappr-dm-contract-v5.json](yappr-dm-contract-v5.json) | `4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21` |
+| blog | [yappr-blog-contract.json](yappr-blog-contract.json) | `a03012221e543b850d7524b27148e6b9c2b84fae3a0c291426e22de30d6dccef` |
+| pollr | [pollr-contract.json](pollr-contract.json) | `a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347` |
+| storefront | [yappr-storefront-contract.json](yappr-storefront-contract.json) | `581122bbf27b76ed014c2695e6c84d4dc14a9712c9c6fb97f9f3614a4455bdca` |
 
-**The 4.2.0-beta.7 re-cut** for the new devnet bonsia (a fresh chain) adds
-social v10 above, translates blog, storefront and pollr to the beta.7 grammar
-(beta.7 removed `canBeDeletedByModerators`, `propertyAgreement` and `lookup`),
-and fixes QA D-25 in storefront (topology `v5`: an order copies its store's
-`status` and only an active store takes one). DM, key exchange and the vault
-files are unchanged. See [docs/SOCIAL_V10.md](../docs/SOCIAL_V10.md) for the
-design, the sizes and the sha256 of every file.
+The passkey vault is implemented and registered by its own work package (PR
+[#786](https://github.com/PastaPastaPasta/yappr/pull/786)); its current code and
+schema are deliberately outside this cleanup. The password-era vault is not
+a release member. Consult the set manifest again after that PR lands.
 
-**The 5.0.0-beta.1 re-cut** edits only blog, in place (**blog v6**, client
-topology `v6`). 5.0 refuses `immutableAllowSetting` on every parse, so
-`blogPost.publishedAt` becomes the conditional entry
-`{"property":"publishedAt","when":{"present":"$old.publishedAt"}}`. `blog` and
-`blogPost` are now moderated-kind (only moderators remove them, keeping records),
-so the three references at them are `moderatedDocument` (40144 at registration as
-`deletableDocument`). A comment no longer copies its post's owner:
-`postOwnerAndTime` indexes `blogPostId.$ownerId`, read through that reference.
-The beta.7 blog loads on neither a 5.0 SDK nor a 5.0 node,
-and the beta.7 SDK cannot read v6. Every other file is byte-identical. See
-[docs/PLATFORM_V5_BETA1_UPGRADE.md](../docs/PLATFORM_V5_BETA1_UPGRADE.md).
+- [Social v17](../docs/SOCIAL_V17.md): release rules and live indexes.
+- [Blog v9](../docs/BLOG_V9.md), [storefront v10](../docs/STOREFRONT_V10.md),
+  [DM v5](../docs/DM_V5.md), and [non-social reference](../docs/NON_SOCIAL_CONTRACTS.md).
+- [App Connect](../docs/APP_CONNECT_CONTRACTS.md): anchor, group, registration
+  prerequisites, `id:version` pins and validation.
 
-**Blog v7** (5.0.0-beta.2, client topology `v7`) edits only blog, in place,
-for mainnet: per-contract elected moderation (the file's interim is the
-contract owner; mainnet registers `notYetUsable`, as for social v13);
-action fees on `blog`/`blogPost` (80M) and `blogComment` (16M) instead of the
-YAPP comment cost; `blog.timeline` and `blogPost.timeline`; the comment and
-follower count twins merged into `postAndTime` and `followers`;
-`followersTrend` and `discussedRecent` 72h windows; `blogPost.ownerAndTime`,
-`blogComment.ownerAndTime` and `blogFollow.following` dropped; and an author's
-post tombstone (`deleted`, `hasBody`/`tombstoneIsBlank`, `deleted` frozen,
-`retractedWhen`). `publishedAt` may run at most 10 minutes past `$updatedAt`,
-and image URLs must be https:// or ipfs://. Was live on sakura from 2026-10-08
-(`4F1Wi4di…`) until the 2026-10-12 beta.5 wipe. See
-[docs/NON_SOCIAL_CONTRACTS.md](../docs/NON_SOCIAL_CONTRACTS.md#blog).
+The elected social, blog and storefront contracts render `notYetUsable` for
+testnet with 3600-second join/vote windows. Moderated writes open only after
+teams are seated. Mainnet has different minimum windows. Release YAPP has
+no manual authorities: its only supply is the 100-YAPP identity claim.
 
-**Property type shorthands** (5.0.0-beta.4): every non-social file here, and
-social v15, writes its 32-byte identifiers as `{"type": "identifier"}` and its
-other fixed-size byte arrays as `{"type": "bytes", "size": n}`. Platform
-expands them before validating (each file parses exactly as its long form) and
-stores them short, so the next registration of each contract is smaller
-(storefront −1,163 B). Contracts already registered keep their long form until
-they are next registered. See [docs/SOCIAL_V15.md](../docs/SOCIAL_V15.md#shorthands-in-every-contract).
+## Files retained until cut-over
 
-**The 5.0.0-beta.5 re-cuts** edit four files in place for sakura's beta.5
-genesis: **pollr v7** (topology `v7`: one ballot per voter with a `choices`
-array indexed per element, the close as a `where` condition, the option and
-single-choice rules reading the poll; no `optionCount`), **storefront v8** and
-**blog v8** (topology `v8`: an order's open store and a comment's open post are
-`where` conditions instead of copied fields), and **social v15** (up to 8 `mentionedUserIds` with an element index, and the report
-rule `staysResolved`). They need the 5.0.0-beta.5 SDK and nodes. They went live on
-sakura on 2026-10-12 ([docs/SAKURA_BETA5_DEPLOY.md](../docs/SAKURA_BETA5_DEPLOY.md)), and storefront, blog and pollr were registered again unchanged on the 2026-10-13 beta.6 genesis ([docs/SAKURA_BETA6_DEPLOY.md](../docs/SAKURA_BETA6_DEPLOY.md)). Sizes, sha256s and the tooling are in
-[docs/PLATFORM_V5_BETA5_UPGRADE.md](../docs/PLATFORM_V5_BETA5_UPGRADE.md).
+- `yappr-social-contract-v2.json` and `yappr-profile-contract.json` support the
+  current production defaults. Social v9–v15 still have client/test/tool
+  references, while v16 is required by `/devnet`; age alone is not a deletion
+  criterion.
+- `yappr-dm-contract.json` is the old v4 authored shape; production still uses
+  its existing v3 deployment. The release registers neither a legacy DM
+  contract nor a migration reader.
+- `key-exchange-v2.json`, `yappr-vault-contract.json`,
+  `encrypted-key-backup-contract.json` and `yappr-auth-vault-contract.json`
+  remain referenced by the retired-contract manifest or existing deployment
+  tooling. None is registered for the release (D9/D10).
+- Four unreferenced early standalone/scratch JSONs were removed in WP17.
+  The current blocks file is **plural**, `yappr-blocks-contract.json`.
 
-**Storefront v7** (5.0.0-beta.3, client topology `v7`) edits only storefront,
-in place: `storeItem.variants` becomes a typed table (option names with stable
-ids, one byte-array selector and price per combination, optional stock, SKU,
-weight and image-index lists, kept aligned by nine `propertyConstraints`
-rules), `imageUrls` rises to 12, and the inherited descriptions are cut to 120
-characters (~17,768 B signed). v6 stores and items are abandoned (no
-migration). See [docs/STOREFRONT_V7.md](../docs/STOREFRONT_V7.md).
+[RELEASE_CLEANUP.md](../docs/RELEASE_CLEANUP.md) records the safe removals and
+production-dependent deferrals. Historical grammar experiments and deployment
+records are in [docs/archive](../docs/archive/README.md); recover deleted
+batteries and scratch schemas from git history.
 
-**Storefront v6** (5.0.0-beta.2, client topology `v6`) edits only storefront,
-in place, for mainnet, on top of the digital products PR #638 (`fulfillment`,
-`itemDeliverable`, `orderDelivery`): per-contract elected moderation (the
-file's interim is the contract owner; mainnet registers `notYetUsable`, as for
-social v13); action fees on `store` (1000M), `storeItem` (50M), `storeReview`
-(16M) and `itemReview` (8M) instead of the YAPP review costs; stores and items
-moderator-deletable, so every reference at them is `moderatedDocument`;
-`storeOrder.sellerId` distinct from the buyer (no self-orders); no stored
-`buyerId` on status updates or deliveries (`buyerFeed`/`buyerDeliveries` index
-`orderId.$ownerId`); status updates undeletable; a required `store.category`
-slug with `byStatus` and `byCategory` (ranked at `category`); seller order
-lists and counts on `storeId`; item ratings only per store; the dead indexes
-and count twins dropped; 5,120 B payload and variants caps; https/ipfs store
-images. Was registered on sakura from 2026-10-08 (`5qh1gpJY…`) until the 2026-10-12 wipe. See
-[docs/NON_SOCIAL_CONTRACTS.md](../docs/NON_SOCIAL_CONTRACTS.md#storefront).
+## Validate before registering
 
-These are the social contract shapes the client knows (`v2`, `v9`, `v10`, `v11`, `v12`, `v13`, `v14`, `v15`). The differences are wired into the app
-through `lib/contract-topology.ts` and selected per deployment with
-`NEXT_PUBLIC_CONTRACT_TOPOLOGY` (unset = `v2`; any other value fails the
-build). `scripts/validate-contract-offline.mjs` parses a contract through full
-wasm validation twice (the wasm-sdk, and `@dashevo/wasm-dpp2`, which alone runs
-the meta-schema and the index-shape rules), audits the node-side rules both
-parses skip, and measures the create transition against the 20,480-byte cap,
-without touching the network.
+```sh
+node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v17.json --network testnet --strict-size
+node scripts/verify-appconnect.mjs --self-test
+node scripts/verify-v10.mjs --self-test
+```
 
-Superseded social cuts (v3 to v8), their generators (`build-vN-contract.py`)
-and their batteries are not kept in the tree; recover them from git history.
-A new cut is edited in place as a new `yappr-social-contract-vN.json`, checked
-with the offline validator, registered with
-`scripts/register-social-v3-draft.mjs`, and proven live with the
-`verify-v10.mjs` battery (`--contract-file` selects v10 or v11) and
-`prove-merged-counts.mjs` (`verify-v8.mjs` covers the moderation grammar on a
-v9 chain).
-
-## App Connect anchor
-
-- `yappr-app-contract.json` — the `yappr-app` anchor (not yet registered). Its id is the App Connect app id, and its create registers Yappr's contract group ("Yappr", maker-owned, no admins) and joins it. It sets `requiresIdentityEncryptionBoundedKey: 2`, so identities hold ENCRYPTION keys bound to it with a current-key pointer that `identities.contractKeys` returns. Its only type is an owner-only `appInfo` (version, name, https origin). 707 B signed, sha256 `d3acd888…`. Social v15, blocks, DM v5, blog, pollr, storefront and the auth vault join the group at their next registration, in `scripts/register-app-connect-contracts.mjs`. Key exchange, the password vault, key backup and DM v4 are retired on PV14. See [docs/APP_CONNECT_CONTRACTS.md](../docs/APP_CONNECT_CONTRACTS.md).
-
-## Feature contracts
-
-- `yappr-blocks-contract.json` — `block`, `blockFilter` and `blockFollow`, split out of social v13 (bare schemas, unmoderated; `block.ownerBlocks` dropped, everything else as social v12 declared them). Live on sakura since the 2026-10-13 beta.6 genesis as `6QCijw1i…` (`NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`), read and written by the client on topologies `v13` to `v16`. See [docs/SOCIAL_V13.md](../docs/SOCIAL_V13.md#5-the-blocks-contract). Not to be confused with the legacy `yappr-block-contract.json` below
-- `yappr-profile-contract.json` — unified profile contract (avatar/banner live here, not in the social contract). **Retired on v10**, where the DashPay `profile` plus social `yapprProfile` replace it; topologies v2 and v9 still read it. **This file is the beta.4 cut (v2): `paymentUris` and `socialLinks` are typed string arrays (`socialLinks` as `"platform:handle"`), where v1 (testnet/prod) stores JSON strings** — see [docs/SOCIAL_V9.md](../docs/SOCIAL_V9.md)
-- `yappr-dm-contract.json` — encrypted direct messages (`conversationInvite`, `directMessage`, `readReceipt`). **This file is the beta.2 re-cut, registered on the moutai devnet; testnet (`J7MP9YU1…`) still runs the previous cut.** It adds `rangeCountable` on `directMessage.conversation` (unread is a count query, not a 100-message download), `refersTo: {type: identity}` on `conversationInvite.recipientId`, and an `immutable` list per doctype. See `docs/NON_SOCIAL_CONTRACTS.md`
-- `yappr-blog-contract.json` — long-form blog posts, comments, follows, reports. **This file is blog v9, the testnet production cut (topology v9: a `live` marker keys the post listings, `publishedAt` required, byte caps, a `report` type; [docs/NON_SOCIAL_CONTRACTS.md](../docs/NON_SOCIAL_CONTRACTS.md#what-v9-changed-from-v8-1)), not yet registered. Before it, blog v8, the 5.0.0-beta.5 re-cut (topology v8: a comment's open post is a `where` condition), live on sakura as `8XAk3nrb…` since the 2026-10-13 beta.6 genesis (`C5zxo8z6…` on beta.5). Before it, blog v7, the 5.0.0-beta.2 mainnet-ready cut (topology v7, live on sakura as `4F1Wi4di…` from 2026-10-08 to the beta.5 wipe): elected moderation, action fees instead of YAPP comments (blog 80M, post 80M, comment 16M), `blog.timeline`/`blogPost.timeline`, merged count twins, 72h `followersTrend`/`discussedRecent` windows, and an author's post tombstone with `retractedWhen` ([docs/NON_SOCIAL_CONTRACTS.md](../docs/NON_SOCIAL_CONTRACTS.md#blog)).** Before it, blog v6, the 5.0.0-beta.1 re-cut (topology v6): `moderatedDocument` references at `blog`/`blogPost`, a conditional `immutable` entry for `publishedAt`, and no `blogComment.blogPostOwnerId` (`postOwnerAndTime` derives it as `blogPostId.$ownerId`) ([docs/PLATFORM_V5_BETA1_UPGRADE.md](../docs/PLATFORM_V5_BETA1_UPGRADE.md)).** Before it, the beta.7 translation of the beta.6 cut (topology v5, comments-off and owner gate kept). Before that, the beta.4 cut (v4): v3 plus a warning list and `labels` as typed string arrays ([docs/SOCIAL_V9.md](../docs/SOCIAL_V9.md)).** v3 (beta.3) was the moderated re-cut, with `blog`/`blogPost`/`blogComment` moderator-deletable and NO edit history any more (see [docs/SOCIAL_V8.md](../docs/SOCIAL_V8.md)); testnet (`9jfarXPw…`) still runs the v1 cut.** On top of the beta.2 cut, which adds the refersTo chain (post→blog, comment→post with a `blogPostOwnerId` agreement against the post's `$ownerId`, follow→blog), countable/ranked comment and follower trees, a daily-grid `followersByDay`, frozen `blogId`/write-once `publishedAt`, and YAPP-priced comments
-- `yappr-storefront-contract.json` — stores, items, orders, reviews, shipping, digital delivery, reports. **This file is storefront v10, the testnet production cut (topology v10: status tracking and notes sealed to the order, items by status, https/ipfs images, a `report` type; [docs/STOREFRONT_V10.md](../docs/STOREFRONT_V10.md)), not yet registered. Before it, storefront v9 (per-item shipping zones) over v8, the 5.0.0-beta.5 re-cut (topology v8: an order's open store is a `where` condition), live on sakura as `9hZwi4W3…` since the 2026-10-13 beta.6 genesis (`9ujMJQ6N…` on beta.5).** Before it, storefront v7 (topology v7): v6 with `storeItem.variants` as a typed table and 12 image URLs ([docs/STOREFRONT_V7.md](../docs/STOREFRONT_V7.md)), live on sakura as `2P2KqWzZ…` from 2026-10-09 to the beta.5 wipe. Before it, storefront v6, the 5.0.0-beta.2 mainnet-ready cut (topology v6, registered on sakura as `5qh1gpJY…`): digital products ([docs/DIGITAL_PRODUCTS.md](../docs/DIGITAL_PRODUCTS.md)), elected moderation, action fees instead of YAPP reviews (store 1000M, item 50M, store review 16M, item review 8M), moderator-deletable stores and items, no self-orders, derived buyer feeds, store categories ([docs/NON_SOCIAL_CONTRACTS.md](../docs/NON_SOCIAL_CONTRACTS.md#storefront)).** Before it, the beta.7 cut (topology v5): v4 in the beta.7 grammar plus QA D-25 (`storeOrder.storeStatus`, `storeIsOpen`; [docs/SOCIAL_V10.md](../docs/SOCIAL_V10.md)). Before that, the beta.4 cut (v4): v3 plus a warning list, `storeItem.tags`/`imageUrls` as typed string arrays and `storeReview.sellerId` distinct from the reviewer ([docs/SOCIAL_V9.md](../docs/SOCIAL_V9.md)).** v3 (beta.3) was the moderated re-cut, with `storeReview`/`itemReview` moderator-deletable (see [docs/SOCIAL_V8.md](../docs/SOCIAL_V8.md)); testnet (`2AUBj86M…`) still runs the v1 cut.** On top of the beta.2 cut, which adds proved rating averages/rankings, item reviews, and a refersTo chain with writer gates (only a store's owner lists under it, only an order's seller posts its status, only its buyer reviews it), frozen `storeId`, countable orders, YAPP-priced reviews
-- `pollr-contract.json` — polls. **This file is pollr v8, the testnet production cut (topology v8: v7 without the poll indexes; polls are read by id only), not yet registered. Before it, pollr v7, the 5.0.0-beta.5 re-cut (topology v7: one ballot per voter with a `choices` array; see [docs/PLATFORM_V5_BETA5_UPGRADE.md](../docs/PLATFORM_V5_BETA5_UPGRADE.md)), live on sakura as `AG5Z5Yzu…` since the 2026-10-13 beta.6 genesis (`4HJTBsr9…` on beta.5). Before it, pollr v6, the 5.0.0-beta.3 cut (topology v6, registered on sakura as `Fq5yTk2Y…` on 2026-10-08): v5 plus the owner's delete of a poll until its first ballot. `poll` is `canBeDeleted: true` with the `deleteConstraints` rule `noBallots` (`countOf vote {pollId: $id} == 0`, a paid 40147 when broken), which counts off the new plain countable `vote.byPoll [pollId]`; withdrawn ballots count, so a poll anyone voted on is permanent. `vote.pollId` becomes a `deletableDocument` reference (a `permanentDocument` one at a deletable type is refused at registration, 40122), so a ballot on a deleted poll is a 40120. Everything else is v5's. Parses on beta.3 at 4,150 B ([docs/NON_SOCIAL_CONTRACTS.md](../docs/NON_SOCIAL_CONTRACTS.md#polls-pollr)).** Before it, pollr v5 (topology v5, registered on sakura as `BX94nj87…`): a permanent, immutable `poll` with an `options` array (2-10 unique), `optionCount`, `multiChoice` and a required `endsAt` at most 31 days out, and one stored, mutable, undeletable `vote` doctype whose ballots copy the poll's `optionCount`/`multiChoice`/`endsAt` through a permanentDocument reference and are editable until the close (`writtenBeforeClose`: `$updatedAt <= pollEndsAt`) and final after; `choice` is optional (absent = withdrawn or unticked) and the countable tally index skips it when absent. v5 replaced the beta.7 v4 cut (indexOnly `vote`/`multiVote`, preallocated, ranked winner), still registered on sakura and read-only in the client. The testnet contract (`GBCR8Jqt…`) is externally owned and still runs v3; the standalone Pollr repo needs the v5 cut before a shared testnet v5 exists. See `docs/NON_SOCIAL_CONTRACTS.md`
-- `yappr-vault-contract.json` — contract-bound encryption keys + encrypted storage
-- `yappr-auth-vault-contract.json` — auth vault + access grants (password era: not in the testnet release set, R-M6; the passkey vault replaces it)
-- `encrypted-key-backup-contract.json` — passphrase-encrypted key backups
-
-  These three carried a legacy doctype key `mutable` that meta-schema v3 refuses
-  (10101; the wasm-sdk drops it silently), so devnets published them from the
-  testnet snapshot (`source-contracts.json`). From the 5.0.0-beta.4 shorthand
-  re-cut the files say `documentsMutable` instead and pass full validation, so
-  the next registration can publish them from here.
-- `key-exchange-v2.json` — QR login key-exchange protocol (deployed everywhere). An indexOnly + TTL re-cut was built and measured 2026-09-18: 42% more credits per response (93.8M vs 66.3M) because the payload must stay in a permanent index, so it was dropped
-
-So for those four, this directory is the source of record for the **next**
-registration, not for what testnet runs today; the client picks between them at
-runtime with `NEXT_PUBLIC_{STOREFRONT,BLOG,DM,POLLR}_TOPOLOGY`. They are
-published with `scripts/register-feature-contract.mjs --file <name>` and
-verified live by the `scripts/verify-*.mjs` batteries. Superseded versions are
-not kept in the tree; recover them from git history. Devnet ids and the full
-per-contract reference are in `docs/NON_SOCIAL_CONTRACTS.md`.
-
-## Legacy (merged into the social contract)
-
-- `yappr-hashtag-contract.json`, `yappr-mention-contract.json`,
-  `yappr-block-contract.json` — early standalone contracts whose document
-  types were folded into the social contract (the block types leave it again
-  on v13, for `yappr-blocks-contract.json` above)
-- `yappr-minimal.json` — minimal post+profile scratch contract for SDK testing
+These checks are offline. Registration and live batteries require the release
+runbook's network, maker, interim and signing controls. Do not publish a
+standalone replacement for an App Connect member.

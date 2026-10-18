@@ -9,7 +9,7 @@
  *
  * Storefront v6 (the mainnet cut) files every store under a category slug, prices store/item/review creates with an
  * action fee instead of YAPP, and derives the buyer of a status update (no `buyerId`). v7 stores a listing's variants
- * as the typed table (docs/STOREFRONT_V7.md), so the toy store carries variant listings: the 7 colour × 2 pack-size
+ * as the typed table (docs/archive/STOREFRONT_V7.md), so the toy store carries variant listings: the 7 colour × 2 pack-size
  * squishy toy whose v6 JSON outgrew 5,120 bytes, a 3 × 4 pop-it, and a 5-axis cube with 100 combinations. Before v7
  * the same tables are written as the v1–v6 JSON string. v9 (docs/STOREFRONT_V9.md) lets an item name the store zones
  * it ships under, so two listings are limited to some of their store's zones (`zones`), written as `shippingZoneIds`.

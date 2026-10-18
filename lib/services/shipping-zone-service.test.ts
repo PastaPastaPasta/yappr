@@ -23,7 +23,7 @@ beforeEach(() => {
   }));
 });
 
-describe('zone replacements (docs/SOCIAL_V9.md TODO 20)', () => {
+describe('zone replacements (docs/archive/SOCIAL_V9.md TODO 20)', () => {
   it('a zone edit that does not name postalPatterns or tiers re-sends both as JSON strings', async () => {
     await shippingZoneService.updateZone('zone', 'owner', storeId, { name: 'Domestic (renamed)' });
     const replacement = updateDocument.mock.calls[0][4];

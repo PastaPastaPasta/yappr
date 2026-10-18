@@ -1,7 +1,7 @@
 /**
  * Shared harness for the registration-day contract batteries
  * (verify-storefront.mjs, verify-blog.mjs, verify-dm.mjs, verify-pollr.mjs,
- * verify-tips.mjs — see docs/NON_SOCIAL_CONTRACTS.md).
+ * verify-tips.mjs — see docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md).
  *
  * Every helper decides a write's outcome by READING IT BACK from the chain,
  * never from the SDK's throw/no-throw: DAPI 504s on confirmation waits for
@@ -132,7 +132,7 @@ export function decodeDriveError(text) {
   });
 }
 
-/** The personal account's slot in the private seed ledger (docs/PLATFORM_BETA4_UPGRADE.md). */
+/** The personal account's slot in the private seed ledger (docs/archive/PLATFORM_BETA4_UPGRADE.md). */
 const PERSONAL_PERSONA_IDX = 900;
 
 /** A `--moderator` value: a ledger persona index, `maker` or `personal`. */

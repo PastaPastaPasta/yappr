@@ -2,7 +2,7 @@
 
 Sakura's Platform chain was wiped for 5.0.0-beta.5 at about 20:15Z on 2026-10-12 and restarted at height 1, with all 13 nodes on Drive/DAPI 5.0.0-beta.5 (protocol 14). Core was kept (chainlocked ~103.8k). Beta.5 could not run in place, because #5350's unsigned-integer index rekey only runs on the first PV14 block. This record covers the rebuild and the `/devnet` cut-over:
 
-- the App Connect contract set ([APP_CONNECT_CONTRACTS.md](APP_CONNECT_CONTRACTS.md)), a new narrow contract group registered by the `yappr-app` anchor;
+- the App Connect contract set ([APP_CONNECT_CONTRACTS.md](../APP_CONNECT_CONTRACTS.md)), a new narrow contract group registered by the `yappr-app` anchor;
 - the beta.5 re-cuts: social v15 with multiple mentions, pollr v7, storefront v8 and blog v8 ([PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md));
 - the legacy sign-in contracts, outside any group.
 
@@ -25,7 +25,7 @@ Keys that were added to an identity after its creation on the beta.3 chain did n
 
 The replayed maker starts at identity nonce 0. Its nonces 1–12 were **burned** with twelve 1M-credit transfers to the CI identity, which cost 27.3M credits (~1.6¢), 12M of them moved to CI. This did two things:
 
-- the App Connect anchor landed on nonce 13, so `APP_ID` and `GROUP_ID` are the ids [APP_CONNECT_CONTRACTS.md](APP_CONNECT_CONTRACTS.md) planned;
+- the App Connect anchor landed on nonce 13, so `APP_ID` and `GROUP_ID` are the ids [APP_CONNECT_CONTRACTS.md](../APP_CONNECT_CONTRACTS.md) planned;
 - no new contract reuses a beta.3 contract id. Browsers and the old bundled snapshot have seen those ids with different contents.
 
 `scripts/register-app-connect-contracts.mjs` registered the set from the sha256-pinned files in `scripts/app-connect-set.mjs`. The run was journaled and preceded by an unsigned and a signed dry run. The anchor went first (`--upto app`) and was checked before the rest. Each create decoded with both wasm builds, and each contract was read back with proofs, membership included. Key exchange, vault and key backup were then created **with no group registration and no membership** by `ops/publish-legacy-beta5.mjs`, from the pinned testnet snapshot (`6101eb0f…`). The snapshot keeps vault's `requiresIdentityEncryptionBoundedKey: 2`, which the bare `contracts/yappr-vault-contract.json` lacks. DM v4 was not registered: a fresh chain has no legacy threads to read.

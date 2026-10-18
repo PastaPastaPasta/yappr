@@ -229,7 +229,7 @@ describe('a first edit without a profile', () => {
   });
 });
 
-describe('profile v2 typed arrays (docs/SOCIAL_V9.md)', () => {
+describe('profile v2 typed arrays (docs/archive/SOCIAL_V9.md)', () => {
   it('writes lists on profile v2, "platform:handle" split on the first colon only', async () => {
     vi.stubEnv('NEXT_PUBLIC_PROFILE_TOPOLOGY', 'v2');
     try {

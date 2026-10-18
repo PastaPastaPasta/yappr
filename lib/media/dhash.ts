@@ -24,7 +24,7 @@
  *
  * Steps 3 and 4 are {@link dHashFromLuma}, which must agree bit for bit with
  * the seeder's `dHashFromLuma` (`scripts/seed/media-hash.mjs`) and with
- * docs/SOCIAL_V10.md; `dhash-vectors.json` pins both.
+ * docs/archive/SOCIAL_V10.md; `dhash-vectors.json` pins both.
  *
  * Two fingerprints of the same picture differ in a few bits at most. More than
  * {@link MEDIA_CHANGED_DISTANCE} differing bits means the served image is not
@@ -42,7 +42,7 @@ const GRID_HEIGHT = DHASH_ROWS
 
 /**
  * Hamming distances above this mean the image changed; 12 or less is "the
- * same image, re-encoded", as docs/SOCIAL_V10.md pins it for every client.
+ * same image, re-encoded", as docs/archive/SOCIAL_V10.md pins it for every client.
  * Measured there: the same picture at half size differs by 6 bits, a
  * different picture by 24 (32 is the expectation for unrelated hashes).
  */
