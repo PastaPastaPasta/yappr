@@ -216,7 +216,7 @@ describe('AppConnectSessionManager across tabs', () => {
     expect(storedGrantedAt()).toBe(renewed.grantedAt)
   })
 
-  it('drops a renewal that a logout overtook while its grant was being stored', async () => {
+  it.each(['logout', 'logoutLocally'] as const)('drops a renewal that %s overtook while its grant was being stored', async (method) => {
     await storeFromAnotherTab(grant('alice', 1))
     await appConnectSessions.restore('alice')
     const store = appConnectSessions.keyStore()
@@ -229,7 +229,7 @@ describe('AppConnectSessionManager across tabs', () => {
 
     const renewing = appConnectSessions.adopt(walletGrant('alice', 5))
     await vi.waitFor(() => expect(save).toHaveBeenCalled())
-    await appConnectSessions.logout('alice')
+    await appConnectSessions[method]('alice')
     proceed()
 
     await expect(renewing).rejects.toThrow('Signed out while the wallet was connecting')
@@ -334,5 +334,47 @@ describe('AppConnectSessionManager across tabs', () => {
     await appConnectSessions.yieldToRawKey('alice')
     expect(appConnectSessions.current()).toBeNull()
     expect(storedGrantedAt()).toBe(3)
+  })
+})
+
+
+describe('tab-local wallet sign-out', () => {
+  beforeEach(async () => {
+    await appConnectSessions.logout('alice')
+    backend.data.delete('session:devnet')
+  })
+  it('drops the active encryption key without clearing a newer shared grant', async () => {
+    await appConnectSessions.logout('alice')
+    const withEncKey: AppConnectSession = { ...grant('alice', 1), encKeys: [{ keyId: 7, contractId: 'app', purpose: 1, keyRef: 'key-enc' }] }
+    await new AppConnectKeyRingStore(backend).save(withEncKey, new Map([['key-group', new Uint8Array(32).fill(7)], ['key-enc', new Uint8Array(32).fill(8)]]))
+    expect(await appConnectSessions.restore('alice')).toBe(true)
+    expect(appConnectEncryptionKey('alice')).not.toBeNull()
+    await storeFromAnotherTab(grant('alice', 2))
+    appConnectSessions.logoutLocally('alice')
+    expect(appConnectSessions.current('alice')).toBeNull()
+    expect(appConnectEncryptionKey('alice')).toBeNull()
+    expect(useAppConnectStatus.getState().identityId).toBeNull()
+    expect(storedGrantedAt()).toBe(2)
+  })
+
+  it('fences a key-ring read that finishes after local sign-out', async () => {
+    await storeFromAnotherTab(grant('alice', 3))
+    const store = appConnectSessions.keyStore()
+    const realLoad = store.load.bind(store)
+    let release: () => void = () => undefined
+    let captured = false
+    const load = vi.spyOn(store, 'load').mockImplementationOnce(async (...args) => {
+      const session = await realLoad(...args)
+      await new Promise<void>((resolve) => { release = resolve; captured = true })
+      return session
+    })
+    const restoring = appConnectSessions.restore('alice')
+    await vi.waitFor(() => expect(captured).toBe(true))
+    appConnectSessions.logoutLocally('alice')
+    release()
+    expect(await restoring).toBe(false)
+    expect(appConnectSessions.current('alice')).toBeNull()
+    expect(storedGrantedAt()).toBe(3)
+    load.mockRestore()
   })
 })

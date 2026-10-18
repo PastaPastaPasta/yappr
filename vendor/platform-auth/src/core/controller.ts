@@ -105,6 +105,8 @@ export class PlatformAuthController {
   /** Bumped whenever a session is stored or ended, so a sign-in can tell it was overtaken. */
   private epoch = 0
 
+  private restoringIdentityId: string | null = null
+
   /** The tail of the session commits and logouts, which run one at a time and never interleave. */
   private lifecycle: Promise<unknown> = Promise.resolve()
 
@@ -224,12 +226,14 @@ export class PlatformAuthController {
 
     try {
       const snapshot = await this.deps.sessionStore.getSession()
+      if (startedAt !== this.epoch) return null
       if (!snapshot) {
         this.patchState({ isAuthRestoring: false })
         return null
       }
 
       const identityId = snapshot.user.identityId
+      this.restoringIdentityId = identityId
       const hasPrivateKey = await this.deps.secretStore.hasPrivateKey(identityId)
       if (startedAt !== this.epoch) return null
       if (!hasPrivateKey) {
@@ -265,6 +269,8 @@ export class PlatformAuthController {
         isAuthRestoring: false,
       })
       return null
+    } finally {
+      if (startedAt === this.epoch) this.restoringIdentityId = null
     }
   }
 
@@ -446,14 +452,15 @@ export class PlatformAuthController {
   /** Another tab already cleared shared storage. Do not erase a newer login or its keys. */
   public logoutLocally(since = this.epoch): Promise<boolean> {
     return this.exclusive(async () => {
-      if (this.epoch !== since || !this.state.user) return false
+      if (this.epoch !== since || (!this.state.user && !this.state.isAuthRestoring)) return false
       await this.logoutNow(true)
       return true
     })
   }
 
   private async logoutNow(localOnly = false): Promise<PlatformAuthResult> {
-    const identityId = this.state.user?.identityId
+    const identityId = this.state.user?.identityId ?? this.restoringIdentityId ?? undefined
+    this.restoringIdentityId = null
     this.epoch += 1
 
     if (!localOnly) await this.deps.sessionStore.clearSession()
@@ -474,6 +481,7 @@ export class PlatformAuthController {
     this.stopBalanceRefresh()
     this.patchState({
       user: null,
+      isAuthRestoring: false,
       error: null,
     })
 

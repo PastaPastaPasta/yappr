@@ -1,3 +1,20 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* The shared web preset's text utilities use these theme-aware tokens. */
+:root {
+  --accent-text: 3 105 161;
+  --accent-text-hover: 7 89 133;
+  --text-muted: 99 109 123;
+  --text-secondary: 83 93 107;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent-text: 56 189 248;
+    --accent-text-hover: 125 211 252;
+    --text-muted: 189 189 189;
+    --text-secondary: 163 163 163;
+  }
+}

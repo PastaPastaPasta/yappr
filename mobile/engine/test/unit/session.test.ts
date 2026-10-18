@@ -67,6 +67,7 @@ const { deriveEncryptionKey } = await import('@/lib/crypto/derive-encryption-key
 const { stubAppConnectBuild } = await import('@/lib/test-storage')
 const { useLoginModal } = await import('@/hooks/use-login-modal')
 const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
+const { getCurrentUserId } = await import('@/lib/services/sdk-helpers')
 
 type Session = ReturnType<typeof createSessionModule>
 type IdentityInfo = NonNullable<Awaited<ReturnType<typeof identityService.getIdentity>>>
@@ -210,6 +211,7 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
   it('signs in with a hex key and stores the key in the secure area', async () => {
     session = boot()
     expect(await session.restore()).toBeNull()
+    expect(getCurrentUserId()).toBeNull()
     const signedIn = await session.signInWithKey({ key: bytesToHex(keyA) })
     expect(signedIn).toEqual({ identityId: idA, network: 'testnet', username: null, credits: 120_000n, hasEncryptionKey: false, method: 'key' })
     expect(emitted).toContainEqual({ event: 'session.changed', payload: { session: signedIn, reason: 'signed-in' } })
@@ -217,6 +219,7 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
     // Never in the plain area, and never the raw hex anywhere.
     expect(changes.filter(c => c.area === 'local').map(c => c.value ?? '').join()).not.toContain(bytesToHex(keyA))
     expect(await session.current()).toEqual(signedIn)
+    expect(getCurrentUserId()).toBe(idA)
   })
 
   it('reports a sign-in only once the host has acknowledged its keys', async () => {
@@ -242,6 +245,7 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
 
   it('adds a second account through a restart, refusing calls until then', async () => {
     await session.prepareAddAccount()
+    expect(getCurrentUserId()).toBeNull()
     expect(localStorage.getItem('yappr_session')).toBeNull()
     await expect(session.current()).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
     await expect(session.signInWithKey({ key: bytesToHex(keyB) })).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
@@ -273,6 +277,7 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
     localStorage.setItem('yappr_session', before ?? '')
     session = boot()
     expect((await session.restore())?.identityId).toBe(idA)
+    expect(getCurrentUserId()).toBe(idA)
   })
 
   it('signs another account out by clearing its secrets by name, even ones the engine does not hold', async () => {
@@ -290,6 +295,7 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
     expect(secureKeys().filter(key => key.endsWith(idA))).toEqual([])
     expect(localStorage.getItem('yappr_session')).toBeNull()
     expect(await session.accounts()).toEqual([])
+    expect(getCurrentUserId()).toBeNull()
     expect(emitted).toContainEqual({ event: 'session.changed', payload: { session: null, reason: 'signed-out' } })
   })
 

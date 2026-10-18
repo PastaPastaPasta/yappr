@@ -15,6 +15,7 @@ import { stopDmEngine } from '@/lib/services/dm-v5'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { identityService } from '@/lib/services/identity-service'
 import { logger } from '@/lib/logger'
+import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions, useAppConnectStatus, type RenewReason } from '@/lib/app-connect/session-manager'
@@ -233,6 +234,8 @@ export function createSessionModule(options: SessionModuleOptions) {
   // lib's App Connect key ring lives in the engine's storage (the device's secure storage), not IndexedDB.
   appConnectSessions.useKeyRingBackend(engineKeyRingBackend(localStorage))
   const controller = options.controller ?? createMobileAuthController()
+  // The engine has no React AuthProvider; services read this controller's live state.
+  const releaseIdentity = bindCurrentIdentity(() => controller.getState().user?.identityId ?? null)
   const registry = createAccountRegistry(storage)
   const stopDm = options.stopDm ?? (async () => stopDmEngine())
   const unhydrated = options.unhydrated ?? new Set<string>()
@@ -317,6 +320,7 @@ export function createSessionModule(options: SessionModuleOptions) {
   }
   function requireRestart(): void {
     restartRequired = true
+    releaseIdentity()
     options.tickets?.requireRestart()
   }
 

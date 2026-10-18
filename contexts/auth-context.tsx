@@ -168,7 +168,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [controller])
 
   useEffect(() => observeSignOut(() => {
-    if (!controller.getState().user) return
     controller.logoutLocally().then((signedOut) => {
       if (!signedOut || controller.getState().user) return
       useUsernameModal.getState().close()

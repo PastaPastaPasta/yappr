@@ -18,6 +18,7 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
     resolveIdentity: async () => null,
     clearCache: vi.fn(),
   }
+  const getIdentity = vi.fn(async (identityId: string) => ({ id: identityId, balance: 1, publicKeys: [] }))
   const controller = new PlatformAuthController({
     network: 'testnet',
     sessionStore: {
@@ -40,7 +41,7 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
       clearLoginKey: async () => undefined,
     } as unknown as SecretStore,
     identity: {
-      getIdentity: async (identityId) => ({ id: identityId, balance: 1, publicKeys: [] }),
+      getIdentity,
       getBalance: async () => 1,
     },
     usernames,
@@ -56,6 +57,7 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
     storePrivateKey,
     clearPrivateKey,
     clearTabSecrets,
+    getIdentity,
     storedUser: (): AuthUser | undefined => session?.user,
   }
 }
@@ -353,4 +355,51 @@ describe('remote sign-out', () => {
     expect(controller.getState().user?.identityId).toBe('new-user')
     expect(clearTabSecrets).not.toHaveBeenCalled()
   })
+})
+
+
+describe('remote sign-out during restoration', () => {
+  it.each(['snapshot', 'key'] as const)('invalidates a restore awaiting %s before it publishes a user', async (waitFor) => {
+    let release: () => void = () => undefined
+    const pending = new Promise<void>((resolve) => { release = resolve })
+    const clearTabSecrets = vi.fn()
+    const snapshot = { user: { identityId: IDENTITY_ID, balance: 1, publicKeys: [] }, timestamp: 0 }
+    const getSession = vi.fn(async () => { if (waitFor === 'snapshot') await pending; return snapshot })
+    const hasPrivateKey = vi.fn(async () => { if (waitFor === 'key') await pending; return true })
+    const controller = new PlatformAuthController({
+      network: 'testnet',
+      sessionStore: { getSession, setSession: vi.fn(), clearSession: vi.fn() },
+      secretStore: { hasPrivateKey, clearTabSecrets } as unknown as SecretStore,
+      identity: { getIdentity: async () => null, getBalance: async () => 0 },
+      features: { balanceRefresh: false, postLoginTasks: false },
+    })
+    const restoring = controller.restoreSession()
+    await vi.waitFor(() => expect(waitFor === 'key' ? hasPrivateKey : getSession).toHaveBeenCalled())
+    expect(controller.getState().user).toBeNull()
+    expect(await controller.logoutLocally()).toBe(true)
+    release()
+    expect(await restoring).toBeNull()
+    expect(controller.getState()).toMatchObject({ user: null, isAuthRestoring: false })
+    if (waitFor === 'key') expect(clearTabSecrets).toHaveBeenCalledWith(IDENTITY_ID)
+    else expect(hasPrivateKey).not.toHaveBeenCalled()
+  })
+})
+
+
+it('ignores external logout in a signed-out tab, preserving a new sign-in already in progress', async () => {
+  const { controller, getIdentity } = setup(async () => 'alice.dash')
+  await controller.restoreSession()
+  await controller.logout()
+  let release: () => void = () => undefined
+  getIdentity.mockImplementationOnce(async (id) => {
+    await new Promise<void>((resolve) => { release = resolve })
+    return { id, balance: 1, publicKeys: [] }
+  })
+  const epoch = controller.sessionEpoch()
+  const signingIn = controller.loginWithKeyRing('new-user', { since: epoch })
+  expect(controller.getState()).toMatchObject({ user: null, isAuthRestoring: false, isLoading: true })
+  expect(await controller.logoutLocally()).toBe(false)
+  expect(controller.sessionEpoch()).toBe(epoch)
+  release()
+  expect((await signingIn).user?.identityId).toBe('new-user')
 })

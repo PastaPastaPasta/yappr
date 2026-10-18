@@ -5,7 +5,7 @@ import { ShieldCheckIcon, EyeIcon, LockClosedIcon, GlobeAltIcon } from '@heroico
 import { InfoPage, InfoSection, Prose, BulletList, NetworkNotice } from '@/components/layout/info-page'
 import { SupportEmailLink } from '@/components/layout/legal-links'
 import { IPFS_GATEWAYS } from '@/lib/utils/ipfs-gateway'
-import { LEGAL_UPDATED } from '@/lib/legal'
+import { LEGAL_UPDATED, orderStatusPrivacyDisclosure } from '@/lib/legal'
 import { YAPPR_DM_CONTRACT_ID, dmIsV5 } from '@/lib/constants'
 
 const PUBLIC_DATA = [
@@ -177,7 +177,8 @@ export default function PrivacyPage() {
             <p className="font-medium text-gray-700 dark:text-gray-300">Orders and addresses</p>
             <p className="mt-1">
               What you ordered and your shipping address are encrypted so only you and the seller can read them. That you placed an
-              order with a store, when, and its status are public. Tracking numbers, carrier details and seller notes are encrypted for you and the seller.
+              order with a store, when, and its status are public.{' '}
+              {orderStatusPrivacyDisclosure()}{' '}
               Saved addresses are encrypted so only you can read them.
             </p>
           </div>

@@ -38,6 +38,15 @@ describe('the session store adapter', () => {
 
 
 describe('remote sign-out cleanup', () => {
+  it('also drops this tab’s wallet session', async () => {
+    const { createYapprPlatformAuthDependencies } = await import('./platform-auth-adapters')
+    const { appConnectSessions } = await import('@/lib/app-connect/session-manager')
+    const logout = vi.spyOn(appConnectSessions, 'logoutLocally')
+    await createYapprPlatformAuthDependencies().secretStore.clearTabSecrets?.('wallet-user')
+    expect(logout).toHaveBeenCalledWith('wallet-user')
+    logout.mockRestore()
+  })
+
   it('fences this tab without deleting private-feed keys saved by a newer login in another tab', async () => {
     const { createYapprPlatformAuthDependencies } = await import('./platform-auth-adapters')
     const { privateFeedKeyStore } = await import('@/lib/services/private-feed-key-store')

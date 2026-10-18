@@ -253,7 +253,10 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     },
     secretStore: {
       storePrivateKey: storeRawLoginKey,
-      clearTabSecrets,
+      clearTabSecrets: (identityId) => {
+        clearTabSecrets(identityId)
+        appConnectSessions.logoutLocally(identityId)
+      },
       getPrivateKey,
       hasPrivateKey: hasSessionPrivateKey,
       clearPrivateKey: async (identityId) => {
