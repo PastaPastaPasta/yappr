@@ -1,8 +1,11 @@
 import bs58 from 'bs58'
-import { describe, expect, it } from 'vitest'
-import { contractFileSha256, contractTarget, recordedTestContract, testContractNetworkKey, withTestContract } from '../scripts/battery-lib.mjs'
+import { IdentityPublicKey, PrivateKey, ensureInitialized } from '@dashevo/evo-sdk'
+import { describe, expect, it, vi } from 'vitest'
+import { createBattery, contractFileSha256, contractTarget, recordedTestContract, testContractNetworkKey, withTestContract } from '../scripts/battery-lib.mjs'
+import { createDocWriter, ensureTokens } from '../scripts/seed/feature-seed-lib.mjs'
 import { parseArgs } from '../scripts/clean-test-content.mjs'
 import { blogPostTombstone, cleanBlog, cleanPollr, cleanStorefront, contentOf, createdSince, withStatus } from '../scripts/surface-cleanup.mjs'
+import { CHOICES_MIN_ITEMS, CHOICES_UNIQUE_ITEMS } from '../scripts/pollr-schema-refusals.mjs'
 
 // The pure half of the feature-surface cleanup (scripts/surface-cleanup.mjs) and of the batteries'
 // test contracts (scripts/battery-lib.mjs). The chain half runs in the blog, storefront and pollr
@@ -60,12 +63,23 @@ describe('which documents a surface cleanup touches', () => {
  * clauses off canned rows (a derived property such as `blogPostId.$ownerId` is a plain field
  * here), `countBy` counts them. A plan never writes, so nothing else is needed.
  */
-function fakeBattery(rows: Record<string, Array<Record<string, unknown>>>, v9 = false) {
+function fakeBattery(rows: Record<string, Array<Record<string, unknown>>>, { release = false, deletableBlogs = false } = {}) {
   const value = (v: unknown) => (v instanceof Uint8Array ? bs58.encode(v) : v)
   const matches = (row: Record<string, unknown>, where: Array<[string, string, unknown]>) => where.every(([field, op, operand]) =>
-    op === '==' ? value(row[field]) === operand : Number(row[field]) >= Number(operand))
+    op === '==' ? value(row[field]) === operand
+      : typeof operand === 'string'
+        ? Buffer.compare(bs58.decode(String(value(row[field]))), bs58.decode(operand)) >= 0
+        : Number(row[field]) >= Number(operand))
   const queryDocs = async (docType: string, { where }: { where: Array<[string, string, unknown]> }) => (rows[docType] ?? []).filter((row) => matches(row, where))
-  return { sdk: { contracts: { fetch: async () => ({ toJSON: () => ({ documentSchemas: { blog: { canBeDeleted: v9 }, blogPost: { properties: v9 ? { live: {} } : {} } } }) }) } }, queryDocs, countBy: async (docType: string, where: Array<[string, string, unknown]>) => (await queryDocs(docType, { where })).length }
+  const schemas = { blog: { canBeDeleted: deletableBlogs }, blogComment: { indices: deletableBlogs ? [{ properties: [{ $ownerId: 'asc' }] }] : [] }, blogPost: { required: deletableBlogs ? [] : ['blogId'], properties: release ? { live: { const: true } } : {} }, poll: { indices: release ? [] : [{ properties: [{ $ownerId: 'asc' }] }] } };
+  return {
+    readback: async <T>(fn: () => Promise<T>) => fn(),
+    sdk: { contracts: { fetch: async () => ({ toJSON: () => ({ documentSchemas: schemas }) }) } },
+    fetchDocument: async (docType: string, docId: string) => {
+      const row = (rows[docType] ?? []).find((entry) => value(entry.$id) === docId);
+      return row ? { toObject: () => row } : null;
+    },
+    queryDocs, countBy: async (docType: string, where: Array<[string, string, unknown]>) => (await queryDocs(docType, { where })).length }
 }
 
 describe('what a surface cleanup plans', () => {
@@ -101,17 +115,72 @@ describe('what a surface cleanup plans', () => {
       ],
       vote: [{ $id: id(4), $ownerId: id(8), $createdAt: 6000n, pollId: id(2) }],
     })
-    const report = await cleanPollr({ battery, owners: [persona], since, live: false })
+    const report = await cleanPollr({ battery, contractId: b58(9), owners: [persona], since, live: false })
     expect(report.found).toEqual({ poll: 2 })
     expect(report.done).toEqual({ poll: 1 })
     expect(report.leftovers).toEqual([expect.objectContaining({ type: 'poll', id: b58(2), name: 'Withdrawn x?' })])
   })
 
+  it('pollr v8 cleans explicitly named polls by id without any poll query, scoped by owner and time', async () => {
+    const battery = fakeBattery({ poll: [
+      { $id: id(1), $ownerId: id(7), $createdAt: 6000n },
+      { $id: id(2), $ownerId: id(8), $createdAt: 6000n },
+      { $id: id(3), $ownerId: id(7), $createdAt: 10n },
+    ] }, { release: true });
+    const query = battery.queryDocs;
+    battery.queryDocs = async (type, q) => { if (type === 'poll') throw new Error('no poll index'); return query(type, q); };
+    const report = await cleanPollr({ battery, contractId: b58(9), owners: [persona], since, live: false, pollIds: [b58(1), b58(2), b58(3), b58(4)] });
+    expect(report.found).toEqual({ poll: 1 });
+    expect(report.done).toEqual({ poll: 1 });
+    const missing = await cleanPollr({ battery, contractId: b58(9), owners: [persona], since, live: false });
+    expect(missing.failed).toEqual([expect.objectContaining({ label: 'poll discovery', error: expect.stringContaining('--poll-ids') })]);
+  });
+
+  it('blog cleanup finds owned comments when the other author has only tombstoned posts', async () => {
+    const battery = fakeBattery({
+      blog: [{ $id: id(1), $ownerId: id(8), $createdAt: 1000n }],
+      blogPost: [{ $id: id(2), $ownerId: id(8), $createdAt: 2000n, blogId: id(1), deleted: true }],
+      blogComment: [{ $id: id(3), $ownerId: id(7), $createdAt: 6000n, 'blogPostId.$ownerId': b58(8) }],
+    }, { release: true });
+    const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false });
+    expect(report.done.blogComment).toBe(1);
+  });
+
+  it('blog cleanup finds comments on tombstones even after the target blog is removed', async () => {
+    const battery = fakeBattery({
+      blogPost: [{ $id: id(2), $ownerId: id(8), $createdAt: 2000n, blogId: id(1), deleted: true }],
+      blogComment: [
+        { $id: id(3), $ownerId: id(7), $createdAt: 6000n, 'blogPostId.$ownerId': b58(8) },
+        { $id: id(4), $ownerId: id(9), $createdAt: 6000n, 'blogPostId.$ownerId': b58(8) },
+        { $id: id(5), $ownerId: id(7), $createdAt: 1000n, 'blogPostId.$ownerId': b58(8) },
+      ],
+    }, { release: true });
+    const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false });
+    expect(report.found.blogComment).toBe(1);
+    expect(report.done.blogComment).toBe(1);
+    expect(report.failed).toEqual([]);
+  });
+
+  it('blog v9 pins live on both listings and preserves publishedAt on tombstones', async () => {
+    const battery = fakeBattery({
+      blog: [{ $id: id(1), $ownerId: id(7), $createdAt: 6000n }],
+      blogPost: [{ $id: id(2), $ownerId: id(7), $createdAt: 6000n, blogId: id(1), slug: 'a', publishedAt: 5500, live: true }],
+    }, { release: true });
+    const query = battery.queryDocs;
+    let listings = 0;
+    battery.queryDocs = async (type, q) => {
+      if (type === 'blogPost') { expect(q.where[0]).toEqual(['live', '==', true]); listings += 1; }
+      return query(type, q);
+    };
+    const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false });
+    expect(report.done['blogPost (tombstone)']).toBe(1);
+    expect(listings).toBe(1);
+  });
   it('blog v9: deletes our comment on a third party whose only post is a tombstone', async () => {
     const battery = fakeBattery({
       blogPost: [{ $id: id(2), $ownerId: id(99), $createdAt: 6000n, deleted: true }],
       blogComment: [{ $id: id(4), $ownerId: id(7), $createdAt: 6000n, 'blogPostId.$ownerId': id(99) }],
-    }, true)
+    }, { release: true, deletableBlogs: true })
     const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false })
     expect(report.found.blogComment).toBe(1)
     expect(report.done.blogComment).toBe(1)
@@ -122,7 +191,7 @@ describe('what a surface cleanup plans', () => {
     const battery = fakeBattery({
       blog: [{ $id: id(1), $ownerId: id(7), $createdAt: 6000n, name: 'Surviving blog' }],
       blogPost: [{ $id: id(2), $ownerId: id(7), $createdAt: 6000n, blogId: id(99), slug: 'orphan', live: true }],
-    }, true)
+    }, { release: true, deletableBlogs: true })
     const report = await cleanBlog({ battery, contractId: b58(9), owners: [persona], since, live: false })
     expect(report.found.blogPost).toBe(1)
     expect(report.done).toEqual({ 'blogPost (tombstone)': 1, blog: 1 })
@@ -221,3 +290,219 @@ describe('the cleanup CLI on the feature surfaces', () => {
     expect(() => parseArgs(['--plan', '--surface', 'blog', '--personas', '1', '--since', since, '--contract', 'abc'])).toThrow(/social contract/)
   })
 })
+
+
+describe('battery rejection verdicts', () => {
+  it.each([
+    'grpc error: Some resource has been exhausted: rate limited',
+    '504 Gateway Timeout',
+    'deadline exceeded',
+    'request timed out',
+    'quorum not found',
+    'invalid quorum',
+    'no available addresses',
+    'Failed to wait for state transition result',
+  ])('does not count transport failure as a broad schema refusal: %s', (error) => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('invalid schema', { ok: false, error }, /[\s\S]+/);
+    expect(battery.failures).toBe(1);
+  });
+
+  it('still accepts an actual schema refusal', () => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('invalid schema', { ok: false, error: 'JsonSchemaError: minItems' }, /[\s\S]+/);
+    expect(battery.failures).toBe(0);
+  });
+
+  it('accepts an explicit consensus refusal inside a confirmation-wait wrapper', () => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('invalid reference', { ok: false, error: 'Failed to wait for state transition result: state transition broadcast error: referenced identity not found | code=40120' }, /40120/);
+    expect(battery.failures).toBe(0);
+  });
+});
+
+describe('Pollr choices schema verdicts', () => {
+  it.each([
+    [CHOICES_MIN_ITEMS, 'Failed to broadcast: Protocol error: JsonSchemaError: [] has less than 1 item, path: /choices | code=10101'],
+    [CHOICES_MIN_ITEMS, 'data/choices must NOT have fewer than 1 items'],
+    [CHOICES_MIN_ITEMS, 'data.choices should have at least 1 item'],
+    [CHOICES_UNIQUE_ITEMS, 'JsonSchemaError: [1,1] has non-unique elements, path: /choices | code=10101'],
+    [CHOICES_UNIQUE_ITEMS, 'data/choices must NOT have duplicate items (items ## 1 and 0 are identical)'],
+    [CHOICES_UNIQUE_ITEMS, 'data.choices should NOT have duplicate items'],
+  ])('requires positive evidence of the expected schema rule: %s, %s', (pattern, error) => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('choices schema', { ok: false, error }, pattern);
+    expect(battery.failures).toBe(0);
+  });
+
+  it.each([CHOICES_MIN_ITEMS, CHOICES_UNIQUE_ITEMS])('rejects ambiguous or unrelated outcomes: %s', (pattern) => {
+    for (const error of [
+      'Object already exists: tx already exists in cache',
+      'AlreadyExists: transaction already exists in cache',
+      'the SDK reported no error, but the write is not on chain',
+      'Failed to wait for state transition result',
+      '',
+      'JsonSchemaError: [] has less than 1 item, path: /options | code=10101',
+      'JsonSchemaError: [1,2] is too long, path: /choices | code=10101',
+    ]) {
+      const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+      battery.expectRejected('choices schema', { ok: false, error }, pattern);
+      expect(battery.failures, error).toBe(1);
+    }
+  });
+
+  it.each([
+    [CHOICES_MIN_ITEMS, 'JsonSchemaError: [1,1] has non-unique elements, path: /choices | code=10101'],
+    [CHOICES_UNIQUE_ITEMS, 'JsonSchemaError: [] has less than 1 item, path: /choices | code=10101'],
+  ])('rejects evidence for the other schema condition: %s', (pattern, error) => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('choices schema', { ok: false, error }, pattern);
+    expect(battery.failures).toBe(1);
+  });
+});
+
+describe('unpriced no-index seeder recovery', () => {
+  it('keeps the facade path for signer-only DM actors', async () => {
+    await ensureInitialized();
+    const facade = vi.fn(async () => ({ id: b58(4) }));
+    const actor = { ownerId: b58(7), identityKey: {}, signer: {}, lock: <T>(operation: () => Promise<T>) => operation() };
+    const writer = createDocWriter({
+      handle: { sdk: { documents: {
+        create: facade, get: async () => ({}), query: async () => new Map(),
+      } }, reconnect: async () => {} },
+      contractId: b58(9), entropyFor: () => id(3), paymentInfo: () => ({}), wait: async () => {},
+    });
+    const created = await writer.createDoc(actor, 'dmInvite', 'signer-only-invite', { bucket: 1 });
+    expect(created.id).toBe(b58(4));
+    expect(facade).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans a no-index poll that becomes visible only after every acceptance read failed', async () => {
+    await ensureInitialized();
+    const key = PrivateKey.fromHex('01'.repeat(32), 'testnet');
+    const actor = {
+      ownerId: b58(7), wif: key.toWIF(), signer: {}, label: 'delayed-poll-owner',
+      identityKey: new IdentityPublicKey({ keyId: 1, purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_secp256k1', data: key.getPublicKey().toBytes() }),
+    };
+    const since = Date.now();
+    let visible = false;
+    const broadcast = vi.fn(async () => { throw new Error('504 Gateway Timeout'); });
+    const remove = vi.fn(async () => { visible = false; });
+    const get = vi.fn(async (_contract: string, _type: string, docId: string) => visible ? {
+      toObject: () => ({ $id: docId, $ownerId: actor.ownerId, $createdAt: since, question: 'Delayed poll?' }),
+    } : null);
+    const battery = createBattery({ handle: { sdk: {
+      wasm: { getIdentityContractNonce: async () => 0n },
+      stateTransitions: { broadcastAndWait: broadcast },
+      contracts: { fetch: async () => ({ toJSON: () => ({ documentSchemas: { poll: { indices: [] } } }) }) },
+      documents: { get, query: async () => { throw new Error('where clause on non indexed property'); }, count: async () => ({ '': 0 }), delete: remove },
+    } }, contractId: b58(9), socialId: b58(9) });
+    vi.useFakeTimers();
+    try {
+      const pending = battery.attemptCreate(actor, 'poll', { question: 'Delayed poll?' });
+      await vi.runAllTimersAsync();
+      const outcome = await pending;
+      expect(outcome.ok).toBe(false);
+      expect(get).toHaveBeenCalledTimes(3);
+      expect(battery.createdDocuments.get('poll')).toEqual(new Set([outcome.id]));
+      expect(broadcast).toHaveBeenCalledTimes(1);
+      visible = true;
+      const cleanup = cleanPollr({ battery, contractId: b58(9), owners: [actor], since, live: true });
+      await vi.runAllTimersAsync();
+      const report = await cleanup;
+      expect(report.found.poll).toBe(1);
+      expect(report.done.poll).toBe(1);
+      expect(report.failed).toEqual([]);
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(visible).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('invalidates a primed facade nonce cache after recovering a manual create with lost confirmation', async () => {
+    await ensureInitialized();
+    const key = PrivateKey.fromHex('01'.repeat(32), 'testnet');
+    const actor = {
+      ownerId: b58(7), wif: key.toWIF(), signer: {},
+      identityKey: new IdentityPublicKey({ keyId: 1, purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_secp256k1', data: key.getPublicKey().toBytes() }),
+      lock: <T>(operation: () => Promise<T>) => operation(),
+    };
+    let chainNonce = 0n;
+    let cachedNonce: bigint | null = null;
+    let landed = false;
+    const replace = vi.fn(async () => {
+      const next = (cachedNonce ?? chainNonce) + 1n;
+      if (next !== chainNonce + 1n) throw new Error('nonce already present at tip');
+      cachedNonce = next;
+      chainNonce = next;
+    });
+    await replace(); // Prime the facade cache before switching to a manual create.
+    const refresh = vi.fn(async () => { cachedNonce = null; });
+    const broadcast = vi.fn(async () => {
+      chainNonce += 1n;
+      landed = true;
+      throw new Error('504 Gateway Timeout');
+    });
+    const writer = createDocWriter({
+      handle: { sdk: {
+        wasm: { getIdentityContractNonce: async () => chainNonce, refreshIdentityNonce: refresh },
+        stateTransitions: { broadcastAndWait: broadcast },
+        documents: { replace, get: async () => landed ? {} : null, query: async () => { throw new Error('where clause on non indexed property'); } },
+      }, reconnect: async () => {} },
+      contractId: b58(9), entropyFor: () => id(3), paymentInfo: () => ({}), wait: async () => {},
+    });
+    const created = await writer.createDoc(actor, 'poll', 'lost-confirmation', { question: 'Question?' });
+    expect(created.id).toBeTruthy();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await expect(replace()).resolves.toBeUndefined();
+    expect(chainNonce).toBe(3n);
+    expect(broadcast).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the ID before a landed poll create loses its confirmation, without creating another poll', async () => {
+    await ensureInitialized();
+    const key = PrivateKey.fromHex('01'.repeat(32), 'testnet');
+    const actor = {
+      ownerId: b58(7), wif: key.toWIF(),
+      identityKey: new IdentityPublicKey({ keyId: 1, purpose: 'authentication', securityLevel: 'high', keyType: 'ecdsa_secp256k1', data: key.getPublicKey().toBytes() }),
+      lock: <T>(operation: () => Promise<T>) => operation(),
+    };
+    let landed = false;
+    const broadcast = vi.fn(async () => { landed = true; throw new Error('504 Gateway Timeout'); });
+    const facade = vi.fn(async () => { throw new Error('504 Gateway Timeout'); });
+    const get = vi.fn(async () => landed ? {} : null);
+    const writer = createDocWriter({
+      handle: { sdk: {
+        wasm: { getIdentityContractNonce: async () => 0n, refreshIdentityNonce: async () => {} },
+        stateTransitions: { broadcastAndWait: broadcast },
+        documents: { create: facade, get, query: async () => { throw new Error('where clause on non indexed property'); } },
+      }, reconnect: async () => {} },
+      contractId: b58(9), entropyFor: () => id(3), paymentInfo: () => ({}), wait: async () => {},
+    });
+    const created = await writer.createDoc(actor, 'poll', 'unpriced-poll', { question: 'Question?' });
+    expect(created.id).toMatch(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(facade).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledWith(b58(9), 'poll', created.id);
+  });
+});
+
+describe('claim-only battery funding', () => {
+  it('uses the actor claim despite a stale ledger marker and falls back to credits without trying an owner mint', async () => {
+    await ensureInitialized();
+    let balance = 0n;
+    const claim = vi.fn(async () => { balance = 100n; });
+    const mint = vi.fn();
+    const sdk = {
+      tokens: { balances: async () => new Map([[b58(7), balance]]), claim, mint },
+      contracts: { fetch: async () => ({ toJSON: () => ({ tokens: { '0': { manualMintingRules: { authorizedToMakeChange: { $type: 'noOne' } } } } }) }) },
+    };
+    const battery = createBattery({ handle: { sdk }, contractId: b58(9), socialId: b58(9) });
+    const actor = { ownerId: b58(7), label: 'actor', identityKey: {}, signer: {}, starterClaimed: true, paysCredits: false };
+    await ensureTokens(battery, b58(8), new Map([[7, actor]]), new Map([[7, 200n]]));
+    expect(claim).toHaveBeenCalledWith(expect.objectContaining({ identityId: actor.ownerId, distributionType: 'oncePerIdentity' }));
+    expect(mint).not.toHaveBeenCalled();
+    expect(actor.paysCredits).toBe(true);
+  });
+});

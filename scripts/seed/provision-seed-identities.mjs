@@ -59,6 +59,7 @@ import {
   IdentityPublicKey,
   IdentitySigner,
   OutPoint,
+  PlatformVersion,
   PrivateKey,
   ensureInitialized,
 } from '@dashevo/evo-sdk';
@@ -68,7 +69,6 @@ import {
   DASHPAY_CONTRACT_ID,
   DUPLICATE_UNIQUE,
   LEDGER_FILE,
-  STARTER_GRANT,
   TREASURY_KEY_FILE,
   YAPP_TOKEN_POSITION,
   addressFor,
@@ -576,6 +576,11 @@ async function makerContext(handle) {
 async function phaseYapp(handle, ledger, only, yappTarget, yappSource, parallel) {
   const sdk = handle.sdk;
   const contractId = socialContractId();
+  const deployed = (await readback(handle, () => sdk.contracts.fetch(contractId))).toJSON(PlatformVersion.current());
+  const mintDisabled = deployed.tokens['0'].manualMintingRules?.authorizedToMakeChange?.$type === 'noOne';
+  const starterGrant = BigInt(deployed.tokens['0'].distributionRules.oncePerIdentityDistribution.amount);
+  // Release YAPP cannot be minted. Provision the available grant; corpus writes beyond it pay credits.
+  if (mintDisabled) { yappSource = 'claim'; yappTarget = yappTarget > starterGrant ? starterGrant : yappTarget; }
   const tokenId = await readback(handle, () => sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
   const balanceOf = (entry) => tokenBalance((fn) => readback(handle, fn), sdk, tokenId, entry.identityId);
   const reconciled = (e, entry, target) => landedAfter(handle, e, async () => (await balanceOf(entry)) >= target);
@@ -589,12 +594,12 @@ async function phaseYapp(handle, ledger, only, yappTarget, yappSource, parallel)
   const claim = async (entry, balance) => {
     const identity = await readback(handle, () => sdk.identities.fetch(entry.identityId));
     const identityKey = identity.getPublicKeyById(CRITICAL_AUTH_KEY_ID);
-    console.log(`  persona ${entry.personaIdx}: claiming the ${STARTER_GRANT} YAPP starter grant …`);
+    console.log(`  persona ${entry.personaIdx}: claiming the ${starterGrant} YAPP starter grant …`);
     try {
       await sdk.tokens.claim({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, identityId: entry.identityId, distributionType: 'oncePerIdentity', identityKey, signer: buildSignerFor(entry) });
     } catch (e) {
       // 40722: claimed on an earlier run; the balance read below decides.
-      if (!ALREADY_CLAIMED.test(describeErr(e)) && !(await reconciled(e, entry, balance + STARTER_GRANT))) throw e;
+      if (!ALREADY_CLAIMED.test(describeErr(e)) && !(await reconciled(e, entry, balance + starterGrant))) throw e;
     }
     return balanceOf(entry);
   };
@@ -619,12 +624,14 @@ async function phaseYapp(handle, ledger, only, yappTarget, yappSource, parallel)
     try {
       if (yappTarget === 0n) return ready(entry);
       let balance = await balanceOf(entry);
-      if (balance < yappTarget && yappSource === 'claim' && !entry.starterClaimed) {
+      // The marker may describe another contract; only the chain knows whether this grant was claimed.
+      if (balance < yappTarget && yappSource === 'claim') {
         balance = await claim(entry, balance);
         entry.starterClaimed = true;
         saveLedger(ledger);
       }
       if (balance >= yappTarget) return ready(entry, `holds ${balance} YAPP`);
+      if (mintDisabled) return ready(entry, `holds ${balance} YAPP; further writes must pay credits`);
       shortfall.set(entry, yappTarget - balance);
     } catch (e) {
       noteError(ledger, entry, 'yapp', e);

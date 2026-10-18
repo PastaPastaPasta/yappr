@@ -69,6 +69,7 @@ import { readFileSync } from 'node:fs';
 import { buildDocument, sleep } from './seed/seed-lib.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 import { cleanPollr, printReport } from './surface-cleanup.mjs';
+import { CHOICES_MIN_ITEMS, CHOICES_UNIQUE_ITEMS } from './pollr-schema-refusals.mjs';
 
 const CONTRACT_FILE = 'pollr-contract.json';
 
@@ -80,12 +81,6 @@ const DAY_MS = 86_400_000;
 const OWNER_MISMATCH = /\b40102\b|mismatch with existing/i;
 /** InvalidDocumentRevisionError: a replace built on a revision that is no longer current. */
 const STALE_REVISION = /\b40106\b|has invalid revision/i;
-/**
- * A write the JSON schema refuses (`choices: []` minItems, duplicates uniqueItems). The SDK may also
- * refuse it client-side before any broadcast, so no code is pinned: the verdict is that it is refused
- * and does not read back (the rejection text is logged verbatim at the end).
- */
-const ANY_REFUSAL = /[\s\S]+/;
 /** p9 waits this long past the close, so the block time stamped into $updatedAt is past it too. */
 const CLOSE_MARGIN_MS = 30_000;
 /** The read the client uses for "my ballot on this poll": byPollVoter. */
@@ -212,8 +207,8 @@ async function caseP2References(ctx) {
   console.log('\n--- p2. refersTo: a ghost poll (40120) and `choices` the JSON schema refuses ---');
   // voter2 holds no ballot on pollS yet, so no unique-index collision can fire first.
   await probeBallot(ctx, 'p2a a ballot on a nonexistent poll is rejected (40120)', REFERENCE_NOT_FOUND, voter2, ballotData(ctx.pollS, [0], { pollId: id32(ghostIdentity()) }));
-  await probeBallot(ctx, 'p2b a ballot with an empty `choices` is refused (minItems 1: a withdrawal omits the field)', ANY_REFUSAL, voter2, ballotData(ctx.pollS, []));
-  await probeBallot(ctx, 'p2c a ballot naming the same option twice is refused (uniqueItems)', ANY_REFUSAL, voter2, ballotData(ctx.pollM, [1, 1]));
+  await probeBallot(ctx, 'p2b a ballot with an empty `choices` is refused (minItems 1: a withdrawal omits the field)', CHOICES_MIN_ITEMS, voter2, ballotData(ctx.pollS, []));
+  await probeBallot(ctx, 'p2c a ballot naming the same option twice is refused (uniqueItems)', CHOICES_UNIQUE_ITEMS, voter2, ballotData(ctx.pollM, [1, 1]));
 }
 
 async function caseP3SingleChoice(ctx) {
@@ -408,7 +403,7 @@ const CASES = new Map([
 /** runBattery's cleanup: on the published contract, the creator's polls without a ballot go; the test contract keeps its polls. */
 async function cleanUpRun(ctx, { since }) {
   if (!ctx.liveContract) { console.log('the pollr-test contract keeps its polls: the app never reads it'); return; }
-  printReport(await cleanPollr({ battery: ctx.battery, owners: [ctx.creator], since, live: true }));
+  printReport(await cleanPollr({ battery: ctx.battery, contractId: ctx.contractId, owners: [ctx.creator], since, live: true }));
 }
 
 await runBattery({

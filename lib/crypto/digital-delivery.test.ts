@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { sealStatus } from '../../scripts/seed/non-social/storefront.mjs'
 import { randomBytes } from '@noble/hashes/utils.js'
 import {
   buyerOrderDeliveryKey,
@@ -152,5 +154,27 @@ describe('order status notes', () => {
     expect(() => decode('[1]')).toThrow()
     expect(() => decode('null')).toThrow()
     expect(() => decodeOrderStatusNote(new Uint8Array([0xff, 0xfe]))).toThrow()
+  })
+})
+
+
+describe('storefront seeder status notes', () => {
+  it('opens the seeded note using the client keys for both parties and binds it to its order', async () => {
+    const buyerPriv = new Uint8Array(32).fill(1)
+    const sellerPriv = new Uint8Array(32).fill(2)
+    const sellerPub = getPublicKey(sellerPriv)
+    const key = 'compat-order'
+    const nonce = sha256(utf8(`yappr/storefront-seed/v1/nonce/${key}`)).slice(0, 24)
+    const storeId = 'compat-store'
+    const id = 'compat-order-id'
+    const ephemeral = privateFeedCryptoService.deriveOrderEphemeralKey(buyerPriv, nonce, storeId)
+    const encryptedPayload = await privateFeedCryptoService.eciesEncryptWithEphemeralKey(ephemeral, sellerPub, utf8('{}'), ORDER_AAD)
+    const order = { id, storeId, nonce, encryptedPayload }
+    const note = { message: 'Shipped', trackingNumber: '123', trackingCarrier: 'test' }
+    const sealed = sealStatus({ key }, 'shipped', note, { buyerPriv, sellerPriv, sellerPub }, storeId, id)
+    for (const deliveryKey of [sellerOrderDeliveryKey(order, sellerPriv), buyerOrderDeliveryKey(order, buyerPriv, sellerPub)]) {
+      expect(decodeOrderStatusNote(decryptOrderStatusNote(sealed.encryptedPayload, sealed.nonce, deliveryKey, id))).toEqual(note)
+      expect(() => decryptOrderStatusNote(sealed.encryptedPayload, sealed.nonce, deliveryKey, 'another-order')).toThrow()
+    }
   })
 })
