@@ -65,27 +65,42 @@ export const privateFeedService = {
 export const fetchRekeys = async () => [{ keyGeneration: 2, revokedLeaf: 0, createdAt: Date.now() }]
 let postReads = 0
 let replyReads = 0
+let nestedReads = 0
+const nestedRefresh = params.get('failure') === 'nested-refresh'
+const focusedReply = { ...post, rootPostId: 'root', parentId: 'root' }
+const existingReply = { ...post, id: 'existing-reply', content: 'Existing reply', rootPostId: nestedRefresh ? 'root' : 'post', parentId: 'post', createdAt: new Date(1), ...(nestedRefresh ? { replyToReplyId: 'post' } : {}) }
 export const postService = {
   getUserPosts: async () => ({ documents: [] }),
-  getOrThrow: async () => {
+  getOrThrow: async (id: string) => {
     postReads++
     if (params.get('failure') === 'post' && postReads === 1) throw new Error('DAPI unavailable')
-    return post
+    if (nestedRefresh && id === 'post') return null
+    return { ...post, id }
   },
 }
 export const replyService = {
+  getOrThrow: async () => focusedReply,
   getReplies: async () => {
     replyReads++
     if (params.get('failure') === 'replies' && replyReads === 1 || params.get('failure') === 'refresh' && replyReads === 2) {
       throw new Error('DAPI unavailable')
     }
-    return { documents: [{ ...post, id: 'existing-reply', content: 'Existing reply', rootPostId: 'post', parentId: 'post', createdAt: new Date(1) }] }
+    return nestedRefresh ? { documents: [focusedReply], nextCursor: 'first-page' } : { documents: [existingReply] }
+  },
+  getNestedReplies: async (parentIds: string[], options: { throwOnError?: boolean }) => {
+    if (!parentIds.includes('post')) return new Map(parentIds.map(id => [id, []]))
+    nestedReads++
+    if (nestedReads === 2) {
+      if (options.throwOnError) throw new Error('DAPI unavailable')
+      return new Map([['post', []]])
+    }
+    return new Map([['post', [existingReply]]])
   },
 }
 const postEnrichment = { enrich: async (posts: Post[]) => posts, reset: noop }
 export const usePostEnrichment = () => postEnrichment
 export const resolveUserDetailsBatch = async () => new Map()
-export const replyToPost = noop
+export const replyToPost = (reply: typeof focusedReply) => ({ ...reply, targetKind: 'reply' as const })
 export const identityService = { hasEncryptionKey: async () => true, getIdentity: async () => ({ publicKeys: [] }) }
 export const resolveEncryptionPublicKey = async () => Uint8Array.from([2, ...new Array<number>(32).fill(1)])
 export const store: Store = { id: 'store', ownerId: 'owner', name: 'QA store', status: 'active', description: '', defaultCurrency: 'USD', createdAt: new Date(0), paymentUris: [{ uri: 'bitcoin:mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn', scheme: 'bitcoin:', label: 'Bitcoin' }] }

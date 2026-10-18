@@ -132,24 +132,26 @@ test('SOC-002: deleted threads have a neutral empty state, live threads invite r
   await page.goto('/qa-round1.html?fixture=post&state=live')
   await expect(page.getByText('No replies yet. Be the first to reply!', { exact: true })).toBeVisible()
 })
-for (const failure of ['post', 'replies', 'refresh']) {
+for (const failure of ['post', 'replies', 'refresh', 'nested-refresh']) {
   test(`DAPI recovery hook: ${failure} rejects failed reads and recovers without losing the last thread`, async ({ page }) => {
     await page.goto(`/qa-round1.html?fixture=post-recovery-hook&state=live&failure=${failure}`)
     const error = page.getByTestId('hook-error')
     const replies = page.getByTestId('hook-replies')
-    if (failure === 'refresh') {
+    if (failure === 'refresh' || failure === 'nested-refresh') {
       await expect(replies).toHaveText('Existing reply')
       await page.getByRole('button', { name: 'Refresh thread' }).click()
     }
     await expect(error).toHaveText('DAPI unavailable')
     await expect(page.getByTestId('hook-loading')).toHaveText('false')
-    if (failure === 'refresh') await expect(replies).toHaveText('Existing reply')
+    if (failure === 'refresh' || failure === 'nested-refresh') await expect(replies).toHaveText('Existing reply')
     await page.getByRole('button', { name: 'Refresh thread' }).click()
     await expect(error).toBeEmpty()
     await expect(replies).toHaveText('Existing reply')
     await expect(page.getByTestId('hook-post')).toHaveText('post')
     await expect(page.getByTestId('hook-loading')).toHaveText('false')
   })
+}
+for (const failure of ['post', 'replies', 'refresh']) {
   test(`DAPI recovery: ${failure} failure offers a working retry without claiming missing content`, async ({ page }) => {
     await page.goto(`/qa-round1.html?fixture=post&state=live&failure=${failure}`)
     const alert = page.getByRole('alert')

@@ -418,7 +418,7 @@ export function usePostDetail({
           const renderedDepth = MAX_NESTED_DEPTH + 1
           let frontier = [loadedPost.id]
           for (let depth = 0; depth < renderedDepth && frontier.length > 0; depth++) {
-            const childrenMap = await replyService.getNestedReplies(frontier, { rootPostId: rootId })
+            const childrenMap = await replyService.getNestedReplies(frontier, { rootPostId: rootId, throwOnError: true })
             if (!isCurrent()) return
             const known = new Set(replies.map((reply) => reply.id))
             const fresh = Array.from(childrenMap.values()).flat()
@@ -669,7 +669,7 @@ async function loadV2Thread(
   // Helper to recursively fetch author's thread continuation
   const fetchAuthorThreadContinuation = async (parentIds: string[]): Promise<Reply[]> => {
     if (parentIds.length === 0) return []
-    const nestedMap = await replyService.getNestedReplies(parentIds)
+    const nestedMap = await replyService.getNestedReplies(parentIds, { throwOnError: true })
     const authorContinuations: Reply[] = []
 
     nestedMap.forEach((nested, parentId) => {
@@ -714,7 +714,7 @@ async function loadV2Thread(
     new Set([...directReplies.map(r => r.id), ...authorThreadChain.map(r => r.id)])
   )
   const nestedRepliesMap = allIdsForNested.length > 0
-    ? await replyService.getNestedReplies(allIdsForNested)
+    ? await replyService.getNestedReplies(allIdsForNested, { throwOnError: true })
     : new Map<string, Reply[]>()
 
   const orderedAuthorThread = authorThreadDepthFirst(mainAuthorId, directReplies, authorChildrenOf)
