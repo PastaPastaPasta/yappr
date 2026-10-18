@@ -1,3 +1,4 @@
+import { useDeletedBlogs } from '@/lib/blog/deleted-blogs'
 import { stateTransitionService } from './state-transition-service'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import type { Blog } from '@/lib/types'
@@ -132,13 +133,22 @@ class BlogService extends BaseDocumentService<Blog> {
     if (!blogIsV9()) throw new Error('Blogs cannot be deleted on this network')
     const result = await stateTransitionService.deleteDocument(this.contractId, this.documentType, blogId, ownerId)
     if (!result.success) throw new Error(result.error || 'Failed to delete blog')
+    useDeletedBlogs.getState().mark(blogId)
     this.clearCache()
     return true
   }
 
   async getBlog(blogId: string): Promise<Blog | null> {
     if (!this.isConfigured()) return null
-    return this.get(blogId)
+    if (useDeletedBlogs.getState().ids.has(blogId)) return null
+    const blog = await this.get(blogId)
+    return useDeletedBlogs.getState().ids.has(blogId) ? null : blog
+  }
+
+  async getMany(blogIds: string[], options: { throwOnError?: boolean } = {}): Promise<Blog[]> {
+    if (!this.isConfigured()) return []
+    const ids = blogIds.filter((id) => !useDeletedBlogs.getState().ids.has(id))
+    return this.withoutDeleted(await super.getMany(ids, options))
   }
 
   async getBlogsByOwner(ownerId: string): Promise<Blog[]> {
@@ -148,7 +158,7 @@ class BlogService extends BaseDocumentService<Blog> {
       orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
     }
     const result = await this.query(options)
-    return result.documents
+    return this.withoutDeleted(result.documents)
   }
 
   /**
@@ -158,7 +168,7 @@ class BlogService extends BaseDocumentService<Blog> {
   async getBlogTimelinePage(options: { limit?: number; startAfter?: string } = {}): Promise<BlogTimelinePage> {
     if (!this.isConfigured()) return { blogs: [] }
     const { documents, nextCursor } = await this.newestFirstPage(Math.min(options.limit ?? BLOG_PAGE_SIZE, BLOG_PAGE_SIZE), options.startAfter)
-    return { blogs: documents, nextCursor }
+    return { blogs: this.withoutDeleted(documents), nextCursor }
   }
 
   /** The newest `limit` blogs on v7's `blog.timeline`, page by page. */
@@ -185,9 +195,14 @@ class BlogService extends BaseDocumentService<Blog> {
    */
   async getNewestBlogs(limit = 100): Promise<{ blogs: Blog[]; complete: boolean }> {
     if (!this.isConfigured()) return { blogs: [], complete: true }
-    if (blogIsV7()) return { blogs: await this.timelineHead(limit), complete: true }
+    if (blogIsV7()) return { blogs: this.withoutDeleted(await this.timelineHead(limit)), complete: true }
     const { blogs, complete } = await this.scanNewestBlogs()
-    return { blogs: blogs.slice(0, limit), complete }
+    return { blogs: this.withoutDeleted(blogs).slice(0, limit), complete }
+  }
+
+  private withoutDeleted(blogs: Blog[]): Blog[] {
+    const deleted = useDeletedBlogs.getState().ids
+    return blogs.filter((blog) => !deleted.has(blog.id))
   }
 
   /** A full clear (a create runs one) drops the discovery scan too, so a new one is listed. */

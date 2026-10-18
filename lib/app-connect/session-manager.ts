@@ -225,6 +225,7 @@ class AppConnectSessionManager {
   /** Loads the stored session for `identityId` without touching the network. */
   async restore(identityId: string): Promise<boolean> {
     if (this.active?.identityId === identityId) return true
+    const startedAt = this.lifecycle
     let session: AppConnectSession | null
     try {
       session = await this.keyStore().load(this.network())
@@ -232,7 +233,7 @@ class AppConnectSessionManager {
       logger.warn('App Connect: could not read the key ring:', error)
       return false
     }
-    if (!session || session.identityId !== identityId) return false
+    if (this.signedOutSince(identityId, startedAt) || !session || session.identityId !== identityId) return false
     // A session from a build with other pins (a re-cut anchor or group) covers nothing here.
     const pins = appConnectPins()
     if (!pins || session.v !== APP_CONNECT_SESSION_VERSION || session.network !== this.network()
@@ -281,9 +282,14 @@ class AppConnectSessionManager {
 
   /** Logout: forgets this browser's session for `identityId`, whichever tab stored it. The connection id stays. */
   async logout(identityId: string): Promise<void> {
+    this.logoutLocally(identityId)
+    await this.clearStored({ identityId })
+  }
+
+  /** Drops only this tab's wallet keys and fences pending restores/adoptions, preserving the shared ring. */
+  logoutLocally(identityId: string): void {
     this.cancelAdoptions(identityId)
     if (this.active?.identityId === identityId) this.deactivate()
-    await this.clearStored({ identityId })
   }
 
   /**

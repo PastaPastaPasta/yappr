@@ -427,6 +427,7 @@ function StoreDetailContent() {
                   </>
                 )}
                 <button
+                  aria-label="View cart"
                   onClick={() => router.push('/cart')}
                   className="relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900"
                 >
@@ -602,6 +603,7 @@ function StoreDetailContent() {
                   <div className="flex gap-2">
                     {availableCategories.length > 0 && (
                       <select
+                        aria-label="Product category"
                         value={categoryFilter}
                         onChange={(e) => setCategoryFilter(e.target.value)}
                         className="flex-1 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm border-none focus:outline-none focus:ring-2 focus:ring-yappr-500"
@@ -613,6 +615,7 @@ function StoreDetailContent() {
                       </select>
                     )}
                     <select
+                      aria-label="Sort products"
                       value={sortField}
                       onChange={(e) => setSortField(e.target.value as 'newest' | 'title' | 'price' | 'rating')}
                       className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm border-none focus:outline-none focus:ring-2 focus:ring-yappr-500"

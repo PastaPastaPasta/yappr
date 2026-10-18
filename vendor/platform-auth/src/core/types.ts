@@ -43,6 +43,8 @@ export interface SecretStore {
   getPrivateKey(identityId: string): MaybePromise<string | null>
   hasPrivateKey(identityId: string): MaybePromise<boolean>
   clearPrivateKey(identityId: string): MaybePromise<void>
+  /** Clear only this tab's secrets; shared keys may already belong to a newer login. */
+  clearTabSecrets?(identityId: string): MaybePromise<void>
 
   storeEncryptionKey(identityId: string, encryptionKey: string): MaybePromise<void>
   getEncryptionKey(identityId: string): MaybePromise<string | null>
@@ -85,6 +87,7 @@ export interface ClientIdentityPort {
 export interface SideEffectsPort {
   runPostLogin(identityId: string, context: { delayMs: number; isSessionActive: () => boolean }): MaybePromise<void>
   runLogoutCleanup?(identityId: string): MaybePromise<void>
+  runLocalLogoutCleanup?(identityId: string): MaybePromise<void>
 }
 
 export interface PlatformAuthCryptoPort {

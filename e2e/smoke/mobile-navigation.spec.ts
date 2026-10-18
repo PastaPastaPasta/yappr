@@ -4,7 +4,7 @@ import { appUrl, appUrlPattern } from '../fixtures/app'
 test.use({ viewport: { width: 390, height: 844 } })
 
 test('mobile navigation identifies its controls and opens its menu', async ({ page }) => {
-  await page.goto(appUrl('/about/'))
+  await page.goto(appUrl('/explore/'))
   const nav = page.getByRole('navigation', { name: 'Mobile navigation' })
   await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeVisible()
   await expect(nav.getByRole('link', { name: 'Explore', exact: true })).toBeVisible()

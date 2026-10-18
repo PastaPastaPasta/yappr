@@ -98,11 +98,14 @@ jobs:
         run: |
           npx tsc --noEmit -p e2e/components/tsconfig.json
           npx tsc --noEmit -p e2e/components-qa-round1/tsconfig.json
+          npx tsc --noEmit -p e2e/qa/tsconfig.json
 
       # Isolated component fixtures simulate service failures; no live network
       # credentials or Platform writes are involved in these browser checks.
       - name: Run browser component regressions
-        run: npm run test:components
+        run: |
+          npm run test:components
+          npm run test:release-qa
 
   dead-code:
     name: Dead Code (knip)

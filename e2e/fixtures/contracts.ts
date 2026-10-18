@@ -54,3 +54,9 @@ export async function expectedNetwork(): Promise<string> {
   const values = await envValues()
   return process.env.NEXT_PUBLIC_NETWORK ?? values.NEXT_PUBLIC_NETWORK ?? 'testnet'
 }
+
+/** The storefront cut controls whether status-note fields are sealed (v10). */
+export async function expectedStorefrontTopology(): Promise<string> {
+  const values = await envValues()
+  return process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY ?? values.NEXT_PUBLIC_STOREFRONT_TOPOLOGY ?? 'v1'
+}

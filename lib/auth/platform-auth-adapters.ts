@@ -16,6 +16,7 @@ import {
   clearEncryptionKeyType,
   clearLoginKey,
   clearPrivateKey,
+  clearTabSecrets,
   clearTransferKey,
   getEncryptionKey,
   getLoginKeyBytes,
@@ -93,7 +94,7 @@ function readStoredSession(): AuthSessionSnapshot | null {
  * platform-auth calls `secretStore.hasPrivateKey` only to decide whether the
  * saved session can be restored. A stored key that belongs to another
  * identity must not restore it either, so the key must also sign for the
- * session identity; otherwise the controller clears the session.
+ * session identity. Shared metadata alone never signs this tab in.
  */
 async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
   // An App Connect key ring restores from IndexedDB alone, without the network.
@@ -109,7 +110,7 @@ async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
     await ensureSdk()
     return (await identityService.getIdentity(identityId))?.publicKeys ?? null
   }, keyNetwork())
-  if (!belongs) logger.warn(`Session restore: the stored key does not belong to ${identityId}; signing out`)
+  if (!belongs) logger.warn(`Session restore: the stored key does not belong to ${identityId}; leaving this tab signed out`)
   return belongs
 }
 
@@ -178,8 +179,8 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
     try {
       const result = await privateFeedFollowerService.syncFollowedFeeds(identityId)
       if (!context.isSessionActive()) {
-        logger.debug('Auth: Private feed sync completed but session ended - clearing keys')
-        privateFeedKeyStore.signOut(identityId)
+        logger.debug('Auth: Private feed sync completed but session ended - fencing pending writes')
+        privateFeedKeyStore.signOutLocally(identityId)
         return
       }
       // A follower move this device started and did not finish (a reload or a crash), or one the
@@ -190,7 +191,7 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
         const moved = await runMove(identityId, getEncryptionKeyBytes(identityId) ?? undefined)
         if (!moved.success) logger.debug('Auth: Private feed follower move paused:', moved.error)
         // Signed out while it ran: the sign-out stopped its key writes; this covers a session ended without one.
-        if (!context.isSessionActive()) privateFeedKeyStore.signOut(identityId)
+        if (!context.isSessionActive()) privateFeedKeyStore.signOutLocally(identityId)
       }
 
       if (result.synced.length > 0 || result.failed.length > 0) {
@@ -216,9 +217,18 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
   }, context.delayMs)
 }
 
+async function runLocalLogoutCleanup(identityId: string): Promise<void> {
+  try {
+    sessionStorage.removeItem(scopedKey('yappr_dpns_username'))
+    invalidateBlockCache(identityId)
+  } catch {
+    // Storage can be blocked even when the session's secrets live in memory.
+  }
+  privateFeedKeyStore.signOutLocally(identityId)
+}
+
 async function runLogoutCleanup(identityId: string): Promise<void> {
-  sessionStorage.removeItem(scopedKey('yappr_dpns_username'))
-  invalidateBlockCache(identityId)
+  await runLocalLogoutCleanup(identityId)
   privateFeedKeyStore.signOut(identityId)
 }
 
@@ -243,6 +253,10 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     },
     secretStore: {
       storePrivateKey: storeRawLoginKey,
+      clearTabSecrets: (identityId) => {
+        clearTabSecrets(identityId)
+        appConnectSessions.logoutLocally(identityId)
+      },
       getPrivateKey,
       hasPrivateKey: hasSessionPrivateKey,
       clearPrivateKey: async (identityId) => {
@@ -320,6 +334,7 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     sideEffects: {
       runPostLogin,
       runLogoutCleanup,
+      runLocalLogoutCleanup,
     },
     crypto: {
       parsePrivateKey,

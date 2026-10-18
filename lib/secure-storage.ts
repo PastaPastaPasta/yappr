@@ -160,16 +160,21 @@ export function hasPrivateKey(identityId: string): boolean {
   return getPrivateKey(identityId) !== null
 }
 
+/** Remote sign-out must destroy this tab's key without deleting a newer shared login. */
+export function clearTabSecrets(identityId: string): void {
+  sessionOnlyMemory.delete(identityId)
+  expectedPasskeyKeys.delete(identityId)
+  try {
+    sessionStorage.removeItem(SESSION_ONLY_KEY_PREFIX + identityId)
+    for (const kind of ['pk', 'ek', 'ek_type', 'tk', 'lk']) sessionStorage.removeItem(`${SECRET_PREFIX}${kind}_${identityId}`)
+  } catch {
+    // The in-memory key was still removed if sessionStorage is blocked.
+  }
+}
+
 export function clearPrivateKey(identityId: string): boolean {
   const hadSessionOnly = getSessionOnlyPrivateKey(identityId) !== null
-  sessionOnlyMemory.delete(identityId)
-  if (hadSessionOnly) {
-    try {
-      sessionStorage.removeItem(SESSION_ONLY_KEY_PREFIX + identityId)
-    } catch {
-      // Nothing to clear where storage is blocked.
-    }
-  }
+  clearTabSecrets(identityId)
   return browserSecretStore.clearPrivateKey(identityId) || hadSessionOnly
 }
 

@@ -90,7 +90,7 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
   const { phase, error, emptyStateKnown } = electionView(status, failed || (!status && !sdkReady && sdkError !== null))
 
   return (
-    <Card data-testid="election-status">
+    <Card data-testid="election-status" className="min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><ScaleIcon className="h-5 w-5" /> Moderation election</CardTitle>
         <CardDescription>
@@ -103,13 +103,13 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
           the leader may add up to {declaration.maxAddedModerators} members.</> : error ? null : 'Loading the election settings…'}
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4 text-sm">
+      <CardContent className="min-w-0 space-y-4 text-sm">
         <div className="flex items-center justify-between gap-2">
-          <p>
+          <p className="min-w-0">
             Status: <span data-testid="election-phase" className="font-semibold">{phase}</span>
             {status && <span className="text-gray-500"> · target contract <code>{short(status.targetContractId)}</code></span>}
           </p>
-          <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading} className="gap-1">
+          <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading} className="shrink-0 gap-1">
             <ArrowPathIcon className="h-4 w-4" /> {loading ? 'Loading…' : 'Refresh'}
           </Button>
         </div>
@@ -149,8 +149,8 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
             {contest.winner && (
               <p>Outcome: {contest.winner.kind}{contest.winner.identityId ? ` — ${contest.winner.identityId}` : ''} ({when(contest.winner.decidedAtMs)})</p>
             )}
-            <table className="w-full mt-2">
-              <thead><tr className="text-left text-gray-500"><th>Contender (leader)</th><th className="text-right">Votes</th></tr></thead>
+            <table className="w-full table-fixed mt-2">
+              <thead><tr className="text-left text-gray-500"><th>Contender (leader)</th><th className="w-20 text-right">Votes</th></tr></thead>
               <tbody>
                 {contest.contenders.map((contender) => (
                   <tr key={contender.identityId}><td><code>{contender.identityId}</code></td><td className="text-right">{contender.votes ?? '—'}</td></tr>

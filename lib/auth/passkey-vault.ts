@@ -1065,9 +1065,6 @@ async function signalRemoved(credentialIds: Uint8Array[]): Promise<void> {
   for (const credentialId of credentialIds) await signalUnknownPasskey(found.rp.id, credentialId)
 }
 
-const REMOVAL_REREADS = 3
-const REMOVAL_REREAD_MS = 2000
-
 /**
  * Removes passkeys: their entries are deleted, so they stop signing in, and
  * the provider is told so it can hide them. Copies sealed earlier stay in
@@ -1090,15 +1087,8 @@ async function removeEntries(identityId: string, entryIds: readonly string[]): P
       logger.warn('Passkey vault: removing a passkey failed:', error)
     }
   }
-  // A node can lag a confirmed delete by a moment, so those get a few more reads before they count as left.
-  let remaining = await passkeyVaultService.list(identityId, { partial: true })
-  for (let attempt = 0; attempt < REMOVAL_REREADS && remaining.some((entry) => confirmed.has(entry.$id)); attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, REMOVAL_REREAD_MS))
-    remaining = await passkeyVaultService.list(identityId, { partial: true })
-  }
-  // Only a confirmed delete that is gone counts as removed: a read can miss an entry a failed delete left (a node behind).
-  const stillThere = new Set(remaining.map((entry) => entry.$id))
-  const gone = entries.filter((entry) => confirmed.has(entry.$id) && !stillThere.has(entry.$id))
+  // A successful transition confirms the deletion. A stale or failing read-back cannot undo it.
+  const gone = entries.filter((entry) => confirmed.has(entry.$id))
   // Only passkeys this browser made or opened are known to be this identity's: a planted entry can carry
   // another account's public credential id, and the provider signal names no user.
   const here = passkeysHere(identityId)

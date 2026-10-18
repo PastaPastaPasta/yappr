@@ -50,6 +50,9 @@ function assertWritten(result: StateTransitionResult, fallback: string): void {
  * a sign-in, and a stale list could hide one somebody else planted.
  */
 class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
+  /** A confirmed delete outranks lagging replicas for the rest of this page session. */
+  private readonly deletedIds = new Set<string>()
+
   constructor() {
     super(VAULT_DOCUMENT_TYPE, YAPPR_PASSKEY_VAULT_CONTRACT_ID)
   }
@@ -86,7 +89,10 @@ class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
       orderBy: [['$ownerId', 'asc'], ['credentialId', 'asc']],
     }, LIST_LIMIT)
     if (reachedLimit && !options.partial) throw new Error(`more than ${LIST_LIMIT} passkey entries`)
-    return documents.filter((entry) => entry.$ownerId === ownerId)
+    const visible = documents.filter((entry) => entry.$ownerId === ownerId && !this.deletedIds.has(entry.$id))
+    // A full stale page can hide undeleted entries beyond the cap; it never proves removal is complete.
+    if (reachedLimit && visible.length === 0) throw new Error('The passkey list is still updating. Try again in a moment.')
+    return visible
   }
 
   /** `ownerId`'s entry for one passkey, or null. */
@@ -96,7 +102,7 @@ class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
       limit: 1,
     })
     const entry = documents[0]
-    return entry && entry.$ownerId === ownerId && bytesEqual(entry.credentialId, credentialId) ? entry : null
+    return entry && !this.deletedIds.has(entry.$id) && entry.$ownerId === ownerId && bytesEqual(entry.credentialId, credentialId) ? entry : null
   }
 
 /**
@@ -127,6 +133,8 @@ class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
 
   async remove(entry: Pick<VaultEntryDocument, '$id' | '$ownerId'>): Promise<void> {
     assertWritten(await stateTransitionService.deleteDocument(this.contractId, this.documentType, entry.$id, entry.$ownerId), 'the passkey could not be removed')
+    this.deletedIds.add(entry.$id)
+    this.clearCache(entry.$id)
   }
 }
 

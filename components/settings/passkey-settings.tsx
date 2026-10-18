@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
@@ -38,6 +38,7 @@ export function PasskeySettings() {
   const [renaming, setRenaming] = useState<{ marker: string; name: string } | null>(null)
   const [removing, setRemoving] = useState<PasskeyEntryView | null>(null)
 
+  const removedIds = useRef(new Set<string>())
   const identityId = user?.identityId
   const wallet = identityId ? hasAppConnectSession(identityId) : false
 
@@ -47,7 +48,7 @@ export function PasskeySettings() {
     setFailed(false)
     try {
       const [list, check] = await Promise.all([listPasskeys(identityId), passkeyEligibility(identityId)])
-      setEntries(list)
+      setEntries(list.filter((entry) => !removedIds.current.has(entry.entryId)))
       setEligibility(check)
       // A failed session check is a read to retry, not a reason this session can't keep passkeys.
       if (check === 'failed') setFailed(true)
@@ -156,6 +157,8 @@ export function PasskeySettings() {
           wallet={wallet}
           onClose={() => setRemoving(null)}
           onRemoved={() => {
+            removedIds.current.add(removing.entryId)
+            setEntries((current) => current?.filter((entry) => entry.entryId !== removing.entryId) ?? null)
             setRemoving(null)
             reload().catch(() => undefined)
           }}

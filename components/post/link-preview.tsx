@@ -225,7 +225,7 @@ export function LinkPreviewInfoIcon() {
         e.stopPropagation()
         openModal()
       }}
-      className="inline-flex items-center justify-center ml-1 p-0.5 text-neutral-400 hover:text-yappr-500 dark:hover:text-yappr-400 transition-colors"
+      className="inline-flex items-center justify-center ml-1 p-0.5 text-neutral-400 hover:text-yappr-500 dark:hover:text-yappr-600 transition-colors"
       title="Enable link previews"
     >
       <InformationCircleIcon className="h-4 w-4" />

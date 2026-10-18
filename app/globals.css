@@ -9,11 +9,19 @@
 @layer base {
   :root {
     --background: 0 0% 100%;
+    --accent-text: 3 105 161;
+    --accent-text-hover: 7 89 133;
+    --text-muted: 99 109 123;
+    --text-secondary: 83 93 107;
     --foreground: 222.2 84% 4.9%;
   }
 
   .dark {
     --background: 0 0% 7%;
+    --accent-text: 56 189 248;
+    --accent-text-hover: 125 211 252;
+    --text-muted: 189 189 189;
+    --text-secondary: 163 163 163;
     --foreground: 210 40% 98%;
   }
 }
@@ -74,7 +82,7 @@
 
 /* Preserve the dark editor text and let the light composer use its own palette. */
 .bn-container [class*="bn-block-content"] {
-  color: #e5e7eb;
+  color: var(--bn-colors-editor-text);
 }
 
 .compose-canvas .bn-container[data-color-scheme="light"] [class*="bn-block-content"] {

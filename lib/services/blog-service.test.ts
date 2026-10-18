@@ -6,6 +6,7 @@ const { get, query, updateDocument, createDocument, deleteDocument } = vi.hoiste
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get, query } }) }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument, createDocument, deleteDocument } }))
 
+import { useDeletedBlogs } from '@/lib/blog/deleted-blogs'
 import { blogService } from './blog-service'
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 
@@ -22,6 +23,7 @@ const content = {
 const raw = { $id: blogId, $ownerId: ownerId, $revision: 7, $createdAt: 1700000000000, ...content }
 
 beforeEach(() => {
+  useDeletedBlogs.setState({ ids: new Set() })
   blogService.clearCache()
   get.mockReset().mockResolvedValue(raw)
   updateDocument.mockReset().mockImplementation(async (_contract, _type, id, owner, data, revision) => ({
@@ -219,8 +221,9 @@ describe('blog deletion', () => {
     await blogService.getBlog(blogId)
     deleteDocument.mockResolvedValueOnce({ success: true })
     expect(await blogService.deleteBlog(blogId, ownerId)).toBe(true)
+    expect(useDeletedBlogs.getState().ids.has(blogId)).toBe(true)
     expect(deleteDocument).toHaveBeenCalledWith(YAPPR_BLOG_CONTRACT_ID, 'blog', blogId, ownerId)
-    get.mockResolvedValueOnce(null)
+    // Even a lagging replica returning the deleted record cannot reopen it.
     expect(await blogService.getBlog(blogId)).toBeNull()
   })
 
@@ -228,7 +231,41 @@ describe('blog deletion', () => {
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9')
     deleteDocument.mockResolvedValueOnce({ success: false, error: 'refused' })
     await expect(blogService.deleteBlog(blogId, ownerId)).rejects.toThrow('refused')
+    expect(useDeletedBlogs.getState().ids.has(blogId)).toBe(false)
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v8')
     await expect(blogService.deleteBlog(blogId, ownerId)).rejects.toThrow('Blogs cannot be deleted')
   })
+})
+
+
+it('excludes confirmed deletions from owner and discovery reads, including a cached scan', async () => {
+  query.mockReset().mockResolvedValue([raw])
+  expect(await blogService.getBlogsByOwner(ownerId)).toHaveLength(1)
+  expect((await blogService.getNewestBlogs()).blogs).toHaveLength(1)
+  useDeletedBlogs.getState().mark(blogId)
+  expect(await blogService.getBlogsByOwner(ownerId)).toEqual([])
+  expect((await blogService.getNewestBlogs()).blogs).toEqual([])
+  expect((await blogService.getBlogTimelinePage()).blogs).toEqual([])
+})
+
+it('does not reopen a blog deleted while its detail read was in flight', async () => {
+  let release: (value: typeof raw) => void = () => undefined
+  get.mockReturnValueOnce(new Promise((resolve) => { release = resolve }))
+  const reading = blogService.getBlog(blogId)
+  await vi.waitFor(() => expect(get).toHaveBeenCalled())
+  useDeletedBlogs.getState().mark(blogId)
+  release(raw)
+  expect(await reading).toBeNull()
+})
+
+
+it('excludes blogs deleted during a batched hydration read and from its populated cache', async () => {
+  let release: (value: typeof raw[]) => void = () => undefined
+  query.mockReset().mockReturnValueOnce(new Promise((resolve) => { release = resolve }))
+  const reading = blogService.getMany([blogId], { throwOnError: true })
+  await vi.waitFor(() => expect(query).toHaveBeenCalled())
+  useDeletedBlogs.getState().mark(blogId)
+  release([raw])
+  expect(await reading).toEqual([])
+  expect(await blogService.getMany([blogId], { throwOnError: true })).toEqual([])
 })

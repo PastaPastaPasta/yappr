@@ -55,12 +55,19 @@ function BlogViewerContent({ blocks }: BlogViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const editor = useCreateBlockNote({
     schema: blogBlockNoteSchema,
+    domAttributes: { editor: { role: 'document', 'aria-label': 'Blog post' } },
     initialContent: blocks as never,
   })
 
   useEffect(() => {
     const root = containerRef.current
     if (!root) return
+
+    // BlockNote's suggestion extension installs editing-only ARIA attributes even in read-only mode.
+    const prose = root.querySelector('.bn-editor')
+    for (const attribute of ['aria-autocomplete', 'aria-haspopup', 'aria-expanded', 'aria-controls', 'tabindex']) {
+      prose?.removeAttribute(attribute)
+    }
 
     const headings = root.querySelectorAll('h1, h2, h3, h4, h5, h6')
     headings.forEach((heading, index) => {
@@ -80,6 +87,10 @@ function BlogViewerContent({ blocks }: BlogViewerProps) {
       <BlockNoteView
         editor={editor}
         editable={false}
+        slashMenu={false}
+        sideMenu={false}
+        formattingToolbar={false}
+        linkToolbar={false}
         theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
       />
       {footnotes.length > 0 && (

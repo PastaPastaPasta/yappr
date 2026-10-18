@@ -105,6 +105,8 @@ export class PlatformAuthController {
   /** Bumped whenever a session is stored or ended, so a sign-in can tell it was overtaken. */
   private epoch = 0
 
+  private restoringIdentityId: string | null = null
+
   /** The tail of the session commits and logouts, which run one at a time and never interleave. */
   private lifecycle: Promise<unknown> = Promise.resolve()
 
@@ -219,19 +221,25 @@ export class PlatformAuthController {
   }
 
   public async restoreSession(): Promise<AuthUser | null> {
+    const startedAt = this.epoch
     this.patchState({ isAuthRestoring: true, error: null })
 
     try {
       const snapshot = await this.deps.sessionStore.getSession()
+      if (startedAt !== this.epoch) return null
       if (!snapshot) {
         this.patchState({ isAuthRestoring: false })
         return null
       }
 
       const identityId = snapshot.user.identityId
+      this.restoringIdentityId = identityId
       const hasPrivateKey = await this.deps.secretStore.hasPrivateKey(identityId)
+      if (startedAt !== this.epoch) return null
       if (!hasPrivateKey) {
-        await this.deps.sessionStore.clearSession()
+        // A different tab may hold a tab-only key for this shared snapshot.
+        // Failure to restore here does not end its session. Only logout removes it.
+        // Metadata may outlive lost keys; consumers must use the live controller state.
         this.patchState({ isAuthRestoring: false, user: null })
         return null
       }
@@ -254,13 +262,15 @@ export class PlatformAuthController {
       return snapshot.user
     } catch (error) {
       this.logger.error('platform-auth: failed to restore session', error)
-      await this.deps.sessionStore.clearSession()
+      if (startedAt !== this.epoch) return null
       this.patchState({
         user: null,
         error: error instanceof Error ? error.message : 'Failed to restore session',
         isAuthRestoring: false,
       })
       return null
+    } finally {
+      if (startedAt === this.epoch) this.restoringIdentityId = null
     }
   }
 
@@ -340,8 +350,10 @@ export class PlatformAuthController {
           options.afterStore?.()
         }
         await this.deps.clientIdentity?.setIdentity(identity.id)
+        this.restoringIdentityId = null
         this.patchState({
           user,
+          isAuthRestoring: false,
           error: null,
         })
       })
@@ -439,24 +451,39 @@ export class PlatformAuthController {
     return this.exclusive(() => this.logoutNow())
   }
 
-  private async logoutNow(): Promise<PlatformAuthResult> {
-    const identityId = this.state.user?.identityId
+  /** Another tab already cleared shared storage. Do not erase a newer login or its keys. */
+  public logoutLocally(since = this.epoch): Promise<boolean> {
+    return this.exclusive(async () => {
+      if (this.epoch !== since || (!this.state.user && !this.state.isAuthRestoring)) return false
+      await this.logoutNow(true)
+      return true
+    })
+  }
+
+  private async logoutNow(localOnly = false): Promise<PlatformAuthResult> {
+    const identityId = this.state.user?.identityId ?? this.restoringIdentityId ?? undefined
+    this.restoringIdentityId = null
     this.epoch += 1
 
-    await this.deps.sessionStore.clearSession()
-    if (identityId) {
+    if (!localOnly) await this.deps.sessionStore.clearSession()
+    if (identityId && localOnly) await this.deps.secretStore.clearTabSecrets?.(identityId)
+    if (identityId && !localOnly) {
       await this.deps.secretStore.clearPrivateKey(identityId)
       await this.deps.secretStore.clearEncryptionKey(identityId)
       await this.deps.secretStore.clearEncryptionKeyType(identityId)
       await this.deps.secretStore.clearTransferKey(identityId)
       await this.deps.secretStore.clearLoginKey(identityId)
-      await this.deps.sideEffects?.runLogoutCleanup?.(identityId)
+    }
+    if (identityId) {
+      if (localOnly) await this.deps.sideEffects?.runLocalLogoutCleanup?.(identityId)
+      else await this.deps.sideEffects?.runLogoutCleanup?.(identityId)
     }
 
     await this.deps.clientIdentity?.setIdentity('')
     this.stopBalanceRefresh()
     this.patchState({
       user: null,
+      isAuthRestoring: false,
       error: null,
     })
 

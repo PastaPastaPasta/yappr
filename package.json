@@ -4,11 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && node scripts/write-static-404.mjs out",
     "build:release": "node scripts/build-release.mjs",
-    "build:subpath": "BASE_PATH=/yappr next build",
-    "build:testing": "set -a && . ./.env.testing && set +a && BASE_PATH=/testing next build",
-    "build:devnet": "set -a && . ./.env.devnet && set +a && BASE_PATH=/devnet next build",
+    "build:subpath": "BASE_PATH=/yappr next build && node scripts/write-static-404.mjs out /yappr",
+    "build:testing": "set -a && . ./.env.testing && set +a && BASE_PATH=/testing next build && node scripts/write-static-404.mjs out /testing",
+    "build:devnet": "set -a && . ./.env.devnet && set +a && BASE_PATH=/devnet next build && node scripts/write-static-404.mjs out /devnet",
     "contracts:snapshot": "node scripts/snapshot-contracts.mjs",
     "start": "next start",
     "lint": "next lint --dir app --dir components --dir contexts --dir hooks --dir lib --dir types --max-warnings 0",
@@ -17,7 +17,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:components": "playwright test --config e2e/components/playwright.config.ts && playwright test --config e2e/components-qa-round1/qa-round1-playwright.config.ts"
+    "test:components": "playwright test --config e2e/components/playwright.config.ts && playwright test --config e2e/components-qa-round1/qa-round1-playwright.config.ts",
+    "test:release-qa": "playwright test --config e2e/qa/playwright.config.ts"
   },
   "dependencies": {
     "@blocknote/core": "^0.47.0",
@@ -69,6 +70,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@dashevo/dashcore-lib": "^0.25.0",
     "@dashevo/wasm-dpp2": "5.0.0-rc.4",
     "@playwright/test": "^1.62.1",

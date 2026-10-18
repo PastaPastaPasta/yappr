@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Deliberately opt-in: ordinary builds keep their current configuration until
 // package.json's build switches to `npm run build:release` in the cut-over PR.
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { parseEnv } from 'node:util'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import releaseConfig from './release-config.cjs'
+import { staticNotFound } from './write-static-404.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const file = fileURLToPath(new URL('../.env.testnet', import.meta.url))
@@ -31,4 +32,5 @@ const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modul
   cwd: root, env, stdio: 'inherit',
 })
 if (result.error) console.error(result.error.message)
-process.exit(result.status ?? 1)
+if (result.status !== 0) process.exit(result.status ?? 1)
+writeFileSync(new URL('../out/404.html', import.meta.url), staticNotFound(env.BASE_PATH ?? ''))

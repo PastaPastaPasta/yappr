@@ -6,7 +6,7 @@
  */
 
 import { getContractTopology } from '../constants'
-import { SESSION_STORAGE_KEY } from '../storage-scope'
+import { currentIdentityId } from '../auth/active-identity'
 import { getPinataGateway } from '../upload/providers/pinata/credential-storage'
 import { imageSourceFor, type ProxyImageSize } from '../media/remote-media'
 
@@ -52,15 +52,13 @@ function getDedicatedGatewayDomain(): string | null {
   if (typeof window === 'undefined') return null
 
   try {
-    const savedSession = localStorage.getItem(SESSION_STORAGE_KEY)
-    if (!savedSession) return null
-    const identityId = (JSON.parse(savedSession) as { user?: { identityId?: unknown } }).user?.identityId
-    if (typeof identityId !== 'string' || !identityId) return null
+    const identityId = currentIdentityId()
+    if (!identityId) return null
 
     const gateway = getPinataGateway(identityId)
     return gateway && /^[a-z0-9.-]+$/i.test(gateway) ? gateway : null
   } catch {
-    // Storage unavailable or malformed session — fall back to public gateways.
+    // Storage unavailable — fall back to public gateways.
     return null
   }
 }

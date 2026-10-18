@@ -110,7 +110,7 @@ describe('release build configuration', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yappr-release-env-'))
     try {
       mkdirSync(join(dir, 'scripts'))
-      for (const file of ['build-release.mjs', 'release-config.cjs']) {
+      for (const file of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
         copyFileSync(new URL(file, import.meta.url), join(dir, 'scripts', file))
       }
       symlinkSync(fileURLToPath(new URL('../node_modules', import.meta.url)), join(dir, 'node_modules'), 'dir')
@@ -125,6 +125,48 @@ describe('release build configuration', () => {
       expect(result.status).not.toBe(0)
       expect(result.stderr).toContain('STORAGE_EPOCH must be a non-empty scope')
       expect(result.stdout).not.toContain('Creating an optimized production build')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    { ambient: '', configured: undefined, expected: '', status: 0 },
+    { ambient: '/yappr', configured: undefined, expected: '/yappr', status: 0 },
+    { ambient: '/ambient', configured: '/release', expected: '/release', status: 0 },
+    { ambient: '/yappr', configured: undefined, expected: '/yappr', status: 7 },
+  ])('postprocesses successful release exports with the effective prefix: %j', ({ ambient, configured, expected, status }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'yappr-release-404-'))
+    try {
+      mkdirSync(join(dir, 'scripts'))
+      for (const file of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+        copyFileSync(new URL(file, import.meta.url), join(dir, 'scripts', file))
+      }
+      mkdirSync(join(dir, 'node_modules/next/dist/bin'), { recursive: true })
+      symlinkSync(fileURLToPath(new URL('../node_modules/bs58', import.meta.url)), join(dir, 'node_modules/bs58'), 'dir')
+      // Exercise the owning release entry point; only Next's expensive export is substituted.
+      writeFileSync(join(dir, 'node_modules/next/dist/bin/next'), `
+        const fs = require('node:fs');
+        fs.mkdirSync('out');
+        fs.writeFileSync('out/404.html', '<script src="legacy-runtime.js"></script>');
+        process.exit(${status});
+      `)
+      const env = completeEnv()
+      if (configured !== undefined) env.BASE_PATH = configured
+      writeFileSync(join(dir, '.env.testnet'), Object.entries(env).map(([key, value]) => key + '=' + value).join('\n'))
+      const result = spawnSync(process.execPath, [join(dir, 'scripts/build-release.mjs')], {
+        cwd: dir, env: { ...process.env, BASE_PATH: ambient }, encoding: 'utf8',
+      })
+      expect(result.status, result.stderr).toBe(status)
+      const html = readFileSync(join(dir, 'out/404.html'), 'utf8')
+      if (status === 0) {
+        expect(html).toContain(`href="${expected}/"`)
+        expect(html).toContain(`href="${expected}/explore/"`)
+        expect(html).toContain('location.replace')
+        expect(html).not.toMatch(/_next|legacy-runtime|src=/)
+      } else {
+        expect(html).toContain('legacy-runtime')
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

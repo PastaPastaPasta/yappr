@@ -316,7 +316,6 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
               onClick={() => setShowCredential(!showCredential)}
               aria-label={showCredential ? 'Hide key' : 'Show key'}
               className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-              tabIndex={-1}
             >
               {showCredential ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </button>

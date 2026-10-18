@@ -18,6 +18,7 @@ const sdk = vi.hoisted(() => ({
     unsuspendUser: vi.fn(),
     moderatorDeleteDocument: vi.fn(),
     claimFees: vi.fn(),
+    feePots: vi.fn(),
     moderatorRestoreDocument: vi.fn(),
     moderationStatus: vi.fn(),
     moderationEntries: vi.fn(),
@@ -1035,6 +1036,74 @@ describe('moderatedTypeOpenFor (the registered interim, not the committed file)'
     expect(moderatedTypeOpenFor('notYetUsable', { leaderId: 'L', members: [] })).toBe(true)
     for (const interim of ['contractOwner', 'appointedModerators', 'noModeration', null] as const) {
       expect(moderatedTypeOpenFor(interim, null), String(interim)).toBe(true)
+    }
+  })
+})
+
+describe('proved moderators payouts survive view lifetimes', () => {
+  it.each([4, null])('keeps epoch 6 authoritative over intermediate history after displayed epoch %s', async (baseline) => {
+    vi.resetModules()
+    const { moderationServiceFor } = await import('./moderation-service')
+    const service = moderationServiceFor('social')
+    const pots = (epoch: number | null, credits: bigint) => ({
+      owner: { credits: 0n, lastClaimEpoch: null, lastClaimantId: null },
+      moderators: { credits, lastClaimEpoch: epoch, lastClaimantId: epoch === null ? null : MODERATOR },
+    })
+    sdk.contracts.feePots.mockResolvedValue(pots(baseline, 100n))
+    await service.getFeePots()
+    sdk.contracts.claimFees.mockResolvedValue({ remainingCredits: 0n, lastClaimEpoch: 6, lastClaimantId: MODERATOR })
+    expect(await service.claimModeratorsPot(MODERATOR)).toMatchObject({ success: true, remainingCredits: 0n })
+    // A remounted panel gets the same per-contract service and its proved state.
+    const remounted = moderationServiceFor('social')
+    expect(remounted.moderatorsPotStatus()).toEqual({ pot: { credits: 0n, lastClaimEpoch: 6, lastClaimantId: MODERATOR }, pending: true })
+    sdk.contracts.feePots.mockResolvedValue(pots(5, 80n))
+    expect((await remounted.getFeePots())?.moderators).toMatchObject({ credits: 0n, lastClaimEpoch: 6 })
+    expect(remounted.moderatorsPotStatus().pending).toBe(true)
+    expect(await remounted.claimModeratorsPot(MODERATOR)).toMatchObject({ success: false })
+    expect(sdk.contracts.claimFees).toHaveBeenCalledTimes(1)
+    expect(moderationServiceFor('blog').moderatorsPotStatus()).toEqual({ pot: null, pending: false })
+
+    sdk.contracts.feePots.mockResolvedValue(pots(6, 2n))
+    await remounted.getFeePots()
+    expect(remounted.moderatorsPotStatus()).toEqual({ pot: { credits: 2n, lastClaimEpoch: 6, lastClaimantId: MODERATOR }, pending: false })
+    // A later lagging response cannot undo reconciliation either.
+    sdk.contracts.feePots.mockResolvedValue(pots(5, 80n))
+    expect((await remounted.getFeePots())?.moderators).toMatchObject({ credits: 2n, lastClaimEpoch: 6 })
+  })
+})
+
+
+describe('in-flight moderator payout exclusion', () => {
+  it.each([true, false])('survives a remount and releases its active guard after success=%s', async (success) => {
+    vi.resetModules()
+    const { moderationServiceFor } = await import('./moderation-service')
+    const service = moderationServiceFor('social')
+    const pot = { credits: 100n, lastClaimEpoch: 4, lastClaimantId: MODERATOR }
+    sdk.contracts.feePots.mockResolvedValue({ owner: pot, moderators: pot })
+    await service.getFeePots()
+    const receipt = { remainingCredits: 0n, lastClaimEpoch: 6, lastClaimantId: MODERATOR }
+    let finishClaim!: () => void
+    sdk.contracts.claimFees.mockReturnValue(new Promise<typeof receipt>((resolve, reject) => {
+      finishClaim = () => success ? resolve(receipt) : reject(new Error('Payout refused'))
+    }))
+    const first = service.claimModeratorsPot(MODERATOR)
+    // The exclusion is synchronous, before signer setup or the SDK write can yield.
+    const remounted = moderationServiceFor('social')
+    expect(remounted.moderatorsPotStatus().pending).toBe(true)
+    expect(moderationServiceFor('blog').moderatorsPotStatus().pending).toBe(false)
+    await vi.waitFor(() => expect(sdk.contracts.claimFees).toHaveBeenCalledTimes(1))
+    // A refresh during the broadcast cannot clear the separate in-flight guard.
+    await remounted.getFeePots()
+    expect(remounted.moderatorsPotStatus().pending).toBe(true)
+    expect(await remounted.claimModeratorsPot(MODERATOR)).toMatchObject({ success: false })
+    expect(sdk.contracts.claimFees).toHaveBeenCalledTimes(1)
+    finishClaim()
+    expect(await first).toMatchObject({ success })
+    expect(remounted.moderatorsPotStatus().pending).toBe(success)
+    if (!success) {
+      sdk.contracts.claimFees.mockResolvedValue(receipt)
+      expect(await remounted.claimModeratorsPot(MODERATOR)).toMatchObject({ success: true })
+      expect(sdk.contracts.claimFees).toHaveBeenCalledTimes(2)
     }
   })
 })
