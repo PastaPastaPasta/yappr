@@ -8,6 +8,8 @@
  *
  * Public routes also enforce an 8 MiB raw eager-JavaScript budget
  * (override with --max-eager-bytes) to catch SDK/editor hydration regressions.
+ * Data entry routes must retain their parser-time WASM download in the head,
+ * even when a client rendering gate suppresses the route body during SSR.
  * Always prints the largest files so a creeping chunk is visible before it
  * crosses the limit. Exit code 1 when any file is over, 2 when the export
  * directory is missing.
@@ -79,6 +81,22 @@ for (const route of ['/', '/feed', '/post', '/user', '/terms', '/blog/compose'])
   const htmlFile = path.join(dir, route, 'index.html')
   let html
   try { html = readFileSync(htmlFile, 'utf8') } catch { continue }
+  if (['/feed', '/post', '/user'].includes(route)) {
+    const head = html.slice(0, html.indexOf('</head>'))
+    const bootstrap = [...head.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)]
+      .map(match => match[1]).find(script => script.includes('window.__yapprSdkWasm'))
+    const asset = bootstrap?.match(/\/_next\/static\/wasm\/sdk-[a-f0-9]{64}\.wasm\.gz/)?.[0]
+    if (!bootstrap || !asset || !files.some(({ file }) => file === path.join(dir, asset.slice(1)))) {
+      console.error(`::error file=${htmlFile}::${route} is missing its head bootstrap or matching WASM asset.`)
+      process.exitCode = 1
+    } else {
+      // Also catch broken serialized function syntax before shipping the export.
+      try { new Function(bootstrap) } catch (error) {
+        console.error(`::error file=${htmlFile}::Invalid WASM bootstrap: ${error.message}`)
+        process.exitCode = 1
+      }
+    }
+  }
   const scripts = new Set([...html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/g)].map(match => match[1]))
   let raw = 0
   let gzip = 0

@@ -29,8 +29,9 @@ describe('one wasm-sdk instance', () => {
     type WebpackHook = (config: object, context: { isServer: boolean }) => { resolve: { alias: Record<string, string> } }
     const configureNext = createRequire(__filename)('../next.config.js') as (phase: string) => { webpack: WebpackHook }
     const nextConfig = configureNext('phase-production-build')
-    const config = nextConfig.webpack({ resolve: { alias: {} }, module: { rules: [] } }, { isServer: false })
+    const config = nextConfig.webpack({ resolve: { alias: {} }, module: { rules: [] }, plugins: [] }, { isServer: false })
     expect(config.resolve.alias['@dashevo/wasm-sdk$']).toBe(path.resolve(__dirname, '../node_modules/@dashevo/wasm-sdk/dist/raw/wasm_sdk.no_url.js'))
+    expect(config.resolve.alias['@dashevo/wasm-sdk/compressed$']).toBe(path.resolve(__dirname, 'web-wasm-sdk.ts'))
     expect(config.resolve.alias['@dashevo/evo-sdk$']).toBe(path.join(EVO_SDK_DIST, 'sdk.js'))
   })
 
