@@ -285,7 +285,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
     }
     const pollId = await recorder.createDoc(actor, 'poll', `poll/${poll.key}`, {
       question: poll.question, options: poll.options, multiChoice: poll.multiChoice, endsAt,
-    });
+    }, { persistPending: true });
     if (!pollId) return;
     state.modes[poll.key] = mode;
     await recorder.createDoc(actor, 'post', `post/${poll.key}`, socialPost({

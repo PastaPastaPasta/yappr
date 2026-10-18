@@ -1,3 +1,4 @@
+import { textBytes } from '@/lib/text-limits'
 import { HASHTAG_MAX_LENGTH, contentLimits, inlineMentions, inlineTags } from '@/lib/contract-topology'
 import { extractMentions, indexedTags } from '@/lib/post-helpers'
 
@@ -23,7 +24,7 @@ export function characterCount(text: string): number {
 
 /** Bytes as the contract's `maxBytes` counts them: the UTF-8 encoding. */
 export function utf8ByteCount(text: string): number {
-  return new TextEncoder().encode(text).length
+  return textBytes(text)
 }
 
 /**

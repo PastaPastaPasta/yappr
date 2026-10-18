@@ -9,7 +9,9 @@ import { FormatButton, CharacterCounter } from './compose-sub-components'
 import { MentionAutocomplete } from './mention-autocomplete'
 import { EmojiPicker } from './emoji-picker'
 
-import { CHARACTER_LIMIT, characterCount, contentOverage } from '@/lib/compose/limits'
+import toast from 'react-hot-toast'
+import { acceptsTextChange } from '@/lib/text-limits'
+import { BYTE_LIMIT, utf8ByteCount, CHARACTER_LIMIT, characterCount, contentOverage } from '@/lib/compose/limits'
 
 interface ThreadPostEditorProps {
   post: ThreadPost
@@ -48,7 +50,7 @@ export function ThreadPostEditor({
   showPreview,
   onActivate,
   onRemove,
-  onContentChange,
+  onContentChange: changeContent,
   textareaRef,
   extraCharacters = 0,
   onImageClick,
@@ -60,6 +62,13 @@ export function ThreadPostEditor({
   mentionHint = null,
   tagProblem = null,
 }: ThreadPostEditorProps) {
+  const onContentChange = (text: string) => {
+    if (!acceptsTextChange(post.content, text, { maxLength: Math.max(0, CHARACTER_LIMIT - extraCharacters), maxBytes: BYTE_LIMIT === null ? null : Math.max(0, BYTE_LIMIT - extraCharacters) })) {
+      toast.error('That change would make your post too long. Shorten it and try again.', { id: 'post-too-long' })
+      return
+    }
+    changeContent(text)
+  }
   const localRef = useRef<HTMLTextAreaElement>(null)
   const ref = textareaRef || localRef
 
@@ -405,6 +414,7 @@ export function ThreadPostEditor({
               ) : null}
               <div className="ml-auto shrink-0">
                 <CharacterCounter current={effectiveLength} limit={CHARACTER_LIMIT} />
+                {BYTE_LIMIT !== null && <span className="ml-2">{utf8ByteCount(post.content) + extraCharacters}/{BYTE_LIMIT} bytes</span>}
               </div>
             </div>
           )}

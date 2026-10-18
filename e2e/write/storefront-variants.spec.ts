@@ -1,5 +1,5 @@
 /**
- * Storefront v7 (docs/STOREFRONT_V7.md) against a real chain: a variant
+ * Storefront v7 (docs/archive/STOREFRONT_V7.md) against a real chain: a variant
  * listing renders with one picker per option type, the price, stock and SKU
  * follow the chosen combination, a combination that is not offered cannot be
  * bought, and an order for one combination lands carrying its id, label and

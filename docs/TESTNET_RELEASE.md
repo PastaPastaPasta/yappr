@@ -5,6 +5,7 @@ This is the committed record of Yappr's first true release on Dash testnet. It h
 - Written: 2026-10-16, against staging `4f8306f9` and Platform `5.0.0-rc.3` (protocol version 14).
 - Conventions: **D-numbers** are the owner's release decisions (section 2). **R-numbers** are backlog items from the pre-release audit. Neither is related to the D-numbers in `docs/mobile/` (those are older, mobile-only decisions).
 - **[O]** marks a step only the owner can do or approve. **[A]** marks work an agent does.
+- **Pre-cut-over cleanup:** [RELEASE_CLEANUP.md](RELEASE_CLEANUP.md) records removals and the legacy paths retained until production configuration changes. [The archive index](archive/README.md) locates historical contract and deployment evidence.
 - **Monitoring and incident response:** [MONITORING.md](MONITORING.md) describes the scheduled site/chain probes, thresholds, incident issues, and recurring operator tasks. Production-chain coverage stays pending until `.env.testnet` contains the registered release IDs.
 
 ## 1. Goal and scope
@@ -34,13 +35,14 @@ Once a contract is registered, the shape of its existing document types cannot c
   - Yappr's charters for social, blog and storefront are filed in the block right after registration, and the owner's testnet masternodes vote. Posting opens about two hours after registration.
 - **D3, YAPP authorities.** Manual mint, manual burn, freeze, unfreeze and destroy-frozen-funds are all set to `noOne`. YAPP supply comes only from the 100-YAPP once-per-identity claim. YAPP is non-transferable and bans already stop spending, so the owner needs none of these powers. The "Mainnet TODO" line at `lib/constants.ts:24` is removed if it concerns this.
 - **D4, sponsorship.** Unchanged: post, reply, like and like-reply cost 10, 3, 1 and 1 YAPP with gas paid by the contract owner, and no size changes are made for this purpose. Storage refunds going to the document owner is by design in rc.3. Exposure is bounded at roughly 74 to 132¢ per identity because the 100-YAPP grant cannot be topped up. The maker balance is monitored.
-- **D5, settled deletion.** Post and reply keep `leader: true, approvals: 3`. Yappr's charters always elect the leader plus at least two members, so three approvals is reachable.
+- **D5, settled deletion.** Post and reply keep `leader: true, approvals: 3`. The owner extended the same seven-day window and settled rule to blog posts and comments on 2026-10-17; storefront stays unchanged. Yappr's charters always elect the leader plus at least two members, so three approvals is reachable.
 - **D6, self-likes.** Blocked on chain: `like.postAuthor` gets `distinctFrom: $ownerId` (and the equivalent on like-reply if it carries an author). The like button is hidden on your own posts.
 - **D7, tags.** The ASCII pattern `^[a-z0-9_]{1,61}$` stays. The client is fixed so a tag with non-ASCII characters stays plain text instead of being indexed as a truncated ASCII prefix.
 - **D10, auth vault.** The current password-era vault does not go into the set. It is replaced by a new design, likely passkey-only, registered as a member of the App Connect group in the release set. The work runs in order: a dual design by Fable and Opus, a crypto review, then implementation. Password login is removed, and passkey sign-in returns with the new vault.
 - **D11, reviews.** Status quo. Any order lets the buyer review the store and its items. Lying or spam reviews are handled by storefront moderation, since `storeReview` and `itemReview` are moderated types. This depends on the storefront moderation UI (R-M24).
 - **D12, report box.** The broad scope stays: a report shares the feed's generation key, so a report lets moderators read that feed's earlier posts. This is disclosed plainly in Privacy and in private-feed setup.
 - **D13, bookmarks.** Bookmarks stay public on chain. They are disclosed with one quiet, well-designed line (for example in the bookmark confirmation or on the Bookmarks page), not with warning banners. The owner's brief: do not make the UX look bad.
+- **Blog ownership (2026-10-17).** Authors may delete their blog. Posts remain stored, but stop appearing on its page and in blog discovery; deletion is confirmed in settings. The parent-independent **My posts** pane keeps author retraction reachable, and owner indexes keep posts and comments discoverable for cleanup. The unregistered v9 cut is amended in place, including the required `deletableDocument` references and the D5 moderation rule above. [BLOG_V9.md](BLOG_V9.md) records the Sakura proof.
 - **D14, media URLs (contract).** Post and reply `mediaUrls`, `bannerUri`, and the storefront and blog image fields allow only `^(https|ipfs)://.+$`. Plain http is dropped. The website link becomes https-only.
 - **D14b, media URLs (app).** The app never loads arbitrary https media directly. Https media is shown through the public proxy wsrv.nl (images.weserv.nl). IPFS keeps using the gateway list. The same treatment applies to remote avatars, banners, and storefront and blog images, with a graceful fallback if wsrv is down. wsrv.nl is disclosed in the privacy page's third-party list.
 - **D15, poll indexes.** Both `byCreatedAt` and `ownerAndTime` are dropped from pollr. Polls are reachable only through the posts that embed them. The `POLLR_APP_*` settings are retired unless the standalone Pollr app moves to this contract.
@@ -108,7 +110,7 @@ Every PR goes to `staging` through the normal gates (lint, unit tests, build, de
   - The v2-era scripts are deleted or devnet-gated.
 - **SDK bump (WP2).** rc.3 across all three packages, matchers re-checked, mobile licenses regenerated.
 - **Contract cut (WP3).** The decided shape: social v17, storefront v10, blog v9, pollr v8 and DM v5, with the new vault in the App Connect set and the old one removed. SHA-256 values re-pinned, topology descriptors added, a query-to-index conformance spec added.
-  - Done: [SOCIAL_V17.md](SOCIAL_V17.md), [STOREFRONT_V10.md](STOREFRONT_V10.md), and the blog v9 and pollr v8 sections of [NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md). Signed creates: social 18,019 B, storefront 18,704 B, blog 8,852 B, pollr 3,568 B. A throwaway copy of each was registered and probed on sakura (153/153 cases as expected). The `authVault` is out of the set; the passkey vault joins in its own PR.
+  - Done: [SOCIAL_V17.md](SOCIAL_V17.md), [STOREFRONT_V10.md](STOREFRONT_V10.md), and the blog v9 and pollr v8 sections of [NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md). Signed creates: social 18,019 B, storefront 18,704 B, blog 9,247 B, pollr 3,568 B. A throwaway copy of each was registered and probed on sakura (153/153 cases as expected). The `authVault` is out of the set; the passkey vault joins in its own PR.
 - **Client (WP4).** Live-marker pins everywhere, new fields, private-feed caps from stored state, hidden self-like button, no plaintext tracking in the seller form, read-side payment filter.
 - **Auth vault redesign (D10).** Dual design, crypto review, then implementation.
 - **In parallel.** Auth hardening (password login removed, #616, #740, #738), safety and privacy fixes (blocks in notifications, EXIF stripping, link-preview proxies removed, media denylist, wsrv proxy, tip tab hidden, Beta pills), storefront and blog moderation UI, write-path reliability (#644), legal and user-facing copy, CI and deploy hardening, e2e on the release topology, store notifications (#575).
@@ -145,10 +147,84 @@ Every PR goes to `staging` through the normal gates (lint, unit tests, build, de
 3. [A] Run `--plan` and record the app id and group id. **Start the maker nonce freeze.** [O] Send the app id and `https://yap.pr` to the DashPay iOS and Android brand maps.
 4. [A] Run `--dry-run` then `--signed-dry-run`. Check that the interim, windows, app id, group id and member ids match the plan.
 5. [O/A] Run `--live --journal --upto app`, read back the group (owner is the maker, no admins, name Yappr), then `--live` for the members.
-6. [A/O] **Immediately after registration**, file each Yappr charter in the next block with a proved readback, for social, blog and storefront. Then watch for rival contenders. The first charter filed wins ties and seats are permanent on protocol 14. The owner's testnet masternodes vote. Posting opens about two hours later (1 h join plus 1 h vote).
+6. [A/O] **Prepare before registration and file immediately afterward**, independently for social, blog and storefront, following the charter procedure below. Prove the submitted proposal, members' joins, and elected application in that order. Tie-break priority belongs to the **elected application**, not the submitted proposal. The owner's masternode majority decides contested elections. A sole contender seats after the 1 h join window; a contested election also takes its 1 h vote window. Posting stays closed until a team actually seats.
 7. [A] Run read-only `verify-appconnect g1,g2,g3,a1` (expect 32/0) and one proved query per index family. Snapshot the contracts and end the nonce freeze. [O] Write the anchor `appInfo` (name Yappr, url `https://yap.pr`).
 
 **Gate G4.** All ids and hashes recorded in the runbook, charters seated, the journal at mode 0600 with an off-machine backup.
+
+### Charter preparation, filing, and masternode votes
+
+`file-release-charters.mjs` accepts one manifest per target (`social`, `blog`, or `storefront`). Use the **predicted registration id** from the registration plan; never copy a Sakura id into a testnet manifest. Each target needs a leader and at least two distinct elected members; **three members plus the leader are recommended**, so losing one nonleader still leaves three signatures possible. `leader: true, approvals: 3` means three signatures **including the leader**. Later-added members cannot approve deletion of documents that predate their membership.
+
+Keep manifests, journals, and generated encryption/decryption keys in a 0700 release directory. Signing key files must be regular files owned by the operator, mode 0600 or tighter, in the same format as registration: `{ "identityId": "…", "identityKeys": [{ "id": 0, "privateKeyWif": "…" }, { "id": 1, "privateKeyWif": "…" }] }`. Never put private keys in command arguments or checked-in manifests. Each actor supplies an enabled, unbound MASTER authentication key for preparation and a CRITICAL authentication key for documents; their ids need not be 0 and 1. The tool proves each key matches the declared identity before signing. Filing reads CRITICAL document keys and the prepared bound keys; MASTER keys are opened only when preparation must add an identity key.
+
+Example manifest (`social-charter.json`; repeat with the other target names and ids):
+
+```json
+{
+  "contract": "social",
+  "targetContractId": "<predicted-social-contract-id>",
+  "expected": {
+    "ownerId": "<registration-maker-id>",
+    "joinWindow": 3600, "voteWindow": 3600, "challengeCoolDown": 2592000,
+    "interim": "notYetUsable",
+    "documentTypes": ["post", "reply", "report", "yapprProfile"]
+  },
+  "leader": {
+    "identityId": "<leader-id>",
+    "keyFile": "/private/release/leader.json", "keyId": 1,
+    "masterKeyFile": "/private/release/leader.json", "masterKeyId": 0
+  },
+  "members": [
+    { "identityId": "<member-1>", "keyFile": "/private/release/member-1.json", "keyId": 1, "masterKeyFile": "/private/release/member-1.json", "masterKeyId": 0 },
+    { "identityId": "<member-2>", "keyFile": "/private/release/member-2.json", "keyId": 1, "masterKeyFile": "/private/release/member-2.json", "masterKeyId": 0 },
+    { "identityId": "<member-3>", "keyFile": "/private/release/member-3.json", "keyId": 1, "masterKeyFile": "/private/release/member-3.json", "masterKeyId": 0 }
+  ],
+  "description": "Our proposed moderation team and policy.",
+  "reasons": [{ "code": "SPM", "label": "Spam" }, { "code": "ABU", "label": "Abuse" }],
+  "moderatorsShare": 60,
+  "rewardSplit": { "leader": 40, "equal": 30, "actions": 30 }
+}
+```
+
+1. **Fund before preparing.** Each elected application spends a **0.5 DASH contest deposit (50B credits, approximately 3,000¢)** plus key/reason/proposal/join/application gas. It is not a refundable leader bond. The CLI requires **at least 0.51 DASH per leader per application**, and at least 0.001 DASH reserve per member. For three contracts, budget **1.5 DASH in deposits plus at least 0.03 DASH in leader reserves**, with extra member and operational funding. If a leader serves multiple contracts, fund the total before starting and use separate journals. Prepare them sequentially; reasons with the same owner/code/text are reused. **When reusing any actor, pass `--prior-journal` for every other journal that has already used a shared actor during both preparation and filing** (repeat the flag for social and blog when preparing/filing storefront). These private journals must match NETWORK/devnet and have no unresolved writes. Their verified charters nonces are imported and persisted in the new journal, so a lagging read cannot reuse a nonce consumed by an earlier target. Re-import all latest journals at filing even if all teams were prepared before registration, including journals for targets prepared later than this target; their reason writes share the same nonce stream. File sequentially too: never run concurrent filers or other charters writes for the same leader or member. Use distinct teams for parallel filing. Registration costs are separate. Use asset locks, preserving the maker's registration nonce.
+2. **Review the plan and read-only preflight.** `--plan` is offline and opens no key files. `--dry-run` reads the registered target and identity balances without signing or broadcasting. Placeholder ids may be absent; `ready: false` then documents the missing prerequisites. Mainnet is refused unless `--allow-mainnet` is explicit; production broadcasts also require `--production`. `NETWORK` is mandatory in every mode.
+
+   ```sh
+   NETWORK=testnet node scripts/file-release-charters.mjs --plan --config "$PRIVATE_RELEASE_DIR/social-charter.json"
+   NETWORK=testnet node scripts/file-release-charters.mjs --dry-run --config "$PRIVATE_RELEASE_DIR/social-charter.json"
+   ```
+
+3. **Prepare each team before registering its target.** This live step creates the leader's MEDIUM DECRYPTION key bound to `moderationCharters/submittedCharter`, each member's MEDIUM ENCRYPTION key bound to `moderationCharters/joinRequest`, and the reason documents. It persists generated private keys before identity updates, then checkpoints readiness and rechecks the leader still has 0.51 DASH. The manifest fixes the proposal payload; its transition is signed locally with the current nonce only at filing, avoiding stale pre-signed proposals across the three contracts. Keep these key files: the leader needs the decryption key to read member messages. To reuse an existing bound key, place its private half in the journal directory as `<identity-id>-decryption.json` or `<identity-id>-encryption.json` in the same identity-key JSON format.
+
+   ```sh
+   NETWORK=testnet node scripts/file-release-charters.mjs --live --production --prepare \
+     --config "$PRIVATE_RELEASE_DIR/social-charter.json" --journal "$PRIVATE_RELEASE_DIR/social-charter-journal.json"
+   ```
+
+4. **Arm the prepared filer, then register the target.** Start the command below in a second terminal before the corresponding registration command. It checks the prepared state, waits up to 600 seconds for proved registration, checks the registered owner, 1h/1h windows, interim, cool-down, and moderated types against `expected`, requires no election delay, signs and submits the proposal, commits members' encrypted joins in parallel, then checks the current join phase and applies with the full elected member list. Repeat for blog and storefront, matching each id against the actual registration journal. Set `expected.documentTypes` from each target's registration plan: social uses `post`, `reply`, `report`, `yapprProfile`; blog uses `blog`, `blogPost`, `blogComment`, `report`; storefront uses `store`, `storeItem`, `storeReview`, `itemReview`, `report`. A declaration mismatch stops before proposal or deposit. The contest fund must still equal the reviewed 0.5 DASH budget. The registration batch can be stopped after an entry with `--upto`; it does not itself interleave charters.
+
+   ```sh
+   NETWORK=testnet node scripts/file-release-charters.mjs --live --production --wait-registration 600 \
+     --config "$PRIVATE_RELEASE_DIR/social-charter.json" --journal "$PRIVATE_RELEASE_DIR/social-charter-journal.json"
+   ```
+
+   Prepared proposal filing aims for the first eligible block after registration. The tool does **not guarantee H+1** under network delays: prove registration and submission inclusion heights independently in the release evidence. Journal `observedTip` is only the tip seen after a proof, not an inclusion height; do not use it to claim H+1. A full-member elected application requires the committed proposal and joins first; do not claim it landed in H+1. The election clock and tie-break priority begin with the elected application. A rival may have opened the join window already, so file promptly. Resume with the **same semantic manifest and journal** after an interrupted document create (key paths may change after a backup restore). A journaled application is proved before funding gates, so an already-paid deposit needs no second top-up. Readback retries for up to 60 seconds. Only saved signed bytes are rebroadcast; a consumed nonce without the exact document stops for reconciliation. Inspect the saved transition hash/error and prove acceptance or rejection before retrying; never delete uncertain signed bytes. An ambiguous identity update stops for manual reconciliation: if the exact saved bound key appears on the proved identity, rerun to adopt it. If absent, absence or an unchanged revision alone does not prove rejection. Establish the transition's definitive rejection with node/operator evidence before an operator clears only that key's `broadcasting` checkpoint and reruns preparation; preserve the original private journal. Never do this while a transition could still land. A stale `.lock` after a killed process must be inspected and removed only after proving that process exited. Back up the private journal and key files off-machine.
+
+For example, when preparing blog after social with shared actors, append `--prior-journal "$PRIVATE_RELEASE_DIR/social-charter-journal.json"` to blog’s preparation command. When filing any target, append all other journals that have already prepared or filed with its actors: social filing after blog/storefront preparation must import those too. For storefront preparation after social/blog, append both earlier journals. Keep all journals and their imported floors with the backup; do not omit them when restoring or starting a new target.
+
+5. **Watch all three contracts and vote.** The CLI's one-shot `--watch` reads proposals, contenders, vote tallies, join/vote deadlines, phase, and seated team without opening key files. Invoke again to refresh.
+
+   ```sh
+   NETWORK=testnet node scripts/file-release-charters.mjs --watch \
+     --targets "social=$SOCIAL_CONTRACT_ID,blog=$BLOG_CONTRACT_ID,storefront=$STOREFRONT_CONTRACT_ID"
+   ```
+
+   For masternode voting, use the existing election tooling through an adapter explicitly configured for the **current testnet** actor/voter ledger and SDK endpoints. The audit copies under `elections-fast/` are **Sakura-only** and must never be run unmodified against testnet. Map voters before signing: prove each derived voter identity and its enabled VOTING key against the current chain. The voting private key can differ from the owner key. Preserve Core's proTxHash display order when deriving the voter id.
+
+   After join closes, use the adapter's `mn-vote.mjs --target "$CONTRACT_ID" --choice "towards:$LEADER_ID" --nodes all --live` for **each** target. Use the exact poll returned by `votePollsByEndDate`, preserving its Identifier index value (`0x10`); rebuilding a Text-valued poll can address the wrong contest fund. Prove voter nonce advancement and the landed tally. Evonodes carry weight four. Each landed vote costs **2M credits (approximately 0.12¢) from the contest fund**, not an extra charge to the leader. Do not cast lock votes: moderation elections are no-locking polls. **Our masternode majority decides contested elections**; first application only wins a tie, and it is not reserved ownership.
+
+6. **Prove seating before opening the release.** After chain time crosses the deadline, read the canonical winner, `seatedCharter`, and every elected identity for all three contracts; perform a real moderated write and refresh each app gate. A sole applicant seats after join closes without needing a vote window. With `notYetUsable`, registration alone opens nothing: no application means no election clock. Protocol 14 does not implement challenges even when `seatContestable` and a 30-day cool-down are declared. `ownerProtected` protects the owner from lists; it gives no post-seat rescue authority.
 
 ### Phase 5: Cut-over configuration PR on staging [A]
 

@@ -1,6 +1,6 @@
 /**
  * The two encodings of every field Platform 4.2.0-beta.4 turned into a typed
- * array (docs/SOCIAL_V9.md, "Typed-array encoding migration").
+ * array (docs/archive/SOCIAL_V9.md, "Typed-array encoding migration").
  *
  * Old cuts (social v2–v8, profile v1, blog v1–v3, storefront v1–v3) store a
  * string or packed bytes; the beta.4 cuts store a list, and each refuses the
@@ -187,7 +187,7 @@ export function encodeStringList(values: readonly string[], typed: boolean): str
 
 // ---- schema limits of the beta.4 cuts --------------------------------------------
 //
-// The typed-array bounds the new cuts declare (docs/SOCIAL_V9.md). A write past
+// The typed-array bounds the new cuts declare (docs/archive/SOCIAL_V9.md). A write past
 // one is a JSON-schema refusal (10101) after signing; checking here turns it
 // into a message the user can act on BEFORE anything is broadcast.
 

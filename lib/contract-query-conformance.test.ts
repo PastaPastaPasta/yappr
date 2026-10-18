@@ -470,6 +470,7 @@ async function readers(): Promise<Reader[]> {
     { name: 'privateFeedFollowerService.getFollowRequest', run: () => privateFeedFollowerService.getFollowRequest(OTHER, ME) },
     { name: 'privateFeedFollowerService.getGrant', run: () => privateFeedFollowerService.getGrant(OTHER, ME) },
     // ---- blog ----
+    { name: 'blogPostService.getOwnerPostsPage', run: () => blogPostService.getOwnerPostsPage(ME, { limit: 20 }) },
     { name: 'blogPostService.getLatestPosts', run: () => blogPostService.getLatestPosts({ limit: 20 }) },
     { name: 'blogPostService.getPostsByBlog', run: () => blogPostService.getPostsByBlog(BLOG, { limit: 20 }) },
     { name: 'blogPostService.getPostsByBlogs', run: () => blogPostService.getPostsByBlogs([BLOG, ident(43)], 5) },

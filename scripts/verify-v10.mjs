@@ -1,7 +1,7 @@
 /**
  * Registration-day battery for **contract v10** and its 5.0.0-beta.1 successor
  * **v11** (`--contract-file contracts/yappr-social-contract-v11.json`,
- * docs/SOCIAL_V11.md). v11 keeps every v10 case; where it differs the case
+ * docs/archive/SOCIAL_V11.md). v11 keeps every v10 case; where it differs the case
  * switches on the file:
  *
  *   - likes are timeless (`outlivesDelete` trend windows, byAuthorPost /
@@ -25,7 +25,7 @@
  *     minutes, since a week cannot pass in a battery).
  *
  * Its 5.0.0-beta.2 successor **v12** (`--contract-file
- * contracts/yappr-social-contract-v12.json`, docs/SOCIAL_V12.md) keeps every
+ * contracts/yappr-social-contract-v12.json`, docs/archive/SOCIAL_V12.md) keeps every
  * v11 case. The behaviour switches on what the file declares, never on its
  * name:
  *
@@ -42,7 +42,7 @@
  *     refused with the bar. On a file without `retractedWhen` x4 skips.
  *
  * The mainnet candidate **v13** (`--contract-file
- * contracts/yappr-social-contract-v13.json`, docs/SOCIAL_V13.md) keeps every
+ * contracts/yappr-social-contract-v13.json`, docs/archive/SOCIAL_V13.md) keeps every
  * v12 case; every document is built by scripts/social-shapes.mjs off the file,
  * so the shapes switch on what it declares:
  *
@@ -66,7 +66,7 @@
  *     self-test pins the mainnet election windows.
  *
  * Its 5.0.0-beta.3 successor **v14** (`--contract-file
- * contracts/yappr-social-contract-v14.json`, docs/SOCIAL_V14.md) keeps every
+ * contracts/yappr-social-contract-v14.json`, docs/archive/SOCIAL_V14.md) keeps every
  * v13 case; the switches read the file (the reply's properties, the windows,
  * `deleteConstraints`, the token's `startAsPaused`), never its name:
  *
@@ -99,7 +99,7 @@
  *     as one FAIL line and exits 1 after every other offline check ran.
  *
  * Its 5.0.0-beta.4 successor **v15** (`--contract-file
- * contracts/yappr-social-contract-v15.json`, docs/SOCIAL_V15.md) keeps every
+ * contracts/yappr-social-contract-v15.json`, docs/archive/SOCIAL_V15.md) keeps every
  * v14 case; only YAPP changes (read off `tokens["0"].transferable`):
  *
  *   - y1a's 1-YAPP transfer is refused 40726 (the token is not transferable);
@@ -124,12 +124,11 @@
  *     keeping the mentions is 10422 blankTombstone.
  *
  * **v17** (`--contract-file contracts/yappr-social-contract-v17.json`,
- * docs/SOCIAL_V17.md, the testnet production cut) is offline-ready only: `--self-test` and
+ * docs/SOCIAL_V17.md, the testnet production cut) is supported by the live battery: `--self-test` and
  * `--dry-run` pin its schema (the live-keyed timeline, tag listing and reply owner listing, the
  * reply's `live`, the quote-triple `quoteOwner`, the four-field `private` rule and the `feed` it
  * names, no self-likes, `privateFeed` in place of `privateFeedState`, a locked YAPP) and build
- * every write through SOCIAL. The live cases below still assume v16: running them on v17 needs the
- * adaptations listed in the work package's report (x2l, p1, y1, x1t's late like, the private posts).
+ * every write through SOCIAL. Live queries and private-feed cases use the schema-selected topology.
  *
  * Its 5.0.0-beta.6 successor **v16** (`--contract-file
  * contracts/yappr-social-contract-v16.json`, docs/SOCIAL_V16.md) keeps every
@@ -177,7 +176,7 @@
  * The rest of this header describes v10.
  *
  * Registration-day battery for **contract v10**
- * (`contracts/yappr-social-contract-v10.json`, docs/SOCIAL_V10.md): the
+ * (`contracts/yappr-social-contract-v10.json`, docs/archive/SOCIAL_V10.md): the
  * 4.2.0-beta.7 cut, exercised against a freshly registered contract on a
  * beta.7 devnet (bonsia). The machinery is verify-lib; the moderated write path
  * (manual batches carrying `$actionFeeAgreement`) is social-battery-lib. It
@@ -462,6 +461,7 @@ const TAG_NOUN = TAG_ARRAY ? 'the tag list' : 'the hashtag';
  */
 const LIVE_LISTINGS = SOCIAL.cut.liveTimeline;
 const PRIVATE_FEEDS = SOCIAL.cut.privateFeeds;
+const NO_SELF_LIKES = V10.documentSchemas.like.properties.postAuthor?.distinctFrom === '$ownerId';
 /** The type a feed owner opens: `privateFeed` (v17), `privateFeedState` before. */
 const FEED_TYPE = PRIVATE_FEEDS ? 'privateFeed' : 'privateFeedState';
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
@@ -484,8 +484,8 @@ const SUSPENSION_MS = 25_000;
 // The interim moderator is the contract owner alone (interim: contractOwner appoints nobody):
 // the maker on the published contract, or the bot that registered a throwaway draft
 // (`--moderator bot:<n>`, checked against the contract's owner before any case runs).
-if (MODERATOR_SPEC !== 'maker' && !/^bot:\d+$/.test(MODERATOR_SPEC)) {
-  console.error(`--moderator ${MODERATOR_SPEC}: name the contract owner, \`maker\` (the default) or the \`bot:<n>\` that registered a draft`);
+if (MODERATOR_SPEC !== 'maker' && !/^(bot|persona):\d+$/.test(MODERATOR_SPEC)) {
+  console.error(`--moderator ${MODERATOR_SPEC}: name the contract owner, \`maker\` (the default) or the \`bot:<n>\` / \`persona:<n>\` that registered a draft`);
   process.exit(1);
 }
 
@@ -801,33 +801,40 @@ async function caseD1DistinctFrom(ctx) {
 async function caseP1PrivateFeedGates(ctx) {
   const { sdk, contractId, botA, botB } = ctx;
   console.log('\n--- p1. private-feed gates: feed state required, request required, self-grant refused ---');
-  // A is the feed owner. privateFeedState is permanent and unique per owner, so
-  // a re-run finds it; the "no feed yet" probes only run on A's first pass.
-  let feedState = await queryOne(ctx, 'privateFeedState', [['$ownerId', '==', botA.ownerId]]);
-  if (!feedState) {
-    await expectCreateRefused(ctx, 'p1a a rekey by an identity with NO privateFeedState is refused (40120 on $ownerId)', botA, 'privateFeedRekey', rekeyData(), REFERENCE_NOT_FOUND, NOT_FOUND_ON_OWNER);
-    await expectCreateRefused(ctx, 'p1b a grant by an identity with NO privateFeedState is refused (40120 on $ownerId)', botA, 'privateFeedGrant', grantData({ recipientId: bs58.decode(botB.ownerId) }), REFERENCE_NOT_FOUND, NOT_FOUND_ON_OWNER);
-    const enabled = await attemptCreate(sdk, botA, { contractId, docType: 'privateFeedState', data: feedStateData() });
-    expectAccepted('p1c A enables a private feed (privateFeedState)', enabled);
-    feedState = enabled.ok ? await queryOne(ctx, 'privateFeedState', [['$ownerId', '==', botA.ownerId]]) : null;
-  } else {
-    console.log(`SKIP  p1a–p1c: A already has a privateFeedState (${idOf(feedState.id)}) from an earlier run; the no-feed probes need a fresh owner (--bot)`);
+  // v17 opens a fresh numbered feed each run; older cuts have one permanent state per owner.
+  let feed = 1;
+  if (PRIVATE_FEEDS) {
+    const existing = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: FEED_TYPE,
+      where: [['$ownerId', '==', botA.ownerId]], orderBy: [['$ownerId', 'asc'], ['feed', 'desc']], limit: 1 }));
+    feed = Number([...existing.values()][0]?.toObject().feed ?? 0) + 1;
+    if (feed > 65535) throw new Error('private feed numbers exhausted: use another battery owner');
   }
-  if (!feedState) { check('p1 fixture', false, 'A has no privateFeedState'); return; }
+  const feedWhere = [['$ownerId', '==', botA.ownerId], ...(PRIVATE_FEEDS ? [['feed', '==', feed]] : [])];
+  let feedState = await queryOne(ctx, FEED_TYPE, feedWhere);
+  if (!feedState) {
+    await expectCreateRefused(ctx, `p1a a rekey with NO ${FEED_TYPE} is refused (40120 on $ownerId)`, botA, 'privateFeedRekey', rekeyData({ feed }), REFERENCE_NOT_FOUND, NOT_FOUND_ON_OWNER);
+    await expectCreateRefused(ctx, `p1b a grant with NO ${FEED_TYPE} is refused (40120 on $ownerId)`, botA, 'privateFeedGrant', grantData({ feed, recipientId: bs58.decode(botB.ownerId) }), REFERENCE_NOT_FOUND, NOT_FOUND_ON_OWNER);
+    const enabled = await attemptCreate(sdk, botA, { contractId, docType: FEED_TYPE, data: feedStateData({ feed }) });
+    expectAccepted(`p1c A enables ${FEED_TYPE} ${feed}`, enabled);
+    feedState = enabled.ok ? await queryOne(ctx, FEED_TYPE, feedWhere) : null;
+  } else {
+    console.log(`SKIP  p1a–p1c: A already has ${FEED_TYPE}; the no-feed probes need a fresh owner (--bot)`);
+  }
+  if (!feedState) { check('p1 fixture', false, `A has no ${FEED_TYPE}`); return; }
 
   // Clear what an earlier run left: B's request and A's grant to B.
-  const staleGrant = await queryOne(ctx, 'privateFeedGrant', [['$ownerId', '==', botA.ownerId], ['recipientId', '==', botB.ownerId]]);
+  const staleGrant = await queryOne(ctx, 'privateFeedGrant', [['recipientId', '==', botB.ownerId], ['$ownerId', '==', botA.ownerId], ...(PRIVATE_FEEDS ? [['feed', '==', feed]] : [])]);
   if (staleGrant) await deleteOwn(ctx, botA, 'privateFeedGrant', idOf(staleGrant.id));
   const staleRequest = await queryOne(ctx, 'followRequest', [['targetId', '==', botA.ownerId], ['$ownerId', '==', botB.ownerId]]);
   if (staleRequest) await deleteOwn(ctx, botB, 'followRequest', idOf(staleRequest.id));
   if (staleGrant || staleRequest) await settle();
 
   const leafIndex = Number(BigInt.asUintN(10, BigInt(Date.now())));
-  await expectCreateRefused(ctx, 'p1d a grant to B with NO followRequest from B is refused (40120 on recipientId)', botA, 'privateFeedGrant', grantData({ recipientId: bs58.decode(botB.ownerId), leafIndex }), REFERENCE_NOT_FOUND, NOT_FOUND_ON_RECIPIENT);
+  await expectCreateRefused(ctx, 'p1d a grant to B with NO followRequest from B is refused (40120 on recipientId)', botA, 'privateFeedGrant', grantData({ feed, recipientId: bs58.decode(botB.ownerId), leafIndex }), REFERENCE_NOT_FOUND, NOT_FOUND_ON_RECIPIENT);
 
   const request = await attemptCreate(sdk, botB, { contractId, docType: 'followRequest', data: followRequestData({ targetId: bs58.decode(botA.ownerId) }) });
   expectAccepted('p1e B files a followRequest to A', request);
-  const grant = await attemptCreate(sdk, botA, { contractId, docType: 'privateFeedGrant', data: grantData({ recipientId: bs58.decode(botB.ownerId), leafIndex }) });
+  const grant = await attemptCreate(sdk, botA, { contractId, docType: 'privateFeedGrant', data: grantData({ feed, recipientId: bs58.decode(botB.ownerId), leafIndex }) });
   expectAccepted('p1f A\'s grant to B lands once B\'s request exists', grant);
 
   // The client's stale-request cleanup: the requester deletes the request after
@@ -839,12 +846,28 @@ async function caseP1PrivateFeedGates(ctx) {
     check('p1h …and A\'s grant to B is still there', (await fetchDocument(sdk, contractId, 'privateFeedGrant', grant.id)) !== null);
   }
 
-  await expectCreateRefused(ctx, 'p1i a self-grant is refused (10419 distinctFrom, before the request lookup)', botA, 'privateFeedGrant', grantData({ recipientId: bs58.decode(botA.ownerId), leafIndex: (leafIndex + 1) % 1024 }), NOT_DISTINCT);
+  await expectCreateRefused(ctx, 'p1i a self-grant is refused (10419 distinctFrom, before the request lookup)', botA, 'privateFeedGrant', grantData({ feed, recipientId: bs58.decode(botA.ownerId), leafIndex: (leafIndex + 1) % 1024 }), NOT_DISTINCT);
 
   // A rekey by the feed owner: the key generation is unique per owner, so pick a fresh one.
-  const keyGeneration = 2 + Number(BigInt.asUintN(20, BigInt(Date.now())));
-  const rekey = await attemptCreate(sdk, botA, { contractId, docType: 'privateFeedRekey', data: rekeyData({ keyGeneration, revokedLeaf: leafIndex }) });
+  const keyGeneration = PRIVATE_FEEDS ? 2 : 2 + Number(BigInt.asUintN(20, BigInt(Date.now())));
+  const rekey = await attemptCreate(sdk, botA, { contractId, docType: 'privateFeedRekey', data: rekeyData({ feed, keyGeneration, revokedLeaf: leafIndex }) });
   expectAccepted('p1j a rekey by the feed owner lands (ownerRefersTo satisfied)', rekey);
+  if (PRIVATE_FEEDS) {
+    if (grant.ok) await deleteOwn(ctx, botA, 'privateFeedGrant', grant.id);
+    await attemptCreate(sdk, botB, { contractId, docType: 'followRequest', data: followRequestData({ targetId: bs58.decode(botA.ownerId) }) });
+    await expectCreateRefused(ctx, 'p1k a grant outside the feed capacity is refused (40127)', botA, 'privateFeedGrant', grantData({ feed, recipientId: bs58.decode(botB.ownerId), leafIndex: 1024 }), PROPERTY_MISMATCH);
+    await expectCreateRefused(ctx, 'p1l a rekey beyond the feed generation ceiling is refused (40127)', botA, 'privateFeedRekey', rekeyData({ feed, keyGeneration: 2001 }), PROPERTY_MISMATCH);
+    const pendingRequest = await queryOne(ctx, 'followRequest', [['targetId', '==', botA.ownerId], ['$ownerId', '==', botB.ownerId]]);
+    if (pendingRequest) await deleteOwn(ctx, botB, 'followRequest', idOf(pendingRequest.id));
+    const sealed = SOCIAL.privateFields({ feed, encryptedContent: crypto.getRandomValues(new Uint8Array(48)), keyGeneration: 1, nonce: crypto.getRandomValues(new Uint8Array(24)) });
+    const post = await createFeedOutcome(ctx, botA, 'post', SOCIAL.post({ content: '🔒', ...sealed }));
+    expectAccepted('p1m a private post names its numbered feed', post);
+    const incomplete = { ...sealed };
+    delete incomplete.feed;
+    await expectFeedRefused(ctx, 'p1n ciphertext without its feed is refused (10422 private)', botA, 'post', SOCIAL.post({ content: '🔒', ...incomplete }), constraintViolation('private'));
+    if (post.ok) expectAccepted('p1o a private reply names its feed and carries live', await createFeedOutcome(ctx, botB, 'reply', SOCIAL.reply({ content: '🔒', rootPostId: bs58.decode(post.id), ...sealed })));
+  }
+
 }
 
 async function caseB1TypedBlockFollows(ctx) {
@@ -1010,9 +1033,11 @@ async function caseO1LikeOwnerAgreement(ctx) {
   const { botA, botB } = ctx;
   console.log('\n--- o1. like.postAuthor agrees with the post\'s $ownerId (40127) ---');
   const tagged = await ensurePost(ctx, 'tagged', { tags: [ctx.tag] });
+
   const untagged = await ensurePost(ctx, 'untagged');
   const spare = await ensurePost(ctx, 'spare', { tags: [ctx.tag] });
   if (!tagged || !untagged || !spare) { check('o1 fixture', false, 'fixture posts unavailable'); return; }
+  if (NO_SELF_LIKES) expectRejected('o1self liking your own post is refused (10419)', await attemptCreateIndexOnly(ctx.sdk, botB, { contractId: ctx.contractId, docType: 'like', data: likeData({ postId: bs58.decode(tagged), ...SOCIAL.tags([ctx.tag]), postAuthor: bs58.decode(botB.ownerId) }), accepted: () => entryExists(ctx.sdk, ctx.contractId, 'like', 'postId', tagged, botB.ownerId) }), NOT_DISTINCT);
   const likeOn = (postId, data) => attemptCreateIndexOnly(ctx.sdk, botA, {
     contractId: ctx.contractId,
     docType: 'like',
@@ -1025,7 +1050,7 @@ async function caseO1LikeOwnerAgreement(ctx) {
 
   // Every violation targets a post A has NOT yet liked: the 40105 uniqueness
   // probe fires before the agreement check and would mask the 40127.
-  expectRejected('o1a a like whose postAuthor is the LIKER is refused', await likeOn(tagged, { ...tag, postAuthor: bs58.decode(botA.ownerId) }), PROPERTY_MISMATCH);
+  expectRejected('o1a a like whose postAuthor is the LIKER is refused', await likeOn(tagged, { ...tag, postAuthor: bs58.decode(botA.ownerId) }), NO_SELF_LIKES ? NOT_DISTINCT : PROPERTY_MISMATCH);
   expectRejected('o1b a like whose postAuthor is an unrelated identity is refused', await likeOn(tagged, { ...tag, postAuthor: randomIdBytes() }), PROPERTY_MISMATCH);
   expectRejected(`o1c the ${SOCIAL.tagField} pair holds: a wrong tag is refused`, await likeOn(tagged, { ...SOCIAL.tags([`${ctx.tag}x`]), postAuthor: owner }), PROPERTY_MISMATCH);
   expectRejected('o1d absence is strict: a tagged like on an UNTAGGED post is refused', await likeOn(untagged, { ...tag, postAuthor: owner }), PROPERTY_MISMATCH);
@@ -1056,7 +1081,9 @@ async function caseO2LikeReplyOwnerAgreement(ctx) {
   const { botA, botB } = ctx;
   console.log(`\n--- o2. ${SOCIAL.cut.replyAuthor ? 'likeReply.replyAuthor agrees with the reply\'s $ownerId (40127)' : 'a reply like names the reply alone (v13: no replyAuthor)'} ---`);
   const replyId = await ensureReply(ctx);
+
   if (!replyId) { check('o2 fixture', false, 'no anchor reply available'); return; }
+  if (NO_SELF_LIKES) expectRejected('o2self liking your own reply is refused (40127)', await attemptCreateIndexOnly(ctx.sdk, botB, { contractId: ctx.contractId, docType: 'likeReply', data: SOCIAL.likeReply({ replyId: bs58.decode(replyId), replyAuthor: bs58.decode(botB.ownerId) }), accepted: () => entryExists(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId, botB.ownerId) }), PROPERTY_MISMATCH);
   const likeReplyCount = () => countBy(ctx.sdk, ctx.contractId, 'likeReply', 'replyId', replyId);
   const likeReplyOn = (replyAuthor, accepted) => attemptCreateIndexOnly(ctx.sdk, botA, {
     contractId: ctx.contractId,
@@ -1276,10 +1303,13 @@ async function caseX1Tombstones(ctx) {
     const second = await tagRanking(ctx.tag2);
     check('x1tp2 (v16) …and so does the second tag\'s ranking: the record keeps the whole list (deleteKeepsFields tags)', Number(second.entries.find((e) => e.groupValue === removed)?.value ?? -1) === 1, `groups ${second.entries.length}`);
   }
-  // The like carries the post's exact list, so its refusal is the removal record's, never 40127.
-  const lateLike = await attemptCreateIndexOnly(sdk, botB, { contractId, docType: 'like', data: likeData({ postId: removedBytes, ...kept, postAuthor: owner }), accepted: () => entryExists(sdk, contractId, 'like', 'postId', removed, botB.ownerId) });
+  // On v17 B's self-like is refused before resolving the removed post. A first unlikes, then probes the missing target.
+  const { document: removedHeart } = buildDocument({ contractId, docType: 'like', ownerId: botA.ownerId, data: likeData({ postId: removedBytes, ...kept, postAuthor: owner }) });
+  expectAccepted('x1tq0 A unlikes the removed post before the late-like probe', await attemptDeleteByValues(sdk, botA, { document: removedHeart, accepted: async () => !(await entryExists(sdk, contractId, 'like', 'postId', removed, botA.ownerId)) }));
+  await settle();
+  const lateLike = await attemptCreateIndexOnly(sdk, botA, { contractId, docType: 'like', data: likeData({ postId: removedBytes, ...kept, postAuthor: owner }), accepted: () => entryExists(sdk, contractId, 'like', 'postId', removed, botA.ownerId) });
   const lateReply = await createFeedOutcome(ctx, botB, 'reply', replyData({ content: 'x1t late reply', rootPostId: removedBytes, parentOwnerId: owner }));
-  check('x1tq after the removal a new like does not land and a new reply is refused (the reference resolves to a removal record)', !lateLike.ok && !lateReply.ok && (await countBy(sdk, contractId, 'like', 'postId', removed)) === 1, `like ${lateLike.ok ? 'ACCEPTED' : (lateLike.error ?? '').slice(0, 100)}; reply ${lateReply.ok ? 'ACCEPTED' : (lateReply.error ?? '').slice(0, 100)}`);
+  check('x1tq after the removal a new like does not land and a new reply is refused (the reference resolves to a removal record)', !lateLike.ok && REFERENCE_NOT_FOUND.test(lateLike.error ?? '') && !lateReply.ok && REFERENCE_NOT_FOUND.test(lateReply.error ?? '') && (await countBy(sdk, contractId, 'like', 'postId', removed)) === 0, `like ${lateLike.ok ? 'ACCEPTED' : (lateLike.error ?? '').slice(0, 100)}; reply ${lateReply.ok ? 'ACCEPTED' : (lateReply.error ?? '').slice(0, 100)}`);
 }
 
 // ---- v10: media hashes and content limits ----------------------------------------
@@ -1316,8 +1346,8 @@ async function caseX2MediaAndLimits(ctx) {
   // The global timeline replaces the per-language one: a fresh post heads it.
   const fresh = await createFeed(ctx, botA, 'post', postData({ content: `x2 timeline ${Date.now()}` }), 'x2 timeline post');
   if (fresh) {
-    const page = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'post', where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 }));
-    check('x2l the global timeline [$createdAt] lists the fresh post among the newest 20', [...page.keys()].map(idOf).includes(fresh), `${page.size} posts`);
+    const page = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'post', ...SOCIAL.timelinePosts({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 }) }));
+    check('x2l the global timeline lists the fresh post among the newest 20', [...page.keys()].map(idOf).includes(fresh), `${page.size} posts`);
   }
 }
 
@@ -3186,6 +3216,9 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
 
 await runBattery({
   name: 'v10',
+  // Full-run token probes spend 24 YAPP: two posts, one reply and one like.
+  minYappBalance: YAPP_LOCKED ? 30n : 150n,
+  claimStarter: YAPP_LOCKED,
   contractEnvVar: 'V10_CONTRACT_ID',
   usage:
     'Usage: node scripts/verify-v10.mjs --contract <id> [--bot <n>] [--bot2 <n>] [--fresh-bot <n> [--fresh-owner <id>]]\n' +

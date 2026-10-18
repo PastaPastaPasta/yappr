@@ -1,5 +1,7 @@
 'use client'
 
+import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
+
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useId, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -639,7 +641,7 @@ function AddItemPage() {
               <label htmlFor={`${formId}-title`} className="block text-sm font-medium mb-2">
                 Product Title <span className="text-red-500">*</span>
               </label>
-              <input
+              <LimitedInput contract="storefront" document="storeItem" field="title"
                 type="text"
                 id={`${formId}-title`}
                 value={title}
@@ -647,21 +649,19 @@ function AddItemPage() {
                 placeholder="Enter product title"
                 className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 required
-                maxLength={200}
               />
             </div>
 
             {/* Description */}
             <div>
               <label htmlFor={`${formId}-description`} className="block text-sm font-medium mb-2">Description</label>
-              <textarea
+              <LimitedTextarea contract="storefront" document="storeItem" field="description"
                 id={`${formId}-description`}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe your product"
                 rows={4}
                 className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
-                maxLength={2000}
               />
             </div>
 
@@ -754,7 +754,7 @@ function AddItemPage() {
                     Or paste a URL
                   </summary>
                   <div className="flex gap-2 mt-2">
-                    <input
+                    <LimitedInput contract="storefront" document="storeItem" field="imageUrls[]"
                       type="url"
                       aria-label="Product image URL"
                       value={newImageUrl}
@@ -780,14 +780,13 @@ function AddItemPage() {
             {/* Category */}
             <div>
               <label htmlFor={`${formId}-category`} className="block text-sm font-medium mb-2">Category</label>
-              <input
+              <LimitedInput contract="storefront" document="storeItem" field="category"
                 type="text"
                 id={`${formId}-category`}
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 placeholder="e.g., Electronics, Clothing"
                 className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                maxLength={50}
               />
             </div>
 

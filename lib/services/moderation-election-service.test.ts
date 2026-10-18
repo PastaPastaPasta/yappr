@@ -5,6 +5,7 @@ const sdk = vi.hoisted(() => ({
   voting: { contestedResourceVoteState: vi.fn(), votePollsByEndDate: vi.fn() },
   moderationCharters: { submittedCharters: vi.fn(), team: vi.fn(), submittedCharter: vi.fn() },
   documents: { get: vi.fn() },
+  contracts: { fetch: vi.fn() },
 }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }));
 import { MODERATION_CHARTERS_CONTRACT_ID, contestEndFromPolls, contestVotePoll, moderationElectionService, toProposal, toReason } from './moderation-election-service';
@@ -12,6 +13,10 @@ import { MODERATION_CHARTERS_CONTRACT_ID, contestEndFromPolls, contestVotePoll, 
 const target = bs58.encode(new Uint8Array(32).fill(9));
 const leader = bs58.encode(new Uint8Array(32).fill(1));
 const reasonA = bs58.encode(new Uint8Array(32).fill(2));
+const registered = { moderators: { $type: 'elected', joinWindow: 3600, voteWindow: 3600,
+  interim: { $type: 'notYetUsable' }, seatContestable: true, challengeCoolDown: 7200,
+  moderatedDocumentTypes: { post: ['delete'] }, maxAddedModerators: 5, ownerProtected: true } };
+
 
 describe('moderation election mappers', () => {
   it('queries the seat contest with the target id as a base58 STRING', () => {
@@ -121,6 +126,7 @@ describe('getStatus reports failed reads instead of passing them off as empty', 
   beforeEach(() => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v9');
     for (const fn of [sdk.voting.contestedResourceVoteState, sdk.voting.votePollsByEndDate, sdk.moderationCharters.submittedCharters, sdk.moderationCharters.team, sdk.moderationCharters.submittedCharter, sdk.documents.get]) fn.mockReset();
+    sdk.contracts.fetch.mockReset().mockResolvedValue({ config: { moderation: registered }, free: vi.fn() });
     sdk.voting.contestedResourceVoteState.mockResolvedValue(noContest());
     sdk.voting.votePollsByEndDate.mockResolvedValue([]);
     sdk.moderationCharters.submittedCharters.mockResolvedValue(new Map());
@@ -161,9 +167,10 @@ describe('getStatus reports failed reads instead of passing them off as empty', 
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
     try {
       sdk.voting.contestedResourceVoteState.mockResolvedValue({ ...noContest(), contenders: [{ identityId: leader, voteTally: 0 }] });
+      vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v16');
       await moderationElectionService.getStatus(target);
       const query = sdk.voting.votePollsByEndDate.mock.calls[0][0];
-      // v9 declares 3600 s join and vote windows; 10 minutes of slack on top.
+      // Registered 1h/1h windows, regardless of the committed 7d/3d template.
       expect(query).toMatchObject({ endTimeMs: now + 7_200_000 + 600_000, endTimeIncluded: true, orderAscending: true });
       expect(query).not.toHaveProperty('startTimeMs');
     } finally {
@@ -172,30 +179,32 @@ describe('getStatus reports failed reads instead of passing them off as empty', 
   });
 });
 
-describe('the end-date bound follows the configured cut', () => {
-  it('reads the join and vote windows of the v10 contract when the topology is v10', async () => {
-    vi.resetModules();
-    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10');
-    const { moderationElectionService: service } = await import('./moderation-election-service');
-    const { electedModeration } = await import('@/lib/contract-topology');
-    const v10 = (await import('@/contracts/yappr-social-contract-v10.json')).default.config.moderation.moderators;
-    const now = 1_790_000_000_000;
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
-    try {
-      for (const fn of [sdk.voting.contestedResourceVoteState, sdk.voting.votePollsByEndDate, sdk.moderationCharters.submittedCharters, sdk.moderationCharters.team]) fn.mockReset();
-      sdk.voting.contestedResourceVoteState.mockResolvedValue({ contenders: [{ identityId: leader, voteTally: 0 }], abstainVoteTally: 0, lockVoteTally: 0, winner: undefined, free: vi.fn() });
-      sdk.voting.votePollsByEndDate.mockResolvedValue([]);
-      sdk.moderationCharters.submittedCharters.mockResolvedValue(new Map());
-      sdk.moderationCharters.team.mockResolvedValue(undefined);
-      await service.getStatus(target);
-      expect(electedModeration()?.joinWindowSeconds).toBe(v10.joinWindow);
-      expect(electedModeration()?.voteWindowSeconds).toBe(v10.voteWindow);
-      expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).toMatchObject({ endTimeMs: now + (v10.joinWindow + v10.voteWindow) * 1000 + 600_000 });
-    } finally {
-      clock.mockRestore();
-      vi.unstubAllEnvs();
-      vi.resetModules();
-    }
+describe('registered election declarations', () => {
+  it.each([['social', 9], ['blog', 10], ['storefront', 11]] as const)('uses the registered %s settings despite a 7d/3d template', async (_name, byte) => {
+    const contractId = bs58.encode(new Uint8Array(32).fill(byte));
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v16');
+    sdk.contracts.fetch.mockResolvedValue({ config: { moderation: registered }, free: vi.fn() });
+    const status = await moderationElectionService.getStatus(contractId);
+    expect(sdk.contracts.fetch).toHaveBeenCalledWith(contractId);
+    expect(status?.declaration).toMatchObject({ joinWindowSeconds: 3600, voteWindowSeconds: 3600,
+      interim: 'notYetUsable', challengeCoolDownSeconds: 7200, maxAddedModerators: 5 });
+  });
+
+  it('uses protocol defaults only when the registered declaration omits windows', async () => {
+    sdk.contracts.fetch.mockResolvedValueOnce({ config: { moderation: { moderators: { ...registered.moderators, joinWindow: undefined, voteWindow: undefined } } }, free: vi.fn() });
+    expect((await moderationElectionService.getStatus(target))?.declaration).toMatchObject({ joinWindowSeconds: 604800, voteWindowSeconds: 604800 });
+  });
+
+  it('fails instead of showing the template when the registered declaration cannot be read', async () => {
+    sdk.contracts.fetch.mockRejectedValueOnce(new Error('offline'));
+    await expect(moderationElectionService.getStatus(target)).rejects.toThrow('offline');
+    sdk.contracts.fetch.mockResolvedValueOnce(null);
+    await expect(moderationElectionService.getStatus(target)).rejects.toThrow('could not be read');
+  });
+
+  it('returns null for a registered contract without elected moderation', async () => {
+    sdk.contracts.fetch.mockResolvedValueOnce({ config: {}, free: vi.fn() });
+    await expect(moderationElectionService.getStatus(target)).resolves.toBeNull();
   });
 });
 
@@ -215,5 +224,6 @@ describe('electionView', () => {
     const seated = { electedCharterId: leader, submittedCharterId: leader, leaderId: leader, members: [] };
     expect(electionView({ ...base, seated, failures: ['proposals'] }, false)).toMatchObject({ phase: 'Seated', emptyStateKnown: false });
     expect(electionView(null, true)).toMatchObject({ phase: 'Unknown', error: 'Could not read the election state.' });
+    expect(electionView({ ...base, seated }, true)).toMatchObject({ phase: 'Seated', error: 'Could not refresh the election state. Showing the last successful read.' });
   });
 });

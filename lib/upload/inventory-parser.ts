@@ -3,7 +3,7 @@
  *
  * Turns an inventory CSV into listings:
  * - Rows sharing a group ID (or Shopify handle) become one listing, each row
- *   one combination of its variants table (docs/STOREFRONT_V7.md). The option
+ *   one combination of its variants table (docs/archive/STOREFRONT_V7.md). The option
  *   types come from Shopify-style `Option1 Name`/`Option1 Value` columns, else
  *   the `variant`/`subVariant` columns, whose values may carry compound labels
  *   ("Primary color: Red · Pack Size: Single Piece").

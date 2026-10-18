@@ -20,8 +20,8 @@
  *    all callers hold a proxy handle that can be re-pointed.
  *  - Never print private keys or WIFs; ledgers are written with mode 600.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, chmodSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readFileSync, renameSync, writeFileSync, appendFileSync, chmodSync } from 'node:fs';
+import { join } from 'node:path';
 import { getPublicKey, utils as secpUtils } from '@noble/secp256k1';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -57,14 +57,14 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 export const YAPP_TOKEN_POSITION = 0;
 
 /**
- * The social topologies the seeder writes: v10, v11, v12 and v13. v11 (docs/SOCIAL_V11.md) keeps every
+ * The social topologies the seeder writes: v10, v11, v12 and v13. v11 (docs/archive/SOCIAL_V11.md) keeps every
  * create shape the seeder writes; it differs in deletes (tombstones), unlikes and moderation,
- * which the seeder never does. v12 (docs/SOCIAL_V12.md) changes only how the like author and
+ * which the seeder never does. v12 (docs/archive/SOCIAL_V12.md) changes only how the like author and
  * hashtag indexes store (counters) and who may tombstone, not what a create carries. v13
- * (docs/SOCIAL_V13.md) does change creates: posts carry `live`, replies `rootOwnerId`, a reply like
+ * (docs/archive/SOCIAL_V13.md) does change creates: posts carry `live`, replies `rootOwnerId`, a reply like
  * no `replyAuthor`, media are arrays; `SOCIAL_SHAPES` builds them off the configured file. v14
- * (docs/SOCIAL_V14.md) is v13 whose replies store no owner (`{ rootPostId, replyToReplyId? }`: the
- * notification windows derive the root and parent owners). v15 (docs/SOCIAL_V15.md) writes what v14
+ * (docs/archive/SOCIAL_V14.md) is v13 whose replies store no owner (`{ rootPostId, replyToReplyId? }`: the
+ * notification windows derive the root and parent owners). v15 (docs/archive/SOCIAL_V15.md) writes what v14
  * writes; only its YAPP differs (not transferable, costs burn). v16 (docs/SOCIAL_V16.md) is v15 whose
  * post carries up to four tags in the typed array `tags` (one `hashtag` before) and whose like repeats
  * the post's list exactly (`SOCIAL_SHAPES.tags`). v17 (docs/SOCIAL_V17.md) writes what v16 writes
@@ -98,6 +98,8 @@ export const STARTER_GRANT = BigInt(SOCIAL_CONTRACT.tokens['0'].distributionRule
  * client does the same, lib/payment-preference.ts). Credits land on beta.2 too.
  */
 const YAPP_TOKEN = SOCIAL_CONTRACT.tokens['0'];
+/** v17 funds YAPP only through each actor's starter claim. */
+export const YAPP_MINT_DISABLED = YAPP_TOKEN.manualMintingRules?.authorizedToMakeChange?.$type === 'noOne';
 export const YAPP_LOCKED = YAPP_TOKEN.startAsPaused === true && YAPP_TOKEN.emergencyActionRules?.authorizedToMakeChange?.$type === 'noOne';
 /** TokenOncePerIdentityDistributionAlreadyClaimedError: a second claim. */
 export const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
@@ -571,6 +573,7 @@ export function parseCorpus(text, personas) {
   const hashtagPattern = new RegExp(`^$|^[a-z0-9_]{1,${hashtagMax}}$`);
   const personaIdxSet = new Set(personas.map((p) => p.idx));
   const refs = new Map(); // ref -> 'post' | 'reply'
+  const authors = new Map(); // target ref -> persona idx, for distinctFrom on release cuts
   const dedupe = new Set();
   const ops = [];
   const stats = Object.fromEntries(OP_TYPES.map((t) => [t, 0]));
@@ -646,6 +649,7 @@ export function parseCorpus(text, personas) {
       if (typeof ref !== 'string' || !ref) return fail(line, 'ref is required');
       if (refs.has(ref)) return fail(line, `duplicate ref "${ref}"`);
       refs.set(ref, kind);
+      authors.set(ref, op.author);
       return undefined;
     };
 
@@ -686,10 +690,13 @@ export function parseCorpus(text, personas) {
         break;
       case 'like':
         requireEarlierRef(op.targetRef, ['post'], 'targetRef');
+        if (SOCIAL_DOCUMENT_SCHEMAS.like.properties.postAuthor?.distinctFrom === '$ownerId' && authors.get(op.targetRef) === op.author) fail(line, 'an identity cannot like its own post on this cut (10419)');
         dedupeKey('like', op.targetRef);
         break;
       case 'likeReply':
         requireEarlierRef(op.targetRef, ['reply'], 'targetRef');
+        // v17's refersTo rejects a reply owned by the liker (40127).
+        if (SOCIAL_DOCUMENT_SCHEMAS.likeReply.properties.replyId.refersTo?.where?.['$ownerId']?.notEqual === '$ownerId' && authors.get(op.targetRef) === op.author) fail(line, 'an identity cannot like its own reply on this cut (40127)');
         dedupeKey('likeReply', op.targetRef);
         break;
       case 'repost':
@@ -933,7 +940,7 @@ export async function findRecentByValues(sdk, { contractId, docType, ownerId, da
   if (fields.length === 0) return null; // nothing to match on — every candidate would "match"
   // A v13 post is listed by its author on [live, $ownerId, $createdAt], which holds only posts
   // carrying `live`: without the pin no index serves `$ownerId ==` and the scan finds nothing.
-  const owner = docType === 'post' && data.live === true ? [['live', '==', true], ['$ownerId', '==', ownerId]] : [['$ownerId', '==', ownerId]];
+  const owner = (docType === 'post' || docType === 'reply') && data.live === true ? [['live', '==', true], ['$ownerId', '==', ownerId]] : [['$ownerId', '==', ownerId]];
   const base = { dataContractId: contractId, documentTypeName: docType, where: scope?.where ?? owner, limit };
   // Checked before the transient patterns: an index refusal never succeeds on retry,
   // whatever else its (truncated) text happens to contain.
@@ -1098,7 +1105,7 @@ export async function feeAgreementFor(sdk, docType, schemas = SOCIAL_DOCUMENT_SC
  * unlike the facade path. Returns `{ id }` — the same shape `createdId` reads
  * off a facade-created Document — so callers' acceptance logic is unchanged.
  *
- * `onDerivedId(id)` receives that id before anything is signed or sent: a
+ * `onDerivedId(id)` receives that id after signing and before anything is sent: a
  * broadcast that lands while its wait throws (the DAPI 504 quirk) returns
  * nothing, and a caller reconciling by id needs it then. Looking the document
  * up by value instead needs an owner index, which not every doctype keeps
@@ -1108,7 +1115,6 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
   const rawNonce = (await sdk.wasm.getIdentityContractNonce(ownerId, contractId)) ?? 0n;
   const nonce = (BigInt(rawNonce) & NONCE_SEQUENCE_MASK) + 1n;
   const { document, id } = buildDocument({ contractId, docType, ownerId, data, entropy, nonce });
-  onDerivedId?.(id);
   const transition = new DocumentCreateTransition({
     document,
     identityContractNonce: nonce,
@@ -1119,31 +1125,33 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
   const stateTransition = batch.toStateTransition();
   stateTransition.setIdentityContractNonce(nonce);
   stateTransition.sign(PrivateKey.fromWIF(wif), identityKey);
-  await sdk.stateTransitions.broadcastAndWait(stateTransition);
-  // The nonce was managed by hand, so the facade's cached one is now behind:
-  // refresh it or the next `documents.create` by this actor reuses a spent
-  // nonce. The binding takes an `Identifier` (it `_assertClass`es, and consumes
-  // it), NOT a base58 string — and it throws SYNCHRONOUSLY, so this needs a
-  // try/catch rather than a rejection handler. Best effort: the write already
-  // landed, and a stale cache costs a retry, not the document.
+  onDerivedId?.(id);
   try {
-    await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId));
-  } catch (error) {
-    console.log(`     (nonce cache refresh failed after ${docType} create: ${describeErr(error).slice(0, 120)})`);
+    await sdk.stateTransitions.broadcastAndWait(stateTransition);
+  } finally {
+    // A lost confirmation can hide a landed manual write too. Invalidate the
+    // facade cache after every attempted broadcast, preserving its original error.
+    // The binding consumes an Identifier and may throw synchronously.
+    try {
+      await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId));
+    } catch (error) {
+      console.log(`     (nonce cache refresh failed after ${docType} create: ${describeErr(error).slice(0, 120)})`);
+    }
   }
   return { id };
 }
 
 /**
- * One create, sent whichever way its doctype demands: the facade when there is
- * nothing to agree to, and the hand-built batch above when an
- * `$actionFeeAgreement` has to ride along. Both resolve to something
+ * One create: the hand-built batch when an `$actionFeeAgreement` has to ride
+ * along or the caller needs its id before broadcast and provides a WIF;
+ * otherwise the facade (signer-only actors keep their existing path).
+ * Both resolve to something
  * `createdId` can read an id off, so a caller's acceptance logic does not care
  * which path ran. `actor` is a seeder actor: `{ ownerId, identityKey, signer,
  * wif }`.
  */
 export function createDocument(sdk, { contractId, actor, docType, document, data, entropy, agreement, payment = {}, onDerivedId }) {
-  if (!agreement) {
+  if (!agreement && (!onDerivedId || !actor.wif)) {
     return sdk.documents.create({ document, identityKey: actor.identityKey, signer: actor.signer, ...payment });
   }
   return createWithAgreement(sdk, {
@@ -1316,9 +1324,4 @@ export async function readback(handle, fn, { attempts = 4 } = {}) {
     }
   }
   throw new Error(`read failed after ${attempts} attempts: ${describeErr(lastError)}`);
-}
-
-/** Ensures the parent directory of `path` exists. */
-export function ensureDir(path) {
-  mkdirSync(dirname(path), { recursive: true });
 }

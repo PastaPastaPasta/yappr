@@ -1,11 +1,12 @@
 'use client'
 
+import { fieldLimits } from '@/lib/field-limits'
+import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
+
 import { useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { useAuth } from '@/contexts/auth-context'
 import { blogService } from '@/lib/services'
@@ -97,23 +98,23 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
           <div className="space-y-4">
             <div>
               <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} placeholder="My Blog" />
+              <LimitedInput contract="blog" document="blog" field="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Blog" />
             </div>
 
             <div>
               <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Description</label>
-              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={256} rows={3} placeholder="What this blog is about" />
+              <LimitedTextarea contract="blog" document="blog" field="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="What this blog is about" />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <ProfileImageUpload
+              <ProfileImageUpload urlLimits={fieldLimits('blog', 'blog', 'avatar')}
                 aspectRatio="square"
                 label="Avatar"
                 currentUrl={avatar || undefined}
                 onUpload={setAvatar}
                 onClear={() => setAvatar('')}
               />
-              <ProfileImageUpload
+              <ProfileImageUpload urlLimits={fieldLimits('blog', 'blog', 'headerImage')}
                 aspectRatio="banner"
                 label="Header image"
                 currentUrl={headerImage || undefined}

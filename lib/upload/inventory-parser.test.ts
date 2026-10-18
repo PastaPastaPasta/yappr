@@ -78,7 +78,7 @@ describe('inventory CSV currency units', () => {
   })
 })
 
-describe('merged tags fit storefront v4 (docs/SOCIAL_V9.md)', () => {
+describe('merged tags fit storefront v4 (docs/archive/SOCIAL_V9.md)', () => {
   it('keeps at most 32 tags of at most 64 characters and warns about the rest', () => {
     const many = Array.from({ length: 40 }, (_, i) => `tag${i}`).join(',')
     const long = 'x'.repeat(65)

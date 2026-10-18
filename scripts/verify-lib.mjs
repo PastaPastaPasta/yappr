@@ -1,8 +1,8 @@
 /**
  * Shared infrastructure for the registration-day contract batteries.
  *
- * `scripts/verify-v8.mjs` and `scripts/verify-v9.mjs` are thin files of CASES
- * on top of this module (the moderated write path they share is
+ * `scripts/verify-v10.mjs` and the feature batteries define cases on top of
+ * this module (the moderated social write path is
  * `social-battery-lib.mjs`): the devnet SDK with its quorum-rotation
  * reconnect, the readback-decided write helpers, the strict wrong-reason-fails
  * rejection matchers, the PASS/FAIL ledger and the CLI/dry-run/report shell
@@ -254,13 +254,6 @@ export async function readback(fn) {
 
 export async function fetchDocument(sdk, contractId, docType, id) {
   return readback(async () => (await sdk.documents.get(contractId, docType, id)) ?? null);
-}
-
-/** Identifier values arrive as bytes or base58 depending on the surface. */
-export function asBase58(value) {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'string') return value;
-  return bs58.encode(Uint8Array.from(value));
 }
 
 /**
@@ -532,8 +525,6 @@ export const likeData = ({ postId, hashtag, tags, postAuthor }) => ({
   ...(tags === undefined ? {} : { tags }),
   postAuthor,
 });
-/** `replyAuthor` is left out when not given: social v13 likes a reply by its id alone (social-shapes `likeReply`). */
-export const likeReplyData = ({ replyId, replyAuthor }) => ({ replyId, ...(replyAuthor === undefined ? {} : { replyAuthor }) });
 export const followData = ({ followingId }) => ({ followingId });
 // ---- Identities -------------------------------------------------------------
 
@@ -565,20 +556,33 @@ async function botSigner(sdk, index, explicitOwnerId) {
 }
 
 /** Aborts before any case runs if a bot cannot pay for its writes. */
-async function requireYapp(sdk, contractId, bots) {
+async function requireYapp(sdk, contractId, bots, minimum, claimStarter) {
   const tokenId = await sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION);
   console.log(`     YAPP token id: ${tokenId}`);
+  if (claimStarter) {
+    const initial = await sdk.tokens.balances(bots.map((bot) => bot.ownerId), tokenId);
+    for (const bot of bots) {
+      if ((initial.get(bot.ownerId) ?? 0n) >= minimum) continue;
+      try {
+        await sdk.tokens.claim({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION,
+          identityId: bot.ownerId, distributionType: 'oncePerIdentity', identityKey: bot.identityKey, signer: bot.signer });
+      } catch (e) {
+        console.log(`     ${bot.label} starter claim: ${describeErr(e).slice(0, 160)}`);
+      }
+    }
+    await settle();
+  }
   const balances = await sdk.tokens.balances(bots.map((bot) => bot.ownerId), tokenId);
   const short = [];
   for (const bot of bots) {
     const balance = (balances instanceof Map ? balances.get(bot.ownerId) : undefined) ?? 0n;
     console.log(`     ${bot.label}: ${balance} YAPP`);
-    if (balance < MIN_YAPP_BALANCE) short.push(`${bot.ownerId} (${balance})`);
+    if (balance < minimum) short.push(`${bot.ownerId} (${balance})`);
   }
   if (short.length > 0) {
     throw new Error(
-      `YAPP balance below ${MIN_YAPP_BALANCE} for ${short.join(', ')} on token ${tokenId}. ` +
-      `Fund them from the contract owner (maker, seed index 9).`
+      `YAPP balance below ${minimum} for ${short.join(', ')} on token ${tokenId}. ` +
+      (claimStarter ? `The actor's own starter claim cannot cover this run; use a fresh actor.` : `Fund them from the contract owner.`)
     );
   }
 }
@@ -698,6 +702,8 @@ export async function runBattery({
   makeContext,
   summarize = () => {},
   cleanup = null,
+  minYappBalance = MIN_YAPP_BALANCE,
+  claimStarter = false,
 }) {
   let args;
   try {
@@ -725,7 +731,7 @@ export async function runBattery({
     console.log(`${name} contract: ${args.contract}`);
     console.log(`A=${botA.label}  B=${botB.label}`);
     console.log('YAPP balances:');
-    await requireYapp(sdk, args.contract, [botA, botB]);
+    await requireYapp(sdk, args.contract, [botA, botB], minYappBalance, claimStarter);
 
     const ctx = makeContext({ sdk, contractId: args.contract, botA, botB });
 

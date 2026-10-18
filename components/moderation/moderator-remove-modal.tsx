@@ -66,7 +66,7 @@ export function ModeratorRemoveModal() {
   const viewerId = user?.identityId
   const postId = target?.documentId
   const createdAtMs = target?.createdAt ?? Number.NaN
-  /** No deletion window (social v2-v10, storefront, blog): always the single removal, known without reading anything. */
+  /** No deletion window (social v2-v10, storefront, blog before v9): always the single removal, known without reading anything. */
   const windowSeconds = moderatedContract(contract).deleteWindowSeconds(kind)
   const windowless = windowSeconds === null
 

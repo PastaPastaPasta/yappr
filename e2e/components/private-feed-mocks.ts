@@ -82,3 +82,5 @@ export const validateEncryptionKey = async () => ({
 export const useEncryptionKeyModal = () => ({ open: () => undefined })
 export const ResetPrivateFeedDialog = () => null
 export const AddEncryptionKeyModal = () => null
+
+export { blogService, blogPostService } from './blog-management-mocks'

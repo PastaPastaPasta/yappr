@@ -105,6 +105,7 @@ describe('edit-profile-form', () => {
     // v2 requires a name; a blank DashPay name keeps the stored one.
     expect(validateForm({ ...form, displayName: ' ' }, V2_LIMITS).displayName).toBe('Name is required');
     expect(validateForm({ ...form, displayName: ' ' }, DEV_LIMITS)).toEqual({});
+    expect(validateForm({ ...form, website: 'http://example.com' }, DEV_LIMITS).website).toBe('Website must start with https://');
     // Compose's copy: no URL schemes named.
     expect(validateForm({ ...form, bannerUri: 'http://x/y.png' }, DEV_LIMITS).bannerUri).toBe("That doesn't look like an image link.");
     expect(validateForm({ ...form, bannerUri: 'ipfs://bafy' }, DEV_LIMITS)).toEqual({});

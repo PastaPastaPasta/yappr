@@ -128,10 +128,10 @@ const META_SCHEMA_SHA256 = '742f99130f75940a3ba2962f243713fb745be0689093cd48d496
 
 let metaValidator;
 /**
- * A compiled validator for one document schema, or null when ajv is not
- * installed (it is a transitive dependency only; nothing here adds it to
- * package.json). rs-dpp validates each doctype enriched with `$schema` and the
- * contract's `$defs` (enrich_with_base_schema_v0).
+ * A compiled validator for one document schema, or null when the validator
+ * cannot be loaded. ajv is a direct dev dependency. rs-dpp validates each
+ * doctype enriched with `$schema` and the contract's `$defs`
+ * (enrich_with_base_schema_v0).
  */
 function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
@@ -775,15 +775,15 @@ const PROBES = [
     // reference there is refused for that first (pinned below).
     for (const [type, property] of [['blogPost', 'blogId'], ['blogFollow', 'blogId']]) types(s)[type].properties[property].refersTo.type = 'deletableDocument';
   } },
-  // #5214: blog and blogPost are moderated-kind (canBeDeleted false, no ttl, a moderator
-  // delete keeping records). Both parses accept the beta.7 `deletableDocument` references at
-  // blog; registration refuses each one with 40144. (blogComment's reference at blogPost is
+  // #5214: restore the old owner-permanent blog for this negative control.
+  // Its deletableDocument references are then refused with 40144. (blogComment's reference at blogPost is
   // refused by the parse itself: postOwnerAndTime derives through it, below.)
-  { label: 'blog with its beta.7 deletableDocument references at the moderated blog', file: BLOG, expect: 'audit', node: '40144', mutate: (s) => {
+  { label: 'blog deletableDocument references at an owner-permanent moderated blog', file: BLOG, expect: 'audit', node: '40144', mutate: (s) => {
+    types(s).blog.canBeDeleted = false;
     for (const [type, property] of [['blogPost', 'blogId'], ['blogFollow', 'blogId']]) types(s)[type].properties[property].refersTo.type = 'deletableDocument';
   } },
   { label: 'blog moderatedDocument reference at a blogPost its owner may delete', file: BLOG, expect: 'audit', node: '40143', mutate: (s) => { types(s).blogPost.canBeDeleted = true; } },
-  { label: 'blog moderatedDocument reference at a blogPost whose removals keep no record', file: BLOG, expect: 'audit', node: '40143', mutate: (s) => { types(s).blogPost.moderatorAbilities.deleteKeepsRecord = false; } },
+  { label: 'blog moderatedDocument reference at a blogPost whose removals keep no record', file: BLOG, expect: 'audit', node: '40143', mutate: (s) => { delete types(s).blogPost.moderatorAbilities.deleteKeepsFields; types(s).blogPost.moderatorAbilities.deleteKeepsRecord = false; } },
   // #5216: blog v6's postOwnerAndTime reads `blogPostId.$ownerId` through the reference, and a
   // derived property needs a permanent or moderated reference.
   { label: 'blog postOwnerAndTime deriving through a deletableDocument reference', file: BLOG, expect: 'wasm', mutate: (s) => {
@@ -944,7 +944,7 @@ const PROBES = [
   } },
   { label: 'v13 update: the media rule relaxed (rules are fixed)', file: SOCIAL_V13, expect: 'update', node: '10246', why: /propertyConstraints/i, update: (s) => { types(s).post.propertyConstraints.media = { equal: [{ count: 'mediaUrls' }, { count: 'mediaKinds' }] }; } },
 
-  // Social v14 (5.0.0-beta.3, docs/SOCIAL_V14.md): countPresent rules, the report deleteConstraints,
+  // Social v14 (5.0.0-beta.3, docs/archive/SOCIAL_V14.md): countPresent rules, the report deleteConstraints,
   // the derived reply-owner windows and an unpaused YAPP. Every refusal below was first measured
   // with rs-dpp at the v5.0.0-beta.3 tag; `why` pins the rule that speaks.
   { label: 'control: social v14 as committed (devnet: interim contractOwner)', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
@@ -992,7 +992,7 @@ const PROBES = [
   { label: 'v14 update: the report delete rule relaxed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { types(s).report.deleteConstraints.pending = { notEqual: ['status', 2] }; } },
   { label: 'v14 update: the report delete rule removed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { delete types(s).report.deleteConstraints; } },
 
-  // Social v15 (5.0.0-beta.4, docs/SOCIAL_V15.md): v14 with a non-transferable YAPP whose costs
+  // Social v15 (5.0.0-beta.4, docs/archive/SOCIAL_V15.md): v14 with a non-transferable YAPP whose costs
   // burn, written with the property type shorthands.
   { label: 'control: social v15 as committed (devnet: interim contractOwner)', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
   { label: 'control: social v15 as mainnet registers it (interim notYetUsable)', file: SOCIAL_V15, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
@@ -1401,6 +1401,16 @@ const PROBES = [
       && report.properties.targetOwnerId.distinctFrom === '$ownerId' && Number(report.properties.reason.maximum) === 31
       && report.indices.filter((i) => i.unique).length === 3;
   } },
+  { label: 'blog v9: author-deletable blogs use deletable references; posts and comments keep settled moderation records', file: BLOG, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const d = types(s);
+    return d.blog.canBeDeleted === true
+      && [d.blogPost.properties.blogId, d.blogFollow.properties.blogId, d.report.properties.blogId].every((p) => p.refersTo.type === 'deletableDocument')
+      && d.blogPost.canBeDeleted === false && d.blogComment.properties.blogPostId.refersTo.type === 'moderatedDocument'
+      && ['blogPost', 'blogComment'].every((name) => d[name].moderatorAbilities.deleteWithin === 604800
+        && d[name].moderatorAbilities.deleteKeepsRecord !== false
+        && JSON.stringify(d[name].moderatorAbilities.deleteSettled) === '{"leader":true,"approvals":3}');
+  } },
+  { label: 'blog v9: moderatedDocument cannot target an author-deletable blog', file: BLOG, expect: 'audit', node: '40143', mutate: (s) => { types(s).blogPost.properties.blogId.refersTo.type = 'moderatedDocument'; } },
   { label: 'blog v9: the live marker required on blogPost (the listings\' skipIfAbsent could never skip a tombstone)', file: BLOG, expect: 'wasm', why: /none of its properties is optional/i, mutate: (s) => { types(s).blogPost.required.push('live'); } },
   { label: 'blog v9: blogAndTime keyed on live without skipIfAbsent: legal (a tombstone enters the listing)', file: BLOG, expect: 'accepted', mutate: (s) => { delete namedIndex(s, 'blogPost', 'blogAndTime').skipIfAbsent; } },
   { label: 'blog v9: the report type missing from the moderated set (changeFields without changeDocumentFields)', file: BLOG, expect: 'audit', node: '10900', mutate: (s) => { elected(s).moderatedDocumentTypes.report = ['deleteDocuments']; } },

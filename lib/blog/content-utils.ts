@@ -116,7 +116,7 @@ export function getBlogPostUrl(blogId: string, slug: string): string {
 /**
  * Labels as the configured blog cut stores them; undefined when there are
  * none (the field is then omitted). The app models labels as a list; blog v4
- * stores that list (docs/SOCIAL_V9.md), v1–v3 a comma-separated string. On v4
+ * stores that list (docs/archive/SOCIAL_V9.md), v1–v3 a comma-separated string. On v4
  * the contract caps the list (64 on a blog, 16 on a post, 40 characters each)
  * and a longer one is refused after signing, so it throws a
  * {@link ListLimitError} with a user-facing message first. v1–v3 keep their
@@ -350,8 +350,8 @@ export async function enrichBlogPostsWithAuthors<T extends { ownerId: string; bl
 /**
  * {@link enrichBlogPostsWithAuthors} for posts from many blogs: the blogs are
  * read by id (one query per 100) for their names. A post whose blog does not
- * come back is dropped: a moderator may remove a blog while its posts stay
- * (they reference the removal record), and a post page needs its blog, so
+ * come back is dropped: an author may delete a blog or a moderator remove it
+ * while its posts stay stored, and a post page needs its blog, so
  * such a card would only lead to "Blog not found".
  */
 export async function enrichBlogPostsWithBlogNames<T extends { ownerId: string; blogId: string }>(posts: T[]) {

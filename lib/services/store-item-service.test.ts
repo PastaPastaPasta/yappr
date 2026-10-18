@@ -55,7 +55,7 @@ describe('product stock replacements', () => {
   });
 });
 
-describe('the replace merge re-encodes parsed fields (docs/SOCIAL_V9.md TODO 20)', () => {
+describe('the replace merge re-encodes parsed fields (docs/archive/SOCIAL_V9.md TODO 20)', () => {
   const variants = { axes: [{ name: 'Size', options: ['S'] }], combinations: [{ key: 'S', price: 1 }] };
   const stored = { ...raw, tags: '["wood","catan"]', imageUrls: '["https://example.com/a.png"]', variants: JSON.stringify(variants) };
 

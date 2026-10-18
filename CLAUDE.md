@@ -151,22 +151,43 @@ Singleton service classes handle all Dash Platform operations:
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure
-The deployed social contract (`contracts/yappr-social-contract-v2.json` on staging/prod) defines the 16 document types below. The /devnet build moves to v10 (`contracts/yappr-social-contract-v10.json`, Platform 4.2.0-beta.7, see `docs/SOCIAL_V10.md`: real deletes, no `beat`, the DashPay profile plus a `yapprProfile` extension, moderator-resolved reports, a locked YAPP); v9 (`docs/SOCIAL_V9.md`) was the moutai cut. Topology `v2`:
-- `profile` - User data (name, bio, avatar/banner references)
-- `post`, `reply` - Content; `post` is 500 chars, optional media
-- `like`, `repost`, `follow`, `followRequest` - Social interactions
-- `bookmark`, `block`, `blockFilter`, `blockFollow` - User preferences and moderation
-- `postHashtag`, `postMention` - Discovery indexes written alongside posts
-- `privateFeedGrant`, `privateFeedRekey`, `privateFeedState` - Private (encrypted) feed key management
 
-Not in this contract:
-- Direct messages live in the separate DM contract (`contracts/yappr-dm-contract.json`)
-- Notifications are derived client-side from other document types, not stored
-- `list` / `listMember` / `mute` were dropped when the v2 contract was cut (never implemented; `block` covers muting)
+The release set is social **v17**, blocks, **DM v5**, **blog v9**,
+**storefront v10**, and **pollr v8**, registered behind an App Connect anchor
+and permanent contract group. `scripts/app-connect-set.mjs` owns the files,
+hashes and registration order. The passkey vault
+(`contracts/yappr-passkey-vault-contract.json`, [docs/PASSKEY_VAULT.md](docs/PASSKEY_VAULT.md))
+joins as its own member; do not resurrect the password-era vault, key backup, key exchange or
+DM v4 for the release (D9/D10).
 
-Additional contracts back specific features: storefront (7 types), DM, blog, the App Connect anchor, the passkey vault, and the externally-owned Pollr contract. The legacy vault, auth vault, encrypted key backup and key-exchange contracts are not part of the release (DECISIONS D9); the app no longer reads the first three. The standalone hashtag, mention, and block contracts are gone — those doctypes moved into the social contract, and `lib/constants.ts` no longer carries their contract IDs.
+**Keep deployment states separate.** Today's production default still selects
+social **v2**, DM **v3**, the old feature contracts and legacy login.
+`.env.devnet` selects Sakura **social v16**, blog **v8**, storefront **v9**,
+pollr **v7**, DM **v5** and App Connect. The authored release files are not a
+claim that the release set has been registered. WP14/WP15 record the ids and
+switch shipping builds; until then, keep paths used by either current build.
+The legacy v2 schema still has 500-character posts, a standalone profile,
+and `postHashtag`/`postMention` discovery documents.
+See [contracts/README.md](contracts/README.md),
+[docs/TESTNET_RELEASE.md](docs/TESTNET_RELEASE.md) and
+[docs/RELEASE_CLEANUP.md](docs/RELEASE_CLEANUP.md).
 
-**IMPORTANT**: Documents use `$ownerId` (platform system field), NOT custom `authorId`/`userId` fields. When creating documents, only include content fields - ownership is automatic.
+The modern social contract owns posts (up to 1,000 characters), replies,
+quotes/reposts, likes, follows, bookmarks, discovery indexes, profile
+extensions, private-feed records and moderator-resolved reports. Blocks live
+in their own contract. DashPay's system profile plus `yapprProfile` replace
+the legacy standalone profile on modern cuts. Notifications are derived
+client-side from writes and proved indexes rather than stored in a social
+notification document. Exact feature and index support goes through
+`lib/contract-topology.ts`; don't guess a deployment from a versioned file.
+
+**Ownership:** use Platform's `$ownerId`, never an invented `authorId` or
+`userId`. Explicit target-owner fields exist only where a schema requires
+them. Never add system ownership fields to document content.
+
+Superseded topology designs and deployment experiments live in
+[docs/archive](docs/archive/README.md). Current `/devnet` v16 and release v17
+documentation remain outside that archive.
 
 ### DPNS Integration
 - Usernames managed through Dash Platform Name Service

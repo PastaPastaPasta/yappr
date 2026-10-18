@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v16)> node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v17)> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
@@ -49,7 +49,7 @@ import { socialShapes } from './social-shapes.mjs';
 
 const social = process.env.V10_CONTRACT_ID;
 if (!social) {
-  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10 to v16 cut (there is no default).');
+  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10 to v17 cut (there is no default).');
   process.exit(1);
 }
 /** A contract id from the environment or `.env.devnet`; the devnet's own, never a baked-in chain's. */
@@ -78,10 +78,17 @@ const id = bytes => typeof bytes === 'string' ? bytes : bs58.encode(bytes);
 const canonical = docs => JSON.stringify(docs.map(doc => Object.fromEntries(
   Object.entries(doc).filter(([key]) => key !== '$id').sort(([a], [b]) => a.localeCompare(b))
 )), (_, value) => typeof value === 'bigint' ? value.toString() : value);
+/** The social contract under test as published (v10 to v17): its declarations pick the reads below. */
+const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
+/**
+ * v13: author post pages read `post.ownerAndTime` with `live == true` first (SOCIAL.ownerPosts).
+ * v15: mentions are read one element of `mentionedUserIds` at a time (SOCIAL.mentionsOf, `contains`).
+ */
+const SOCIAL = socialShapes(V10);
+
 const timeline = records(await sdk.documents.query({
   dataContractId: social, documentTypeName: 'post',
-  where: [['$createdAt', '>', 0]],
-  orderBy: [['$createdAt', 'desc']], limit: 20,
+  ...SOCIAL.timelinePosts({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 }),
 }));
 assert(timeline.length, 'Need public posts to exercise nonempty queries');
 const owner = id(timeline[0].$ownerId);
@@ -127,14 +134,6 @@ await verify('profiles and DPNS including profile-less identity', [
   { dataContractId: profile, documentTypeName: 'profile', where: [['$ownerId', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['$ownerId', 'asc']], limit: owners.length + 1 },
   { dataContractId: dpns, documentTypeName: 'domain', where: [['records.identity', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['records.identity', 'asc']], limit: 100 },
 ]);
-/** The social contract under test as published (v10 to v16): its declarations pick the reads below. */
-const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
-/**
- * v13: author post pages read `post.ownerAndTime` with `live == true` first (SOCIAL.ownerPosts).
- * v15: mentions are read one element of `mentionedUserIds` at a time (SOCIAL.mentionsOf, `contains`).
- */
-const SOCIAL = socialShapes(V10);
-
 // Mentions stay permanent (the mentioning post's and reply's own mentionedUserAndTime).
 const permanent = (documentTypeName, field) => ({
   dataContractId: social, documentTypeName,
@@ -187,7 +186,7 @@ await verifyAlone('notification windows (current and previous)', [
 // and replies since the start, newest first, one `target in` read per kind.
 const recentOwn = async (documentTypeName) => {
   const query = { where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] };
-  return records(await sdk.documents.query({ dataContractId: social, documentTypeName, limit: 20, ...(documentTypeName === 'post' ? SOCIAL.ownerPosts(query) : query) }));
+  return records(await sdk.documents.query({ dataContractId: social, documentTypeName, limit: 20, ...(documentTypeName === 'post' ? SOCIAL.ownerPosts(query) : SOCIAL.ownerReplies(query)) }));
 };
 const likesSince = (documentTypeName, author, target, docs) => ({
   dataContractId: social, documentTypeName,
@@ -258,10 +257,12 @@ await verify('following post pages (reposts included)', owners.map(ownerId => SO
 })));
 
 const blogs = records(await sdk.documents.query({ dataContractId: blog, documentTypeName: 'blog', limit: 3 }));
+const blogSchemas = (await sdk.contracts.fetch(blog)).toJSON(PlatformVersion.current()).documentSchemas;
+const blogLivePin = blogSchemas.blogPost.properties.live ? [['live', '==', true]] : [];
 const blogIds = blogs.map(doc => id(doc.$id));
 while (blogIds.length < 2) blogIds.push(bs58.encode(Uint8Array.from({ length: 32 }, () => blogIds.length + 1)));
 await verify('blog pages with separate row budgets', blogIds.map(blogId => ({
-  dataContractId: blog, documentTypeName: 'blogPost', where: [['blogId', '==', blogId], ['$createdAt', '>', 0]],
+  dataContractId: blog, documentTypeName: 'blogPost', where: [...blogLivePin, ['blogId', '==', blogId], ['$createdAt', '>', 0]],
   orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']], limit: 10,
 })));
 

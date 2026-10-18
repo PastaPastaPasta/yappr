@@ -1,13 +1,14 @@
 import { logger } from '@/lib/logger';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { YAPPR_CONTRACT_ID } from '@/lib/constants';
-import { electedModeration, type ElectedModerationDeclaration } from '@/lib/contract-topology';
+import type { ElectedModerationDeclaration } from '@/lib/contract-topology';
+import { electedDeclarationOf } from '@/lib/moderated-contracts';
 import { getEvoSdk } from './evo-sdk-service';
 import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 
 /**
  * The election of the social contract's moderation team (v9 declares elected
- * moderation; docs/SOCIAL_V9.md). Read-only: filing charters, joining and
+ * moderation; docs/archive/SOCIAL_V9.md). Read-only: filing charters, joining and
  * voting are the election script's and the masternodes' business.
  *
  * Everything lives in the moderation charters system contract
@@ -272,7 +273,7 @@ class ModerationElectionService {
    * A failed vote-state read THROWS; a failed end-time read leaves `endsAtMs`
    * null and is reported in `endTimeFailed`.
    */
-  async getContest(targetContractId = YAPPR_CONTRACT_ID, declaration = electedModeration()): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
+  async getContest(targetContractId = YAPPR_CONTRACT_ID, declaration: ElectedModerationDeclaration | null = null): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
     const sdk = await getEvoSdk();
     const state = await sdk.voting.contestedResourceVoteState({
       ...contestVotePoll(targetContractId),
@@ -347,9 +348,24 @@ class ModerationElectionService {
 
   /**
    * Everything the election status view shows, or null when the contract is not
-   * elected. `declaration` is the target contract's (social by default).
+   * elected. All election settings come from the registered target, including
+   * network-specific windows and interim, never the committed template.
    */
-  async getStatus(targetContractId = YAPPR_CONTRACT_ID, declaration = electedModeration()): Promise<ElectionStatus | null> {
+  async getStatus(targetContractId = YAPPR_CONTRACT_ID): Promise<ElectionStatus | null> {
+    const sdk = await getEvoSdk();
+    const contract = await sdk.contracts.fetch(targetContractId);
+    if (!contract) throw new Error('The election contract could not be read.');
+    let declaration: ElectedModerationDeclaration | null;
+    try {
+      const moderators = contract.config.moderation?.moderators;
+      if (moderators?.$type !== 'elected') return null;
+      // Protocol defaults apply when omitted from the registered declaration.
+      const joinWindow = moderators.joinWindow ?? 604_800;
+      const voteWindow = moderators.voteWindow ?? 604_800;
+      declaration = electedDeclarationOf({ moderators: { ...moderators, joinWindow, voteWindow } });
+    } finally {
+      contract.free();
+    }
     if (!declaration) return null;
     const failures: ElectionReadFailure[] = [];
     /** A read whose failure is recorded (and logged) and whose fallback stands in as "unknown". */
@@ -392,7 +408,9 @@ const FAILURE_LABELS: Record<ElectionReadFailure, string> = {
 export function electionView(status: ElectionStatus | null, readFailed: boolean): { phase: string; error: string | null; emptyStateKnown: boolean } {
   if (!status) return { phase: readFailed ? 'Unknown' : 'Loading', error: readFailed ? 'Could not read the election state.' : null, emptyStateKnown: false };
   const failed = new Set(status.failures);
-  const error = status.failures.length === 0
+  const error = readFailed
+    ? 'Could not refresh the election state. Showing the last successful read.'
+    : status.failures.length === 0
     ? null
     : `Could not read ${status.failures.map((failure) => FAILURE_LABELS[failure]).join(', ')}. What is shown may be incomplete.`;
   let phase: string;

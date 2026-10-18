@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for the **blog contract**
- * (`contracts/yappr-blog-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run live on
+ * (`contracts/yappr-blog-contract.json`, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md), run live on
  * a 5.0.0-beta.2+ devnet. Actors are seed-ledger personas: an AUTHOR, a READER and a
  * STRANGER. Every fixture is fresh per run under a new blog, so blog- and
  * post-level aggregates are exact without a baseline.
@@ -35,7 +35,7 @@
  *     counts and "most followed" `followers` (b4, b5b, b11: the same queries);
  *     "most discussed" is the 72h `discussedRecent` window (b5a), "trending"
  *     the 72h `followersTrend` window (b6, b11d);
- *   - `blogPost.ownerAndTime`, `blogComment.ownerAndTime`, `blogFollow.following`
+ *   - `blogFollow.following` (owner indexes are restored by the 2026-10-17 amendments)
  *     and the all-time comment ranking are gone (the self-test pins it);
  *   - an author deletes a post with a TOMBSTONE (b22): `deleted`, comments off,
  *     every content field absent, blogId/slug/publishedAt kept; `deleted` is
@@ -53,7 +53,7 @@
  * wrote since it began (scripts/surface-cleanup.mjs cleanBlog): comments and
  * follows by their owners' deletes, posts and the draft by the author's
  * tombstone, and the run's blogs by the `--moderator`'s removal (a blog's
- * owner cannot delete it; on sakura pass `--moderator maker`, the interim).
+ * owner may delete it on v9; the older cuts need a moderator).
  * Whatever cannot go is printed as a leftover. `--keep-content` skips the
  * cleanup; `scripts/clean-test-content.mjs --surface blog` does it later.
  */
@@ -73,9 +73,12 @@ import { cleanBlog, printReport } from './surface-cleanup.mjs';
 
 const CONTRACT_FILE = 'yappr-blog-contract.json';
 const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
-const SCHEMAS = CONTRACT.documentSchemas;
-/** A property the type does not declare (`additionalProperties: false`): JSON-schema 10101. */
-const UNKNOWN_PROPERTY = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror|additional ?propert/i;
+let SCHEMAS = CONTRACT.documentSchemas;
+const publishedOnly = () => SCHEMAS.blogPost.required.includes('publishedAt');
+/** A JSON-schema refusal (10101): an unknown property or a missing required field. */
+const SCHEMA_REFUSED = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror|additional ?propert/i;
+const MISSING_PUBLISHED_AT = /(?=.*(?:\b10101\b|jsonschemaerror))(?=.*publishedAt)(?=.*required)/is;
+const MISSING_BLOG_ID = /(?=.*(?:\b10101\b|jsonschemaerror))(?=.*blogId)(?=.*required)/is;
 
 /** An index `docType` declares, by name (undefined when it declares none). */
 const index = (docType, name) => (SCHEMAS[docType].indices ?? []).find((entry) => entry.name === name);
@@ -105,11 +108,32 @@ const blogData = (run, labels) => ({ name: `Battery ${run}`, description: 'blog 
 // `immutableAllowSetting`): a replace must resend the stored value
 // byte-identically, so it is a parameter, not a fresh `Date.now()`.
 // Passing `null` omits it, which is how a DRAFT is written.
-const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({ blogId, title, slug, data0: crypto.getRandomValues(new Uint8Array(64)), ...(publishedAt === null ? {} : { publishedAt }) });
+const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({ blogId, title, slug, ...(SCHEMAS.blogPost.properties.live ? { live: true } : {}), data0: crypto.getRandomValues(new Uint8Array(64)), ...(publishedAt === null ? {} : { publishedAt }) });
 // v6 (5.0.0-beta.1): no `blogPostOwnerId`; `postOwnerAndTime` derives the post's
 // owner through `blogPostId` (`blogPostId.$ownerId`). v8 (5.0.0-beta.5): no
 // `postCommentsEnabled` either; the blogPostId reference checks the post's flag.
 const commentData = ({ blogPostId, content }) => ({ blogPostId, content });
+
+/** Bind a constraint probe's reference without restoring a deliberately omitted field. */
+const withFixtureBlog = (data, blogId) => ({ ...data, ...(Object.hasOwn(data, 'blogId') ? { blogId: id32(blogId) } : {}) });
+
+/** Shared probes as the deployed cut accepts them; older cuts have no live rule. */
+function blogConstraintProbes(cases, { schema = SCHEMAS.blogPost, prefix } = {}) {
+  return cases.filter(([label, , rule]) => {
+    if (schema.propertyConstraints?.[rule]) return true;
+    if (prefix) console.log(`SKIP  ${prefix} ${label} — ${rule} is not declared on this blog cut`);
+    return false;
+  }).map(([label, data, rule]) => {
+    const payload = { ...data };
+    if (!schema.properties.live) delete payload.live;
+    const requiredBlog = !Object.hasOwn(payload, 'blogId') && schema.required.includes('blogId');
+    return {
+      label, data: payload, rule,
+      expect: requiredBlog ? MISSING_BLOG_ID : constraintViolation(rule),
+      reason: requiredBlog ? '10101: required blogId' : `10422 ${rule}`,
+    };
+  });
+}
 
 // ---- Cases ------------------------------------------------------------------
 
@@ -129,7 +153,8 @@ async function caseB1Fixtures(ctx) {
     // A draft: `publishedAt` absent, so b12 can publish it exactly once.
     ['b1i draft post created (no publishedAt)', 'Draft', 'draft', null],
   ]) {
-    const created = await battery.probeCreate(label, null, author, 'blogPost', postData({ ...base, title: `${title} ${run}`, slug: `${slug}-${run}`, publishedAt }));
+    const expect = publishedAt === null && publishedOnly() ? SCHEMA_REFUSED : null;
+    const created = await battery.probeCreate(publishedAt === null && publishedOnly() ? 'b1i an on-chain draft without publishedAt is refused (10101)' : label, expect, author, 'blogPost', postData({ ...base, title: `${title} ${run}`, slug: `${slug}-${run}`, publishedAt }));
     posts.push(created.ok ? created.id : null);
   }
   [ctx.post1, ctx.post2, ctx.draftId] = posts;
@@ -168,7 +193,7 @@ async function caseB3Comments(ctx) {
   // v6 has no `blogPostOwnerId`: a client still on v5 (copying the owner) is refused (10101,
   // additionalProperties), not silently accepted. The field is spread past commentData(),
   // which would drop it before it reached the document. A refused write charges no fee.
-  await battery.probeCreate('b3d a v6 comment that still copies blogPostOwnerId is refused (10101)', UNKNOWN_PROPERTY, reader, 'blogComment',
+  await battery.probeCreate('b3d a v6 comment that still copies blogPostOwnerId is refused (10101)', SCHEMA_REFUSED, reader, 'blogComment',
     { ...commentData({ blogPostId: id32(ctx.post1), content: `stale client ${run}` }), blogPostOwnerId: id32(ctx.author.ownerId) });
 }
 
@@ -237,10 +262,27 @@ async function caseB7Edit(ctx) {
 }
 
 async function caseB8Permanence(ctx) {
-  const { battery, author } = ctx;
-  console.log('\n--- b8. permanence: posts and blogs cannot be deleted (an author tombstones a post, b22) ---');
-  for (const [label, docType, id] of [['b8a blogPost delete is rejected', 'blogPost', ctx.post2], ['b8b blog delete is rejected', 'blog', ctx.blogId]]) {
-    await battery.probeDelete(label, DELETE_FORBIDDEN, author, docType, id);
+  const { battery, author, run } = ctx;
+  console.log('\n--- b8. posts stay permanent; an owner may delete their blog ---');
+  await battery.probeDelete('b8a blogPost delete is rejected', DELETE_FORBIDDEN, author, 'blogPost', ctx.post2);
+  const registered = (await battery.sdk.contracts.fetch(ctx.contractId)).toJSON();
+  if (registered.documentSchemas.blog.canBeDeleted === false) {
+    await battery.probeDelete('b8b older cut: blog delete is rejected', DELETE_FORBIDDEN, author, 'blog', ctx.blogId);
+    return;
+  }
+  // Separate fixtures: later cases still need the main blog.
+  const blog = await battery.probeCreate('b8b deletable blog created', null, author, 'blog', blogData(`b8-${run}`));
+  if (!blog.ok) return;
+  const post = await battery.probeCreate('b8c post on deletable blog created', null, author, 'blogPost',
+    { ...postData({ blogId: id32(blog.id), title: `Retained ${run}`, slug: `retained-${run}` }), live: true });
+  await battery.probeDelete('b8d owner deletes a blog with posts', null, author, 'blog', blog.id);
+  battery.check('b8e blog is absent and its post stays stored',
+    !await battery.fetchDocument('blog', blog.id) && post.ok && Boolean(await battery.fetchDocument('blogPost', post.id)));
+  if (post.ok) {
+    const stored = await battery.fetchDocument('blogPost', post.id);
+    await battery.probeReplace('b8f author can retract a post after its blog is deleted', null, author, 'blogPost', post.id,
+      { deleted: true, commentsEnabled: false, slug: `retained-${run}`, publishedAt: Number(stored.toObject().publishedAt) },
+      await battery.revisionOf('blogPost', post.id));
   }
 }
 
@@ -294,9 +336,14 @@ async function caseB12Immutable(ctx) {
     // Back-dated: a date more than 10 minutes past the replace would be refused first by
     // `publishedNotAhead` (10422, judged before immutability), so it would prove nothing.
     ['b12b a replace re-dating publishedAt is rejected (40128)', { blogId: id32(ctx.blogId), publishedAt: ctx.publishedAt - 86_400_000 }],
-    ['b12c a replace DROPPING publishedAt is rejected (40128) — removal counts as a change', { blogId: id32(ctx.blogId), publishedAt: null }],
-  ]) await edit(label, IMMUTABLE_CHANGED, ctx.post2, postData({ ...post2Base, ...data }), revision);
+    ['b12c a replace DROPPING publishedAt is rejected', { blogId: id32(ctx.blogId), publishedAt: null }],
+  ]) await edit(label, data.publishedAt === null && publishedOnly() ? SCHEMA_REFUSED : IMMUTABLE_CHANGED, ctx.post2, postData({ ...post2Base, ...data }), revision);
 
+  if (publishedOnly()) {
+    const first = await battery.probeCreate('b12d a local draft is first published as a new post with publishedAt', null, author, 'blogPost', postData({ blogId: id32(ctx.blogId), title: `Draft ${run}`, slug: `draft-${run}`, publishedAt: ctx.publishedAt }));
+    if (first.ok) await edit('b12e re-dating a published draft is refused (40128)', IMMUTABLE_CHANGED, first.id, postData({ blogId: id32(ctx.blogId), title: `Draft ${run}`, slug: `draft-${run}`, publishedAt: ctx.publishedAt - 1000 }), await battery.revisionOf('blogPost', first.id));
+    return;
+  }
   if (!ctx.draftId) { battery.check('b12d draft publish', false, 'no draft fixture'); return; }
   const draftBase = { blogId: id32(ctx.blogId), title: `Draft ${run}`, slug: `draft-${run}` };
   const firstPublish = Date.now();
@@ -372,8 +419,8 @@ async function caseB19PropertyConstraints(ctx) {
   console.log('\n--- b19. propertyConstraints on a create (10422): chunks contiguous, a body, publishedAt not ahead ---');
   // Under b1's fixture blog, or (for `--only b19`) a fresh one; b1b/b1c (one chunk each) are the accepted side.
   if (!(await ensureFixtureBlog(ctx, 'b19'))) return;
-  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, 'blogPost')) {
-    await battery.probeCreate(`b19 ${label} is refused (10422 ${rule})`, constraintViolation(rule), author, 'blogPost', { ...data, blogId: id32(ctx.blogId), slug: `gap-${run}-${Date.now()}` });
+  for (const { label, data, expect, reason } of blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost'), { prefix: 'b19' })) {
+    await battery.probeCreate(`b19 ${label} is refused (${reason})`, expect, author, 'blogPost', { ...withFixtureBlog(data, ctx.blogId), slug: `gap-${run}-${Date.now()}` });
   }
 }
 
@@ -389,7 +436,7 @@ async function caseB20CommentsOff(ctx) {
     { ...commentData({ blogPostId: id32(postId), content: `${label} ${run}` }), ...extra });
   if (on.ok) {
     await comment('b20a a comment on a post that stores commentsEnabled true lands', null, on.id);
-    await comment('b20b a comment still copying postCommentsEnabled is refused (10101: v8 checks the post through the reference)', UNKNOWN_PROPERTY, on.id, { postCommentsEnabled: true });
+    await comment('b20b a comment still copying postCommentsEnabled is refused (10101: v8 checks the post through the reference)', SCHEMA_REFUSED, on.id, { postCommentsEnabled: true });
   }
   if (unset.ok) await comment('b20f a comment on a post that leaves commentsEnabled out lands', null, unset.id);
   if (off.ok) await comment('b20c a comment on a comments-off post is refused (40127: commentsEnabled notEqual false fails)', PROPERTY_MISMATCH, off.id);
@@ -427,10 +474,11 @@ async function caseB22Tombstone(ctx) {
   if (!fixture) return;
   const { replace } = fixture;
   // The refused shapes come from the shared table, so the offline oracle judged them first.
-  for (const [label, data, rule] of refusedReplaces(CONTRACT_FILE, 'blogPost')) {
-    await replace(`b22 ${label} is refused (10422 ${rule})`, constraintViolation(rule), { ...data, blogId: id32(ctx.blogId), slug: fixture.slug, publishedAt: fixture.publishedAt });
+  for (const { label, data, expect, reason } of blogConstraintProbes(refusedReplaces(CONTRACT_FILE, 'blogPost'), { prefix: 'b22' })) {
+    await replace(`b22 ${label} is refused (${reason})`, expect, { ...data, blogId: id32(ctx.blogId), slug: fixture.slug, publishedAt: fixture.publishedAt });
   }
-  await replace('b22a a tombstone that drops publishedAt is refused (40128: frozen once set)', IMMUTABLE_CHANGED, drop(tombstoneData(ctx, fixture), 'publishedAt'));
+  await replace(`b22a a tombstone that drops publishedAt is refused (${publishedOnly() ? '10101: required field' : '40128: frozen once set'})`,
+    publishedOnly() ? MISSING_PUBLISHED_AT : IMMUTABLE_CHANGED, drop(tombstoneData(ctx, fixture), 'publishedAt'));
   await replace('b22b the author\'s tombstone lands: deleted, comments off, blogId/slug/publishedAt kept', null, tombstoneData(ctx, fixture));
   const stored = (await battery.fetchDocument('blogPost', fixture.id))?.toJSON?.() ?? {};
   battery.check('b22c it reads back as a tombstone: no title, no body, the slug kept',
@@ -502,11 +550,40 @@ function selfTestV7() {
   const indexNames = (docType) => (SCHEMAS[docType].indices ?? []).map((entry) => entry.name);
   const moderators = CONTRACT.config?.moderation?.moderators ?? {};
   const fee = (docType) => actionFeeFor(docType, SCHEMAS)?.moderators;
+  const missingBlog = refusedCreates(CONTRACT_FILE, 'blogPost').find(([label]) => label === 'blogPost: live post requires a blog')?.[1];
+  const fixtureId = new Uint8Array(32).fill(7);
+  const legacySchema = structuredClone(SCHEMAS.blogPost);
+  legacySchema.required.push('blogId');
+  const originalV9Probes = blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost'), { schema: legacySchema });
+  delete legacySchema.properties.live;
+  delete legacySchema.propertyConstraints.live;
+  legacySchema.required = legacySchema.required.filter((field) => field !== 'publishedAt');
+  const legacyProbes = blogConstraintProbes([...refusedCreates(CONTRACT_FILE, 'blogPost'), ...refusedReplaces(CONTRACT_FILE, 'blogPost')], { schema: legacySchema });
+  const missingBlogProbe = (probes) => probes.find((probe) => probe.label === 'blogPost: live post requires a blog');
   return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v9)`, [
+    ['constraint fixture binding keeps the missing-blog refusal intact', missingBlog !== undefined && !Object.hasOwn(withFixtureBlog(missingBlog, bs58.encode(fixtureId)), 'blogId')],
+    ['constraint fixture binding replaces an existing blog reference', JSON.stringify(withFixtureBlog({ blogId: new Uint8Array(32) }, bs58.encode(fixtureId)).blogId) === JSON.stringify(fixtureId)],
+    ['older cuts skip only undeclared live constraints and omit the live marker', legacyProbes.length > 0 && legacyProbes.every((probe) => probe.rule !== 'live' && !Object.hasOwn(probe.data, 'live'))],
+    ['older cuts require the specific missing-blog schema refusal', missingBlogProbe(legacyProbes)?.expect.test('JsonSchemaError: "blogId" is a required property | code=10101') && !missingBlogProbe(legacyProbes)?.expect.test('JsonSchemaError: "title" is a required property | code=10101')],
+    ['original v9 keeps live markers and the required-blog schema refusal', originalV9Probes.some((probe) => probe.data.live === true) && missingBlogProbe(originalV9Probes)?.reason === '10101: required blogId'],
+    ['amended v9 keeps the exact hasBody refusal for a missing blog', missingBlogProbe(blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost')))?.expect.test('A document of type "blogPost" breaks its propertyConstraints rule "hasBody": it does not hold') && !missingBlogProbe(blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost')))?.expect.test('JsonSchemaError: "blogId" is a required property | code=10101')],
+    ['author management and cleanup have independent owner indexes', JSON.stringify(index('blogPost', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"live":"asc"},{"$createdAt":"asc"}]' && JSON.stringify(index('blogComment', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"$createdAt":"asc"}]'],
+    ['only tombstones may omit blogId after parent deletion', !SCHEMAS.blogPost.required.includes('blogId') && SCHEMAS.blogPost.propertyConstraints.hasBody.anyOf[1].allOf.some((rule) => rule.present === 'blogId')],
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (comments cost no YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['blog and blogPost creates declare an 80M moderators fee', fee('blog') === 80_000_000n && fee('blogPost') === 80_000_000n],
     ['blogComment creates declare a 16M moderators fee', fee('blogComment') === 16_000_000n],
+    ['blog owners may delete their blog; every reference to it admits deletion',
+      SCHEMAS.blog.canBeDeleted === true && [SCHEMAS.blogPost.properties.blogId, SCHEMAS.blogFollow.properties.blogId, SCHEMAS.report.properties.blogId].every((p) => p.refersTo.type === 'deletableDocument')],
+    ['posts and comments mirror social settled deletion: 7 days, leader and three approvals, recorded removals',
+      ['blogPost', 'blogComment'].every((name) => {
+        const a = SCHEMAS[name].moderatorAbilities;
+        return a.delete === true && a.deleteWithin === 604800 && a.deleteKeepsRecord !== false
+          && a.deleteSettled.leader === true && a.deleteSettled.approvals === 3;
+      })],
+    ['removal records keep the parent and creation time',
+      JSON.stringify(SCHEMAS.blogPost.moderatorAbilities.deleteKeepsFields) === '["blogId","$createdAt"]'
+      && JSON.stringify(SCHEMAS.blogComment.moderatorAbilities.deleteKeepsFields) === '["blogPostId","$createdAt"]'],
     ['follows are unpriced', actionFeeFor('blogFollow', SCHEMAS) === null],
     ['blog.timeline indexes [$createdAt]; blogPost.timeline and blogAndTime are keyed on live first and skip a tombstone (v9)',
       JSON.stringify(index('blog', 'timeline')?.properties) === '[{"$createdAt":"asc"}]'
@@ -520,8 +597,8 @@ function selfTestV7() {
       && JSON.stringify(SCHEMAS.report.deleteConstraints) === '{"pending":{"absent":"status"}}' && SCHEMAS.report.ttl === 7_776_000 && fee('report') === 50_000_000n
       && JSON.stringify(SCHEMAS.report.moderatorAbilities?.changeFields) === '["status","resolution"]'
       && JSON.stringify(moderators.moderatedDocumentTypes?.report) === '["deleteDocuments","changeDocumentFields"]'],
-    ['the dropped indexes are gone (blogPost/blogComment ownerAndTime, blogFollow following, the count-only twins)',
-      !indexNames('blogPost').includes('ownerAndTime') && !indexNames('blogComment').includes('ownerAndTime') && !indexNames('blogComment').includes('commentCount')
+    ['the unused following/count-only indexes stay gone',
+      !indexNames('blogComment').includes('commentCount')
       && !indexNames('blogFollow').includes('following') && !indexNames('blogFollow').includes('followerCount') && !indexNames('blogFollow').includes('followersByDay')],
     ['comment counts ride postAndTime (rangeCountable, b4)', index('blogComment', 'postAndTime')?.rangeCountable === true],
     ['follower counts and "most followed" ride followers (rangeCountable, ranked at blogId; b4c, b5b)', index('blogFollow', 'followers')?.rangeCountable === true && index('blogFollow', 'followers')?.rankedCountable?.at === 'blogId'],
@@ -564,7 +641,8 @@ await runBattery({
   // Every create of a priced type (blog, blogPost, blogComment) carries the declared agreement,
   // unless a case opts out (`noAgreement`, b3c) or names its own (`agreement`, b9).
   agreementFor: (sdk, docType) => feeAgreementFor(sdk, docType, SCHEMAS),
-  setup: async ({ battery, args }) => {
+  setup: async ({ battery, args, contractId }) => {
+    SCHEMAS = (await battery.readback(() => battery.sdk.contracts.fetch(contractId))).toJSON().documentSchemas;
     const moderator = await battery.moderatorActor(args.moderator);
     console.log(`moderator=${moderator.label}`);
     return { startedAt: Date.now() - 60_000, strangerCommentId: null, draftId: null, publishedAt: null, tombstone: null, moderator };

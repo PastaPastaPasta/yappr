@@ -4,18 +4,18 @@ A decentralized social network and marketplace on Dash Platform. Posts, profiles
 
 <img src="public/yappr.png" alt="Yappr" width="200">
 
-Live at [yap.pr](https://yap.pr). A second copy at [yap.pr/testing](https://yap.pr/testing/) runs the same code against dedicated test contracts and is what the end-to-end suite drives; [yap.pr/devnet](https://yap.pr/devnet/) tracks the newest contract shape.
+Live at [yap.pr](https://yap.pr). A second copy at [yap.pr/testing](https://yap.pr/testing/) runs the same code against dedicated test contracts and is what the end-to-end suite drives; [yap.pr/devnet](https://yap.pr/devnet/) runs the Sakura contract set in `.env.devnet`. The [testnet release record](docs/TESTNET_RELEASE.md) tracks the planned clean-start release and its cut-over gates.
 
 ## What it does
 
-- **Social**: 500-character posts with media, replies and threads, quotes, likes, reposts, follows, bookmarks, blocking (with shared block lists), @mentions and #hashtags, an explore page with trending tags and ranked posts.
+- **Social**: up to 1,000-character posts on modern cuts with media, replies and threads, quotes, likes, reposts, follows, bookmarks, blocking (with shared block lists), @mentions and #hashtags, an explore page with trending tags and ranked posts.
 - **Private feeds**: followers-only posts encrypted with XChaCha20-Poly1305, epoch-based key derivation, grant and revoke without re-uploading content. See `docs/YAPPR_PRIVATE_FEED_SPEC.md` and `/about/private-feeds`.
 - **Direct messages**: end-to-end encrypted, on a separate contract.
-- **Blogs**: long-form posts with a block editor, chunked on chain, embeddable in the feed.
+- **Blogs (Beta for the release)**: long-form posts with a block editor, chunked on chain, embeddable in the feed.
 - **Polls**: native polls on the Pollr contract, embedded in posts.
-- **Storefront**: stores, items with variants, cart, checkout with shipping zones, encrypted orders, order status, reviews, encrypted saved addresses.
-- **Payments**: tips by QR code, payment URIs for Dash and other coins, YAPP token purchases that pay for writes.
-- **Identity**: self-custodied keys, DPNS usernames, optional password-encrypted on-chain key backup, passkey unlock, wallet sign-in through key exchange.
+- **Storefront (Beta for the release)**: stores, items with variants, cart, checkout with shipping zones, encrypted orders, order status, reviews, encrypted saved addresses.
+- **Payments**: payment-URI tips for Dash and other coins. Release YAPP is a non-transferable starter grant for sponsored social writes, not a purchasable currency.
+- **Identity**: self-custodied keys and DPNS usernames. The release signs in through App Connect or a private key; the passkey vault ships through its own release work package. Password backup and legacy wallet key exchange are retired at cut-over.
 
 ## Getting started
 
@@ -76,11 +76,27 @@ docs/           private-feed spec, testing guide, deployment runbooks
 
 ### Contract topology
 
-Two social contracts exist: v2 on testnet and production, and v9 on the moutai devnet (flat threads, proved and daily-windowed rankings, a beat doctype, consensus-enforced ownership and immutability, and elected contract moderation). Superseded cuts are in git history only. `lib/contract-topology.ts` answers questions like "can a reply be reposted here" and "is the hashtag inline on the post", and everything that differs between shapes dispatches on it rather than on a version string. `/about` prints the topology a build was compiled with; the e2e suite checks it.
+The planned release uses an App Connect anchor/group with social **v17**,
+blocks, **DM v5**, **blog v9**, **storefront v10** and **pollr v8**. The
+passkey-vault work package adds its own member. The release is a clean start:
+no legacy contracts are registered and old data is not migrated.
+
+Today's production default still uses **social v2**, **DM v3** and the old
+feature contracts. `/devnet` uses **social v16**, **DM v5**, **blog v8**,
+**storefront v9** and **pollr v7** on Sakura beta.6, with App Connect enabled.
+Those paths stay supported until configuration cut-over; authored release
+JSONs are not a deployment record. See [the contract index](contracts/README.md),
+[non-social features](docs/NON_SOCIAL_CONTRACTS.md) and
+[cut-over deferrals](docs/RELEASE_CLEANUP.md).
+
+`lib/contract-topology.ts` resolves schema capabilities for the selected build.
+`/about` reports its configured topology, which the smoke suite checks.
+[Historical designs and upgrade records](docs/archive/README.md) are archived;
+the current devnet v16 and release v17 references remain in `docs/`.
 
 ### Documents
 
-Ownership is the platform's `$ownerId`; documents never carry their own author field (on v9 a like binds to its target's `$ownerId` through a propertyAgreement). Notifications are derived client-side from other documents, not stored. Deletes are tombstones where the shape makes posts permanent.
+Ownership is the platform's `$ownerId`. A schema may also require a target's owner, such as `like.postAuthor`, bound by a `refersTo.where` rule on modern cuts. Notifications are derived client-side from other documents, not stored. Deletes are tombstones where the shape makes posts permanent.
 
 ### Writes
 

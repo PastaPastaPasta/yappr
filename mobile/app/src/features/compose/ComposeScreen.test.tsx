@@ -281,6 +281,11 @@ it('takes a hosted image link and refuses anything else, never naming URL scheme
   expect(byId('compose-media-error')).toHaveTextContent("That doesn't look like an image link.");
   expect(screen.queryByText(/https:\/\/|ipfs:\/\//)).toBeNull();
 
+  fireEvent.changeText(byId('compose-media-url'), 'http://example.com/image.png');
+  expect(postButton()).toBeDisabled();
+  fireEvent.changeText(byId('compose-media-url'), `https://example.com/${'界'.repeat(170)}`);
+  expect(byId('compose-media-error')).toHaveTextContent('That link is too long.');
+
   // IPFS links are taken, without the field ever saying so.
   fireEvent.changeText(byId('compose-media-url'), 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
   expect(screen.queryByTestId('compose-media-error')).toBeNull();

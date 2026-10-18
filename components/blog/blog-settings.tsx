@@ -1,10 +1,13 @@
 'use client'
 
+import { fieldLimits } from '@/lib/field-limits'
+import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
+
 import { useState } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { blogIsV9 } from '@/lib/constants'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { blogService } from '@/lib/services'
@@ -19,9 +22,10 @@ interface BlogSettingsProps {
   blog: Blog
   ownerId: string
   onUpdated?: (blog: Blog) => void
+  onDeleted: () => void
 }
 
-export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
+export function BlogSettings({ blog, ownerId, onUpdated, onDeleted }: BlogSettingsProps) {
   const [name, setName] = useState(blog.name)
   const [description, setDescription] = useState(blog.description || '')
   const [avatar, setAvatar] = useState(blog.avatar || '')
@@ -31,6 +35,21 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
   const [newLabel, setNewLabel] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [isSavingLabels, setIsSavingLabels] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const handleDelete = async () => {
+    setIsDeleting(true)
+    try {
+      if (!await blogService.deleteBlog(blog.id, ownerId)) throw new Error('Delete refused')
+      toast.success('Blog deleted')
+      onDeleted()
+    } catch (err) {
+      if (!reportModerationRefusal(err, ownerId, 'blog')) toast.error('Failed to delete blog. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
 
   const handleSave = async () => {
@@ -105,23 +124,23 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
 
       <div>
         <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
-        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} />
+        <LimitedInput contract="blog" document="blog" field="name" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
 
       <div>
         <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Description</label>
-        <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={256} />
+        <LimitedTextarea contract="blog" document="blog" field="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <ProfileImageUpload
+        <ProfileImageUpload urlLimits={fieldLimits('blog', 'blog', 'avatar')}
           aspectRatio="square"
           label="Avatar"
           currentUrl={avatar || undefined}
           onUpload={setAvatar}
           onClear={() => setAvatar('')}
         />
-        <ProfileImageUpload
+        <ProfileImageUpload urlLimits={fieldLimits('blog', 'blog', 'headerImage')}
           aspectRatio="banner"
           label="Header image"
           currentUrl={headerImage || undefined}
@@ -157,10 +176,9 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
         </div>
 
         <div className="flex gap-2">
-          <Input
+          <LimitedInput contract="blog" document="blog" field="labels[]"
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
-            maxLength={40}
             placeholder="Add new label"
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
@@ -187,6 +205,24 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
         </div>
         <Switch checked={commentsEnabledDefault} onCheckedChange={setCommentsEnabledDefault} />
       </div>
+
+      {blogIsV9() && (
+        <div className="border-t border-gray-200 pt-4 dark:border-gray-800">
+          <Button variant="destructive" onClick={() => setConfirmDelete(true)} disabled={isSaving || isSavingLabels}>
+            Delete blog
+          </Button>
+          <ConfirmDialog
+            isOpen={confirmDelete}
+            onClose={() => { if (!isDeleting) setConfirmDelete(false) }}
+            onConfirm={handleDelete}
+            title="Delete blog"
+            message={`Delete “${blog.name}”? Its posts will stop showing on the blog page and in discovery. The posts stay stored. This cannot be undone.`}
+            confirmText="Delete blog"
+            variant="danger"
+            isLoading={isDeleting}
+          />
+        </div>
+      )}
 
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={isSaving || !name.trim()}>{isSaving ? 'Saving...' : 'Save settings'}</Button>

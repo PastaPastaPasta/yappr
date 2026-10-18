@@ -1,6 +1,6 @@
 /**
  * The social documents the Node scripts write, built for the cut a contract
- * file declares (docs/SOCIAL_V10.md to docs/SOCIAL_V17.md). Every switch reads
+ * file declares (docs/archive/SOCIAL_V10.md to docs/SOCIAL_V17.md). Every switch reads
  * the schemas, never the file's name, so one builder serves v10 to v17 and a
  * v10–v12 document comes out exactly as the scripts wrote it before v13:
  *

@@ -1,7 +1,7 @@
 # Platform 4.2.0-beta.7: the SDK pin and bonsia devnet wiring
 
 Investigation date: 2026-09-29. This document covers the beta.6 → beta.7 range
-only. Everything earlier is in [`PLATFORM_BETA6_UPGRADE.md`](./PLATFORM_BETA6_UPGRADE.md).
+only. Everything earlier is in [`PLATFORM_BETA6_UPGRADE.md`](PLATFORM_BETA6_UPGRADE.md).
 
 It records the SDK pin PR (`beta7/sdk-bonsia`). That PR contains:
 - the SDK bump, now from npm again;

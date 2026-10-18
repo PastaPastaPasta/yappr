@@ -313,6 +313,7 @@ describe('engage writes', () => {
     const reply = { ...TARGET, kind: 'reply' as const }
     await expect(engage.repost(reply)).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
     await expect(engage.bookmark(reply)).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
+    await expect(engage.like({ ...TARGET, ownerId: VIEWER })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(engage.like({ ...TARGET, id: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     m.viewer = null
     await expect(engage.like(TARGET)).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
@@ -553,6 +554,9 @@ describe('profiles.update', () => {
     }, expect.anything())
     await expect(profiles.update({ avatar: { dicebear: { style: 'nope', seed: 'a' } } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(profiles.update({ displayName: 'x'.repeat(51) })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(profiles.update({ website: 'http://example.com' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(profiles.update({ bannerUri: 'http://example.com/image.png' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(profiles.update({ avatar: { uri: 'http://example.com/image.png' } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(profiles.update({ handle: 'x' } as never)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
@@ -672,6 +676,8 @@ describe('posts.publish and posts.delete', () => {
     await expect(posts.publish({ parts: parts(2), replyTo: TARGET })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(posts.publish({ parts: [{ text: ' ​ ' }] })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(posts.publish({ parts: [{ text: 'x'.repeat(501) }] })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(posts.publish({ parts: [{ text: 'x' }], mediaUrl: 'http://example.com/image.png' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(posts.publish({ parts: [{ text: 'x' }], mediaUrl: `https://img.example/${'界'.repeat(170)}` })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(posts.publish({ parts: [{ text: 'x' }], mediaUrl: 'javascript:alert(1)' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     // The contract's mediaUrl maxLength (512): refused before a ticket, not after it, every retry.
     await expect(posts.publish({ parts: [{ text: 'x' }], mediaUrl: `https://img.example/${'a'.repeat(600)}.png` })).rejects.toMatchObject({ code: 'BAD_REQUEST' })

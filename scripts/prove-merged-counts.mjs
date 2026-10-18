@@ -1,5 +1,5 @@
 /**
- * Live proof of the beta.7 social v10 count consolidation (docs/SOCIAL_V10.md,
+ * Live proof of the beta.7 social v10 count consolidation (docs/archive/SOCIAL_V10.md,
  * "Merged count indexes"). The re-cut drops every count-only index whose list
  * twin can carry the count, and the app then counts through the twins:
  *
@@ -62,7 +62,7 @@
  *
  * ## Social v11 (`--contract-file contracts/yappr-social-contract-v11.json`)
  *
- * v11 (docs/SOCIAL_V11.md) keeps every v10 index but the like author index,
+ * v11 (docs/archive/SOCIAL_V11.md) keeps every v10 index but the like author index,
  * which drops `$createdAt` (byAuthorPost / byAuthorReply), and marks the two
  * trend windows `outlivesDelete`. The proof contract then also keeps the
  * post/reply moderator abilities (deleteKeepsFields, deleteWithin,
@@ -89,7 +89,7 @@
  *
  * ## Social v12 (`--contract-file contracts/yappr-social-contract-v12.json`)
  *
- * v12 (docs/SOCIAL_V12.md) is v11 whose like author and hashtag indexes are
+ * v12 (docs/archive/SOCIAL_V12.md) is v11 whose like author and hashtag indexes are
  * `summableOffCountIndex` counters of byPost / byReply (one SumItem per post,
  * no like documents; platform#5250) and whose post and reply declare
  * `retractedWhen` (#5253). Every v11 phase runs; what the file declares
@@ -123,7 +123,7 @@
  *
  * ## Social v13 (`--contract-file contracts/yappr-social-contract-v13.json`)
  *
- * v13 (docs/SOCIAL_V13.md) is v12 with new document shapes, so every v12 phase
+ * v13 (docs/archive/SOCIAL_V13.md) is v12 with new document shapes, so every v12 phase
  * runs on it; the fixture is written in v12's shape and adapted by
  * scripts/social-shapes.mjs (`fit`): posts carry `live: true` (tombstones
  * leave it out), replies name `rootOwnerId` (a nested reply names it
@@ -139,7 +139,7 @@
  *
  * ## Social v14 (`--contract-file contracts/yappr-social-contract-v14.json`)
  *
- * v14 (docs/SOCIAL_V14.md) is v13 whose replies store no owner, so every v13
+ * v14 (docs/archive/SOCIAL_V14.md) is v13 whose replies store no owner, so every v13
  * phase runs on it: `fit` drops `parentOwnerId` and `rootOwnerId` from the
  * v12-shaped fixture. The reply windows derive the owner by consensus:
  *   - n1 reads `rootOwnerRecent` (`rootPostId.$ownerId == A`): every reply in
@@ -750,8 +750,7 @@ async function main() {
   await attempt('c2', () => sdk.documents.composite({
     dataContractId: contractId,
     documentType: 'reply',
-    where: [['$ownerId', '==', B.ownerId]],
-    orderBy: [['$createdAt', 'asc']],
+    ...shapes.ownerReplies({ where: [['$ownerId', '==', B.ownerId]], orderBy: [['$createdAt', 'asc']] }),
     limit: 10,
     subQueries: [
       { documentType: 'reply', kind: 'counts', where: [['rootPostId', '==', T1]], bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } },
@@ -764,8 +763,7 @@ async function main() {
   await attempt('c3', () => sdk.documents.composite({
     dataContractId: contractId,
     documentType: 'reply',
-    where: [['$ownerId', '==', B.ownerId]],
-    orderBy: [['$createdAt', 'asc']],
+    ...shapes.ownerReplies({ where: [['$ownerId', '==', B.ownerId]], orderBy: [['$createdAt', 'asc']] }),
     limit: 1,
     subQueries: [
       { documentType: 'post', kind: 'counts', ...(livePin.length ? { where: livePin } : {}), bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } },
@@ -915,9 +913,7 @@ async function main() {
   await attempt('c5', () => sdk.documents.composite({
     dataContractId: contractId,
     documentType: 'post',
-    where: [['$createdAt', '>', 0]],
-    orderBy: [['$createdAt', 'desc']],
-    limit: 20,
+    ...shapes.timelinePosts({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 }),
     subQueries: [
       { documentType: 'like', kind: 'counts', bind: fromPage('$id', 'postId') },
       { documentType: 'reply', kind: 'counts', bind: fromPage('$id', 'rootPostId') },
@@ -940,7 +936,7 @@ async function main() {
       `likes ${JSON.stringify(likes)} replies ${JSON.stringify(replies)} quotes ${JSON.stringify(quotes)} quoted ${JSON.stringify([...quoted])} myLikes ${myLikes}`);
   });
   await expectRefusal('c5x a like-count slot and a viewer-likes slot on byPost in one composite are refused (a count shares the documents lookup\'s index path)', () => sdk.documents.composite({
-    dataContractId: contractId, documentType: 'post', where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20,
+    dataContractId: contractId, documentType: 'post', ...shapes.timelinePosts({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 }),
     subQueries: [
       { documentType: 'like', kind: 'counts', bind: fromPage('$id', 'postId') },
       { documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId'), limit: 20 },
@@ -1005,14 +1001,14 @@ async function main() {
       (r) => check('dc-a3 "did A like these replies" on byReply (countable, not rangeCountable): r1', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]), JSON.stringify(pairsOf(r, 'replyId'))));
     // (b) the feed page's viewer-likes slot, bound on the page's ids against byPost.
     await attempt('dc-b1', () => sdk.documents.composite({
-      dataContractId: contractId, documentType: 'post', where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20,
+      dataContractId: contractId, documentType: 'post', ...shapes.timelinePosts({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 }),
       subQueries: [{ documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId'), limit: 20 }],
     }), (result) => {
       const liked = result.subResults[0].documents.map(likeOf).map((l) => toBase58(l.postId));
       check('dc-b1 the feed composite\'s viewer-likes slot on byPost (limit = page size): B liked T1 and T2', sameSet(liked, [T1, T2]), JSON.stringify(liked));
     });
     await attempt('dc-b2', () => sdk.documents.composite({
-      dataContractId: contractId, documentType: 'reply', where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
+      dataContractId: contractId, documentType: 'reply', ...shapes.ownerReplies({ where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 }),
       subQueries: [{ documentType: 'likeReply', where: [['$ownerId', '==', A.ownerId]], bind: fromPage('$id', 'replyId'), limit: 20 }],
     }), (result) => {
       const liked = result.subResults[0].documents.map(likeOf).map((l) => toBase58(l.replyId));
@@ -1102,7 +1098,7 @@ async function main() {
     await attempt('dc-e3', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', '==', r1], ['$createdAt', '>', 0]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc'], ['$createdAt', 'desc']], limit: 100 })),
       (r) => check('dc-e3 likes of B\'s reply r1 since a watermark (byAuthorReplyTime, newest first): A', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]) && docsOf(r).map(likeOf).every((l) => Number(l.$createdAt) > 0), JSON.stringify(pairsOf(r, 'replyId'))));
     await attempt('dc-f3', () => sdk.documents.composite({
-      dataContractId: contractId, documentType: 'reply', where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
+      dataContractId: contractId, documentType: 'reply', ...shapes.ownerReplies({ where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 }),
       subQueries: [{ documentType: 'likeReply', kind: 'counts', bind: fromPage('$id', 'replyId') }],
     }), (result) => {
       const m = countEntries(result.subResults[0].counts);
@@ -1188,7 +1184,7 @@ async function main() {
     await attempt('dc-a3', () => sdk.documents.query(q('likeReply', { where: [['replyId', 'in', [r1, r2]], ['$ownerId', '==', A.ownerId]], orderBy: [['replyId', 'asc'], ['$ownerId', 'asc']], limit: 2 })),
       (r) => check('dc-a3 "did A like these replies" on byReply: r1', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]), JSON.stringify(pairsOf(r, 'replyId'))));
     await attempt('dc-b1', () => sdk.documents.composite({
-      dataContractId: contractId, documentType: 'post', where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20,
+      dataContractId: contractId, documentType: 'post', ...shapes.timelinePosts({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 }),
       subQueries: [{ documentType: 'like', where: [['$ownerId', '==', B.ownerId]], bind: fromPage('$id', 'postId'), limit: 20 }],
     }), (result) => {
       const liked = result.subResults[0].documents.map(likeOf).map((l) => toBase58(l.postId));
@@ -1251,7 +1247,7 @@ async function main() {
       check('dc-f2 the profile-page composite count slot: T1 2, T2 1, Th 1', sameCounts(m, { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(m));
     });
     await attempt('dc-f3', () => sdk.documents.composite({
-      dataContractId: contractId, documentType: 'reply', where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
+      dataContractId: contractId, documentType: 'reply', ...shapes.ownerReplies({ where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 }),
       subQueries: [{ documentType: 'likeReply', kind: 'counts', bind: fromPage('$id', 'replyId') }],
     }), (result) => {
       const m = countEntries(result.subResults[0].counts);
@@ -1271,6 +1267,13 @@ async function main() {
     await attempt('ol-t2', trendTags, (r) => check(`ol-t2 trending tags in the oldest open byTrendHashtagPost window: ${tag} 2`, same(tagPairs(r), [[tag, 2]]), JSON.stringify(tagPairs(r))));
     await attempt('ol-t3', () => ranked(...tagRankingArgs(tag), oldestOf('byTrendHashtagPost')), (r) => check('ol-t3 the tag\'s top posts in its window: Th 2', same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
     await attempt('ol-t4', () => ranked(...tagRankingArgs(tag)), (r) => check(`ol-t4 hashtag Top all-time (byHashtagPost ranked ${PIN} groupBy postId): Th 2`, same(rankedPairs(r), [[Th, 2]]), JSON.stringify(rankedPairs(r))));
+
+    // Refresh T2 immediately before the retention probe: the earlier query cases and tag
+    // wait can outlive its shortened proof window, especially under DAPI throttling.
+    // Deleting and recreating overwrites the kept entry with a fresh window timestamp.
+    await unlike(B, 'like', { postId: id(T2), postAuthor: id(A.ownerId) }).catch(reported('refresh unlike of T2'));
+    await likeWrite(B, 'like', { postId: id(T2), postAuthor: id(A.ownerId) });
+    await sleep(SETTLE_MS);
 
     // (h) unlikes WITHOUT $createdAt. h0 first offers the time anyway: the SDK drops it on a
     // type whose rows commit to none, so it is reported, never failed.
@@ -1507,7 +1510,7 @@ async function main() {
 
   // ---- lv: v13 live marker: a tombstone leaves ownerAndTime ([live, $ownerId, $createdAt], skipIfAbsent) ----
   async function proveLiveMarker() {
-    console.log('\n--- lv. v13 live marker: a tombstone leaves its author\'s timeline and post count; the global timeline keeps it ---');
+    console.log('\n--- lv. v13 live marker: a tombstone leaves its author\'s timeline and post count; the global timeline follows the selected live policy ---');
     const authorPosts = () => count('post', shapes.ownerPostsWhere([['$ownerId', '==', D.ownerId]]));
     const timelineOf = () => sdk.documents.query(q('post', { ...ownerPosts({ where: [['$ownerId', '==', D.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }), limit: 100 }));
     const before = total(await withReconnect(authorPosts));
@@ -1521,8 +1524,8 @@ async function main() {
     check('lv-4 D tombstones it: deleted, and `live` left out', tomb.ok && after.deleted === true && after.live === undefined, tomb.error ?? JSON.stringify({ deleted: after.deleted, live: after.live }));
     await attempt('lv-5', authorPosts, (m) => check(`lv-5 the tombstone left D's post count: back to ${before}`, total(m) === before, `count ${total(m)}`));
     await attempt('lv-6', timelineOf, (r) => check('lv-6 …and D\'s timeline no longer lists it', !ids(r).includes(Pl), `${ids(r).length} post(s)`));
-    await attempt('lv-7', () => sdk.documents.query(q('post', { where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 50 })),
-      (r) => check('lv-7 the global timeline still lists the tombstone (the client shows it as deleted)', ids(r).includes(Pl), `${ids(r).length} post(s)`));
+    await attempt('lv-7', () => sdk.documents.query(q('post', shapes.timelinePosts({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 50 }))),
+      (r) => check(`lv-7 the global timeline ${shapes.cut.liveTimeline ? 'excludes' : 'still lists'} the tombstone`, ids(r).includes(Pl) === !shapes.cut.liveTimeline, `${ids(r).length} post(s)`));
     refusedWith('lv-8 a tombstone that is live again is refused (10422 live, or 40128: frozen)', await replaceDoc(D, 'post', Pl, { deleted: true, live: true }), /\bcode"?\s*[=:]\s*(10422|40128)\b|"live"|immutable/i);
   }
 

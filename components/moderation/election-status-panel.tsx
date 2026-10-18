@@ -10,7 +10,6 @@ import { isV10 } from '@/lib/contract-topology'
 import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import { createElectionStatusLoader } from '@/lib/election-status-loader'
 import { electionView, moderationElectionService, type ElectionStatus } from '@/lib/services/moderation-election-service'
-import { moderationServiceFor } from '@/lib/services/moderation-service'
 
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id)
 const when = (ms: number | null) => (ms === null ? 'unknown' : new Date(ms).toLocaleString())
@@ -50,25 +49,24 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
   // the boolean anyway, so it runs once per mount, never per render.
   const declared = moderatedContract(contract)
   const { contractId } = declared
-  const declaration = declared.elected()
-  const elected = declaration !== null
+  const elected = declared.elected() !== null
   // A panel mounts (and its effect runs) before SdkProvider has called
   // initialize(), so a read on mount fails with "SDK not configured".
   const { isReady: sdkReady, error: sdkError } = useSdk()
   // One loader per mounted panel: concurrent loads share a single read.
-  const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus(contractId, declared.elected())), [declared, contractId])
+  const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus(contractId)), [contractId])
   const [status, setStatus] = useState<ElectionStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
-  // The interim the contract was REGISTERED with: mainnet registers v13 with
-  // `notYetUsable` while the committed file declares `contractOwner`.
-  const [registeredInterim, setRegisteredInterim] = useState<string | null>(null)
+  const [notElected, setNotElected] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
     setFailed(false)
     try {
-      setStatus(await loader.load())
+      const result = await loader.load()
+      setStatus(result)
+      setNotElected(result === null)
     } catch (error) {
       logger.error('ElectionStatusPanel: status read failed', error)
       setFailed(true)
@@ -81,18 +79,9 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
     if (elected && sdkReady) refresh().catch(() => { /* reported inside */ })
   }, [elected, sdkReady, refresh])
 
-  useEffect(() => {
-    if (!elected || !sdkReady) return
-    let cancelled = false
-    moderationServiceFor(contract).getInterim().then((interim) => {
-      if (!cancelled) setRegisteredInterim(interim)
-    }).catch((error: unknown) => logger.warn('ElectionStatusPanel: could not read the registered interim', error))
-    return () => {
-      cancelled = true
-    }
-  }, [contract, elected, sdkReady])
+  if (!elected || notElected) return null
 
-  if (!declaration) return null
+  const declaration = status?.declaration
 
   const contest = status?.contest ?? null
   const seated = status?.seated ?? null
@@ -105,13 +94,13 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><ScaleIcon className="h-5 w-5" /> Moderation election</CardTitle>
         <CardDescription>
-          Masternodes elect this contract&apos;s moderation team. Until a team is seated,{' '}
-          {interimText(registeredInterim ?? declaration.interim, contract)}.
+          {declaration ? <>Masternodes elect this contract&apos;s moderation team. Until a team is seated,{' '}
+          {interimText(declaration.interim, contract)}.
           Applicants join for {duration(declaration.joinWindowSeconds)}, then masternodes vote for {duration(declaration.voteWindowSeconds)};{' '}
           {declaration.seatContestable
             ? `the seat becomes contestable once challenges ship${declaration.challengeCoolDownSeconds ? `, with ${duration(declaration.challengeCoolDownSeconds)} of protection after each seat change` : ''}`
             : 'the first seated team keeps the seat'};
-          the leader may add up to {declaration.maxAddedModerators} members.
+          the leader may add up to {declaration.maxAddedModerators} members.</> : error ? null : 'Loading the election settings…'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
@@ -151,7 +140,7 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
             <h4 className="font-semibold mb-1">Contest for the seat</h4>
             <p>
               Voting ends: <span data-testid="election-ends">{when(contest.endsAtMs)}</span>
-              {contest.endsAtMs === null && !contest.winner && isV10() && (
+              {declaration && contest.endsAtMs === null && !contest.winner && isV10() && (
                 <span className="text-gray-500">
                   {' '}(at most {hours(declaration.joinWindowSeconds + declaration.voteWindowSeconds)} after the first charter entered)
                 </span>

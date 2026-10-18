@@ -23,7 +23,7 @@ beforeEach(() => {
   }));
 });
 
-describe('store replacements re-encode the parsed JSON fields (docs/SOCIAL_V9.md TODO 20)', () => {
+describe('store replacements re-encode the parsed JSON fields (docs/archive/SOCIAL_V9.md TODO 20)', () => {
   it('an update that names neither re-sends paymentUris and contactMethods as JSON strings', async () => {
     await storeService.updateStore('store', 'owner', { description: 'Coffee and tea' });
     expect(updateDocument.mock.calls[0][4]).toMatchObject({

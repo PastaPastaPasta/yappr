@@ -1,5 +1,5 @@
 {
-  "description": "Pinned dHash test vectors (docs/SOCIAL_V10.md, \"The media fingerprint\"): a 9x8 BT.601 luma grid, row-major, and its 8-byte dHash in hex. lib/media/dhash.ts and scripts/seed/media-hash.mjs must both reproduce every one.",
+  "description": "Pinned dHash test vectors (docs/archive/SOCIAL_V10.md, \"The media fingerprint\"): a 9x8 BT.601 luma grid, row-major, and its 8-byte dHash in hex. lib/media/dhash.ts and scripts/seed/media-hash.mjs must both reproduce every one.",
   "vectors": [
     {
       "name": "left-to-right ramp: every bit",

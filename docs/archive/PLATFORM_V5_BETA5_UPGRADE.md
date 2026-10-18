@@ -69,7 +69,7 @@ The npm `wasm-sdk` 5.0.0-beta.5 wasm is about 26.38 MB. That is over Cloudflare 
 
 ## The contract re-cuts
 
-Sakura restarts from a beta.5 genesis, so every Yappr contract is registered fresh there by `scripts/register-app-connect-contracts.mjs` ([APP_CONNECT_CONTRACTS.md](APP_CONNECT_CONTRACTS.md)). That lets four contracts be re-cut in place with the new grammar, with no compatibility shims.
+Sakura restarts from a beta.5 genesis, so every Yappr contract is registered fresh there by `scripts/register-app-connect-contracts.mjs` ([APP_CONNECT_CONTRACTS.md](../APP_CONNECT_CONTRACTS.md)). That lets four contracts be re-cut in place with the new grammar, with no compatibility shims.
 
 ### What beta.5 adds that the cuts use
 

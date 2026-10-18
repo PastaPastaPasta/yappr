@@ -1,5 +1,7 @@
 'use client'
 
+import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
+
 import { logger } from '@/lib/logger';
 import { useId, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -31,8 +33,6 @@ interface ReviewModalProps {
   onSuccess: () => void
 }
 
-const TITLE_LIMIT = 100
-const CONTENT_LIMIT = 1000
 /** Indexed by the star rating, 0 meaning "not rated yet". */
 const RATING_LABELS = ['Tap a star to rate', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent']
 
@@ -192,18 +192,15 @@ export function ReviewModal({
                         <label htmlFor={`${formId}-title`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                           Title <span className="text-gray-400">(optional)</span>
                         </label>
-                        <input
+                        <LimitedInput contract="storefront" document="storeReview" field="title"
                           id={`${formId}-title`}
                           type="text"
                           value={title}
-                          onChange={(e) => setTitle(e.target.value.slice(0, TITLE_LIMIT))}
+                          onChange={(e) => setTitle(e.target.value)}
                           placeholder="Summarize your experience"
                           disabled={isSubmitting}
                           className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
                         />
-                        <p className="text-xs text-gray-400 mt-1 text-right">
-                          {title.length}/{TITLE_LIMIT}
-                        </p>
                       </div>
 
                       {/* Per-item ratings (optional; each publishes that this order contained the item) */}
@@ -234,18 +231,15 @@ export function ReviewModal({
                         <label htmlFor={`${formId}-content`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                           Review <span className="text-gray-400">(optional)</span>
                         </label>
-                        <textarea
+                        <LimitedTextarea contract="storefront" document="storeReview" field="content"
                           id={`${formId}-content`}
                           value={content}
-                          onChange={(e) => setContent(e.target.value.slice(0, CONTENT_LIMIT))}
+                          onChange={(e) => setContent(e.target.value)}
                           placeholder="Share details of your experience..."
                           rows={4}
                           disabled={isSubmitting}
                           className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent resize-none focus:outline-none focus:ring-2 focus:ring-yappr-500 disabled:opacity-50"
                         />
-                        <p className="text-xs text-gray-400 mt-1 text-right">
-                          {content.length}/{CONTENT_LIMIT}
-                        </p>
                       </div>
                     </div>
 

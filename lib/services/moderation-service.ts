@@ -18,7 +18,7 @@ import { signerService } from './signer-service';
 
 /**
  * Contract moderation (Platform 4.2.0-beta.3, protocol version 14;
- * docs/SOCIAL_V8.md), described below for the social contract, where it
+ * docs/archive/SOCIAL_V8.md), described below for the social contract, where it
  * began. Storefront and blog declare the same machinery for their own types
  * (lib/moderated-contracts.ts), each with an instance of its own:
  *
@@ -186,7 +186,8 @@ export interface RemovalKeptFields {
  * The client measures from `$createdAt` (the `Post` model carries no
  * `$updatedAt`). That is exact for every live post and reply, since the
  * tombstone is the only edit consensus allows, and a tombstone shows no
- * moderator menu on v11 (`tombstonesAreHidden()`); were one offered, a
+ * moderator menu on v11 (`tombstonesAreHidden()`). Editable documents such
+ * as blog posts pass their updatedAt instead. Were a social tombstone offered, a
  * settled-looking tombstone would really be open, and the node decides.
  *
  * - `open`: one moderator deletes it alone;

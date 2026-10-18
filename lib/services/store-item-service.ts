@@ -1,7 +1,7 @@
 /**
  * Store Item Service
  *
- * Manages product listings and their variants table (docs/STOREFRONT_V7.md):
+ * Manages product listings and their variants table (docs/archive/STOREFRONT_V7.md):
  * up to five option types, combinations named by a canonical variant id. v7
  * stores the table as typed lists (lib/storefront/variant-codec.ts); v1–v6 as
  * a JSON string (lib/storefront/legacy-variants.ts). Callers see one model.

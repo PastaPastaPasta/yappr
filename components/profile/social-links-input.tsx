@@ -1,5 +1,9 @@
 'use client'
 
+import { LimitedInput } from '@/components/ui/limited-text'
+import { fieldLimits } from '@/lib/field-limits'
+import { textBytes } from '@/lib/text-limits'
+
 import { useState, useEffect } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { SocialLink } from '@/lib/types'
@@ -67,6 +71,8 @@ export function SocialLinksInput({
   }
 
   const [selectedPlatform, setSelectedPlatform] = useState<SocialPlatform>(getDefaultPlatform())
+  const linkLimits = fieldLimits('social', 'yapprProfile', 'socialLinks[]')
+  const prefix = `${selectedPlatform}:`
   const [handle, setHandle] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -177,7 +183,7 @@ export function SocialLinksInput({
               </option>
             ))}
           </select>
-          <input
+          <LimitedInput limits={{ maxLength: (linkLimits.maxLength ?? 256) - [...prefix].length, maxBytes: (linkLimits.maxBytes ?? 256) - textBytes(prefix) }}
             type="text"
             value={handle}
             onChange={(e) => {

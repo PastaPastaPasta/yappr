@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for the **storefront contract**
- * (`contracts/yappr-storefront-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run
+ * (`contracts/yappr-storefront-contract.json`, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md), run
  * live on a beta.1+ devnet. Actors are seed-ledger personas: a SELLER, a BUYER and
  * a STRANGER. The committed contract is storefront v9, which charges action fees
  * (credits) instead of YAPP, so the actors need credits only.
@@ -24,7 +24,7 @@
  * Storefront topology v6 adds digital products (docs/DIGITAL_PRODUCTS.md):
  * `storeItem.fulfillment`, the seller-only `itemDeliverable` kit and the
  * seller-written `orderDelivery`: s22. v6 is also the mainnet re-cut
- * (docs/NON_SOCIAL_CONTRACTS.md): no YAPP; store, item and review creates
+ * (docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md): no YAPP; store, item and review creates
  * carry an action-fee agreement (s5e, s6b2, s12); stores and items are
  * moderator-deletable (s24); an order's seller is never its buyer (s19); status
  * updates and deliveries store no buyerId (the buyer's feeds are derived
@@ -32,7 +32,7 @@
  * with proved "newest" and "top categories" reads (s23). The cases for the
  * dropped indexes (per-seller averages and order counts, global item
  * rankings, most-reviewed stores) are gone with them.
- * Storefront v7 (docs/STOREFRONT_V7.md) stores `storeItem.variants` as a typed
+ * Storefront v7 (docs/archive/STOREFRONT_V7.md) stores `storeItem.variants` as a typed
  * table: s25 lands the seller's 7 × 2 listing and a 5-axis, 100-combination
  * one with one signature each, replaces every stock cell in one write, reads
  * both back value for value and measures the fees; the JSON schema refuses a
@@ -75,7 +75,7 @@ import { cleanStorefront, printReport, withStatus } from './surface-cleanup.mjs'
 const CONTRACT_FILE = 'yappr-storefront-contract.json';
 const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
 /** The schemas in long form (the file writes identifiers and fixed-size byte arrays as shorthands). */
-const SCHEMAS = expandSchemas(CONTRACT.documentSchemas);
+let SCHEMAS = expandSchemas(CONTRACT.documentSchemas);
 const RATINGS = [1, 2, 3, 4, 5];
 /** The category every battery store files under (a v6 slug), so s23 knows what to look for. */
 const CATEGORY = 'battery-goods';
@@ -97,7 +97,7 @@ const zoneData = ({ storeId, name }) => ({ storeId, name, rateType: 'flat', flat
 // under it index `orderId.$ownerId` (v6), derived through the order. v8 has no
 // `storeStatus`: the storeId reference itself requires an active store (QA D-25).
 const orderData = ({ storeId, sellerId, ...extra }) => ({ storeId, sellerId, ...extra, encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) });
-const statusData = ({ orderId, status = 'shipped', message }) => ({ orderId, status, ...(message ? { message } : {}) });
+const statusData = ({ orderId, status = 'shipped', message }) => ({ orderId, status, ...(message ? (SCHEMAS.orderStatusUpdate.properties.encryptedPayload ? { encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) } : { message }) : {}) });
 const storeReviewData = ({ storeId, orderId, sellerId, rating, title }) => ({ storeId, orderId, sellerId, rating, ...(title ? { title } : {}) });
 const itemReviewData = ({ storeId, itemId, orderId, rating }) => ({ storeId, itemId, orderId, rating });
 // Digital payloads are opaque ciphertext to consensus, so random bytes stand in.
@@ -212,6 +212,12 @@ async function caseS4Status(ctx) {
   await update('s4d a STRANGER posting an update on the order is rejected (writer gate, 40127)', WRITER_GATE, stranger, { status: 'cancelled', message: 'spoof' });
   await update('s4e even the BUYER cannot post a status update on their own order (writer gate, 40127)', WRITER_GATE, buyer, { status: 'cancelled' });
   await update('s4f seller ships the order', null, seller, { status: 'shipped' });
+  if (SCHEMAS.orderStatusUpdate.properties.encryptedPayload) {
+    await battery.probeCreate('s4h a sealed status without its nonce is refused (10422 sealed)', constraintViolation('sealed'), seller, 'orderStatusUpdate',
+      { ...good, status: 'shipped', encryptedPayload: new Uint8Array(32).fill(1) });
+    await battery.probeCreate('s4i a nonce without its sealed status is refused (10422 sealed)', constraintViolation('sealed'), seller, 'orderStatusUpdate',
+      { ...good, status: 'shipped', nonce: new Uint8Array(24).fill(1) });
+  }
   await settle();
   const rows = await battery.queryDocs('orderStatusUpdate', buyerFeedQuery(buyer.ownerId));
   // The buyer persona may hold orders with other sellers too (the storefront
@@ -869,7 +875,8 @@ await runBattery({
   // agreement, unless a case opts out (`noAgreement`, s5e/s12a) or names its own (`agreement`, s12b).
   agreementFor: (sdk, docType) => feeAgreementFor(sdk, docType, SCHEMAS),
   selfTest: () => Math.max(selfTestV6(), selfTestRules()),
-  setup: async ({ battery, args }) => {
+  setup: async ({ battery, args, contractId }) => {
+    SCHEMAS = expandSchemas((await battery.readback(() => battery.sdk.contracts.fetch(contractId))).toJSON().documentSchemas);
     const moderator = await battery.moderatorActor(args.moderator);
     console.log(`moderator=${moderator.label}`);
     return { reviews: [], itemRatings: {}, zoneId: null, moderator, reopenedStores: new Map() };
