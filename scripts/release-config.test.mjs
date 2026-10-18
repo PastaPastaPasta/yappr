@@ -31,6 +31,21 @@ function completeEnv() {
 }
 
 describe('release build configuration', () => {
+  it('ignores ambient release values and never lets release mode be disabled by the file', () => {
+    const file = join(tmpdir(), `yappr-env-${process.pid}.env`)
+    try {
+      const configured = { ...completeEnv(), NEXT_PUBLIC_RELEASE: '0' }
+      writeFileSync(file, Object.entries(configured).map(([key, value]) => `${key}=${value}`).join('\n'))
+      const env = releaseConfig.loadReleaseEnv(file, { NEXT_PUBLIC_UNDECLARED: 'leaked', STORAGE_EPOCH: 'wrong', BASE_PATH: '/staging' })
+      expect(env.NEXT_PUBLIC_UNDECLARED).toBeUndefined()
+      expect(env.NEXT_PUBLIC_RELEASE).toBe('1')
+      expect(env.STORAGE_EPOCH).toBe(configured.STORAGE_EPOCH)
+      expect(env.BASE_PATH).toBe('/staging')
+    } finally {
+      rmSync(file, { force: true })
+    }
+  })
+
   it('documents every public application env reader except Next-generated metadata', () => {
     const generated = new Set(['BASE_PATH', 'GIT_BRANCH', 'GIT_COMMIT_DATE', 'GIT_COMMIT_HASH', 'STORAGE_SCOPE', 'SDK_WASM_URL']
       .map(name => `NEXT_PUBLIC_${name}`))

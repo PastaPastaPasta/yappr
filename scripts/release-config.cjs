@@ -1,6 +1,8 @@
 // Build-only validation. Importing application constants must remain safe in
 // Vitest, next dev and the mobile engine; next.config.js calls this at build time.
 const bs58 = require('bs58').default
+const { readFileSync } = require('node:fs')
+const { parseEnv } = require('node:util')
 
 const CONTRACT_KEYS = [
   'NEXT_PUBLIC_YAPPR_CONTRACT_ID',
@@ -108,4 +110,31 @@ function storageScope(basePath, epoch = '') {
   return [epoch, basePath.replace(/^\//, '')].filter(Boolean).join(':')
 }
 
-module.exports = { assertReleaseConfig, storageScope }
+/** The rehearsal snapshot must contain exactly the selected release contracts. */
+function assertStagingSnapshot(snapshot, env) {
+  const pins = env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').map(pin => pin.split(':'))
+  const expectedIds = new Set([...pins.map(([id]) => id), env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID,
+    env.NEXT_PUBLIC_DPNS_CONTRACT_ID, env.NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID])
+  if (snapshot.network !== 'testnet' || Object.keys(snapshot.contracts).length !== expectedIds.size ||
+      Object.keys(snapshot.contracts).some(id => !expectedIds.has(id)) ||
+      pins.some(([id, version]) => snapshot.contracts[id]?.version !== Number(version))) {
+    throw new Error('The staging snapshot must match the exact testnet release contract pins')
+  }
+}
+
+/** Authoritative public release pins, shared by web and native builders. */
+function loadReleaseEnv(file, ambient = process.env) {
+  let configured
+  try {
+    configured = parseEnv(readFileSync(file, 'utf8'))
+  } catch (error) {
+    throw new Error(`Cannot load ${file}: ${error.message}\nComplete the public release configuration before building; see docs/TESTNET_DEPLOY.md.`)
+  }
+  const env = Object.fromEntries(Object.entries(ambient).filter(([key]) =>
+    !key.startsWith('NEXT_PUBLIC_') && key !== 'STORAGE_EPOCH' && key !== 'YAPPR_STAGING_REHEARSAL'))
+  Object.assign(env, configured, { NEXT_PUBLIC_RELEASE: '1' })
+  assertReleaseConfig(env)
+  return env
+}
+
+module.exports = { assertReleaseConfig, storageScope, loadReleaseEnv, assertStagingSnapshot }

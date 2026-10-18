@@ -120,7 +120,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const v = VARIANTS[variant];
   const buildNumber = resolveBuildNumber(process.env.YAPPR_BUILD_NUMBER);
   // Per-variant icons from scripts/generate-icons.mjs: devnet and testnet carry a DEV / BETA badge.
-  const icons = `./assets/images/icons/${variant}`;
+  const icons = `./assets/images/icons/${variant === 'staging-testnet' ? 'testnet' : variant}`;
 
   return {
     ...config,

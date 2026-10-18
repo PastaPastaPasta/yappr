@@ -5,6 +5,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { Platform, Share } from 'react-native';
 
 import { config } from '~/config';
+import { webHandoffUrl, webUrl } from '~/navigation/web-urls';
 import { queryKeys } from '~/data/keys';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
@@ -21,11 +22,10 @@ import { toast } from '~/ui/toast';
  * reply `/post?id=<root>&reply=<id>`, its thread with it highlighted (PRD ENG-05).
  */
 export function postWebUrl(post: Pick<PostDTO, 'id' | 'kind' | 'rootPostId'> | string): string {
-  const base = `https://yap.pr${config.webBasePath}/post?id=`;
-  if (typeof post === 'string') return base + encodeURIComponent(post);
+  if (typeof post === 'string') return webUrl(config, '/post', { id: post });
   return post.kind === 'reply' && post.rootPostId
-    ? `${base}${encodeURIComponent(post.rootPostId)}&reply=${encodeURIComponent(post.id)}`
-    : base + encodeURIComponent(post.id);
+    ? webUrl(config, '/post', { id: post.rootPostId, reply: post.id })
+    : webUrl(config, '/post', { id: post.id });
 }
 
 /** Opens a post. The card's data seeds the detail screen, which refetches at once. */
@@ -53,7 +53,7 @@ export function openHashtag(tag: string): void {
 /** An external link, already through `safeExternalUrl`, in the in-app browser. */
 export function openExternal(url: string | null): void {
   if (!url) return;
-  WebBrowser.openBrowserAsync(url).catch((error: unknown) => {
+  WebBrowser.openBrowserAsync(webHandoffUrl(config, url)).catch((error: unknown) => {
     appendLog('warn', 'host', `Opening a link failed: ${errorMessage(error)}`);
     toast.error("Couldn't open the link");
   });

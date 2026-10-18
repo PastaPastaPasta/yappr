@@ -4,7 +4,8 @@
 
 The preparation PR adds an opt-in release build mechanism. It does **not**
 activate the release, register contracts, change today's `build` command, change
-mobile's testnet variant, or change any hosting settings. `.env.testnet.template`
+any hosting settings. Native testnet builds now require this release configuration;
+use `staging-testnet` for the committed rehearsal pins. `.env.testnet.template`
 is documentation, never an automatically loaded Next env file. Production,
 `/staging`, `/testing` and `/devnet` keep their current configurations.
 
@@ -76,19 +77,34 @@ template covers public application configuration; `BASE_PATH`, Git metadata and
    | Root `package.json`, `build:subpath` | Change to `BASE_PATH=/yappr npm run build` so this convenience script also inherits release config. |
    | `ipfs/entrypoint.sh`, `build_project` | Keep `npm run build --loglevel=warn`; ensure the publisher checks out the intended release master. |
    | Cloudflare Pages **yappr** | Production branch **master**, build `npm run build`, output `out`; remove stale dashboard public env overrides and rebuild the same master revision as yap.pr. Verify IDs and buildId agree. |
-   | `mobile/engine/build.mjs`, `VARIANTS.testnet` | Change `testnet: { envFile: null }` to `testnet: { envFile: '.env.testnet' }`; set `env.NEXT_PUBLIC_RELEASE = '1'`, then call `assertReleaseConfig(env)` before bundling, just as the web loader forces release mode. |
+   | Native `APP_VARIANT=testnet` | Already loads `.env.testnet` through the shared release loader/validator; fill the file, rebuild, and verify the emitted manifest before beta distribution. Never substitute `.env.staging` for production pins. |
 
    D29: do **not** edit or rebuild the archived `yappr-v1`, `yappr-v2`, `yappr-v3`
    or other versioned Pages projects, or their original env/SDK settings.
-3. In the same PR, add `.env.testnet` and `scripts/release-config.cjs` to both
-   push and pull-request path filters in `.github/workflows/mobile-engine.yml`.
-   Add the shared config directory to `WATCHED_INPUT_DIRS` if the engine bundles
-   it; build-time imports are not esbuild metafile inputs. Preserve the engine's
-   public-key-only env inlining. Derive the mobile storage epoch from the same
-   file (its native network namespace is additional isolation). Update its
-   header, engine README, ADR E6 and testnet read-harness IDs/topologies, then
-   rebuild both variants, run mobile checks and beta QA. Mobile betas ship with
-   the web release (D26).
+3. Build native `testnet` with the completed `.env.testnet`:
+
+   ```sh
+   node mobile/engine/build.mjs --variant testnet
+   cd mobile/app
+   APP_VARIANT=testnet npm run release:android -- all
+   APP_VARIANT=testnet npm run release:ios -- archive
+   ```
+
+   `.env.testnet`, `.env.staging` and the shared validator are already watched
+   by mobile-engine CI. Routine CI builds `staging-testnet` and `devnet`;
+   `testnet` deliberately fails until production pins are filled. Native storage
+   derives its epoch from the same release file, with native isolation added.
+   Before cut-over, use `APP_VARIANT=staging-testnet` with committed `.env.staging`
+   and `https://yap.pr/staging` handoffs. It needs no patch or skipped engine build.
+   At cut-over the `testnet` app uses root `https://yap.pr` for every handoff and
+   its HTTPS App Connect callback. Confirm `/connect/` returns 200 at root,
+   `/staging/connect/` and `/devnet/connect/`; inspect the exported callback
+   bridge and test the app's actual approved HTTPS return on both OSes.
+   Verify each artifact's embedded engine hash and release pins against its
+   manifest, run mobile lint/typecheck/tests/bundles, and repeat checkout/order,
+   poll vote, approved private-post read and blog read through native handoffs.
+   See [mobile/RELEASE.md](../mobile/RELEASE.md) for owner signing/account gates.
+   Mobile betas ship with the web release (D26).
 4. Delete the compatibility defaults listed below. Make `dev` source an explicit
    development env; keep `/testing` and `/devnet` independent and complete before
    removing shared defaults. Do not enable release mode in those existing sets

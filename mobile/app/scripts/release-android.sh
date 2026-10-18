@@ -4,7 +4,7 @@
 #   APP_VARIANT=devnet scripts/release-android.sh [apk|aab|all]   (default: all)
 #
 # Environment:
-#   APP_VARIANT          devnet (default) | testnet | production
+#   APP_VARIANT          devnet (default) | staging-testnet | testnet | production
 #   YAPPR_BUILD_NUMBER   versionCode (default 1); CI passes its run number
 #   YAPPR_ANDROID_ABIS   native ABIs to build and package (default arm64-v8a)
 #   YAPPR_SKIP_PREBUILD  1 to reuse the existing android/ project

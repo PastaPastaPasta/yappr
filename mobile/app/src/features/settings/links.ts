@@ -13,7 +13,7 @@ import { copy } from './copy';
 export const SUPPORT_EMAIL = 'support@dash.org';
 
 /** This variant's yap.pr (devnet: under `/devnet`). */
-const site = `https://yap.pr${config.webBasePath}`;
+const site = config.webBaseUrl;
 
 export const links = {
   /** This network's copies, so the notice on them names the network the app is on (D-013). */

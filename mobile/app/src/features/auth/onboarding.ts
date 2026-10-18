@@ -38,10 +38,10 @@ export const setWelcomed = (welcomed: boolean) => useOnboarding.setState({ welco
 
 export const links = {
   /** This network's copies (devnet: under `/devnet`), so the notice on them names the network the app is on (D-013). */
-  terms: `https://yap.pr${config.webBasePath}/terms`,
-  privacy: `https://yap.pr${config.webBasePath}/privacy`,
+  terms: `${config.webBaseUrl}/terms`,
+  privacy: `${config.webBaseUrl}/privacy`,
   /** The identity bridge, for the network this build talks to (web `identityBridgeUrl`). */
-  identityBridge: `https://bridge.thepasta.org/?network=${encodeURIComponent(engineNetworkKey)}`,
+  identityBridge: `https://bridge.thepasta.org/?network=${encodeURIComponent(config.network === 'devnet' ? engineNetworkKey : config.network)}`,
   /** Web's DASH_WALLET_DOWNLOAD_URL. */
   getWallet: 'https://www.dash.org/download/',
 };

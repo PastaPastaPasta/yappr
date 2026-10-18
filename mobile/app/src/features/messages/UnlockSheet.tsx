@@ -193,7 +193,7 @@ function UnlockBody({
             label="Open yap.pr"
             variant="outline"
             size="block"
-            onPress={() => openExternal(`https://yap.pr${config.webBasePath}/messages`)}
+            onPress={() => openExternal(`${config.webBaseUrl}/messages`)}
           />
         </View>
       ) : null}

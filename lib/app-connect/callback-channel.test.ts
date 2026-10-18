@@ -52,6 +52,7 @@ describe('APP_RETURN_SCRIPT', () => {
   it('opens exactly what the page would, before it hydrates', () => {
     for (const search of [
       `?r=${HASH}&app=yappr-dev&ac=ok`,
+      `?r=${HASH}&app=yappr-staging&ac=ok`,
       `?r=${HASH.toUpperCase()}&app=yappr-beta`,
       `?app=yappr&r=${HASH}&ac=declined`,
       `?r=${HASH}&app=yappr-dev&ac=<script>`,
