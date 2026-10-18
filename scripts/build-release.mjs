@@ -16,9 +16,10 @@ try {
   console.error(`Cannot load .env.testnet: ${error.message}\nCopy .env.testnet.template and complete docs/TESTNET_DEPLOY.md first.`)
   process.exit(1)
 }
-// Public config is authoritative, including explicit blanks. BASE_PATH remains
-// a call-site choice. Do not inherit stray public keys from a CI dashboard.
-const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('NEXT_PUBLIC_')))
+// Release config is authoritative, including explicit blanks. BASE_PATH remains
+// a call-site choice. Public keys and the epoch must come from the release file.
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+  !key.startsWith('NEXT_PUBLIC_') && key !== 'STORAGE_EPOCH'))
 Object.assign(env, configured, { NEXT_PUBLIC_RELEASE: '1' })
 try {
   releaseConfig.assertReleaseConfig(env)

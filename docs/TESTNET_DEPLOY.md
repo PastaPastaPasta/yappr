@@ -18,8 +18,8 @@ landed before cut-over. The unified profile and system contracts are not group
 members; grant them separately.
 
 `npm run build:release` loads `.env.testnet` explicitly, replaces ambient
-`NEXT_PUBLIC_*` values with this file's values (including blanks), forces
-`NEXT_PUBLIC_RELEASE=1`, validates, then runs `next build`. It requires Node
+`NEXT_PUBLIC_*` values and `STORAGE_EPOCH` with this file's values (including
+blanks), forces `NEXT_PUBLIC_RELEASE=1`, validates, then runs `next build`. It requires Node
 20.12 or later (`util.parseEnv`); CI uses Node 22 and the IPFS Node 20 image
 must meet that minimum.
 It never delegates to `npm run build`, so switching that command cannot recurse.
@@ -202,5 +202,6 @@ actual application's build with only `NEXT_PUBLIC_RELEASE=1` and
 `NEXT_PUBLIC_NETWORK=testnet` failed in `next.config.js` before compilation,
 with the missing fields listed together. An auto-loaded incomplete env fixture
 failed at the same hook. The loader separately rejected missing and incomplete
-`.env.testnet` files. Lint, all 3,551 unit tests and dead-code checks passed;
+`.env.testnet` files, including an omitted epoch when the runner exports one.
+Lint, all 3,552 unit tests and dead-code checks passed;
 Opus approved the final code review and Sonnet reviewed simplifications.

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import bs58 from 'bs58'
-import { readFileSync, readdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parseEnv } from 'node:util'
 import releaseConfig from './release-config.cjs'
 
@@ -100,6 +104,30 @@ describe('release build configuration', () => {
     const env = completeEnv()
     env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID = env.NEXT_PUBLIC_YAPPR_CONTRACT_ID
     expect(() => assertReleaseConfig(env)).toThrow('distinct')
+  })
+
+  it('does not inherit an ambient epoch when the release file omits it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'yappr-release-env-'))
+    try {
+      mkdirSync(join(dir, 'scripts'))
+      for (const file of ['build-release.mjs', 'release-config.cjs']) {
+        copyFileSync(new URL(file, import.meta.url), join(dir, 'scripts', file))
+      }
+      symlinkSync(fileURLToPath(new URL('../node_modules', import.meta.url)), join(dir, 'node_modules'), 'dir')
+      const env = completeEnv()
+      delete env.STORAGE_EPOCH
+      writeFileSync(join(dir, '.env.testnet'), Object.entries(env).map(([key, value]) => `${key}=${value}`).join('\n'))
+      const result = spawnSync(process.execPath, [join(dir, 'scripts/build-release.mjs')], {
+        cwd: dir,
+        env: { ...process.env, STORAGE_EPOCH: 'testing' },
+        encoding: 'utf8',
+      })
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('STORAGE_EPOCH must be a non-empty scope')
+      expect(result.stdout).not.toContain('Creating an optimized production build')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it.each(['DEVNET_NAME', 'DAPI_ADDRESSES', 'QUORUM_URL', 'INSIGHT_API_URL'])(
