@@ -7,6 +7,23 @@ test.beforeEach(async ({ page, baseURL }) => {
     else await route.abort()
   })
 })
+for (const failure of ['initial', 'refresh']) {
+  test(`feed ${failure} proof failure keeps a retry and only shows verified posts`, async ({ page }) => {
+    await page.goto(`/qa-round1.html?fixture=feed-recovery&failure=${failure}`)
+    if (failure === 'refresh') {
+      await expect(page.locator('article')).toHaveCount(1)
+      await page.getByRole('button', { name: 'Refresh posts' }).click()
+    }
+    await expect(page.getByText('Posts are temporarily unavailable. Please try again in a moment.')).toBeVisible()
+    await expect(page.getByText('Loading posts…')).toHaveCount(0)
+    await expect(page.getByText('Unknown error', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('No posts yet', { exact: true })).toHaveCount(0)
+    await expect(page.locator('article')).toHaveCount(failure === 'refresh' ? 1 : 0)
+    await page.getByRole('button', { name: 'Try Again', exact: true }).click()
+    await expect(page.locator('article')).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Try Again', exact: true })).toHaveCount(0)
+  })
+}
 test('BP-02: poll, post and reply editors show one character counter and keep both schema caps', async ({ page }) => {
   await page.goto('/qa-round1.html?fixture=composer')
   const editor = page.getByTestId('compose-textarea')

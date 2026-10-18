@@ -89,7 +89,7 @@ export async function seedContext(context: BrowserContext, bot: BotIdentity): Pr
   // seeded for the whole run — if it ever went missing mid-session the app
   // would drop the session and pop the login modal.
   await context.addInitScript(
-    ({ sessionKey, privateKeyKey, skipDpnsKey, identityId, wif }) => {
+    ({ sessionKey, privateKeyKey, skipDpnsKey, starterGrantKey, identityId, wif }) => {
       if (!window.localStorage.getItem(sessionKey)) {
         window.localStorage.setItem(
           sessionKey,
@@ -105,11 +105,16 @@ export async function seedContext(context: BrowserContext, bot: BotIdentity): Pr
       // `withAuth` DPNS gate redirecting to /dpns/register mid-test
       // (lib/username-skip.ts: remembered per identity in localStorage).
       window.localStorage.setItem(skipDpnsKey, '1')
+      // These specs exercise social writes, not the once-only starter claim.
+      // Fresh release contracts give even old CI identities an unclaimed grant;
+      // its asynchronous onboarding modal otherwise obscures the UI mid-test.
+      window.localStorage.setItem(starterGrantKey, JSON.stringify([identityId]))
     },
     {
       sessionKey: scopedKey('yappr_session'),
       privateKeyKey: scopedKey(`yappr_secure_pk_${bot.identityId}`),
       skipDpnsKey: scopedKey(`yappr_skip_dpns:${bot.identityId}`),
+      starterGrantKey: scopedKey('yappr_starter_grant_settled'),
       identityId: bot.identityId,
       wif: bot.wif,
     }

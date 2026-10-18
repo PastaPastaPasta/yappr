@@ -25,7 +25,7 @@ export const ContractReportButton = () => null
 export const ModeratorContentMenu = () => null
 export const PaymentQRCode = () => null
 export const PostTips = () => null
-export const PostCard = () => <div>Post content</div>
+export const PostCard = () => <article>Post content</article>
 export const ReplyThreadItem = () => <div>Existing reply</div>
 export const flattenReplyThreads = () => []
 export const row: InboxRow = { key: 'group', kind: 'group', peerId: 'owner', name: 'DM QA friends — café ☕', memberIds: ['owner', 'peer'], preview: null, previewOwn: false, lastActivity: 0, unread: 0, hidden: false, legacyOnly: false, notice: null }
@@ -55,8 +55,18 @@ export const usePostDetail = () => {
     },
   }
 }
-const enrichment = { enrichProgressively: noop, getPostEnrichment: noop, reset: noop }
+const enrichment = { enrichProgressively: noop, getPostEnrichment: noop, reset: noop, enrichmentState: { blockStatus: new Map() } }
 export const useProgressiveEnrichment = () => enrichment
+let feedReads = 0
+export async function loadForYouFeed() {
+  feedReads++
+  // The real WASM error is an object with getters, rather than an Error.
+  if (feedReads === (params.get('failure') === 'refresh' ? 2 : 1)) {
+    throw { name: 'Proof', message: 'quorum key unavailable for quorum 107:fixture: Quorum not found in cache' }
+  }
+  return { posts: [{ id: 'verified-post', author: { id: 'author' }, content: 'Verified content', createdAt: new Date() }], cursor: null, hasMore: false }
+}
+export async function enrichPostsWithRepostsAndQuotes(posts: Post[]) { return posts }
 export const useCanReplyToPrivate = () => ({ canReply: true, isLoading: false })
 export const privateFeedService = {
   getOverview: async () => ({ feed: { feed: 1, treeCapacity: 4096, maxKeyGeneration: 4095 }, followers: [], keyGeneration: 2 }),
