@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -29,5 +29,10 @@ export function staticNotFound(basePath = '') {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const directory = resolve(process.argv[2] || 'out')
   mkdirSync(directory, { recursive: true })
-  writeFileSync(resolve(directory, '404.html'), staticNotFound(process.argv[3] ?? process.env.BASE_PATH ?? ''))
+  // Next loads env files inside its own process. Its manifest records the prefix actually exported.
+  const manifest = resolve(directory, '../.next/routes-manifest.json')
+  const basePath = process.argv[3] ?? (existsSync(manifest)
+    ? JSON.parse(readFileSync(manifest, 'utf8')).basePath
+    : process.env.BASE_PATH) ?? ''
+  writeFileSync(resolve(directory, '404.html'), staticNotFound(basePath))
 }
