@@ -187,7 +187,8 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
 
   const confirm = useCallback((pending: PendingPasskey) => {
     setStep({ kind: 'saving' })
-    finishPasskeyEnrolment(pending)
+    // A sheet closed after the dialog went is not tapped again: the vault drops that passkey.
+    finishPasskeyEnrolment(pending, () => mounted.current)
       .then(() => {
         changed()
         setStep({ kind: 'done' })

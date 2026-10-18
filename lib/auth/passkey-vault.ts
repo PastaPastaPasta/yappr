@@ -606,13 +606,15 @@ async function dropFromProvider(credentialId: Uint8Array): Promise<void> {
   if (found) await signalUnknownPasskey(found.rp.id, credentialId)
 }
 
-export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<void> {
+export async function finishPasskeyEnrolment(pending: PendingPasskey, stillWanted: () => boolean = () => true): Promise<void> {
   let prf: Uint8Array | null
   try {
     prf = (await pendingPasskeyAssertion(pending)).prfOutput
   } catch (error) {
-    // A closed sheet keeps it (and its PRF output) for another tap on Confirm; anything else ends it.
-    if (!(error instanceof PasskeyVaultError && error.code === 'cancelled')) await abandonPasskeyEnrolment(pending)
+    // A closed sheet keeps it (and its PRF output) for another tap on Confirm, while someone can still tap it
+    // (`stillWanted`: the dialog may have gone meanwhile, say on a sign-out); anything else ends it.
+    const cancelled = error instanceof PasskeyVaultError && error.code === 'cancelled'
+    if (!cancelled || !stillWanted()) await abandonPasskeyEnrolment(pending)
     throw error
   }
   try {

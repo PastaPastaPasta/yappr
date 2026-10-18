@@ -191,6 +191,19 @@ describe('an enrolment left unfinished', () => {
     expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
   })
 
+  it('drops it when the sheet is closed after the dialog went (say, a sign-out meanwhile)', async () => {
+    const pending = made()
+    let dialogOpen = true
+    auth.getPasskeyPrf.mockImplementation(async () => {
+      // The session ends while the confirming sheet is open; then the sheet is closed.
+      dialogOpen = false
+      throw new PasskeyCancelledError()
+    })
+    await expect(finishPasskeyEnrolment(pending, () => dialogOpen)).rejects.toMatchObject({ code: 'cancelled' })
+    expect(pending.createPrf).toEqual(new Uint8Array(32))
+    expect(auth.signalUnknownPasskey).toHaveBeenCalledWith('localhost', CREDENTIAL)
+  })
+
   it('wipes its PRF output and drops the never-sent passkey when the confirming sign-in fails', async () => {
     const pending = made()
     auth.getPasskeyPrf.mockRejectedValue(new Error('NotAllowedError'))

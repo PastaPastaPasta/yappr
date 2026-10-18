@@ -55,18 +55,35 @@ describe('unsettled passkeys', () => {
   })
 })
 
+/**
+ * Runs `other` (another tab's write) inside this tab's next write, after
+ * anything this tab read and right before its own value lands: exactly where
+ * a read-modify-write of a shared value would overwrite it.
+ */
+function racing(other: () => void): void {
+  const setItem = localStorage.setItem.bind(localStorage)
+  let raced = false
+  localStorage.setItem = (key: string, value: string) => {
+    if (!raced) {
+      raced = true
+      other()
+    }
+    setItem(key, value)
+  }
+}
+
 describe('records kept per fact', () => {
-  it('never drop another identity\'s or another tab\'s record', async () => {
-    // Writes interleaved as two tabs would make them (a read-modify-write of one shared map would lose some).
-    const tab1 = await load()
-    const tab2 = tab1
-    tab1.rememberPasskeyHere(IDENTITY, 'cred1.aa')
-    tab2.rememberPasskeyHere(IDENTITY, 'cred2.bb')
-    tab2.rememberPasskeyHere('identity-2', 'cred3.cc')
-    tab1.rememberUnsettledPasskey(IDENTITY, UNSETTLED)
-    tab2.rememberUnsettledPasskey('identity-2', { ...UNSETTLED, credentialId: 'b3RoZXI' })
-    tab1.setPasskeyName('cred1.aa', 'Laptop')
-    tab2.setPasskeyName('cred2.bb', 'Phone')
+  it('never lose another tab\'s write that lands in the middle of this one', async () => {
+    const device = await load()
+    racing(() => device.rememberPasskeyHere(IDENTITY, 'cred2.bb'))
+    device.rememberPasskeyHere(IDENTITY, 'cred1.aa')
+    racing(() => device.rememberUnsettledPasskey('identity-2', { ...UNSETTLED, credentialId: 'b3RoZXI' }))
+    device.rememberUnsettledPasskey(IDENTITY, UNSETTLED)
+    racing(() => device.setPasskeyName('cred2.bb', 'Phone'))
+    device.setPasskeyName('cred1.aa', 'Laptop')
+    racing(() => device.rememberPasskeyHere('identity-2', 'cred3.cc'))
+    device.forgetPasskeyHere(IDENTITY, 'nothing-here')
+    device.rememberPasskeyHere('identity-2', 'cred3.cc')
 
     const after = await load()
     expect(after.passkeysHere(IDENTITY).sort()).toEqual(['cred1.aa', 'cred2.bb'])
