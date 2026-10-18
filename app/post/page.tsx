@@ -251,7 +251,7 @@ function PostDetailContent() {
                 </div>
               ) : replyThreads.length === 0 ? (
                 <div className="p-8 text-center">
-                  <p className="text-gray-500">No replies yet. Be the first to reply!</p>
+                  <p className="text-gray-500">{isDeleted || replyBlockedReason || (user && !canReplyToPrivate) ? 'No replies yet.' : 'No replies yet. Be the first to reply!'}</p>
                 </div>
               ) : (
                 replyThreads.map((thread) => (

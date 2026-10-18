@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+:root:has([data-testid="network-pill"]) {
+  --network-pill-height: 24px;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

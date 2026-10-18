@@ -1098,10 +1098,11 @@ function CheckoutPage() {
               <div className="p-4 space-y-4">
                 {/* Refund Address */}
                 <div>
-                  <label className="block text-sm font-medium mb-1">
+                  <label htmlFor="checkout-refund-address" className="block text-sm font-medium mb-1">
                     Refund Address (optional){selectedPaymentUri?.scheme && <span className="text-gray-500 font-normal"> - {selectedPaymentUri.scheme}</span>}
                   </label>
                   <input
+                    id="checkout-refund-address"
                     type="text"
                     value={refundAddress}
                     onChange={(e) => setRefundAddress(e.target.value)}
@@ -1125,8 +1126,9 @@ function CheckoutPage() {
               <div className="p-4 space-y-4">
                 {/* Notes */}
                 <div>
-                  <label className="block text-sm font-medium mb-1">Order Notes (optional)</label>
+                  <label htmlFor="checkout-order-notes" className="block text-sm font-medium mb-1">Order Notes (optional)</label>
                   <textarea
+                    id="checkout-order-notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     maxLength={paymentFieldLimits?.notes}

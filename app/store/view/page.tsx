@@ -481,7 +481,7 @@ function StoreDetailContent() {
                     <div className="flex items-center gap-2 mt-1">
                       <RatingStars rating={ratingSummary.averageRating} size="lg" />
                       <span className="text-sm text-gray-500">
-                        {ratingSummary.averageRating.toFixed(1)} ({ratingSummary.reviewCount} reviews)
+                        {ratingSummary.averageRating.toFixed(1)} ({ratingSummary.reviewCount} {ratingSummary.reviewCount === 1 ? 'review' : 'reviews'})
                       </span>
                     </div>
                   )}
