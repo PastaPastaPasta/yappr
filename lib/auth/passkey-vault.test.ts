@@ -347,27 +347,32 @@ describe('an enrolment left unfinished', () => {
   it('never drops a passkey once another tab\'s later write was out, even if that write lands and retires the record right after', async () => {
     keySession()
     const key = `yappr_passkey_unsettled:${IDENTITY}`
-    let retireAfterNextRead = false
-    const getItem = localStorage.getItem.bind(localStorage)
-    localStorage.getItem = (name: string) => {
-      const value = getItem(name)
-      // R2 lands and its tab retires the record just after this tab's cleanup has read it.
-      if (retireAfterNextRead && name === key) {
-        retireAfterNextRead = false
-        localStorage.removeItem(name)
+    let retireAfterCleanup = false
+    const setItem = localStorage.setItem.bind(localStorage)
+    localStorage.setItem = (name: string, value: string) => {
+      setItem(name, value)
+      // Cleanup's last write keeps R2's receipt; just after it lets the lock go (and before this tab acts on
+      // the result), R2 lands, its tab retires the record, and a sign-out here clears this tab's copy.
+      if (retireAfterCleanup && name === key) {
+        retireAfterCleanup = false
+        queueMicrotask(() => {
+          localStorage.removeItem(name)
+          forgetPendingEnrolments()
+        })
       }
-      return value
     }
     vault.add.mockImplementation(async (_owner: string, _entry: unknown, options: { beforeBroadcast?: (sent: unknown) => void }) => {
       options.beforeBroadcast?.(receipt('doc-1'))
       rememberUnsettledPasskey(IDENTITY, { vault: VAULT, credentialId: bytesToBase64Url(CREDENTIAL), recipientKey: bytesToHex(recipientFromPrf(prfOf(5)).publicKey), receipts: [storedReceipt('doc-1'), storedReceipt('doc-2')] })
-      forgetPendingEnrolments()
-      retireAfterNextRead = true
+      retireAfterCleanup = true
       throw new Error('refused')
     })
     auth.getPasskeyPrf.mockImplementation(async () => ({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(5) }))
 
     await expect(settled(finishPasskeyEnrolment(made()))).rejects.toMatchObject({ code: 'pending' })
+    // Nothing in storage or in this tab still names the enrolment, so only the write's own outcome can keep it.
+    expect(unsettledPasskey(IDENTITY)).toBeNull()
+    expect(pendingEnrolmentFor(IDENTITY)).toBeNull()
     expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
   })
 
