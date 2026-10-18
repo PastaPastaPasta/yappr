@@ -18,6 +18,7 @@ const sdk = vi.hoisted(() => ({
     unsuspendUser: vi.fn(),
     moderatorDeleteDocument: vi.fn(),
     claimFees: vi.fn(),
+    feePots: vi.fn(),
     moderatorRestoreDocument: vi.fn(),
     moderationStatus: vi.fn(),
     moderationEntries: vi.fn(),
@@ -1036,5 +1037,37 @@ describe('moderatedTypeOpenFor (the registered interim, not the committed file)'
     for (const interim of ['contractOwner', 'appointedModerators', 'noModeration', null] as const) {
       expect(moderatedTypeOpenFor(interim, null), String(interim)).toBe(true)
     }
+  })
+})
+
+describe('proved moderators payouts survive view lifetimes', () => {
+  it.each([4, null])('keeps epoch 6 authoritative over intermediate history after displayed epoch %s', async (baseline) => {
+    vi.resetModules()
+    const { moderationServiceFor } = await import('./moderation-service')
+    const service = moderationServiceFor('social')
+    const pots = (epoch: number | null, credits: bigint) => ({
+      owner: { credits: 0n, lastClaimEpoch: null, lastClaimantId: null },
+      moderators: { credits, lastClaimEpoch: epoch, lastClaimantId: epoch === null ? null : MODERATOR },
+    })
+    sdk.contracts.feePots.mockResolvedValue(pots(baseline, 100n))
+    await service.getFeePots()
+    sdk.contracts.claimFees.mockResolvedValue({ remainingCredits: 0n, lastClaimEpoch: 6, lastClaimantId: MODERATOR })
+    expect(await service.claimModeratorsPot(MODERATOR)).toMatchObject({ success: true, remainingCredits: 0n })
+    // A remounted panel gets the same per-contract service and its proved state.
+    const remounted = moderationServiceFor('social')
+    expect(remounted.moderatorsPotStatus()).toEqual({ pot: { credits: 0n, lastClaimEpoch: 6, lastClaimantId: MODERATOR }, pending: true })
+    sdk.contracts.feePots.mockResolvedValue(pots(5, 80n))
+    expect((await remounted.getFeePots())?.moderators).toMatchObject({ credits: 0n, lastClaimEpoch: 6 })
+    expect(remounted.moderatorsPotStatus().pending).toBe(true)
+    expect(await remounted.claimModeratorsPot(MODERATOR)).toMatchObject({ success: false })
+    expect(sdk.contracts.claimFees).toHaveBeenCalledTimes(1)
+    expect(moderationServiceFor('blog').moderatorsPotStatus()).toEqual({ pot: null, pending: false })
+
+    sdk.contracts.feePots.mockResolvedValue(pots(6, 2n))
+    await remounted.getFeePots()
+    expect(remounted.moderatorsPotStatus()).toEqual({ pot: { credits: 2n, lastClaimEpoch: 6, lastClaimantId: MODERATOR }, pending: false })
+    // A later lagging response cannot undo reconciliation either.
+    sdk.contracts.feePots.mockResolvedValue(pots(5, 80n))
+    expect((await remounted.getFeePots())?.moderators).toMatchObject({ credits: 2n, lastClaimEpoch: 6 })
   })
 })

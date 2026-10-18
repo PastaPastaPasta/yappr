@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { reconcileFeePot } from '../../lib/reconcile-fee-pot'
 import type { PasskeyEntryView } from '@/lib/auth/passkey-vault'
 
 const user = { identityId: 'offline-identity', dpnsUsername: 'alice.dash' }
@@ -49,17 +50,29 @@ export function ReportQueue() { return null }
 export function TeamActionsPanel() { return null }
 export function postedOnLabel() { return '' }
 let claimed = false
-let historyVisible = false
-export function exposePayoutHistory() { historyVisible = true }
+let historyEpoch: number | null = null
+export function exposePayoutHistory() { historyEpoch = 123 }
+export function exposeIntermediatePayoutHistory() { historyEpoch = 122 }
 const moderation = {
   canWarn: () => false,
   contract: { countsActions: () => false },
   listEntries: async () => ({ entries: [] }),
   listRemovals: async () => ({ removals: [] }),
   canRestore: () => false,
-  getFeePots: async () => ({ moderators: historyVisible
-    ? { credits: 0n, lastClaimEpoch: 123, lastClaimantId: 'offline-identity' }
-    : { credits: 100000000n, lastClaimEpoch: null, lastClaimantId: null } }),
+  getFeePots: async () => ({ moderators: historyEpoch === null
+    ? { credits: 100000000n, lastClaimEpoch: null, lastClaimantId: null }
+    : { credits: historyEpoch === 123 ? 0n : 80000000n, lastClaimEpoch: historyEpoch, lastClaimantId: 'offline-identity' } }),
+  // This fixture checks the view/service contract; real epoch filtering has service unit coverage.
+  moderatorsPotStatus: () => ({
+    pot: claimed
+      ? { credits: 0n, lastClaimEpoch: 123, lastClaimantId: 'offline-identity' }
+      : { credits: 100000000n, lastClaimEpoch: null, lastClaimantId: null },
+    pending: claimed && historyEpoch !== 123,
+  }),
+  reconcileModeratorsPot: async () => {
+    if (!claimed) return
+    await reconcileFeePot(async () => (await moderation.getFeePots()).moderators, 123)
+  },
   claimModeratorsPot: async () => { if (claimed) throw new Error('Duplicate fixture payout'); claimed = true; return { success: true, remainingCredits: 0n } },
 }
 export function moderationServiceFor() { return moderation }

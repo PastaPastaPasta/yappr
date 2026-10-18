@@ -1,16 +1,16 @@
 import type { FeePotState } from '@/lib/services/moderation-service'
 
-/** A confirmed payout must advance claim history; lagging balance reads cannot undo it. */
+/** Only history at or beyond the proved payout epoch includes that payout. */
 export async function reconcileFeePot(
   read: () => Promise<FeePotState | null>,
-  previousEpoch: number | null,
+  confirmedEpoch: number,
   pause: () => Promise<void> = () => new Promise((resolve) => setTimeout(resolve, 1500)),
 ): Promise<FeePotState | null> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       const pot = await read()
       if (pot?.lastClaimEpoch != null &&
-        (previousEpoch === null || pot.lastClaimEpoch > previousEpoch)) return pot
+        pot.lastClaimEpoch >= confirmedEpoch) return pot
     } catch {
       // A transient failure after confirmation does not make another claim safe.
     }

@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { reconcileFeePot } from '@/lib/reconcile-fee-pot';
 import { Document, PlatformVersion } from '@dashevo/wasm-sdk';
 import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
@@ -602,6 +603,24 @@ export function missingDocumentState(
  * on chain, where a ban, a seated team or a pot belongs to one contract.
  */
 class ModerationService {
+  /** Kept by the contract service so changing Settings panels cannot forget a proved payout. */
+  private moderatorPot: FeePotState | null = null;
+  private confirmedModeratorEpoch: number | null = null;
+  private moderatorPayoutPending = false;
+
+  moderatorsPotStatus(): { pot: FeePotState | null; pending: boolean } {
+    return { pot: this.moderatorPot, pending: this.moderatorPayoutPending };
+  }
+
+  async reconcileModeratorsPot(): Promise<void> {
+    const epoch = this.confirmedModeratorEpoch;
+    if (!this.moderatorPayoutPending || epoch === null) return;
+    await reconcileFeePot(async () => {
+      const pots = await this.getFeePots();
+      return this.moderatorPayoutPending ? null : pots?.moderators ?? null;
+    }, epoch);
+  }
+
   constructor(readonly contract: ModeratedContract) {}
 
   /**
@@ -925,7 +944,14 @@ class ModerationService {
       lastClaimEpoch: pot.lastClaimEpoch ?? null,
       lastClaimantId: pot.lastClaimantId ?? null,
     });
-    return { owner: toState(pots.owner), moderators: toState(pots.moderators) };
+    const moderators = toState(pots.moderators);
+    // The UI's previous epoch can itself be stale: only the claim proof supplies this watermark.
+    if (this.confirmedModeratorEpoch === null ||
+      (moderators.lastClaimEpoch !== null && moderators.lastClaimEpoch >= this.confirmedModeratorEpoch)) {
+      this.moderatorPot = moderators;
+      this.moderatorPayoutPending = false;
+    }
+    return { owner: toState(pots.owner), moderators: this.moderatorPot ?? moderators };
   }
 
   /**
@@ -1426,10 +1452,18 @@ class ModerationService {
 
   /** Pays the moderators pot out to the whole team (any member may claim). */
   async claimModeratorsPot(moderatorId: string): Promise<ModerationResult & { remainingCredits?: bigint }> {
+    if (this.moderatorPayoutPending) return { success: false, error: 'The payout is confirmed. Wait for claim history to update.', errorCode: 'ALREADY_CLAIMED' };
     let remainingCredits: bigint | undefined;
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       const claimed = await send(() => sdk.contracts.claimFees({ ...auth, contractId: this.contract.contractId, pot: 'moderators' }));
       remainingCredits = claimed.remainingCredits;
+      this.confirmedModeratorEpoch = claimed.lastClaimEpoch;
+      this.moderatorPot = {
+        credits: claimed.remainingCredits,
+        lastClaimEpoch: claimed.lastClaimEpoch,
+        lastClaimantId: identifierToBase58(claimed.lastClaimantId),
+      };
+      this.moderatorPayoutPending = true;
     });
     return remainingCredits === undefined ? result : { ...result, remainingCredits };
   }

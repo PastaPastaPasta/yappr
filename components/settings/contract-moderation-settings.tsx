@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { ArrowUturnLeftIcon, BanknotesIcon, ClockIcon, ExclamationTriangleIcon, NoSymbolIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -16,13 +16,11 @@ import { barredAuthorsCanTombstone, contractTakesReports, deletesAreTombstones }
 import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import type { ReportTargetKind } from '@/lib/reports'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
-import { reconcileFeePot } from '@/lib/reconcile-fee-pot'
 import { forgetModeratedReads } from '@/lib/moderation-refresh'
 import {
   moderationServiceFor,
   postedOnLabel,
   type DocumentRemoval,
-  type FeePotState,
   type ModerationEntry,
   type ModerationResult,
   type ModerationStanding,
@@ -166,11 +164,8 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   // The panel renders only for the moderation team; it reads on mount.
   const seatedReasons = useSeatedReasons(true, contract)
   const [reasonDocumentId, setReasonDocumentId] = useState('')
-  const [pot, setPot] = useState<FeePotState | null>(null)
-  const [claimPending, setClaimPending] = useState(false)
-  const pendingClaim = useRef<{ previousEpoch: number | null } | null>(null)
-  const potRevision = useRef(0)
-  const latestClaimEpoch = useRef<number | null>(null)
+  const [potStatus, setPotStatus] = useState(() => service.moderatorsPotStatus())
+  const { pot, pending: claimPending } = potStatus
   /** v11: counted actions per seated member since the last payout (what the action share splits by); null when not kept or unread. */
   const [actionCounts, setActionCounts] = useState<ReadonlyMap<string, number> | null>(null)
   /** v11: the seated team and its seats, for the pot panel; null while none is seated. */
@@ -179,9 +174,8 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   const [standing, setStanding] = useState<{ identityId: string; standing: ModerationStanding | null; error: string | null } | null>(null)
 
   const refresh = useCallback(async () => {
-    const revision = potRevision.current
     try {
-      const [bans, suspensions, warnings, removedByKind, pots] = await Promise.all([
+      const [bans, suspensions, warnings, removedByKind] = await Promise.all([
         service.listEntries('banlist'),
         service.listEntries('suspensions'),
         service.listEntries('warnings'),
@@ -195,22 +189,8 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
       const all = removedByKind.flat().sort((a, b) => b.removedAt - a.removedAt)
       setRemovals(all)
       setRestorable(new Set(all.filter((removal) => service.canRestore(removal.kind, removal)).map(removalKey)))
-      if (revision === potRevision.current) {
-        const pending = pendingClaim.current
-        const updated = pending
-          ? await reconcileFeePot(async () => (await service.getFeePots())?.moderators ?? null, pending.previousEpoch)
-          : pots?.moderators ?? null
-        // A pre-payout refresh or lagging replica never restores the pre-claim balance.
-        if (revision === potRevision.current && updated &&
-          (latestClaimEpoch.current === null || (updated.lastClaimEpoch !== null && updated.lastClaimEpoch >= latestClaimEpoch.current))) {
-          setPot(updated)
-          if (pending) {
-            latestClaimEpoch.current = updated.lastClaimEpoch
-            pendingClaim.current = null
-            setClaimPending(false)
-          }
-        }
-      }
+      await service.reconcileModeratorsPot()
+      setPotStatus(service.moderatorsPotStatus())
     } catch (error) {
       logger.error('ContractModerationSettings: refresh failed', error)
       toast.error('Could not load the moderation lists')
@@ -255,7 +235,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   }
 
   const run = async (action: Exclude<Action, 'restore'>) => {
-    if (!user || busy || (action === 'claim' && pendingClaim.current)) return
+    if (!user || busy || (action === 'claim' && service.moderatorsPotStatus().pending)) return
     const id = targetId.trim()
     if (action !== 'claim' && !id) {
       toast.error('Enter the identity ID to moderate')
@@ -308,13 +288,10 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
         succeeded = 'Warnings cleared'
         break
       case 'claim': {
-        potRevision.current += 1
         const claimed = await service.claimModeratorsPot(me)
         result = claimed
         if (claimed.success) {
-          pendingClaim.current = { previousEpoch: pot?.lastClaimEpoch ?? null }
-          setClaimPending(true)
-          setPot((current) => current && claimed.remainingCredits !== undefined ? { ...current, credits: claimed.remainingCredits } : null)
+          setPotStatus(service.moderatorsPotStatus())
         }
         succeeded = 'Moderators pot paid out to the team'
         break
