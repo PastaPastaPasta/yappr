@@ -297,6 +297,9 @@ describe('private feeds v2 end to end', () => {
     vi.doMock('./post-service', () => ({ postService: { getPostById: async (id: string) => (id === 'root' ? { author: { id: O }, encryptedContent: new Uint8Array([1]) } : null) } }))
     const fetched = { author: { id: F1 }, targetKind: 'reply' as const, parentId: 'root', rootPostId: 'root', ...sealed.data }
     expect(await s.reader.decryptPostOrReply(fetched, F4, keys[F4])).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
+    // Its root since deleted (a tombstone, no longer saying whether it was private): O's feed is still found.
+    vi.doMock('./post-service', () => ({ postService: { getPostById: async () => ({ author: { id: O }, deleted: true }) } }))
+    expect(await s.reader.decryptPostOrReply(fetched, F4, keys[F4])).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
     // A card that names the thread's starter but not the root: still O's feed.
     expect(await s.reader.decryptPostOrReply({ ...fetched, rootPostId: undefined }, F4, keys[F4], O)).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
     vi.doUnmock('./post-service')
@@ -591,7 +594,8 @@ describe('private feeds v2: every authorised path to history', () => {
       const opened = chain.docs.find((doc) => doc.$type === 'privateFeed' && doc.$ownerId === P && doc.feed === current + 1) as Record<string, unknown>
       rekey.$createdAt = (opened.$createdAt as number) - 0.5
     }
-    expect(await s.move.renewPrivateFeed(P, keys[P], { bringHistory: true })).toMatchObject({ success: true, historyLinked: true })
+    // Reported as a renewal without the history link: the copy says older posts stay with those who follow already.
+    expect(await s.move.renewPrivateFeed(P, keys[P], { bringHistory: true })).toMatchObject({ success: true, historyLinked: false })
     expect(grantsOf(P, current + 1)).toEqual(expect.arrayContaining([F1, F3]))
     expect(grantsOf(P, current)).toEqual(expect.arrayContaining([F1, F3]))
   })

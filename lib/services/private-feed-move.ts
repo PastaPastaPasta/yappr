@@ -162,7 +162,8 @@ export async function renewPrivateFeed(
     if (!opened.success || !opened.feed) return opened
     saveMove({ ownerId, from: current.feed, to: opened.feed.feed, recipients, done: [], skipped: [], deleteOldGrants: carryFrom !== undefined })
     const moved = await runMove(ownerId, encryptionPrivateKey, onProgress)
-    return { ...moved, historyLinked: carryFrom !== undefined }
+    const { historyIncomplete, ...result } = moved
+    return { ...result, historyLinked: carryFrom !== undefined && !historyIncomplete }
   } catch (error) {
     logger.error('Error renewing private feed:', error)
     return { success: false, error: error instanceof Error ? error.message : 'Could not renew your private feed.' }
@@ -196,10 +197,18 @@ function rememberLeftBehind(job: Pick<MoveJob, 'ownerId' | 'from' | 'to'>, ids: 
   }
 }
 
-const running = new Map<string, Promise<PrivateFeedResult>>()
+/**
+ * How a move ended. `historyIncomplete`: the history link it relied on misses
+ * a key change of the old feed (another device removed someone while it was
+ * being opened). The old grants stay, so everyone moved keeps those posts;
+ * people approved later read only what the link holds.
+ */
+type MoveResult = PrivateFeedResult & { historyIncomplete?: boolean }
+
+const running = new Map<string, Promise<MoveResult>>()
 
 /** Continue this device's follower move for `ownerId` (one run at a time per owner). */
-export function runMove(ownerId: string, encryptionPrivateKey?: Uint8Array, onProgress?: MoveListener): Promise<PrivateFeedResult> {
+export function runMove(ownerId: string, encryptionPrivateKey?: Uint8Array, onProgress?: MoveListener): Promise<MoveResult> {
   const inFlight = running.get(ownerId)
   if (inFlight) return inFlight
   const run = moveFollowers(ownerId, encryptionPrivateKey, onProgress).finally(() => running.delete(ownerId))
@@ -207,7 +216,7 @@ export function runMove(ownerId: string, encryptionPrivateKey?: Uint8Array, onPr
   return run
 }
 
-async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array, onProgress?: MoveListener): Promise<PrivateFeedResult> {
+async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array, onProgress?: MoveListener): Promise<MoveResult> {
   const saved = loadMove(ownerId)
   if (!saved) return { success: true }
   let job: MoveJob = { ...saved, error: undefined }
@@ -313,7 +322,8 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       saveMove(job)
       onProgress?.(moveProgress(job))
     }
-    if (job.deleteOldGrants && (await historyLinkCovers(ownerId, synced.state, job.from))) {
+    const historyIncomplete = job.deleteOldGrants && !(await historyLinkCovers(ownerId, synced.state, job.from))
+    if (job.deleteOldGrants && !historyIncomplete) {
       // PF6: the moved followers read the old feed through the history link now. Grants of
       // removed followers stay: they are the record that their request was answered.
       const moved = new Set(job.done)
@@ -323,7 +333,7 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
     }
     if (job.skipped.length > 0) rememberLeftBehind(job, job.skipped)
     clearMove(ownerId)
-    return { success: true }
+    return historyIncomplete ? { success: true, historyIncomplete } : { success: true }
   } catch (error) {
     logger.error('Error moving private followers:', error)
     return pause(error instanceof Error ? error.message : 'The move paused.')

@@ -246,7 +246,9 @@ export async function privateFeedOwnerOf(reply: ThreadedContent, rootOwnerHint?:
   if (reply.rootPostId) {
     const { postService } = await import('./post-service')
     const root = await postService.getPostById(reply.rootPostId, { skipEnrichment: true })
-    if (root && !root.deleted) return root.encryptedContent?.length ? root.author.id : reply.author.id
+    // A tombstone no longer says whether it was private: its author is the likelier owner (the reply's own is tried next).
+    if (root?.deleted) return root.author.id
+    if (root) return root.encryptedContent?.length ? root.author.id : reply.author.id
   }
   return reply.rootOwnerId ?? rootOwnerHint ?? reply.author.id
 }

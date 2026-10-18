@@ -40,7 +40,8 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
   }, [post, isPrivate, rootPostOwnerId])
   const resolvedOwnerId = resolved && resolved.postId === post?.id ? resolved.owner : null
   const feedOwnerId = resolvedOwnerId ?? rootPostOwnerId ?? post?.rootOwnerId ?? post?.author.id
-  const candidates = (resolvedOwnerId ? [resolvedOwnerId] : [rootPostOwnerId, post?.rootOwnerId, post?.author.id]).filter((id): id is string => !!id).join(',')
+  // The reader settles the owner, but on a tombstoned root it is a guess: keys for any candidate count.
+  const candidates = [...new Set([resolvedOwnerId, rootPostOwnerId, post?.rootOwnerId, post?.author.id])].filter((id): id is string => !!id).join(',')
   const keyGeneration = post?.keyGeneration
   const feed = post?.feed
   const viewerId = user?.identityId
