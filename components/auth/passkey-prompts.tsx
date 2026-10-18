@@ -119,6 +119,11 @@ export function PasskeyPrompts() {
   return <EnrolDialog identityId={dialog.identityId} username={user.dpnsUsername} offer={dialog.kind === 'offer'} onClose={close} />
 }
 
+/** Drops a passkey made but never saved (its PRF output wiped, the provider told). */
+function abandon(pending: PendingPasskey): void {
+  abandonPasskeyEnrolment(pending).catch((error: unknown) => logger.warn('Passkeys: dropping an unsaved passkey failed:', error))
+}
+
 type EnrolStep =
   | { kind: 'intro' }
   | { kind: 'creating' }
@@ -147,10 +152,14 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
   // the passkey, which signs in to nothing, is dropped from the provider.
   const stepRef = useRef(step)
   stepRef.current = step
-  useEffect(() => () => {
-    const last = stepRef.current
-    if (last.kind !== 'confirm') return
-    abandonPasskeyEnrolment(last.pending).catch((error: unknown) => logger.warn('Passkeys: dropping an unsaved passkey failed:', error))
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      const last = stepRef.current
+      if (last.kind === 'confirm') abandon(last.pending)
+    }
   }, [])
   // A check can take a minute; the enrolment outlives the dialog (reopening resumes it), so it may close meanwhile.
   const closable = step.kind === 'pending' || !busy
@@ -171,7 +180,8 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
   const create = useCallback(() => {
     setStep({ kind: 'creating' })
     startPasskeyEnrolment({ identityId, username })
-      .then((pending) => setStep({ kind: 'confirm', pending }))
+      // Made after the dialog went (closed, or the session ended): dropped like one left unconfirmed.
+      .then((pending) => { if (mounted.current) setStep({ kind: 'confirm', pending }); else abandon(pending) })
       .catch((error: unknown) => { if (!resume(error)) fail(error, { kind: 'intro' }) })
   }, [fail, identityId, resume, username])
 
@@ -194,10 +204,10 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
   }, [changed, fail, resume])
 
   /** `confirming`: saving it again behind the passkey's own confirmation, which the user may close. */
-  const settle = useCallback((pending: PendingPasskey, confirming: boolean) => {
+  const settle = useCallback((pending: PendingPasskey, confirming = false) => {
     setStep({ kind: 'pending', pending, checking: true, needsConfirm: confirming })
-    const outcome = confirming ? confirmPendingEnrolment(pending) : checkPendingEnrolment(pending)
-    outcome
+    const check = confirming ? confirmPendingEnrolment(pending) : checkPendingEnrolment(pending)
+    check
       .then((outcome) => {
         changed()
         if (outcome === 'saved') setStep({ kind: 'done' })
@@ -215,7 +225,8 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           fail(error, { kind: 'intro' })
           return
         }
-        setStep({ kind: 'pending', pending, checking: false, needsConfirm: confirming, message: cancelled ? undefined : enrolErrorCopy(error) ?? undefined })
+        // Once the passkey has vouched, a refused re-save never asks for it again.
+        setStep({ kind: 'pending', pending, checking: false, needsConfirm: confirming && !pending.verified, message: cancelled ? undefined : enrolErrorCopy(error) ?? undefined })
       })
   }, [changed, fail])
 
@@ -235,10 +246,10 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-3">
             Use Face ID, Touch ID, Windows Hello or your phone to sign in to Yappr on any device. Your sign-in is saved encrypted, and only your passkey can open it.
           </Dialog.Description>
-          {step.kind === 'pending' && step.needsConfirm ? (
-            <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">To finish saving your passkey, confirm it once more.</p>
-          ) : step.kind === 'pending' ? (
-            <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">{enrolErrorCopy(new PasskeyVaultError('pending'))}</p>
+          {step.kind === 'pending' ? (
+            <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">
+              {step.needsConfirm ? 'To finish saving your passkey, confirm it once more.' : enrolErrorCopy(new PasskeyVaultError('pending'))}
+            </p>
           ) : step.kind === 'confirm' ? (
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">Almost done. Confirm your passkey once more.</p>
           ) : (
@@ -248,7 +259,7 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           {step.kind === 'pending' && step.message && <InlineError>{step.message}</InlineError>}
           <div className="flex flex-col gap-3">
             {step.kind === 'pending' ? (
-              <Button className="w-full gap-2" onClick={() => settle(step.pending, step.needsConfirm === true)} disabled={busy}>
+              <Button className="w-full gap-2" onClick={() => settle(step.pending, step.needsConfirm)} disabled={busy}>
                 {busy && <Spinner size="sm" />}
                 {step.needsConfirm ? 'Confirm' : 'Check again'}
               </Button>

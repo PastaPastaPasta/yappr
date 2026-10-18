@@ -26,8 +26,13 @@ const UNSETTLED_PREFIX = 'yappr_passkey_unsettled:'
 
 export const MAX_PASSKEY_NAME_LENGTH = 40
 
-const hereKey = (identityId: string, marker: string) => `${HERE_PREFIX}${identityId}:${marker}`
-const unsettledKey = (identityId: string) => `${UNSETTLED_PREFIX}${identityId}`
+function herePrefix(identityId: string): string {
+  return `${HERE_PREFIX}${identityId}:`
+}
+
+function unsettledKey(identityId: string): string {
+  return `${UNSETTLED_PREFIX}${identityId}`
+}
 
 /**
  * A passkey as this browser knows it: its credential id (base64url) and the
@@ -47,18 +52,18 @@ export function passkeyMarker(credentialId: string, recipientKeyHex: string): st
  * its storage is part of what "This device" rests on (docs/PASSKEY_VAULT.md).
  */
 export function passkeysHere(identityId: string): string[] {
-  const prefix = `${HERE_PREFIX}${identityId}:`
+  const prefix = herePrefix(identityId)
   return scopedKeysWithPrefix(prefix).map((key) => key.slice(prefix.length))
 }
 
 export function rememberPasskeyHere(identityId: string, marker: string): void {
-  writeScoped(hereKey(identityId, marker), '1')
+  writeScoped(herePrefix(identityId) + marker, '1')
 }
 
 /** Forgets every marker of the passkey `credentialId` (base64url). */
 export function forgetPasskeyHere(identityId: string, credentialId: string): void {
   for (const marker of passkeysHere(identityId)) {
-    if (marker.startsWith(`${credentialId}.`)) removeScoped(hereKey(identityId, marker))
+    if (marker.startsWith(`${credentialId}.`)) removeScoped(herePrefix(identityId) + marker)
   }
 }
 

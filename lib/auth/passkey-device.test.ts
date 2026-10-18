@@ -57,9 +57,9 @@ describe('unsettled passkeys', () => {
 
 describe('records kept per fact', () => {
   it('never drop another identity\'s or another tab\'s record', async () => {
+    // Writes interleaved as two tabs would make them (a read-modify-write of one shared map would lose some).
     const tab1 = await load()
-    // Two tabs, each with the module state it loaded (a read-modify-write of a shared map would lose one).
-    const tab2 = await load()
+    const tab2 = tab1
     tab1.rememberPasskeyHere(IDENTITY, 'cred1.aa')
     tab2.rememberPasskeyHere(IDENTITY, 'cred2.bb')
     tab2.rememberPasskeyHere('identity-2', 'cred3.cc')

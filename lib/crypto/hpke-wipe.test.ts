@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 /** Every labeled buffer, told apart when it is made (once wiped, its label is gone too). */
 const made = vi.hoisted(() => [] as Uint8Array[])
+const LABEL = vi.hoisted(() => new TextEncoder().encode('HPKE-v1'))
 
 vi.mock('@/lib/bytes', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bytes')>()
@@ -15,8 +16,7 @@ vi.mock('@/lib/bytes', async (importOriginal) => {
     ...actual,
     concatBytes: (...parts: Uint8Array[]) => {
       const out = actual.concatBytes(...parts)
-      const label = new TextEncoder().encode('HPKE-v1')
-      if (out.length > label.length && label.every((byte, index) => out[index] === byte)) made.push(out)
+      if (out.length > LABEL.length && LABEL.every((byte, index) => out[index] === byte)) made.push(out)
       return out
     },
   }
@@ -33,9 +33,8 @@ describe('HPKE wipes the labeled copies of its secrets', () => {
     const sealed = sealBase(recipient.publicKey, info, aad, new Uint8Array([7, 7, 7]))
     expect(Array.from(openBase(sealed.enc, recipient.privateKey, info, aad, sealed.ciphertext))).toEqual([7, 7, 7])
 
-    const inputs = made.slice()
     // Some of them do hold a secret (the eae_prk and secret extracts), and all of them are wiped.
-    expect(inputs.length).toBeGreaterThan(0)
-    for (const bytes of inputs) expect(bytes.every((byte) => byte === 0)).toBe(true)
+    expect(made.length).toBeGreaterThan(0)
+    for (const bytes of made) expect(bytes.every((byte) => byte === 0)).toBe(true)
   })
 })
