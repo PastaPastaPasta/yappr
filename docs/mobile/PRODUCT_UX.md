@@ -325,7 +325,7 @@ See [NOTIFICATIONS.md](NOTIFICATIONS.md). UX essentials:
 | Compose | **1.0:** text, replies, quotes, threads, mentions, sensitive flag, persisted drafts (no offline queue; media display only). Later: up to 4 images / 1 video / 1 GIF (Y1 cut), private posts | Share extension, polls (Pollr) | — |
 | Messages | 1:1 and group DMs (v5); legacy 1:1 (v3) on testnet. Later: requests inbox | Voice notes? (evaluate), reactions | — |
 | Notifications | **1.0:** in-app, foreground polling. 1.1: private background polling, Instant relay/UnifiedPush, actions, communication notifications | Watcher relay, synced read state, widgets | — |
-| Safety | **1.0:** report posts and replies (where the topology takes reports), block, sensitive filter, media gate, EULA. Before a public store release: profile and DM reports, moderation denylist, account deletion | Muted words, trust-level filters | Moderator tools, elections, report queue |
+| Safety | **1.0:** report posts and replies (where the topology takes reports), block, sensitive filter, media gate, EULA. Before a public store release: profile and DM reports, account deletion | Muted words, trust-level filters | Moderator tools, elections, report queue |
 | Money | **1.0:** credit balance display only. Later: profile tips via DashPay (`dash:`) | Proved credit tips on posts (Android), top-up deep link | Post tips on iOS are never offered (policy) |
 | Other apps | — | Blog reader, storefront browse/buy + seller inbox | Blog editor, store management, CSV inventory |
 | Platforms | iPhone, Android phones | iPad, foldables, localization | — |

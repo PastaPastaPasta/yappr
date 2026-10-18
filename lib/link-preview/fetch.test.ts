@@ -1,17 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { canFetchPreview, fetchPreviewContent } from './fetch'
 
-const DENIED = 'https://raw.githubusercontent.com/owner/repo/main/removed'
-
-vi.mock('@/lib/media/media-denylist.json', async () => {
-  const { createHash } = await import('node:crypto')
-  return {
-    default: {
-      cids: [],
-      urlSha256: [{ sha256: createHash('sha256').update('https://raw.githubusercontent.com/owner/repo/main/removed').digest('hex'), added: '2026-10-17', ref: 'TEST' }],
-    },
-  }
-})
+const PREVIOUSLY_FILTERED = 'https://raw.githubusercontent.com/owner/repo/main/removed'
 
 const CID = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
 
@@ -38,15 +28,28 @@ describe('link-preview fetching', () => {
     }
   })
 
-  it('never requests a denylisted link, even on an allow-listed host', async () => {
+  it('fetches formerly filtered-style links on an allowed host', async () => {
+    const fetchMock = vi.fn(async () => new Response('<title>x</title>', { headers: { 'content-type': 'text/html' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(canFetchPreview(PREVIOUSLY_FILTERED)).toBe(true)
+    await expect(fetchPreviewContent(PREVIOUSLY_FILTERED)).resolves.toMatchObject({ content: '<title>x</title>' })
+    expect(fetchMock).toHaveBeenCalledWith(PREVIOUSLY_FILTERED, expect.any(Object))
+  })
+
+  it.each(['javascript:alert(1)', 'data:text/html,unsafe', 'http://i.imgur.com/a', 'https://127.0.0.1/a', 'https://192.168.1.1/a', 'https://localhost/a', 'https://i.imgur.com@127.0.0.1/a', 'https://\\i.imgur.com/a'])('never fetches unsafe or private destinations: %s', async (url) => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    expect(canFetchPreview(DENIED)).toBe(false)
-    expect(canFetchPreview(`${DENIED}#a\u2028b`)).toBe(false)
-    await expect(fetchPreviewContent(`${DENIED}#a\u2029b`)).rejects.toThrow()
-    await expect(fetchPreviewContent(DENIED)).rejects.toThrow()
+    expect(canFetchPreview(url)).toBe(false)
+    await expect(fetchPreviewContent(url)).rejects.toThrow()
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(canFetchPreview('https://raw.githubusercontent.com/owner/repo/main/kept')).toBe(true)
+  })
+
+  it('keeps the response size limit and image content-type handling', async () => {
+    const fetchMock = vi.fn(async () => new Response('large', { headers: { 'content-type': 'text/html', 'content-length': String(5 * 1024 * 1024 + 1) } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchPreviewContent('https://i.imgur.com/a')).rejects.toThrow('Content too large')
+    fetchMock.mockImplementation(async () => new Response('image bytes', { headers: { 'content-type': 'image/png' } }))
+    await expect(fetchPreviewContent('https://i.imgur.com/a')).resolves.toEqual({ content: '', contentType: 'image/png' })
   })
 
   it('fetches only the allow-listed hosts directly, over https', () => {

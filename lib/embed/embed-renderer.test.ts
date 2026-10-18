@@ -1,15 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { renderEmbedHtml } from './embed-renderer'
-
-vi.mock('@/lib/media/media-denylist.json', async () => {
-  const { createHash } = await import('node:crypto')
-  return {
-    default: {
-      cids: [],
-      urlSha256: [{ sha256: createHash('sha256').update('https://www.youtube.com/watch?v=removed0001').digest('hex'), added: '2026-10-17', ref: 'TEST' }],
-    },
-  }
-})
 
 describe('saved custom blog blocks in embeds', () => {
   it('retains code from the editor props, including ordinary comparison operators', () => {
@@ -85,8 +75,12 @@ describe('images in embeds', () => {
 })
 
 describe('videos in embeds', () => {
-  it('leaves out a video on the takedown denylist and keeps others', () => {
-    expect(renderEmbedHtml([{ type: 'videoEmbed', props: { url: 'https://www.youtube.com/watch?v=removed0001' } }])).toBe('')
+  it.each(['javascript:alert(1)', 'data:text/html,unsafe', 'https://user@www.youtube.com/watch?v=abc'])('refuses unsafe video URLs: %s', (url) => {
+    expect(renderEmbedHtml([{ type: 'videoEmbed', props: { url } }])).toBe('')
+  })
+
+  it('renders formerly filtered-style video URLs', () => {
+    expect(renderEmbedHtml([{ type: 'videoEmbed', props: { url: 'https://www.youtube.com/watch?v=removed0001' } }])).toContain('href="https://www.youtube.com/watch?v=removed0001"')
     expect(renderEmbedHtml([{ type: 'videoEmbed', props: { url: 'https://www.youtube.com/watch?v=kept0000001' } }]))
       .toContain('href="https://www.youtube.com/watch?v=kept0000001"')
   })

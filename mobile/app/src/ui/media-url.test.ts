@@ -37,3 +37,16 @@ describe('media and link URLs', () => {
     expect(safeExternalUrl('http://x.org')).toBe('http://x.org');
   });
 });
+
+describe('media without a client content list', () => {
+  it('resolves formerly filtered-style media while refusing malformed URLs', () => {
+    const cid = 'bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va';
+    expect(resolveMediaUrl(`ipfs://${cid}`)).toBe(`https://ipfs.io/ipfs/${cid}`);
+    expect(safeExternalUrl(`ipfs://${cid}`)).toBe(`https://ipfs.io/ipfs/${cid}`);
+    expect(resolveMediaUrl('https://tracker.example/pixel.png?id=1')).toContain('https://wsrv.nl/');
+    for (const url of ['https://ipfs.io/ipns/example.com', 'https://cdn.example/\uD800.png', `https://ipfs.io/ipfs//${cid}`, `https://user@${cid}.ipfs.dweb.link/`, `https://ipfs.io/i\tpfs/${cid}`]) {
+      expect(resolveMediaUrl(url)).toBeNull();
+      expect(safeExternalUrl(url)).toBeNull();
+    }
+  });
+});

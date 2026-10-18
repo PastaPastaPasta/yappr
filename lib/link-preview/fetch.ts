@@ -7,7 +7,7 @@
  */
 
 import { IPFS_GATEWAYS, getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
-import { IMAGE_PROXY_ORIGIN, imageSourceFor, isDeniedMedia } from '@/lib/media/remote-media'
+import { IMAGE_PROXY_ORIGIN, imageSourceFor, isSafeMediaUrl } from '@/lib/media/remote-media'
 
 /** Major hosts known to send CORS headers; fetched directly. Keep it short to limit IP exposure. */
 const CORS_ALLOWED_DOMAINS = new Set([
@@ -102,9 +102,8 @@ async function firstSuccessful(
 }
 
 /**
- * The IPFS content a link names (`ipfs://` or any gateway's URL), unless it is
- * on the takedown denylist: it is read from Yappr's own gateway list, never
- * from the host the link names.
+ * IPFS content (`ipfs://` or any gateway's URL) is read from Yappr's own
+ * gateway list, never from the host the link names.
  */
 function ipfsContentOf(url: string): string | null {
   const source = imageSourceFor(url)
@@ -112,11 +111,11 @@ function ipfsContentOf(url: string): string | null {
 }
 
 /**
- * Whether a link's page may be fetched for its preview: never when it is on
- * the takedown denylist; otherwise IPFS content, or an allow-listed https host.
+ * Whether a link's page may be fetched for its preview: only structurally safe
+ * IPFS content, or an allow-listed https host.
  */
 export function canFetchPreview(url: string): boolean {
-  if (isDeniedMedia(url)) return false
+  if (!isSafeMediaUrl(url)) return false
   return ipfsContentOf(url) !== null || (url.startsWith('https://') && isCorsAllowedDomain(url))
 }
 

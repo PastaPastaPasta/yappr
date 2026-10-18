@@ -16,7 +16,6 @@
     "scripts/measure-first-content.mjs",
     "scripts/sdk-wasm-asset.cjs",
     "scripts/measure-social-fees.mjs",
-    "scripts/media-denylist.mjs",
     "scripts/monitoring/chain.mjs",
     "scripts/monitoring/incidents.mjs",
     "scripts/monitoring/manifest.mjs",

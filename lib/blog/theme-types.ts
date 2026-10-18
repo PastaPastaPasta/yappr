@@ -230,7 +230,7 @@ export const FORBIDDEN_CSS_PATTERN = /(?:url\s*\(|image-set\s*\(|src\s*\(|expres
 /**
  * A stored CSS value (a block's background, padding) that is safe to apply:
  * one declaration's value, loading nothing (no `url()`, so no image can get
- * past the media rules or the takedown denylist) and running nothing.
+ * past the media rules) and running nothing.
  */
 export function isSafeCssValue(value: string): boolean {
   // Backslash escapes (`u\72l(`) and comments (`ur/**/l(`) could spell a

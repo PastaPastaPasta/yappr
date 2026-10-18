@@ -226,7 +226,7 @@ export function getAllGatewayUrls(ipfsUrl: string): string[] {
  * between candidates (plain HTML, third-party components): IPFS through the
  * primary gateway, other https through the image proxy, inline and
  * same-origin images as they are. Null when it must not be loaded at all
- * (denied, plain http, unknown schemes). Prefer IpfsImage where possible.
+ * (malformed, plain http, unknown schemes). Prefer IpfsImage where possible.
  */
 export function loadableImageUrl(url: string | null | undefined, size: ProxyImageSize = 'full'): string | null {
   const source = imageSourceFor(url, size)
