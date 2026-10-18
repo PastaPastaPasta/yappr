@@ -55,10 +55,10 @@ async function loadBlogs(sort: BlogSort, startAfter?: string): Promise<{ blogs: 
 /** The blogs a ranked page names, in the proved order; absent ids are dropped. */
 async function rankedBlogs(sort: Exclude<BlogSort, 'newest'>): Promise<Blog[]> {
   const ranked = sort === 'followed'
-    ? await blogStatsService.mostFollowedBlogs(100)
-    : await blogStatsService.trendingBlogs(100)
+    ? await blogStatsService.mostFollowedBlogs(100, { throwOnError: true })
+    : await blogStatsService.trendingBlogs(100, { throwOnError: true })
   if (ranked.length === 0) return []
-  const byId = new Map((await blogService.getMany(ranked.map((entry) => entry.id))).map((blog) => [blog.id, blog]))
+  const byId = new Map((await blogService.getMany(ranked.map((entry) => entry.id), { throwOnError: true })).map((blog) => [blog.id, blog]))
   return ranked.flatMap((entry) => {
     const blog = byId.get(entry.id)
     return blog ? [blog] : []
@@ -138,7 +138,7 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
   }, [sort, viewerId])
   // `incomplete`: before v7, `newest` sorted only the first DISCOVERY_SCAN_LIMIT blogs read.
   const { items: blogs, cursor, loading, loadingMore, error, incomplete, loadMore } = useCursorList(loadPage, {
-    enabled: sdkReady, loadError: 'Failed to load blogs', moreError: 'Failed to load more blogs',
+    enabled: sdkReady, loadError: 'Blogs are unavailable right now. Please try again.', moreError: 'Failed to load more blogs',
   })
 
   const filtered = useMemo(() => {

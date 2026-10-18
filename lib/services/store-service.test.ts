@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { get, query, updateDocument } = vi.hoisted(() => ({ get: vi.fn(), query: vi.fn(), updateDocument: vi.fn() }));
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get, query } }) }));
+const { get, query, ranked, updateDocument } = vi.hoisted(() => ({ get: vi.fn(), query: vi.fn(), ranked: vi.fn(), updateDocument: vi.fn() }));
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get, query, ranked } }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }));
 import { storeService } from './store-service';
+import { storeStatsService } from './store-stats-service';
 
 const paymentUris = [{ scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' }];
 const contactMethods = [{ platform: 'email', handle: 'shop@example.com' }];
@@ -15,12 +16,70 @@ const raw = {
 
 beforeEach(() => {
   storeService.clearCache();
+  storeStatsService.invalidateAll();
+  ranked.mockReset();
   get.mockReset().mockResolvedValue(raw);
   query.mockReset().mockResolvedValue(new Map([['store', raw]]));
   updateDocument.mockReset().mockImplementation(async (_contract, _type, id, owner, data, revision) => ({
     success: true,
     document: { $id: id, $ownerId: owner, $revision: revision + 1, ...data },
   }));
+});
+
+describe('directory ranking resilience', () => {
+  const error = new Error('GroveDB corrupted data: indexed target chain: primary entry 0101 is missing');
+
+  it.each(['topRated', 'mostOrdered'] as const)('shows newest active stores when %s fails, then recovers', async (sort) => {
+    ranked.mockRejectedValueOnce(error).mockResolvedValue({ entries: [{ groupValue: 'store', value: 5n }] });
+    const fallback = await storeService.getDiscoveryStores(sort, 20);
+    expect(fallback).toMatchObject({ complete: true, rankingUnavailable: true, stores: [{ id: 'store' }] });
+    expect(query.mock.calls[0][0]).not.toHaveProperty('aggregate');
+    expect(await storeService.getDiscoveryStores(sort, 20)).toMatchObject({ rankingUnavailable: false, stores: [{ id: 'store' }] });
+    expect(ranked).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves a successful empty ranking without replacing it with newest stores', async () => {
+    ranked.mockResolvedValue({ entries: [] });
+    expect(await storeService.getDiscoveryStores('topRated')).toEqual({ stores: [], complete: true, rankingUnavailable: false });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it.each(['topRated', 'mostOrdered'] as const)('falls back when %s succeeds but hydration fails', async (sort) => {
+    ranked.mockResolvedValue({ entries: [{ groupValue: 'store', value: 5n }] });
+    query.mockRejectedValueOnce(new Error('batch offline'));
+    get.mockRejectedValue(new Error('individual offline'));
+    const page = await storeService.getDiscoveryStores(sort);
+    expect(page).toMatchObject({ rankingUnavailable: true, stores: [{ id: 'store' }] });
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates fallback failure after a successful ranking and failed hydration', async () => {
+    ranked.mockResolvedValue({ entries: [{ groupValue: 'store', value: 5n }] });
+    query.mockRejectedValue(new Error('batch offline'));
+    get.mockRejectedValue(new Error('individual offline'));
+    await expect(storeService.getDiscoveryStores('topRated')).rejects.toThrow('batch offline');
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates a failed fallback so the directory can show its unavailable state', async () => {
+    ranked.mockRejectedValue(error);
+    query.mockRejectedValue(new Error('directory offline'));
+    await expect(storeService.getDiscoveryStores('topRated')).rejects.toThrow('directory offline');
+  });
+
+  it('keeps ranking order and drops absent or closed stores', async () => {
+    ranked.mockResolvedValue({ entries: ['second', 'missing', 'closed', 'first'].map(groupValue => ({ groupValue, value: 5n })) });
+    query.mockResolvedValue(new Map([
+      ['first', { ...raw, $id: 'first' }],
+      ['second', { ...raw, $id: 'second' }],
+      ['closed', { ...raw, $id: 'closed', status: 'closed' }],
+    ]));
+    const page = await storeService.getDiscoveryStores('topRated');
+    expect(page.stores.map(store => store.id)).toEqual(['second', 'first']);
+    expect(page.rankingUnavailable).toBe(false);
+  });
 });
 
 describe('store replacements re-encode the parsed JSON fields (docs/archive/SOCIAL_V9.md TODO 20)', () => {
