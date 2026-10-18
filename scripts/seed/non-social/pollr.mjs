@@ -491,8 +491,8 @@ export default {
   defaults: { seed: '20260917', concurrency: 6, nowMs: Date.now(), closeInMs: 10 * 60_000 },
   flags: { '--now': ['nowMs', 'number'], '--close-in': ['closeInMs', 'number'] },
   check(args) {
-    // v8 keeps v7's poll/ballot fields and ballot indexes, and removes the unused poll
-    // listing index. This seeder only fetches polls by id and never deletes them.
+    // v8 keeps v7's poll/ballot fields and ballot indexes, and removes both unused poll
+    // listing indexes. This seeder only fetches polls by id and never deletes them.
     const topology = envValue('NEXT_PUBLIC_POLLR_TOPOLOGY');
     if (topology && !['v7', 'v8'].includes(topology)) throw new Error(`this seeder writes v7/v8 poll and ballot shapes, but NEXT_PUBLIC_POLLR_TOPOLOGY is ${topology}`);
     if (!(args.closeInMs >= 60_000 && args.closeInMs <= MAX_POLL_MS)) throw new Error('--close-in takes milliseconds between 60000 and 31 days');

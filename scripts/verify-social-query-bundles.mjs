@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
  * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v17)> node scripts/verify-social-query-bundles.mjs [report.json]
+ * Set QUERY_BUNDLE_THREAD_ROOT to a known replied-to post when recent feed pages contain no replies.
  * Counts document facade requests after connection/contract warm-up, not HTTP
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
@@ -288,6 +289,7 @@ await verify('blog comment count pages', timeline.slice(0, 2).map(doc => ({
 
 /** The root of a thread with direct replies, for the reply page (per-reply counts pin the root). */
 async function threadRoot() {
+  if (process.env.QUERY_BUNDLE_THREAD_ROOT) return process.env.QUERY_BUNDLE_THREAD_ROOT;
   for (const doc of timeline) {
     const rootPostId = id(doc.$id);
     const direct = await sdk.documents.count({ dataContractId: social, documentTypeName: 'reply',
