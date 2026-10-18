@@ -25,6 +25,9 @@ import { CLEANUP_CLOCK_SLACK_MS } from './verify-lib.mjs';
 import {
   ALREADY_CLAIMED,
   REPO_ROOT,
+  RETRYABLE,
+  TRANSPORT_COLLAPSE,
+  WAIT_MAYBE_LANDED,
   STARTER_GRANT,
   YAPP_TOKEN_POSITION,
   buildDocument,
@@ -156,9 +159,10 @@ export async function personaActor(handle, personaIdx) {
 }
 
 /** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
-export function createBattery({ handle, contractId, socialId, agreementFor }) {
+export function createBattery({ handle, contractId, socialId, agreementFor = undefined }) {
   let failures = 0;
   const capturedErrors = [];
+  const createdDocuments = new Map();
   const workingShapes = [];
   const sdk = handle.sdk;
   const readback = (fn) => readbackWith(handle, fn);
@@ -206,6 +210,11 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
   }
 
   let minterPromise = null;
+  let socialContractPromise = null;
+  const socialContract = () => (socialContractPromise ??= readback(() => sdk.contracts.fetch(socialId)));
+  let mintDisabledPromise = null;
+  const mintDisabled = () => (mintDisabledPromise ??= socialContract().then(contract =>
+    contract.toJSON(PlatformVersion.current()).tokens['0'].manualMintingRules?.authorizedToMakeChange?.$type === 'noOne'));
   /**
    * The devnet maker (seed index 9), who mints YAPP as the social contract's
    * owner. Says so loudly when the maker does NOT own the contract: every mint
@@ -213,7 +222,7 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
    */
   const minter = () => (minterPromise ??= (async () => {
     const owner = resolveMakerOwner();
-    const contract = await readback(() => sdk.contracts.fetch(socialId));
+    const contract = await socialContract();
     const contractOwner = contract?.ownerId?.toBase58?.() ?? String(contract?.ownerId ?? '');
     if (contractOwner !== owner.ownerId) {
       console.log(`     WARNING: the maker ${owner.ownerId} (DEVNET_MAKER_IDENTITY_ID) is not the owner ${contractOwner} of social ${socialId}; YAPP mints will be refused`);
@@ -226,14 +235,14 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
   /**
    * Tops an actor up to `target` YAPP: its own once-per-identity starter claim
    * first (a claim is not a transfer, so the paused v10 token pays it; a second
-   * claim is 40722 and harmless), then an owner MINT of the rest straight to the
-   * actor. YAPP can no longer be bought or transferred (v10: paused, no price).
+   * claim is 40722 and harmless), then, only on a cut permitting it, an owner mint of the rest. v17
+   * has no mint authority; callers must budget the starter grant or pay credits. YAPP can no longer be bought or transferred (v10: paused, no price).
    * Failures are reported, not thrown: the balance read back is what callers trust.
    */
   async function ensureYapp(tokenId, actor, target) {
     let balance = await yappBalance(tokenId, actor.ownerId);
     if (balance >= target) return balance;
-    if (actor.starterClaimed) claimed.add(actor.ownerId);
+    // The ledger may describe another contract; the chain is the source of claim state.
     if (!claimed.has(actor.ownerId)) {
       try {
         await sdk.tokens.claim({ dataContractId: socialId, tokenPosition: YAPP_TOKEN_POSITION, identityId: actor.ownerId, distributionType: 'oncePerIdentity', identityKey: actor.identityKey, signer: actor.signer });
@@ -246,6 +255,10 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
       await settle();
       balance = await yappBalance(tokenId, actor.ownerId);
       if (balance >= target) return balance;
+    }
+    if (await mintDisabled()) {
+      console.log(`     ${actor.label}: ${balance} YAPP after its own starter claim; minting is disabled (use credits for further writes)`);
+      return balance;
     }
     const amount = target - balance;
     console.log(`     minting ${amount} YAPP to ${actor.label} from the contract owner`);
@@ -339,21 +352,32 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
       return id !== null && (await fetchDocument(docType, id, contract)) !== null;
     };
     const payment = noPayment ? {} : paymentInfo(tokenCost);
-    const onDerivedId = (derived) => { id = derived; };
+    const rememberId = (candidate) => {
+      if (!candidate || contract !== contractId) return;
+      if (!createdDocuments.has(docType)) createdDocuments.set(docType, new Set());
+      createdDocuments.get(docType).add(candidate);
+    };
+    const onDerivedId = (derived) => {
+      id = derived;
+      // Acceptance reads can lag a landed broadcast. Cleanup still needs every
+      // candidate ID on types with no listing index, even when the verdict fails.
+      rememberId(derived);
+    };
     const outcome = await attemptWrite(
       { accepted: accepted ?? storedById },
       () => (agreement
         // The derived id is kept before the broadcast, so a create whose wait throws after it
         // landed is still found by id (v7 blogPost/blogComment have no owner index to search).
         ? createDocument(sdk, { contractId: contract, actor: who, docType, document, data, entropy, agreement, payment, onDerivedId })
-        // A case that opts out of a priced type's agreement (40132) is sent hand-built too, with
-        // the nonce read off the chain: this actor's agreed creates moved its nonce by hand, and
-        // the facade's cached nonce can still be behind, which reuses a spent one instead.
-        : noAgreement && who.wif
+        // Unpriced creates and agreement-refusal probes also retain the derived id before
+        // broadcast. This recovers landed writes on types with no queryable indexes (poll v8)
+        // and reads the chain nonce after agreed creates instead of reusing a facade cache.
+        : who.wif
           ? createWithAgreement(sdk, { contractId: contract, docType, ownerId: who.ownerId, wif: who.wif, identityKey: who.identityKey, data, entropy, payment, onDerivedId })
           : sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...payment }))
     );
     if (accepted && outcome.ok) id = createdId(outcome.result);
+    if (outcome.ok) rememberId(id);
     return { ...outcome, id, document: outcome.result ?? document };
   }
 
@@ -417,7 +441,11 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
     const reason = outcome.error ?? '';
     if (outcome.ok) { check(label, false, 'ACCEPTED (BAD)'); return outcome; }
     capturedErrors.push({ label, message: reason });
-    const matched = pattern.test(reason);
+    // Consensus refusals can arrive inside a "failed to wait for state transition"
+    // wrapper too. Its explicit consensus code/schema error still establishes a refusal.
+    const consensus = /\bcode=[124]\d{4}\b|\bJsonSchemaError\b/i.test(reason);
+    const transient = RETRYABLE.test(reason) || TRANSPORT_COLLAPSE.test(reason) || (!consensus && WAIT_MAYBE_LANDED.test(reason));
+    const matched = !transient && pattern.test(reason);
     check(label, matched, matched ? reason.slice(0, 200) : `rejected, but NOT for the expected reason ${pattern}: ${reason.slice(0, 180)}`);
     return outcome;
   }
@@ -522,11 +550,11 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
   }
 
   return {
-    sdk, readback, check, personaActor: actorOf, moderatorActor, yappBalance, balanceOf, ensureYapp, fetchDocument, revisionOf,
+    sdk, readback, check, personaActor: actorOf, moderatorActor, yappBalance, balanceOf, ensureYapp, mintDisabled, fetchDocument, revisionOf,
     attemptWrite, paymentInfo, attemptCreate, attemptReplace, attemptDelete, attemptDeleteByValues,
     attemptCreateByValues, entryExists, expectAccepted, expectRejected, probeCreate, probeReplace, probeDelete,
     countBy, groupedCount, averageBy, sumBy, ranked, checkRanked, queryDocs, groupValueOf, avgOf, approx, b58,
-    workingShapes, report, get failures() { return failures; },
+    workingShapes, createdDocuments, report, get failures() { return failures; },
   };
 }
 
@@ -823,7 +851,7 @@ export async function runBattery(spec) {
       const { test } = spec.contract;
       contractId = await testContractId(handle, { test, registrar: actors[test.registrar], register: args['register-test-contract'] });
       contractIds.push(contractId);
-      await handle.sdk.contracts.fetch(contractId);
+      await readbackWith(handle, () => handle.sdk.contracts.fetch(contractId));
     }
     const battery = createBattery({ handle, contractId, socialId, agreementFor: spec.agreementFor });
     console.log(`${spec.label} ${contractId}${liveContract ? '' : ` (the ${spec.contract.test.name}-test contract)`}${spec.banner?.({ args, socialId }) ?? ''}`);
