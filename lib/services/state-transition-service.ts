@@ -30,13 +30,19 @@ import {
 import type { TokenPaymentInfoOptions } from '@dashevo/wasm-sdk';
 
 
-/** A create sent with no verdict: enough to settle its outcome later ({@link StateTransitionService.settleCreate}). */
+/**
+ * A signed create: enough to settle its outcome later
+ * ({@link StateTransitionService.settleCreate}), whatever happens to this
+ * browser's replay cache. `transition` is the signed transition's bytes,
+ * which hold nothing secret (they are what goes on the wire).
+ */
 export interface CreateReceipt {
   contractId: string;
   documentType: string;
   ownerId: string;
   documentId: string;
   nonce: bigint;
+  transition: Uint8Array;
 }
 
 export interface StateTransitionResult {
@@ -97,9 +103,9 @@ class BroadcastRefusedError extends Error {
 }
 
 /** Run a create's `beforeBroadcast`; a throw refuses the broadcast. */
-function checkBeforeBroadcast(beforeBroadcast: (() => void) | undefined): void {
+function checkBeforeBroadcast(beforeBroadcast: ((receipt?: CreateReceipt) => void) | undefined, receipt?: CreateReceipt): void {
   try {
-    beforeBroadcast?.();
+    beforeBroadcast?.(receipt);
   } catch (error) {
     throw new BroadcastRefusedError(error);
   }
@@ -471,9 +477,9 @@ class StateTransitionService {
    * The outcome of a create reported unconfirmed: `landed`, `not-recorded`
    * (its nonce spent and the document proved absent: it never landed, or for
    * a deletable type it landed and was deleted since), or null while that is
-   * unknown. A create whose nonce is still free is sent
-   * again first, with the same signed bytes, so it either executes or its
-   * nonce goes, and an outcome can be proved.
+   * unknown. A create whose nonce is still free is sent again first, with the
+   * same signed bytes from the receipt (never from the replay cache, which
+   * expires), so it either executes or its nonce goes, and an outcome can be proved.
    */
   async settleCreate(receipt: CreateReceipt): Promise<'landed' | 'not-recorded' | null> {
     const { contractId, documentType, ownerId, documentId, nonce } = receipt;
@@ -481,10 +487,8 @@ class StateTransitionService {
     const outcome = (settled: StateTransitionResult | null) => settled === null ? null : settled.success ? 'landed' : 'not-recorded';
     const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, nonce);
     if (settled) return outcome(settled);
-    const cached = loadPendingSTBytes(documentId);
-    if (!cached) return null;
     try {
-      const stateTransition = StateTransition.fromBytes(cached);
+      const stateTransition = StateTransition.fromBytes(receipt.transition);
       await sdk.stateTransitions.broadcastStateTransition(stateTransition);
       await sdk.stateTransitions.waitForResponse(stateTransition);
     } catch (error) {
@@ -587,9 +591,11 @@ class StateTransitionService {
        * Throwing refuses the create: nothing is sent, and the create fails
        * with the hook's message.
        * Lets a caller count only what was really broadcast, and stop a write
-       * it gave up on while it waited for the lock or a read.
+       * it gave up on while it waited for the lock or a read. A strict create
+       * passes its receipt, so a caller can keep it before anything is sent
+       * (absent when cached bytes are replayed).
        */
-      beforeBroadcast?: () => void;
+      beforeBroadcast?: (receipt?: CreateReceipt) => void;
     }
   ): Promise<StateTransitionResult> {
     const result = await withIdentityWriteLock(ownerId, contractId, () => this.createDocumentLocked(contractId, documentType, ownerId, documentData, options));
@@ -675,11 +681,13 @@ class StateTransitionService {
         { entropy, identityContractNonce: newNonce }
       );
       const resultDocument = { $id: documentId, $ownerId: ownerId, $type: documentType, ...resolvedData };
-      // Sent with no verdict yet: the receipt lets a caller settle it later (settleCreate). Never for
-      // indexOnly: settling reads the document by id, which an indexOnly row never is, so it would read absent.
+      // Set once it is signed. Never for indexOnly: settling reads the document by id, which an indexOnly
+      // row never is, so it would read absent.
+      let receipt: CreateReceipt | undefined;
+      // Sent with no verdict yet: the receipt lets a caller settle it later (settleCreate).
       const unconfirmed = (): StateTransitionResult => ({
         success: true, transactionHash: documentId, document: resultDocument, confirmed: false,
-        ...(affectedStateMode ? {} : { receipt: { contractId, documentType, ownerId, documentId, nonce: newNonce } }),
+        ...(receipt ? { receipt } : {}),
       });
 
       // --- Check for a cached ST from a previous timed-out attempt ---
@@ -773,20 +781,19 @@ class StateTransitionService {
         identityKey,
       });
       logger.debug('StateTransition built and signed');
-      checkBeforeBroadcast(options?.beforeBroadcast);
-
-      // Cache the signed ST bytes BEFORE broadcasting (strict mode only — the
-      // replay flow depends on get-by-id probes affectedState mode cannot make;
-      // an indexOnly duplicate is instead rejected structurally, 40105).
+      // Strict mode only: the replay flow depends on get-by-id probes affectedState mode cannot make
+      // (an indexOnly duplicate is instead rejected structurally, 40105).
       if (!affectedStateMode) {
         const stBytes = stateTransition.toBytes();
-        if (stBytes instanceof Uint8Array) {
-          savePendingSTBytes(documentId, stBytes);
-        } else {
-          // toBytes() might return ArrayBuffer or similar
-          savePendingSTBytes(documentId, new Uint8Array(stBytes));
-        }
-        logger.debug(`Cached ${stBytes.byteLength ?? stBytes.length} ST bytes for ${documentId}`);
+        // toBytes() might return ArrayBuffer or similar
+        receipt = { contractId, documentType, ownerId, documentId, nonce: newNonce, transition: stBytes instanceof Uint8Array ? stBytes : new Uint8Array(stBytes) };
+      }
+      checkBeforeBroadcast(options?.beforeBroadcast, receipt);
+
+      // Cache the signed ST bytes BEFORE broadcasting.
+      if (receipt) {
+        savePendingSTBytes(documentId, receipt.transition);
+        logger.debug(`Cached ${receipt.transition.byteLength} ST bytes for ${documentId}`);
       }
 
       // Reserved before the broadcast: a broadcast that errors may still have

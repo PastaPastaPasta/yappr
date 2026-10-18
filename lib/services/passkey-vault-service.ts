@@ -103,8 +103,12 @@ class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
    * Writes a new entry. Unconfirmed when it was sent but Platform has not
    * confirmed it yet (it may still land); its receipt settles it ({@link settleAdd}).
    */
-  async add(ownerId: string, entry: SealedVaultEntry): Promise<{ confirmed: true } | { confirmed: false; receipt?: CreateReceipt }> {
-    const result = await stateTransitionService.createDocument(this.contractId, this.documentType, ownerId, contentOf(entry))
+  async add(
+    ownerId: string,
+    entry: SealedVaultEntry,
+    beforeBroadcast?: (receipt?: CreateReceipt) => void
+  ): Promise<{ confirmed: true } | { confirmed: false; receipt?: CreateReceipt }> {
+    const result = await stateTransitionService.createDocument(this.contractId, this.documentType, ownerId, contentOf(entry), { beforeBroadcast })
     assertWritten(result, 'the passkey could not be saved')
     return result.confirmed === false ? { confirmed: false, receipt: result.receipt } : { confirmed: true }
   }

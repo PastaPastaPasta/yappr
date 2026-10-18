@@ -6,7 +6,7 @@ const UNSETTLED = {
   vault: 'vault-contract',
   credentialId: 'Y3JlZA',
   recipientKey: 'ab'.repeat(32),
-  receipt: { contractId: 'vault-contract', documentType: 'vaultEntry', ownerId: IDENTITY, documentId: 'doc-1', nonce: '18446744073709551615' },
+  receipt: { contractId: 'vault-contract', documentType: 'vaultEntry', ownerId: IDENTITY, documentId: 'doc-1', nonce: '18446744073709551615', transition: 'AQID' },
 }
 
 /** A fresh module, as after a reload: only what the browser stored survives. */

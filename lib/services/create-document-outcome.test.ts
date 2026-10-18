@@ -223,7 +223,7 @@ describe('settleCreate (a receipt for a create reported unconfirmed)', () => {
     sdk.stateTransitions.waitForResponse.mockRejectedValueOnce(new Error('waitForResponse timed out'))
     sdk.identities.contractNonceWithProof.mockResolvedValueOnce(proved(n(100), 50))
     const result = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'hi' })
-    expect(result).toMatchObject({ success: true, confirmed: false, receipt: { contractId: CONTRACT, documentType: 'post', ownerId: OWNER, documentId: 'doc-101', nonce: n(101) } })
+    expect(result).toMatchObject({ success: true, confirmed: false, receipt: { contractId: CONTRACT, documentType: 'post', ownerId: OWNER, documentId: 'doc-101', nonce: n(101), transition: new Uint8Array([1]) } })
     if (!result.receipt) throw new Error('no receipt')
     return result.receipt
   }
@@ -237,6 +237,32 @@ describe('settleCreate (a receipt for a create reported unconfirmed)', () => {
     expect(await stateTransitionService.settleCreate(receipt)).toBe('landed')
     // The one create, then the re-send of its bytes: never a new transition.
     expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-sends from the receipt even once the replay cache has expired', async () => {
+    const receipt = await unconfirmedCreate()
+    // The 24 h replay cache is gone (expired, or evicted by the cap): the receipt still holds the bytes.
+    storage.clear()
+    sdk.identities.contractNonceWithProof.mockResolvedValueOnce(proved(n(100), 51)).mockResolvedValue(proved(n(101), 52))
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+    sdk.documents.getWithProof.mockResolvedValue(proved({ $id: 'doc-101' }, 52))
+
+    expect(await stateTransitionService.settleCreate(receipt)).toBe('landed')
+    expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(2)
+  })
+
+  it('hands beforeBroadcast the receipt before anything is sent, and a throw there sends nothing', async () => {
+    const seen: unknown[] = []
+    const result = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'hi' }, {
+      beforeBroadcast: (receipt) => {
+        seen.push(receipt)
+        throw new Error('could not keep it')
+      },
+    })
+
+    expect(seen).toEqual([expect.objectContaining({ documentId: 'doc-101', nonce: n(101), transition: new Uint8Array([1]) })])
+    expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ success: false })
   })
 
   it('reports not-recorded only on a proof of absence once the nonce is spent', async () => {

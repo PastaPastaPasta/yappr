@@ -39,7 +39,7 @@ import {
 } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { STORAGE_SCOPE } from '@/lib/storage-scope'
-import { base64ToBytes, bytesEqual, bytesToBase64Url, bytesToHex, hexToBytes } from '@/lib/bytes'
+import { base64ToBytes, bytesEqual, bytesToBase64, bytesToBase64Url, bytesToHex, hexToBytes } from '@/lib/bytes'
 import { YAPPR_PASSKEY_VAULT_CONTRACT_ID, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { getPublicKey, matchIdentityKey } from '@/lib/crypto/keys'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
@@ -412,19 +412,30 @@ function restorePending(identityId: string): PendingPasskey | null {
     return null
   }
   if (!credentialId || sentTo.length !== 32) return null
-  const receipt = stored.receipt ? { ...stored.receipt, nonce: BigInt(stored.receipt.nonce) } : undefined
+  let receipt: CreateReceipt | undefined
+  if (stored.receipt) {
+    try {
+      receipt = { ...stored.receipt, nonce: BigInt(stored.receipt.nonce), transition: base64ToBytes(stored.receipt.transition) }
+    } catch {
+      receipt = undefined
+    }
+  }
   return { identityId, credentialId, createPrf: null, sentTo, ...(receipt ? { receipt } : {}) }
 }
 
-/** Holds an enrolment whose entry was sent but not confirmed, in this tab and in this browser. */
-function holdPending(pending: PendingPasskey, sentTo: Uint8Array): void {
+/**
+ * Holds an enrolment whose entry is about to be sent, in this tab and in this
+ * browser; false when the browser could not store it.
+ */
+function holdPending(pending: PendingPasskey, sentTo: Uint8Array, receipt: CreateReceipt | undefined): boolean {
+  pending.sentTo = sentTo
+  pending.receipt = receipt
   pendingEnrolments.set(pending.identityId, pending)
-  const { receipt } = pending
-  rememberUnsettledPasskey(pending.identityId, {
+  return rememberUnsettledPasskey(pending.identityId, {
     vault: YAPPR_PASSKEY_VAULT_CONTRACT_ID,
     credentialId: bytesToBase64Url(pending.credentialId),
     recipientKey: bytesToHex(sentTo),
-    ...(receipt ? { receipt: { ...receipt, nonce: receipt.nonce.toString() } } : {}),
+    ...(receipt ? { receipt: { ...receipt, nonce: receipt.nonce.toString(), transition: bytesToBase64(receipt.transition) } } : {}),
   })
 }
 
@@ -503,15 +514,24 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<v
     } finally {
       wipeBundle(bundle)
     }
-    const written = await passkeyVaultService.add(pending.identityId, sealed)
+    let written
+    try {
+      written = await passkeyVaultService.add(pending.identityId, sealed, (receipt) => {
+        // Kept before anything is sent: a reload from here on resumes it, and no new passkey can replace it.
+        if (!holdPending(pending, recipient.publicKey, receipt)) throw new Error('this browser could not keep the passkey while it is saved')
+      })
+    } catch (error) {
+      // A verdict (refused, or proved not recorded) or nothing sent: it settled.
+      retirePending(pending.identityId, pending.credentialId)
+      throw error
+    }
     if (!written.confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipient.publicKey)) {
       // Remembered as this device's only once it is confirmed (passkeySaved): one that never lands leaves no marker.
-      pending.sentTo = recipient.publicKey
-      pending.receipt = written.receipt
-      holdPending(pending, recipient.publicKey)
+      pending.receipt = written.receipt ?? pending.receipt
       throw new PasskeyVaultError('pending')
     }
     rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipient.publicKey))
+    retirePending(pending.identityId, pending.credentialId)
   } finally {
     prf?.fill(0)
     pending.createPrf?.fill(0)

@@ -94,13 +94,14 @@ export function markPasskeyOfferMade(): void {
   writeScoped(OFFER_KEY, '1')
 }
 
-/** The receipt of the write that sent an unsettled passkey's entry (the nonce as a decimal string). */
+/** The receipt of the write that sends an unsettled passkey's entry: the nonce as a decimal string, the signed transition in base64. */
 export interface UnsettledReceipt {
   contractId: string
   documentType: string
   ownerId: string
   documentId: string
   nonce: string
+  transition: string
 }
 
 /**
@@ -121,10 +122,10 @@ export interface UnsettledPasskey {
 
 function receiptOf(value: unknown): UnsettledReceipt | undefined {
   if (!value || typeof value !== 'object') return undefined
-  const { contractId, documentType, ownerId, documentId, nonce } = value as Record<string, unknown>
+  const { contractId, documentType, ownerId, documentId, nonce, transition } = value as Record<string, unknown>
   return typeof contractId === 'string' && typeof documentType === 'string' && typeof ownerId === 'string'
-    && typeof documentId === 'string' && typeof nonce === 'string' && /^\d+$/.test(nonce)
-    ? { contractId, documentType, ownerId, documentId, nonce }
+    && typeof documentId === 'string' && typeof nonce === 'string' && /^\d+$/.test(nonce) && typeof transition === 'string'
+    ? { contractId, documentType, ownerId, documentId, nonce, transition }
     : undefined
 }
 
@@ -138,8 +139,9 @@ export function unsettledPasskey(identityId: string): UnsettledPasskey | null {
   return { vault, credentialId, recipientKey, ...(settled ? { receipt: settled } : {}) }
 }
 
-export function rememberUnsettledPasskey(identityId: string, passkey: UnsettledPasskey): void {
-  writeScoped(UNSETTLED_KEY, JSON.stringify({ ...readMap(UNSETTLED_KEY), [identityId]: passkey }))
+/** Keeps it; false when this browser could not store it. */
+export function rememberUnsettledPasskey(identityId: string, passkey: UnsettledPasskey): boolean {
+  return writeScoped(UNSETTLED_KEY, JSON.stringify({ ...readMap(UNSETTLED_KEY), [identityId]: passkey }))
 }
 
 /** Forgets the unsettled passkey for `identityId` if it is `credentialId` (base64url): it settled. */
