@@ -600,6 +600,17 @@ describe('private feeds v2: every authorised path to history', () => {
     expect(grantsOf(P, current)).toEqual(expect.arrayContaining([F1, F3]))
   })
 
+  it('the owner reads an old post through a feed whose seed this device kept, past the discovery window and a fresh start', async () => {
+    expect(await s.owner.privateFeedService.enablePrivateFeed(F2, keys[F2])).toEqual({ success: true })
+    const old = await post('from feed one', F2)
+    expect(await s.move.renewPrivateFeed(F2, keys[F2], { bringHistory: true })).toMatchObject({ success: true, historyLinked: true })
+    // Feed one's seed is gone from this device (sealed to a key it no longer has, say); feed two's stays.
+    s.store.forgetOwnerKeys(F2, 1)
+    for (let opened = 0; opened < 17; opened++) expect((await s.owner.privateFeedService.openFeed(F2, keys[F2])).success).toBe(true)
+    const outcome = await s.reader.decryptPrivateContent(old, F2)
+    expect(outcome).toEqual({ ok: true, text: 'from feed one' })
+  })
+
   it('a follower who leaves and asks again while an earlier follower\'s grant is being written is not moved', async () => {
     expect((await s.owner.privateFeedService.openFeed(P, keys[P])).success).toBe(true)
     const feed = (await s.owner.privateFeedService.getCurrentFeed(P, { fresh: true }))?.feed as number

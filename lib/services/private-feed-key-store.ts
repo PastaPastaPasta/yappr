@@ -167,6 +167,11 @@ class PrivateFeedKeyStore {
     if (changed) this.changed()
   }
 
+  /** Every feed of `ownerId`'s whose seed this device holds. */
+  ownerFeeds(ownerId: string): number[] {
+    return keysWith(`o:${ownerId}:`).map((key) => Number(key.split(':')[2])).filter(Number.isInteger)
+  }
+
   forgetOwnerKeys(ownerId: string, feed: number): void {
     storage()?.removeItem(PREFIX + ownerKey(ownerId, feed))
     this.changed()
