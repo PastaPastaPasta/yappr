@@ -115,7 +115,7 @@ Every PR goes to `staging` through the normal gates (lint, unit tests, build, de
   - Done: [SOCIAL_V17.md](SOCIAL_V17.md), [STOREFRONT_V10.md](STOREFRONT_V10.md), and the blog v9 and pollr v8 sections of [NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md). Signed creates: social 18,019 B, storefront 18,704 B, blog 9,247 B, pollr 3,568 B. A throwaway copy of each was registered and probed on sakura (153/153 cases as expected). The `authVault` is out of the set; the passkey vault joins in its own PR.
 - **Client (WP4).** Live-marker pins everywhere, new fields, private-feed caps from stored state, hidden self-like button, no plaintext tracking in the seller form, read-side payment filter.
 - **Auth vault redesign (D10).** Dual design, crypto review, then implementation.
-- **In parallel.** Auth hardening (password login removed, #616, #740, #738), safety and privacy fixes (blocks in notifications, EXIF stripping, link-preview proxies removed, media denylist, wsrv proxy, tip tab hidden, Beta pills), storefront and blog moderation UI, write-path reliability (#644), legal and user-facing copy, CI and deploy hardening, e2e on the release topology, store notifications (#575).
+- **In parallel.** Auth hardening (password login removed, #616, #740, #738), safety and privacy fixes (blocks in notifications, EXIF stripping, link-preview proxies removed, wsrv proxy, tip tab hidden, Beta pills), storefront and blog moderation UI, write-path reliability (#644), legal and user-facing copy, CI and deploy hardening, e2e on the release topology, store notifications (#575).
 - **Mobile.** Testnet engine environment, mobile QA plan, and release-pin rebuild plan (D26).
 
 **Gate G1.**
@@ -323,7 +323,7 @@ The owner signs this before Phase 7. Every line is yes or no.
 **Not required for the soft launch**
 - A released wallet that speaks App Connect v2 (needed for the public announcement only).
 
-**Existing media filter (owner question, not a release gate):** The web and mobile apps currently ship a source-maintained media denylist; [MEDIA_TAKEDOWN.md](MEDIA_TAKEDOWN.md) records its behavior. It is unchanged in D35. **Owner question:** does this client display filter conflict with “no centralized moderation”? No takedown or response-time promise is made.
+**Client media policy (D35/D37):** No team-maintained client display filter ships on web or mobile. Content removal belongs to independent, community-elected on-chain moderation teams. URL safety checks, IPFS gateway routing and wsrv.nl image proxying remain in place.
 
 ## 5. Rollback
 

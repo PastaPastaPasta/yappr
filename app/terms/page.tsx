@@ -177,13 +177,6 @@ export default function TermsPage() {
         </Prose>
       </InfoSection>
 
-      <InfoSection title="Media in the app">
-        <Prose>
-          The Yappr app may not display some media. Web and mobile builds include a media denylist maintained in the source
-          repository. This affects display in those apps; it does not remove the media from Dash Platform, IPFS or other websites.
-        </Prose>
-      </InfoSection>
-
       <InfoSection title="Stores and payments">
         <Prose className="space-y-3">
           <BulletList>

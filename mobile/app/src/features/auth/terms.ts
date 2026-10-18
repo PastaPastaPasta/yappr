@@ -10,7 +10,7 @@ import { syncStorage } from '~/state/storage';
  * account on its next launch (PRD §11.1 OQ-5: the version is an app constant
  * until web publishes one).
  */
-export const TERMS_VERSION = '2026-10-18';
+export const TERMS_VERSION = '2026-10-19';
 
 export { COMMUNITY_RULES, TERMS_SUMMARY } from './terms-copy';
 

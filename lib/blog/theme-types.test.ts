@@ -7,7 +7,7 @@ describe('isSafeCssValue', () => {
     expect(isSafeCssValue('linear-gradient(135deg, #0f172a, #1e293b)')).toBe(true)
   })
 
-  it('refuses a value that loads an image (it would skip the media rules and the takedown denylist) or escapes its declaration', () => {
+  it('refuses a value that loads an image (it would skip the media rules) or escapes its declaration', () => {
     for (const value of [
       'url("https://ipfs.io/ipfs/bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va")',
       'linear-gradient(red, blue), URL (https://tracker.example/p.png)',

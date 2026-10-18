@@ -7,7 +7,7 @@ import { useSettingsStore } from '@/lib/store'
 import { LINK_PREVIEW_SERVICES } from '@/lib/link-preview/fetch'
 import { isDirectImageUrl, isYouTubeUrl } from '@/lib/link-preview/urls'
 import type { LinkPreviewData } from '@/lib/link-preview/types'
-import { isDeniedMedia } from '@/lib/media/remote-media'
+import { isSafeMediaUrl } from '@/lib/media/remote-media'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { YouTubeThumbnail } from '@/components/ui/youtube-thumbnail'
@@ -269,8 +269,8 @@ export function LinkPreview({ data, className = '' }: LinkPreviewProps) {
 
   const safeUrl = sanitizeUrl(data.url)
 
-  // Don't render if URL is invalid/unsafe, or the link is on the takedown denylist
-  if (!safeUrl || isDeniedMedia(safeUrl)) {
+  // Render only valid, structurally safe URLs.
+  if (!safeUrl || !isSafeMediaUrl(safeUrl)) {
     return null
   }
 

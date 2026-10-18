@@ -1127,7 +1127,6 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 | Image and media upload (Storacha, Pinata), media arrays | Yes (one image) | ADR E7; provider credentials and EXIF handling | 1.1 |
 | Profile reports and DM reports | No | ADR E7; waits for the contract cut with identity targets (COMPLIANCE D7) | Next social cut |
 | Account deletion | No | ADR E7; required before a public store release (COMPLIANCE C5) | Before store |
-| Moderation denylist enforcement | No | COMPLIANCE Y7; store blocker, not a beta blocker | Before store |
 | Moderator tools: remove, restore, report queue, elections, bans, warnings | Yes | ADR E7 | Web only for now |
 | Passkey and password-vault sign-in, key backup | Yes | ADR E5; devnet/testnet artefact (README D9) | Never on mobile |
 | App Connect enabled | No | No wallet ships it yet (ADR E5) | When a wallet does |

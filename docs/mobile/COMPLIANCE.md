@@ -131,20 +131,16 @@ moderation plan for decentralized content.
 | Filter objectionable content | Author-flagged `sensitive` posts hidden until the user consents (`lib/sensitive-content.ts`) | The same, **hidden by default**, plus local muted words in 1.1. Needs two deliberate steps to turn off (Play). |
 | Report content and users | v10: on-chain reports of posts and replies, with a moderator queue that resolves them (`lib/reports.ts`, `components/moderation/`). Testnet v2: none. | Reports of posts, replies, **profiles** and **DMs** on the Y1 cut (see [Reports](#reports)), in the apps and on web |
 | Block abusive users | `block` document, plus `blockFilter`/`blockFollow` | The same. Blocking hides content everywhere at once and also stops DMs, mentions and notifications from that user. |
-| External policy expectations for report handling | On-chain removals, bans, suspensions and warnings belong to independent teams elected by the community through masternode votes. | D35 does not authorize Yappr report triage, a response SLA or a broader denylist. Store acceptance must be assessed against the actual app behavior. |
+| External policy expectations for report handling | On-chain removals, bans, suspensions and warnings belong to independent teams elected by the community through masternode votes. | D35 does not authorize Yappr report triage, a response SLA or a client content filter. Store acceptance must be assessed against the actual app behavior. |
 | Published contact info | Not visible | Support email and URL in the app (Settings → About) and in store listings |
 | EULA with zero tolerance | Terms page exists (`app/terms`), no zero-tolerance clause | Add a zero-tolerance clause, a Community guidelines page, and acceptance before first post (gate stored per identity) |
 
-### Existing media display filter (D35)
+### Media display (D35/D37)
 
-Web and mobile builds bundle `lib/media/media-denylist.json`. The app may not
-display listed media; it does not remove anything from Dash Platform, IPFS or
-other services. See [MEDIA_TAKEDOWN.md](../MEDIA_TAKEDOWN.md).
-
-**Owner question:** does this source-maintained filter conflict with “no
-centralized moderation”? Leave the existing mechanism unchanged. The earlier
-signed identity/document denylist and moderation rota are superseded by D35;
-there is no Yappr report-triage or 24-hour response commitment.
+Web and mobile ship no team-maintained client content filter. Content removal
+belongs to independent teams elected on chain. URL safety checks, IPFS gateway
+routing and wsrv.nl image proxying remain in place. There is no Yappr report-triage
+or 24-hour response commitment.
 
 ### Reports
 
@@ -187,7 +183,7 @@ already work. In that window, on-chain reports cannot be filed. The app may offe
   replies, Yappr profile fields), ban and suspend, and reports are resolved on
   chain with an outcome and a moderator stamp. That is a real removal power,
   unlike most decentralized clients.
-- The existing bundled media denylist only affects display in web and mobile builds. There is no Yappr response SLA. Its fit with D35 is an open owner question.
+- Web and mobile ship no team-maintained client content filter (D37). There is no Yappr response SLA (D35).
 - Clients also hide content from blocked users on the device.
 
 ## Account deletion

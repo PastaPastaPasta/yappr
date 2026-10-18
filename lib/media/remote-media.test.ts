@@ -1,38 +1,15 @@
-import { createHash } from 'node:crypto'
-import { describe, expect, it, vi } from 'vitest'
-import { canonicalHttpsUrl as scriptCanonical, effectiveDestination as scriptDestination, ipfsCidOf as scriptCid, urlSha256 } from '../../scripts/media-denylist.mjs'
+import { describe, expect, it } from 'vitest'
 import {
   canonicalHttpsUrl,
   imageSourceFor,
   ipfsCidOf,
-  isDeniedMedia,
+  isSafeMediaUrl,
   proxiedImageUrl,
-  sha256Hex,
 } from './remote-media'
 
-const { CID_V1, CID_V0 } = vi.hoisted(() => ({
-  CID_V1: 'bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va',
-  CID_V0: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
-}))
-const DENIED_URL = 'https://Tracker.example/pixel.png?id=1#frag'
-
-vi.mock('./media-denylist.json', async () => {
-  const { createHash: hash } = await import('node:crypto')
-  return {
-    default: {
-      cids: [{ cid: CID_V1, added: '2026-10-16', ref: 'TEST-1' }, { cid: CID_V0, added: '2026-10-16', ref: 'TEST-1' }],
-      urlSha256: [{ sha256: hash('sha256').update('https://tracker.example/pixel.png?id=1').digest('hex'), added: '2026-10-16', ref: 'TEST-2' }],
-    },
-  }
-})
-
-describe('sha256Hex', () => {
-  it('matches node:crypto across block boundaries and non-ASCII input', () => {
-    for (const text of ['', 'abc', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'a'.repeat(1000), 'héllo wörld ✓ 🦄']) {
-      expect(sha256Hex(text)).toBe(createHash('sha256').update(text, 'utf8').digest('hex'))
-    }
-  })
-})
+const CID_V1 = 'bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va'
+const CID_V0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG'
+const PREVIOUSLY_FILTERED_URL = 'https://Tracker.example/pixel.png?id=1#frag'
 
 describe('ipfsCidOf', () => {
   it('reads the CID from every IPFS spelling', () => {
@@ -44,23 +21,17 @@ describe('ipfsCidOf', () => {
   })
 })
 
-describe('the denylist', () => {
-  it('blocks a listed CID in any spelling, case-insensitively for CIDv1', () => {
-    expect(isDeniedMedia(`ipfs://${CID_V1}`)).toBe(true)
-    expect(isDeniedMedia(`ipfs://${CID_V1.toUpperCase()}/file.jpg`)).toBe(true)
-    expect(isDeniedMedia(`https://${CID_V1}.ipfs.dweb.link/`)).toBe(true)
-    expect(isDeniedMedia(`https://ipfs.io/ipfs/${CID_V0}`)).toBe(true)
-    expect(isDeniedMedia('ipfs://bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy')).toBe(false)
+describe('media URL safety', () => {
+  it('renders formerly filtered-style CIDs and https URLs without a client content list', () => {
+    for (const url of [`ipfs://${CID_V1}`, `ipfs://${CID_V1.toUpperCase()}/file.jpg`, `https://${CID_V1}.ipfs.dweb.link/`, `https://ipfs.io/ipfs/${CID_V0}`]) {
+      expect(isSafeMediaUrl(url)).toBe(true)
+      expect(imageSourceFor(url).kind).toBe('ipfs')
+    }
+    expect(imageSourceFor(PREVIOUSLY_FILTERED_URL)).toEqual({ kind: 'proxied', url: proxiedImageUrl(PREVIOUSLY_FILTERED_URL) })
   })
 
-  it('blocks a listed https URL by the sha256 of its canonical form', () => {
-    expect(isDeniedMedia(DENIED_URL)).toBe(true)
-    expect(isDeniedMedia('  https://tracker.example/pixel.png?id=1 ')).toBe(true)
-    expect(isDeniedMedia('https://tracker.example/pixel.png?id=2')).toBe(false)
-  })
-
-  it('hashes equivalent spellings of a URL alike, and different queries apart', () => {
-    const listed = canonicalHttpsUrl('https://tracker.example/pixel.png?id=1')
+  it('canonicalizes equivalent spellings of a URL and preserves distinct queries', () => {
+    const canonical = canonicalHttpsUrl('https://tracker.example/pixel.png?id=1')
     for (const same of [
       'https://tracker.example:443/pixel.png?id=1',
       'https://tracker.example:0443/pixel.png?id=1',
@@ -69,8 +40,8 @@ describe('the denylist', () => {
       'https://tracker.example/unused/%2E%2e/./pixel.png?id=1',
       'https://tracker.example/unused\\..\\pixel.png?id=1',
     ]) {
-      expect(canonicalHttpsUrl(same)).toBe(listed)
-      expect(isDeniedMedia(same)).toBe(true)
+      expect(canonicalHttpsUrl(same)).toBe(canonical)
+      expect(isSafeMediaUrl(same)).toBe(true)
     }
     // Browsers send the encoded form of literal non-ASCII and spaces.
     expect(canonicalHttpsUrl('https://cdn.example/caf\u00e9 1.png?q=\u00e9 x')).toBe(canonicalHttpsUrl('https://cdn.example/caf%c3%a9%201.png?q=%C3%A9%20x'))
@@ -82,32 +53,18 @@ describe('the denylist', () => {
     expect(canonicalHttpsUrl('https://cdn.example/a#?ignored=1')).toBe('https://cdn.example/a')
     expect(canonicalHttpsUrl('https://tracker.example/a/..')).toBe('https://tracker.example/')
     expect(canonicalHttpsUrl('https://tracker.example:8443/pixel.png?id=1')).toBe('https://tracker.example:8443/pixel.png?id=1')
-    // Other spellings of an IPv4 address can't be hashed alike, so they are refused; dotted decimal is fine.
+    // Other spellings of an IPv4 address are ambiguous, so they are refused; dotted decimal is fine.
     for (const host of ['16843009', '0x1.1.1.1', '01.1.1.1', '1.1.257', '1.1.1.1.']) {
-      expect(isDeniedMedia(`https://${host}/pixel.png`)).toBe(true)
-      expect(scriptCid(`https://${host}/ipfs/${CID_V1}`)).toBeNull()
+      expect(isSafeMediaUrl(`https://${host}/pixel.png`)).toBe(false)
     }
-    expect(isDeniedMedia('https://1.1.1.1/pixel.png')).toBe(false)
-    expect(isDeniedMedia('https://tracker.example/pixel.png?id=2')).toBe(false)
-    expect(isDeniedMedia('https://tracker.example/pixel.png?id=1&x')).toBe(false)
+    expect(isSafeMediaUrl('https://1.1.1.1/pixel.png')).toBe(true)
+    expect(isSafeMediaUrl('https://tracker.example/pixel.png?id=2')).toBe(true)
+    expect(isSafeMediaUrl('https://tracker.example/pixel.png?id=1&x')).toBe(true)
     // A fragment is never requested, whatever it holds (line separators included).
     for (const fragment of ['#a\u2028b', '#a\u2029b']) {
-      expect(canonicalHttpsUrl(`https://tracker.example/pixel.png?id=1${fragment}`)).toBe(listed)
-      expect(isDeniedMedia(`https://tracker.example/pixel.png?id=1${fragment}`)).toBe(true)
-      expect(scriptCanonical(`https://tracker.example/pixel.png?id=1${fragment}`)).toBe(listed)
+      expect(canonicalHttpsUrl(`https://tracker.example/pixel.png?id=1${fragment}`)).toBe(canonical)
+      expect(isSafeMediaUrl(`https://tracker.example/pixel.png?id=1${fragment}`)).toBe(true)
     }
-  })
-
-  it('has a script that hashes exactly as the renderers do', () => {
-    for (const url of [
-      DENIED_URL, 'https://a.b/c?d=e&f=g', 'https://EXAMPLE.com', `https://${CID_V1}.ipfs.dweb.link/x`,
-      'https://a.b:443/x/../y/./z?q#f', 'https://a.b.:8443/%2e%2E/x\\y', 'https://a.b/x/..',
-      'https://a.b/caf\u00e9 x.png?q=\u00e9"\'<>', 'https://a.b/%c3%a9`{}',
-    ]) {
-      expect(scriptCanonical(url)).toBe(canonicalHttpsUrl(url))
-      expect(scriptCid(url)).toBe(ipfsCidOf(url))
-    }
-    expect(urlSha256(DENIED_URL)).toBe(sha256Hex(canonicalHttpsUrl(DENIED_URL) ?? ''))
   })
 })
 
@@ -116,10 +73,10 @@ describe('IPFS spellings', () => {
     expect(ipfsCidOf('https://docs.ipfs.tech/logo.png')).toBeNull()
     expect(imageSourceFor('https://docs.ipfs.tech/logo.png').kind).toBe('proxied')
     // Only a CID can follow a path gateway's /ipfs/: anything else is refused, not guessed at.
-    expect(imageSourceFor('https://example.com/ipfs/notacid.png')).toEqual({ kind: 'denied' })
+    expect(imageSourceFor('https://example.com/ipfs/notacid.png')).toEqual({ kind: 'none' })
   })
 
-  it('refuses any other spelling of a CID, so it cannot slip past the denylist', () => {
+  it('refuses any other spelling of a CID, to keep gateway routing unambiguous', () => {
     for (const url of [
       'ipfs://zdj7WWeQ43G6JJvLWQWZpyHuAMq6uYWRjkBXFad11vE2LHhQ7',
       'https://ipfs.io/ipfs/f01701220c3c4733ec8affd06cf9e9ff50ffc6bcd2ec85a6170004bb709669c31de94391a',
@@ -129,7 +86,7 @@ describe('IPFS spellings', () => {
       'https://ipfs.io/ipfs/uAXASIJ00OJvXLJYZ46V2uRPI2G68_2AOFWMsGCPx18olnBqo',
       'ipfs://uAXASIJ00OJvXLJYZ46V2uRPI2G68_2AOFWMsGCPx18olnBqo/a.png',
       'https://ipfs.io/ipfs/mAXASIJ00OJvXLJYZ46V2uRPI2G68+2AOFWMsGCPx18olnBqo',
-      // The CIDv0 bytes of a listed CID, spelled in base32 (gateways accept it).
+      // The CIDv0 bytes of a CID, spelled in base32 (gateways accept it).
       'https://ipfs.io/ipfs/bciqj2nbytplszfqz4osxnoitzdmg5ph7mahbkyzmdar7dv6kewobvka',
       'ipfs://bciqj2nbytplszfqz4osxnoitzdmg5ph7mahbkyzmdar7dv6kewobvka',
       // The same bytes with base32's unused trailing bits set (`…va` → `…vb`).
@@ -141,13 +98,12 @@ describe('IPFS spellings', () => {
       'https://k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8.ipns.dweb.link/',
       'ipns://example.com',
     ]) {
-      expect(isDeniedMedia(url)).toBe(true)
-      expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
-      expect(scriptCid(url)).toBeNull()
+      expect(isSafeMediaUrl(url)).toBe(false)
+      expect(imageSourceFor(url)).toEqual({ kind: 'none' })
     }
   })
 
-  it('refuses a path that could leave its CID, so a listed CID cannot hide behind another', () => {
+  it('refuses a path that could leave its CID, so gateway routing stays within its CID', () => {
     const other = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
     for (const url of [
       `ipfs://${other}/../${CID_V1}`,
@@ -158,14 +114,13 @@ describe('IPFS spellings', () => {
       `https://ipfs.io/ipfs/${other}/..\\${CID_V1}`,
       `https://${other}.ipfs.dweb.link/../ipfs/${CID_V1}`,
     ]) {
-      expect(isDeniedMedia(url)).toBe(true)
-      expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
-      expect(scriptCid(url)).toBeNull()
+      expect(isSafeMediaUrl(url)).toBe(false)
+      expect(imageSourceFor(url)).toEqual({ kind: 'none' })
     }
     expect(imageSourceFor(`ipfs://${other}/a..b/c.png`)).toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${other}/a..b/c.png` })
   })
 
-  it('refuses a percent-encoded IPFS reference, which a gateway would decode to listed content', () => {
+  it('refuses a percent-encoded IPFS reference, rather than guessing at gateway routing', () => {
     for (const url of [
       `https://ipfs.io/unused/../ipfs/${CID_V1}`,
       `https://ipfs.io/unused/%2e%2e/ipfs/${CID_V1}`,
@@ -193,9 +148,8 @@ describe('IPFS spellings', () => {
       `https://ipfs.io/%69pfs/${CID_V1}`,
       `https://ipfs.io/%69pfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy`,
     ]) {
-      expect(isDeniedMedia(url)).toBe(true)
-      expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
-      expect(scriptCid(url)).toBeNull()
+      expect(isSafeMediaUrl(url)).toBe(false)
+      expect(imageSourceFor(url)).toEqual({ kind: 'none' })
     }
     expect(imageSourceFor('https://cdn.example/a%20b.png').kind).toBe('proxied')
     // An ordinary site's dot segments or encoded slashes stay ordinary (Firebase Storage paths use %2F).
@@ -210,17 +164,15 @@ describe('IPFS spellings', () => {
     const other = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
     const url = `https://${CID_V1}.ipfs.dweb.link/ipfs/${other}/photo.jpg`
     expect(ipfsCidOf(url)).toBe(CID_V1)
-    expect(scriptCid(url)).toBe(CID_V1)
-    expect(isDeniedMedia(url)).toBe(true)
+    expect(isSafeMediaUrl(url)).toBe(true)
     expect(imageSourceFor(`https://${other}.ipfs.dweb.link/ipfs/x/a.png`))
       .toEqual({ kind: 'ipfs', ipfsUrl: `ipfs://${other}/ipfs/x/a.png` })
   })
 
-  it('refuses repeated slashes before a CID, which gateways collapse, and the script lists the CID they reach', () => {
+  it('refuses repeated slashes before a CID, which gateways collapse', () => {
     for (const url of [`https://ipfs.io/ipfs//${CID_V1}/photo.jpg`, `https://ipfs.io//ipfs/${CID_V1}`, `https://ipfs.io/x//../ipfs/${CID_V1}`]) {
-      expect(isDeniedMedia(url)).toBe(true)
-      expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
-      expect(scriptCid(scriptDestination(url))).toBe(CID_V1)
+      expect(isSafeMediaUrl(url)).toBe(false)
+      expect(imageSourceFor(url)).toEqual({ kind: 'none' })
     }
     // An ordinary site with a double slash stays ordinary.
     expect(imageSourceFor('https://cdn.example//a.png').kind).toBe('proxied')
@@ -228,9 +180,8 @@ describe('IPFS spellings', () => {
 
   it('refuses a URL with a tab or newline, which browsers drop (`i\\tpfs` is `ipfs`)', () => {
     for (const url of [`https://ipfs.io/i\tpfs/${CID_V1}`, `https://ipfs.io/ipfs/${CID_V1.slice(0, 10)}\n${CID_V1.slice(10)}`]) {
-      expect(isDeniedMedia(url)).toBe(true)
+      expect(isSafeMediaUrl(url)).toBe(false)
       expect(imageSourceFor(url)).toEqual({ kind: 'none' })
-      expect(scriptCid(url)).toBeNull()
     }
   })
 
@@ -238,8 +189,7 @@ describe('IPFS spellings', () => {
     for (const url of ['https://cdn.example/\uD800.png', 'https://cdn.example/a\uDC00b.png', `ipfs://${CID_V1}/\uD800`]) {
       expect(() => imageSourceFor(url)).not.toThrow()
       expect(imageSourceFor(url)).toEqual({ kind: 'none' })
-      expect(isDeniedMedia(url)).toBe(true)
-      expect(scriptCid(url)).toBeNull()
+      expect(isSafeMediaUrl(url)).toBe(false)
     }
     expect(imageSourceFor('https://cdn.example/\u{1F600}.png').kind).toBe('proxied')
   })
@@ -249,8 +199,7 @@ describe('IPFS spellings', () => {
     const nested = `https://cdn.example/%${'25'.repeat(500)}41.png`
     for (const url of [deep, nested]) {
       expect(() => imageSourceFor(url)).not.toThrow()
-      expect(imageSourceFor(url)).toEqual({ kind: 'denied' })
-      expect(scriptCid(url)).toBeNull()
+      expect(imageSourceFor(url)).toEqual({ kind: 'none' })
     }
     // One or two layers, as real URLs have, are fine.
     expect(imageSourceFor('https://cdn.example/a%2520b.png').kind).toBe('proxied')
@@ -285,10 +234,8 @@ describe('imageSourceFor', () => {
     expect(imageSourceFor('/yappr.jpg')).toEqual({ kind: 'local', url: '/yappr.jpg' })
   })
 
-  it('loads nothing that is denied, plain http, protocol-relative or another scheme', () => {
-    expect(imageSourceFor(`ipfs://${CID_V1}`)).toEqual({ kind: 'denied' })
-    expect(imageSourceFor(DENIED_URL)).toEqual({ kind: 'denied' })
-    for (const url of ['http://example.com/a.png', '//example.com/a.png', '/\\example.com/a.png', '/\t/example.com/a.png', 'javascript:alert(1)', 'file:///x', '', '   ', null, undefined]) {
+  it('loads nothing with plain http, protocol-relative or another scheme', () => {
+    for (const url of ['http://example.com/a.png', '//example.com/a.png', '/\\example.com/a.png', '/\t/example.com/a.png', 'javascript:alert(1)', 'data:text/html,unsafe', 'file:///x', '', '   ', null, undefined]) {
       expect(imageSourceFor(url)).toEqual({ kind: 'none' })
     }
   })

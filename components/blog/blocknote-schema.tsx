@@ -35,7 +35,7 @@ import { extractYouTubeVideoId } from '@/lib/link-preview/urls'
 import { YouTubeIcon } from '@/components/ui/brand-icons'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { YouTubeThumbnail } from '@/components/ui/youtube-thumbnail'
-import { imageSourceFor, isDeniedMedia } from '@/lib/media/remote-media'
+import { imageSourceFor, isSafeMediaUrl } from '@/lib/media/remote-media'
 import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { isSafeCssValue } from '@/lib/blog/theme-types'
 import { extractInlineText } from '@/lib/blog/content-utils'
@@ -362,8 +362,8 @@ function VideoEmbedPlayer({ url }: { url: string }) {
     setIsPlaying(false)
   }, [youtubeVideoId])
 
-  // A video on the takedown denylist shows neither its thumbnail nor its player.
-  if (isDeniedMedia(url)) {
+  // Refuse ambiguous or malformed media URLs.
+  if (!isSafeMediaUrl(url)) {
     return <p className="text-sm text-gray-400">This video isn&apos;t available.</p>
   }
 
@@ -470,7 +470,7 @@ const videoBlock = createReactBlockSpec(
 /**
  * Audio by the media rules: IPFS audio plays from the gateway; audio hosted
  * anywhere else is never fetched by the reader's browser (there is no proxy
- * for it), so it shows as a link; denied or unusable URLs show nothing to play.
+ * for it), so it shows as a link; malformed or unusable URLs show nothing to play.
  */
 function AudioPlayer({ url, caption }: { url: string; caption: string }) {
   const source = imageSourceFor(url)
