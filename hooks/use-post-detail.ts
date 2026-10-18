@@ -10,6 +10,7 @@ import { hasFlatThreads, referencesMayDangle, repliesOutliveTheirParent, targetK
 import { deletedReplyStubs, unloadedReplyParents } from '@/lib/feed/deleted-reply-stubs'
 import { assembleFlatThread, authorThreadDepthFirst, buildReplyTree, byCreatedAtAsc, MAX_NESTED_DEPTH } from '@/lib/feed/reply-thread'
 import { provenAbsent } from '@/lib/feed/prove-absent'
+import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from '@/lib/services/pagination-utils'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
@@ -448,25 +449,38 @@ export function usePostDetail({
         }
       }
       if (!hasFlatThreads()) collectIds(replyThreads)
-      for (const [id, entry] of acceptedRepliesRef.current) {
-        if (!fetchedIds.has(id)) continue
-        if (entry.ancestors.every(parent => fetchedIds.has(parent.id))) acceptedRepliesRef.current.delete(id)
-        else entry.confirmed = true
+      const acceptedReplies = new Map(acceptedRepliesRef.current)
+      // Captured ancestry preserves a rendering path across pagination, but
+      // successful refreshes must reflect later removals and tombstones. Query
+      // missing ancestors afresh rather than accepting the document cache.
+      const ancestorIds = [...new Set([...acceptedReplies.values()]
+        .flatMap(entry => entry.ancestors.map(parent => parent.id)))].filter(id => !fetchedIds.has(id))
+      const ancestorPages = await mapLimit(chunk(ancestorIds, MAX_IN_CLAUSE_VALUES), 2, ids =>
+        replyService.query({ where: [['$id', 'in', ids]], limit: ids.length }))
+      if (!isCurrent()) return
+      const currentAncestors = new Map(ancestorPages.flatMap(page => page.documents).map(reply => [reply.id, reply]))
+      for (const [id, entry] of acceptedReplies) {
+        const ancestors = entry.ancestors.flatMap(parent => {
+          const current = fetchedIds.has(parent.id) ? parent : currentAncestors.get(parent.id)
+          return current ? [current] : []
+        })
+        if (fetchedIds.has(id) && ancestors.every(parent => fetchedIds.has(parent.id))) acceptedReplies.delete(id)
+        else acceptedReplies.set(id, { ...entry, ancestors, confirmed: entry.confirmed || fetchedIds.has(id) })
       }
-      const pendingIds = [...acceptedRepliesRef.current].filter(([, entry]) => !entry.confirmed).map(([id]) => id)
+      const pendingIds = [...acceptedReplies].filter(([, entry]) => !entry.confirmed).map(([id]) => id)
       // A new reply can be beyond page one. Confirm its id without reading the
       // entire thread, and keep the overlay until a loaded page includes it.
       if (pendingIds.length > 0) {
         const confirmed = await replyService.getMany(pendingIds, { throwOnError: true })
         if (!isCurrent()) return
         for (const reply of confirmed) {
-          const pending = acceptedRepliesRef.current.get(reply.id)
-          if (pending) acceptedRepliesRef.current.set(reply.id, {
+          const pending = acceptedReplies.get(reply.id)
+          if (pending) acceptedReplies.set(reply.id, {
             ...pending, reply: { ...reply, author: pending.reply.author }, confirmed: true,
           })
         }
       }
-      const overlayReplies = [...acceptedRepliesRef.current.values()].flatMap(entry => [...entry.ancestors, entry.reply])
+      const overlayReplies = [...acceptedReplies.values()].flatMap(entry => [...entry.ancestors, entry.reply])
       const included = new Set(fetchedIds)
       for (const reply of overlayReplies) {
         if (included.has(reply.id)) continue
@@ -490,6 +504,8 @@ export function usePostDetail({
       if (!isCurrent()) return
       const quotedPost = loadedPost.quotedPost
 
+      // Commit reconciliation only when all page reads and proofs succeeded.
+      acceptedRepliesRef.current = acceptedReplies
       // Publish pagination only after this page is complete. A failed nested
       // read or parent proof must not allow pagination past an uncommitted page.
       replyCursorRef.current = nextCursor

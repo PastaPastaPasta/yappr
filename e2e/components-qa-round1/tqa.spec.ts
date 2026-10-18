@@ -248,3 +248,28 @@ test('T-SOC-02: modern bookmarks do not query unsupported reply targets', async 
   await expect(page.getByText('This post is no longer available.', { exact: true })).toBeVisible()
   await expect(page.locator('article[data-target-kind="reply"]')).toHaveCount(0)
 })
+
+for (const change of ['removed', 'tombstone', 'outage', 'proof-outage']) {
+  test(`T-SOC-01: retained ancestry reflects ${change} after pagination reconciliation`, async ({ page }) => {
+    test.skip(process.env.TQA_SOCIAL_TOPOLOGY === 'v2', 'Flat contracts preserve children of removed ancestors')
+    await page.goto(`/tqa.html?fixture=thread&scenario=ancestor-${change}`)
+    await expect(page.getByText('Continuation', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Publish accepted reply' }).click()
+    await expect(page.getByText('Settled', { exact: true })).toBeVisible()
+    await expect(page.locator('article[data-reply-id="accepted"]')).toHaveCount(1)
+    const parent = page.locator('article[data-reply-id="continuation"]')
+    await expect(parent).toContainText('Continuation')
+    await page.getByRole('button', { name: 'Change ancestor', exact: true }).click()
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    if (change.includes('outage')) {
+      await expect(page.getByRole('alert')).toContainText('Replies could not be refreshed.')
+      await expect(parent).toContainText('Continuation')
+      await expect(page.locator('article[data-reply-id="accepted"]')).toHaveCount(1)
+      await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    }
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    await expect(parent).not.toContainText('Continuation')
+    await expect(parent).toHaveAttribute(change === 'removed' || change === 'proof-outage' ? 'data-deleted-stub' : 'data-deleted', 'true')
+    await expect(parent.locator('article[data-reply-id="accepted"]')).toHaveCount(1)
+  })
+}
