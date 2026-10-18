@@ -189,6 +189,8 @@ async function approveBy(owner: string, ...followers: string[]) {
 const NAMES: Record<string, string> = { [O]: 'O', [F1]: 'F1', [F2]: 'F2', [F3]: 'F3', [F4]: 'F4', [F5]: 'F5' }
 const grantsIn = (feed: number) => chain.docs.filter((doc) => doc.$type === 'privateFeedGrant' && doc.feed === feed).map((doc) => NAMES[norm(doc.recipientId) as string]).sort()
 
+const grantsOf = (owner: string, feed: number) => chain.docs.filter((doc) => doc.$type === 'privateFeedGrant' && doc.$ownerId === owner && doc.feed === feed).map((doc) => norm(doc.recipientId))
+
 describe('private feeds v2 end to end', () => {
   const posts: Record<string, PrivateContent> = {}
 
@@ -464,8 +466,25 @@ describe('private feeds v2: every authorised path to history', () => {
   })
 
   it('after a renewal, a request older than a removal in an earlier feed still cannot be approved', async () => {
-    expect(grantsIn(4)).not.toContain('F2')
+    expect(grantsOf(P, 4)).not.toContain(F2)
     expect(await s.owner.privateFeedService.approveFollower(P, F2, getPublicKey(keys[F2]), keys[P])).toMatchObject({ success: false })
     expect((await s.owner.privateFeedService.getPendingRequests(P)).map((r) => r.$ownerId)).not.toContain(F2)
+  })
+
+  it('a follower who left and asks again after a renewal waits for approval, and private posting goes on', async () => {
+    expect(await s.follower.leave(P, F1)).toEqual({ success: true })
+    const renewed = await s.move.renewPrivateFeed(P, keys[P], { bringHistory: true })
+    expect(renewed).toMatchObject({ success: true })
+    const feed = (await post('while away', P)).feed
+    expect(grantsOf(P, feed)).not.toContain(F1)
+    expect(await s.follower.requestAccess(P, F1)).toEqual({ success: true })
+    const { loadMove } = await import('./private-feed-move-job')
+    const asked = await post('after asking', P)
+    expect(loadMove(P)).toBeNull()
+    expect(grantsOf(P, feed)).not.toContain(F1)
+    expect((await s.owner.privateFeedService.getPendingRequests(P)).map((r) => r.$ownerId)).toContain(F1)
+    expect(await s.owner.privateFeedService.approveFollower(P, F1, getPublicKey(keys[F1]), keys[P])).toEqual({ success: true })
+    expect(grantsOf(P, feed)).toContain(F1)
+    expect(await read(F1, asked)).toBe('after asking')
   })
 })

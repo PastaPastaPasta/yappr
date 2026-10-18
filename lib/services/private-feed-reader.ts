@@ -47,6 +47,9 @@ export interface PrivateContent {
  */
 export type LockReason = 'needs-key' | 'no-access' | 'revoked' | 'history-unavailable' | 'failed'
 
+/** Which reason wins when several paths fail: the one that tells the viewer most about what would open it. */
+const REASON_RANK: Record<LockReason, number> = { 'needs-key': 4, failed: 3, revoked: 2, 'history-unavailable': 1, 'no-access': 0 }
+
 export type ContentKeyResult = { cek: Uint8Array } | { reason: LockReason }
 export type DecryptOutcome = { ok: true; text: string } | { ok: false; reason: LockReason }
 
@@ -147,6 +150,8 @@ async function walkBack(viewerId: string, ownerId: string, feeds: readonly Priva
 async function openFeedKeys(viewerId: string, ownerId: string, doc: PrivateFeedDocument, grant: GrantDocument | null, encryptionPrivateKey?: Uint8Array): Promise<'recovered' | 'needs-key' | 'none'> {
   if (viewerId === ownerId) {
     const { privateFeedService } = await import('./private-feed-service')
+    // Without the seed here or the key it is sealed to, a read would not change the answer.
+    if (!encryptionPrivateKey && !privateFeedKeyStore.ownerKeys(ownerId, doc.feed)) return 'needs-key'
     const synced = await privateFeedService.feedState(ownerId, doc, encryptionPrivateKey)
     if (synced.success) return 'recovered'
     return synced.errorCode === 'SYNC_REQUIRED' ? 'needs-key' : 'none'
@@ -173,17 +178,18 @@ export async function contentKeyFor(
   viewerId: string, ownerId: string, feed: number, keyGeneration: number, encryptionPrivateKey?: Uint8Array,
 ): Promise<ContentKeyResult> {
   try {
+    // Keys already on this device answer without a read.
+    const direct = await directKey(viewerId, ownerId, feed, keyGeneration, encryptionPrivateKey)
+    if (direct && 'cek' in direct) return direct
     const isOwner = viewerId === ownerId
     const feeds = await fetchFeeds(ownerId)
     const grants = isOwner ? [] : await fetchGrantsTo(ownerId, viewerId)
     const grantIn = (number: number) => grants.find((grant) => grant.feed === number) ?? null
     let fallback: LockReason | null = null
     const note = (reason: LockReason) => {
-      if (fallback === null || fallback === 'history-unavailable' || fallback === 'no-access') fallback = reason
+      if (fallback === null || REASON_RANK[reason] > REASON_RANK[fallback]) fallback = reason
     }
 
-    const direct = await directKey(viewerId, ownerId, feed, keyGeneration, encryptionPrivateKey)
-    if (direct && 'cek' in direct) return direct
     if (direct) note(direct.reason)
     else {
       const doc = await feedDoc(feeds, ownerId, feed)

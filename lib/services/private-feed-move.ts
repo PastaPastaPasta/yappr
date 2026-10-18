@@ -74,8 +74,11 @@ async function blockedBy(ownerId: string): Promise<Set<string>> {
  */
 async function movableFollowers(ownerId: string, feed: number): Promise<string[]> {
   const [grants, rekeys, requests, blocked] = await Promise.all([fetchMembers(ownerId, feed), fetchRekeys(ownerId, feed, 1), fetchFollowRequestsTo(ownerId), blockedBy(ownerId)])
-  const asking = new Set(requests.map((request) => request.$ownerId))
-  return activeGrants(grants, rekeys).filter((grant) => asking.has(grant.recipientId) && !blocked.has(grant.recipientId)).map((grant) => grant.recipientId)
+  // Only a request the grant answered: one made since (they left and asked again) waits for the owner's approval.
+  const askedAt = new Map(requests.map((request) => [request.$ownerId, request.$createdAt]))
+  return activeGrants(grants, rekeys)
+    .filter((grant) => (askedAt.get(grant.recipientId) ?? Infinity) <= grant.createdAt && !blocked.has(grant.recipientId))
+    .map((grant) => grant.recipientId)
 }
 
 /**
