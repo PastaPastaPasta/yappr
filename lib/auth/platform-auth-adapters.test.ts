@@ -73,7 +73,7 @@ describe('stale post-login work', () => {
   it('does not erase another tab’s newly saved keys when a feed sync finishes after sign-out', async () => {
     const { createYapprPlatformAuthDependencies } = await import('./platform-auth-adapters')
     const { privateFeedKeyStore } = await import('@/lib/services/private-feed-key-store')
-    let finish = () => undefined
+    let finish: () => void = () => undefined
     syncFollowedFeeds.mockImplementation(() => new Promise((resolve) => {
       finish = () => resolve({ synced: [], failed: [], upToDate: [] })
     }))
