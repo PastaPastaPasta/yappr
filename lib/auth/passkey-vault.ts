@@ -732,18 +732,28 @@ export async function checkPendingEnrolment(pending: PendingPasskey): Promise<En
  * passkey, whose PRF must give exactly the recipient key on record. Only then
  * is the session sealed to it. A record whose passkey gives a different key
  * is dropped (it can only be a damaged or planted one), and nothing is sealed.
- * A passkey that gives no PRF here (another device or path) proves nothing:
- * the record is kept, as its write may still land.
+ * The passkey must also name this identity and vault in its user handle (the
+ * PRF input is shared by every account), or the record is dropped the same
+ * way. A passkey that gives no PRF or no user handle here (another device or
+ * path) proves nothing: the record is kept, as its write may still land.
  */
 export async function confirmPendingEnrolment(pending: PendingPasskey): Promise<EnrolmentCheck> {
+  const { contractId } = requireSetup()
   const assertion = await pendingPasskeyAssertion(pending)
   const prf = assertion.prfOutput
   try {
     if (!prf || prf.length !== 32 || !bytesEqual(assertion.credentialId, pending.credentialId)) throw new PasskeyVaultError('no-prf')
+    // The PRF input is the vault's, shared by every account: only the user handle says whose passkey this is.
+    // One the authenticator gave none for proves nothing either way.
+    if (!assertion.userHandle) throw new PasskeyVaultError('not-yappr')
+    const owner = identityOfUserHandle(assertion.userHandle, contractId)
     const recipient = recipientFromPrf(prf)
     recipient.privateKey.fill(0)
-    if (!pending.sentTo || !bytesEqual(recipient.publicKey, pending.sentTo)) {
-      // Retired under the write lock every send and retirement takes, and only if still this same record.
+    const ours = owner !== null && bytesEqual(owner, identityBytes(pending.identityId))
+    if (!ours || !pending.sentTo || !bytesEqual(recipient.publicKey, pending.sentTo)) {
+      // Another account's (or vault's) passkey, or one that opens something else: the record can only be
+      // damaged or planted. Retired under the write lock every send and retirement takes, and only if still
+      // this same record; the passkey itself is someone's, and is never dropped from the provider.
       const sentTo = pending.sentTo
       await withIdentityWriteLock(pending.identityId, YAPPR_PASSKEY_VAULT_CONTRACT_ID, async () => {
         const stored = restorePending(pending.identityId)

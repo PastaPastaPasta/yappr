@@ -13,6 +13,9 @@ import { stubBrowserStorage } from '../test-storage'
 const IDENTITY = bs58.encode(new Uint8Array(32).fill(4))
 const CREDENTIAL = new Uint8Array([1, 2, 3, 4])
 const prfOf = (seed: number) => new Uint8Array(32).fill(seed)
+/** The user handle a passkey of IDENTITY carries in this vault (identity ‖ vault contract). */
+const handleOf = (identityId: string) => new Uint8Array([...bs58.decode(identityId), ...bs58.decode(VAULT)])
+const HANDLE = handleOf(IDENTITY)
 
 const VAULT = vi.hoisted(() => 'AwTMt9nEFgCwLcFNfJXpCRfKtrqHnkyR8hCWiTBm7HqJ')
 const auth = vi.hoisted(() => ({
@@ -118,7 +121,7 @@ describe('a pending enrolment restored from storage', () => {
 
   it('is dropped, with nothing sealed, when its passkey opens something else', async () => {
     const pending = restored(66)
-    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: null, prfOutput: prfOf(7) })
+    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(7) })
 
     await expect(settled(confirmPendingEnrolment(pending))).rejects.toBeInstanceOf(PasskeyVaultError)
     // The one sign-in asked was restricted to this passkey.
@@ -132,7 +135,7 @@ describe('a pending enrolment restored from storage', () => {
 
   it('is saved again once its passkey gives exactly the recipient key on record', async () => {
     const pending = restored(7)
-    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: null, prfOutput: prfOf(7) })
+    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(7) })
 
     // Sealing starts (it reads the session's keys; none here, so it stops there).
     await expect(settled(confirmPendingEnrolment(pending))).rejects.toThrow()
@@ -145,7 +148,7 @@ describe('a pending enrolment restored from storage', () => {
 describe('a pending enrolment restored from storage, settled', () => {
   it('keeps a record its passkey gives no PRF for: that proves nothing', async () => {
     const pending = restored(66)
-    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: null, prfOutput: null })
+    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: null })
     await expect(settled(confirmPendingEnrolment(pending))).rejects.toMatchObject({ code: 'no-prf' })
     expect(unsettledPasskey(IDENTITY)).not.toBeNull()
   })
@@ -166,9 +169,31 @@ describe('a pending enrolment restored from storage, settled', () => {
     expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
   })
 
-  it('treats a recipient key changed under the tab as unvouched again', async () => {
+  it('drops, with nothing sealed, a record whose passkey belongs to another account', async () => {
+    // Another account's real passkey: its public credential id and recipient key, and the same PRF.
+    const pending = restored(7)
+    const other = bs58.encode(new Uint8Array(32).fill(8))
+    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: handleOf(other), prfOutput: prfOf(7) })
+    await expect(settled(confirmPendingEnrolment(pending))).rejects.toBeInstanceOf(PasskeyVaultError)
+    expect(pending.verified).not.toBe(true)
+    expect(stores.getPrivateKey).not.toHaveBeenCalled()
+    expect(unsettledPasskey(IDENTITY)).toBeNull()
+    // That passkey is the other account's: never dropped from the provider.
+    expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
+  })
+
+  it('keeps a record whose passkey gives no user handle: that proves nothing, and nothing is sealed', async () => {
     const pending = restored(7)
     auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: null, prfOutput: prfOf(7) })
+    await expect(settled(confirmPendingEnrolment(pending))).rejects.toMatchObject({ code: 'not-yappr' })
+    expect(pending.verified).not.toBe(true)
+    expect(stores.getPrivateKey).not.toHaveBeenCalled()
+    expect(unsettledPasskey(IDENTITY)).not.toBeNull()
+  })
+
+  it('treats a recipient key changed under the tab as unvouched again', async () => {
+    const pending = restored(7)
+    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(7) })
     await settled(confirmPendingEnrolment(pending)).catch(() => undefined)
     expect(pending.verified).toBe(true)
     // Another tab (or anyone with this site's storage) rewrites the record's recipient key.
