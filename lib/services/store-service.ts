@@ -237,6 +237,29 @@ class StoreService extends BaseDocumentService<Store> {
     return { stores: stores.slice(0, limit), complete };
   }
 
+  /** A directory page; failed rankings fall back to ordinary active stores. */
+  async getDiscoveryStores(sort: 'newest' | 'topRated' | 'mostOrdered', limit = 50): Promise<{
+    stores: Store[];
+    complete: boolean;
+    rankingUnavailable: boolean;
+  }> {
+    if (sort === 'newest') return { ...await this.getNewestActiveStores(limit), rankingUnavailable: false };
+    try {
+      const ranked = sort === 'topRated'
+        ? await storeStatsService.topRatedStores(limit, { throwOnError: true })
+        : await storeStatsService.mostOrderedStores(limit, { throwOnError: true });
+      const byId = new Map((await this.getMany(ranked.map((entry) => entry.id))).map((store) => [store.id, store]));
+      const stores = ranked.flatMap((entry) => {
+        const store = byId.get(entry.id);
+        return store?.status === 'active' ? [store] : [];
+      });
+      return { stores, complete: true, rankingUnavailable: false };
+    } catch (error) {
+      logger.warn('Store ranking unavailable; showing newest stores', error);
+      return { ...await this.getNewestActiveStores(limit), rankingUnavailable: true };
+    }
+  }
+
   /** The newest active stores in one category (v6 `byCategory [status, category, $createdAt]`), `limit` at most. */
   async getNewestActiveStoresInCategory(category: string, limit = 50): Promise<Store[]> {
     const { documents } = await this.query({

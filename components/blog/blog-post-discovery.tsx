@@ -39,7 +39,7 @@ function latestPage(cursor?: string): Promise<{ posts: RankedPost[]; nextCursor?
 
 /** The ranked posts in the proved order, with their counts; drafts, tombstones and missing posts dropped. */
 async function discussedPosts(): Promise<RankedPost[]> {
-  const ranked = await blogStatsService.mostDiscussedPosts(DISCUSSED_LIMIT)
+  const ranked = await blogStatsService.mostDiscussedPosts(DISCUSSED_LIMIT, { throwOnError: true })
   if (ranked.length === 0) return []
   const byId = new Map((await blogPostService.getMany(ranked.map((entry) => entry.id))).map((post) => [post.id, post]))
   return ranked.flatMap((entry) => {
@@ -56,7 +56,7 @@ export function BlogPostDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
     return { items: await enrichBlogPostsWithBlogNames(page.posts), nextCursor: page.nextCursor }
   }, [sort])
   const { items: posts, cursor, loading, loadingMore, error, loadMore } = useCursorList(loadPage, {
-    enabled: sdkReady, loadError: 'Failed to load posts', moreError: 'Failed to load more posts',
+    enabled: sdkReady, loadError: 'Posts are unavailable right now. Please try again.', moreError: 'Failed to load more posts',
   })
 
   const openPost = (post: BlogPostWithAuthor) => router.push(getBlogPostUrl(post.blogId, post.slug))
