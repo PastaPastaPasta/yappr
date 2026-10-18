@@ -14,10 +14,37 @@ test('the legal pages render with the community rules anchor', async ({ page }) 
   await expect(page.getByRole('heading', { name: 'Cookies & Storage' })).toBeVisible()
 })
 
+test('legal and support copy explains the independent moderation model', async ({ page }) => {
+  for (const route of ['/terms/', '/privacy/', '/cookies/', '/about/']) {
+    await page.goto(appUrl(route))
+    const body = page.locator('body')
+    await expect(body).not.toContainText('support@yap' + '.pr')
+    await expect(body).not.toContainText(/we (review|will explain|can also stop showing|pass requests)/i)
+    if (route !== '/cookies/') {
+      await expect(body).toContainText('masternode votes')
+      await expect(body).toContainText('independent of Yappr')
+      await expect(page.getByRole('link', { name: 'support@dash.org', exact: true }).first()).toHaveAttribute('href', 'mailto:support@dash.org')
+    }
+  }
+
+  await page.goto(appUrl('/terms/'))
+  const body = page.locator('body')
+  await expect(body).toContainText('Yappr has no centralized moderation')
+  await expect(body).toContainText('Its authors cannot change, remove or recover your data on Dash Platform')
+  await expect(body).toContainText('at least 18 years old')
+  await expect(body).toContainText('without any warranty')
+  await expect(body).toContainText('authors and contributors are not liable')
+  await expect(body).toContainText('Yappr is not a party to any sale')
+  await expect(body).toContainText('You pay the seller directly')
+  await expect(body).toContainText('The Yappr app may not display some media')
+})
+
 test('the sign-in dialog links the terms, rules and privacy policy', async ({ page }) => {
   await page.goto(appUrl('/login/'))
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
   await expect(dialog.getByText(/By continuing, you agree to the/)).toBeVisible()
+  await expect(dialog).toContainText('Yappr has no centralized moderation.')
+  await expect(dialog).toContainText('18 or older')
   await expect(dialog.getByRole('link', { name: /^Terms/ })).toHaveAttribute('target', '_blank')
   await expect(dialog.getByRole('link', { name: /^Community Rules/ })).toHaveAttribute('href', /\/terms\/?#community-rules$/)
   await expect(dialog.getByRole('link', { name: /^Privacy Policy/ })).toBeVisible()

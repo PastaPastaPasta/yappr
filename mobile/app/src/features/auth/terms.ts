@@ -10,54 +10,9 @@ import { syncStorage } from '~/state/storage';
  * account on its next launch (PRD §11.1 OQ-5: the version is an app constant
  * until web publishes one).
  */
-export const TERMS_VERSION = '2026-10-01';
+export const TERMS_VERSION = '2026-10-18';
 
-/** The summary on the gate (UX_SPEC §5.1 terms.rule1–4). */
-export const TERMS_SUMMARY = [
-  'No harassment, hate, threats or illegal content. There is zero tolerance for abuse.',
-  "Reported content can be removed by the community's moderators, and abusive accounts can be banned.",
-  'You can block anyone, and report posts that break these rules.',
-  'What you post is public and permanent on Dash Platform.',
-] as const;
-
-/**
- * The full community rules, drafted from COMPLIANCE.md (UGC section) for
- * mobile 1.0. Shown in the gate under "Community rules".
- */
-export const COMMUNITY_RULES: readonly { title: string; body: string }[] = [
-  {
-    title: 'Zero tolerance for abuse',
-    body:
-      'Harassment, hate speech, threats of violence, doxxing, and content that sexualises minors are not allowed. ' +
-      'Neither is content that is illegal where you live or that promotes self-harm. Accounts that post it can be banned.',
-  },
-  {
-    title: 'Sensitive content',
-    body:
-      'Mark posts with nudity, gore or other graphic content as sensitive. Yappr hides sensitive posts until each viewer chooses to see them.',
-  },
-  {
-    title: 'Spam and impersonation',
-    body:
-      'Do not post spam, scams or misleading links, and do not pretend to be another person or organisation.',
-  },
-  {
-    title: 'Reports and moderation',
-    body:
-      "Anyone can report a post, a reply or an account. The community's elected moderators can remove reported content and suspend or ban accounts, " +
-      'and the Yappr team hides content that breaks these rules in the official apps, usually within 24 hours. ' +
-      'Reports are public documents signed by the reporter. For anything urgent, email support@yap.pr.',
-  },
-  {
-    title: 'Blocking',
-    body: 'You can block anyone. Their posts, replies, mentions and messages stop reaching you.',
-  },
-  {
-    title: 'Your content is public and permanent',
-    body:
-      'Posts, replies, likes and follows are documents on Dash Platform. Anyone can read them, and deleting a post may leave a trace on the network.',
-  },
-];
+export { COMMUNITY_RULES, TERMS_SUMMARY } from './terms-copy';
 
 interface Acceptance {
   version: string;

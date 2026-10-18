@@ -49,7 +49,7 @@ function ContractReportDialog({ target, reporterId, close }: { target: ContractR
     try {
       const result = await contractReportService.file(reporterId, target, reason, note)
       if (!result.success) { toast.error(categorizeError(result.error)); return }
-      toast.success(result.confirmed === false ? 'Report sent. Waiting for network confirmation.' : 'Reported. The moderators will review it.')
+      toast.success(result.confirmed === false ? 'Report sent. Waiting for network confirmation.' : 'Report published for the community-elected moderators.')
       close()
     } catch (error) { toast.error(categorizeError(error)) }
     finally { setBusy(false) }
@@ -67,7 +67,7 @@ function ContractReportDialog({ target, reporterId, close }: { target: ContractR
   return <Modal open onOpenChange={value => { if (!value && !busy) close() }} className="w-[440px] max-w-[90vw] max-h-[90vh] overflow-y-auto">
     <ModalTitle>{own ? `You reported this ${noun}` : `Report this ${noun}`}</ModalTitle>
     <Dialog.Description className="text-sm text-gray-500 mb-4">
-      Your report goes to this community&apos;s moderators. Reports are public: anyone can see who reported it, the reason and the details. Reports expire after 90 days.
+      Your report goes to on-chain moderators, elected by the community through masternode votes. These teams are independent of Yappr. Reports are public: anyone can see who reported it, the reason and the details. Reports expire after 90 days.
     </Dialog.Description>
     {loading ? <p>Checking your reports…</p> : failed ? <p role="alert">Could not check your reports. Close this window and try again.</p> : own ? <div className="space-y-3">
       <p>You reported it for {reportReasonLabel(own.reason)}.</p>
@@ -85,7 +85,7 @@ function ContractReportDialog({ target, reporterId, close }: { target: ContractR
           <span>{option.label}<span className="block text-xs text-gray-500">{option.hint}</span></span>
         </label>)}
       </fieldset>
-      {reason !== null && isUrgentReason(reason) && <p role="alert" className="text-sm text-red-500">If a child is in danger, contact your local police now. Report to the <a href="https://report.cybertip.org/" target="_blank" rel="noopener noreferrer" className="underline">NCMEC CyberTipline</a> and <a href={`mailto:${MODERATION_EMAIL}`} className="underline">email the team</a>. Do not share or describe the material here.</p>}
+      {reason !== null && isUrgentReason(reason) && <p role="alert" className="text-sm text-red-500">If a child is in danger, contact your local police now. Report to the <a href="https://report.cybertip.org/" target="_blank" rel="noopener noreferrer" className="underline">NCMEC CyberTipline</a> and <a href={`mailto:${MODERATION_EMAIL}`} className="underline">email support</a>. Do not share or describe the material here.</p>}
       <label className="block text-sm">Details {reason === OTHER_REASON_CODE ? '(required)' : '(optional)'}
         <LimitedTextarea contract={contract} document="report" field="note" value={note} onChange={e => setNote(e.target.value)} disabled={busy} placeholder="Anything the moderators should know" />
       </label>

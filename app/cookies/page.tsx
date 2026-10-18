@@ -103,7 +103,7 @@ export default function CookiesPage() {
             set a short-lived security cookie to protect it from abuse.
           </p>
           <p>
-            We count visits with Cloudflare Web Analytics, which uses no cookies and builds no profile of you. The{' '}
+            The website counts visits with Cloudflare Web Analytics, which uses no cookies and builds no profile of you. The{' '}
             <Link href="/privacy" className="underline">Privacy Policy</Link> lists every service your browser talks to.
           </p>
         </Prose>
@@ -111,8 +111,7 @@ export default function CookiesPage() {
 
       <InfoSection title="What Yappr stores in your browser">
         <Prose className="mb-6">
-          Yappr has no server to remember you, so it keeps what it needs in your browser&apos;s own storage. None of it is sent to
-          us.
+          Yappr has no server to remember you, so it keeps what it needs in your browser&apos;s own storage. These stored keys, settings, drafts and caches are not sent to Yappr’s authors.
         </Prose>
         <div className="space-y-6">
           <StorageGroup name="Local storage" summary="Stays on this device, shared by all Yappr tabs, until removed." items={localItems} />

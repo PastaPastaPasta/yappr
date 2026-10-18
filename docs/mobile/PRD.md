@@ -255,7 +255,7 @@ As Quinn, I want to paste a private key, so that I can sign in pool identities w
 - Passwords and passkeys are not offered (ADR E5).
 
 #### AUTH-09 · Accept the terms and community rules · P0 · all
-As the operator, I need every signed-in identity to accept the terms with a zero-tolerance clause, so that the apps meet UGC policy.
+As an app user, I need every signed-in identity to accept the terms with a zero-tolerance clause, so that the apps meet UGC policy.
 - After the first successful sign-in of an identity on this device and network, a full-screen "Before you start" screen shows the community-rules summary (UX_SPEC copy deck), links to Terms of Use, Privacy Policy and Community rules (in-app browser), and "Agree and continue".
 - "Agree and continue" records acceptance (identity, network, terms version, time) locally and opens Home.
 - "Not now" signs that account out and returns to the previous screen.
@@ -922,15 +922,15 @@ As a reader, I want to report harmful content, so that moderators can act.
   - "Details (optional)" ("Details (required)" for Something else), placeholder "Anything the moderators should know", max 500 with a counter;
   - "Report post" (disabled until valid); "Reporting…" while the engine takes it.
 - The viewer's existing report is read beside the form, never in front of it, and a failed read never blocks reporting. A `DUPLICATE` refusal says "You already reported this." and shows the report.
-- Sent (confirmed, or not confirmed yet): "Report sent" / "Thanks for letting us know.", with "Also block @x" (P1) and "Done". A sheet dismissed before it could say so (while the report is still on its way) leaves the toast "Report sent", once. The network's answer is reconciled in the background; only a report proven not to have landed brings the form back, with "Couldn't send your report. Try again."
-- Reporting again shows the existing report: "You reported this on {date} for {reason} · Under review" (or "· Resolved: {No action taken | Content removed | Author actioned}" where `reportsResolved`), the note, the muted line "Reports close after 90 days.", "Withdraw report" and "Done".
+- Sent (confirmed, or not confirmed yet): "Report sent" / "Your report is public on Dash Platform for the community-elected moderators.", with "Also block @x" (P1) and "Done". A sheet dismissed before it could say so (while the report is still on its way) leaves the toast "Report sent", once. The network's answer is reconciled in the background; only a report proven not to have landed brings the form back, with "Couldn't send your report. Try again."
+- Reporting again shows the existing report: "You reported this on {date} for {reason} · Awaiting moderator action" (or "· Resolved: {No action taken | Content removed | Author actioned}" where `reportsResolved`), the note, the muted line "Reports close after 90 days.", "Withdraw report" and "Done".
 - "Withdraw report" asks first, then is optimistic: toast "Report withdrawn" and the sheet closes. Only a withdrawal proven not to have landed brings the report back ("Couldn't withdraw your report. Try again."); a report already gone says "This report was already closed."
-- Where the contract waits for an elected moderation team that isn't seated, the sheet decides before the form (`safety.reportsOpen`) and opens the email path (SAFE-05) directly. A late refusal reads "Your report wasn't sent. Send it by email instead." above the email path, keeping the reason chosen.
+- Where the contract waits for an elected moderation team that isn't seated, the sheet decides before the form (`safety.reportsOpen`) and opens the email path (SAFE-05) directly. A late refusal reads "Your report wasn't sent because no moderation team is elected yet." above the email path, keeping the reason chosen.
 - A post that can't be read says "Couldn't load this post. Try again."
 
 #### SAFE-05 · Report by email · P1 · all (v2 always; dev as fallback)
 As a reader on testnet, I want a way to report content, so that abuse doesn't go unanswered.
-- Where `reports` is off, "Report post" opens the email sheet: "Report by email", "Reports go to the Yappr team by email for now. Your email app opens with a link to the post and the reason you chose.", the same reasons and details as SAFE-04, and "Email the Yappr team".
+- Where `reports` is off, "Report post" opens the email sheet: "Report by email", "You can email support@dash.org with a link and the reason you chose. Email does not file an on-chain report or guarantee moderator action.", the same reasons and details as SAFE-04, and "Email support".
 - It opens the mail composer to the Yappr support address with subject "Report: post {id}" and a body prefilled with the post link, "Reason: {reason}" and the details (PD-13). The link stays inside the email; the sheet never shows it.
 - With no mail app configured, the address and link are copied, toast "Report address copied. Send it from any email app."
 
@@ -1170,7 +1170,7 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 
 | # | Question | Default until answered |
 | --- | --- | --- |
-| OQ-1 | What support email and URL do "Report by email" (SAFE-05) and About → Support use? | Placeholder `support@yap.pr`; the build fails a release check while it's a placeholder |
+| OQ-1 | What support email and URL do "Report by email" (SAFE-05) and About → Support use? | `support@dash.org` (D35); general support only, with no moderation or recovery promise |
 | OQ-2 | White text on `yappr-500` buttons is 2.77:1, below AA. Darken the fill to `yappr-600` (4.1:1) or `yappr-700` (5.9:1), or accept the exception? | Keep `yappr-500` for fidelity, logged as an AA exception |
 | OQ-3 | Should mobile require a DPNS name like web does? | No (PD-2) |
 | OQ-4 | Is it acceptable that the testnet build can't post without YAPP bought on yap.pr? | Yes: testnet is a read-heavy dogfooding build (ADR E6) |
@@ -1186,7 +1186,7 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 
 | OQ | Decision |
 | --- | --- |
-| 1 | Support address: `support@yap.pr`, already used on web. About → Support links to it. "Report by email" on testnet also uses it. |
+| 1 | Support address: `support@dash.org`, already used on web. About → Support links to it. "Report by email" on testnet also uses it. |
 | 2 | **Darken.** In light mode, every `accent` fill that carries white text or icons uses `yappr-600` (`#0284c7`): primary buttons, the FAB, count badges, the new-posts pill and own DM bubbles. White on `#0284c7` passes AA for large or bold text and for icons, at 3:1 or better. Dark mode keeps `yappr-500`. Links and other text accents use the darker shades UX_SPEC already lists. |
 | 3 | No forced username. An identity without one uses the app normally and gets the dismissible "Get a username" card, in line with #605 (the profile is optional). |
 | 4 | Accepted. The testnet build is for dogfooding real data with mostly reading. A YAPP shortfall links to yap.pr. |

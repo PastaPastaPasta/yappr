@@ -64,7 +64,7 @@ type OwnReport = { state: 'loading' } | { state: 'none' } | { state: 'filed'; re
  * A report of private content (v13) carries the moderators' box: the
  * reader's key to it, sealed to every current moderator's encryption key.
  * Where no moderator holds one, the report is filed without it and the reader
- * is pointed at the team's email.
+ * is told moderators cannot read its content.
  */
 export function ReportPostModal() {
   const { user } = useAuth()
@@ -123,7 +123,7 @@ export function ReportPostModal() {
       const outcome = await buildReportBox(reporterId, privatePost)
       if (outcome.kind === 'sealed') return outcome.box
       if (outcome.kind === 'no-recipients') {
-        toast(`No moderator can read private posts yet. Your report is filed without the ${noun}'s content; email ${MODERATION_EMAIL} if they need to see it.`, { duration: 10000 })
+        toast(`No moderator can read private posts yet. Your report is filed without the ${noun}'s content.`, { duration: 10000 })
       } else if (outcome.kind === 'no-key') {
         toast(`This device could not confirm a key that opens the ${noun}, so the moderators will not be able to read it.`, { duration: 8000 })
       }
@@ -161,9 +161,7 @@ export function ReportPostModal() {
     }
     toast.success(result.confirmed === false
       ? 'Report sent. The network has not confirmed it yet; it reaches the moderators once it does.'
-      : resolving
-        ? `Reported. The moderators will review this ${noun} and mark your report handled.`
-        : `Reported. The moderators will review this ${noun}.`)
+      : 'Report published for the community-elected moderators.')
     finish()
   }
 
@@ -213,8 +211,8 @@ export function ReportPostModal() {
           <Dialog.Description className="text-gray-600 dark:text-gray-400">
             On {new Date(filed.createdAt).toLocaleDateString()} you reported it for <strong>{reportReasonLabel(filed.reason)}</strong>.
             {resolving
-              ? filed.status === null ? ` The moderators haven't resolved it yet; they'll mark it handled here once they review the ${noun}.` : ''
-              : ` The moderators review it and may remove the ${noun} or dismiss the report.`}
+              ? filed.status === null ? ' The community-elected moderators have not resolved it yet.' : ''
+              : ` The community-elected moderators can remove the ${noun} or dismiss the report.`}
           </Dialog.Description>
           {filed.note && (
             <p className="text-sm p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 whitespace-pre-wrap break-words">{filed.note}</p>
@@ -244,7 +242,7 @@ export function ReportPostModal() {
       {own.state === 'none' && (
         <div className="flex flex-col">
           <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-            Your report goes to this community&apos;s moderators. Reports are public on Dash Platform: anyone, including
+            Your report goes to on-chain moderators, elected by the community through masternode votes. These teams are independent of Yappr. Reports are public on Dash Platform: anyone, including
             the {noun === 'profile' ? 'account\'s owner' : `${noun}'s author`}, can see that you reported it, the reason you pick and anything you write in the details.
             {resolving && ' You can come back here to see how the moderators resolved it.'} A report expires after 90 days.
           </Dialog.Description>
@@ -262,7 +260,7 @@ export function ReportPostModal() {
           )}
           {!reportsOpen && (
             <p role="status" data-testid="reports-closed" className="text-sm mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200">
-              {POSTING_CLOSED_COPY} Until then, email <a href={`mailto:${MODERATION_EMAIL}`} className="underline">{MODERATION_EMAIL}</a>.
+              {POSTING_CLOSED_COPY} For questions, email <a href={`mailto:${MODERATION_EMAIL}`} className="underline">{MODERATION_EMAIL}</a>.
             </p>
           )}
           <fieldset className="mb-4" disabled={busy}>
@@ -296,7 +294,7 @@ export function ReportPostModal() {
                 Report it to the{' '}
                 <a href="https://report.cybertip.org/" target="_blank" rel="noopener noreferrer" className="underline">NCMEC CyberTipline</a>
                 {' '}or your country&apos;s hotline, and{' '}
-                <a href={reportEmailHref(target, reason)} className="underline">email the team</a>.
+                <a href={reportEmailHref(target, reason)} className="underline">email support</a>.
                 Do not share or describe the material: reports are public.
               </p>
             </div>

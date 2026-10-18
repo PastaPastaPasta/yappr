@@ -5,8 +5,8 @@ import { storefrontStatusIsSealed } from '@/lib/constants'
  * so they cannot drift apart.
  */
 
-/** Where users, rights holders and reporters reach the Yappr team (the address the mobile apps use too). */
-export const SUPPORT_EMAIL = 'support@yap.pr'
+/** General support contact; email is not an on-chain moderation or recovery service. */
+export const SUPPORT_EMAIL = 'support@dash.org'
 
 export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`
 
@@ -19,7 +19,7 @@ export const SOURCE_URL = 'https://github.com/PastaPastaPasta/yappr'
 export const MINIMUM_AGE = 18
 
 /** Printed as "Last updated" on Terms, Privacy, Cookies and About. Bump it with any change to what they say. */
-export const LEGAL_UPDATED = '18 October 2026'
+export const LEGAL_UPDATED = 'October 18, 2026'
 
 /** The Community Rules, a section of the Terms. */
 export const COMMUNITY_RULES_HREF = '/terms#community-rules'

@@ -59,7 +59,7 @@ export const REPORT_REASONS: readonly ReportReason[] = Object.freeze([
 /**
  * Sexual content involving minors (v13): the moderators' queue puts it first
  * and flags it urgent, and the reporter is pointed at the authorities and the
- * team's email as well (a report is public, the material must not be repeated).
+ * support contact as well (a report is public, the material must not be repeated).
  */
 export const URGENT_REASON_CODE = 9
 
@@ -80,9 +80,8 @@ export type ReportTargetKind = TargetKind | 'profile'
 export const ABOUT_PROFILE = 1
 
 /**
- * Where reports go when the chain cannot carry them: the team's email
- * (the support address), for a private post no moderator holds an
- * encryption key to read, or anything urgent.
+ * General support contact offered alongside reports. Email does not file an
+ * on-chain report or promise moderation or recovery.
  */
 export const MODERATION_EMAIL = SUPPORT_EMAIL
 

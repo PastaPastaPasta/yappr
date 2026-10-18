@@ -353,6 +353,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
         <CardHeader>
           <CardTitle>{social ? 'Contract Moderation' : `${moderatedContract(contract).label} Moderation`}</CardTitle>
           <CardDescription>
+            On-chain moderation teams are elected by the community through masternode votes and are independent of Yappr.{' '}
             {copy.barred} Both refusals are recorded with your reason, which anyone can read.
             {social && <> Only deleting their own documents (an unlike, an unfollow) still goes through for them{barredOwnDeleteNote()}</>}
             {canWarn && ' A warning bars nothing: it is a public, reasoned note, and at most 16 accumulate until cleared.'}

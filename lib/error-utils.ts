@@ -947,7 +947,7 @@ function isVoteChoiceNotAllowedError(error: unknown): boolean {
  * posts, replies, reports and profile changes open once masternodes elect the
  * first moderation team.
  */
-export const POSTING_CLOSED_COPY = 'Posting opens when Yappr\'s first moderators are elected. Until then posts, replies, reports and profile changes are closed.'
+export const POSTING_CLOSED_COPY = 'Posting opens when the first community moderators are elected. Until then posts, replies, reports and profile changes are closed.'
 
 /**
  * What a 41200 means on each moderated contract. Storefront and blog elect
@@ -956,8 +956,8 @@ export const POSTING_CLOSED_COPY = 'Posting opens when Yappr\'s first moderators
  */
 export const MODERATION_CLOSED_COPY = {
   social: POSTING_CLOSED_COPY,
-  storefront: 'Stores open when Yappr\'s first store moderators are elected. Until then, stores, listings and reviews can\'t be created or changed.',
-  blog: 'Blogs open when Yappr\'s first blog moderators are elected. Until then, blogs, posts and comments can\'t be created or changed.',
+  storefront: 'Stores open when the first community store moderators are elected. Until then, stores, listings and reviews can\'t be created or changed.',
+  blog: 'Blogs open when the first community blog moderators are elected. Until then, blogs, posts and comments can\'t be created or changed.',
 } as const
 export type ModerationClosedProduct = keyof typeof MODERATION_CLOSED_COPY
 
