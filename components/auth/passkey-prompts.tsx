@@ -14,10 +14,8 @@ import {
   finishPasskeyEnrolment,
   forgetPendingEnrolments,
   listPasskeys,
-  abandonPendingEnrolment,
-  passkeySaved,
+  checkPendingEnrolment,
   pendingEnrolmentFor,
-  pendingEnrolmentStale,
   passkeyEligibility,
   passkeysOffered,
   removeAllPasskeys,
@@ -134,7 +132,7 @@ const ENROL_BUTTON: Partial<Record<EnrolStep['kind'], string>> = { creating: 'Wa
 function EnrolDialog({ identityId, username, offer, onClose }: { identityId: string; username?: string; offer: boolean; onClose: () => void }) {
   const changed = usePasskeyPrompts((state) => state.changed)
   const [step, setStep] = useState<EnrolStep>(() => {
-    // An enrolment still settling resumes with only "Check again" (lib/auth/passkey-vault.ts retires it).
+    // An enrolment still settling resumes with only "Check again", which ends it once its outcome is proved.
     const pending = pendingEnrolmentFor(identityId)
     return pending ? { kind: 'pending', pending, checking: false } : { kind: 'intro' }
   })
@@ -173,30 +171,19 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
 
   const checkAgain = useCallback((pending: PendingPasskey) => {
     setStep({ kind: 'pending', pending, checking: true })
-    passkeySaved(pending)
-      .then((saved) => {
+    checkPendingEnrolment(pending)
+      .then((outcome) => {
         changed()
-        setStep(saved ? { kind: 'done' } : { kind: 'pending', pending, checking: false })
+        if (outcome === 'saved') setStep({ kind: 'done' })
+        // Proved never saved: the passkey was dropped, and a new one can be added.
+        else if (outcome === 'not-saved') fail(new PasskeyVaultError('failed'), { kind: 'intro' })
+        else setStep({ kind: 'pending', pending, checking: false })
       })
       .catch((error: unknown) => {
         logger.warn('Passkeys: checking a saved passkey failed:', error)
         setStep({ kind: 'pending', pending, checking: false })
       })
-  }, [changed])
-
-  const startOver = useCallback((pending: PendingPasskey) => {
-    setStep({ kind: 'pending', pending, checking: true })
-    abandonPendingEnrolment(pending)
-      .then((outcome) => {
-        changed()
-        // Dropped: a new passkey can be added. Landed after all: it is saved.
-        setStep(outcome === 'abandoned' ? { kind: 'intro' } : outcome === 'saved' ? { kind: 'done' } : { kind: 'pending', pending, checking: false })
-      })
-      .catch((error: unknown) => {
-        logger.warn('Passkeys: starting over failed:', error)
-        setStep({ kind: 'pending', pending, checking: false })
-      })
-  }, [changed])
+  }, [changed, fail])
 
   return (
     <Modal open onOpenChange={(next) => { if (!next && !busy) onClose() }} className="w-[440px] max-w-[92vw]">
@@ -224,18 +211,10 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           {step.kind === 'error' && <InlineError>{step.message}</InlineError>}
           <div className="flex flex-col gap-3">
             {step.kind === 'pending' ? (
-              <>
-                <Button className="w-full gap-2" onClick={() => checkAgain(step.pending)} disabled={busy}>
-                  {busy && <Spinner size="sm" />}
-                  Check again
-                </Button>
-                {/* Only well past when the entry could still land: before that, adding another could replace it. */}
-                {pendingEnrolmentStale(step.pending) && (
-                  <Button variant="outline" className="w-full" onClick={() => startOver(step.pending)} disabled={busy}>
-                    Start over
-                  </Button>
-                )}
-              </>
+              <Button className="w-full gap-2" onClick={() => checkAgain(step.pending)} disabled={busy}>
+                {busy && <Spinner size="sm" />}
+                Check again
+              </Button>
             ) : step.kind === 'confirm' ? (
               <Button className="w-full" onClick={() => confirm(step.pending)} data-testid="passkey-confirm">Confirm</Button>
             ) : (

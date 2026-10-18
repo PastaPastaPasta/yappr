@@ -4,7 +4,7 @@ import { YAPPR_PASSKEY_VAULT_CONTRACT_ID } from '@/lib/constants'
 import { VAULT_DOCUMENT_TYPE, type SealedVaultEntry } from '@/lib/crypto/passkey-vault'
 import { BaseDocumentService } from './document-service'
 import { bytesToBase64QueryOperand } from './sdk-helpers'
-import { stateTransitionService, type StateTransitionResult } from './state-transition-service'
+import { stateTransitionService, type CreateReceipt, type StateTransitionResult } from './state-transition-service'
 
 /** A `vaultEntry` as read from chain (contracts/yappr-passkey-vault-contract.json). */
 export interface VaultEntryDocument extends SealedVaultEntry {
@@ -99,11 +99,19 @@ class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
     return entry && entry.$ownerId === ownerId && bytesEqual(entry.credentialId, credentialId) ? entry : null
   }
 
-/** Writes a new entry. False when it was sent but Platform has not confirmed it yet (it may still land). */
-  async add(ownerId: string, entry: SealedVaultEntry): Promise<boolean> {
+/**
+   * Writes a new entry. Unconfirmed when it was sent but Platform has not
+   * confirmed it yet (it may still land); its receipt settles it ({@link settleAdd}).
+   */
+  async add(ownerId: string, entry: SealedVaultEntry): Promise<{ confirmed: true } | { confirmed: false; receipt?: CreateReceipt }> {
     const result = await stateTransitionService.createDocument(this.contractId, this.documentType, ownerId, contentOf(entry))
     assertWritten(result, 'the passkey could not be saved')
-    return result.confirmed !== false
+    return result.confirmed === false ? { confirmed: false, receipt: result.receipt } : { confirmed: true }
+  }
+
+  /** Settles an unconfirmed {@link add}: `landed`, `not-recorded` (proved it never will), or null while unknown. */
+  settleAdd(receipt: CreateReceipt): Promise<'landed' | 'not-recorded' | null> {
+    return stateTransitionService.settleCreate(receipt)
   }
 
   /** Re-seals an entry in place; its credential and recipient key cannot change (the contract makes them immutable). */

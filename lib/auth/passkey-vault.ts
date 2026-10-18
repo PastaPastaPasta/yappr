@@ -64,6 +64,7 @@ import { buildYapprAppConnectRequest } from '@/lib/app-connect/yappr-request'
 import { rememberAnchorKey } from '@/lib/app-connect/anchor-key-mark'
 import { getEncryptionKeyBytes, getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
 import { passkeyVaultService, type VaultEntryDocument } from '@/lib/services/passkey-vault-service'
+import type { CreateReceipt } from '@/lib/services/state-transition-service'
 import { forgetPasskeyHere, passkeyMarker, passkeyName, passkeysHere, rememberPasskeyHere } from './passkey-device'
 import {
   MAX_PASSKEYS,
@@ -391,8 +392,8 @@ export interface PendingPasskey {
   createPrf: Uint8Array | null
   /** Set once its entry was sent: the recipient key it was sealed to, for {@link passkeySaved}. */
   sentTo?: Uint8Array
-  /** When its entry was sent (ms). */
-  sentAt?: number
+  /** The unconfirmed write's receipt, which settles it ({@link checkPendingEnrolment}). */
+  receipt?: CreateReceipt
 }
 
 /**
@@ -452,11 +453,11 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<v
     } finally {
       wipeBundle(bundle)
     }
-    const confirmed = await passkeyVaultService.add(pending.identityId, sealed)
-    if (!confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipient.publicKey)) {
+    const written = await passkeyVaultService.add(pending.identityId, sealed)
+    if (!written.confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipient.publicKey)) {
       // Remembered as this device's only once it is confirmed (passkeySaved): one that never lands leaves no marker.
       pending.sentTo = recipient.publicKey
-      pending.sentAt = Date.now()
+      pending.receipt = written.receipt
       pendingEnrolments.set(pending.identityId, pending)
       throw new PasskeyVaultError('pending')
     }
@@ -489,7 +490,7 @@ async function entryLanded(identityId: string, credentialId: Uint8Array, recipie
  * exact entry has landed now. Never makes or writes anything, so a second
  * passkey cannot replace the first in the provider while it settles.
  */
-export async function passkeySaved(pending: PendingPasskey): Promise<boolean> {
+async function passkeySaved(pending: PendingPasskey): Promise<boolean> {
   if (!pending.sentTo) return false
   const landed = await entryLanded(pending.identityId, pending.credentialId, pending.sentTo)
   if (landed) {
@@ -500,30 +501,23 @@ export async function passkeySaved(pending: PendingPasskey): Promise<boolean> {
 }
 
 /**
- * How long an unconfirmed entry may still land. A Platform transition is
- * executed within a few blocks of its broadcast or never: well past this, an
- * entry that is still absent is not coming.
+ * Checks a pending enrolment again: `saved` once its entry is seen.
+ * `not-saved` only when Platform proves its write can never land (the
+ * state-transition service settles it by proof, re-sending the same signed
+ * write while its nonce is free): the provider is then told to drop the
+ * passkey, which signs in to nothing, and the enrolment is forgotten, so a new
+ * one can be added. Anything short of proof, a failed read included, is `waiting`.
  */
-const PENDING_SETTLE_MS = 10 * 60_000
-
-/** Whether a pending enrolment is past its settle window, so the user may start over. */
-export function pendingEnrolmentStale(pending: PendingPasskey, now = Date.now()): boolean {
-  return pending.sentAt !== undefined && now - pending.sentAt > PENDING_SETTLE_MS
-}
-
-/**
- * Ends a pending enrolment whose entry never landed: checks once more, then
- * tells the provider to drop the passkey (it signs in to nothing) and forgets
- * the enrolment, so a new passkey can be added. `waiting` before its settle
- * window has passed, `saved` if the entry has landed after all.
- */
-export async function abandonPendingEnrolment(pending: PendingPasskey): Promise<'abandoned' | 'saved' | 'waiting'> {
-  if (!pendingEnrolmentStale(pending)) return 'waiting'
+export async function checkPendingEnrolment(pending: PendingPasskey): Promise<'saved' | 'not-saved' | 'waiting'> {
   if (await passkeySaved(pending)) return 'saved'
+  if (!pending.receipt) return 'waiting'
+  const outcome = await passkeyVaultService.settleAdd(pending.receipt)
+  if (outcome === 'landed') return await passkeySaved(pending) ? 'saved' : 'waiting'
+  if (outcome !== 'not-recorded') return 'waiting'
   const found = setup()
   if (found) await signalUnknownPasskey(found.rp.id, pending.credentialId)
   if (pendingEnrolments.get(pending.identityId) === pending) pendingEnrolments.delete(pending.identityId)
-  return 'abandoned'
+  return 'not-saved'
 }
 
 /** What opening a passkey restores. */
