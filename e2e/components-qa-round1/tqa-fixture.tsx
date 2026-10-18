@@ -6,6 +6,7 @@ import { BlogPostView } from '@/components/blog/blog-post-view'
 import { InventoryTable } from '@/components/store/inventory-table'
 import { useReaderPreferencesStore } from '@/lib/store'
 import ItemPage from '@/app/item/page'
+import PostPage from '@/app/post/page'
 import { eurItem } from './qa-round1-mocks'
 import { BlogSettings } from '@/components/blog/blog-settings'
 import { BlogThemeProvider } from '@/components/blog/theme-provider'
@@ -16,7 +17,7 @@ import ManagePage from '@/app/store/manage/page'
 import BookmarksPage from '@/app/bookmarks/page'
 import PrivateGuide from '@/app/about/private-feeds/page'
 import { usePostDetail } from '../../hooks/use-post-detail'
-import { publishReply, threadReads } from './tqa-mocks'
+import { publishReply, threadReads, ReplyThreadItem, finishThreadRead } from './tqa-mocks'
 import { getDefaultBlogThemeConfig } from '@/lib/blog/theme-types'
 import { getReaderOverrideStyle } from '@/lib/blog/reader-preferences'
 import '@/app/globals.css'
@@ -32,7 +33,7 @@ function Stars() {
 }
 function Thread() {
   const { replyThreads, error, refresh, isLoadingReplies } = usePostDetail({ postId: 'root' })
-  return <><button onClick={publishReply}>Publish accepted reply</button><button onClick={() => refresh()}>Refresh</button>{error && <div role="alert">{error}</div>}<p>{isLoadingReplies ? 'Refreshing' : 'Settled'}</p><div>{replyThreads.map(thread => <article key={thread.content.id}>{thread.content.content}{thread.nestedReplies.map(child => <p key={child.content.id}>{child.content.content}</p>)}</article>)}</div><output aria-label="Thread reads">{threadReads()}</output></>
+  return <><button onClick={publishReply}>Publish accepted reply</button><button onClick={() => refresh()}>Refresh</button>{error && <div role="alert">{error}</div>}<p>{isLoadingReplies ? 'Refreshing' : 'Settled'}</p><div>{replyThreads.map(thread => <ReplyThreadItem key={thread.content.id} thread={thread} />)}</div><output aria-label="Thread reads">{threadReads()}</output></>
 }
 const theme = getDefaultBlogThemeConfig()
 document.documentElement.classList.toggle('dark', params.get('mode') === 'dark')
@@ -47,6 +48,7 @@ const content = fixture === 'username' ? <UsernameFixture />
   : fixture === 'item' ? <ItemPage />
   : fixture === 'article' ? <BlogPostView blog={{ id: 'blog', ownerId: 'owner', name: 'QA blog', createdAt: new Date(0), themeConfig: theme }} post={{ id: 'article', blogId: 'blog', ownerId: 'owner', title: 'Readable article', slug: 'readable', createdAt: new Date(1700000000000), publishedAt: 1700000000000, content: [{ type: 'quote', content: 'A readable quotation.' }], commentsEnabled: false }} username="author" />
   : fixture === 'bookmarks' ? <BookmarksPage />
+  : fixture === 'thread-page' ? <><button onClick={publishReply}>Publish accepted reply</button><button onClick={finishThreadRead}>Finish thread read</button><PostPage /></>
   : fixture === 'thread' ? <Thread />
   : fixture === 'guide' ? <PrivateGuide />
   : <BlogThemeProvider blogName="QA blog" hideHeader themeConfig={theme} readerOverrides={getReaderOverrideStyle(params.get('mode') === 'dark' ? 'dark' : params.get('mode') === 'sepia' ? 'sepia' : 'light')}><p style={{ color: 'var(--blog-muted)' }}>Published yesterday · 4 min read</p><BlogViewer blocks={[{ type: 'quote', content: 'A readable quotation.' }]} /></BlogThemeProvider>

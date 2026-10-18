@@ -439,7 +439,11 @@ export function usePostDetail({
         }
       }
       if (!hasFlatThreads()) collectIds(replyThreads)
-      for (const id of fetchedIds) acceptedRepliesRef.current.delete(id)
+      for (const [id, entry] of acceptedRepliesRef.current) {
+        if (!fetchedIds.has(id)) continue
+        if (entry.ancestors.every(parent => fetchedIds.has(parent.id))) acceptedRepliesRef.current.delete(id)
+        else entry.confirmed = true
+      }
       const pendingIds = [...acceptedRepliesRef.current].filter(([, entry]) => !entry.confirmed).map(([id]) => id)
       // A new reply can be beyond page one. Confirm its id without reading the
       // entire thread, and keep the overlay until a loaded page includes it.
@@ -646,23 +650,22 @@ export function usePostDetail({
       const newReply = event.detail?.reply
       if (!newReply) return
 
-      // A v9 reply names the thread it belongs to, so membership is exact — a
-      // reply to a reply three levels down still refreshes this page. On v2 the
-      // only signal is the direct parent, so the check stays as it was.
+      const known = new Map(state.replies.map(reply => [reply.id, reply]))
+      const collect = (threads: ReplyThread[]): void => {
+        for (const thread of threads) {
+          known.set(thread.content.id, thread.content)
+          collect(thread.nestedReplies)
+        }
+      }
+      collect(state.replyThreads)
+      // Flat replies name the thread root; v2 replies name a direct parent,
+      // including descendants rendered only in the nested tree.
       const belongsHere = newReply.rootPostId
         ? newReply.rootPostId === threadRootIdRef.current
-        : newReply.parentId === postId || state.replies.some(r => r.id === newReply.parentId)
+        : newReply.parentId === postId || known.has(newReply.parentId)
 
       if (belongsHere) {
         // Keep the visible ancestry if refresh starts again at page one.
-        const known = new Map(state.replies.map(reply => [reply.id, reply]))
-        const collect = (threads: ReplyThread[]): void => {
-          for (const thread of threads) {
-            known.set(thread.content.id, thread.content as Reply)
-            collect(thread.nestedReplies)
-          }
-        }
-        collect(state.replyThreads)
         const ancestors: Reply[] = []
         const seen = new Set([newReply.id])
         let parentId = newReply.replyToReplyId ?? newReply.parentId

@@ -252,7 +252,7 @@ function PostDetailContent() {
             )}
 
             <div className="divide-y divide-gray-200 dark:divide-gray-800">
-              {isLoadingReplies ? (
+              {isLoadingReplies && replyThreads.length === 0 ? (
                 <div className="p-6 text-center">
                   <Spinner size="sm" className="mx-auto mb-2" />
                   <p className="text-gray-500 text-sm">Loading replies...</p>
