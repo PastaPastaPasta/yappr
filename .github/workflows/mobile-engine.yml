@@ -18,6 +18,9 @@ on:
       - 'tsconfig.json'
       - 'package-lock.json'
       - '.env.devnet'
+      - '.env.staging'
+      - '.env.testnet'
+      - 'scripts/release-config.cjs'
       - '.github/workflows/mobile-engine.yml'
   pull_request:
     paths:
@@ -31,6 +34,9 @@ on:
       - 'tsconfig.json'
       - 'package-lock.json'
       - '.env.devnet'
+      - '.env.staging'
+      - '.env.testnet'
+      - 'scripts/release-config.cjs'
       - '.github/workflows/mobile-engine.yml'
 
 permissions:
@@ -76,7 +82,7 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Build bundles (testnet, devnet)
+      - name: Build bundles (staging-testnet, devnet)
         run: npm run build
 
       - name: Upload bundle manifests

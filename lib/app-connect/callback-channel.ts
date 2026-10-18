@@ -40,7 +40,7 @@ export function isConnectCallbackAck(value: unknown, requestHash: string): value
  * hands the user back to that app; any other value is ignored, so the page
  * never opens a scheme it does not know.
  */
-export const YAPPR_APP_SCHEMES = ['yappr-dev', 'yappr-beta', 'yappr'] as const
+export const YAPPR_APP_SCHEMES = ['yappr-dev', 'yappr-beta', 'yappr-staging', 'yappr'] as const
 export type YapprAppScheme = (typeof YAPPR_APP_SCHEMES)[number]
 
 const isAppScheme = (value: string | null): value is YapprAppScheme =>

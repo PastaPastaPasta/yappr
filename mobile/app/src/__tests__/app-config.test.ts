@@ -8,6 +8,9 @@ import { withConfigurationHandler, withFontScaleConfigChange } from '../../plugi
 import pkg from '../../package.json';
 import { VARIANTS, type Variant } from '../variants';
 
+// Configuration shape tests do not build or load a native engine.
+jest.mock('../../plugins/engine-assets', () => ({ engineExtra: () => null }));
+
 const APP_DIR = path.resolve(__dirname, '../..');
 
 function configFor(variant: Variant, env: Record<string, string> = {}) {
@@ -70,7 +73,7 @@ describe.each(Object.keys(VARIANTS) as Variant[])('app.config for %s (store read
     ];
     expect(icons.every(Boolean)).toBe(true);
     for (const icon of icons) {
-      expect(icon).toContain(`/icons/${variant}/`);
+      expect(icon).toContain(`/icons/${variant === 'staging-testnet' ? 'testnet' : variant}/`);
       expect(fs.existsSync(path.join(APP_DIR, icon!))).toBe(true);
     }
   });

@@ -27,7 +27,7 @@
     "licenses": "node plugins/licenses/generate.js",
     "release:android": "scripts/release-android.sh",
     "release:ios": "scripts/release-ios.sh",
-    "eas-build-post-install": "npm ci --prefix ../.. && npm ci --prefix ../engine"
+    "eas-build-pre-install": "npm ci --prefix ../.. && npm ci --prefix ../engine"
   },
   "dependencies": {
     "@gorhom/bottom-sheet": "^5.2.14",

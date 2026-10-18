@@ -7,6 +7,7 @@ describe('resolveAppConfig', () => {
       network: 'testnet',
       scheme: 'yappr-beta',
       webBasePath: '',
+      webBaseUrl: 'https://yap.pr',
       applicationId: 'pr.yap.app.beta',
       appVersion: '1.2.3',
       engine: null,

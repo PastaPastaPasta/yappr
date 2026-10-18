@@ -54,7 +54,7 @@ export type LinkTarget =
   | { kind: 'ignore' };
 
 /** Web deployments that serve the app's paths under a prefix. */
-const WEB_BASE_PATHS = ['/devnet', '/testing'];
+const WEB_BASE_PATHS = ['/devnet', '/testing', '/staging'];
 
 /** Web pages the app does not have in 1.0 (UX_SPEC §3.5); each covers its sub-paths. */
 const WEB_ONLY = [
@@ -246,7 +246,7 @@ function pinColdRoute(route: string): string {
 const DEV_CLIENT = '/expo-development-client';
 
 /** The web page for a path: the in-app browser opens only yap.pr, with a path of plain characters. */
-function webUrl(path: string, query: Query): string {
+function safeWebUrl(path: string, query: Query): string {
   const safe = /^[\w./-]*$/.test(path) && !path.includes('..') ? path : '/';
   return withQuery(`${WEB_ORIGIN}${safe}`, query);
 }
@@ -264,10 +264,10 @@ export function resolveLink(url: string, options: LinkOptions): LinkTarget {
     path = path.slice(options.webBasePath.length) || '/';
   } else if (WEB_BASE_PATHS.some((b) => matchesPrefix(path, b))) {
     // Another deployment's link; its ids belong to another network.
-    return { kind: 'unsupported', url: webUrl(path, parsed.query) };
+    return { kind: 'unsupported', url: safeWebUrl(path, parsed.query) };
   }
   // The same page on this build's web deployment.
-  const page = webUrl(`${options.webBasePath}${path === '/' ? '' : path}` || '/', parsed.query);
+  const page = safeWebUrl(`${options.webBasePath}${path === '/' ? '' : path}` || '/', parsed.query);
 
   if (WEB_ONLY.some((p) => matchesPrefix(path, p))) return { kind: 'browser', url: page };
 

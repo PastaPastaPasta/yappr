@@ -18,8 +18,48 @@ and in the Play Console.
 | `APP_VARIANT` | Name | Bundle id / package | Icon badge | Network |
 | --- | --- | --- | --- | --- |
 | `devnet` | Yappr Dev | `pr.yap.app.dev` | amber "DEV" | devnet (sakura) |
+| `staging-testnet` | Yappr Staging | `pr.yap.app.staging` | blue "BETA" | testnet rehearsal |
 | `testnet` | Yappr Beta | `pr.yap.app.beta` | blue "BETA" | testnet |
 | `production` | Yappr | `pr.yap.app` | none | mainnet; refused until the Rust engine (`YAPPR_ALLOW_PRODUCTION=1` overrides) |
+
+Release configuration is shared with the web's fail-closed validator:
+
+| Variant | Authoritative public env | Web handoffs and wallet HTTPS return |
+| --- | --- | --- |
+| `staging-testnet` | committed `.env.staging` | `https://yap.pr/staging` |
+| `testnet` | `.env.testnet`, filled at cut-over | `https://yap.pr` |
+| `devnet` | committed `.env.devnet` | `https://yap.pr/devnet` |
+
+The testnet variants force `NEXT_PUBLIC_RELEASE=1` and validate every release
+pin before building. Missing or unfilled `.env.testnet` fails intentionally;
+ambient public env variables cannot supply missing pins. Staging needs no local
+patch, copied env file or skip-build flag:
+
+```bash
+# From the repository root
+node mobile/engine/build.mjs --variant staging-testnet
+# From mobile/app (prebuild rebuilds the matching engine)
+APP_VARIANT=staging-testnet npm run release:android -- apk
+APP_VARIANT=staging-testnet npm run release:ios -- simulator
+```
+
+Staging uses `yappr-staging://`, distinct from production beta's `yappr-beta://`,
+so both can be installed together. All handoffs retain the deployment prefix.
+The wallet returns to `<web-base>/connect/?r=…&app=<scheme>`; the exported web
+bridge opens that app. Confirm the deployed bridge returns HTTP 200 before QA.
+Universal/App Links must use the same deployment prefix; enabling verified
+links still needs the owner's Team ID and distribution signing fingerprints
+and matching `.well-known` association files. HTTPS-to-scheme return works
+without those associations. The legacy root may remain 404 until cut-over.
+
+Rebuild the engine explicitly after changing release env files; app config
+rejects a stale manifest before prebuild starts.
+
+The generated engine manifest records all public pins, the release storage
+epoch, web prefix, native namespace and bundle hash. The app rejects a manifest from another variant or
+configuration, including when reusing an engine with `YAPPR_ENGINE_SKIP_BUILD=1`.
+The native storage namespace includes the epoch/prefix, isolating staging and
+release; engine keys stay unscoped so host session and secret routing agree.
 
 ## Versions
 
@@ -137,7 +177,7 @@ upload, see [TestFlight](#testflight).
 ## CI: `Mobile release` workflow
 
 `.github/workflows/mobile-release.yml` runs on manual dispatch, with inputs
-`variant` (devnet or testnet) and `build_number` (defaults to the run number).
+`variant` (devnet, staging-testnet or testnet) and `build_number` (defaults to the run number).
 
 - **Android** (ubuntu): a release APK and AAB, uploaded as artifacts.
   - Both are signed with the debug key unless these secrets are set:
@@ -161,6 +201,7 @@ Neither job needs secrets to run.
 | --- | --- | --- | --- |
 | `development` | devnet | dev client (debug APK, iOS simulator) | internal |
 | `preview` | devnet | release (AAB, arm64) | store: TestFlight / Play internal (G1 alpha) |
+| `staging-beta` | staging-testnet | release | store; separate optional rehearsal app record |
 | `beta` | testnet | release | store |
 | `production` | production | release | store; fails until production is buildable |
 
@@ -178,8 +219,9 @@ Setup by the owner:
 4. Run `npx eas-cli build --profile preview --platform all`, then
    `npx eas-cli submit --profile preview`.
 
-`eas-build-post-install` (package.json) installs the root and engine
-dependencies that the engine build needs at prebuild.
+`eas-build-pre-install` (package.json) installs the root and engine
+dependencies before Expo evaluates app config or runs prebuild. The shared
+release validator needs those root dependencies even before an engine exists.
 
 ## TestFlight
 

@@ -25,7 +25,7 @@ Run `npm ci` at the repo root first: the bundle resolves `lib/`'s dependencies f
 
 | Command | What it does |
 | --- | --- |
-| `npm run build:testnet` / `build:devnet` / `build` | Bundle → `dist/<variant>/{engine.js, engine.wasm.js, engine.avatars.js, engine.html, engine.inline.html, selftest.html, manifest.json, meta.json}`. Fails when the committed `bundled-packages.json` (the packages the shipped scripts bundle, read by the app's open-source licenses list) no longer matches; `node build.mjs --variant testnet --update-packages` rewrites it. |
+| `npm run build:staging-testnet` / `build:testnet` / `build:devnet` / `build` | Bundle → `dist/<variant>/{engine.js, engine.wasm.js, engine.avatars.js, engine.html, engine.inline.html, selftest.html, manifest.json, meta.json}`. Fails when the committed `bundled-packages.json` (the packages the shipped scripts bundle, read by the app's open-source licenses list) no longer matches; `node build.mjs --variant testnet --update-packages` rewrites it. |
 | `npm run typecheck` | `tsc` over src, tests and the lib files they reach |
 | `npm run lint` | ESLint with the engine's own config (`.eslintrc.cjs`; the root config ignores `mobile/**`) |
 | `npm test` | Unit tests (offline) |
@@ -33,15 +33,16 @@ Run `npm ci` at the repo root first: the bundle resolves `lib/`'s dependencies f
 | `npm run test:contract:write` | Writes on **sakura** with pool personas 90–99 (`YAPPR_SAKURA_IDENTITIES`), serial. Skips with the reason until W-SAKURA lands |
 | `npm run test:browser` | Needs `build:testnet`. Boots the bundle in WebKit and Chromium; writes timings to `$EVIDENCE_DIR` (default `test-results/`, gitignored; `RUNS=n` per configuration) |
 
-CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint, unit tests and both bundle builds on changes to `mobile/engine/**`, `lib/**`, `types/**`, `hooks/**`, `vendor/platform-auth/**`, `contracts/**`, the root manifests, `tsconfig.json` and `.env.devnet`, so a web change that breaks the engine fails on the web PR. `build.mjs` fails if the bundle ever reads a file outside those directories (`WATCHED_INPUT_DIRS`), so the filter cannot silently fall behind. The contract and browser suites need the live network and run locally for now.
+CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint, unit tests and both bundle builds on changes to `mobile/engine/**`, `lib/**`, `types/**`, `hooks/**`, `vendor/platform-auth/**`, `contracts/**`, the root manifests, `tsconfig.json`, the three variant env files and `scripts/release-config.cjs`, so a web change that breaks the engine fails on the web PR. `build.mjs` fails if the bundle ever reads a file outside those directories (`WATCHED_INPUT_DIRS`), so the filter cannot silently fall behind. The contract and browser suites need the live network and run locally for now.
 
 ### Variants and env
 
-- **`testnet`** uses **no env file**, like the production web build (`npm run build` loads none). `lib/constants.ts` falls back to its testnet defaults: network `testnet`, social `9oDC6xdg…` (topology v2).
-- **`devnet`** reads `.env.devnet`, like `npm run build:devnet`.
-- **Inlining:** only `NEXT_PUBLIC_*` keys are inlined (`define process.env.X`), as Next.js does. Any other `process.env.X` reads `undefined`.
-- **Storage:** `NEXT_PUBLIC_STORAGE_SCOPE` and `NEXT_PUBLIC_BASE_PATH` are empty. The host namespaces storage per network instead.
-- **`.env.devnet` is stale:** it still points at **bonsia**, which is abandoned. The devnet variant builds, but it can't boot until the sakura cutover rewrites `.env.devnet`.
+- **`testnet`** loads `.env.testnet`, forces release mode and uses the same validator as web. It fails closed until production registration fills the file.
+- **`staging-testnet`** loads committed `.env.staging`, validates release mode and uses the staging contract snapshot and `/staging` web deployment.
+- **`devnet`** reads `.env.devnet` and uses `/devnet`.
+- **Inlining:** only `NEXT_PUBLIC_*` keys plus `NODE_ENV` are inlined. Ambient public env values cannot change variant pins.
+- **Storage:** engine keys stay unscoped (`NEXT_PUBLIC_STORAGE_SCOPE` and `NEXT_PUBLIC_BASE_PATH` are empty). The host isolates native storage by network, release epoch and web prefix, recorded separately in the manifest. Devnet retains its `devnet-<name>` namespace.
+- **Default `build`:** builds staging-testnet and devnet. Use `build:testnet` explicitly for the production beta after cut-over.
 
 ## How the wasm loads
 

@@ -1,4 +1,5 @@
 import type { AppConnectGrant } from 'platform-auth'
+import { YAPPR_APP_SCHEMES } from '@/lib/app-connect/callback-channel'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { AppConnectLogin, type AppConnectLoginState, type AppConnectUnavailableReason } from '@/lib/app-connect/login-flow'
 import { requestRecordsFor } from '@/lib/app-connect/pending-request'
@@ -51,7 +52,6 @@ export interface AppConnectReturn {
 }
 
 const WEB_ORIGIN = 'https://yap.pr'
-const SCHEMES = /^yappr(?:-dev|-beta)?$/
 const BASE_PATH = /^(?:\/[a-z0-9-]+)?$/
 
 /**
@@ -70,7 +70,7 @@ export function appConnectReturnUrl(target: AppConnectReturn, requestHashHex: st
 
 function checkReturn(target: unknown): AppConnectReturn {
   const { webBasePath, scheme } = (target ?? {}) as Partial<AppConnectReturn>
-  if (typeof webBasePath !== 'string' || !BASE_PATH.test(webBasePath) || typeof scheme !== 'string' || !SCHEMES.test(scheme)) {
+  if (typeof webBasePath !== 'string' || !BASE_PATH.test(webBasePath) || typeof scheme !== 'string' || !(YAPPR_APP_SCHEMES as readonly string[]).includes(scheme)) {
     throw new RpcError('returnTo must name the app\'s yap.pr prefix and scheme', 'BAD_REQUEST')
   }
   return { webBasePath, scheme }

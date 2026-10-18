@@ -292,7 +292,9 @@ describe('App Connect sign-in', () => {
       expect(bytesToHex(parsed.requestBytes)).toBe(vectors.request.bytes)
       expect(started.requestHash).toBe(bytesToHex(auth.appConnectRequestHash(parsed.request)))
       expect(parsed.callbackUrl).toBe(`https://yap.pr/devnet/connect/?r=${started.requestHash}&app=yappr-dev`)
-      expect(appConnectReturnUrl({ webBasePath: '', scheme: 'yappr-beta' }, started.requestHash)).toBe(`https://yap.pr/connect/?r=${started.requestHash}&app=yappr-beta`)
+      for (const [webBasePath, scheme] of [['', 'yappr-beta'], ['/staging', 'yappr-staging'], ['/devnet', 'yappr-dev'], ['', 'yappr']]) {
+        expect(appConnectReturnUrl({ webBasePath, scheme }, started.requestHash)).toBe(`https://yap.pr${webBasePath}/connect/?r=${started.requestHash}&app=${scheme}`)
+      }
     } finally {
       vi.useRealTimers()
     }

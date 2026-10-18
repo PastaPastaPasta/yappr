@@ -2,6 +2,7 @@ import type { CapabilitiesDTO } from '@engine/api';
 import type { ProfileTab } from '@engine/api/profiles';
 
 import { config } from '~/config';
+import { webUrl } from '~/navigation/web-urls';
 import { formatNumber } from '~/lib-allowlist';
 
 /** Pure helpers for the profile screens (PRD PROF-01 – PROF-12, UX_SPEC §4.12 – §4.14, copy §5.6). */
@@ -35,12 +36,12 @@ export function websiteLabel(website: string): string {
 
 /** The profile on yap.pr (devnet: under `/devnet`), for share and copy (PRD PROF-12). */
 export function profileWebUrl(identityId: string): string {
-  return `https://yap.pr${config.webBasePath}/user?id=${encodeURIComponent(identityId)}`;
+  return webUrl(config, '/user', { id: identityId });
 }
 
 /** "Get a username" links here (PRD AUTH-15). */
 export function usernameRegisterUrl(): string {
-  return `https://yap.pr${config.webBasePath}/dpns/register`;
+  return webUrl(config, '/dpns/register');
 }
 
 /** 1234 → "1.2K", as web's counts. */

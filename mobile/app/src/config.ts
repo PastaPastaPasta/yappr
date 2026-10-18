@@ -9,7 +9,7 @@ export interface EngineBuildConfig {
   evoSdkVersion: string;
   builtAt: string;
   network: string;
-  /** Names the engine's storage namespaces: `testnet`, `mainnet` or `devnet-<name>`. */
+  /** Names the engine's storage namespaces: network, release epoch and deployment; devnet retains `devnet-<name>`. */
   networkKey: string;
   topology: string;
   /** Dev only: read the engine from this URL instead of the app bundle. */
@@ -19,10 +19,12 @@ export interface EngineBuildConfig {
 export interface AppConfig {
   variant: Variant;
   network: Network;
-  /** The URL scheme this install registers (`yappr-dev`, `yappr-beta`, `yappr`). */
+  /** The URL scheme this install registers (`yappr-dev`, `yappr-staging`, `yappr-beta`, `yappr`). */
   scheme: string;
-  /** The yap.pr path prefix this variant's web links use (`/devnet`, or '' for the root). */
+  /** The yap.pr path prefix this variant's web links use (`/devnet`, `/staging`, or '' for the root). */
   webBasePath: string;
+  /** The deployment owning this build's data, including its path prefix. */
+  webBaseUrl: string;
   applicationId: string;
   appVersion: string;
   /** null when the JS bundle was built without a built engine (tests, a fresh clone). */
@@ -58,7 +60,8 @@ export function resolveAppConfig(
     variant,
     network: v.network,
     scheme: v.scheme,
-    webBasePath: v.webBasePath,
+    webBasePath: new URL(v.webBaseUrl).pathname.replace(/\/$/, ''),
+    webBaseUrl: v.webBaseUrl,
     applicationId,
     appVersion: appVersion ?? '0.0.0',
     engine: (extra?.engine as EngineBuildConfig | null | undefined) ?? null,

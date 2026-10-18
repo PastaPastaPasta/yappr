@@ -6,7 +6,7 @@
 #                                                         unsigned .ipa (for size; not installable)
 #
 # Environment:
-#   APP_VARIANT          devnet (default) | testnet | production
+#   APP_VARIANT          devnet (default) | staging-testnet | testnet | production
 #   YAPPR_BUILD_NUMBER   CFBundleVersion (default 1); CI passes its run number
 #   YAPPR_SKIP_PREBUILD  1 to reuse the existing ios/ project (pods installed)
 #

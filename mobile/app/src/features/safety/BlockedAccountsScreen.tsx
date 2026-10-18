@@ -27,7 +27,7 @@ import { blockWrite, useBlockBusy, useBlockedList } from './block-state';
 import { copy } from './copy';
 
 /** Where web manages block lists (Settings → Privacy & Security). */
-const BLOCK_LISTS_URL = `https://yap.pr${config.webBasePath}/settings?section=privacy`;
+const BLOCK_LISTS_URL = `${config.webBaseUrl}/settings?section=privacy`;
 
 /** One blocked account: avatar, name, handle, the public note, and "Unblock" (UX_SPEC §4.29). */
 const BlockedRow = memo(function BlockedRow({ user, viewerId }: { user: BlockedUserDTO; viewerId: string }) {

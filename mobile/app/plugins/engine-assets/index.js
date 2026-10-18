@@ -16,6 +16,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { variantConfig } = require('../../../engine/build-config.cjs');
 const { IOSConfig, withDangerousMod, withXcodeProject } = require('expo/config-plugins');
 
 const ENGINE_DIR = path.resolve(__dirname, '../../../engine');
@@ -40,9 +41,14 @@ const engineVariantFor = (appVariant) => (appVariant === 'production' ? 'mainnet
  * @param {string} appVariant
  */
 function engineExtra(appVariant) {
-  const file = path.join(distDir(engineVariantFor(appVariant)), 'manifest.json');
+  const engineVariant = engineVariantFor(appVariant);
+  const expected = appVariant === 'production' ? null : variantConfig(path.resolve(ENGINE_DIR, '../..'), engineVariant);
+  const file = path.join(distDir(engineVariant), 'manifest.json');
   if (!fs.existsSync(file)) return null;
   const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (manifest.variant !== engineVariant || (expected && ['env', 'storageEpoch', 'webBasePath', 'networkKey'].some((key) => JSON.stringify(manifest[key]) !== JSON.stringify(expected[key])))) {
+    throw new Error(`Stale ${engineVariant} engine; rebuild with node mobile/engine/build.mjs --variant ${engineVariant}.`);
+  }
   const network = manifest.env.NEXT_PUBLIC_NETWORK ?? 'testnet';
   return {
     bundleHash: manifest.sha256,
@@ -50,7 +56,7 @@ function engineExtra(appVariant) {
     builtAt: manifest.builtAt,
     network,
     // The storage namespace (ENGINE.md §9.1): a renamed or wiped devnet starts empty.
-    networkKey: network === 'devnet' ? `devnet-${manifest.env.NEXT_PUBLIC_DEVNET_NAME ?? 'unnamed'}` : network,
+    networkKey: manifest.networkKey,
     topology: manifest.topology,
     // Dev only: serve dist/<variant> (npm run engine:serve) and the app reads the engine from there.
     // Omitted rather than null: a null in `extra` reaches the app as `{}`.
@@ -58,10 +64,11 @@ function engineExtra(appVariant) {
   };
 }
 
-let built = false;
-/** @param {string} engineVariant */
-function ensureBuilt(engineVariant) {
-  if (built) return;
+const built = new Set();
+/** @param {string} appVariant */
+function ensureBuilt(appVariant) {
+  const engineVariant = engineVariantFor(appVariant);
+  if (built.has(engineVariant)) return;
   if (process.env.YAPPR_ENGINE_SKIP_BUILD === '1') {
     if (!fs.existsSync(path.join(distDir(engineVariant), 'manifest.json'))) {
       throw new Error(`YAPPR_ENGINE_SKIP_BUILD=1 but ${distDir(engineVariant)} is not built.`);
@@ -71,7 +78,8 @@ function ensureBuilt(engineVariant) {
       stdio: 'inherit',
     });
   }
-  built = true;
+  built.add(engineVariant);
+  engineExtra(appVariant);
 }
 
 /**
@@ -108,7 +116,7 @@ const withEngineAssets = (config, { variant }) => {
   config = withDangerousMod(config, [
     'ios',
     async (cfg) => {
-      ensureBuilt(engineVariant);
+      ensureBuilt(variant);
       const target = path.join(cfg.modRequest.platformProjectRoot, iosProjectName(cfg), FOLDER);
       copyEngine(engineVariant, target);
       writeIosPage(engineVariant, target);
@@ -136,7 +144,7 @@ const withEngineAssets = (config, { variant }) => {
   config = withDangerousMod(config, [
     'android',
     async (cfg) => {
-      ensureBuilt(engineVariant);
+      ensureBuilt(variant);
       copyEngine(engineVariant, path.join(cfg.modRequest.platformProjectRoot, 'app/src/main/assets', FOLDER));
       return cfg;
     },

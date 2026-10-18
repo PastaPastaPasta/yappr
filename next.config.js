@@ -2,7 +2,7 @@ const { execSync } = require('child_process')
 const path = require('path')
 const { readFileSync } = require('fs')
 const { PHASE_PRODUCTION_BUILD } = require('next/constants')
-const { assertReleaseConfig, storageScope } = require('./scripts/release-config.cjs')
+const { assertReleaseConfig, storageScope, assertStagingSnapshot } = require('./scripts/release-config.cjs')
 const { sdkWasmAsset } = require('./scripts/sdk-wasm-asset.cjs')
 const wasmAsset = sdkWasmAsset(__dirname)
 
@@ -55,14 +55,7 @@ const nextConfig = {
       }
       const snapshotPath = path.join(__dirname, 'lib/contracts/snapshots/testnet-staging.json')
       const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8'))
-      const pins = process.env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').map(pin => pin.split(':'))
-      const expectedIds = new Set([...pins.map(([id]) => id), process.env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID,
-        process.env.NEXT_PUBLIC_DPNS_CONTRACT_ID, process.env.NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID])
-      if (snapshot.network !== 'testnet' || Object.keys(snapshot.contracts).length !== expectedIds.size ||
-          Object.keys(snapshot.contracts).some(id => !expectedIds.has(id)) ||
-          pins.some(([id, version]) => snapshot.contracts[id]?.version !== Number(version))) {
-        throw new Error('The staging snapshot must match the exact testnet release contract pins')
-      }
+      assertStagingSnapshot(snapshot, process.env)
       let replaced = false
       config.plugins.push(new webpack.NormalModuleReplacementPlugin(/(^|[/\\])testnet\.json$/, resource => {
         if (resource.context === path.join(__dirname, 'lib/contracts/bundled')) {
