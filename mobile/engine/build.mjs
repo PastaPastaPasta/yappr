@@ -2,7 +2,7 @@
 /**
  * Build the engine bundle for one network variant.
  *
- *   node mobile/engine/build.mjs --variant testnet|devnet [--sourcemap] [--outdir dir] [--update-packages]
+ *   node mobile/engine/build.mjs --variant testnet|staging-testnet|devnet [--sourcemap] [--outdir dir] [--update-packages]
  *
  * Outputs (default `mobile/engine/dist/<variant>/`):
  *   engine.js           the IIFE bundle: evo-sdk and its wasm-bindgen glue, lib/, the API
@@ -17,10 +17,9 @@
  * It also checks mobile/engine/bundled-packages.json (committed) against the
  * bundles; --update-packages rewrites it (see BUNDLED_PACKAGES).
  *
- * Env: the `testnet` variant uses NO env file, exactly like the production web
- * build (`npm run build`), so lib/constants.ts falls back to its testnet
- * defaults. `devnet` reads `.env.devnet`, as `npm run build:devnet` does.
- * Only NEXT_PUBLIC_* keys are inlined, as Next.js does.
+ * Env: release variants read .env.testnet / .env.staging through the web's
+ * fail-closed release validator. Devnet reads .env.devnet. Only public keys
+ * are inlined; ambient overrides cannot change a variant's pins.
  */
 import { build } from 'esbuild'
 import { createHash } from 'node:crypto'
@@ -29,14 +28,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import { ENGINE_ALIASES } from './aliases.mjs'
+import buildConfig from './build-config.cjs'
+
+const { VARIANTS, variantConfig } = buildConfig
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '../..')
-
-const VARIANTS = {
-  testnet: { envFile: null },
-  devnet: { envFile: '.env.devnet' },
-}
 
 function parseArgs(argv) {
   const args = { variant: 'testnet', sourcemap: false, outdir: null, updatePackages: false }
@@ -50,40 +47,6 @@ function parseArgs(argv) {
   }
   if (!(args.variant in VARIANTS)) throw new Error(`Unknown variant ${args.variant}; expected ${Object.keys(VARIANTS).join(', ')}`)
   return args
-}
-
-/** KEY=VALUE lines; `#` comments; optional single or double quotes. No expansion (the files use none). */
-function parseEnvFile(text) {
-  const env = {}
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (!line || line.startsWith('#')) continue
-    const eq = line.indexOf('=')
-    if (eq <= 0) continue
-    const key = line.slice(0, eq).trim()
-    let value = line.slice(eq + 1).trim()
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1)
-    }
-    env[key] = value
-  }
-  return env
-}
-
-/** The `process.env.*` values the bundle sees for a variant. */
-function variantEnv(variant) {
-  const { envFile } = VARIANTS[variant]
-  const fileEnv = envFile ? parseEnvFile(readFileSync(path.join(root, envFile), 'utf8')) : {}
-  const env = Object.fromEntries(Object.entries(fileEnv).filter(([key]) => key.startsWith('NEXT_PUBLIC_')))
-  return {
-    ...env,
-    NODE_ENV: 'production',
-    // next.config.js derives these from BASE_PATH. The app has no base path,
-    // and each network gets its own host-side storage namespace, so keys keep
-    // their unscoped names.
-    NEXT_PUBLIC_BASE_PATH: '',
-    NEXT_PUBLIC_STORAGE_SCOPE: '',
-  }
 }
 
 /**
@@ -112,6 +75,21 @@ const rootAliasPlugin = {
   setup(pluginBuild) {
     pluginBuild.onResolve({ filter: /^@\// }, args =>
       pluginBuild.resolve(`./${args.path.slice(2)}`, { kind: args.kind, resolveDir: root }))
+  },
+}
+
+// esbuild expands the dynamic snapshot import before resolution; replace its JSON load.
+const stagingSnapshotPlugin = {
+  name: 'staging-contract-snapshot',
+  setup(pluginBuild) {
+    let replaced = false
+    pluginBuild.onLoad({ filter: /[/\\]lib[/\\]contracts[/\\]bundled[/\\]testnet\.json$/ }, () => {
+      replaced = true
+      return { contents: readFileSync(path.join(root, 'lib/contracts/snapshots/testnet-staging.json'), 'utf8'), loader: 'json' }
+    })
+    pluginBuild.onEnd(() => {
+      if (!replaced) throw new Error('The staging contract snapshot was not bundled')
+    })
   },
 }
 
@@ -178,10 +156,11 @@ function checkBundledPackages(packages, update) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   const outdir = path.resolve(args.outdir ?? path.join(here, 'dist', args.variant))
+  const config = variantConfig(root, args.variant)
+  const { env } = config
   rmSync(outdir, { recursive: true, force: true })
   mkdirSync(outdir, { recursive: true })
 
-  const env = variantEnv(args.variant)
   const evoSdkVersion = JSON.parse(readFileSync(path.join(root, 'node_modules/@dashevo/evo-sdk/package.json'), 'utf8')).version
   const engineBuild = { variant: args.variant, evoSdkVersion, builtAt: new Date().toISOString() }
 
@@ -212,7 +191,7 @@ async function main() {
     legalComments: 'none',
     metafile: true,
     define,
-    plugins: [engineAliasPlugin(BUNDLE_ALIASES), rootAliasPlugin],
+    plugins: [engineAliasPlugin(BUNDLE_ALIASES), rootAliasPlugin, ...(args.variant === 'staging-testnet' ? [stagingSnapshotPlugin] : [])],
   })
   const buildMs = Date.now() - started
   assertInputsWatched(result.metafile)
@@ -261,6 +240,7 @@ async function main() {
   const [js, wasmJs, avatarsJs] = ['engine.js', 'engine.wasm.js', 'engine.avatars.js'].map(sourceOf)
   const manifest = {
     ...engineBuild,
+    ...config,
     sha256: hash,
     bytes: js.length,
     gzipBytes: gzipSync(js).length,

@@ -12,7 +12,7 @@ on:
       variant:
         description: 'APP_VARIANT'
         type: choice
-        options: [devnet, testnet]
+        options: [devnet, staging-testnet, testnet]
         default: devnet
       build_number:
         description: 'Build number (iOS CFBundleVersion, Android versionCode); empty = this run number'

@@ -108,7 +108,8 @@ Errors keep **verbatim evo-sdk messages**, so `lib/error-utils.ts` classificatio
 | Variant | Bundle id | Network | Purpose |
 | --- | --- | --- | --- |
 | `devnet` | `pr.yap.app.dev` | sakura, from `.env.devnet` | Development, agents, Maestro, internal QA |
-| `testnet` | `pr.yap.app.beta` | testnet, the production yap.pr contracts (topology v2) | Read-heavy dogfooding with real data |
+| `staging-testnet` | `pr.yap.app.staging` | testnet rehearsal, `.env.staging`, `https://yap.pr/staging` | Release QA |
+| `testnet` | `pr.yap.app.beta` | testnet release, `.env.testnet`, `https://yap.pr` | Production beta; fail closed until registered |
 | `production` | `pr.yap.app` | mainnet (later) | Store launch; out of scope until mainnet |
 
 - The engine bundle is built per variant from the matching env file. It never hard-codes contract ids or topology.

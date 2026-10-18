@@ -361,7 +361,7 @@ function logFailure(ticket: WriteTicket): void {
 const openYapprWeb: ToastAction = {
   label: 'Get YAPP',
   onPress: () => {
-    WebBrowser.openBrowserAsync(`https://yap.pr${config.webBasePath}`).catch((error: unknown) =>
+    WebBrowser.openBrowserAsync(config.webBaseUrl).catch((error: unknown) =>
       appendLog('warn', 'host', `Opening yap.pr failed: ${errorMessage(error)}`),
     );
   },

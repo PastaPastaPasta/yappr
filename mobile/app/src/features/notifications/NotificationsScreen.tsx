@@ -144,7 +144,7 @@ export function NotificationsScreen() {
     if (!destination) return;
     if (destination.kind === 'post') openPost(destination.id);
     else if (destination.kind === 'user') openUser(destination.id);
-    else openExternal(`https://yap.pr${config.webBasePath}${destination.path}`);
+    else openExternal(`${config.webBaseUrl}${destination.path}`);
   }, []);
 
   const [refreshing, setRefreshing] = useState(false);

@@ -1,6 +1,8 @@
 // Build-only validation. Importing application constants must remain safe in
 // Vitest, next dev and the mobile engine; next.config.js calls this at build time.
 const bs58 = require('bs58').default
+const { readFileSync } = require('node:fs')
+const { parseEnv } = require('node:util')
 
 const CONTRACT_KEYS = [
   'NEXT_PUBLIC_YAPPR_CONTRACT_ID',
@@ -108,4 +110,19 @@ function storageScope(basePath, epoch = '') {
   return [epoch, basePath.replace(/^\//, '')].filter(Boolean).join(':')
 }
 
-module.exports = { assertReleaseConfig, storageScope }
+/** Authoritative public release pins, shared by web and native builders. */
+function loadReleaseEnv(file, ambient = process.env) {
+  let configured
+  try {
+    configured = parseEnv(readFileSync(file, 'utf8'))
+  } catch (error) {
+    throw new Error(`Cannot load ${file}: ${error.message}\nComplete the public release configuration before building; see docs/TESTNET_DEPLOY.md.`)
+  }
+  const env = Object.fromEntries(Object.entries(ambient).filter(([key]) =>
+    !key.startsWith('NEXT_PUBLIC_') && key !== 'STORAGE_EPOCH' && key !== 'YAPPR_STAGING_REHEARSAL'))
+  Object.assign(env, configured, { NEXT_PUBLIC_RELEASE: '1' })
+  assertReleaseConfig(env)
+  return env
+}
+
+module.exports = { assertReleaseConfig, storageScope, loadReleaseEnv }

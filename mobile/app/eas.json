@@ -27,6 +27,12 @@
       "autoIncrement": true,
       "env": { "APP_VARIANT": "devnet", "YAPPR_RELEASE": "1" }
     },
+    "staging-beta": {
+      "extends": "base",
+      "distribution": "store",
+      "autoIncrement": true,
+      "env": { "APP_VARIANT": "staging-testnet", "YAPPR_RELEASE": "1" }
+    },
     "beta": {
       "extends": "base",
       "distribution": "store",
@@ -41,6 +47,9 @@
     }
   },
   "submit": {
+    "staging-beta": {
+      "android": { "track": "internal", "releaseStatus": "draft" }
+    },
     "preview": {
       "android": { "track": "internal", "releaseStatus": "draft" }
     },
