@@ -39,7 +39,7 @@ import {
 } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { STORAGE_SCOPE } from '@/lib/storage-scope'
-import { base64ToBytes, bytesEqual, bytesToBase64Url, bytesToHex } from '@/lib/bytes'
+import { base64ToBytes, bytesEqual, bytesToBase64Url, bytesToHex, hexToBytes } from '@/lib/bytes'
 import { YAPPR_PASSKEY_VAULT_CONTRACT_ID, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { getPublicKey, matchIdentityKey } from '@/lib/crypto/keys'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
@@ -65,7 +65,16 @@ import { rememberAnchorKey } from '@/lib/app-connect/anchor-key-mark'
 import { getEncryptionKeyBytes, getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
 import { passkeyVaultService, type VaultEntryDocument } from '@/lib/services/passkey-vault-service'
 import type { CreateReceipt } from '@/lib/services/state-transition-service'
-import { forgetPasskeyHere, passkeyMarker, passkeyName, passkeysHere, rememberPasskeyHere } from './passkey-device'
+import {
+  forgetPasskeyHere,
+  forgetUnsettledPasskey,
+  passkeyMarker,
+  passkeyName,
+  passkeysHere,
+  rememberPasskeyHere,
+  rememberUnsettledPasskey,
+  unsettledPasskey,
+} from './passkey-device'
 import {
   MAX_PASSKEYS,
   checkSignInKey,
@@ -369,20 +378,61 @@ async function ceremony<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Enrolments whose entry was sent but not confirmed, by identity. Authoritative
- * for this tab (unlike the best-effort device markers): a new passkey excludes
- * their credentials, and only a confirmed landing or removal retires them.
+ * Enrolments whose entry was sent but not confirmed, by identity. Kept in this
+ * browser until they settle, across reloads and sign-outs (public facts only,
+ * lib/auth/passkey-device.ts), unlike the recognition markers: a new passkey
+ * excludes their credentials, and only a proved outcome or a confirmed removal
+ * retires them. This map holds the restored objects, so a dialog keeps the one it shows.
  */
 const pendingEnrolments = new Map<string, PendingPasskey>()
 
-/** The enrolment still settling for `identityId` in this tab, if any. */
+/** The enrolment still settling for `identityId` in this browser, if any. */
 export function pendingEnrolmentFor(identityId: string): PendingPasskey | null {
-  return pendingEnrolments.get(identityId) ?? null
+  const held = pendingEnrolments.get(identityId)
+  if (held) return held
+  const restored = restorePending(identityId)
+  if (restored) pendingEnrolments.set(identityId, restored)
+  return restored
 }
 
-/** Forgets every unsettled enrolment (the session ended). */
+/** The session ended: this tab lets go of its copies. The stored record stays until the enrolment settles. */
 export function forgetPendingEnrolments(): void {
   pendingEnrolments.clear()
+}
+
+function restorePending(identityId: string): PendingPasskey | null {
+  const stored = unsettledPasskey(identityId)
+  // Another deployment's vault: not this one's to settle (its user handle names that vault).
+  if (!stored || !setup() || stored.vault !== YAPPR_PASSKEY_VAULT_CONTRACT_ID) return null
+  const credentialId = base64UrlToBytes(stored.credentialId)
+  let sentTo: Uint8Array
+  try {
+    sentTo = hexToBytes(stored.recipientKey)
+  } catch {
+    return null
+  }
+  if (!credentialId || sentTo.length !== 32) return null
+  const receipt = stored.receipt ? { ...stored.receipt, nonce: BigInt(stored.receipt.nonce) } : undefined
+  return { identityId, credentialId, createPrf: null, sentTo, ...(receipt ? { receipt } : {}) }
+}
+
+/** Holds an enrolment whose entry was sent but not confirmed, in this tab and in this browser. */
+function holdPending(pending: PendingPasskey, sentTo: Uint8Array): void {
+  pendingEnrolments.set(pending.identityId, pending)
+  const { receipt } = pending
+  rememberUnsettledPasskey(pending.identityId, {
+    vault: YAPPR_PASSKEY_VAULT_CONTRACT_ID,
+    credentialId: bytesToBase64Url(pending.credentialId),
+    recipientKey: bytesToHex(sentTo),
+    ...(receipt ? { receipt: { ...receipt, nonce: receipt.nonce.toString() } } : {}),
+  })
+}
+
+/** The enrolment of `credentialId` for `identityId` settled: its entry was seen, proved never recorded, or removed. */
+function retirePending(identityId: string, credentialId: Uint8Array): void {
+  const held = pendingEnrolments.get(identityId)
+  if (held && bytesEqual(held.credentialId, credentialId)) pendingEnrolments.delete(identityId)
+  forgetUnsettledPasskey(identityId, bytesToBase64Url(credentialId))
 }
 
 /** A passkey made by {@link startPasskeyEnrolment}, waiting for its confirming sign-in. */
@@ -417,7 +467,7 @@ export async function startPasskeyEnrolment(user: { identityId: string; username
     excludeCredentialIds: [
       ...existing.map((entry) => entry.credentialId),
       ...credentialsHere(user.identityId),
-      ...[pendingEnrolments.get(user.identityId)?.credentialId].filter((id): id is Uint8Array => id !== undefined),
+      ...[pendingEnrolmentFor(user.identityId)?.credentialId].filter((id): id is Uint8Array => id !== undefined),
     ],
   }))
   if (created.prfEnabled === false) {
@@ -458,7 +508,7 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<v
       // Remembered as this device's only once it is confirmed (passkeySaved): one that never lands leaves no marker.
       pending.sentTo = recipient.publicKey
       pending.receipt = written.receipt
-      pendingEnrolments.set(pending.identityId, pending)
+      holdPending(pending, recipient.publicKey)
       throw new PasskeyVaultError('pending')
     }
     rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipient.publicKey))
@@ -495,7 +545,7 @@ async function passkeySaved(pending: PendingPasskey): Promise<boolean> {
   const landed = await entryLanded(pending.identityId, pending.credentialId, pending.sentTo)
   if (landed) {
     rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, pending.sentTo))
-    if (pendingEnrolments.get(pending.identityId) === pending) pendingEnrolments.delete(pending.identityId)
+    retirePending(pending.identityId, pending.credentialId)
   }
   return landed
 }
@@ -516,7 +566,7 @@ export async function checkPendingEnrolment(pending: PendingPasskey): Promise<'s
   if (outcome !== 'not-recorded') return 'waiting'
   const found = setup()
   if (found) await signalUnknownPasskey(found.rp.id, pending.credentialId)
-  if (pendingEnrolments.get(pending.identityId) === pending) pendingEnrolments.delete(pending.identityId)
+  retirePending(pending.identityId, pending.credentialId)
   return 'not-saved'
 }
 
@@ -769,8 +819,8 @@ async function removeEntries(identityId: string, entryIds: readonly string[]): P
   const ours = gone.filter((entry) => here.includes(markerOf(entry.credentialId, entry.recipientKey)))
   for (const entry of gone) forgetPasskeyHere(identityId, bytesToBase64Url(entry.credentialId))
   // A pending enrolment whose entry landed and was then removed is over.
-  const pending = pendingEnrolments.get(identityId)
-  if (pending && gone.some((entry) => bytesEqual(entry.credentialId, pending.credentialId))) pendingEnrolments.delete(identityId)
+  const pending = pendingEnrolmentFor(identityId)
+  if (pending && gone.some((entry) => bytesEqual(entry.credentialId, pending.credentialId))) retirePending(identityId, pending.credentialId)
   // Counted over what was asked for: a requested entry this read missed (a node behind) is not known gone either.
   const failed = new Set(entryIds).size - gone.length
   await signalRemoved(ours.map((entry) => entry.credentialId))

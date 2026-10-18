@@ -9,12 +9,15 @@
  *   browser that set them.
  * - Whether the one-time "sign in faster with a passkey" offer has been made
  *   on this device.
+ * - A passkey added here whose entry was sent but not yet confirmed, until it
+ *   settles (public facts only).
  */
 import { readScoped, writeScoped } from '@/lib/storage-scope'
 
 const DEVICE_KEY = 'yappr_passkeys_here'
 const NAMES_KEY = 'yappr_passkey_names'
 const OFFER_KEY = 'yappr_passkey_offered'
+const UNSETTLED_KEY = 'yappr_passkey_unsettled'
 
 export const MAX_PASSKEY_NAME_LENGTH = 40
 
@@ -89,4 +92,62 @@ export function passkeyOfferMade(): boolean {
 
 export function markPasskeyOfferMade(): void {
   writeScoped(OFFER_KEY, '1')
+}
+
+/** The receipt of the write that sent an unsettled passkey's entry (the nonce as a decimal string). */
+export interface UnsettledReceipt {
+  contractId: string
+  documentType: string
+  ownerId: string
+  documentId: string
+  nonce: string
+}
+
+/**
+ * A passkey added in this browser whose entry was sent but not confirmed. It
+ * outlives a reload until it settles: until then a new passkey must exclude
+ * it, or the provider could replace it while its entry may still land. Public
+ * facts only, never the PRF output or a key.
+ */
+export interface UnsettledPasskey {
+  /** The vault contract its entry was written to. */
+  vault: string
+  /** base64url */
+  credentialId: string
+  /** The recipient key its entry is sealed to (hex). */
+  recipientKey: string
+  receipt?: UnsettledReceipt
+}
+
+function receiptOf(value: unknown): UnsettledReceipt | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const { contractId, documentType, ownerId, documentId, nonce } = value as Record<string, unknown>
+  return typeof contractId === 'string' && typeof documentType === 'string' && typeof ownerId === 'string'
+    && typeof documentId === 'string' && typeof nonce === 'string' && /^\d+$/.test(nonce)
+    ? { contractId, documentType, ownerId, documentId, nonce }
+    : undefined
+}
+
+/** The unsettled passkey added here for `identityId`, or null. */
+export function unsettledPasskey(identityId: string): UnsettledPasskey | null {
+  const value = readMap(UNSETTLED_KEY)[identityId]
+  if (!value || typeof value !== 'object') return null
+  const { vault, credentialId, recipientKey, receipt } = value as Record<string, unknown>
+  if (typeof vault !== 'string' || typeof credentialId !== 'string' || typeof recipientKey !== 'string') return null
+  const settled = receiptOf(receipt)
+  return { vault, credentialId, recipientKey, ...(settled ? { receipt: settled } : {}) }
+}
+
+export function rememberUnsettledPasskey(identityId: string, passkey: UnsettledPasskey): void {
+  writeScoped(UNSETTLED_KEY, JSON.stringify({ ...readMap(UNSETTLED_KEY), [identityId]: passkey }))
+}
+
+/** Forgets the unsettled passkey for `identityId` if it is `credentialId` (base64url): it settled. */
+export function forgetUnsettledPasskey(identityId: string, credentialId: string): void {
+  const stored = unsettledPasskey(identityId)
+  if (stored && stored.credentialId !== credentialId) return
+  const map = readMap(UNSETTLED_KEY)
+  if (!(identityId in map)) return
+  delete map[identityId]
+  writeScoped(UNSETTLED_KEY, JSON.stringify(map))
 }
