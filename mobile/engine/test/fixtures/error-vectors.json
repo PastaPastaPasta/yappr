@@ -42,7 +42,7 @@
         "outcome": "refused",
         "retryable": false,
         "state": "failed",
-        "userMessage": "Posting opens when Yappr's first moderators are elected. Until then posts, replies, reports and profile changes are closed."
+        "userMessage": "Posting opens when the first community moderators are elected. Until then posts, replies, reports and profile changes are closed."
       }
     },
     {
