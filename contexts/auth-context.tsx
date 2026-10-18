@@ -16,8 +16,7 @@ import { useLoginModal } from '@/hooks/use-login-modal'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 import { createWalletSignIn, wipeGrant } from '@/lib/app-connect/wallet-sign-in'
-import { restorePasskeyMessagingKey, unlockWithPasskey, type PasskeyRenewal } from '@/lib/auth/passkey-vault'
-import { expectPasskeyCriticalKey, settlePasskeyCriticalKey } from '@/lib/secure-storage'
+import { rawKeyStoreHooks, unlockWithPasskey, type PasskeyRenewal } from '@/lib/auth/passkey-vault'
 import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompts'
 
 /**
@@ -219,15 +218,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         noteSignIn(await signInWithGrant(unlocked.grant, since), 'passkey', controller.sessionEpoch())
         return null
       case 'raw-key': {
-        // A CRITICAL key from a passkey is stored as one tagged record (lib/secure-storage.ts), so the key never
-        // exists without its provenance. Expected only inside the commit that stores it, right before.
-        const { identityId, signInWif, critical } = unlocked
-        const intent = await signInWithKey(identityId, signInWif, {
-          since,
-          beforeStore: () => { if (critical) expectPasskeyCriticalKey(identityId, signInWif) },
-          afterStore: () => settlePasskeyCriticalKey(identityId),
-        })
-        if (unlocked.messagingWif) restorePasskeyMessagingKey(unlocked.identityId, unlocked.messagingWif)
+        // Its keys are stored only inside the commit that stores the sign-in key (rawKeyStoreHooks): a sign-out
+        // or another sign-in meanwhile leaves nothing of this one behind.
+        const intent = await signInWithKey(unlocked.identityId, unlocked.signInWif, { since, ...rawKeyStoreHooks(unlocked) })
         noteSignIn(intent, 'passkey', controller.sessionEpoch())
         return null
       }

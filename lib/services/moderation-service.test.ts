@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const sdk = vi.hoisted(() => ({
   contracts: {
     fetch: vi.fn(),
+    fetchWithProof: vi.fn(),
     warnUser: vi.fn(),
     clearUserWarnings: vi.fn(),
     banUser: vi.fn(),
@@ -182,7 +183,17 @@ describe('who moderates (mirrors Drive ContractModerators::may_moderate)', () =>
     expect((await moderationService.getTeam())?.appointed).toEqual([LEADER, MEMBER])
     sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [], electedMembers: [], seats: () => 1, free: vi.fn() })
     expect((await moderationService.getTeam())?.appointed).toEqual([LEADER, MEMBER])
+    sdk.contracts.fetchWithProof.mockResolvedValue({ data: contract, metadata: {} })
     expect((await moderationService.getTeam({ fresh: true }))?.appointed).toEqual([LEADER])
+  })
+
+  it('reads the contract itself through the proved call on a fresh request', async () => {
+    const contract = { ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: { $type: 'appointedModerators', identities: [LEADER] } } } }
+    sdk.contracts.fetchWithProof.mockResolvedValue({ data: contract, metadata: {} })
+    const team = await moderationService.getTeam({ fresh: true })
+    expect(sdk.contracts.fetchWithProof).toHaveBeenCalledTimes(1)
+    expect(sdk.contracts.fetch).not.toHaveBeenCalled()
+    expect(team?.appointed).toEqual([LEADER])
   })
 
   it('re-reads the team after its TTL', async () => {

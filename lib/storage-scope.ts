@@ -40,5 +40,32 @@ export function writeScoped(key: string, value: string): boolean {
   }
 }
 
+/** Remove a scoped localStorage value; false when storage is blocked. */
+export function removeScoped(key: string): boolean {
+  try {
+    localStorage.removeItem(scopedKey(key))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The (unscoped) names of every scoped localStorage value starting with `prefix`; none when storage is blocked. */
+export function scopedKeysWithPrefix(prefix: string): string[] {
+  if (typeof window === 'undefined') return []
+  const scopedPrefix = scopedKey(prefix)
+  const unscope = scopedKey('').length
+  const names: string[] = []
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (key?.startsWith(scopedPrefix)) names.push(key.slice(unscope))
+    }
+  } catch {
+    return []
+  }
+  return names
+}
+
 /** localStorage key holding the persisted login session. */
 export const SESSION_STORAGE_KEY = scopedKey('yappr_session')

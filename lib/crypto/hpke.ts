@@ -44,7 +44,13 @@ const SUITE_KEM = concatBytes(encoder.encode('KEM'), i2osp(KEM_ID, 2))
 const SUITE_HPKE = concatBytes(encoder.encode('HPKE'), i2osp(KEM_ID, 2), i2osp(KDF_ID, 2), i2osp(AEAD_ID, 2))
 
 function labeledExtract(suite: Uint8Array, salt: Uint8Array, label: string, ikm: Uint8Array): Uint8Array {
-  return extract(sha256, concatBytes(HPKE_V1, suite, encoder.encode(label), ikm), salt)
+  // The labeled input holds a copy of the secret (the DH output, or the KEM's shared secret): wiped once used.
+  const labeled = concatBytes(HPKE_V1, suite, encoder.encode(label), ikm)
+  try {
+    return extract(sha256, labeled, salt)
+  } finally {
+    labeled.fill(0)
+  }
 }
 
 function labeledExpand(suite: Uint8Array, prk: Uint8Array, label: string, info: Uint8Array, length: number): Uint8Array {

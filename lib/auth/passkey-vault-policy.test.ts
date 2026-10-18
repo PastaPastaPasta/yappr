@@ -70,26 +70,34 @@ describe('passkey vault policy: keys', () => {
 
   it('accepts an enabled HIGH sign-in key, and a CRITICAL one only with a moderator check when unbound', () => {
     const keys = [key({ id: 2 }), key({ id: 1, securityLevel: 1, data: getPublicKey(CRITICAL_KEY) })]
-    expect(checkSignInKey(slotFor(keys[0], HIGH_KEY), keys, NOW)).toMatchObject({ ok: true, needsModerator: false })
-    expect(checkSignInKey(slotFor(keys[1], CRITICAL_KEY), keys, NOW)).toMatchObject({ ok: true, needsModerator: true })
+    expect(checkSignInKey(slotFor(keys[0], HIGH_KEY), keys, NOW, 'g')).toMatchObject({ ok: true, needsModerator: false })
+    expect(checkSignInKey(slotFor(keys[1], CRITICAL_KEY), keys, NOW, 'g')).toMatchObject({ ok: true, needsModerator: true })
     const bound = key({ id: 3, securityLevel: 1, data: getPublicKey(CRITICAL_KEY), bounds: { kind: 'contractGroup', groupId: 'g' } })
-    expect(checkSignInKey(slotFor(bound, CRITICAL_KEY), [bound], NOW)).toMatchObject({ ok: true, needsModerator: false })
+    expect(checkSignInKey(slotFor(bound, CRITICAL_KEY), [bound], NOW, 'g')).toMatchObject({ ok: true, needsModerator: false })
     // Only a group bound exempts a CRITICAL key: one bound to a single contract still needs the moderator check.
     const single = { ...bound, bounds: { kind: 'singleContract' as const, contractId: 'c' } }
-    expect(checkSignInKey(slotFor(single, CRITICAL_KEY), [single], NOW)).toMatchObject({ ok: true, needsModerator: true })
+    expect(checkSignInKey(slotFor(single, CRITICAL_KEY), [single], NOW, 'g')).toMatchObject({ ok: true, needsModerator: true })
+  })
+
+  it('exempts only a key bound to the pinned App Connect group from the moderator check', () => {
+    const bound = key({ id: 3, securityLevel: 1, data: getPublicKey(CRITICAL_KEY), bounds: { kind: 'contractGroup', groupId: 'pinned' } })
+    expect(checkSignInKey(slotFor(bound, CRITICAL_KEY), [bound], NOW, 'pinned')).toMatchObject({ ok: true, needsModerator: false })
+    // Bound to some other group (anyone can make one), or on a build with no pins: an ordinary CRITICAL key.
+    expect(checkSignInKey(slotFor(bound, CRITICAL_KEY), [bound], NOW, 'another')).toMatchObject({ ok: true, needsModerator: true })
+    expect(checkSignInKey(slotFor(bound, CRITICAL_KEY), [bound], NOW, null)).toMatchObject({ ok: true, needsModerator: true })
   })
 
   it('refuses a disabled, expiring, mislabelled, wrong-level or mismatched sign-in key', () => {
     const high = key({ id: 2 })
     const slot = slotFor(high, HIGH_KEY)
-    expect(checkSignInKey(slot, [{ ...high, disabledAt: NOW - 1 }], NOW).ok).toBe(false)
-    expect(checkSignInKey(slot, [{ ...high, expiresAt: NOW + APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS }], NOW).ok).toBe(false)
-    expect(checkSignInKey(slot, [{ ...high, securityLevel: 3 }], NOW).ok).toBe(false)
-    expect(checkSignInKey(slot, [{ ...high, purpose: 1 }], NOW).ok).toBe(false)
-    expect(checkSignInKey(slot, [{ ...high, securityLevel: 0 }], NOW).ok).toBe(false)
-    expect(checkSignInKey({ ...slot, securityLevel: 1 }, [high], NOW).ok).toBe(false)
-    expect(checkSignInKey({ ...slot, privateKey: CRITICAL_KEY }, [high], NOW).ok).toBe(false)
-    expect(checkSignInKey(slot, [], NOW).ok).toBe(false)
+    expect(checkSignInKey(slot, [{ ...high, disabledAt: NOW - 1 }], NOW, 'g').ok).toBe(false)
+    expect(checkSignInKey(slot, [{ ...high, expiresAt: NOW + APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS }], NOW, 'g').ok).toBe(false)
+    expect(checkSignInKey(slot, [{ ...high, securityLevel: 3 }], NOW, 'g').ok).toBe(false)
+    expect(checkSignInKey(slot, [{ ...high, purpose: 1 }], NOW, 'g').ok).toBe(false)
+    expect(checkSignInKey(slot, [{ ...high, securityLevel: 0 }], NOW, 'g').ok).toBe(false)
+    expect(checkSignInKey({ ...slot, securityLevel: 1 }, [high], NOW, 'g').ok).toBe(false)
+    expect(checkSignInKey({ ...slot, privateKey: CRITICAL_KEY }, [high], NOW, 'g').ok).toBe(false)
+    expect(checkSignInKey(slot, [], NOW, 'g').ok).toBe(false)
   })
 
   it('asks for an update only when the sealed sign-in key stopped working', () => {
