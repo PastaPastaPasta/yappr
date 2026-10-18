@@ -40,13 +40,16 @@ export function FormatButton({ onClick, title, children, disabled = false }: For
 interface CharacterCounterProps {
   current: number
   limit: number
+  sizeLimitReached?: boolean
+  tooLong?: boolean
 }
 
-export function CharacterCounter({ current, limit }: CharacterCounterProps) {
+export function CharacterCounter({ current, limit, sizeLimitReached = false, tooLong = false }: CharacterCounterProps) {
   const remaining = limit - current
-  const color = remaining < 0
+  const sizeMessage = tooLong ? 'Too long' : sizeLimitReached && remaining > 0 ? 'Character limit reached' : null
+  const color = remaining < 0 || tooLong
     ? 'text-red-600 dark:text-red-400'
-    : remaining <= 50
+    : remaining <= 50 || sizeLimitReached
     ? 'text-amber-700 dark:text-amber-400'
     : 'text-gray-500 dark:text-gray-400'
 
@@ -54,9 +57,9 @@ export function CharacterCounter({ current, limit }: CharacterCounterProps) {
     <output
       aria-live="off"
       className={`whitespace-nowrap tabular-nums ${color}`}
-      aria-label={`${current} of ${limit} characters${remaining < 0 ? `, ${-remaining} over limit` : ''}`}
+      aria-label={sizeMessage ?? `${current} of ${limit} characters${remaining < 0 ? `, ${-remaining} over limit` : ''}`}
     >
-      {current} <span aria-hidden="true" className="text-gray-300 dark:text-gray-600">/</span> {limit}
+      {sizeMessage ?? <>{current} <span aria-hidden="true" className="text-gray-300 dark:text-gray-600">/</span> {limit}</>}
     </output>
   )
 }

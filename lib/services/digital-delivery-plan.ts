@@ -391,7 +391,7 @@ export function kitDeliveryFitError(kit: ItemDeliverablePayload): string | null 
   }
   const bytes = new TextEncoder().encode(JSON.stringify(delivery)).length
   return bytes > MAX_DELIVERY_PLAINTEXT_BYTES
-    ? `Delivery content is too large to send in one delivery (${bytes} of ${MAX_DELIVERY_PLAINTEXT_BYTES} bytes). Remove some links, codes or instructions.`
+    ? `Delivery content is too large to send in one delivery. Remove some links, codes or instructions.`
     : null
 }
 
@@ -703,7 +703,7 @@ const decodeJson = (bytes: Uint8Array): unknown => {
 export function encodeKit(kit: ItemDeliverablePayload): Uint8Array {
   const bytes = encodeJson(kit)
   if (bytes.length > MAX_KIT_PLAINTEXT_BYTES) {
-    throw new Error(`Delivery content is too large to store (${bytes.length} of ${MAX_KIT_PLAINTEXT_BYTES} bytes). Remove some unique codes or links.`)
+    throw new Error(`Delivery content is too large to store. Remove some unique codes or links.`)
   }
   return bytes
 }
@@ -726,7 +726,7 @@ export function decodeKit(bytes: Uint8Array): ItemDeliverablePayload {
 export function encodeDelivery(delivery: OrderDeliveryPayload): Uint8Array {
   const bytes = encodeJson(delivery)
   if (bytes.length > MAX_DELIVERY_PLAINTEXT_BYTES) {
-    throw new Error(`This delivery is too large (${bytes.length} of ${MAX_DELIVERY_PLAINTEXT_BYTES} bytes). Shorten the message, or deliver the items in parts: untick some, deliver, then deliver the rest.`)
+    throw new Error(`This delivery is too large. Shorten the message, or deliver the items in parts: untick some, deliver, then deliver the rest.`)
   }
   return bytes
 }

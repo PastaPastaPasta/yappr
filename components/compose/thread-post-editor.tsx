@@ -11,7 +11,7 @@ import { EmojiPicker } from './emoji-picker'
 
 import toast from 'react-hot-toast'
 import { acceptsTextChange } from '@/lib/text-limits'
-import { BYTE_LIMIT, utf8ByteCount, CHARACTER_LIMIT, characterCount, contentOverage } from '@/lib/compose/limits'
+import { BYTE_LIMIT, utf8ByteCount, CHARACTER_LIMIT, characterCount } from '@/lib/compose/limits'
 
 interface ThreadPostEditorProps {
   post: ThreadPost
@@ -194,8 +194,7 @@ export function ThreadPostEditor({
 
   const isPosted = !!post.postedPostId
   const effectiveLength = characterCount(post.content) + extraCharacters
-  // v10 also caps content at UTF-8 bytes; always zero where there is no byte limit.
-  const { bytesOver } = contentOverage(post.content, extraCharacters)
+  const bytesUsed = BYTE_LIMIT === null ? 0 : utf8ByteCount(post.content) + extraCharacters
 
   return (
     <motion.div
@@ -405,16 +404,15 @@ export function ThreadPostEditor({
           {/* Keep attachment cost and the count visible in edit, preview and locked states. */}
           {isActive && !isPosted && (
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mt-3 text-xs text-gray-500 dark:text-gray-400">
-              {bytesOver > 0 ? (
-                <span className="min-w-0 break-words text-red-600 dark:text-red-400">{bytesOver} bytes over the size limit. Emoji and non-Latin text count extra.</span>
-              ) : extraCharacters > 0 ? (
+              {extraCharacters > 0 ? (
                 <span className="min-w-0 break-words">Image URL +{extraCharacters} chars</span>
               ) : !locked && !showPreview ? (
                 <span>Markdown supported</span>
               ) : null}
               <div className="ml-auto shrink-0">
-                <CharacterCounter current={effectiveLength} limit={CHARACTER_LIMIT} />
-                {BYTE_LIMIT !== null && <span className="ml-2">{utf8ByteCount(post.content) + extraCharacters}/{BYTE_LIMIT} bytes</span>}
+                <CharacterCounter current={effectiveLength} limit={CHARACTER_LIMIT}
+                  sizeLimitReached={BYTE_LIMIT !== null && bytesUsed >= BYTE_LIMIT}
+                  tooLong={BYTE_LIMIT !== null && bytesUsed > BYTE_LIMIT} />
               </div>
             </div>
           )}

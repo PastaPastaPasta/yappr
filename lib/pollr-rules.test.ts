@@ -35,7 +35,7 @@ describe('poll limits', () => {
     expect(pollQuestionError('q'.repeat(280), v7)).toBeNull()
     expect(pollQuestionError('q'.repeat(281), v7)).toMatch(/280/)
     // 200 three-byte characters: within 280 characters, over 560 bytes.
-    expect(pollQuestionError('€'.repeat(200), v7)).toMatch(/560 bytes/)
+    expect(pollQuestionError('€'.repeat(200), v7)).toMatch(/Use fewer characters/)
     expect(pollQuestionError('', v7)).toMatch(/required/)
     // v3/v4 allow 512 characters and have no byte cap.
     expect(pollQuestionError('€'.repeat(500), v3)).toBeNull()
@@ -44,7 +44,7 @@ describe('poll limits', () => {
   it('v7 caps each option at 80 characters and 160 bytes', () => {
     expect(pollOptionsError(['a'.repeat(80), 'b'], v7)).toBeNull()
     expect(pollOptionsError(['a'.repeat(81), 'b'], v7)).toMatch(/80/)
-    expect(pollOptionsError(['👍'.repeat(41), 'b'], v7)).toMatch(/160 bytes/)
+    expect(pollOptionsError(['👍'.repeat(41), 'b'], v7)).toMatch(/Use fewer characters/)
     expect(pollOptionsError(['a'.repeat(100), 'b'], v3)).toBeNull()
   })
 

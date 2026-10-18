@@ -234,7 +234,7 @@ export const STATUS_NOTE_MAX_BYTES = property('orderStatusUpdate', 'encryptedPay
  */
 export function orderPayloadSizeError(bytes: number): string | null {
   return storefrontIsV6() && bytes > ORDER_PAYLOAD_MAX_BYTES
-    ? `This order is too large to send (${bytes.toLocaleString()} of ${ORDER_PAYLOAD_MAX_BYTES.toLocaleString()} bytes). Shorten the notes, or split it into smaller orders.`
+    ? `This order is too large to send. Shorten the notes, or split it into smaller orders.`
     : null
 }
 
@@ -275,7 +275,7 @@ export function orderPaymentBudgetError(draft: OrderPayload, paymentUris: readon
   }
   const bytes = utf8Length(JSON.stringify(worst)) + ORDER_CIPHERTEXT_OVERHEAD
   return bytes > ORDER_PAYLOAD_MAX_BYTES
-    ? `This order is too large to place (${bytes.toLocaleString()} of ${ORDER_PAYLOAD_MAX_BYTES.toLocaleString()} bytes, counting room for payment details and notes). Remove some items, or split it into smaller orders.`
+    ? `This order is too large to place. Remove some items, or split it into smaller orders.`
     : null
 }
 

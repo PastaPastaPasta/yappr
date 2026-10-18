@@ -11,7 +11,7 @@ export function socialLinkAddProblem(existing: readonly SocialLink[], link: Soci
   const stored = socialLinkToString(link)
   const { maxBytes } = LIST_LIMITS.profileSocialLinks
   if (utf8ByteLength(stored) > maxBytes) {
-    return `That handle is too long (at most ${maxBytes - link.platform.length - 1} bytes for ${platformLabel}; accented letters and emoji count as more than one)`
+    return `That handle is too long for ${platformLabel}. Shorten it and try again.`
   }
   if (existing.some((other) => socialLinkToString(other) === stored)) return 'This link is already added'
   return null

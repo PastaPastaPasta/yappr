@@ -77,11 +77,11 @@ function utf8Length(value: string): number {
 
 /**
  * Why `value` is over its limits, as the end of a sentence, or null. The byte
- * cap is the one emoji and non-Latin scripts hit first, so it says so.
+ * cap can bind before the character count, so its message asks for shorter text.
  */
 function lengthProblem(value: string, maxChars: number, maxBytes: number | null): string | null {
   if (charCount(value) > maxChars) return `${maxChars} characters or fewer`
-  if (maxBytes !== null && utf8Length(value) > maxBytes) return `shorter: emoji and non-Latin letters take extra room (${maxBytes} bytes at most)`
+  if (maxBytes !== null && utf8Length(value) > maxBytes) return `shorter. Use fewer characters`
   return null
 }
 

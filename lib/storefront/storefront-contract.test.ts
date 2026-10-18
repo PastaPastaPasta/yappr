@@ -97,7 +97,7 @@ describe('the order payload budget, checked before payment (v6)', () => {
 
   it('refuses an order that cannot fit once the typed fields are reserved at their caps', async () => {
     const { orderPaymentBudgetError } = await load('v6')
-    expect(orderPaymentBudgetError(draft(14, 150), [])).toMatch(/too large to place .* counting room for payment details and notes/)
+    expect(orderPaymentBudgetError(draft(14, 150), [])).toBe('This order is too large to place. Remove some items, or split it into smaller orders.')
   })
 
   it('budgets for the store\'s longest payment URI, whichever one is selected', async () => {
@@ -146,7 +146,7 @@ describe('size guards (item transition budget, legacy variants JSON caps)', () =
   it('refuses an encrypted order payload past 5,120 bytes on v6 only', async () => {
     const v6 = await load('v6')
     expect(v6.orderPayloadSizeError(5120)).toBeNull()
-    expect(v6.orderPayloadSizeError(5121)).toMatch(/too large to send \(5,121 of 5,120 bytes\)/)
+    expect(v6.orderPayloadSizeError(5121)).toBe('This order is too large to send. Shorten the notes, or split it into smaller orders.')
     expect((await load('v5')).orderPayloadSizeError(9000)).toBeNull()
   })
 

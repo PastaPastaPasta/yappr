@@ -127,8 +127,8 @@ describe('list limits (beta.4 schema bounds)', () => {
   it('enforces the contract maxBytes for multibyte text within maxLength', async () => {
     const { LIST_LIMITS, listLimitProblem } = await import('./typed-array-codecs')
     // 206 characters, 406 UTF-8 bytes: under maxLength 256 but over maxBytes 256.
-    expect(listLimitProblem([`other:${'é'.repeat(200)}`], LIST_LIMITS.profileSocialLinks)).toMatch(/at most 256 bytes/)
+    expect(listLimitProblem([`other:${'é'.repeat(200)}`], LIST_LIMITS.profileSocialLinks)).toMatch(/too long/)
     expect(listLimitProblem([`other:${'é'.repeat(125)}`], LIST_LIMITS.profileSocialLinks)).toBeNull()
-    expect(listLimitProblem(['🙂'.repeat(33)], LIST_LIMITS.storeTags)).toMatch(/at most 128 bytes/)
+    expect(listLimitProblem(['🙂'.repeat(33)], LIST_LIMITS.storeTags)).toMatch(/too long/)
   })
 })

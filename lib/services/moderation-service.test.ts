@@ -233,7 +233,7 @@ describe('toModerationReason', () => {
 
   it('refuses a text over 1024 BYTES before anything is signed (10903 on chain), though it is under 1024 characters', () => {
     const text = '\u00e9'.repeat(600) // 600 characters, 1200 bytes of UTF-8
-    expect(() => toModerationReason({ text })).toThrow(/1200 bytes long, the maximum is 1024/)
+    expect(() => toModerationReason({ text })).toThrow(/reason is too long/)
     expect(toModerationReason({ text: 'a'.repeat(1024) })).toEqual({ text: 'a'.repeat(1024) })
   })
 })

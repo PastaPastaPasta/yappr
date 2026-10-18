@@ -235,7 +235,7 @@ export function listLimitProblem(values: readonly string[], limits: ListLimits):
   const tooLong = values.find((value) => [...value].length > limits.maxLength)
   if (tooLong !== undefined) return `Each of the ${limits.noun} can be at most ${limits.maxLength} characters ("${tooLong.slice(0, 24)}…" is longer).`
   const tooManyBytes = values.find((value) => utf8ByteLength(value) > limits.maxBytes)
-  if (tooManyBytes !== undefined) return `Each of the ${limits.noun} can be at most ${limits.maxBytes} bytes; accented letters and emoji count as more than one ("${tooManyBytes.slice(0, 24)}…" is longer).`
+  if (tooManyBytes !== undefined) return `One of the ${limits.noun} is too long ("${tooManyBytes.slice(0, 24)}…"). Use fewer characters.`
   const pattern = limits.pattern
   if (pattern) {
     const bad = values.find((value) => !pattern.test(value))
