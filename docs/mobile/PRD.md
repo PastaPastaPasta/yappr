@@ -55,7 +55,7 @@ Yappr Mobile 1.0 is a native iOS and Android client for Yappr, the social app on
 
 | Variant | Bundle id | Network | Social topology | DM | Profile shape |
 | --- | --- | --- | --- | --- | --- |
-| `devnet` | `pr.yap.app.dev` | sakura (Platform 5.0.0-beta.1) | the dev cut set in `.env.devnet`: v10 today, v11 once `docs/SOCIAL_V11.md` merges | DM v5 | DashPay `profile` + `yapprProfile` |
+| `devnet` | `pr.yap.app.dev` | sakura (Platform 5.0.0-beta.1) | the dev cut set in `.env.devnet`: v10 today, v11 once `docs/archive/SOCIAL_V11.md` merges | DM v5 | DashPay `profile` + `yapprProfile` |
 | `testnet` | `pr.yap.app.beta` | testnet, production yap.pr contracts | v2 | DM v3 (legacy) | profile contract `profile` |
 
 ### Capability flags
@@ -1176,7 +1176,7 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 | OQ-4 | Is it acceptable that the testnet build can't post without YAPP bought on yap.pr? | Yes: testnet is a read-heavy dogfooding build (ADR E6) |
 | OQ-5 | Who writes the community-rules summary and the zero-tolerance clause, and where is the terms version number kept? | UX_SPEC carries a draft; the version is a constant in the app until web publishes one |
 | OQ-6 | ADR E2 was amended so RN imports no `lib/` code at runtime for limits and topology. Do the formatting helpers (`formatTimeCompact`, `formatNumber`, in `lib/utils/common.ts`) stay importable, or does RN port them? | RN ports them with the same outputs, pinned by a shared-fixture test |
-| OQ-7 | The devnet topology on sakura: v10 or v11? `docs/SOCIAL_V11.md` is on branch `v5b1/social-v11`, not yet merged. | Both are supported through capability flags; v11-only stories are P1 |
+| OQ-7 | The devnet topology on sakura: v10 or v11? `docs/archive/SOCIAL_V11.md` is on branch `v5b1/social-v11`, not yet merged. | Both are supported through capability flags; v11-only stories are P1 |
 | OQ-8 | Universal links need `apple-app-site-association` and `assetlinks.json` under `public/.well-known/`, a static web change outside the ADR E2 list. Who lands it? | `yappr://` links in 1.0; universal links when the files ship |
 | OQ-9 | Link previews fetched directly from the device (PD-9) reveal the user's IP to the linked site. Keep, or route through the same proxies as web? | Direct, with the disclosure |
 | OQ-10 | Should the engagements screen stay readable signed out (PD-16)? | Yes |

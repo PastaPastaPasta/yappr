@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DASHPAY_CONTRACT_ID, YAPPR_CONTRACT_ID } from '../constants';
 
-// v10 profiles (docs/SOCIAL_V10.md): the DashPay `profile` plus the social
+// v10 profiles (docs/archive/SOCIAL_V10.md): the DashPay `profile` plus the social
 // `yapprProfile` extension, behind the same service the v2/v9 profile uses.
 const { query, createDocument, updateDocument, imageDigestForUrl } = vi.hoisted(() => ({
   query: vi.fn(), createDocument: vi.fn(), updateDocument: vi.fn(), imageDigestForUrl: vi.fn(),

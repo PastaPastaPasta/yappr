@@ -116,7 +116,7 @@ export function getBlogPostUrl(blogId: string, slug: string): string {
 /**
  * Labels as the configured blog cut stores them; undefined when there are
  * none (the field is then omitted). The app models labels as a list; blog v4
- * stores that list (docs/SOCIAL_V9.md), v1–v3 a comma-separated string. On v4
+ * stores that list (docs/archive/SOCIAL_V9.md), v1–v3 a comma-separated string. On v4
  * the contract caps the list (64 on a blog, 16 on a post, 40 characters each)
  * and a longer one is refused after signing, so it throws a
  * {@link ListLimitError} with a user-facing message first. v1–v3 keep their

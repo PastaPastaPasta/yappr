@@ -2,7 +2,7 @@
 
 App Connect logs a user in by having their wallet add keys to their identity that are scoped to Yappr. The main one is an AUTHENTICATION key bound to a **contract group**, so one key can sign for every Yappr contract and nothing else. This document covers the contract side: the anchor contract that registers the group, which contracts join it, how they are registered, and how the app decides whether to trust the group.
 
-**Status: sakura's Platform chain was wiped for 5.0.0-beta.6 on 2026-10-13, and the set is registered again on the new genesis with social v16 in v15's slot: the anchor at maker nonce 24 (`APP_ID` `BbWcUA8M…`) registers the group `7iM9B6WD…`, and the seven members joined it at nonces 25-31 ([SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md), which records why no beta.5 id is reproduced). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there (32/0). `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values, and `/devnet` signs in with App Connect (`NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`).** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md), social v16 in [SOCIAL_V16.md](SOCIAL_V16.md).
+**Status: sakura's Platform chain was wiped for 5.0.0-beta.6 on 2026-10-13, and the set is registered again on the new genesis with social v16 in v15's slot: the anchor at maker nonce 24 (`APP_ID` `BbWcUA8M…`) registers the group `7iM9B6WD…`, and the seven members joined it at nonces 25-31 ([SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md), which records why no beta.5 id is reproduced). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there (32/0). `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values, and `/devnet` signs in with App Connect (`NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`).** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](archive/PLATFORM_V5_BETA5_UPGRADE.md), social v16 in [SOCIAL_V16.md](SOCIAL_V16.md).
 
 Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
@@ -12,7 +12,7 @@ The group has to be registered by some contract's create transition, and its id 
 
 - **A stable app id.** The anchor's id is the App Connect app id: the id a wallet's brand map is keyed by, the id the login request names, and the id grant records point at. Social is re-cut every few weeks and gets a new id each time; the anchor has no reason to change.
 - **A home for the encryption key.** Peers find a user's messaging key with `identities.contractKeys([...ids], APP_ID, [ENCRYPTION])`. Encryption keys can only be bound to a contract, never to a group (`InvalidKeyPurposeForContractBoundsError`), and only to one that opts in. The anchor is the contract that opts in, so the binding survives every re-cut of the contracts that use it.
-- **A narrow group.** Memberships can never be removed. The existing sakura group (`Cxxdiq5b…`, registered by key backup) holds all twelve contracts, including the ones App Connect retires. A key bound to it could write to the password vault and key backup for as long as the key lives. A new group, registered by the anchor, holds only what App Connect needs.
+- **A narrow group.** Memberships can never be removed. Before App Connect, Sakura's old group (`Cxxdiq5b…`, registered by key backup) held twelve contracts, including the retired password vault and key backup. That group was replaced at genesis; the current beta.6 group is the anchor-owned set in the status above. The release also uses a fresh anchor group containing only its intended members.
 
 The cost is that every member is registered again, into the new group, at the cut-over. Their data starts empty (re-seeded on devnet). This was approved on 2026-10-11.
 
@@ -88,16 +88,16 @@ DashPay's `profile` is a system contract and cannot join a group. App Connect co
 
 ## Retired on PV14
 
-These never join the group (`RETIRED_ON_PV14`). On sakura's beta.5 and beta.6 geneses, key exchange, vault and key backup were registered again **without any group** (maker nonces 21-23 on beta.5, 32-34 on beta.6), so the legacy sign-in stays available as the rollback of the App Connect sign-in. DM v4 was not registered there.
+These are excluded from the **testnet release** (`RETIRED_ON_PV14`, D9). On Sakura's older beta.5 and beta.6 geneses, key exchange, vault and key backup were registered **without any group** (maker nonces 21–23 on beta.5, 32–34 on beta.6). That historical deployment is not the release policy: register none of them in the fresh release set, blank their ids at cut-over and then remove their client paths. DM v4 was not registered on those Sakura geneses either.
 
 | Contract | Why it goes |
 | --- | --- |
 | key exchange (`key-exchange-v2.json`) | The legacy QR login. App Connect responses go to Platform's own login-response store (`H8F9…`, `loginKeyResponse`), and the wallet registers the keys itself. |
-| password vault (`yappr-vault-contract.json`) | It stores the login key wrapped under a password. An App Connect session has no single long-lived login key to store. Password access goes; restored sessions come from the passkey-wrapped bundle in the auth vault. |
+| password vault (`yappr-vault-contract.json`) | The password-era schema is retired. Release passkey access belongs to its own vault member (D10), with no password recovery. |
 | key backup (`encrypted-key-backup-contract.json`) | It holds passphrase-encrypted login-key backups, for the same reason. |
 | DM v4 (`yappr-dm-contract.json`) | Read-only since DM v5. Its threads only merge into the v5 timeline, so a fresh PV14 network has none to read. |
 
-In the group, each would also widen what every group-bound key can sign, permanently, for features that no longer exist. PV13 networks (testnet, mainnet today) keep the legacy flow and these contracts until the legacy code is deleted. Pollr on testnet is externally owned and could not join a maker-owned group anyway.
+In the group, each would permanently widen what every group-bound key can sign. Testnet now runs PV14 (5.0.0-rc.3); protocol support is no longer a reason to retain these paths. Current production defaults still select the old contracts and legacy sign-in until WP15 switches every shipping build to App Connect. The release's fresh pollr v8 is a group member; the old externally owned testnet Pollr deployment is separate. See [RELEASE_CLEANUP.md](RELEASE_CLEANUP.md) for the coordinated removals.
 
 ## Registering the set
 

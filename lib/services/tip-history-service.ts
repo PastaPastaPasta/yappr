@@ -7,7 +7,7 @@
  * sender signed. The document exists because the transfer happened and cannot
  * be edited or deleted (`documentsMutable: false`, `canBeDeleted: false`).
  *
- * What that proves and what it does not is spelled out in docs/NON_SOCIAL_CONTRACTS.md;
+ * What that proves and what it does not is spelled out in docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md;
  * the short version is that the amount, the sender and the recipient are
  * consensus facts, while the link to a post is only the sender's own claim in
  * `publicNote`.

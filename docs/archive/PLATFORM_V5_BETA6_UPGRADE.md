@@ -1,6 +1,6 @@
 # Platform 5.0.0-beta.6: what changed for Yappr
 
-Dash Platform 5.0.0-beta.6 (2026-10-13, still protocol 14) is a small release. Sakura's Platform chain was wiped for it the same day, so every Yappr contract was registered again on a fresh genesis ([SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md)). This note records what the release adds, what Yappr uses, and what was considered and left out. Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
+Dash Platform 5.0.0-beta.6 (2026-10-13, still protocol 14) is a small release. Sakura's Platform chain was wiped for it the same day, so every Yappr contract was registered again on a fresh genesis ([SAKURA_BETA6_DEPLOY.md](../SAKURA_BETA6_DEPLOY.md)). This note records what the release adds, what Yappr uses, and what was considered and left out. Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
 ## The release
 
@@ -13,7 +13,7 @@ Dash Platform 5.0.0-beta.6 (2026-10-13, still protocol 14) is a small release. S
 
 ## What Yappr uses
 
-**Social v16** ([SOCIAL_V16.md](SOCIAL_V16.md), #746): up to four tags per post, and a like counted under every tag of its post. It is the only Yappr type that fits #5390/#5394: social `like` is the only index-only type whose counters follow a list on the referenced document.
+**Social v16** ([SOCIAL_V16.md](../SOCIAL_V16.md), #746): up to four tags per post, and a like counted under every tag of its post. It is the only Yappr type that fits #5390/#5394: social `like` is the only index-only type whose counters follow a list on the referenced document.
 
 **#5398 changes nothing for Yappr.** Social `post`, `reply`, `like` and `likeReply` offer contract-owner gas (`gasFeesPaidBy: 2`, PreferContractOwner, on their optional YAPP cost), but no Yappr code path sets a user fee increase: the web client, `vendor/platform-auth`, the mobile engine and the scripts never pass one, and the 5.0.0-beta.6 SDKs default it to 0. With an increase of 0 every branch of the new fee rule charges exactly what beta.5 did. Whoever pays the gas also pays the action fees, so a sponsored YAPP post costs the maker the 80M-credit (≈4.8¢) moderators' fee as before.
 
@@ -23,7 +23,7 @@ Dash Platform 5.0.0-beta.6 (2026-10-13, still protocol 14) is a small release. S
 
 | Candidate | Decision | Why |
 | --- | --- | --- |
-| DM v5: a `members contains "$ownerId"` writer gate on group messages and keys | **No** | It needs a plain on-chain roster and a `groupId` on every message, which publishes every group's membership and links its messages, against DM v5's first rule that no field is shared between two participants' documents ([DM_V5.md](DM_V5.md)). There is no gap for it to close: rosters and keyrings are the owner's own documents under a unique `[$ownerId, handle]` index, non-members cannot derive a group's tags, and readers drop documents whose owner is not the stream's sender. |
+| DM v5: a `members contains "$ownerId"` writer gate on group messages and keys | **No** | It needs a plain on-chain roster and a `groupId` on every message, which publishes every group's membership and links its messages, against DM v5's first rule that no field is shared between two participants' documents ([DM_V5.md](../DM_V5.md)). There is no gap for it to close: rosters and keyrings are the owner's own documents under a unique `[$ownerId, handle]` index, non-members cannot derive a group's tags, and readers drop documents whose owner is not the stream's sender. |
 | Blog: a post's `labels` must be among its blog's (`containsAll`) | **No** | Both documents belong to one owner, so it only stops an owner contradicting themselves; it would break the publish-then-label flow, block edits of posts using a label the blog dropped, and fail every post replace (40145) after a moderator removes the blog unless `blog.labels` joins `deleteKeepsFields`. |
 | Blog: a label index `[blogId, labels, $createdAt]` | Deferred | The blog home reads the newest 100 posts and filters labels in the browser; the 100-post cap is the real limit, so this belongs to a blog pagination change. Indexes on lists already worked on beta.5. |
 | Storefront: `paymentUris`, `contactMethods`, `postalPatterns` from JSON strings to lists | Deferred | `paymentUris` entries carry a seller-typed label a list of strings would drop ([SOCIAL_V9.md](SOCIAL_V9.md)); converting only the other two adds an encoding for little gain. |

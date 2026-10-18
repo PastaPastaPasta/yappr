@@ -117,7 +117,7 @@ export interface VariantCombination {
   imageUrl?: string
 }
 
-/** A listing's variants table (storefront v7 stores it as typed lists, docs/STOREFRONT_V7.md). */
+/** A listing's variants table (storefront v7 stores it as typed lists, docs/archive/STOREFRONT_V7.md). */
 export interface ItemVariants {
   axes: VariantAxis[]
   combinations: VariantCombination[]

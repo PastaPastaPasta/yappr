@@ -7,7 +7,7 @@ import { declaredActionFee, tokenCostFor, yappIsPausedForGood, type ActionFeeDec
  * setting and their YAPP balance. Presentation layer only: this is what the
  * compose UI shows and what the write path turns into `$tokenPaymentInfo` and
  * `$actionFeeAgreement` (`lib/transition-agreements.ts`, applied in
- * `state-transition-service.createDocument`) — see docs/SOCIAL_V8.md.
+ * `state-transition-service.createDocument`) — see docs/archive/SOCIAL_V8.md.
  */
 export interface PaymentPlan {
   /** The currency the write spends. `credits` when the type is unpriced. */

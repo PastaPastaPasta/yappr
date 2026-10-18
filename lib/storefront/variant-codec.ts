@@ -1,5 +1,5 @@
 /**
- * The storefront v7 variants table (docs/STOREFRONT_V7.md): the editor model
+ * The storefront v7 variants table (docs/archive/STOREFRONT_V7.md): the editor model
  * the app works with, its encoding as the typed lists `storeItem.variants`
  * stores, and the pure operations every surface shares (lookups, the buyer's
  * picker, price ranges, validation, editing). No SDK, no topology.

@@ -1,7 +1,7 @@
 # Platform 5.0.0-beta.1: the blog v6 re-cut and the 5.0 tooling
 
 Investigation date: 2026-09-30. This document covers the beta.7 → 5.0.0-beta.1
-range only. Everything earlier is in [`PLATFORM_BETA7_UPGRADE.md`](./PLATFORM_BETA7_UPGRADE.md).
+range only. Everything earlier is in [`PLATFORM_BETA7_UPGRADE.md`](PLATFORM_BETA7_UPGRADE.md).
 
 This branch contains what 5.0 makes mandatory, plus decision D5:
 - the blog contract re-cut, **blog v6**;
@@ -192,7 +192,7 @@ nonces 1-10, all in contract group `7ZXmLYbq614VzFMpiPFCRhRYKAJhCg3zfGvEGy9RQVEY
 
 | nonce | contract | id | source sha256 |
 | ---: | --- | --- | --- |
-| 1 | social v11, design M (topology `v11`, [`SOCIAL_V11.md`](./SOCIAL_V11.md)) | `DzoVNQmCFmLa9e7gsLczDwPs6jYs3oFuZdwgNNzh64GG` | `374745b4…` |
+| 1 | social v11, design M (topology `v11`, [`SOCIAL_V11.md`](SOCIAL_V11.md)) | `DzoVNQmCFmLa9e7gsLczDwPs6jYs3oFuZdwgNNzh64GG` | `374745b4…` |
 | 2 | key backup | `7n7YtriN9e58zmWVsEUZRP1ALAhyv46KdnhrrbeoVHZr` | testnet snapshot |
 | 3 | key exchange | `ExSSHFeyLuR41BQoh9XuXbY8DA3s2HJYNZoLi9TXDPmp` | testnet snapshot |
 | 4 | vault | `HkFVngZz9JTRhssjPr66z1hU1x8CtjivjzCkFWwka9Qj` | testnet snapshot |

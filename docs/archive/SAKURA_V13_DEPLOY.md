@@ -1,6 +1,6 @@
 # The v13 set on sakura (2026-10-07)
 
-`/devnet` moves from social v12 to the mainnet candidate set: social v13 ([SOCIAL_V13.md](SOCIAL_V13.md)), the blocks contract, pollr v5, blog v7 and storefront v6 ([NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md)). The chain is the one [PLATFORM_V5_BETA2_UPGRADE.md](PLATFORM_V5_BETA2_UPGRADE.md) re-created after the 2026-10-06 wipe. It was not wiped again, so every identity, the maker, the contract group and the six contracts that did not change are kept. This is the first time the v13 shapes ran live.
+`/devnet` moves from social v12 to the mainnet candidate set: social v13 ([SOCIAL_V13.md](SOCIAL_V13.md)), the blocks contract, pollr v5, blog v7 and storefront v6 ([NON_SOCIAL_CONTRACTS.md](../NON_SOCIAL_CONTRACTS.md)). The chain is the one [PLATFORM_V5_BETA2_UPGRADE.md](PLATFORM_V5_BETA2_UPGRADE.md) re-created after the 2026-10-06 wipe. It was not wiped again, so every identity, the maker, the contract group and the six contracts that did not change are kept. This is the first time the v13 shapes ran live.
 
 ## Contracts
 

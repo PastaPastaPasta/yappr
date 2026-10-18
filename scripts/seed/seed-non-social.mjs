@@ -6,7 +6,7 @@
  * build the plan, run the real crypto where a feature has any, and print what would be written. Everything else
  * connects, writes and then verifies through the query shapes the app itself uses. Every run is deterministic in
  * `--seed` and resumable: document ids are a pure function of a logical key, so a re-run probes before it writes. See
- * docs/NON_SOCIAL_CONTRACTS.md. Actors are seed-ledger personas. The ones these five need beyond the social seed live
+ * docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md. Actors are seed-ledger personas. The ones these five need beyond the social seed live
  * in scripts/seed/personas.non-social.json:   NETWORK=devnet node scripts/seed/provision-seed-identities.mjs \
  * --personas scripts/seed/personas.non-social.json --yapp 150
  */

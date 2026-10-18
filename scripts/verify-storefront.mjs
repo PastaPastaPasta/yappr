@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for the **storefront contract**
- * (`contracts/yappr-storefront-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run
+ * (`contracts/yappr-storefront-contract.json`, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md), run
  * live on a beta.1+ devnet. Actors are seed-ledger personas: a SELLER, a BUYER and
  * a STRANGER. The committed contract is storefront v9, which charges action fees
  * (credits) instead of YAPP, so the actors need credits only.
@@ -24,7 +24,7 @@
  * Storefront topology v6 adds digital products (docs/DIGITAL_PRODUCTS.md):
  * `storeItem.fulfillment`, the seller-only `itemDeliverable` kit and the
  * seller-written `orderDelivery`: s22. v6 is also the mainnet re-cut
- * (docs/NON_SOCIAL_CONTRACTS.md): no YAPP; store, item and review creates
+ * (docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md): no YAPP; store, item and review creates
  * carry an action-fee agreement (s5e, s6b2, s12); stores and items are
  * moderator-deletable (s24); an order's seller is never its buyer (s19); status
  * updates and deliveries store no buyerId (the buyer's feeds are derived
@@ -32,7 +32,7 @@
  * with proved "newest" and "top categories" reads (s23). The cases for the
  * dropped indexes (per-seller averages and order counts, global item
  * rankings, most-reviewed stores) are gone with them.
- * Storefront v7 (docs/STOREFRONT_V7.md) stores `storeItem.variants` as a typed
+ * Storefront v7 (docs/archive/STOREFRONT_V7.md) stores `storeItem.variants` as a typed
  * table: s25 lands the seller's 7 × 2 listing and a 5-axis, 100-combination
  * one with one signature each, replaces every stock cell in one write, reads
  * both back value for value and measures the fees; the JSON schema refuses a

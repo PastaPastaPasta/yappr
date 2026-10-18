@@ -6,8 +6,9 @@ import { DASHPAY_CONTRACT_ID } from '@/lib/constants'
  * (docs/APP_CONNECT_PROFILE.md, docs/APP_CONNECT_CONTRACTS.md).
  *
  * `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` turns it on for a build; anything
- * else (or nothing) keeps the legacy key exchange, which is all PV13 networks
- * (testnet, mainnet) can run. Every `process.env.NEXT_PUBLIC_*` read below is
+ * else (or nothing) keeps the legacy key exchange for current production
+ * defaults. Testnet and sakura support PV14; the release explicitly selects
+ * App Connect at cut-over. Every `process.env.NEXT_PUBLIC_*` read below is
  * spelled out literally so Next inlines it into the static export.
  */
 

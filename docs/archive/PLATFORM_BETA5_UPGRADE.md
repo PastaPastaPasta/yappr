@@ -1,7 +1,7 @@
 # Platform 4.2.0-beta.5: document TTL, richer propertyConstraints, contests before epoch 4
 
 Investigation date: 2026-09-27. This document covers the beta.4 → beta.5 range
-only; everything earlier is in [`PLATFORM_BETA4_UPGRADE.md`](./PLATFORM_BETA4_UPGRADE.md).
+only; everything earlier is in [`PLATFORM_BETA4_UPGRADE.md`](PLATFORM_BETA4_UPGRADE.md).
 It is the record of **PR A** (`beta5/sdk`): the SDK pin, the new consensus
 errors, the proof that the hand-built create still decodes under the stricter
 beta.5 decoder, the DPNS contest-fund change, and an offline validation of every

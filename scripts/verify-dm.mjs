@@ -1,6 +1,6 @@
 /**
  * Registration-day battery for the **DM contract**
- * (`contracts/yappr-dm-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run live on a
+ * (`contracts/yappr-dm-contract.json`, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md), run live on a
  * beta.1+ devnet. Actors are seed-ledger personas: a SENDER, a RECIPIENT and a
  * STRANGER. DMs carry no token cost, so nothing here buys YAPP.
  *

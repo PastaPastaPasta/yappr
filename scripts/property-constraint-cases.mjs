@@ -1,8 +1,8 @@
 /**
  * The `propertyConstraints` rules Yappr's contracts declare, and the documents
  * each must accept and refuse (DocumentPropertyConstraintViolated, 10422).
- * docs/CONTRACTS_BETA5.md explains the beta.5 rules, docs/CONTRACTS_BETA6.md
- * the beta.6 ones (blog `commentsOpen`) and docs/SOCIAL_V10.md the beta.7 ones
+ * docs/archive/CONTRACTS_BETA5.md explains the beta.5 rules, docs/archive/CONTRACTS_BETA6.md
+ * the beta.6 ones (blog `commentsOpen`) and docs/archive/SOCIAL_V10.md the beta.7 ones
  * (social v10 drops the tombstone rule and adds report `resolvedHasStatus`;
  * storefront `storeIsOpen`, QA D-25). Blog v7 (5.0.0-beta.2) adds the post
  * tombstone (`hasBody`, `tombstoneIsBlank`) and `publishedNotAhead`.
@@ -233,7 +233,7 @@ export const CONSTRAINT_CASES = {
     ['storeItem: variants with a currency', 'storeItem', variantItem(baseVariants(), 'EUR'), null],
     ['storeItem: a price with no currency', 'storeItem', { ...baseItem(), basePrice: 1000 }, 'pricedHasCurrency'],
     ['storeItem: variants with no currency', 'storeItem', { ...baseItem(), variants: baseVariants() }, 'pricedHasCurrency'],
-    // Storefront v7: the variants table (docs/STOREFRONT_V7.md). Each column
+    // Storefront v7: the variants table (docs/archive/STOREFRONT_V7.md). Each column
     // stays aligned with its table, and a variant item carries no item-level
     // price or stock.
     ['storeItem: variants with stock, SKU, weight and image lists', 'storeItem', variantItem(baseVariants({ stocks: [5, 0, 2, 9], skus: ['R-S', 'R-L', '', 'B-L'], weights: [100, 180, 100, 180], images: [1, 1, 2, 0] })), null],
@@ -271,7 +271,7 @@ export const CONSTRAINT_CASES = {
     ['orderStatusUpdate: a nonce without ciphertext', 'orderStatusUpdate', { ...baseStatusUpdate(), nonce: bytes(24) }, 'sealed'],
     ...reportCases('storeReport', baseStoreReport, { storeId: id, itemId: id, storeReviewId: id, itemReviewId: id }),
   ],
-  // Pollr v7 (5.0.0-beta.5, docs/NON_SOCIAL_CONTRACTS.md). The poll's rules read
+  // Pollr v7 (5.0.0-beta.5, docs/archive/NON_SOCIAL_CONTRACTS_PRE_RELEASE.md). The poll's rules read
   // the poll alone; `offlineOnly` marks a case a live create cannot reproduce
   // (the schema refuses it first, or its margin is a millisecond of block time).
   // The vote rules read the poll a ballot names: elements 0-9 must each be below
@@ -444,7 +444,7 @@ CONSTRAINT_CASES['yappr-social-contract-v13.json'] = [
 ];
 
 // Social v14 (5.0.0-beta.3) keeps v13's rule names and behaviour, rewritten with `countPresent`
-// (S2-S5 in docs/SOCIAL_V14.md): `private` and `embed` are "0 or all 3 present", `blankTombstone`
+// (S2-S5 in docs/archive/SOCIAL_V14.md): `private` and `embed` are "0 or all 3 present", `blankTombstone`
 // is "none of the content paths present", `live` is "exactly one of deleted and live", `notEmpty`
 // is "text, or at least one of six paths", and report `oneTarget` is "exactly one of postId,
 // replyId and about". A reply no longer stores `parentOwnerId`/`rootOwnerId` (S7: its
@@ -513,7 +513,7 @@ CONSTRAINT_CASES['yappr-social-contract-v14.json'] = [
   ['report: oneTarget with all three targets (countPresent 3)', 'report', { ...baseReport(), replyId: id(), about: 1 }, 'oneTarget'],
 ];
 
-// Social v15 (docs/SOCIAL_V15.md) changes YAPP (non-transferable, costs burn) and the spelling of
+// Social v15 (docs/archive/SOCIAL_V15.md) changes YAPP (non-transferable, costs burn) and the spelling of
 // its byte arrays (shorthands), and its 5.0.0-beta.5 re-cut adds report `staysResolved`: a
 // moderator's field change may move a resolved report to another outcome or edit its note, but
 // never remove its `status` (that would reopen the reporter's withdrawal, deleteConstraints

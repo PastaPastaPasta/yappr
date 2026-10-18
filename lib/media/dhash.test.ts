@@ -139,7 +139,7 @@ describe('hammingDistance and mediaFingerprintChanged', () => {
   })
 
   it('treats more than MEDIA_CHANGED_DISTANCE bits as a changed image', () => {
-    // docs/SOCIAL_V10.md pins 12 or less as "the same image, re-encoded".
+    // docs/archive/SOCIAL_V10.md pins 12 or less as "the same image, re-encoded".
     expect(MEDIA_CHANGED_DISTANCE).toBe(12)
     expect(mediaFingerprintChanged(zero, withBits(12))).toBe(false)
     expect(mediaFingerprintChanged(zero, withBits(13))).toBe(true)
@@ -162,7 +162,7 @@ function grayImage9x8(level: (i: number) => number) {
 }
 
 // The same vectors `run-seeder.mjs --self-test` pins for scripts/seed/media-hash.mjs.
-describe('dHash (docs/SOCIAL_V10.md, pinned)', () => {
+describe('dHash (docs/archive/SOCIAL_V10.md, pinned)', () => {
   it('sets every bit for a left-to-right ramp and none for a flat or falling grid', () => {
     expect(hex(dHashFromLuma(grid((i) => i % 9)))).toBe('ffffffffffffffff')
     expect(hex(dHashFromLuma(grid(() => 7)))).toBe('0000000000000000')

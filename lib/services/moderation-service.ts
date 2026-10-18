@@ -18,7 +18,7 @@ import { signerService } from './signer-service';
 
 /**
  * Contract moderation (Platform 4.2.0-beta.3, protocol version 14;
- * docs/SOCIAL_V8.md), described below for the social contract, where it
+ * docs/archive/SOCIAL_V8.md), described below for the social contract, where it
  * began. Storefront and blog declare the same machinery for their own types
  * (lib/moderated-contracts.ts), each with an instance of its own:
  *
