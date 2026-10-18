@@ -137,6 +137,8 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
     return pending ? { kind: 'pending', pending, checking: false } : { kind: 'intro' }
   })
   const busy = step.kind === 'creating' || step.kind === 'saving' || (step.kind === 'pending' && step.checking)
+  // A check can take a minute; the enrolment outlives the dialog (reopening resumes it), so it may close meanwhile.
+  const closable = step.kind === 'pending' || !busy
 
   const fail = useCallback((error: unknown, back: EnrolStep) => {
     logger.warn('Passkeys: adding a passkey stopped:', error)
@@ -186,7 +188,7 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
   }, [changed, fail])
 
   return (
-    <Modal open onOpenChange={(next) => { if (!next && !busy) onClose() }} className="w-[440px] max-w-[92vw]">
+    <Modal open onOpenChange={(next) => { if (!next && closable) onClose() }} className="w-[440px] max-w-[92vw]">
       {step.kind === 'done' ? (
         <>
           <ModalTitle><CheckCircleIcon className="h-6 w-6 text-green-500" />Passkey added</ModalTitle>
@@ -223,7 +225,7 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
                 {ENROL_BUTTON[step.kind] ?? 'Add a passkey'}
               </Button>
             )}
-            <Button variant="outline" className="w-full" onClick={onClose} disabled={busy}>Not now</Button>
+            <Button variant="outline" className="w-full" onClick={onClose} disabled={!closable}>Not now</Button>
           </div>
         </>
       )}

@@ -469,8 +469,9 @@ class StateTransitionService {
 
   /**
    * The outcome of a create reported unconfirmed: `landed`, `not-recorded`
-   * (proved it never will: its nonce spent and the document proved absent),
-   * or null while that is unknown. A create whose nonce is still free is sent
+   * (its nonce spent and the document proved absent: it never landed, or for
+   * a deletable type it landed and was deleted since), or null while that is
+   * unknown. A create whose nonce is still free is sent
    * again first, with the same signed bytes, so it either executes or its
    * nonce goes, and an outcome can be proved.
    */
@@ -488,7 +489,7 @@ class StateTransitionService {
       await sdk.stateTransitions.waitForResponse(stateTransition);
     } catch (error) {
       // Refused, already in flight, or no verdict: only the proof below decides.
-      logger.debug(`Re-sending ${documentType} ${documentId} gave no verdict:`, extractErrorMessage(error));
+      logger.warn(`Re-sending ${documentType} ${documentId} gave no verdict:`, extractErrorMessage(error));
     }
     return outcome(await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, nonce));
   }
@@ -674,10 +675,11 @@ class StateTransitionService {
         { entropy, identityContractNonce: newNonce }
       );
       const resultDocument = { $id: documentId, $ownerId: ownerId, $type: documentType, ...resolvedData };
-      // Sent with no verdict yet: the receipt lets a caller settle it later (settleCreate).
+      // Sent with no verdict yet: the receipt lets a caller settle it later (settleCreate). Never for
+      // indexOnly: settling reads the document by id, which an indexOnly row never is, so it would read absent.
       const unconfirmed = (): StateTransitionResult => ({
         success: true, transactionHash: documentId, document: resultDocument, confirmed: false,
-        receipt: { contractId, documentType, ownerId, documentId, nonce: newNonce },
+        ...(affectedStateMode ? {} : { receipt: { contractId, documentType, ownerId, documentId, nonce: newNonce } }),
       });
 
       // --- Check for a cached ST from a previous timed-out attempt ---
@@ -863,10 +865,11 @@ class StateTransitionService {
           try { doc = await this.checkDocumentExists(contractId, documentType, documentId); } catch (checkErr) {
             logger.warn(`checkDocumentExists failed for ${documentId}:`, extractErrorMessage(checkErr));
           }
-          if (doc) decided({ success: true });
-          clearPendingSTBytes(documentId);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
+          // Not seen yet: the bytes stay cached, the one thing settleCreate can re-send if the mempool drops them.
           if (!doc) return unconfirmed();
+          decided({ success: true });
+          clearPendingSTBytes(documentId);
           return { success: true, transactionHash: documentId, document: doc, confirmed: true };
         }
         // Non-fatal verification errors (e.g. newly deployed contract not yet propagated
