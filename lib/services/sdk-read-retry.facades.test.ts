@@ -8,7 +8,7 @@ import { EvoSDK } from '@dashevo/evo-sdk'
 import { SDK_FACADES } from './sdk-facades'
 import { isRetriedRead } from './sdk-read-retry'
 
-/** Every method on the evo-sdk 5.0.0-rc.3 facades that signs, broadcasts or waits on a transition. */
+/** Every method on the evo-sdk 5.0.0-rc.4 facades that signs, broadcasts or waits on a transition. */
 const WRITES = [
   'documents.create', 'documents.contestFundToJoin', 'documents.replace', 'documents.delete', 'documents.transfer',
   'documents.purchase', 'documents.setPrice',

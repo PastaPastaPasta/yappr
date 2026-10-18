@@ -148,6 +148,13 @@ describe('verifyAppConnectCandidate', () => {
     expect((await verify({ keys: swapped })).ok).toBe(true)
   })
 
+  it.each([0, 1, 19, 21, 33, 65])('refuses HASH160 grant key data of %i bytes', async (length) => {
+    const data = new Uint8Array(length)
+    data.set(groupKey().data.subarray(0, length))
+    const result = await verify({ keys: [groupKey({ data }), profileKey(), encryptionKey()] })
+    expect(rejection(result)).toEqual({ reason: 'key-not-found', retryable: true, slot: 0 })
+  })
+
   it('honours the identity hint', async () => {
     const hinted = { ...yapprVectorRequest(), identityHint: vectorKeys.ownerId }
     expect((await verify({ request: hinted })).ok).toBe(true)
