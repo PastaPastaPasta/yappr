@@ -17,24 +17,31 @@ export function useInheritedEncryption(isOpen: boolean, replyingTo: Post | null)
   const [source, setSource] = useState<EncryptionSource | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
+  // The post the current answer is for: until it matches, nothing is settled (no public-reply window on open).
+  const [checkedId, setCheckedId] = useState<string | null>(null)
 
   const check = useCallback(async (post: Post, isCurrent: () => boolean = () => true) => {
     setLoading(true)
     setError(false)
     try {
       if (!isPrivatePost(post)) {
-        if (isCurrent()) setSource(null)
+        if (isCurrent()) {
+          setSource(null)
+          setCheckedId(post.id)
+        }
         return
       }
       const { getEncryptionSource } = await import('@/lib/services/post-service')
       const resolved = await getEncryptionSource(post)
       if (!isCurrent()) return
       setSource(resolved)
+      setCheckedId(post.id)
     } catch (err) {
       logger.error('Failed to check inherited encryption:', err)
       if (!isCurrent()) return
       setError(isPrivatePost(post))
       setSource(null)
+      setCheckedId(post.id)
     } finally {
       if (isCurrent()) setLoading(false)
     }
@@ -45,6 +52,7 @@ export function useInheritedEncryption(isOpen: boolean, replyingTo: Post | null)
       setSource(null)
       setLoading(false)
       setError(false)
+      setCheckedId(null)
       return
     }
     let cancelled = false
@@ -58,5 +66,6 @@ export function useInheritedEncryption(isOpen: boolean, replyingTo: Post | null)
     if (replyingTo) check(replyingTo).catch((err) => logger.error('Failed to check inherited encryption:', err))
   }, [replyingTo, check])
 
-  return { source, loading, error, retry }
+  const ready = !!replyingTo && checkedId === replyingTo.id && !loading
+  return { source, loading, error, ready, retry }
 }

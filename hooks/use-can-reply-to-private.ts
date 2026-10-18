@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
 import { logger } from '@/lib/logger'
+import { targetKindOf } from '@/lib/contract-topology'
 
 /**
  * Reply controls follow the local keys available for this post's feed and key generation.
@@ -24,24 +25,31 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
 } {
   const { user } = useAuth()
   const isPrivate = post ? isPrivatePost(post) : false
-  const [resolved, setResolved] = useState<{ postId: string; owner: string } | null>(null)
+  const postId = post?.id
+  const authorId = post?.author.id
+  const isReply = !!post && targetKindOf(post) === 'reply'
+  const rootPostId = post?.rootPostId
+  const rootOwnerId = post?.rootOwnerId
+  const [resolved, setResolved] = useState<{ postId: string; owner: string; certain: boolean } | null>(null)
   useEffect(() => {
-    if (!post || !isPrivate) return
+    if (!postId || !authorId || !isPrivate || !isReply) return
     let live = true
     import('@/lib/services/private-feed-reader')
-      .then(({ privateFeedOwnerOf }) => privateFeedOwnerOf(post, rootPostOwnerId))
-      .then((owner) => {
-        if (live) setResolved({ postId: post.id, owner })
+      .then(({ privateFeedOwnerOf }) => privateFeedOwnerOf({ author: { id: authorId }, targetKind: 'reply', rootPostId, rootOwnerId }, rootPostOwnerId))
+      .then(({ owner, certain }) => {
+        if (!live) return
+        setResolved((known) => (known?.postId === postId && known.owner === owner && known.certain === certain ? known : { postId, owner, certain }))
       })
       .catch((error) => logger.warn('Could not tell whose private feed this is:', error))
     return () => {
       live = false
     }
-  }, [post, isPrivate, rootPostOwnerId])
-  const resolvedOwnerId = resolved && resolved.postId === post?.id ? resolved.owner : null
-  const feedOwnerId = resolvedOwnerId ?? rootPostOwnerId ?? post?.rootOwnerId ?? post?.author.id
-  // The reader settles the owner, but on a tombstoned root it is a guess: keys for any candidate count.
-  const candidates = [...new Set([resolvedOwnerId, rootPostOwnerId, post?.rootOwnerId, post?.author.id])].filter((id): id is string => !!id).join(',')
+  }, [postId, authorId, isPrivate, isReply, rootPostId, rootOwnerId, rootPostOwnerId])
+  const settled = !isReply ? { owner: authorId, certain: true } : resolved?.postId === postId ? resolved : null
+  const feedOwnerId = settled?.owner ?? rootPostOwnerId ?? rootOwnerId ?? authorId
+  // A settled owner is the one; until then, or when it is a guess (a deleted root), keys for any candidate count.
+  const candidates = (settled?.certain ? [settled.owner] : [...new Set([settled?.owner, rootPostOwnerId, rootOwnerId, authorId])])
+    .filter((id): id is string => !!id).join(',')
   const keyGeneration = post?.keyGeneration
   const feed = post?.feed
   const viewerId = user?.identityId

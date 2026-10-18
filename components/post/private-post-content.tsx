@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon, KeyIcon, ArrowPathIcon, ClockIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
 import { Post } from '@/lib/types'
@@ -212,25 +212,32 @@ export function PrivatePostContent({
     mediaGate,
   }
 
+  // Each attempt's answers land only while it is the latest (a slow read for a previous post must not overwrite this one).
+  const attemptRef = useRef(0)
   const attemptDecryption = useCallback(async () => {
+    const attempt = ++attemptRef.current
+    const settle = (next: DecryptionState) => {
+      if (attempt === attemptRef.current) setState(next)
+    }
     if (!privateContentOf(post)) {
-      setState({ status: 'error', message: 'Invalid private post data' })
+      settle({ status: 'error', message: 'Invalid private post data' })
       return
     }
     if (!user) {
-      setState({ status: 'locked', reason: 'no-auth' })
+      settle({ status: 'locked', reason: 'no-auth' })
       return
     }
 
-    setState({ status: 'loading' })
+    settle({ status: 'loading' })
     try {
       const { decryptPostOrReply } = await import('@/lib/services/private-feed-reader')
       const opened = await decryptPostOrReply(post, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined, rootPostOwnerId)
       if (!opened) {
-        setState({ status: 'error', message: 'Invalid private post data' })
+        settle({ status: 'error', message: 'Invalid private post data' })
         return
       }
       const { outcome, feedOwnerId } = opened
+      if (attempt !== attemptRef.current) return
       setEncryptionSourceOwnerId(feedOwnerId)
       const isOwner = user.identityId === feedOwnerId
       if (outcome.ok) {
@@ -243,25 +250,25 @@ export function PrivatePostContent({
             logger.warn('Failed to fetch private follower count:', err)
           }
         }
-        setState({ status: 'decrypted', content: outcome.text, followerCount })
+        settle({ status: 'decrypted', content: outcome.text, followerCount })
         return
       }
       switch (outcome.reason) {
         case 'needs-key':
-          setState({ status: 'locked', reason: isOwner ? 'no-keys' : 'approved-no-keys' })
+          settle({ status: 'locked', reason: isOwner ? 'no-keys' : 'approved-no-keys' })
           return
         case 'revoked':
-          setState({ status: 'locked', reason: 'revoked' })
+          settle({ status: 'locked', reason: 'revoked' })
           return
         case 'history-unavailable':
-          setState({ status: 'locked', reason: 'history' })
+          settle({ status: 'locked', reason: 'history' })
           return
         case 'failed':
-          setState({ status: 'error', message: 'Unable to decrypt this post.' })
+          settle({ status: 'error', message: 'Unable to decrypt this post.' })
           return
       }
       if (isOwner) {
-        setState({ status: 'locked', reason: 'no-keys' })
+        settle({ status: 'locked', reason: 'no-keys' })
         return
       }
       const { privateFeedFollowerService } = await import('@/lib/services')
@@ -270,17 +277,17 @@ export function PrivatePostContent({
         // Seed the shared cache so the author's other posts show pending too
         const { setPrivateFeedRequestStatus } = await import('@/lib/caches/user-status-cache')
         setPrivateFeedRequestStatus(`${user.identityId}:${feedOwnerId}`, 'pending')
-        setState({ status: 'locked', reason: 'pending' })
+        settle({ status: 'locked', reason: 'pending' })
       } else if (accessStatus === 'renewing') {
-        setState({ status: 'locked', reason: 'renewing' })
+        settle({ status: 'locked', reason: 'renewing' })
       } else if (accessStatus === 'approved-no-keys' || accessStatus === 'approved') {
-        setState({ status: 'locked', reason: 'history' })
+        settle({ status: 'locked', reason: 'history' })
       } else {
-        setState({ status: 'locked', reason: accessStatus === 'revoked' ? 'revoked' : 'no-keys' })
+        settle({ status: 'locked', reason: accessStatus === 'revoked' ? 'revoked' : 'no-keys' })
       }
     } catch (error) {
       logger.error('Error decrypting private post:', error)
-      setState({ status: 'error', message: 'Unable to decrypt this post.' })
+      settle({ status: 'error', message: 'Unable to decrypt this post.' })
     }
   }, [post, user, rootPostOwnerId])
 
@@ -291,6 +298,7 @@ export function PrivatePostContent({
 
   // Reset state when post or user changes to avoid stale decryption data
   useEffect(() => {
+    attemptRef.current++
     setState({ status: 'idle' })
     setEncryptionSourceOwnerId(post.rootOwnerId ?? rootPostOwnerId ?? post.author.id)
   }, [post.id, user?.identityId, post.rootOwnerId, rootPostOwnerId, post.author.id])

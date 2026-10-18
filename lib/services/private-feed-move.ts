@@ -258,8 +258,10 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
      * Settle a follower who holds `moved` in the new feed: kept while their old
      * grant is in force, they are not blocked, and the grant did not answer a
      * request made since the old grant (they left and asked again while it was
-     * being written: that is the owner's to approve); otherwise exactly that
-     * grant is revoked, or the move pauses.
+     * being written); otherwise exactly that grant is revoked (fail closed: the
+     * revocation answers that request too, so they ask again), or the move
+     * pauses. With no request at all (they left after it was written) the grant
+     * stays, as any member's does when they leave.
      */
     const settleGranted = async (recipientId: string, moved: GrantDocument): Promise<PrivateFeedResult | null> => {
       const [source, request] = await Promise.all([fetchGrant(ownerId, job.from, recipientId), fetchFollowRequest(ownerId, recipientId)])

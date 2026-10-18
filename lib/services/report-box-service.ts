@@ -13,7 +13,7 @@
  * Reading: a moderator opens the box with their own encryption key (held on
  * this device) and decrypts the reported post or reply read-only.
  */
-import { reportShape, targetKindOf } from '@/lib/contract-topology'
+import { reportShape } from '@/lib/contract-topology'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { logger } from '@/lib/logger'
 import { maxReportBoxRecipients, openReportBox, sealReportBox, type ReportBoxPayload } from '@/lib/report-box'
@@ -74,8 +74,8 @@ async function moderatorKeys(): Promise<{ keys: Uint8Array[]; missing: number }>
  */
 async function feedKeyOf(target: Post, reporterId: string): Promise<{ feedOwnerId: string; cek: Uint8Array } | null> {
   const { privateFeedOwnerOf } = await import('./private-feed-reader')
-  const likely = await privateFeedOwnerOf(target)
-  const other = targetKindOf(target) !== 'reply' ? undefined : likely !== target.author.id ? target.author.id : target.rootOwnerId
+  const { owner: likely, certain } = await privateFeedOwnerOf(target)
+  const other = certain ? undefined : likely !== target.author.id ? target.author.id : target.rootOwnerId
   for (const feedOwnerId of new Set([likely, other])) {
     if (!feedOwnerId) continue
     const cek = await contentKeyOf(feedOwnerId, target.feed as number, target.keyGeneration as number, reporterId)

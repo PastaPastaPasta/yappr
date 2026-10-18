@@ -179,7 +179,7 @@ export function ComposeModal() {
   const hasTagOverLimit = tagProblem !== null
 
   const isValidEncryptedPost = !willBeEncrypted || threadPosts.length <= 1
-  const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) || (!inherited.loading && !inherited.error)
+  const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) || (inherited.ready && !inherited.error)
   // Mainnet v13 (`notYetUsable`): nothing posts until the first team is seated.
   const postingOpen = useModeratedTypeOpen(replyingTo ? 'reply' : 'post', isComposeOpen)
   const canPost =
@@ -410,7 +410,7 @@ export function ComposeModal() {
                             <XMarkIcon className="h-5 w-5" />
                           </IconButton>
                           {user && <UserAvatar userId={user.identityId} size="sm" alt="Your avatar" />}
-                          {privateFeedClientSupported() && !(replyingTo && isPrivatePost(replyingTo) && (inherited.source || inherited.loading || inherited.error)) && (
+                          {privateFeedClientSupported() && !(replyingTo && isPrivatePost(replyingTo) && (!inherited.ready || inherited.source || inherited.error)) && (
                             <VisibilitySelector
                               visibility={visibility}
                               onVisibilityChange={setFirstPostVisibility}

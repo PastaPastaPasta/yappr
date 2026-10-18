@@ -20,7 +20,7 @@
 import { logger } from '@/lib/logger'
 import { privateFeedKeyStore } from './private-feed-key-store'
 import { fetchFeed, fetchFeeds, fetchGrant, fetchGrantsTo, mainFeeds, type GrantDocument, type PrivateFeedDocument } from './private-feed-reads'
-import { identifierToBytes } from './sdk-helpers'
+import { identifierToBytes, RequestDeduplicator } from './sdk-helpers'
 import { targetKindOf } from '@/lib/contract-topology'
 import { cekAt, decryptContent, hashBack, historyKey, openCarry, type ContentKind } from '@/lib/private-feed/crypto'
 import { bytesEqual } from '@/lib/bytes'
@@ -237,29 +237,35 @@ export async function contentKeyFor(
 
 type ThreadedContent = Parameters<typeof privateContentOf>[0] & { rootOwnerId?: string; rootPostId?: string }
 
+// Thread roots, shared by every card of a thread and kept briefly (a failed read too, so cards do not retry it each render).
+const rootReads = new RequestDeduplicator<string, Awaited<ReturnType<typeof readRoot>>>(30_000)
+
+async function readRoot(rootPostId: string) {
+  const { postService } = await import('./post-service')
+  return postService.getPostById(rootPostId, { skipEnrichment: true })
+}
+
 /**
  * Whose feed encrypted a private post or reply: a post's author; for a reply
  * the thread root's author when the root is private (replies inherit its
- * encryption), the replier's own under a public root. The root is read
- * (cached) where it can be; otherwise the reply's own `rootOwnerId`, or
- * `rootOwnerHint` (who started the thread), is the guess.
+ * encryption), the replier's own under a public root. Both are `certain`.
+ * Otherwise it is a guess: a deleted root's author (the tombstone no longer
+ * says whether it was private), else the reply's own `rootOwnerId`, or
+ * `rootOwnerHint` (who started the thread).
  */
-export async function privateFeedOwnerOf(reply: ThreadedContent, rootOwnerHint?: string): Promise<string> {
-  if (targetKindOf(reply) !== 'reply') return reply.author.id
-  if (reply.rootPostId) {
-    const { postService } = await import('./post-service')
-    const root = await postService.getPostById(reply.rootPostId, { skipEnrichment: true })
-    // A tombstone no longer says whether it was private: its author is the likelier owner (the reply's own is tried next).
-    if (root?.deleted) return root.author.id
-    if (root) return root.encryptedContent?.length ? root.author.id : reply.author.id
-  }
-  return reply.rootOwnerId ?? rootOwnerHint ?? reply.author.id
+export async function privateFeedOwnerOf(reply: ThreadedContent, rootOwnerHint?: string): Promise<{ owner: string; certain: boolean }> {
+  if (targetKindOf(reply) !== 'reply') return { owner: reply.author.id, certain: true }
+  const rootPostId = reply.rootPostId
+  const root = rootPostId ? await rootReads.dedupe(rootPostId, () => readRoot(rootPostId)) : null
+  if (root && !root.deleted) return { owner: root.encryptedContent?.length ? root.author.id : reply.author.id, certain: true }
+  return { owner: root?.author.id ?? reply.rootOwnerId ?? rootOwnerHint ?? reply.author.id, certain: false }
 }
 
 /**
  * Decrypt a post or reply, working out whose feed encrypted it (see
- * {@link privateFeedOwnerOf}). When that owner does not open it, a reply's other
- * candidate is tried: the replier's own feed, or the thread's root owner. The
+ * {@link privateFeedOwnerOf}). When that owner is a guess and does not open it,
+ * a reply's other candidate is tried: the replier's own feed, or the thread's
+ * root owner. The
  * content binding rejects a wrong owner. Returns the outcome and the owner it
  * is about (the one that opened it, else the likelier one); null when the
  * content is not private.
@@ -269,11 +275,10 @@ export async function decryptPostOrReply(
 ): Promise<{ outcome: DecryptOutcome; feedOwnerId: string } | null> {
   const content = privateContentOf(post)
   if (!content) return null
-  if (targetKindOf(post) !== 'reply') return { outcome: await decryptPrivateContent(content, viewerId, encryptionPrivateKey), feedOwnerId: post.author.id }
-  const owner = await privateFeedOwnerOf(post, rootOwnerHint)
+  const { owner, certain } = await privateFeedOwnerOf(post, rootOwnerHint)
   const outcome = await decryptPrivateContent({ ...content, feedOwnerId: owner }, viewerId, encryptionPrivateKey)
   const other = owner !== post.author.id ? post.author.id : post.rootOwnerId ?? rootOwnerHint
-  if (outcome.ok || !other || other === owner) return { outcome, feedOwnerId: owner }
+  if (outcome.ok || certain || !other || other === owner) return { outcome, feedOwnerId: owner }
   const second = await decryptPrivateContent({ ...content, feedOwnerId: other }, viewerId, encryptionPrivateKey)
   return second.ok ? { outcome: second, feedOwnerId: other } : { outcome, feedOwnerId: owner }
 }

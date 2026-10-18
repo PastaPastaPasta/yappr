@@ -296,10 +296,13 @@ describe('private feeds v2 end to end', () => {
     // On v17 a reply names no root owner: the root is read, and a private one's author is whose feed it is.
     vi.doMock('./post-service', () => ({ postService: { getPostById: async (id: string) => (id === 'root' ? { author: { id: O }, encryptedContent: new Uint8Array([1]) } : null) } }))
     const fetched = { author: { id: F1 }, targetKind: 'reply' as const, parentId: 'root', rootPostId: 'root', ...sealed.data }
+    expect(await s.reader.privateFeedOwnerOf(fetched)).toEqual({ owner: O, certain: true })
     expect(await s.reader.decryptPostOrReply(fetched, F4, keys[F4])).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
     // Its root since deleted (a tombstone, no longer saying whether it was private): O's feed is still found.
     vi.doMock('./post-service', () => ({ postService: { getPostById: async () => ({ author: { id: O }, deleted: true }) } }))
-    expect(await s.reader.decryptPostOrReply(fetched, F4, keys[F4])).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
+    const underTombstone = { ...fetched, rootPostId: 'deleted-root' }
+    expect(await s.reader.privateFeedOwnerOf(underTombstone)).toEqual({ owner: O, certain: false })
+    expect(await s.reader.decryptPostOrReply(underTombstone, F4, keys[F4])).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
     // A card that names the thread's starter but not the root: still O's feed.
     expect(await s.reader.decryptPostOrReply({ ...fetched, rootPostId: undefined }, F4, keys[F4], O)).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
     vi.doUnmock('./post-service')
@@ -540,6 +543,25 @@ describe('private feeds v2: every authorised path to history', () => {
     expect((await s.owner.privateFeedService.getPendingRequests(P)).map((r) => r.$ownerId)).toContain(F1)
   })
 
+  it('a follower who leaves and asks again while their own grant is being written has that grant taken back', async () => {
+    expect(await s.follower.requestAccess(P, F4)).toEqual({ success: true })
+    await approveBy(P, F4)
+    expect((await s.owner.privateFeedService.openFeed(P, keys[P])).success).toBe(true)
+    expect(await s.move.adoptUnfinishedMove(P)).toBeGreaterThan(0)
+    chain.afterGrant = async () => {
+      const written = chain.docs.filter((doc) => doc.$type === 'privateFeedGrant').at(-1) as Record<string, unknown>
+      expect(await s.follower.leave(P, F4)).toEqual({ success: true })
+      expect(await s.follower.requestAccess(P, F4)).toEqual({ success: true })
+      // Their new request landed before the grant did, after the move read their old one: the grant answered it.
+      const asked = chain.docs.filter((doc) => doc.$type === 'followRequest' && doc.$ownerId === F4).at(-1) as Record<string, unknown>
+      asked.$createdAt = (written.$createdAt as number) - 0.5
+    }
+    expect(await s.move.runMove(P, keys[P])).toEqual({ success: true })
+    expect((await s.owner.privateFeedService.getPrivateFollowers(P)).map((f) => f.recipientId)).not.toContain(F4)
+    // Fail closed: the take-back answers that request too, so they ask again.
+    expect(await s.follower.getAccessStatus(P, F4)).toBe('revoked')
+  })
+
   it('a renewal planned from a feed another device has renewed since is refused', async () => {
     const current = (await s.owner.privateFeedService.getCurrentFeed(P, { fresh: true }))?.feed as number
     expect(await s.owner.privateFeedService.openFeed(P, keys[P], { after: current - 1 })).toMatchObject({ success: false, errorCode: 'FEED_CHANGED' })
@@ -569,9 +591,14 @@ describe('private feeds v2: every authorised path to history', () => {
   it('a private reply under a public root opens in the replier\'s own feed, whatever the card names as the root\'s owner', async () => {
     const sealed = await s.owner.prepareOwnerEncryption(P, 'my own reply', 'reply', undefined, keys[P])
     if (!sealed.success) throw new Error(sealed.error)
-    vi.doMock('./post-service', () => ({ postService: { getPostById: async () => ({ author: { id: O } }) } }))
+    vi.doMock('./post-service', () => ({ postService: { getPostById: async (id: string) => (id === 'public-root' ? { author: { id: O } } : null) } }))
     const reply = { author: { id: P }, targetKind: 'reply' as const, parentId: 'public-root', rootPostId: 'public-root', rootOwnerId: O, ...sealed.data }
+    expect(await s.reader.privateFeedOwnerOf(reply, O)).toEqual({ owner: P, certain: true })
     expect(await s.reader.decryptPostOrReply(reply, P, keys[P], O)).toEqual({ outcome: { ok: true, text: 'my own reply' }, feedOwnerId: P })
+    // Its root unreadable: the guess (the root owner it names) fails the content binding, and the replier's own feed opens it.
+    const unread = { ...reply, parentId: 'lost-root', rootPostId: 'lost-root' }
+    expect(await s.reader.privateFeedOwnerOf(unread, O)).toEqual({ owner: O, certain: false })
+    expect(await s.reader.decryptPostOrReply(unread, P, keys[P], O)).toEqual({ outcome: { ok: true, text: 'my own reply' }, feedOwnerId: P })
     vi.doUnmock('./post-service')
   })
 
