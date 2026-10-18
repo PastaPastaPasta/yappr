@@ -179,8 +179,8 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
     try {
       const result = await privateFeedFollowerService.syncFollowedFeeds(identityId)
       if (!context.isSessionActive()) {
-        logger.debug('Auth: Private feed sync completed but session ended - clearing keys')
-        privateFeedKeyStore.signOut(identityId)
+        logger.debug('Auth: Private feed sync completed but session ended - fencing pending writes')
+        privateFeedKeyStore.signOutLocally(identityId)
         return
       }
       // A follower move this device started and did not finish (a reload or a crash), or one the
@@ -191,7 +191,7 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
         const moved = await runMove(identityId, getEncryptionKeyBytes(identityId) ?? undefined)
         if (!moved.success) logger.debug('Auth: Private feed follower move paused:', moved.error)
         // Signed out while it ran: the sign-out stopped its key writes; this covers a session ended without one.
-        if (!context.isSessionActive()) privateFeedKeyStore.signOut(identityId)
+        if (!context.isSessionActive()) privateFeedKeyStore.signOutLocally(identityId)
       }
 
       if (result.synced.length > 0 || result.failed.length > 0) {

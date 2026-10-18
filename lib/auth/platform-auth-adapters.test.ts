@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { PlatformAuthController } from '../../vendor/platform-auth/src/core/controller'
 
+const syncFollowedFeeds = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/services/private-feed-follower-service', () => ({ privateFeedFollowerService: { syncFollowedFeeds } }))
+vi.mock('@/lib/services/block-service', () => ({ blockService: { initializeBlockData: async () => undefined } }))
+
 function installWindow() {
   const data = new Map<string, string>()
   const localStorage = {
@@ -11,7 +15,7 @@ function installWindow() {
     removeItem: (k: string) => { data.delete(k) },
     clear: () => data.clear(),
   }
-  vi.stubGlobal('window', { localStorage, addEventListener: () => undefined, removeEventListener: () => undefined })
+  vi.stubGlobal('window', { localStorage, setTimeout: () => 0, addEventListener: () => undefined, removeEventListener: () => undefined })
   vi.stubGlobal('localStorage', localStorage)
 }
 
@@ -61,5 +65,31 @@ describe('remote sign-out cleanup', () => {
     expect(await deps.sessionStore.getSession()).toMatchObject({ user })
     privateFeedKeyStore.signOut(identityId)
     expect(privateFeedKeyStore.historyKeys(identityId, 'owner', 1)).toBeNull()
+  })
+})
+
+
+describe('stale post-login work', () => {
+  it('does not erase another tab’s newly saved keys when a feed sync finishes after sign-out', async () => {
+    const { createYapprPlatformAuthDependencies } = await import('./platform-auth-adapters')
+    const { privateFeedKeyStore } = await import('@/lib/services/private-feed-key-store')
+    let finish = () => undefined
+    syncFollowedFeeds.mockImplementation(() => new Promise((resolve) => {
+      finish = () => resolve({ synced: [], failed: [], upToDate: [] })
+    }))
+    const identityId = 'stale-sync-owner'
+    let active = true
+    const deps = createYapprPlatformAuthDependencies()
+    await deps.sideEffects?.runPostLogin(identityId, { delayMs: 0, isSessionActive: () => active })
+    await vi.waitFor(() => expect(syncFollowedFeeds).toHaveBeenCalledWith(identityId))
+    active = false
+    const keys = { finalKeyGeneration: 1, cek: new Uint8Array(32).fill(5), history: new Uint8Array(32).fill(6) }
+    privateFeedKeyStore.storeHistoryKeys(identityId, 'owner', 1, keys)
+    const fenced = vi.spyOn(privateFeedKeyStore, 'signOutLocally')
+    finish()
+    await vi.waitFor(() => expect(fenced).toHaveBeenCalledWith(identityId))
+    privateFeedKeyStore.storeHistoryKeys(identityId, 'owner', 1, { ...keys, finalKeyGeneration: 2 })
+    expect(privateFeedKeyStore.historyKeys(identityId, 'owner', 1)).toEqual(keys)
+    fenced.mockRestore()
   })
 })
