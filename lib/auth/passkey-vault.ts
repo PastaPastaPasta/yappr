@@ -475,8 +475,6 @@ function writePending(pending: PendingPasskey): boolean {
 function refreshPending(pending: PendingPasskey): boolean {
   const stored = restorePending(pending.identityId)
   if (!stored || !bytesEqual(stored.credentialId, pending.credentialId)) return false
-  // A recipient key that changed under this tab is storage's word again, not the passkey's.
-  if (stored.sentTo && pending.sentTo && !bytesEqual(stored.sentTo, pending.sentTo)) pending.verified = false
   pending.sentTo = stored.sentTo
   pending.receipts = mergeReceipts(stored.receipts, pending.receipts)
   return true
@@ -490,7 +488,7 @@ function refreshPending(pending: PendingPasskey): boolean {
  */
 async function sendEntry(pending: PendingPasskey, recipientKey: Uint8Array, retireOnVerdict: boolean, replacesNonce?: bigint): Promise<boolean> {
   const { contractId } = requireSetup()
-  if (!pending.verified) throw new PasskeyVaultError('failed', 'the passkey has not vouched for this recipient key')
+  if (!pending.vouchedFor || !bytesEqual(pending.vouchedFor, recipientKey)) throw new PasskeyVaultError('failed', 'the passkey has not vouched for this recipient key')
   const bundle = await sessionBundle(pending.identityId)
   let sealed
   try {
@@ -519,24 +517,29 @@ async function sendEntry(pending: PendingPasskey, recipientKey: Uint8Array, reti
     // with it, unless another tab sent a later write for it meanwhile (that one may land); a later write
     // only drops its own receipt, as earlier writes may still land.
     const mine = sent?.documentId
-    const ended = await withIdentityWriteLock(pending.identityId, YAPPR_PASSKEY_VAULT_CONTRACT_ID, async () => {
+    // Published (held in storage) before the send: other tabs could take it up from then on.
+    const published = held === 'held'
+    const outcome = await withIdentityWriteLock(pending.identityId, YAPPR_PASSKEY_VAULT_CONTRACT_ID, async () => {
       const stored = restorePending(pending.identityId)
       const ours = stored !== null && bytesEqual(stored.credentialId, pending.credentialId)
+      // Gone since it was published: another tab settled it, maybe by saving a later write.
+      if (published && !ours) return 'settled-elsewhere'
       const others = ours ? (stored.receipts ?? []).filter((receipt) => receipt.documentId !== mine) : []
       if (retireOnVerdict && others.length === 0) {
         pending.receipts = []
         retirePending(pending.identityId, pending.credentialId)
-        return true
+        return 'ended'
       }
       if (ours && mine !== undefined) {
         pending.sentTo = stored.sentTo
         pending.receipts = others
         writePending(pending)
       }
-      return false
+      return 'still-out'
     })
+    if (outcome === 'settled-elsewhere') throw new SettledElsewhere()
     // Another tab's later write is still out: this passkey may yet be saved.
-    if (retireOnVerdict && !ended) throw new PasskeyVaultError('pending')
+    if (retireOnVerdict && outcome === 'still-out') throw new PasskeyVaultError('pending')
     throw error
   }
   if (!written.confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipientKey)) return false
@@ -560,11 +563,12 @@ export interface PendingPasskey {
   /** Set once its entry was sent: the recipient key it was sealed to, for {@link passkeySaved}. */
   sentTo?: Uint8Array
   /**
-   * Whether `sentTo` came from this passkey's PRF in this tab. One restored
-   * from storage is not until {@link confirmPendingEnrolment} proves it: the
-   * session is never sealed again to a recipient key only storage vouches for.
+   * The recipient key this passkey's PRF gave in this tab: the only key the
+   * session is ever sealed to. One restored from storage has none until
+   * {@link confirmPendingEnrolment} gets it, so whatever storage says
+   * (`sentTo`), the session never goes to a key only storage vouches for.
    */
-  verified?: boolean
+  vouchedFor?: Uint8Array
   /** Every write sent for its entry, which settle it ({@link checkPendingEnrolment}). */
   receipts?: CreateReceipt[]
 }
@@ -610,7 +614,12 @@ export async function startPasskeyEnrolment(user: { identityId: string; username
  * `pending` (and its PRF output) so Confirm can be tapped again; every other
  * outcome wipes it.
  */
-/** A later write for a pending enrolment found its record gone: another tab settled it. Nothing was sent. */
+/** Whether the session may go to the record's recipient key: the one this passkey's PRF gave in this tab. */
+function vouchedForRecord(pending: PendingPasskey): boolean {
+  return pending.vouchedFor !== undefined && pending.sentTo !== undefined && bytesEqual(pending.vouchedFor, pending.sentTo)
+}
+
+/** A pending enrolment's record went while this tab was working on it: another tab settled it. */
 class SettledElsewhere extends Error {
   constructor() {
     super('the enrolment was settled elsewhere')
@@ -650,13 +659,18 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey, stillWante
     const recipient = recipientFromPrf(prf)
     recipient.privateKey.fill(0)
     // Derived from the passkey's own PRF output, right here.
-    pending.verified = true
+    pending.vouchedFor = recipient.publicKey.slice()
     // Remembered as this device's only once it is confirmed (passkeySaved): one that never lands leaves no marker.
     if (!await sendEntry(pending, recipient.publicKey, true)) {
       unconfirmed = true
       throw new PasskeyVaultError('pending')
     }
   } catch (error) {
+    // Settled in another tab meanwhile, maybe saved: never dropped on this write's verdict.
+    if (error instanceof SettledElsewhere) {
+      if (await passkeySaved(pending)) return
+      throw new PasskeyVaultError('failed', error.message)
+    }
     // Otherwise it was never sent, or a verdict says it never lands (refused, proved not recorded, another
     // passkey still saving here, no PRF): it signs in to nothing.
     if (!unconfirmed) await abandonPasskeyEnrolment(pending)
@@ -748,7 +762,7 @@ export async function checkPendingEnrolment(pending: PendingPasskey): Promise<En
     }
     // Only a passkey this tab knows to be the one on record is dropped from the provider: a record read from
     // storage may name anyone's public credential id (the user's working passkey, another account's).
-    if (pending.verified) await dropFromProvider(pending.credentialId)
+    if (vouchedForRecord(pending)) await dropFromProvider(pending.credentialId)
     return 'not-saved'
   }
   // Every write so far is refused for now (its nonce still free) or proved never recorded: save it again
@@ -757,12 +771,14 @@ export async function checkPendingEnrolment(pending: PendingPasskey): Promise<En
   // nonce from the first one on, and byCredential is unique: whichever lands is the entry, and it opens
   // with this passkey.
   if (!pending.sentTo) return 'waiting'
-  // Restored from storage: the passkey vouches for the recipient key first (a gesture, so the UI asks).
-  if (!pending.verified) return 'confirm'
+  // Restored from storage, or its record's recipient key changed since: the passkey vouches for it first
+  // (a gesture, so the UI asks). The session only ever goes to the key the passkey gave.
+  const recipient = pending.vouchedFor
+  if (!recipient || !bytesEqual(recipient, pending.sentTo)) return 'confirm'
   const stalled = receipts.filter((_, index) => outcomes[index] === 'stalled').map((receipt) => receipt.nonce)
   const replaces = stalled.length > 0 ? stalled.reduce((low, nonce) => (nonce < low ? nonce : low)) : undefined
   try {
-    return await sendEntry(pending, pending.sentTo, false, replaces) ? 'saved' : 'waiting'
+    return await sendEntry(pending, recipient, false, replaces) ? 'saved' : 'waiting'
   } catch (error) {
     if (!(error instanceof SettledElsewhere)) throw error
     // Settled in another tab between the proofs and this write: nothing was sent, and nothing is dropped here.
@@ -808,7 +824,7 @@ export async function confirmPendingEnrolment(pending: PendingPasskey): Promise<
       })
       throw new PasskeyVaultError('failed', 'the passkey does not open what this browser recorded for it')
     }
-    pending.verified = true
+    pending.vouchedFor = recipient.publicKey.slice()
   } finally {
     prf?.fill(0)
   }

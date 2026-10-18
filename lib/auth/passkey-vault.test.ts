@@ -28,7 +28,7 @@ const auth = vi.hoisted(() => ({
 }))
 const port = vi.hoisted(() => ({ getIdentityFresh: vi.fn() }))
 const vault = vi.hoisted(() => ({
-  find: vi.fn(async () => null),
+  find: vi.fn(async (): Promise<unknown> => null),
   add: vi.fn(),
   settleAdd: vi.fn(),
   list: vi.fn(async () => []),
@@ -153,7 +153,7 @@ describe('a pending enrolment restored from storage', () => {
 
     // Sealing starts (it reads the session's keys; none here, so it stops there).
     await expect(settled(confirmPendingEnrolment(pending))).rejects.toThrow()
-    expect(pending.verified).toBe(true)
+    expect(pending.vouchedFor).toEqual(recipientFromPrf(prfOf(7)).publicKey)
     expect(stores.getPrivateKey).toHaveBeenCalledWith(IDENTITY)
     expect(unsettledPasskey(IDENTITY)).not.toBeNull()
   })
@@ -189,7 +189,7 @@ describe('a pending enrolment restored from storage, settled', () => {
     const other = bs58.encode(new Uint8Array(32).fill(8))
     auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: handleOf(other), prfOutput: prfOf(7) })
     await expect(settled(confirmPendingEnrolment(pending))).rejects.toBeInstanceOf(PasskeyVaultError)
-    expect(pending.verified).not.toBe(true)
+    expect(pending.vouchedFor).toBeUndefined()
     expect(stores.getPrivateKey).not.toHaveBeenCalled()
     expect(unsettledPasskey(IDENTITY)).toBeNull()
     // That passkey is the other account's: never dropped from the provider.
@@ -200,7 +200,7 @@ describe('a pending enrolment restored from storage, settled', () => {
     const pending = restored(7)
     auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: null, prfOutput: prfOf(7) })
     await expect(settled(confirmPendingEnrolment(pending))).rejects.toMatchObject({ code: 'not-yappr' })
-    expect(pending.verified).not.toBe(true)
+    expect(pending.vouchedFor).toBeUndefined()
     expect(stores.getPrivateKey).not.toHaveBeenCalled()
     expect(unsettledPasskey(IDENTITY)).not.toBeNull()
   })
@@ -209,7 +209,7 @@ describe('a pending enrolment restored from storage, settled', () => {
     const pending = restored(7)
     auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(7) })
     await settled(confirmPendingEnrolment(pending)).catch(() => undefined)
-    expect(pending.verified).toBe(true)
+    expect(pending.vouchedFor).toEqual(recipientFromPrf(prfOf(7)).publicKey)
     // This tab holds write R1; another tab saved a later write and retired the record while R1 was being proved.
     pending.receipts = [{ contractId: VAULT, documentType: 'vaultEntry', ownerId: IDENTITY, documentId: 'doc-1', nonce: BigInt(5), transition: new Uint8Array([1]) }]
     vault.settleAdd.mockImplementation(async () => {
@@ -246,16 +246,38 @@ describe('a pending enrolment restored from storage, settled', () => {
     expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
   })
 
+  it('never seals to a recipient key storage swapped in during a refused re-save', async () => {
+    keySession()
+    const pending = restored(7)
+    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(7) })
+    pending.receipts = [receipt('doc-1')]
+    rememberUnsettledPasskey(IDENTITY, { vault: VAULT, credentialId: bytesToBase64Url(CREDENTIAL), recipientKey: bytesToHex(recipientFromPrf(prfOf(7)).publicKey), receipts: [storedReceipt('doc-1')] })
+    vault.settleAdd.mockResolvedValue('stalled')
+    const attacker = recipientFromPrf(prfOf(66)).publicKey
+    const sealedTo: Uint8Array[] = []
+    vault.add.mockImplementation(async (_owner: string, entry: { recipientKey: Uint8Array }, options: { beforeBroadcast?: (sent: unknown) => void }) => {
+      sealedTo.push(entry.recipientKey)
+      options.beforeBroadcast?.(receipt(`doc-${sealedTo.length + 1}`))
+      // Someone able to write this site's storage swaps the record's recipient key, then the write is refused.
+      rememberUnsettledPasskey(IDENTITY, { vault: VAULT, credentialId: bytesToBase64Url(CREDENTIAL), recipientKey: bytesToHex(attacker), receipts: [storedReceipt('doc-1'), storedReceipt(`doc-${sealedTo.length + 1}`)] })
+      throw new Error('refused')
+    })
+    await expect(settled(confirmPendingEnrolment(pending))).rejects.toThrow('refused')
+
+    // The next check never seals to the swapped key: the passkey has to vouch again.
+    expect(await settled(checkPendingEnrolment(pending))).toBe('confirm')
+    expect(sealedTo).toEqual([recipientFromPrf(prfOf(7)).publicKey])
+  })
+
   it('treats a recipient key changed under the tab as unvouched again', async () => {
     const pending = restored(7)
     auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(7) })
     await settled(confirmPendingEnrolment(pending)).catch(() => undefined)
-    expect(pending.verified).toBe(true)
+    expect(pending.vouchedFor).toEqual(recipientFromPrf(prfOf(7)).publicKey)
     // Another tab (or anyone with this site's storage) rewrites the record's recipient key.
     plant(recipientFromPrf(prfOf(66)).publicKey)
     vi.clearAllMocks()
     expect(await settled(checkPendingEnrolment(pending))).toBe('confirm')
-    expect(pending.verified).toBe(false)
     expect(stores.getPrivateKey).not.toHaveBeenCalled()
   })
 })
@@ -320,6 +342,28 @@ describe('an enrolment left unfinished', () => {
     await expect(settled(finishPasskeyEnrolment(pending))).rejects.toMatchObject({ code: 'pending' })
     expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
     expect(unsettledPasskey(IDENTITY)?.receipts.map((sent) => sent.documentId)).toEqual(['doc-2'])
+  })
+
+  it('never drops a passkey whose refused first write was overtaken by another tab saving it', async () => {
+    keySession()
+    const recipient = recipientFromPrf(prfOf(5)).publicKey
+    vault.add.mockImplementation(async (_owner: string, _entry: unknown, options: { beforeBroadcast?: (sent: unknown) => void }) => {
+      options.beforeBroadcast?.(receipt('doc-1'))
+      // Another tab resumed it, saved a later write, and retired the record before this refusal is cleaned up.
+      forgetUnsettledPasskey(IDENTITY, bytesToBase64Url(CREDENTIAL))
+      throw new Error('refused')
+    })
+    vault.find.mockResolvedValue({ recipientKey: recipient })
+    // A fresh PRF output each sign-in (each is wiped once used).
+    auth.getPasskeyPrf.mockImplementation(async () => ({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(5) }))
+
+    await expect(settled(finishPasskeyEnrolment(made()))).resolves.toBeUndefined()
+    expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
+
+    // Not visible here yet: still never dropped.
+    vault.find.mockResolvedValue(null)
+    await expect(settled(finishPasskeyEnrolment(made()))).rejects.toBeInstanceOf(PasskeyVaultError)
+    expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
   })
 
   it('wipes its PRF output and drops the never-sent passkey when the confirming sign-in fails', async () => {

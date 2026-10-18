@@ -228,7 +228,7 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           return
         }
         // Once the passkey has vouched, a refused re-save never asks for it again.
-        setStep({ kind: 'pending', pending, checking: false, needsConfirm: confirming && !pending.verified, message: cancelled ? undefined : enrolErrorCopy(error) ?? undefined })
+        setStep({ kind: 'pending', pending, checking: false, needsConfirm: confirming && !pending.vouchedFor, message: cancelled ? undefined : enrolErrorCopy(error) ?? undefined })
       })
   }, [changed, fail])
 
