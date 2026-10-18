@@ -82,8 +82,8 @@ Do not treat rc.4 as release clearance for this issue.
 ## Client behavior and exposure
 
 - **Store directory:** Top rated and Most ordered fall back to the ordinary
-  newest active stores when ranking fails. A quiet status line explains the
-  order. A successful empty ranking remains empty. A failed fallback shows
+  newest active stores when ranking or store hydration fails. A quiet status
+  line explains the order. A successful empty ranking remains empty. A failed fallback shows
   neutral unavailable copy, rather than claiming there are no stores.
 - **Store categories and item rankings:** failed reads remain empty and never
   poison the ranking cache. Categories/suggestions disappear; items remain
@@ -106,7 +106,9 @@ Do not treat rc.4 as release clearance for this issue.
   counts. Unfollow/moderation can drain groups; no average index exists.
   Discovery now requests strict ranking errors so its existing list error
   state shows neutral unavailable copy instead of false empty claims. Failures
-  are not cached; other service callers keep fail-soft behavior.
+  are not cached; ranked blog/post hydration also propagates read failures,
+  while genuinely missing documents remain absent. Other service callers keep
+  fail-soft behavior.
 - **Pollr:** no averageable/ranked index and no ranked/HAVING read. Ballot
   counters are not the global ranked-average shape; no change is needed.
 - **HAVING:** there is no application HAVING read in the current source. The

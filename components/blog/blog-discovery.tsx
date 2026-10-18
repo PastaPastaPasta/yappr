@@ -58,7 +58,7 @@ async function rankedBlogs(sort: Exclude<BlogSort, 'newest'>): Promise<Blog[]> {
     ? await blogStatsService.mostFollowedBlogs(100, { throwOnError: true })
     : await blogStatsService.trendingBlogs(100, { throwOnError: true })
   if (ranked.length === 0) return []
-  const byId = new Map((await blogService.getMany(ranked.map((entry) => entry.id))).map((blog) => [blog.id, blog]))
+  const byId = new Map((await blogService.getMany(ranked.map((entry) => entry.id), { throwOnError: true })).map((blog) => [blog.id, blog]))
   return ranked.flatMap((entry) => {
     const blog = byId.get(entry.id)
     return blog ? [blog] : []

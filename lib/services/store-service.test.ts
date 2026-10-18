@@ -44,6 +44,25 @@ describe('directory ranking resilience', () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it.each(['topRated', 'mostOrdered'] as const)('falls back when %s succeeds but hydration fails', async (sort) => {
+    ranked.mockResolvedValue({ entries: [{ groupValue: 'store', value: 5n }] });
+    query.mockRejectedValueOnce(new Error('batch offline'));
+    get.mockRejectedValue(new Error('individual offline'));
+    const page = await storeService.getDiscoveryStores(sort);
+    expect(page).toMatchObject({ rankingUnavailable: true, stores: [{ id: 'store' }] });
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates fallback failure after a successful ranking and failed hydration', async () => {
+    ranked.mockResolvedValue({ entries: [{ groupValue: 'store', value: 5n }] });
+    query.mockRejectedValue(new Error('batch offline'));
+    get.mockRejectedValue(new Error('individual offline'));
+    await expect(storeService.getDiscoveryStores('topRated')).rejects.toThrow('batch offline');
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
   it('propagates a failed fallback so the directory can show its unavailable state', async () => {
     ranked.mockRejectedValue(error);
     query.mockRejectedValue(new Error('directory offline'));

@@ -41,7 +41,7 @@ function latestPage(cursor?: string): Promise<{ posts: RankedPost[]; nextCursor?
 async function discussedPosts(): Promise<RankedPost[]> {
   const ranked = await blogStatsService.mostDiscussedPosts(DISCUSSED_LIMIT, { throwOnError: true })
   if (ranked.length === 0) return []
-  const byId = new Map((await blogPostService.getMany(ranked.map((entry) => entry.id))).map((post) => [post.id, post]))
+  const byId = new Map((await blogPostService.getMany(ranked.map((entry) => entry.id), { throwOnError: true })).map((post) => [post.id, post]))
   return ranked.flatMap((entry) => {
     const post = byId.get(entry.id)
     return post && isPublishedBlogPost(post) ? [{ ...post, recentComments: entry.count }] : []
