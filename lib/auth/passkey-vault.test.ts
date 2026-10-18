@@ -195,6 +195,24 @@ describe('a pending enrolment restored from storage, settled', () => {
     expect(unsettledPasskey(IDENTITY)).not.toBeNull()
   })
 
+  it('never drops the passkey when another tab ended the enrolment while these writes were being proved', async () => {
+    const pending = restored(7)
+    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(7) })
+    await settled(confirmPendingEnrolment(pending)).catch(() => undefined)
+    expect(pending.verified).toBe(true)
+    // This tab holds write R1; another tab saved a later write and retired the record while R1 was being proved.
+    pending.receipts = [{ contractId: VAULT, documentType: 'vaultEntry', ownerId: IDENTITY, documentId: 'doc-1', nonce: BigInt(5), transition: new Uint8Array([1]) }]
+    vault.settleAdd.mockImplementation(async () => {
+      forgetUnsettledPasskey(IDENTITY, bytesToBase64Url(CREDENTIAL))
+      return 'not-recorded'
+    })
+    vi.clearAllMocks()
+    // Refreshed before settling: put the record back so this tab reaches the proof.
+    rememberUnsettledPasskey(IDENTITY, { vault: VAULT, credentialId: bytesToBase64Url(CREDENTIAL), recipientKey: bytesToHex(recipientFromPrf(prfOf(7)).publicKey), receipts: [{ contractId: VAULT, documentType: 'vaultEntry', ownerId: IDENTITY, documentId: 'doc-1', nonce: '5', transition: 'AQ' }] })
+    await settled(checkPendingEnrolment(pending))
+    expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
+  })
+
   it('treats a recipient key changed under the tab as unvouched again', async () => {
     const pending = restored(7)
     auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(7) })

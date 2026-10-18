@@ -710,11 +710,18 @@ export async function checkPendingEnrolment(pending: PendingPasskey): Promise<En
     const proved = new Set(receipts.map((receipt) => receipt.documentId))
     const retired = await withIdentityWriteLock(pending.identityId, YAPPR_PASSKEY_VAULT_CONTRACT_ID, async () => {
       const stored = restorePending(pending.identityId)
-      if (stored && (!bytesEqual(stored.credentialId, pending.credentialId) || (stored.receipts ?? []).some((receipt) => !proved.has(receipt.documentId)))) return false
+      if (!stored || !bytesEqual(stored.credentialId, pending.credentialId)) return 'settled-elsewhere'
+      if ((stored.receipts ?? []).some((receipt) => !proved.has(receipt.documentId))) return 'more-sent'
       retirePending(pending.identityId, pending.credentialId)
-      return true
+      return 'retired'
     })
-    if (!retired) return 'waiting'
+    if (retired === 'more-sent') return 'waiting'
+    if (retired === 'settled-elsewhere') {
+      // Another tab ended it meanwhile, maybe by saving a later write: the writes proved here say nothing of
+      // that one, so the passkey is never dropped on their word.
+      if (pendingEnrolments.get(pending.identityId) === pending) pendingEnrolments.delete(pending.identityId)
+      return await passkeySaved(pending) ? 'saved' : 'not-saved'
+    }
     // Only a passkey this tab knows to be the one on record is dropped from the provider: a record read from
     // storage may name anyone's public credential id (the user's working passkey, another account's).
     if (pending.verified) await dropFromProvider(pending.credentialId)
