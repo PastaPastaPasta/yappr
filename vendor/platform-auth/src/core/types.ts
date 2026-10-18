@@ -32,36 +32,6 @@ export interface AuthSessionSnapshot {
   timestamp: number
 }
 
-export interface PasskeyCredentialDescriptor {
-  credentialId: Uint8Array
-  prfInput: Uint8Array
-  rpId: string
-}
-
-export interface PasskeyPrfAssertionResult {
-  credentialId: Uint8Array
-  credentialIdHash: Uint8Array
-  prfInput: Uint8Array
-  prfOutput: Uint8Array
-  rpId: string
-}
-
-export interface DiscoverablePasskeySelectionResult {
-  credentialId: Uint8Array
-  credentialIdHash: Uint8Array
-  userHandle?: string
-  rpId: string
-}
-
-export interface EnrollPasskeyOptions {
-  identityId: string
-  username: string
-  displayName: string
-  label: string
-  rpId?: string
-  rpName?: string
-}
-
 export interface SessionStore {
   getSession(): MaybePromise<AuthSessionSnapshot | null>
   setSession(snapshot: AuthSessionSnapshot): MaybePromise<void>

@@ -67,6 +67,21 @@ describe('createWalletSignIn', () => {
     expect(keyRing.slot()).toBe('alice')
   })
 
+  it('a sign-in that began earlier (a passkey, before its picker) is superseded by a session that won meanwhile', async () => {
+    const auth = controller()
+    const keyRing = ring()
+    let settle = () => undefined as void
+    const wallet = createWalletSignIn({ controller: auth, sessions: keyRing.sessions, settled: () => new Promise<void>((resolve) => { settle = resolve }) })
+    const began = auth.sessionEpoch()
+    const passkey = wallet.signIn(grant('alice'), began)
+    // Another sign-in commits while this one waits for a sign-out to settle.
+    await auth.loginWithKeyRing('bob')
+    settle()
+    await expect(passkey).rejects.toBeInstanceOf(SupersededSignInError)
+    expect(auth.getState().user?.identityId).toBe('bob')
+    expect(keyRing.adopted).toEqual([])
+  })
+
   it('never installs a queued wallet sign-in over a typed-key session that completed while it waited (#734)', async () => {
     const auth = controller()
     const keyRing = ring()

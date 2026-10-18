@@ -230,8 +230,11 @@ class TokenService {
    */
   async canSignTokenTransitions(identityId: string): Promise<boolean> {
     try {
-      const { getPrivateKey } = await import('../secure-storage');
-      const wif = getPrivateKey(identityId)?.trim();
+      const { getPrivateKeyRecord } = await import('../secure-storage');
+      const record = getPrivateKeyRecord(identityId);
+      // One read: the key and its provenance from the same record.
+      if (!record || record.fromPasskey) return false;
+      const wif = record.wif.trim();
       if (!wif) return false;
       const sdk = await getEvoSdk();
       const identity = await sdk.identities.fetch(identityId);
@@ -384,14 +387,17 @@ class TokenService {
       return { ...(await signerService.createSignerFromWasmKey(signingKey.wif, signingKey.identityKey)), signingKey };
     }
     if (!wif) {
-      const { getPrivateKey } = await import('../secure-storage');
-      const stored = getPrivateKey(identityId);
+      const { getPrivateKeyRecord } = await import('../secure-storage');
+      // One read: the key that signs and its provenance come from the same record.
+      const stored = getPrivateKeyRecord(identityId);
       if (!stored) {
         const { promptForAuthKey } = await import('../auth-utils');
         promptForAuthKey();
         throw new Error('Private key not found — please re-authenticate');
       }
-      wif = stored.trim();
+      // A moderator's CRITICAL key from a passkey never signs token transitions: they ask for the key itself.
+      if (stored.fromPasskey) throw new Error('critical key required');
+      wif = stored.wif.trim();
     }
 
     const sdk = await getEvoSdk();

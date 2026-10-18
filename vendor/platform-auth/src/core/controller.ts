@@ -63,6 +63,18 @@ export interface KeyRingLoginOptions {
    * or sign-out since then supersedes it. Defaults to the epoch at this call.
    */
   since?: number
+  /**
+   * Key sign-ins only. Runs inside the session commit, after the session was
+   * saved, immediately before the key is stored; never for a superseded or
+   * failed commit. For metadata a stored key must never lack (say, that it
+   * came from a passkey).
+   */
+  beforeStore?: () => void
+  /**
+   * Key sign-ins only. Runs inside the commit immediately after the key was
+   * stored, so a failed store leaves the previous key's metadata as it was.
+   */
+  afterStore?: () => void
 }
 
 function buildIntent(kind: PlatformAuthIntent['kind'], identityId: string, username?: string): PlatformAuthIntent {
@@ -256,7 +268,7 @@ export class PlatformAuthController {
   public async loginWithAuthKey(
     identityId: string,
     privateKey: string,
-    options: Pick<KeyRingLoginOptions, 'skipUsernameCheck' | 'since'> = {},
+    options: Pick<KeyRingLoginOptions, 'skipUsernameCheck' | 'since' | 'beforeStore' | 'afterStore'> = {},
   ): Promise<PlatformAuthResult> {
     if (!identityId || !privateKey) {
       this.patchState({ error: 'Identity ID and private key are required' })
@@ -322,7 +334,11 @@ export class PlatformAuthController {
         if (this.epoch !== startedAt || (options.stillCurrent && !options.stillCurrent())) throw new SupersededSignInError()
         this.epoch += 1
         await this.persistSessionUser(user)
-        if (privateKey !== null) await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
+        if (privateKey !== null) {
+          options.beforeStore?.()
+          await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
+          options.afterStore?.()
+        }
         await this.deps.clientIdentity?.setIdentity(identity.id)
         this.patchState({
           user,

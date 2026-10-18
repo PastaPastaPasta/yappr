@@ -62,7 +62,7 @@ lib/
   feed/         feed loaders and post resolution (quotes, reply parents, reposts)
   compose/      turning a draft thread into documents
   link-preview/ URL recognition, HTML meta parsing, proxied fetch
-  crypto/       AES-GCM, ECDH, WIF, identity-key matching, vault
+  crypto/       AES-GCM, ECDH, WIF, identity-key matching, HPKE (passkey vault)
   caches/       TtlMap and the status caches the hooks share
   stores/       app-wide zustand stores
   contract-topology.ts   which contract shape this build targets and what it allows

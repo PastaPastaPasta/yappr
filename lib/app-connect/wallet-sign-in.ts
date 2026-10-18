@@ -15,7 +15,8 @@ export interface WalletSignInSessions {
   current(identityId: string): AppConnectSession | null
 }
 
-function wipeGrant(grant: AppConnectGrant): void {
+/** Overwrites every private key a grant carries. */
+export function wipeGrant(grant: AppConnectGrant): void {
   for (const key of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
 }
 
@@ -39,10 +40,15 @@ export function createWalletSignIn({ controller, sessions, settled }: {
 }) {
   const queue = serialQueue()
 
-  /** Stores the grant as this tab's key ring and signs its identity in. */
-  async function signIn(grant: AppConnectGrant): Promise<PlatformAuthResult> {
+  /**
+   * Stores the grant as this tab's key ring and signs its identity in.
+   * `began`: the epoch the sign-in began on when that was before this call
+   * (a passkey sign-in, before its picker); a sign-in or sign-out since then,
+   * even one that settles while this waits, supersedes it.
+   */
+  async function signIn(grant: AppConnectGrant, began?: number): Promise<PlatformAuthResult> {
     await settled()
-    const since = controller.sessionEpoch()
+    const since = began ?? controller.sessionEpoch()
     return queue(async () => {
       if (controller.sessionEpoch() !== since) {
         wipeGrant(grant)

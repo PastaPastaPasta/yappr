@@ -36,7 +36,7 @@ This keeps the auth engine reusable across multiple apps with different onboardi
 - `PlatformAuthController`: the core auth orchestration engine
 - `PlatformAuthProvider` and `usePlatformAuth`: React bindings for consuming controller state
 - typed adapter interfaces: contracts for storage, identity lookup, usernames and side effects
-- browser helpers: a secret store and WebAuthn PRF passkey primitives (not wired into the controller; there is no password or passkey vault)
+- browser helpers: a secret store and WebAuthn PRF passkey ceremonies (create, discoverable or restricted assertion, provider signals); the controller knows nothing of passkeys, and the app builds its passkey vault on them
 - Yappr-compatible key-exchange module: protocol helpers, transport polling, registration helpers, and React hooks
 
 ## Integration Model

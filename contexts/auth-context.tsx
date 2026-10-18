@@ -6,7 +6,7 @@ import { signInDestination } from '@/lib/auth/intent-destination'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { usePathname, useRouter } from 'next/navigation'
-import { PlatformAuthController, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
+import { PlatformAuthController, SupersededSignInError, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { currentRoute, dpnsRegisterHref } from '@/lib/auth/return-to'
 import { keyNetwork } from '@/lib/constants'
@@ -15,7 +15,19 @@ import { useUsernameModal } from '@/hooks/use-username-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
-import { createWalletSignIn } from '@/lib/app-connect/wallet-sign-in'
+import { createWalletSignIn, wipeGrant } from '@/lib/app-connect/wallet-sign-in'
+import { restorePasskeyMessagingKey, unlockWithPasskey, type PasskeyRenewal } from '@/lib/auth/passkey-vault'
+import { expectPasskeyCriticalKey, settlePasskeyCriticalKey } from '@/lib/secure-storage'
+import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompts'
+
+/**
+ * A sign-in finished (not a restore): the passkey prompts decide whether to
+ * offer one or ask to update them, bound to the session `epoch` it left.
+ */
+function noteSignIn(intent: PlatformAuthIntent, method: SignInMethod, epoch: number): void {
+  // A username prompt still means a signed-in session: the passkey dialogs wait for it to close.
+  if (intent.kind !== 'logged-out') usePasskeyPrompts.getState().noteSignIn(intent.identityId, method, epoch)
+}
 
 export interface AuthUser {
   identityId: string
@@ -42,6 +54,13 @@ interface AuthContextType {
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean }) => Promise<void>
   /** Signs in with a verified App Connect grant (the user already confirmed the identity). Wipes the grant's keys. */
   loginWithAppConnect: (grant: AppConnectGrant) => Promise<PlatformAuthIntent>
+  /**
+   * Signs in with a passkey: the browser's picker, then the session the passkey
+   * holds (docs/PASSKEY_VAULT.md). Resolves null once signed in, or with the
+   * identity whose wallet sign-in needs renewing first. Rejects with a
+   * PasskeyVaultError when the passkey cannot sign in.
+   */
+  loginWithPasskey: () => Promise<PasskeyRenewal | null>
   /** Replaces the signed-in identity's App Connect keys with a renewed grant from the same identity. */
   renewWithAppConnect: (grant: AppConnectGrant) => Promise<void>
   logout: () => Promise<void>
@@ -149,21 +168,71 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     else router.push(next.href)
   }, [router])
 
-  const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
+  /**
+   * `since`: the session epoch the sign-in began on; any sign-in or sign-out
+   * after it supersedes this one. Defaults to now.
+   */
+  const signInWithKey = useCallback(async (
+    identityId: string,
+    privateKey: string,
+    options: { skipUsernameCheck?: boolean; since?: number; beforeStore?: () => void; afterStore?: () => void } = {},
+  ): Promise<PlatformAuthIntent> => {
     // Taken before the key check: a sign-in or sign-out while it runs supersedes this one.
-    const since = controller.sessionEpoch()
+    const since = options.since ?? controller.sessionEpoch()
     // The same rule restore and signing apply, on keys read fresh: a disabled or wrong-level key never starts a session.
     const check = await keyValidationService.validatePrivateKey(privateKey, identityId, keyNetwork(), { fresh: true })
     if (!check.isValid) throw new Error(check.error ?? 'This key cannot sign in to this account')
-    const result = await controller.loginWithAuthKey(identityId, privateKey, { ...options, since })
+    const result = await controller.loginWithAuthKey(identityId, privateKey, { skipUsernameCheck: options.skipUsernameCheck, since, beforeStore: options.beforeStore, afterStore: options.afterStore })
     await applyIntent(result.intent)
+    return result.intent
   }, [applyIntent, controller])
 
-  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
-    const result = await walletSignIn.signIn(grant)
+  const login = useCallback(async (identityId: string, privateKey: string, options: { skipUsernameCheck?: boolean } = {}) => {
+    const intent = await signInWithKey(identityId, privateKey, options)
+    noteSignIn(intent, 'key', controller.sessionEpoch())
+  }, [controller, signInWithKey])
+
+  const signInWithGrant = useCallback(async (grant: AppConnectGrant, since?: number): Promise<PlatformAuthIntent> => {
+    const result = await walletSignIn.signIn(grant, since)
     await applyIntent(result.intent)
     return result.intent
   }, [applyIntent, walletSignIn])
+
+  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
+    const intent = await signInWithGrant(grant)
+    noteSignIn(intent, 'wallet', controller.sessionEpoch())
+    return intent
+  }, [controller, signInWithGrant])
+
+  const loginWithPasskey = useCallback(async (): Promise<PasskeyRenewal | null> => {
+    // Taken before the passkey picker: a sign-in or sign-out while the passkey opens supersedes it.
+    const since = controller.sessionEpoch()
+    const unlocked = await unlockWithPasskey()
+    switch (unlocked.kind) {
+      case 'renew':
+        return { identityId: unlocked.identityId, reason: unlocked.reason }
+      case 'key-ring':
+        if (controller.sessionEpoch() !== since) {
+          wipeGrant(unlocked.grant)
+          throw new SupersededSignInError()
+        }
+        noteSignIn(await signInWithGrant(unlocked.grant, since), 'passkey', controller.sessionEpoch())
+        return null
+      case 'raw-key': {
+        // A CRITICAL key from a passkey is stored as one tagged record (lib/secure-storage.ts), so the key never
+        // exists without its provenance. Expected only inside the commit that stores it, right before.
+        const { identityId, signInWif, critical } = unlocked
+        const intent = await signInWithKey(identityId, signInWif, {
+          since,
+          beforeStore: () => { if (critical) expectPasskeyCriticalKey(identityId, signInWif) },
+          afterStore: () => settlePasskeyCriticalKey(identityId),
+        })
+        if (unlocked.messagingWif) restorePasskeyMessagingKey(unlocked.identityId, unlocked.messagingWif)
+        noteSignIn(intent, 'passkey', controller.sessionEpoch())
+        return null
+      }
+    }
+  }, [controller, signInWithGrant, signInWithKey])
 
   const renewWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
     // A revocation sign-out may still be running: let it finish first, so it
@@ -173,6 +242,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Only the signed-in identity's own renewal, and only while that session stands.
       await walletSignIn.renew(grant)
       useAppConnectStatus.getState().dismissRenewRequired()
+      // The renewal superseded the old wallet keys: passkeys still holding them need updating.
+      usePasskeyPrompts.getState().noteSignIn(grant.identityId, 'renewal', controller.sessionEpoch())
       return
     }
     // Signed out meanwhile: the renewal signs back in, and a sign-in prompt that
@@ -209,6 +280,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     error: controllerState.error,
     login,
     loginWithAppConnect,
+    loginWithPasskey,
     renewWithAppConnect,
     logout,
     updateDPNSUsername,
@@ -222,6 +294,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     controllerState.user,
     login,
     loginWithAppConnect,
+    loginWithPasskey,
     logout,
     refreshBalance,
     refreshDpnsUsernames,

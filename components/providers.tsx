@@ -16,6 +16,7 @@ import { StarterGrantModal } from '@/components/token/starter-grant-modal'
 import { QueryInspectorGate } from '@/components/query-inspector/inspector-gate'
 import { yappIsLocked } from '@/lib/contract-topology'
 import { AppConnectSessionNotices } from '@/components/auth/app-connect-session-notices'
+import { PasskeyPrompts } from '@/components/auth/passkey-prompts'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -41,6 +42,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <EncryptionKeyModal />
           <QueryInspectorGate />
           {isAppConnectBuild() && <AppConnectSessionNotices />}
+          <PasskeyPrompts />
         </AuthProvider>
       </SdkProvider>
     </ThemeProvider>

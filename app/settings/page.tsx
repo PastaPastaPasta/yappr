@@ -33,6 +33,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { EncryptionKeySettings } from '@/components/settings/encryption-key-settings'
 import { WalletConnectionsSettings } from '@/components/settings/wallet-connections-settings'
+import { PasskeySettings } from '@/components/settings/passkey-settings'
 import { useWalletSession } from '@/components/auth/wallet-encryption-key-prompt'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
 import { PrivateFeedSettings } from '@/components/settings/private-feed-settings'
@@ -400,6 +401,8 @@ function SettingsPage() {
 
   const renderPrivacySettings = () => (
     <div className="p-6 space-y-6">
+      <PasskeySettings />
+
       {/* A wallet sign-in manages its keys in the wallet instead */}
       {walletSession
         ? <WalletConnectionsSettings />

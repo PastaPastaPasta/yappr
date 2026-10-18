@@ -216,6 +216,108 @@ describe('createDocument with an inconclusive outcome', () => {
   })
 })
 
+describe('settleCreate (a receipt for a create reported unconfirmed)', () => {
+  /** A create whose wait timed out, with its nonce still free on Platform and its bytes cached. */
+  async function unconfirmedCreate() {
+    sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
+    sdk.stateTransitions.waitForResponse.mockRejectedValueOnce(new Error('waitForResponse timed out'))
+    sdk.identities.contractNonceWithProof.mockResolvedValueOnce(proved(n(100), 50))
+    const result = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'hi' })
+    expect(result).toMatchObject({ success: true, confirmed: false, receipt: { contractId: CONTRACT, documentType: 'post', ownerId: OWNER, documentId: 'doc-101', nonce: n(101), transition: new Uint8Array([1]) } })
+    if (!result.receipt) throw new Error('no receipt')
+    return result.receipt
+  }
+
+  it('re-sends the same bytes while the nonce is free, and reports the create landed once it is proved there', async () => {
+    const receipt = await unconfirmedCreate()
+    sdk.identities.contractNonceWithProof.mockResolvedValueOnce(proved(n(100), 51)).mockResolvedValue(proved(n(101), 52))
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+    sdk.documents.getWithProof.mockResolvedValue(proved({ $id: 'doc-101' }, 52))
+
+    expect(await stateTransitionService.settleCreate(receipt)).toBe('landed')
+    // The one create, then the re-send of its bytes: never a new transition.
+    expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-sends from the receipt even once the replay cache has expired', async () => {
+    const receipt = await unconfirmedCreate()
+    // The 24 h replay cache is gone (expired, or evicted by the cap): the receipt still holds the bytes.
+    storage.clear()
+    sdk.identities.contractNonceWithProof.mockResolvedValueOnce(proved(n(100), 51)).mockResolvedValue(proved(n(101), 52))
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+    sdk.documents.getWithProof.mockResolvedValue(proved({ $id: 'doc-101' }, 52))
+
+    expect(await stateTransitionService.settleCreate(receipt)).toBe('landed')
+    expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(2)
+  })
+
+  it('hands beforeBroadcast the receipt before anything is sent, and a throw there sends nothing', async () => {
+    const seen: unknown[] = []
+    const result = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'hi' }, {
+      beforeBroadcast: (receipt) => {
+        seen.push(receipt)
+        throw new Error('could not keep it')
+      },
+    })
+
+    expect(seen).toEqual([expect.objectContaining({ documentId: 'doc-101', nonce: n(101), transition: new Uint8Array([1]) })])
+    expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ success: false })
+  })
+
+  it('reports not-recorded only on a proof of absence once the nonce is spent', async () => {
+    const receipt = await unconfirmedCreate()
+    sdk.identities.contractNonceWithProof.mockResolvedValue(proved(n(101), 60))
+    sdk.documents.getWithProof.mockResolvedValue(proved(undefined, 60))
+
+    expect(await stateTransitionService.settleCreate(receipt)).toBe('not-recorded')
+  })
+
+  it('reports a create stalled when its re-send is refused and its nonce stays free', async () => {
+    const receipt = await unconfirmedCreate()
+    sdk.identities.contractNonceWithProof.mockResolvedValue(proved(n(100), 60))
+    sdk.stateTransitions.broadcastStateTransition.mockRejectedValue({ code: 40100, message: 'invalid signature', name: 'Consensus' })
+
+    expect(await stateTransitionService.settleCreate(receipt)).toBe('stalled')
+  })
+
+  it('does not call a create stalled on a nonce clash, which a write that landed also gets', async () => {
+    const receipt = await unconfirmedCreate()
+    sdk.identities.contractNonceWithProof.mockResolvedValue(proved(n(100), 60))
+    sdk.stateTransitions.broadcastStateTransition.mockRejectedValue(new Error(NONCE_AT_TIP))
+
+    expect(await stateTransitionService.settleCreate(receipt)).toBeNull()
+  })
+
+  it('signs a replacement at the stalled create\'s own nonce, and sends nothing once that nonce is spent', async () => {
+    await unconfirmedCreate()
+    // The stalled create took 101; the tip moved past it (102 executed) with 101 still missing.
+    const missing101 = n(102) | (BigInt(1) << BigInt(40))
+    sdk.identities.contractNonce.mockResolvedValue(missing101)
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+    const replacement = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'again' }, { replacesNonce: n(101) })
+    expect(replacement).toMatchObject({ success: true, confirmed: true, transactionHash: 'doc-101' })
+
+    // 101 spent: there is nothing left to replace, and nothing is sent.
+    sdk.identities.contractNonce.mockResolvedValue(n(102))
+    sdk.stateTransitions.broadcastStateTransition.mockClear()
+    vi.useFakeTimers()
+    const late = stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'late' }, { replacesNonce: n(101) })
+    await vi.runAllTimersAsync()
+    expect(await late).toEqual({ success: false, error: PENDING_WRITE_ERROR })
+    vi.useRealTimers()
+    expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
+  })
+
+  it('leaves the outcome unknown when the reads fail, however often they are tried', async () => {
+    const receipt = await unconfirmedCreate()
+    sdk.identities.contractNonceWithProof.mockRejectedValue(new Error('transport error: unavailable'))
+    sdk.stateTransitions.waitForResponse.mockRejectedValue(new Error('rate limited'))
+
+    expect(await stateTransitionService.settleCreate(receipt)).toBeNull()
+  })
+})
+
 describe('createDocument beforeBroadcast (DM v5 counts a send at its broadcast)', () => {
   const ME = new Uint8Array(32).fill(7)
   const me = bs58.encode(ME)

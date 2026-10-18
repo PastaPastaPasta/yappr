@@ -147,7 +147,7 @@ Singleton service classes handle all Dash Platform operations:
 ### Authentication System
 - `contexts/auth-context.tsx` manages user sessions and exposes the `withAuth` HOC
 - It delegates to the vendored `platform-auth` controller (`vendor/platform-auth`) through the adapters in `lib/auth/platform-auth-adapters.ts`
-- Private keys live in the browser secret store built in `lib/secure-storage.ts` (localStorage, keys prefixed `yappr_secure_`). Sign-in is App Connect (wallet) or a typed-in private key (`lib/auth/login-key.ts`); a CRITICAL key typed in on an App Connect build stays in the tab only. There is no password or passkey sign-in: the passkey vault is being redesigned (DECISIONS D10)
+- Private keys live in the browser secret store built in `lib/secure-storage.ts` (localStorage, keys prefixed `yappr_secure_`). Sign-in is App Connect (wallet) or a typed-in private key (`lib/auth/login-key.ts`); a CRITICAL key typed in on an App Connect build stays in the tab only. A passkey can sign either session back in on yap.pr: `lib/auth/passkey-vault.ts` seals the session's keys to the passkey's PRF key in the passkey vault contract (`docs/PASSKEY_VAULT.md`)
 - State transitions retrieve private keys on-demand for signing
 
 ### Data Contract Structure
@@ -155,8 +155,9 @@ Singleton service classes handle all Dash Platform operations:
 The release set is social **v17**, blocks, **DM v5**, **blog v9**,
 **storefront v10**, and **pollr v8**, registered behind an App Connect anchor
 and permanent contract group. `scripts/app-connect-set.mjs` owns the files,
-hashes and registration order. The passkey-vault work package adds its own
-member; do not resurrect the password-era vault, key backup, key exchange or
+hashes and registration order. The passkey vault
+(`contracts/yappr-passkey-vault-contract.json`, [docs/PASSKEY_VAULT.md](docs/PASSKEY_VAULT.md))
+joins as its own member; do not resurrect the password-era vault, key backup, key exchange or
 DM v4 for the release (D9/D10).
 
 **Keep deployment states separate.** Today's production default still selects

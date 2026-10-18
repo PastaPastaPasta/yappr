@@ -6,7 +6,7 @@ import { sealAppConnectPayload } from './crypto'
 import type { AppConnectRequest } from './request'
 import { DASHPAY_CONTRACT_ID, NINETY_DAYS_MS, VECTOR_CREATED_AT, seed, vectorKeys, yapprVectorRequest } from './test-helpers'
 import { KeyPurpose, KeySecurityLevel, KeyType, type AppConnectIdentityKey, type AppConnectIdentityPort } from './types'
-import { verifyAppConnectCandidate, type AppConnectVerification } from './verify'
+import { verifyAppConnectCandidate, verifyAppConnectKeys, type AppConnectVerification } from './verify'
 
 const OWNER = bs58.encode(vectorKeys.ownerId)
 const STRANGER_BYTES = seed('stranger')
@@ -216,5 +216,46 @@ describe('verifyAppConnectCandidate', () => {
     const request = yapprVectorRequest()
     request.authBindings[0] = { ...request.authBindings[0], securityLevel: KeySecurityLevel.HIGH }
     expect(rejection(await verify({ request })).reason).toBe('key-level')
+  })
+})
+
+describe('verifyAppConnectKeys (keys kept from an earlier grant)', () => {
+  const port = (keys: AppConnectIdentityKey[], budgets: Record<number, bigint | undefined> = { 5: 49_000_000_000n, 6: 900_000_000n }): AppConnectIdentityPort => ({
+    getIdentityFresh: async (id) => (id === OWNER ? { id, publicKeys: keys } : null),
+    remainingBudgets: async (_id, keyIds) => new Map(keyIds.map((keyId) => [keyId, budgets[keyId]])),
+    contractKeys: async (id, contractId, purpose) => (id === OWNER && contractId === APP_ID && purpose === KeyPurpose.ENCRYPTION ? [encryptionKey()] : []),
+    groupInfo: async () => null,
+  })
+  const kept = () => [vectorKeys.groupKey.slice(), vectorKeys.profileKey.slice(), vectorKeys.encryptionKey.slice()]
+
+  it('rebuilds the grant from chain', async () => {
+    const result = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: OWNER, identity: port([masterKey, groupKey(), profileKey(), encryptionKey()]), now: NOW, privateKeys: kept() })
+    if (!result.ok) throw new Error(`rejected: ${result.reason}`)
+    expect(result.grant.authKeys.map((k) => k.key.id)).toEqual([5, 6])
+    expect(result.grant.encryptionKeys.map((k) => k.key.id)).toEqual([7])
+  })
+
+  it('says an expired or spent grant is expired or spent, and wipes the keys', async () => {
+    const keys = kept()
+    const expired = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: OWNER, identity: port([groupKey({ expiresAt: NOW - 1 }), profileKey(), encryptionKey()]), now: NOW, privateKeys: keys })
+    expect(rejection(expired).reason).toBe('key-expired')
+    expect(keys.every((key) => key.every((byte) => byte === 0))).toBe(true)
+    const spent = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: OWNER, identity: port([groupKey(), profileKey(), encryptionKey()], { 5: 0n, 6: 1n }), now: NOW, privateKeys: kept() })
+    expect(rejection(spent).reason).toBe('budget-exhausted')
+  })
+
+  it('takes the caller\'s expiry margin: a key 30 minutes from expiry is fine at the signing margin, not the default hour', async () => {
+    const keys = [groupKey({ expiresAt: NOW + 30 * 60_000 }), profileKey(), encryptionKey()]
+    const atDefault = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: OWNER, identity: port(keys), now: NOW, privateKeys: kept() })
+    expect(rejection(atDefault).reason).toBe('key-expired')
+    const atSigning = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: OWNER, identity: port(keys), now: NOW, expiryMarginMs: 5 * 60_000, privateKeys: kept() })
+    expect(atSigning.ok).toBe(true)
+  })
+
+  it('refuses keys the wallet has since revoked, or that belong to another identity', async () => {
+    const revoked = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: OWNER, identity: port([groupKey({ disabledAt: NOW - 1 }), profileKey(), encryptionKey()]), now: NOW, privateKeys: kept() })
+    expect(rejection(revoked).reason).toBe('key-disabled')
+    const stranger = await verifyAppConnectKeys({ request: yapprVectorRequest(), ownerId: STRANGER, identity: port([groupKey()]), now: NOW, privateKeys: kept() })
+    expect(rejection(stranger).reason).toBe('identity-not-found')
   })
 })
