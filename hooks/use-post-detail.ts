@@ -441,31 +441,41 @@ export function usePostDetail({
         if (!isCurrent()) return
       }
 
-      const fetchedIds = new Set(replies.map(reply => reply.id))
-      const collectIds = (threads: ReplyThread[]): void => {
+      const fetchedReplies = new Map(replies.map(reply => [reply.id, reply]))
+      const collectReplies = (threads: ReplyThread[]): void => {
         for (const thread of threads) {
-          fetchedIds.add(thread.content.id)
-          collectIds(thread.nestedReplies)
+          fetchedReplies.set(thread.content.id, thread.content)
+          collectReplies(thread.nestedReplies)
         }
       }
-      if (!hasFlatThreads()) collectIds(replyThreads)
+      if (!hasFlatThreads()) collectReplies(replyThreads)
+      const fetchedIds = new Set(fetchedReplies.keys())
       const acceptedReplies = new Map(acceptedRepliesRef.current)
-      // Captured ancestry preserves a rendering path across pagination, but
-      // successful refreshes must reflect later removals and tombstones. Query
-      // missing ancestors afresh rather than accepting the document cache.
-      const ancestorIds = [...new Set([...acceptedReplies.values()]
-        .flatMap(entry => entry.ancestors.map(parent => parent.id)))].filter(id => !fetchedIds.has(id))
-      const ancestorPages = await mapLimit(chunk(ancestorIds, MAX_IN_CLAUSE_VALUES), 2, ids =>
+      // Confirmation stops indexing retries, but saved content must still
+      // reflect later edits and deletions. Refresh confirmed overlays and their
+      // missing ancestry without accepting cached documents as fresh evidence.
+      const retainedIds = [...new Set([...acceptedReplies].flatMap(([id, entry]) =>
+        [...(entry.confirmed ? [id] : []), ...entry.ancestors.map(parent => parent.id)]))]
+        .filter(id => !fetchedIds.has(id))
+      const retainedPages = await mapLimit(chunk(retainedIds, MAX_IN_CLAUSE_VALUES), 2, ids =>
         replyService.query({ where: [['$id', 'in', ids]], limit: ids.length }))
       if (!isCurrent()) return
-      const currentAncestors = new Map(ancestorPages.flatMap(page => page.documents).map(reply => [reply.id, reply]))
+      const currentRetained = new Map(retainedPages.flatMap(page => page.documents).map(reply => [reply.id, reply]))
       for (const [id, entry] of acceptedReplies) {
+        const freshReply = fetchedReplies.get(id) ?? currentRetained.get(id)
+        if (entry.confirmed && !freshReply) {
+          acceptedReplies.delete(id)
+          continue
+        }
         const ancestors = entry.ancestors.flatMap(parent => {
-          const current = fetchedIds.has(parent.id) ? parent : currentAncestors.get(parent.id)
+          const current = fetchedReplies.get(parent.id) ?? currentRetained.get(parent.id)
           return current ? [current] : []
         })
         if (fetchedIds.has(id) && ancestors.every(parent => fetchedIds.has(parent.id))) acceptedReplies.delete(id)
-        else acceptedReplies.set(id, { ...entry, ancestors, confirmed: entry.confirmed || fetchedIds.has(id) })
+        else acceptedReplies.set(id, {
+          ...entry, ancestors, reply: freshReply ?? entry.reply,
+          confirmed: entry.confirmed || fetchedIds.has(id),
+        })
       }
       const pendingIds = [...acceptedReplies].filter(([, entry]) => !entry.confirmed).map(([id]) => id)
       // A new reply can be beyond page one. Confirm its id without reading the
@@ -549,14 +559,22 @@ export function usePostDetail({
       // A parent on an earlier page is present, so only deleted ones prove absent.
       const deletedParents = await deletedReplyParents(result.documents)
       if (threadRootIdRef.current !== rootId || loadRequestIdRef.current !== requestId) return
+      const fetched = new Map(result.documents.map(reply => [reply.id, reply]))
+      for (const [id, entry] of acceptedRepliesRef.current) {
+        acceptedRepliesRef.current.set(id, {
+          ...entry,
+          reply: fetched.get(id) ?? entry.reply,
+          confirmed: entry.confirmed || fetched.has(id),
+          ancestors: entry.ancestors.map(parent => fetched.get(parent.id) ?? parent),
+        })
+      }
       replyCursorRef.current = result.nextCursor
       setHasMoreReplies(Boolean(result.nextCursor))
       setError(null)
 
       setState(current => {
         if (!current.post) return current
-        const known = new Set(current.replies.map((reply) => reply.id))
-        const loaded = [...current.replies, ...result.documents.filter((reply) => !known.has(reply.id))]
+        const loaded = [...current.replies.filter(reply => !fetched.has(reply.id)), ...result.documents]
         const merged = [...deletedReplyStubs(loaded, deletedParents), ...loaded]
         return { ...current, replies: merged, replyThreads: assembleFlatThread(current.post, merged) }
       })

@@ -273,3 +273,42 @@ for (const change of ['removed', 'tombstone', 'outage', 'proof-outage']) {
     await expect(parent.locator('article[data-reply-id="accepted"]')).toHaveCount(1)
   })
 }
+
+for (const change of ['removed', 'tombstone', 'outage', 'pagination']) {
+  test(`T-SOC-01: confirmed beyond-page-one reply reflects ${change} without navigation`, async ({ page }) => {
+    test.skip(change === 'pagination' && process.env.TQA_SOCIAL_TOPOLOGY === 'v2', 'Only flat contracts paginate the thread')
+    await page.clock.install()
+    await page.goto(`/tqa.html?fixture=thread&scenario=confirmed-${change}`)
+    await expect(page.getByText('Continuation', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Publish accepted reply' }).click()
+    // The first read fails; the bounded retry confirms the off-page reply.
+    await expect(page.getByRole('alert')).toContainText('Replies could not be refreshed.')
+    await page.clock.runFor(1100)
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    const reply = page.locator('article[data-reply-id="accepted"]')
+    await expect(reply).toHaveText('Accepted nested reply')
+    if (change === 'pagination') {
+      await page.getByRole('button', { name: 'Load more', exact: true }).click()
+      await page.getByRole('button', { name: 'Change accepted reply', exact: true }).click()
+    } else {
+      await page.getByRole('button', { name: 'Change accepted reply', exact: true }).click()
+      await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    }
+    if (change === 'outage') {
+      await expect(page.getByRole('alert')).toContainText('Replies could not be refreshed.')
+      await expect(reply).toHaveText('Accepted nested reply')
+      await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    }
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    // Flat trees prune leaf tombstones; v2 renders the returned tombstone.
+    if (change === 'removed' || process.env.TQA_SOCIAL_TOPOLOGY !== 'v2') await expect(reply).toHaveCount(0)
+    else {
+      await expect(reply).toHaveAttribute('data-deleted', 'true')
+      await expect(reply).toHaveText('')
+    }
+    // A later refresh must not restore the old accepted-write snapshot.
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    await expect(page.getByText('Settled', { exact: true })).toBeVisible()
+    await expect(page.getByText('Accepted nested reply', { exact: true })).toHaveCount(0)
+  })
+}

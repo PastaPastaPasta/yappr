@@ -24,6 +24,9 @@ let replyBookmarkReads = 0
 let postReads = 0
 let release: (() => void) | undefined
 let held = false
+let replyChanged = false
+let changedReplyReads = 0
+export function changeAcceptedReply() { replyChanged = true }
 let ancestorChanged = false
 let changedAncestorReads = 0
 let changedAncestorProofs = 0
@@ -58,14 +61,15 @@ export const postService = {
 export const replyToPost = (reply: Reply) => ({ ...reply, targetKind: 'reply' as const, quotes: 0 })
 export const PostCard = ({ post }: { post: Post }) => <article data-target-kind={post.targetKind}>{post.content}<span>Post content</span></article>
 export const replyService = {
-  getReplies: async () => {
+  getReplies: async (_rootId?: string, options?: { startAfter?: string }) => {
     reads++
+    if (options?.startAfter && scenario === 'confirmed-pagination') return { documents: [{ ...acceptedReply, deleted: true, content: '' }] }
     if (published && scenario === 'slow' && !held) {
       held = true
       await new Promise<void>(resolve => { release = resolve })
     }
     if (published && scenario !== 'slow' && scenario !== 'post-outage' && !scenario?.startsWith('ancestor-') && (scenario === 'outage' || reads === 2)) throw new TypeError('Failed to fetch')
-    const beyondPage = scenario === 'paged' || scenario === 'indexing'
+    const beyondPage = scenario === 'paged' || scenario === 'indexing' || scenario?.startsWith('confirmed-')
     // After a failed proof the next page can omit the child too: its saved
     // overlay must survive the failed attempt, not just its rendered state.
     if (published && scenario === 'ancestor-proof-outage' && changedAncestorProofs > 0) return { documents: [], nextCursor: 'page2' }
@@ -78,9 +82,16 @@ export const replyService = {
   query: async ({ where }: { where: [string, string, string[]][] }) => {
     if (ancestorChanged && scenario === 'ancestor-outage' && ++changedAncestorReads === 1) throw new TypeError('Failed to fetch')
     const ids = where[0][2]
-    const documents = [continuation, descendant].filter(reply => ids.includes(reply.id))
-    if (!ancestorChanged) return { documents }
-    return { documents: scenario === 'ancestor-removed' || scenario === 'ancestor-proof-outage' ? [] : documents.map(reply => ({ ...reply, deleted: true, content: '' })) }
+    if (replyChanged && scenario === 'confirmed-outage' && ++changedReplyReads === 1) throw new TypeError('Failed to fetch')
+    const documents = [continuation, descendant, ...(published ? [acceptedReply] : [])].filter(reply => ids.includes(reply.id))
+    return { documents: documents.flatMap(reply => {
+      if (reply.id === 'accepted' && replyChanged) {
+        if (scenario === 'confirmed-removed') return []
+        return [{ ...reply, deleted: true, content: '' }]
+      }
+      if (reply.id === 'accepted' || !ancestorChanged) return [reply]
+      return scenario === 'ancestor-removed' || scenario === 'ancestor-proof-outage' ? [] : [{ ...reply, deleted: true, content: '' }]
+    }) }
   },
   getMany: async (ids: string[], options?: { throwOnError?: boolean }) => {
     if (scenario?.startsWith('reply-bookmark')) {
@@ -94,7 +105,7 @@ export const replyService = {
   },
   getNestedReplies: async (parentIds: string[]) => new Map(parentIds.map(id => [id,
     scenario === 'v2-descendant' ? (id === 'continuation' ? [descendant] : published && id === 'descendant' ? [acceptedReply] : [])
-      : published && scenario !== 'paged' && scenario !== 'indexing' && id === 'continuation' ? [acceptedReply] : [],
+      : published && scenario !== 'paged' && scenario !== 'indexing' && !scenario?.startsWith('confirmed-') && id === 'continuation' ? [acceptedReply] : [],
   ])),
 }
 const enrichment = { enrich: async (posts: Post[]) => posts, reset: () => undefined }

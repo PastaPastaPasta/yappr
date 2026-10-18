@@ -17,7 +17,7 @@ import ManagePage from '@/app/store/manage/page'
 import BookmarksPage from '@/app/bookmarks/page'
 import PrivateGuide from '@/app/about/private-feeds/page'
 import { usePostDetail } from '../../hooks/use-post-detail'
-import { publishReply, threadReads, ReplyThreadItem, finishThreadRead, changeAncestor } from './tqa-mocks'
+import { publishReply, threadReads, ReplyThreadItem, finishThreadRead, changeAncestor, changeAcceptedReply } from './tqa-mocks'
 import { getDefaultBlogThemeConfig } from '@/lib/blog/theme-types'
 import { getReaderOverrideStyle } from '@/lib/blog/reader-preferences'
 import '@/app/globals.css'
@@ -32,8 +32,8 @@ function Stars() {
   return <><StarRatingInput value={rating} onChange={setRating} /><button disabled={!rating}>Submit review</button></>
 }
 function Thread() {
-  const { replyThreads, error, refresh, isLoadingReplies } = usePostDetail({ postId: 'root' })
-  return <><button onClick={publishReply}>Publish accepted reply</button><button onClick={changeAncestor}>Change ancestor</button><button onClick={() => refresh()}>Refresh</button>{error && <div role="alert">{error}</div>}<p>{isLoadingReplies ? 'Refreshing' : 'Settled'}</p><div>{replyThreads.map(thread => <ReplyThreadItem key={thread.content.id} thread={thread} />)}</div><output aria-label="Thread reads">{threadReads()}</output></>
+  const { replyThreads, error, refresh, isLoadingReplies, loadMoreReplies } = usePostDetail({ postId: 'root' })
+  return <><button onClick={publishReply}>Publish accepted reply</button><button onClick={changeAncestor}>Change ancestor</button><button onClick={changeAcceptedReply}>Change accepted reply</button><button onClick={() => loadMoreReplies()}>Load more</button><button onClick={() => refresh()}>Refresh</button>{error && <div role="alert">{error}</div>}<p>{isLoadingReplies ? 'Refreshing' : 'Settled'}</p><div>{replyThreads.map(thread => <ReplyThreadItem key={thread.content.id} thread={thread} />)}</div><output aria-label="Thread reads">{threadReads()}</output></>
 }
 const theme = getDefaultBlogThemeConfig()
 document.documentElement.classList.toggle('dark', params.get('mode') === 'dark')
