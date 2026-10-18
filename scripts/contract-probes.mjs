@@ -128,10 +128,10 @@ const META_SCHEMA_SHA256 = '742f99130f75940a3ba2962f243713fb745be0689093cd48d496
 
 let metaValidator;
 /**
- * A compiled validator for one document schema, or null when ajv is not
- * installed (it is a transitive dependency only; nothing here adds it to
- * package.json). rs-dpp validates each doctype enriched with `$schema` and the
- * contract's `$defs` (enrich_with_base_schema_v0).
+ * A compiled validator for one document schema, or null when the validator
+ * cannot be loaded. ajv is a direct dev dependency. rs-dpp validates each
+ * doctype enriched with `$schema` and the contract's `$defs`
+ * (enrich_with_base_schema_v0).
  */
 function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;

@@ -14,7 +14,6 @@ import { tipHistoryService, type SentTipMatch } from './tip-history-service'
 
 export interface TipResult {
   success: boolean;
-  transactionHash?: string;
   error?: string;
   errorCode?:
     | 'INSUFFICIENT_BALANCE'
@@ -194,8 +193,6 @@ class TipService {
 
       return {
         success: true,
-        // TODO: Return actual transaction hash once SDK exposes it
-        transactionHash: 'confirmed',
       };
 
     } catch (error) {
@@ -299,7 +296,7 @@ class TipService {
     // The transfer document appears a block or two later; drop the cached
     // pages so the next read can pick it up instead of serving a stale page.
     tipHistoryService.clearCache();
-    return { success: true, transactionHash: 'confirmed' };
+    return { success: true };
   }
 
   /**
@@ -332,7 +329,7 @@ class TipService {
   async confirmYappTip(senderId: string, match: SentTipMatch): Promise<TipResult> {
     const landed = await tipHistoryService.awaitSentTip(senderId, match);
     tipHistoryService.clearCache();
-    if (landed) return { success: true, transactionHash: 'confirmed' };
+    if (landed) return { success: true };
     return {
       success: false,
       error: "Your tip was sent but we couldn't confirm it landed. Check again before sending another — it may still be settling.",

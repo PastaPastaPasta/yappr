@@ -784,7 +784,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   }
 
   /**
-   * Enrich user with async data (username, stats)
+   * Enrich user with a resolved username
    */
   private async enrichUser(user: User, skipUsernameResolution?: boolean): Promise<void> {
     try {
@@ -794,11 +794,6 @@ class UnifiedProfileService extends BaseDocumentService<User> {
           user.username = username;
         }
       }
-
-      // Get follower/following counts (implementation in follow service)
-      const stats = await this.getUserStats(user.id);
-      user.followers = stats.followers;
-      user.following = stats.following;
     } catch (error) {
       logger.error('UnifiedProfileService: Error enriching user:', error);
     }
@@ -824,14 +819,6 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       logger.error('UnifiedProfileService: Error resolving username:', error);
       return null;
     }
-  }
-
-  /**
-   * Get user statistics
-   */
-  private async getUserStats(_userId: string): Promise<{ followers: number; following: number }> {
-    // TODO: Query follow documents for actual counts
-    return { followers: 0, following: 0 };
   }
 
   // ==================== Profile CRUD ====================
