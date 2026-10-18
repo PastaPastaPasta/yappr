@@ -61,7 +61,8 @@ class BlogStatsService {
       groupBy: string;
       limit: number;
       window?: BlogTrendWindow;
-    }
+    },
+    throwOnError = false
   ): Promise<RankedBlogEntry[]> {
     if (!blogIsV2()) return [];
     const cached = this.rankings.get(key);
@@ -84,32 +85,33 @@ class BlogStatsService {
       return entries;
     } catch (error) {
       if (query.window && isColdBucketError(error)) return [];
+      if (throwOnError) throw error;
       logger.error(`blogStats: ranked ${query.documentTypeName}.${query.groupBy} failed`, error);
       return [];
     }
   }
 
   /** Blogs ranked by follower count, all time (`followerCount`; v7 `followers`). */
-  mostFollowedBlogs(limit = 20): Promise<RankedBlogEntry[]> {
+  mostFollowedBlogs(limit = 20, { throwOnError = false } = {}): Promise<RankedBlogEntry[]> {
     return this.rankedPage(`blogs:followers:${limit}`, {
       documentTypeName: DOCUMENT_TYPES.BLOG_FOLLOW, groupBy: 'blogId', limit,
-    });
+    }, throwOnError);
   }
 
   /** Blogs ranked by followers gained recently: today up to v6, the last ~3 days on v7 ({@link trendingBlogsCopy}). */
-  trendingBlogs(limit = 20): Promise<RankedBlogEntry[]> {
+  trendingBlogs(limit = 20, { throwOnError = false } = {}): Promise<RankedBlogEntry[]> {
     return this.rankedPage(`blogs:trending:${limit}`, {
       documentTypeName: DOCUMENT_TYPES.BLOG_FOLLOW, groupBy: 'blogId', limit,
       window: blogIsV7() ? blogTrendWindow('followers') : DAY_WINDOW,
-    });
+    }, throwOnError);
   }
 
   /** Posts ranked by comment count: all time up to v6 (`commentCount`), the last ~3 days on v7 (`discussedRecent`). */
-  mostDiscussedPosts(limit = 20): Promise<RankedBlogEntry[]> {
+  mostDiscussedPosts(limit = 20, { throwOnError = false } = {}): Promise<RankedBlogEntry[]> {
     return this.rankedPage(`posts:comments:${limit}`, {
       documentTypeName: DOCUMENT_TYPES.BLOG_COMMENT, groupBy: 'blogPostId', limit,
       ...(blogIsV7() ? { window: blogTrendWindow('comments') } : {}),
-    });
+    }, throwOnError);
   }
 }
 

@@ -1,3 +1,4 @@
+import { filterPaymentUris } from '../utils/payment-uri';
 import { logger } from '@/lib/logger';
 /**
  * Store Service
@@ -8,7 +9,6 @@ import { logger } from '@/lib/logger';
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6 } from '../constants';
-import { parseJsonArray } from '../utils/json-parsing';
 import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils';
 import { storeStatsService } from './store-stats-service';
 import type {
@@ -92,7 +92,7 @@ class StoreService extends BaseDocumentService<Store> {
       logoUrl: data.logoUrl,
       bannerUrl: data.bannerUrl,
       status: data.status,
-      paymentUris: parseJsonArray<ParsedPaymentUri>(data.paymentUris, 'paymentUris'),
+      paymentUris: filterPaymentUris(data.paymentUris),
       defaultCurrency: data.defaultCurrency,
       policies: data.policies,
       location: data.location,
@@ -235,6 +235,29 @@ class StoreService extends BaseDocumentService<Store> {
     }
     const { stores, complete } = await this.scanNewestActiveStores();
     return { stores: stores.slice(0, limit), complete };
+  }
+
+  /** A directory page; failed rankings fall back to ordinary active stores. */
+  async getDiscoveryStores(sort: 'newest' | 'topRated' | 'mostOrdered', limit = 50): Promise<{
+    stores: Store[];
+    complete: boolean;
+    rankingUnavailable: boolean;
+  }> {
+    if (sort === 'newest') return { ...await this.getNewestActiveStores(limit), rankingUnavailable: false };
+    try {
+      const ranked = sort === 'topRated'
+        ? await storeStatsService.topRatedStores(limit, { throwOnError: true })
+        : await storeStatsService.mostOrderedStores(limit, { throwOnError: true });
+      const byId = new Map((await this.getMany(ranked.map((entry) => entry.id), { throwOnError: true })).map((store) => [store.id, store]));
+      const stores = ranked.flatMap((entry) => {
+        const store = byId.get(entry.id);
+        return store?.status === 'active' ? [store] : [];
+      });
+      return { stores, complete: true, rankingUnavailable: false };
+    } catch (error) {
+      logger.warn('Store ranking unavailable; showing newest stores', error);
+      return { ...await this.getNewestActiveStores(limit), rankingUnavailable: true };
+    }
   }
 
   /** The newest active stores in one category (v6 `byCategory [status, category, $createdAt]`), `limit` at most. */

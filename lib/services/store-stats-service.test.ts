@@ -87,6 +87,17 @@ describe('rankings', () => {
     sdk.documents.ranked.mockRejectedValue(new Error('offline'));
     expect(await storeStatsService.mostOrderedStores()).toEqual([]);
   });
+
+  it.each(['topRatedStores', 'mostOrderedStores', 'topStoreCategories', 'topItemsInStore'] as const)(
+    'contains indexed-target failures in %s without caching a false empty page', async (method) => {
+      sdk.documents.ranked.mockRejectedValueOnce(new Error('indexed target chain: primary entry 0101 is missing'))
+        .mockResolvedValue({ entries: [{ groupValue: 'group', value: 5n }] });
+      const read = () => method === 'topItemsInStore' ? storeStatsService.topItemsInStore(storeId) : storeStatsService[method]();
+      expect(await read()).toEqual([]);
+      expect(await read()).toEqual([{ id: 'group', value: 5 }]);
+      expect(sdk.documents.ranked).toHaveBeenCalledTimes(2);
+    }
+  );
 });
 
 describe('buyer orders composite', () => {

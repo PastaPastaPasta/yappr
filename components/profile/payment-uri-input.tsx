@@ -4,8 +4,7 @@ import { LimitedInput } from '@/components/ui/limited-text'
 
 import { useState } from 'react'
 import { PlusIcon, TrashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
-import { APPROVED_PAYMENT_SCHEMES } from '@/lib/services/unified-profile-service'
-import { isValidPaymentAddress } from '@/lib/utils/payment-uri'
+import { APPROVED_PAYMENT_SCHEMES, parsePaymentUri } from '@/lib/utils/payment-uri'
 import * as Tooltip from '@radix-ui/react-tooltip'
 
 interface PaymentUriInputProps {
@@ -45,15 +44,6 @@ function getSchemeLabel(uri: string): string {
   return 'Unknown'
 }
 
-function parsePaymentUri(uri: string): { scheme: string; address: string } | null {
-  const colonIndex = uri.indexOf(':')
-  if (colonIndex <= 0) return null
-  const scheme = uri.slice(0, colonIndex + 1).toLowerCase()
-  const address = uri.slice(colonIndex + 1).trim()
-  if (!address || !APPROVED_PAYMENT_SCHEMES.includes(scheme as typeof APPROVED_PAYMENT_SCHEMES[number])) return null
-  return { scheme, address }
-}
-
 export function PaymentUriInput({
   uris,
   onChange,
@@ -68,7 +58,7 @@ export function PaymentUriInput({
     if (!trimmedUri) return
 
     const parsed = parsePaymentUri(trimmedUri)
-    if (!parsed || !isValidPaymentAddress(parsed.scheme, parsed.address)) {
+    if (!parsed) {
       setError('Please enter a valid payment URI (e.g., tdash:y..., dash:XnNh3..., bitcoin:bc1...)')
       return
     }
@@ -84,7 +74,7 @@ export function PaymentUriInput({
       return
     }
 
-    onChange([...uris, trimmedUri])
+    onChange([...uris, parsed.uri])
     setNewUri('')
     setError(null)
   }

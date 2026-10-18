@@ -267,7 +267,7 @@ describe('posts from many blogs', () => {
     services.loadIdentityBatch.mockResolvedValue({ usernames: new Map([['o', 'alice']]), profiles: [] })
     const posts = [{ id: 'p1', ownerId: 'o', blogId: 'live' }, { id: 'p2', ownerId: 'o', blogId: 'removed' }]
     const listed = await enrichBlogPostsWithBlogNames(posts)
-    expect(services.getMany).toHaveBeenCalledWith(['live', 'removed'])
+    expect(services.getMany).toHaveBeenCalledWith(['live', 'removed'], {})
     expect(listed).toEqual([{ id: 'p1', ownerId: 'o', blogId: 'live', authorUsername: 'alice', authorDisplayName: undefined, blogName: 'Live blog' }])
   })
 })

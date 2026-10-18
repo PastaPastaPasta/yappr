@@ -1,3 +1,4 @@
+import type { ParsedPaymentUri } from '@/lib/types'
 import bs58check from 'bs58check'
 
 /** Validate a Dash Base58Check address and ensure its network version matches. */
@@ -57,5 +58,48 @@ export function isValidPaymentAddress(scheme: string, address: string): boolean 
   if (normalizedScheme === 'dash:') return isValidDashAddress(destination, 'mainnet')
   if (normalizedScheme === 'tdash:') return isValidDashAddress(destination, 'testnet')
   const shape = DESTINATION_SHAPES[normalizedScheme]
-  return shape ? shape.test(destination) : Boolean(destination)
+  return shape ? shape.test(destination) : false
+}
+
+
+/** The complete set of wallet protocols supported by Yappr. Never infer this from stored metadata. */
+export const APPROVED_PAYMENT_SCHEMES = [
+  'dash:', 'tdash:', 'bitcoin:', 'litecoin:', 'ethereum:', 'monero:',
+  'dogecoin:', 'bitcoincash:', 'zcash:', 'stellar:', 'ripple:', 'solana:',
+  'cardano:', 'polkadot:', 'tron:', 'lightning:',
+] as const
+
+const PAYMENT_LABELS: Record<typeof APPROVED_PAYMENT_SCHEMES[number], string> = {
+  'dash:': 'Dash', 'tdash:': 'tDash', 'bitcoin:': 'Bitcoin', 'litecoin:': 'Litecoin',
+  'ethereum:': 'Ethereum', 'monero:': 'Monero', 'dogecoin:': 'Dogecoin',
+  'bitcoincash:': 'Bitcoin Cash', 'zcash:': 'Zcash', 'stellar:': 'Stellar',
+  'ripple:': 'XRP', 'solana:': 'Solana', 'cardano:': 'Cardano',
+  'polkadot:': 'Polkadot', 'tron:': 'Tron', 'lightning:': 'Lightning',
+}
+
+/** Validate an untrusted URI (or stored record) and rebuild all display metadata. */
+export function parsePaymentUri(value: unknown): ParsedPaymentUri | null {
+  const input = typeof value === 'string' ? value
+    : value && typeof value === 'object' && 'uri' in value ? value.uri : null
+  if (typeof input !== 'string') return null
+  const uri = input.trim()
+  // Reject controls, spaces, fragments and invalid percent escapes rather than allowing
+  // browsers/wallets to repair an ambiguous URI differently at each sink.
+  if (!uri || /[\s\u0000-\u001f\u007f#]/u.test(uri) || /%(?![0-9a-f]{2})/i.test(uri)) return null
+  const match = /^([a-z][a-z0-9+.-]*:)(.+)$/i.exec(uri)
+  if (!match) return null
+  const scheme = match[1].toLowerCase()
+  const supported = APPROVED_PAYMENT_SCHEMES.find(candidate => candidate === scheme)
+  if (!supported || !isValidPaymentAddress(supported, match[2])) return null
+  return { scheme: supported, uri: supported + match[2], label: PAYMENT_LABELS[supported] }
+}
+
+/** Store JSON, profile lists and cached parsed records all cross the same read boundary. */
+export function filterPaymentUris(value: unknown): ParsedPaymentUri[] {
+  let list: unknown = value
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list) } catch { return [] }
+  }
+  if (!Array.isArray(list)) return []
+  return list.map(parsePaymentUri).filter((uri): uri is ParsedPaymentUri => uri !== null)
 }
