@@ -3,7 +3,7 @@
 import { fieldLimits } from '@/lib/field-limits'
 import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
 
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -26,6 +26,7 @@ interface BlogSettingsProps {
 }
 
 export function BlogSettings({ blog, ownerId, onUpdated, onDeleted }: BlogSettingsProps) {
+  const fieldId = useId()
   const [name, setName] = useState(blog.name)
   const [description, setDescription] = useState(blog.description || '')
   const [avatar, setAvatar] = useState(blog.avatar || '')
@@ -123,13 +124,13 @@ export function BlogSettings({ blog, ownerId, onUpdated, onDeleted }: BlogSettin
       <h2 className="text-lg font-semibold">Blog Settings</h2>
 
       <div>
-        <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
-        <LimitedInput contract="blog" document="blog" field="name" value={name} onChange={(e) => setName(e.target.value)} />
+        <label htmlFor={`${fieldId}-name`} className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
+        <LimitedInput id={`${fieldId}-name`} contract="blog" document="blog" field="name" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
 
       <div>
-        <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Description</label>
-        <LimitedTextarea contract="blog" document="blog" field="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+        <label htmlFor={`${fieldId}-description`} className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Description</label>
+        <LimitedTextarea id={`${fieldId}-description`} contract="blog" document="blog" field="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -200,10 +201,10 @@ export function BlogSettings({ blog, ownerId, onUpdated, onDeleted }: BlogSettin
 
       <div className="flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-800 p-3">
         <div>
-          <p className="text-sm font-medium">Comments enabled by default</p>
+          <label htmlFor={`${fieldId}-comments`} className="text-sm font-medium">Comments enabled by default</label>
           <p className="text-xs text-gray-500">Applied when creating new posts.</p>
         </div>
-        <Switch checked={commentsEnabledDefault} onCheckedChange={setCommentsEnabledDefault} />
+        <Switch id={`${fieldId}-comments`} checked={commentsEnabledDefault} onCheckedChange={setCommentsEnabledDefault} />
       </div>
 
       {blogIsV9() && (

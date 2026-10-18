@@ -95,12 +95,12 @@ function BlogViewerContent({ blocks }: BlogViewerProps) {
       />
       {footnotes.length > 0 && (
         <section className="mt-6 border-t pt-6" style={{ borderColor: 'var(--blog-border)' }}>
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--blog-text)]/70">Footnotes</h3>
-          <ol className="mt-2 list-decimal space-y-2 pl-6 text-sm text-[var(--blog-text)]/85">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--blog-muted)]">Footnotes</h3>
+          <ol className="mt-2 list-decimal space-y-2 pl-6 text-sm text-[var(--blog-muted)]">
             {footnotes.map((footnote, index) => (
               <li key={footnote.key} id={`footnote-item-${index + 1}`}>
                 {footnote.text}
-                {footnote.noteId && <span className="ml-2 text-xs text-[var(--blog-text)]/60">({footnote.noteId})</span>}
+                {footnote.noteId && <span className="ml-2 text-xs text-[var(--blog-muted)]">({footnote.noteId})</span>}
               </li>
             ))}
           </ol>

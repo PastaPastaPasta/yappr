@@ -52,9 +52,12 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       return
     }
 
-    const validUsernames = usernames.filter(
-      (u) => u.label.trim() && u.status !== 'invalid'
-    )
+    const validUsernames = usernames.filter((entry) => {
+      const label = entry.label.trim()
+      const error = label ? dpnsService.getUsernameValidationError(label) : null
+      if (error) updateUsernameStatus(entry.id, 'invalid', error)
+      return label && !error
+    })
 
     if (validUsernames.length === 0) {
       toast.error('Please enter at least one valid username.')
@@ -121,6 +124,15 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     if (availableUsernames.length === 0) {
       toast.error('No available usernames to register.')
       return
+    }
+
+    for (const entry of availableUsernames) {
+      const error = dpnsService.getUsernameValidationError(entry.label.trim())
+      if (error) {
+        updateUsernameStatus(entry.id, 'invalid', error)
+        setStep('username-entry')
+        return
+      }
     }
 
     setStep('registering')
@@ -195,6 +207,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     setCurrentRegistrationIndex,
     setUsernameRegistered,
     setUsernameContested,
+    updateUsernameStatus,
     updateDPNSUsername,
   ])
 

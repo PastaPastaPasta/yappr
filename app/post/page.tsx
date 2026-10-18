@@ -45,7 +45,9 @@ function PostDetailContent() {
     hasMoreReplies,
     isLoadingMoreReplies,
     loadMoreReplies,
-    postEnrichment
+    postEnrichment,
+    error,
+    refresh
   } = usePostDetail({
     postId,
     enabled: !!postId
@@ -158,6 +160,12 @@ function PostDetailContent() {
             <h1 className="text-xl font-bold">Post</h1>
           </div>
         </PageHeader>
+        {error && (
+          <div role="alert" className="flex items-center justify-between gap-3 p-4 text-sm">
+            <p>{error}</p>
+            <Button variant="outline" disabled={isLoadingReplies} onClick={() => refresh()}>Retry</Button>
+          </div>
+        )}
 
         {isLoading && !post ? (
           <div className="p-8 text-center">

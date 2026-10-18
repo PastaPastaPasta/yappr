@@ -193,6 +193,10 @@ export function usePostDetail({
   // The thread this page is showing, and where the next page of it starts.
   const threadRootIdRef = useRef<string | null>(null)
   const replyCursorRef = useRef<string | undefined>(undefined)
+  // Accepted writes stay visible until a proved thread read includes them.
+  const acceptedRepliesRef = useRef(new Map<string, { reply: Reply; confirmed: boolean; ancestors: Reply[] }>())
+  const reconcileTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const reconcileGenerationRef = useRef(0)
 
   // Track if we used navigation data for initial render (computed once at mount)
   const usedNavigationDataRef = useRef<boolean>(!!getInitialData()?.post)
@@ -356,7 +360,9 @@ export function usePostDetail({
       setRootCheckedFor(postId)
 
       // Show the main post as soon as it's available
-      setState({ post: loadedPost, replies: [], replyThreads: [], replyChain })
+      setState(current => current.post?.id === loadedPost?.id
+        ? { ...current, post: loadedPost, replyChain }
+        : { post: loadedPost, replies: [], replyThreads: [], replyChain })
       setIsLoading(false)
 
       // Enrich the main post without blocking replies or UI
@@ -366,7 +372,7 @@ export function usePostDetail({
     } catch (err) {
       if (!isCurrent()) return
       logger.error('usePostDetail: Failed to load post:', err)
-      setError(err instanceof Error ? err.message : 'Failed to load post')
+      setError('This post could not be loaded. Please try again.')
       // Only clear state if we don't have navigation data to show
       if (!usedNavigationDataRef.current) {
         setState({ post: null, replies: [], replyThreads: [], replyChain: [] })
@@ -380,7 +386,7 @@ export function usePostDetail({
 
     try {
       let replies: Reply[]
-      let replyThreads: ReplyThread[]
+      let replyThreads: ReplyThread[] = []
 
       if (hasFlatThreads()) {
         // One query for the entire thread, keyed on the root every reply shares
@@ -420,16 +426,50 @@ export function usePostDetail({
           }
         }
 
-        // A reply whose parent reply was deleted keeps its place under a
-        // deleted-parent stub instead of dropping out with the parent.
-        const deletedParents = await deletedReplyParents(replies)
-        if (!isCurrent()) return
-        replies = [...deletedReplyStubs(replies, deletedParents), ...replies]
-
-        replyThreads = assembleFlatThread(loadedPost, replies)
       } else {
         ;({ replies, replyThreads } = await loadV2Thread(loadedPost, postId, isCurrent))
         if (!isCurrent()) return
+      }
+
+      const fetchedIds = new Set(replies.map(reply => reply.id))
+      const collectIds = (threads: ReplyThread[]): void => {
+        for (const thread of threads) {
+          fetchedIds.add(thread.content.id)
+          collectIds(thread.nestedReplies)
+        }
+      }
+      if (!hasFlatThreads()) collectIds(replyThreads)
+      for (const id of fetchedIds) acceptedRepliesRef.current.delete(id)
+      const pendingIds = [...acceptedRepliesRef.current].filter(([, entry]) => !entry.confirmed).map(([id]) => id)
+      // A new reply can be beyond page one. Confirm its id without reading the
+      // entire thread, and keep the overlay until a loaded page includes it.
+      if (pendingIds.length > 0) {
+        const confirmed = await replyService.getMany(pendingIds, { throwOnError: true })
+        if (!isCurrent()) return
+        for (const reply of confirmed) {
+          const pending = acceptedRepliesRef.current.get(reply.id)
+          if (pending) acceptedRepliesRef.current.set(reply.id, {
+            ...pending, reply: { ...reply, author: pending.reply.author }, confirmed: true,
+          })
+        }
+      }
+      const overlayReplies = [...acceptedRepliesRef.current.values()].flatMap(entry => [...entry.ancestors, entry.reply])
+      const included = new Set(fetchedIds)
+      for (const reply of overlayReplies) {
+        if (included.has(reply.id)) continue
+        included.add(reply.id)
+        replies = [...replies, reply]
+        if (!hasFlatThreads()) {
+          const newThread: ReplyThread = { content: reply, isAuthorThread: false, isThreadContinuation: false, nestedReplies: [] }
+          const parentId = reply.replyToReplyId ?? reply.parentId
+          replyThreads = (parentId ? nestUnderReply(replyThreads, parentId, newThread) : null) ?? [...replyThreads, newThread]
+        }
+      }
+      if (hasFlatThreads()) {
+        const deletedParents = await deletedReplyParents(replies)
+        if (!isCurrent()) return
+        replies = [...deletedReplyStubs(replies, deletedParents), ...replies]
+        replyThreads = assembleFlatThread(loadedPost, replies)
       }
 
       // Resolve whatever the main post quotes (chain items are done in fetchReplyChain)
@@ -448,7 +488,7 @@ export function usePostDetail({
     } catch (err) {
       if (!isCurrent()) return
       logger.error('usePostDetail: Failed to load replies:', err)
-      setError(err instanceof Error ? err.message : 'Failed to load replies')
+      setError('Replies could not be refreshed. Please try again.')
     } finally {
       if (isCurrent()) {
         setIsLoadingReplies(false)
@@ -490,6 +530,13 @@ export function usePostDetail({
       setIsLoadingMoreReplies(false)
     }
   }, [isLoadingMoreReplies])
+
+  const cancelRequests = useCallback(() => {
+    acceptedRepliesRef.current.clear()
+    loadRequestIdRef.current++
+    reconcileGenerationRef.current++
+    clearTimeout(reconcileTimerRef.current)
+  }, [])
 
   // Load on mount/postId change/enabled change
   useEffect(() => {
@@ -536,7 +583,8 @@ export function usePostDetail({
     }
 
     loadPost().catch((err) => logger.error('usePostDetail: load failed:', err))
-  }, [postId, enabled, loadPost, resetEnrichment])
+    return cancelRequests
+  }, [postId, enabled, loadPost, resetEnrichment, cancelRequests])
 
   const refresh = useCallback(async () => {
     loadedPostIdRef.current = null
@@ -546,6 +594,7 @@ export function usePostDetail({
 
   const addOptimisticReply = useCallback((reply: Reply) => {
     setState(current => {
+      if (current.replies.some(known => known.id === reply.id)) return current
       const newThread: ReplyThread = {
         content: reply,
         isAuthorThread: false,
@@ -557,7 +606,7 @@ export function usePostDetail({
       // show it in the wrong place, and on a flat thread nothing refetches in
       // between. A nesting target that is not on this page (past the rendered
       // depth cap) falls back to the top of the list.
-      const nestUnder = reply.replyToReplyId
+      const nestUnder = reply.replyToReplyId ?? reply.parentId
       const nestedThreads = nestUnder
         ? nestUnderReply(current.replyThreads, nestUnder, newThread)
         : null
@@ -605,8 +654,44 @@ export function usePostDetail({
         : newReply.parentId === postId || state.replies.some(r => r.id === newReply.parentId)
 
       if (belongsHere) {
-        // Refresh to get the new reply with proper data
-        refresh().catch((err) => logger.error('usePostDetail: refresh after reply failed:', err))
+        // Keep the visible ancestry if refresh starts again at page one.
+        const known = new Map(state.replies.map(reply => [reply.id, reply]))
+        const collect = (threads: ReplyThread[]): void => {
+          for (const thread of threads) {
+            known.set(thread.content.id, thread.content as Reply)
+            collect(thread.nestedReplies)
+          }
+        }
+        collect(state.replyThreads)
+        const ancestors: Reply[] = []
+        const seen = new Set([newReply.id])
+        let parentId = newReply.replyToReplyId ?? newReply.parentId
+        while (parentId && parentId !== postId && !seen.has(parentId)) {
+          seen.add(parentId)
+          const parent = known.get(parentId)
+          if (!parent) break
+          ancestors.unshift(parent)
+          parentId = parent.replyToReplyId ?? parent.parentId
+        }
+        acceptedRepliesRef.current.set(newReply.id, { reply: newReply, confirmed: false, ancestors })
+        addOptimisticReply(newReply)
+        clearTimeout(reconcileTimerRef.current)
+        const generation = ++reconcileGenerationRef.current
+        // SDK reads already retry quorum rotations in sdk-read-retry.ts.
+        // This bounded reconciliation also covers an accepted write not indexed yet,
+        // or a refresh that exhausted the SDK's transport retries. Never resend it.
+        const reconcile = async (attempt: number): Promise<void> => {
+          await refresh()
+          if (generation !== reconcileGenerationRef.current || ![...acceptedRepliesRef.current.values()].some(entry => !entry.confirmed)) return
+          if (attempt < 3) {
+            reconcileTimerRef.current = setTimeout(() => {
+              reconcile(attempt + 1).catch(err => logger.error('Reply reconciliation failed:', err))
+            }, [1000, 3000, 8000][attempt])
+          } else {
+            setError('Your reply is posted. The thread could not be refreshed. Please try again.')
+          }
+        }
+        reconcile(0).catch(err => logger.error('Reply reconciliation failed:', err))
       }
     }
 
@@ -614,7 +699,7 @@ export function usePostDetail({
     return () => {
       window.removeEventListener('reply-created', handleReplyCreated as EventListener)
     }
-  }, [postId, state.replies, refresh])
+  }, [postId, state.replies, state.replyThreads, refresh, addOptimisticReply])
 
   return {
     post: state.post,

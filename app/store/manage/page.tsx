@@ -508,9 +508,9 @@ function StoreManagePage() {
           {/* Content */}
           {activeTab === 'items' && (
             <div className="p-4">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <h3 className="font-medium">Products{!itemsLoadError || items.length > 0 ? ` (${items.length})` : ''}</h3>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     size="sm"
                     variant="outline"
@@ -606,12 +606,14 @@ function StoreManagePage() {
                         </div>
                         <div className="flex gap-1">
                           <button
+                            aria-label={`Edit ${item.title}`}
                             onClick={() => router.push(`/store/item/add?itemId=${item.id}&storeId=${store?.id}`)}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
                           >
                             <PencilIcon className="h-4 w-4 text-gray-500" />
                           </button>
                           <button
+                            aria-label={`Delete ${item.title}`}
                             onClick={() => setDeleteItemId(item.id)}
                             className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-lg"
                           >

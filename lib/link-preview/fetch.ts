@@ -31,7 +31,7 @@ export const LINK_PREVIEW_SERVICES = {
     { name: 'Reddit', description: 'Image hosting (i.redd.it)' },
     { name: 'Imgur', description: 'Image hosting (i.imgur.com)' },
     { name: 'Giphy', description: 'GIF hosting (media.giphy.com, i.giphy.com)' },
-    { name: 'GitHub', description: 'Raw files (raw.githubusercontent.com)' },
+    { name: 'GitHub', description: 'Raw images (raw.githubusercontent.com)' },
     { name: 'Twitter/X', description: 'Images (pbs.twimg.com)' },
   ],
   /** IPFS gateways used for ipfs:// URLs (derived from the shared gateway list) */
@@ -63,26 +63,54 @@ function isCorsAllowedDomain(url: string): boolean {
   }
 }
 
-async function fetchWithTimeout(url: string): Promise<Response> {
+/** The deadline covers headers and streamed, decoded bytes, including chunked bodies. */
+async function fetchDirectly(url: string): Promise<PreviewFetchResult> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  try {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error('Preview request timed out'))
+      controller.abort()
+    }, FETCH_TIMEOUT_MS)
+  })
+  const read = async (): Promise<PreviewFetchResult> => {
     const response = await fetch(url, { signal: controller.signal })
+    reader = response.body?.getReader()
+    if (controller.signal.aborted) {
+      reader?.cancel().catch(() => undefined)
+      throw new Error('Preview request timed out')
+    }
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    return response
+    const contentType = response.headers.get('content-type')
+    if (isImageContentType(contentType)) return { content: '', contentType }
+    const mime = contentType?.split(';')[0].trim().toLowerCase()
+    if (mime !== 'text/html' && mime !== 'application/xhtml+xml') throw new Error('Unsupported preview content type')
+    const declaredSize = Number(response.headers.get('content-length'))
+    if (declaredSize > MAX_PREVIEW_SIZE_BYTES) throw new Error('Content too large for preview')
+    const decoder = new TextDecoder()
+    let size = 0
+    let content = ''
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        size += chunk.value.byteLength
+        if (size > MAX_PREVIEW_SIZE_BYTES) throw new Error('Content too large for preview')
+        content += decoder.decode(chunk.value, { stream: true })
+      }
+    }
+    return { content: content + decoder.decode(), contentType }
+  }
+  try {
+    return await Promise.race([read(), expired])
   } finally {
     clearTimeout(timeout)
+    controller.abort()
+    // Cancel unused images, rejected types and oversized or stalled streams.
+    // Do not wait for a stalled source's cancellation callback to finish.
+    reader?.cancel().catch(() => undefined)
   }
-}
-
-/** Fetch from the viewer's browser. Images are not downloaded; only their Content-Type matters. */
-async function fetchDirectly(url: string): Promise<PreviewFetchResult> {
-  const response = await fetchWithTimeout(url)
-  const contentType = response.headers.get('content-type')
-  if (isImageContentType(contentType)) return { content: '', contentType }
-  const size = parseInt(response.headers.get('content-length') ?? '', 10)
-  if (Number.isFinite(size) && size > MAX_PREVIEW_SIZE_BYTES) throw new Error('Content too large for preview')
-  return { content: await response.text(), contentType }
 }
 
 /** Try each candidate in order; the first success wins, the last failure is thrown. */

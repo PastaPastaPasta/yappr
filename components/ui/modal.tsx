@@ -61,6 +61,7 @@ export function Modal({ open, onOpenChange, children, className, variant = 'card
                 )}
               >
                 <Dialog.Content
+                  aria-modal="true"
                   asChild
                   onOpenAutoFocus={(event) => {
                     // Controlled modals have no Dialog.Trigger for Radix to restore.

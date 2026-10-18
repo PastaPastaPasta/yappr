@@ -362,7 +362,9 @@ export class DmEngine {
     const last = newestText(conv, visible)
     const lastActivity = last?.createdAt ?? conv.entry.readAt
     const blocked = conv.kind === 'direct' && this.isBlockedId(conv.peer)
-    const hidden = conv.entry.hiddenAt > 0 && (!last || last.createdAt <= conv.entry.hiddenAt)
+    const hidden = conv.entry.hiddenAt > 0 && timeline(conv)
+      .filter(message => message.content.type === 'text' && visible(message))
+      .every(message => ctx.cache.wasHidden(conv.key, hexId(message.sender), message.pointer, conv.entry.hiddenAt) ?? message.createdAt <= conv.entry.hiddenAt)
     if (conv.kind === 'direct') {
       if (conv.draft && this.openKey !== conv.key) return null
       // A 1:1 that holds only grants stays out of the inbox (the group shows instead) until its first text (§6.2).
@@ -546,6 +548,7 @@ export class DmEngine {
     const newest = timeline(conv).at(-1)
     // Hidden up to the newest message held: anything newer, even one already on its way, un-hides it.
     const at = newest?.createdAt ?? this.ctx.chain.now()
+    this.ctx.cache.hideThroughHeads(conv.key, Math.max(at, conv.entry.hiddenAt))
     this.ctx.store.touch(conv.entry, { hiddenAt: at, readAt: newest?.createdAt ?? 0 })
     this.notePositions(conv)
     this.emit()

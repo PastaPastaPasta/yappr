@@ -1,6 +1,5 @@
 'use client'
 
-import { useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { UsernameInputRow } from '../username-input-row'
 import { canonicalDpnsLabel } from '../canonical-label'
@@ -25,59 +24,10 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
     updateUsernameStatus,
   } = useDpnsRegistration()
 
-  // Validate username format on input change (debounced)
-  // This only checks format validity - availability is checked separately
-  const validateUsername = useCallback(
-    (id: string, label: string) => {
-      const trimmedLabel = label.trim()
-      const currentEntry = usernames.find((u) => u.id === id)
-      const currentStatus = currentEntry?.status
-
-      if (!trimmedLabel) {
-        // Only update if status would actually change
-        if (currentStatus !== 'pending') {
-          updateUsernameStatus(id, 'pending')
-        }
-        return
-      }
-
-      // Only do client-side format validation
-      const validationError = dpnsService.getUsernameValidationError(trimmedLabel)
-      if (validationError) {
-        // Only update if status would change or error message differs
-        if (currentStatus !== 'invalid' || currentEntry?.validationError !== validationError) {
-          updateUsernameStatus(id, 'invalid', validationError)
-        }
-      } else {
-        // Valid format - keep as pending until availability check
-        if (currentStatus !== 'pending') {
-          updateUsernameStatus(id, 'pending')
-        }
-      }
-    },
-    [usernames, updateUsernameStatus]
-  )
-
-  // Debounce validation
-  useEffect(() => {
-    const timeouts: NodeJS.Timeout[] = []
-
-    for (const entry of usernames) {
-      if (entry.label && entry.status === 'pending') {
-        const timeout = setTimeout(() => {
-          validateUsername(entry.id, entry.label)
-        }, 300)
-        timeouts.push(timeout)
-      }
-    }
-
-    return () => {
-      timeouts.forEach((t) => clearTimeout(t))
-    }
-  }, [usernames, validateUsername])
-
   const handleLabelChange = (id: string, label: string) => {
     updateUsernameLabel(id, label)
+    const error = label.trim() ? dpnsService.getUsernameValidationError(label.trim()) : null
+    if (error) updateUsernameStatus(id, 'invalid', error)
   }
 
   // Rows that already fail the format check keep that error and are skipped by
@@ -91,7 +41,7 @@ export function UsernameEntryStep({ onCheckAvailability }: UsernameEntryStepProp
     entry.status !== 'invalid' && duplicateLabels.has(canonical(entry.label))
 
   const hasValidUsernames = usernames.some(
-    (u) => u.label.trim() && u.status !== 'invalid'
+    (u) => u.label.trim() && !dpnsService.getUsernameValidationError(u.label.trim())
   )
 
   return (

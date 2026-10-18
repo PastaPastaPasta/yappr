@@ -32,6 +32,8 @@ interface ConvCache {
   left?: boolean
   readAt?: number
   hiddenAt?: number
+  hiddenHeads?: Record<string, MessagePointer>
+  hiddenHeadsAt?: number
 }
 
 export interface CachedBlock {
@@ -74,6 +76,8 @@ function parse(raw: string | null): CacheData {
       for (const [sender, p] of Object.entries(conv?.heads ?? {})) if (isPointer(p)) heads[sender] = p
       data.convs[key] = {
         heads,
+        ...(isTime(conv?.hiddenHeadsAt) ? { hiddenHeadsAt: conv.hiddenHeadsAt } : {}),
+        ...(conv?.hiddenHeads ? { hiddenHeads: Object.fromEntries(Object.entries(conv.hiddenHeads).filter(([sender, pointer]) => IDENTITY_HEX.test(sender) && isPointer(pointer))) } : {}),
         ...(isPointer(conv?.oldestOwn) ? { oldestOwn: conv.oldestOwn } : {}),
         ...(conv?.hasText === true ? { hasText: true } : {}),
         ...(conv?.left === true ? { left: true } : {}),
@@ -179,6 +183,23 @@ export class LocalCache {
     if (read) conv.readAt = readAt
     if (hidden) conv.hiddenAt = hiddenAt
     this.dirty = true
+  }
+
+  /** Positions present when Delete was chosen, independent of provisional timestamps. */
+  hideThroughHeads(convKey: string, hiddenAt: number): void {
+    const conv = this.conv(convKey)
+    conv.hiddenHeads = structuredClone(conv.heads)
+    conv.hiddenHeadsAt = hiddenAt
+    this.dirty = true
+  }
+
+  wasHidden(convKey: string, sender: string, pointer: MessagePointer, hiddenAt: number): boolean | undefined {
+    const conv = this.data.convs[convKey]
+    if (conv?.hiddenHeadsAt !== hiddenAt) return undefined
+    const heads = conv.hiddenHeads
+    if (!heads) return undefined
+    const head = heads[sender]
+    return head !== undefined && comparePointers(pointer, head) <= 0
   }
 
   blocks(): CachedBlock[] {

@@ -29,13 +29,16 @@ import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel
 /** Bookmarked posts fetched and enriched per page. */
 const PAGE_SIZE = 30
 
-/**
- * One page of bookmarks as posts, in bookmark order: the referenced posts in
- * bounded `$id in [...]` batches, enriched together.
- */
-async function hydrateBookmarks(bookmarkDocs: BookmarkDocument[]): Promise<Post[]> {
+interface SavedPost {
+  id: string
+  post?: Post
+}
+const UNAVAILABLE_POST = 'This post is no longer available.'
+
+/** One row per saved post, including unavailable targets, in bookmark order. */
+async function hydrateBookmarks(bookmarkDocs: BookmarkDocument[]): Promise<SavedPost[]> {
   const { postService } = await import('@/lib/services/post-service')
-  const page = await postService.getPostsByIdsForDisplay(bookmarkDocs.map(bookmark => bookmark.postId))
+  const page = await postService.getPostsByIdsForDisplay(bookmarkDocs.map(bookmark => bookmark.postId), { throwOnError: true })
   const postsById = new Map(page.posts.map(post => [post.id, post]))
   const kept = bookmarkDocs.flatMap((bookmark) => {
     const post = postsById.get(bookmark.postId)
@@ -44,13 +47,17 @@ async function hydrateBookmarks(bookmarkDocs: BookmarkDocument[]): Promise<Post[
   })
   // enrichPostsBatch also resolves quote targets, so bookmarked quotes
   // render their embed instead of a permanent skeleton
-  return postService.enrichPostsBatch(kept, page.preloaded)
+  const enriched = await postService.enrichPostsBatch(kept, page.preloaded)
+  const enrichedById = new Map(enriched.map(post => [post.id, post]))
+  return bookmarkDocs.map(bookmark => ({ id: bookmark.postId, post: enrichedById.get(bookmark.postId) }))
 }
 
 function BookmarksPage() {
   const { user } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [isLoading, setIsLoading] = useState(true)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [reload, setReload] = useState(0)
   const [isMutating, setIsMutating] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'recent' | 'oldest'>('recent')
@@ -71,6 +78,7 @@ function BookmarksPage() {
     let cancelled = false
     const loadBookmarks = async () => {
       setIsLoading(true)
+      setLoadFailed(false)
       setSortBy('recent')
       try {
         const { bookmarkService } = await import('@/lib/services/bookmark-service')
@@ -78,14 +86,14 @@ function BookmarksPage() {
         if (!cancelled) await resetList(docs)
       } catch (error) {
         logger.error('Error loading bookmarks:', error)
-        toast.error('Failed to load bookmarks')
+        if (!cancelled) setLoadFailed(true)
       } finally {
         if (!cancelled) setIsLoading(false)
       }
     }
     loadBookmarks().catch(err => logger.error('Failed to load bookmarks:', err))
     return () => { cancelled = true }
-  }, [user, resetList])
+  }, [user, resetList, reload])
 
   // The sort orders the whole (current) list, so a change starts the pages over.
   const toggleSort = () => {
@@ -156,9 +164,9 @@ function BookmarksPage() {
 
   // Search covers the bookmarks loaded so far; the list keeps loading as it scrolls.
   const query = searchQuery.toLowerCase()
-  const filteredBookmarks = bookmarks.filter(post =>
-    post.content.toLowerCase().includes(query) ||
-    post.author.username.toLowerCase().includes(query)
+  const filteredBookmarks = bookmarks.filter(({ post }) =>
+    post ? post.content.toLowerCase().includes(query) || post.author.username.toLowerCase().includes(query)
+      : !query || UNAVAILABLE_POST.toLowerCase().includes(query)
   )
 
   return (
@@ -237,6 +245,11 @@ function BookmarksPage() {
             <Spinner size="md" className="mx-auto mb-4" />
             <p className="text-gray-500">Loading bookmarks...</p>
           </div>
+        ) : loadFailed ? (
+          <div role="alert" className="p-8 text-center">
+            <p>Bookmarks could not be loaded. Please try again.</p>
+            <button type="button" className="mt-3 text-yappr-600 hover:underline" onClick={() => setReload(value => value + 1)}>Retry</button>
+          </div>
         ) : bookmarks.length === 0 && !list.hasMore ? (
           <div className="p-8 text-center">
             <BookmarkIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
@@ -252,7 +265,7 @@ function BookmarksPage() {
           </div>
         ) : (
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
-            {filteredBookmarks.map((post) => (
+            {filteredBookmarks.map(({ id, post }) => post ? (
               <motion.div
                 key={post.id}
                 initial={{ opacity: 0, y: 20 }}
@@ -307,6 +320,12 @@ function BookmarksPage() {
                   </DropdownMenu.Root>
                 </div>
               </motion.div>
+            ) : (
+              <div key={id} className="flex items-center justify-between gap-4 p-4">
+                <p className="text-sm text-gray-500">{UNAVAILABLE_POST}</p>
+                <button type="button" disabled={isMutating} onClick={() => removeBookmark(id)}
+                  className="shrink-0 text-sm text-yappr-600 hover:underline">Remove bookmark</button>
+              </div>
             ))}
             {list.hasMore && (
               <InfiniteScrollSentinel
