@@ -438,10 +438,12 @@ function restorePending(identityId: string): PendingPasskey | null {
  * another passkey's unsettled enrolment for the identity (one at a time, so
  * no record is ever overwritten), `unstored` when the browser could not store it.
  */
-function holdPending(pending: PendingPasskey, sentTo: Uint8Array, receipt: CreateReceipt | undefined): 'held' | 'busy' | 'unstored' {
+function holdPending(pending: PendingPasskey, sentTo: Uint8Array, receipt: CreateReceipt | undefined, resuming: boolean): 'held' | 'busy' | 'unstored' | 'settled' {
   // What is stored decides, the same way a reload reads it (another vault's or an unreadable record is not one).
   const stored = restorePending(pending.identityId)
   if (stored && !bytesEqual(stored.credentialId, pending.credentialId)) return 'busy'
+  // A later write resumes a record: one gone meanwhile was settled (and may have been dropped) elsewhere.
+  if (resuming && !stored) return 'settled'
   pending.sentTo = sentTo
   // Merged with what another tab may have sent for it meanwhile: a write is only ever added, never dropped.
   pending.receipts = mergeReceipts(stored?.receipts, pending.receipts, receipt ? [receipt] : [])
@@ -504,23 +506,37 @@ async function sendEntry(pending: PendingPasskey, recipientKey: Uint8Array, reti
       replacesNonce,
       beforeBroadcast: (receipt) => {
         // Kept before anything is sent: a reload from here on resumes it, and no new passkey can replace it.
-        held = holdPending(pending, recipientKey, receipt)
+        held = holdPending(pending, recipientKey, receipt, !retireOnVerdict)
         sent = receipt
-        if (held !== 'held') throw new Error(held === 'busy' ? 'another passkey is still being saved' : 'this browser could not keep the passkey while it is saved')
+        if (held !== 'held') throw new Error(held === 'busy' ? 'another passkey is still being saved' : held === 'settled' ? 'it was settled elsewhere' : 'this browser could not keep the passkey while it is saved')
       },
     })
   } catch (error) {
     if (held === 'busy') throw new PasskeyVaultError('pending')
-    // A verdict (refused, or proved not recorded) or nothing sent: this write never lands. A first write
-    // ends the enrolment with it; a later one only drops its own receipt, as earlier writes may still land.
-    if (retireOnVerdict) {
-      pending.receipts = []
-      retirePending(pending.identityId, pending.credentialId)
-    } else if (sent && refreshPending(pending)) {
-      const dropped = sent.documentId
-      pending.receipts = (pending.receipts ?? []).filter((receipt) => receipt.documentId !== dropped)
-      writePending(pending)
-    }
+    if (held === 'settled') throw new SettledElsewhere()
+    // A verdict (refused, or proved not recorded) or nothing sent: this write never lands. Under the write
+    // lock every send takes, so no other tab's write slips in between: a first write ends the enrolment
+    // with it, unless another tab sent a later write for it meanwhile (that one may land); a later write
+    // only drops its own receipt, as earlier writes may still land.
+    const mine = sent?.documentId
+    const ended = await withIdentityWriteLock(pending.identityId, YAPPR_PASSKEY_VAULT_CONTRACT_ID, async () => {
+      const stored = restorePending(pending.identityId)
+      const ours = stored !== null && bytesEqual(stored.credentialId, pending.credentialId)
+      const others = ours ? (stored.receipts ?? []).filter((receipt) => receipt.documentId !== mine) : []
+      if (retireOnVerdict && others.length === 0) {
+        pending.receipts = []
+        retirePending(pending.identityId, pending.credentialId)
+        return true
+      }
+      if (ours && mine !== undefined) {
+        pending.sentTo = stored.sentTo
+        pending.receipts = others
+        writePending(pending)
+      }
+      return false
+    })
+    // Another tab's later write is still out: this passkey may yet be saved.
+    if (retireOnVerdict && !ended) throw new PasskeyVaultError('pending')
     throw error
   }
   if (!written.confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipientKey)) return false
@@ -594,6 +610,14 @@ export async function startPasskeyEnrolment(user: { identityId: string; username
  * `pending` (and its PRF output) so Confirm can be tapped again; every other
  * outcome wipes it.
  */
+/** A later write for a pending enrolment found its record gone: another tab settled it. Nothing was sent. */
+class SettledElsewhere extends Error {
+  constructor() {
+    super('the enrolment was settled elsewhere')
+    this.name = 'SettledElsewhere'
+  }
+}
+
 /** One sign-in restricted to `pending`'s passkey, evaluating the vault's PRF. */
 function pendingPasskeyAssertion(pending: PendingPasskey) {
   const { rp, contractId } = requireSetup()
@@ -737,7 +761,14 @@ export async function checkPendingEnrolment(pending: PendingPasskey): Promise<En
   if (!pending.verified) return 'confirm'
   const stalled = receipts.filter((_, index) => outcomes[index] === 'stalled').map((receipt) => receipt.nonce)
   const replaces = stalled.length > 0 ? stalled.reduce((low, nonce) => (nonce < low ? nonce : low)) : undefined
-  return await sendEntry(pending, pending.sentTo, false, replaces) ? 'saved' : 'waiting'
+  try {
+    return await sendEntry(pending, pending.sentTo, false, replaces) ? 'saved' : 'waiting'
+  } catch (error) {
+    if (!(error instanceof SettledElsewhere)) throw error
+    // Settled in another tab between the proofs and this write: nothing was sent, and nothing is dropped here.
+    if (pendingEnrolments.get(pending.identityId) === pending) pendingEnrolments.delete(pending.identityId)
+    return await passkeySaved(pending) ? 'saved' : 'not-saved'
+  }
 }
 
 /**
