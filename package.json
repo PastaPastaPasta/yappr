@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:release": "node scripts/build-release.mjs",
     "build:subpath": "BASE_PATH=/yappr next build",
     "build:testing": "set -a && . ./.env.testing && set +a && BASE_PATH=/testing next build",
     "build:devnet": "set -a && . ./.env.devnet && set +a && BASE_PATH=/devnet next build",
