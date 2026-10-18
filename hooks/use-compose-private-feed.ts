@@ -23,7 +23,7 @@ export function useComposePrivateFeed(isOpen: boolean, user: AuthUser | null, ap
 
   useEffect(() => {
     if (!isOpen) return
-    // No user, or a cut this client offers no private feeds on (social v17): public only.
+    // No user, or a cut before social v17 (no private feeds there): public only.
     if (!user || !privateFeedClientSupported()) {
       setHasPrivateFeed(false)
       setLoading(false)
@@ -32,11 +32,10 @@ export function useComposePrivateFeed(isOpen: boolean, user: AuthUser | null, ap
     setLoading(true)
     const check = async () => {
       try {
-        const { privateFeedService, privateFeedKeyStore, identityService } = await import('@/lib/services')
-        // Local keys are proof enough; only ask Platform when there are none.
-        const hasPrivate = privateFeedKeyStore.hasFeedSeed() || (await privateFeedService.hasPrivateFeed(user.identityId))
+        const { privateFeedService, identityService } = await import('@/lib/services')
+        const hasPrivate = await privateFeedService.hasPrivateFeed(user.identityId)
         setHasPrivateFeed(hasPrivate)
-        setFollowerCount(hasPrivate ? Object.keys(privateFeedKeyStore.getRecipientMap()).length : 0)
+        setFollowerCount(hasPrivate ? await privateFeedService.getPrivateFollowerCount(user.identityId).catch(() => 0) : 0)
         if (!hasPrivate) {
           try {
             const { hasEncryptionKeyOnIdentity } = await import('@/lib/crypto/encryption-key-lookup')
@@ -60,7 +59,7 @@ export function useComposePrivateFeed(isOpen: boolean, user: AuthUser | null, ap
     async (targetVisibility: PostVisibility) => {
       if (!user) return
       try {
-        const { privateFeedService, privateFeedKeyStore } = await import('@/lib/services')
+        const { privateFeedService } = await import('@/lib/services')
         const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
         const encryptionPrivateKey = getEncryptionKeyBytes(user.identityId)
         if (!encryptionPrivateKey) {
@@ -75,7 +74,7 @@ export function useComposePrivateFeed(isOpen: boolean, user: AuthUser | null, ap
         setHasPrivateFeed(true)
         applyVisibility(targetVisibility)
         toast.success('Private feed enabled!')
-        setFollowerCount(Object.keys(privateFeedKeyStore.getRecipientMap()).length)
+        setFollowerCount(0)
       } catch (error) {
         logger.error('Error enabling private feed:', error)
         toast.error('Failed to enable private feed')

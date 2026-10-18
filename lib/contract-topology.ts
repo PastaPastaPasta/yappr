@@ -1457,16 +1457,6 @@ export function mediaItemLimit(): number {
 }
 
 /**
- * The property of `post`/`reply`/`privateFeedGrant`/`privateFeedRekey` holding
- * the private-feed key generation, and of `privateFeedState` holding the
- * latest one. v10 renamed them from `epoch`/`maxEpoch`; the HKDF labels
- * (`epoch-chain`) and the ciphertext layout are unchanged.
- */
-export function privateFeedKeyFields(): { readonly generation: 'epoch' | 'keyGeneration'; readonly latest: 'maxEpoch' | 'maxKeyGeneration' } {
-  return isV10() ? { generation: 'keyGeneration', latest: 'maxKeyGeneration' } : { generation: 'epoch', latest: 'maxEpoch' }
-}
-
-/**
  * The pattern the configured cut's `yapprProfile.<field>` declares (v10 on),
  * or null where it declares none: v17 takes an https website only, an https
  * or ipfs banner, and an avatar that is a DiceBear recipe or an https/ipfs
@@ -2160,30 +2150,22 @@ export function selfLikesAreRefused(kind: TargetKind): boolean {
 }
 
 /**
- * True when private-feed writes are gated by consensus (v9): a grant or rekey
- * needs the writer's own `privateFeedState` (40120 on `$ownerId` otherwise),
- * and a grant needs a `followRequest` from its recipient to the writer that
- * exists when the grant is written (40120 on `recipientId`).
- */
-export function privateFeedWritesAreGated(): boolean {
-  return isDevnetCut() && devnetSchemas().privateFeedGrant?.ownerRefersTo !== undefined
-}
-
-/**
  * True when an identity keeps several write-once private feeds (v17: the
  * `privateFeed` type, one document per feed number, replaces
- * `privateFeedState`; docs/SOCIAL_V17.md). The private-feed client in this
- * build speaks the single-`privateFeedState` shape only, so on such a cut it
- * reads no feeds and offers none ({@link privateFeedClientSupported}) until
- * the multi-feed client lands.
+ * `privateFeedState`; docs/SOCIAL_V17.md).
  */
 export function privateFeedsAreMultiple(): boolean {
   return isDevnetCut() && devnetSchemas().privateFeed !== undefined
 }
 
-/** True when this build's private-feed client can read and write the configured cut's feeds (every cut but v17 for now). */
+/**
+ * True when this build's private-feed client can read and write the
+ * configured cut's feeds: the multi-feed client (crypto v2,
+ * lib/private-feed/crypto.ts) speaks v17's shape only, so earlier cuts offer
+ * no private feed at all.
+ */
 export function privateFeedClientSupported(): boolean {
-  return !privateFeedsAreMultiple()
+  return privateFeedsAreMultiple()
 }
 
 /**

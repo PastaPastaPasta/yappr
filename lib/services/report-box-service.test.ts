@@ -7,7 +7,7 @@ import bs58 from 'bs58'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { bytesToBase64 } from '@/lib/bytes'
-import { privateFeedCryptoService } from './private-feed-crypto-service'
+import { cekAt, encryptContent, type ContentKind } from '@/lib/private-feed/crypto'
 import { sealReportBox } from '@/lib/report-box'
 import type { Post } from '@/lib/types'
 
@@ -19,11 +19,9 @@ vi.mock('./moderation-service', () => ({
     [...new Set([...team.appointed, ...(team.ownerModerates ? [team.ownerId] : [])])],
 }))
 vi.mock('./identity-service', () => ({ identityService: { getIdentity: mocks.getIdentity } }))
-vi.mock('./index', () => ({
-  privateFeedFollowerService: { contentKeyFor: mocks.contentKeyFor },
-  privateFeedKeyStore: { getFeedSeed: () => null },
-  privateFeedCryptoService,
-  MAX_KEY_GENERATION: 2000,
+vi.mock('./private-feed-reader', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./private-feed-reader')>()),
+  contentKeyFor: mocks.contentKeyFor,
 }))
 
 const id = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
@@ -36,23 +34,26 @@ const encryptionKeyOf = (identityId: string) => {
   return { publicKeys: key ? [{ id: 2, type: 0, purpose: 1, securityLevel: 2, data: bytesToBase64(getPublicKey(key)) }] : [] }
 }
 
-const chain = privateFeedCryptoService.generateCekChain(secret(77), 10)
-const encrypted = privateFeedCryptoService.encryptPostContent(chain[3], 'the private words', bs58.decode(AUTHOR), 3)
+const FEED = 2
+const cek = cekAt(secret(77), 10, 3)
+const seal = (text: string, feedOwner: string, author: string, kind: ContentKind) =>
+  encryptContent(cek, text, { feedOwnerId: bs58.decode(feedOwner), feed: FEED, keyGeneration: 3, authorId: bs58.decode(author), kind })
+const encrypted = seal('the private words', AUTHOR, AUTHOR, 'post')
 const privatePost: Post = {
   id: id(9), targetKind: 'post', content: '🔒', createdAt: new Date(0),
   author: { id: AUTHOR, username: '', displayName: '', avatar: '', followers: 0, following: 0, verified: false, joinedAt: new Date(0) },
   likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0,
-  encryptedContent: encrypted.ciphertext, nonce: encrypted.nonce, keyGeneration: 3,
+  encryptedContent: encrypted.ciphertext, nonce: encrypted.nonce, keyGeneration: 3, feed: FEED,
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   vi.resetModules()
-  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v13')
+  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
   mocks.getTeam.mockResolvedValue({ ownerId: id(99), appointed: [LEADER, MEMBER, KEYLESS], elected: true, ownerModerates: false })
   mocks.getIdentity.mockImplementation(async (identityId: string) => encryptionKeyOf(identityId))
   // The reporter follows the feed: its keys give the CEK of the post's generation.
-  mocks.contentKeyFor.mockResolvedValue({ cek: chain[3] })
+  mocks.contentKeyFor.mockResolvedValue({ cek })
 })
 afterEach(() => vi.unstubAllEnvs())
 
@@ -62,7 +63,7 @@ describe('the report box service', () => {
     const outcome = await buildReportBox(REPORTER, privatePost)
     if (outcome.kind !== 'sealed') throw new Error(`expected a sealed box, got ${outcome.kind}`)
     expect([outcome.recipients, outcome.missing]).toEqual([2, 1])
-    expect(mocks.contentKeyFor).toHaveBeenCalledWith(AUTHOR, 3, REPORTER)
+    expect(mocks.contentKeyFor).toHaveBeenCalledWith(REPORTER, AUTHOR, FEED, 3, undefined)
     for (const moderator of [LEADER, MEMBER]) {
       await expect(openReportedContent(outcome.box, privatePost, MODERATOR_KEYS[moderator])).resolves.toEqual({ kind: 'opened', text: 'the private words' })
     }
@@ -127,7 +128,7 @@ describe('the report box service', () => {
   })
 
   it('seals nothing when this device cannot read the post itself', async () => {
-    mocks.contentKeyFor.mockResolvedValue({ error: 'No keys for this feed' })
+    mocks.contentKeyFor.mockResolvedValue({ reason: 'no-access' })
     const { buildReportBox } = await import('./report-box-service')
     await expect(buildReportBox(REPORTER, privatePost)).resolves.toEqual({ kind: 'no-key' })
   })
@@ -144,7 +145,7 @@ describe('the report box service', () => {
   describe('a reply', () => {
     const REPLIER = id(11)
     const reply = (owner: string): Post => {
-      const sealed = privateFeedCryptoService.encryptPostContent(chain[3], 'the private reply', bs58.decode(owner), 3)
+      const sealed = seal('the private reply', owner, REPLIER, 'reply')
       return { ...privatePost, id: id(10), targetKind: 'reply', author: { ...privatePost.author, id: REPLIER }, rootPostId: id(9), rootOwnerId: AUTHOR,
         encryptedContent: sealed.ciphertext, nonce: sealed.nonce }
     }
@@ -153,14 +154,14 @@ describe('the report box service', () => {
       const { buildReportBox } = await import('./report-box-service')
       mocks.getPostById.mockResolvedValue(privatePost)
       await expect(buildReportBox(REPORTER, reply(AUTHOR))).resolves.toMatchObject({ kind: 'sealed' })
-      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(AUTHOR, 3, REPORTER)
+      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(REPORTER, AUTHOR, FEED, 3, undefined)
     })
 
     it('under a public post seals the replier\'s own key', async () => {
       const { buildReportBox } = await import('./report-box-service')
       mocks.getPostById.mockResolvedValue({ ...privatePost, encryptedContent: undefined, nonce: undefined, keyGeneration: undefined })
       await expect(buildReportBox(REPORTER, reply(REPLIER))).resolves.toMatchObject({ kind: 'sealed' })
-      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(REPLIER, 3, REPORTER)
+      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(REPORTER, REPLIER, FEED, 3, undefined)
     })
 
     it.each([
@@ -181,12 +182,20 @@ describe('the report box service', () => {
     })
   })
 
-  it('refuses a box naming another key generation before deriving any key', async () => {
+  it('refuses a box naming another feed or key generation than the content', async () => {
     const { openReportedContent } = await import('./report-box-service')
-    const forged = sealReportBox({ feedOwnerId: AUTHOR, keyGeneration: 0xffffffff, cek: chain[3] }, [getPublicKey(MODERATOR_KEYS[LEADER])], privatePost.id)
-    const derive = vi.spyOn(privateFeedCryptoService, 'deriveCEK')
-    await expect(openReportedContent(forged, privatePost, MODERATOR_KEYS[LEADER])).resolves.toMatchObject({ kind: 'failed', reason: expect.stringMatching(/another generation/) })
-    expect(derive).not.toHaveBeenCalled()
-    derive.mockRestore()
+    const moderator = [getPublicKey(MODERATOR_KEYS[LEADER])]
+    for (const forged of [{ feed: FEED + 1, keyGeneration: 3 }, { feed: FEED, keyGeneration: 0xffff }]) {
+      const box = sealReportBox({ feedOwnerId: AUTHOR, cek, ...forged }, moderator, privatePost.id)
+      await expect(openReportedContent(box, privatePost, MODERATOR_KEYS[LEADER])).resolves.toMatchObject({ kind: 'failed', reason: expect.stringMatching(/another feed or generation/) })
+    }
+  })
+
+  it('opens nothing presented as another author\'s post', async () => {
+    const { openReportedContent } = await import('./report-box-service')
+    const box = sealReportBox({ feedOwnerId: AUTHOR, feed: FEED, keyGeneration: 3, cek }, [getPublicKey(MODERATOR_KEYS[LEADER])], privatePost.id)
+    // The author binding: the same ciphertext presented as someone else's post does not open.
+    const moved = { ...privatePost, author: { ...privatePost.author, id: REPORTER } }
+    await expect(openReportedContent(box, moved, MODERATOR_KEYS[LEADER])).resolves.toMatchObject({ kind: 'failed' })
   })
 })

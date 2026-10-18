@@ -5,7 +5,8 @@
  * Filing: the box is sealed to the ENCRYPTION key of everyone who may
  * moderate when the report is filed (`moderatorIdsOf`: a seated elected
  * team's leader and members, or the interim's moderators and owner), and
- * carries the reporter's own CEK for the content's key generation. Members
+ * carries the reporter's own CEK for the content's feed and key generation:
+ * it opens that feed's posts up to that generation, never another feed (D12). Members
  * without an encryption key are left out; when none has one, nothing is
  * sealed and the reporter is pointed at the email channel instead.
  *
@@ -33,8 +34,8 @@ export type ReportBoxOutcome =
   | { kind: 'not-needed' }
 
 /** True when a report of `target` should carry a box: private content on a contract that takes one. */
-export function reportNeedsBox(target: Pick<Post, 'encryptedContent' | 'keyGeneration'>): boolean {
-  return reportShape().boxMaxBytes !== null && !!target.encryptedContent?.length && target.keyGeneration !== undefined
+export function reportNeedsBox(target: Pick<Post, 'encryptedContent' | 'keyGeneration' | 'feed'>): boolean {
+  return reportShape().boxMaxBytes !== null && !!target.encryptedContent?.length && target.keyGeneration !== undefined && target.feed !== undefined
 }
 
 /**
@@ -75,7 +76,7 @@ async function moderatorKeys(): Promise<{ keys: Uint8Array[]; missing: number }>
 async function feedOwnerOf(target: Post): Promise<string | null> {
   // The root may come from a cache, and so may the CEK below. Neither needs a
   // fresh read: the key is sealed only after it decrypts the target itself
-  // ({@link opensTarget}), so a stale answer can only leave the box out.
+  // ({@link openTarget}), so a stale answer can only leave the box out.
   if (targetKindOf(target) !== 'reply') return target.author.id
   const rootId = target.rootPostId
   if (!rootId) return null
@@ -85,30 +86,28 @@ async function feedOwnerOf(target: Post): Promise<string | null> {
   return root.encryptedContent?.length ? root.author.id : target.author.id
 }
 
-/** True when `cek` (of `feedOwnerId`'s feed) decrypts `target`: only a key that opens the reported content is sealed. */
-async function opensTarget(cek: Uint8Array, feedOwnerId: string, target: Post): Promise<boolean> {
-  if (!target.encryptedContent || !target.nonce || target.keyGeneration === undefined) return false
-  const { privateFeedCryptoService } = await import('./private-feed-crypto-service')
+/** The text of `target` under `cek` of `feedOwnerId`'s feed, or null when the key does not open it. */
+async function openTarget(cek: Uint8Array, feedOwnerId: string, target: Pick<Post, 'author' | 'encryptedContent' | 'nonce' | 'keyGeneration' | 'feed' | 'targetKind' | 'parentId'>): Promise<string | null> {
+  const { privateContentOf } = await import('./private-feed-reader')
+  const content = privateContentOf(target, feedOwnerId)
+  if (!content) return null
+  const { decryptContent } = await import('@/lib/private-feed/crypto')
   try {
-    privateFeedCryptoService.decryptPostContent(cek, {
-      ciphertext: target.encryptedContent,
-      nonce: target.nonce,
-      keyGeneration: target.keyGeneration,
-    }, identifierToBytes(feedOwnerId))
-    return true
+    return decryptContent(cek, content.encryptedContent, content.nonce, {
+      feedOwnerId: identifierToBytes(feedOwnerId), feed: content.feed, keyGeneration: content.keyGeneration,
+      authorId: identifierToBytes(content.authorId), kind: content.kind,
+    })
   } catch {
-    return false
+    return null
   }
 }
 
-/** This device's CEK of `feedOwnerId`'s feed for `keyGeneration`: the owner's own chain, or a follower's granted keys. */
-async function contentKeyOf(feedOwnerId: string, keyGeneration: number, viewerId: string): Promise<Uint8Array | null> {
-  const { privateFeedFollowerService, privateFeedKeyStore, privateFeedCryptoService, MAX_KEY_GENERATION } = await import('./index')
-  if (feedOwnerId === viewerId) {
-    const seed = privateFeedKeyStore.getFeedSeed()
-    return seed ? privateFeedCryptoService.generateCekChain(seed, MAX_KEY_GENERATION)[keyGeneration] ?? null : null
-  }
-  const key = await privateFeedFollowerService.contentKeyFor(feedOwnerId, keyGeneration, viewerId)
+/** This device's CEK of `feedOwnerId`'s feed `feed` for `keyGeneration`: the owner's own keys, or a member's. */
+async function contentKeyOf(feedOwnerId: string, feed: number, keyGeneration: number, viewerId: string): Promise<Uint8Array | null> {
+  const { contentKeyFor } = await import('./private-feed-reader')
+  // The session's encryption key lets a device that never opened this post recover its feed's keys.
+  const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+  const key = await contentKeyFor(viewerId, feedOwnerId, feed, keyGeneration, getEncryptionKeyBytes(viewerId) ?? undefined)
   return 'cek' in key ? key.cek : null
 }
 
@@ -121,16 +120,17 @@ export async function buildReportBox(reporterId: string, target: Post): Promise<
   const maxBytes = reportShape().boxMaxBytes
   if (maxBytes === null || !reportNeedsBox(target)) return { kind: 'not-needed' }
   const keyGeneration = target.keyGeneration as number
+  const feed = target.feed as number
   const feedOwnerId = await feedOwnerOf(target)
-  const cek = feedOwnerId ? await contentKeyOf(feedOwnerId, keyGeneration, reporterId) : null
+  const cek = feedOwnerId ? await contentKeyOf(feedOwnerId, feed, keyGeneration, reporterId) : null
   // A key of the wrong feed would hand the moderators someone else's posts and still not open this one.
-  if (!feedOwnerId || !cek || !(await opensTarget(cek, feedOwnerId, target))) return { kind: 'no-key' }
+  if (!feedOwnerId || !cek || (await openTarget(cek, feedOwnerId, target)) === null) return { kind: 'no-key' }
   const { keys, missing } = await moderatorKeys()
   if (keys.length === 0) return { kind: 'no-recipients' }
   const room = maxReportBoxRecipients(maxBytes)
   if (keys.length > room) logger.warn(`reportBox: ${keys.length} moderators, room for ${room}; the rest cannot open this report`)
   const sealed = keys.slice(0, room)
-  const box = sealReportBox({ feedOwnerId, keyGeneration, cek }, sealed, target.id)
+  const box = sealReportBox({ feedOwnerId, feed, keyGeneration, cek }, sealed, target.id)
   return { kind: 'sealed', box, recipients: sealed.length, missing: missing + keys.length - sealed.length }
 }
 
@@ -139,34 +139,26 @@ export type OpenedReport = { kind: 'opened'; text: string } | { kind: 'failed'; 
 
 /**
  * Open `box` (on the report of `target`) with the moderator's encryption key
- * and decrypt the private content read-only. Version 1 boxes are sealed with
- * the content's own key generation, and anyone can seal a box to a
- * moderator's public key, so a box naming any other generation is refused
- * before any key derivation: a forged generation of 2^32 - 1 would otherwise
- * run billions of hashes on the moderator's main thread.
+ * and decrypt the private content read-only. Version 2 boxes are sealed with
+ * the content's own feed and key generation, and anyone can seal a box to a
+ * moderator's public key, so a box naming any other feed or generation is
+ * refused before any key derivation.
  */
 export async function openReportedContent(
   box: Uint8Array,
-  target: Pick<Post, 'id' | 'encryptedContent' | 'nonce' | 'keyGeneration'>,
+  target: Pick<Post, 'id' | 'author' | 'encryptedContent' | 'nonce' | 'keyGeneration' | 'feed' | 'targetKind' | 'parentId'>,
   encryptionPrivateKey: Uint8Array
 ): Promise<OpenedReport> {
-  if (!target.encryptedContent || !target.nonce || target.keyGeneration === undefined) return { kind: 'failed', reason: 'The content is not encrypted' }
+  if (!target.encryptedContent || !target.nonce || target.keyGeneration === undefined || target.feed === undefined) return { kind: 'failed', reason: 'The content is not encrypted' }
   let payload: ReportBoxPayload
   try {
     payload = openReportBox(box, target.id, encryptionPrivateKey)
   } catch (error) {
     return { kind: 'failed', reason: error instanceof Error ? error.message : 'The box could not be opened' }
   }
-  if (payload.keyGeneration !== target.keyGeneration) return { kind: 'failed', reason: 'The box holds a key for another generation than the content' }
-  const { privateFeedCryptoService } = await import('./private-feed-crypto-service')
-  try {
-    const text = privateFeedCryptoService.decryptPostContent(payload.cek, {
-      ciphertext: target.encryptedContent,
-      nonce: target.nonce,
-      keyGeneration: target.keyGeneration,
-    }, identifierToBytes(payload.feedOwnerId))
-    return { kind: 'opened', text }
-  } catch {
-    return { kind: 'failed', reason: 'The key in this report does not open the content' }
+  if (payload.feed !== target.feed || payload.keyGeneration !== target.keyGeneration) {
+    return { kind: 'failed', reason: 'The box holds a key for another feed or generation than the content' }
   }
+  const text = await openTarget(payload.cek, payload.feedOwnerId, target)
+  return text === null ? { kind: 'failed', reason: 'The key in this report does not open the content' } : { kind: 'opened', text }
 }

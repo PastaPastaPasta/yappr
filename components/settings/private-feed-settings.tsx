@@ -8,21 +8,112 @@ import { withoutRevokedGrants } from '@/lib/utils/revoked-grants'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { LockClosedIcon, CheckCircleIcon, UserGroupIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { LockClosedIcon, CheckCircleIcon, UserGroupIcon, ExclamationTriangleIcon, KeyIcon, PlusIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { TREE_CAPACITY, MAX_KEY_GENERATION } from '@/lib/services'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
-import { ResetPrivateFeedDialog } from './reset-private-feed-dialog'
+import { usePrivateFeedMove } from '@/hooks/use-private-feed-move'
+import { RenewPrivateFeedDialog } from './renew-private-feed-dialog'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { useWalletSession } from '@/components/auth/wallet-encryption-key-prompt'
-import { SupportEmailLink } from '@/components/layout/legal-links'
+import { DEFAULT_FEED_CAPS } from '@/lib/private-feed/crypto'
 
 interface PrivateFeedSettingsProps {
-  /** If true, automatically open the reset dialog when component mounts */
-  openReset?: boolean
-  /** Callback when reset dialog is opened (for clearing URL params) */
-  onResetOpened?: () => void
+  /** If true, automatically open the renewal dialog when component mounts (the lost-key flow) */
+  openRenew?: boolean
+  /** Callback when the renewal dialog is opened (for clearing URL params) */
+  onRenewOpened?: () => void
+}
+
+/** The current feed's stored caps and use, as Settings shows them. */
+interface FeedStats {
+  followerCount: number
+  treeCapacity: number
+  keyGeneration: number
+  maxKeyGeneration: number
+  keyRotated: boolean
+}
+
+/** A feed is nearly full at 90% of its leaves or within 10 key changes of its cap (design §7.7). */
+function nearlyFull(stats: FeedStats): boolean {
+  return stats.followerCount >= 0.9 * stats.treeCapacity || stats.keyGeneration >= stats.maxKeyGeneration - 10
+}
+
+/** Why the renewal dialog is opened, from the feed's state. */
+function renewReason(stats: FeedStats | null): 'choice' | 'key-changed' | 'full' {
+  if (stats?.keyRotated) return 'key-changed'
+  if (stats && nearlyFull(stats)) return 'full'
+  return 'choice'
+}
+
+/**
+ * Keep the key the chain just accepted available the way the manual key-entry
+ * flow does. Throws when it cannot be saved (the store swallows write failures,
+ * so this reads it back).
+ */
+async function rememberEncryptionKey(identityId: string, enteredKey: string, acceptedKey: Uint8Array): Promise<void> {
+  const {
+    storeEncryptionKey,
+    getEncryptionKey,
+    getEncryptionKeyBytes,
+    clearEncryptionKey,
+    storeEncryptionKeyType,
+    clearEncryptionKeyType,
+  } = await import('@/lib/secure-storage')
+  const { bytesEqual } = await import('@/lib/bytes')
+  // The input is prefilled with the stored key, which may be a derived key.
+  // Remember it so resubmitting that same key does not relabel it.
+  const priorKeyBytes = getEncryptionKeyBytes(identityId)
+  storeEncryptionKey(identityId, enteredKey)
+  const normalizedEncryptionKey = getEncryptionKey(identityId)
+  // The store swallows write failures, so a non-null readback can still be a stale
+  // key left over from an earlier session. Compare the decoded secret with the key
+  // that was actually accepted before backing anything up.
+  const storedKeyBytes = getEncryptionKeyBytes(identityId)
+  if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, acceptedKey)) {
+    // Drop any stale key so later private-feed operations cannot pick up a secret
+    // that no longer matches the one the chain just accepted.
+    clearEncryptionKey(identityId)
+    clearEncryptionKeyType(identityId)
+    throw new Error('Encryption key was not saved')
+  }
+  // A newly pasted key is recorded as external, matching the add-encryption-key flow.
+  // Resubmitting the key that was already stored keeps its existing type label.
+  if (!priorKeyBytes || !bytesEqual(priorKeyBytes, acceptedKey)) {
+    storeEncryptionKeyType(identityId, 'external')
+  }
+}
+
+function BulletList({ items }: { items: readonly string[] }) {
+  return (
+    <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+      {items.map((item) => (
+        <li key={item} className="flex gap-2">
+          <span className="text-yappr-500">•</span>
+          {item}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** The amber "encryption key required" box. */
+function EncryptionKeyRequiredNotice({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
+      <div className="flex gap-3">
+        <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+            Encryption key required
+          </p>
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            {children}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -31,7 +122,7 @@ interface PrivateFeedSettingsProps {
  * Settings section for managing private feeds.
  * Implements PRD §4.1 - Enable Private Feed UI
  */
-export function PrivateFeedSettings({ openReset = false, onResetOpened }: PrivateFeedSettingsProps) {
+export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: PrivateFeedSettingsProps) {
   const encryptionKeyId = useId()
   const { user } = useAuth()
   // A wallet sign-in's messaging key lives in its key ring; nothing here stores or backs it up.
@@ -43,17 +134,18 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
   const [isLoading, setIsLoading] = useState(true)
   const [isEnabling, setIsEnabling] = useState(false)
   const [enabledDate, setEnabledDate] = useState<Date | null>(null)
-  const [followerCount, setFollowerCount] = useState(0)
-  const [currentKeyGeneration, setCurrentKeyGeneration] = useState(1)
+  const [stats, setStats] = useState<FeedStats | null>(null)
   const [hasEncryptionKeyStored, setHasEncryptionKeyStored] = useState(false)
+  const [isRenewing, setIsRenewing] = useState(false)
+  const move = usePrivateFeedMove(user?.identityId)
 
   // Encryption key input state
   const [showKeyInput, setShowKeyInput] = useState(false)
   const [encryptionKeyInput, setEncryptionKeyInput] = useState('')
   const [keyError, setKeyError] = useState<string | null>(null)
 
-  // Reset dialog state
-  const [showResetDialog, setShowResetDialog] = useState(false)
+  // Renewal dialog state
+  const [showRenewDialog, setShowRenewDialog] = useState(false)
 
   // Add encryption key modal state
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
@@ -66,51 +158,36 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
     }
 
     try {
-      const { privateFeedService, privateFeedKeyStore } = await import('@/lib/services')
+      const { privateFeedService } = await import('@/lib/services')
       const { hasEncryptionKey } = await import('@/lib/secure-storage')
       const { identityService } = await import('@/lib/services/identity-service')
 
-      // Check if user has private feed on chain
-      const state = await privateFeedService.getPrivateFeedState(user.identityId)
-      const hasPrivateFeed = state !== null
+      const overview = await privateFeedService.getOverview(user.identityId)
+      const hasPrivateFeed = overview !== null
       setIsEnabled(hasPrivateFeed)
 
       // Check if encryption key is stored in session
       setHasEncryptionKeyStored(hasEncryptionKey(user.identityId))
 
       // Check if user has encryption key on identity (only if not already enabled)
-      if (!hasPrivateFeed) {
+      if (!overview) {
         const hasKeyOnIdentity = await identityService.hasEncryptionKey(user.identityId)
         setHasEncryptionKeyOnIdentity(hasKeyOnIdentity)
+        return
       }
 
-      if (hasPrivateFeed) {
-        // Get state document for created date
-        if (state?.$createdAt) {
-          setEnabledDate(new Date(state.$createdAt))
-        }
-
-        // Get current key generation
-        const keyGeneration = await privateFeedService.getLatestKeyGeneration(user.identityId)
-        setCurrentKeyGeneration(keyGeneration)
-
-        // Get follower count from on-chain grants (authoritative source)
-        // Falls back to local recipientMap if on-chain query fails
-        try {
-          const followers = withoutRevokedGrants(
-            await privateFeedService.getPrivateFollowers(user.identityId),
-            usePrivateFeedRefreshStore.getState().revokedGrantsFor(user.identityId)
-          )
-          setFollowerCount(followers.length)
-        } catch (err) {
-          logger.error('Failed to get followers from chain, using local state:', err)
-          // Fallback to local storage if on-chain query fails
-          if (privateFeedKeyStore.hasFeedSeed()) {
-            const recipientMap = privateFeedKeyStore.getRecipientMap()
-            setFollowerCount(Object.keys(recipientMap || {}).length)
-          }
-        }
-      }
+      // "On since" the first feed; the stats and caps are the current feed's own (R-M30).
+      setEnabledDate(new Date(overview.feeds[overview.feeds.length - 1].createdAt))
+      setStats({
+        followerCount: withoutRevokedGrants(overview.followers, usePrivateFeedRefreshStore.getState().revokedGrantsFor(user.identityId)).length,
+        treeCapacity: overview.feed.treeCapacity,
+        keyGeneration: overview.keyGeneration,
+        maxKeyGeneration: overview.feed.maxKeyGeneration,
+        keyRotated: overview.keyRotated,
+      })
+      // A move no device finished (a crash before it was saved, or begun elsewhere) resumes here.
+      const { adoptUnfinishedMove } = await import('@/lib/services/private-feed-move')
+      await adoptUnfinishedMove(user.identityId)
     } catch (error) {
       logger.error('Error checking private feed status:', error)
     } finally {
@@ -122,14 +199,61 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
     checkPrivateFeedStatus().catch(err => logger.error('Failed to check private feed status:', err))
   }, [checkPrivateFeedStatus, refreshKey])
 
-  // Handle openReset prop - open reset dialog when directed from lost key flow
+  // Open the renewal dialog when directed from the lost-key flow
   useEffect(() => {
-    if (openReset && isEnabled && !isLoading) {
-      setShowResetDialog(true)
+    if (openRenew && isEnabled && !isLoading) {
+      setShowRenewDialog(true)
       // Notify parent to clear URL param to prevent dialog re-opening
-      onResetOpened?.()
+      onRenewOpened?.()
     }
-  }, [openReset, isEnabled, isLoading, onResetOpened])
+  }, [openRenew, isEnabled, isLoading, onRenewOpened])
+
+  /** Renew, or continue a paused move; both need the encryption key in this session. */
+  const withEncryptionKey = async (action: (key: Uint8Array) => Promise<void>) => {
+    if (!user) return
+    const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+    const key = getEncryptionKeyBytes(user.identityId)
+    if (key) {
+      await action(key)
+      return
+    }
+    openEncryptionKeyModal('manage_private_feed', () => {
+      const entered = getEncryptionKeyBytes(user.identityId)
+      if (entered) action(entered).catch((error) => logger.error('Private feed action failed:', error))
+    })
+  }
+
+  const handleRenew = (bringHistory: boolean) => {
+    setShowRenewDialog(false)
+    withEncryptionKey(async (key) => {
+      if (!user) return
+      setIsRenewing(true)
+      try {
+        const { renewPrivateFeed } = await import('@/lib/services/private-feed-move')
+        const result = await renewPrivateFeed(user.identityId, key, { bringHistory })
+        if (result.success) {
+          toast.success(result.historyLinked === false && bringHistory
+            ? 'Private feed renewed. Posts from before this change stay visible only to people who already follow you.'
+            : 'Private feed renewed')
+        } else if (result.error) {
+          toast.error(result.error)
+        }
+      } finally {
+        setIsRenewing(false)
+        triggerRefresh()
+      }
+    }).catch((error) => logger.error('Renewal failed:', error))
+  }
+
+  const handleContinueMove = () => {
+    withEncryptionKey(async (key) => {
+      if (!user) return
+      const { runMove } = await import('@/lib/services/private-feed-move')
+      const result = await runMove(user.identityId, key)
+      if (!result.success && result.error) toast.error(result.error)
+      triggerRefresh()
+    }).catch((error) => logger.error('Continuing the move failed:', error))
+  }
 
   const handleStartEnable = async () => {
     // Check if we already have the key stored in secure storage
@@ -193,36 +317,7 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         // Storage/backup failures cannot undo the feed that was already enabled.
         if (!walletSession) {
           try {
-            const {
-              storeEncryptionKey,
-              getEncryptionKey,
-              getEncryptionKeyBytes,
-              clearEncryptionKey,
-              storeEncryptionKeyType,
-              clearEncryptionKeyType,
-            } = await import('@/lib/secure-storage')
-            const { bytesEqual } = await import('@/lib/bytes')
-            // The input is prefilled with the stored key, which may be a derived key.
-            // Remember it so resubmitting that same key does not relabel it.
-            const priorKeyBytes = getEncryptionKeyBytes(user.identityId)
-            storeEncryptionKey(user.identityId, trimmedKey)
-            const normalizedEncryptionKey = getEncryptionKey(user.identityId)
-            // The store swallows write failures, so a non-null readback can still be a stale
-            // key left over from an earlier session. Compare the decoded secret with the key
-            // that was actually accepted before backing anything up.
-            const storedKeyBytes = getEncryptionKeyBytes(user.identityId)
-            if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, validation.privateKey)) {
-              // Drop any stale key so later private-feed operations cannot pick up a secret
-              // that no longer matches the one the chain just accepted.
-              clearEncryptionKey(user.identityId)
-              clearEncryptionKeyType(user.identityId)
-              throw new Error('Encryption key was not saved')
-            }
-            // A newly pasted key is recorded as external, matching the add-encryption-key flow.
-            // Resubmitting the key that was already stored keeps its existing type label.
-            if (!priorKeyBytes || !bytesEqual(priorKeyBytes, validation.privateKey)) {
-              storeEncryptionKeyType(user.identityId, 'external')
-            }
+            await rememberEncryptionKey(user.identityId, trimmedKey, validation.privateKey)
           } catch (error) {
             logger.error('Failed to store encryption key after enabling private feed:', error)
             toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
@@ -292,43 +387,62 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
               </div>
             </div>
 
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
-                <div className="flex items-center justify-center gap-1 mb-1">
-                  <UserGroupIcon className="h-4 w-4 text-gray-500" />
+            {move && (
+              <div data-testid="private-feed-move" className={move.job.error ? 'bg-amber-50 dark:bg-amber-950 p-4 rounded-lg space-y-2' : 'bg-blue-50 dark:bg-blue-950 p-4 rounded-lg space-y-2'}>
+                <p className="text-sm font-medium">
+                  Moving followers: {move.done.toLocaleString()} of {move.total.toLocaleString()}
+                </p>
+                <div className="h-2 bg-white/60 dark:bg-gray-800 rounded-full overflow-hidden">
+                  <div className="h-full bg-yappr-500 transition-all" style={{ width: `${move.total ? Math.round((move.done / move.total) * 100) : 100}%` }} />
                 </div>
-                <p className="text-lg font-semibold">{followerCount}</p>
-                <p className="text-xs text-gray-500">/ {TREE_CAPACITY}</p>
-                <p className="text-xs text-gray-500">Followers</p>
+                <p className="text-xs text-gray-600 dark:text-gray-400">
+                  {move.job.error ?? 'Private posting pauses until everyone has been moved.'}
+                </p>
+                {(move.job.error || move.done >= move.total) && (
+                  <Button size="sm" variant="outline" onClick={handleContinueMove}>Continue</Button>
+                )}
               </div>
-              <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
-                <p className="text-lg font-semibold">{currentKeyGeneration}</p>
-                <p className="text-xs text-gray-500">/ {MAX_KEY_GENERATION}</p>
-                <p className="text-xs text-gray-500">Key Generation</p>
-              </div>
-              <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
-                <p className="text-lg font-semibold">{TREE_CAPACITY - followerCount}</p>
-                <p className="text-xs text-gray-500">Available</p>
-                <p className="text-xs text-gray-500">Slots</p>
-              </div>
-            </div>
+            )}
 
-            {/* Key generation usage warning */}
-            {currentKeyGeneration > MAX_KEY_GENERATION * 0.9 && (
-              <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
+            {stats && !move && (stats.keyRotated || nearlyFull(stats)) && (
+              <div data-testid="private-feed-renew-prompt" className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
                 <div className="flex gap-3">
                   <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                      Approaching revocation limit
+                      {stats.keyRotated ? 'Your messaging key changed' : 'Your private feed is nearly full'}
                     </p>
                     <p className="text-sm text-amber-700 dark:text-amber-300">
-                      Your private feed is approaching its maximum revocation limit.
-                      Once it&apos;s reached, you can&apos;t remove more followers from this feed. Email{' '}
-                      <SupportEmailLink /> if you need help.
+                      {stats.keyRotated
+                        ? 'Renew your private feed so it uses your new key. Your followers are moved over automatically.'
+                        : 'Renew it to make room. Your followers are moved over automatically.'}
                     </p>
+                    <Button size="sm" onClick={() => setShowRenewDialog(true)} disabled={isRenewing}>Renew private feed</Button>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Stats: the current feed's stored caps */}
+            {stats && (
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
+                  <div className="flex items-center justify-center gap-1 mb-1">
+                    <UserGroupIcon className="h-4 w-4 text-gray-500" />
+                  </div>
+                  <p className="text-lg font-semibold">{stats.followerCount}</p>
+                  <p className="text-xs text-gray-500">/ {stats.treeCapacity.toLocaleString()}</p>
+                  <p className="text-xs text-gray-500">Followers</p>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
+                  <p className="text-lg font-semibold">{stats.keyGeneration - 1}</p>
+                  <p className="text-xs text-gray-500">/ {(stats.maxKeyGeneration - 1).toLocaleString()}</p>
+                  <p className="text-xs text-gray-500">Removals</p>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
+                  <p className="text-lg font-semibold">{(stats.treeCapacity - stats.followerCount).toLocaleString()}</p>
+                  <p className="text-xs text-gray-500">Available</p>
+                  <p className="text-xs text-gray-500">Slots</p>
                 </div>
               </div>
             )}
@@ -377,49 +491,36 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
               )}
             </div>
 
-            <div className="pt-4 border-t">
-              <h4 className="font-medium mb-2 text-sm">Capacity:</h4>
-              <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Up to {TREE_CAPACITY.toLocaleString()} private followers
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Up to {(MAX_KEY_GENERATION - 1).toLocaleString()} revocations before migration needed
-                </li>
-              </ul>
-            </div>
-
-            {/* Private Feed Recovery */}
+            {/* Renewal (design §7.4–§7.7): new keys, followers moved automatically */}
             <div className="pt-4 border-t">
               <h4 className="font-medium mb-2 text-sm flex items-center gap-2">
-                <KeyIcon className="h-4 w-4" />
-                Recovery
+                <ArrowPathIcon className="h-4 w-4" />
+                Renew
               </h4>
-              <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-4 rounded-lg">
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Reset unavailable</p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Your existing private feed cannot be reset. Keep your original encryption key to recover access.
-                  </p>
-                  <Button
-                    data-testid="reset-private-feed-btn"
-                    variant="outline"
-                    className="mt-2"
-                    onClick={() => setShowResetDialog(true)}
-                  >
-                    View recovery information
-                  </Button>
-                </div>
-              </div>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Give your private feed new keys, for example if you think someone saw your encryption key. Everyone who follows
+                you privately is moved over automatically.
+              </p>
+              <Button
+                data-testid="renew-private-feed-btn"
+                variant="outline"
+                className="mt-3"
+                onClick={() => setShowRenewDialog(true)}
+                disabled={isRenewing || !!move}
+              >
+                {isRenewing ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Renewing...</> : 'Renew private feed'}
+              </Button>
             </div>
 
-            {/* Reset Dialog */}
-            <ResetPrivateFeedDialog
-              open={showResetDialog}
-              onOpenChange={setShowResetDialog}
-            />
+            {user && (
+              <RenewPrivateFeedDialog
+                open={showRenewDialog}
+                onOpenChange={setShowRenewDialog}
+                ownerId={user.identityId}
+                reason={renewReason(stats)}
+                onConfirm={handleRenew}
+              />
+            )}
           </>
         ) : (
           <>
@@ -430,39 +531,20 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                     <p className="text-sm text-gray-700 dark:text-gray-300">
                       Create a private feed visible only to approved followers
                     </p>
-                    <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                      <li className="flex gap-2">
-                        <span className="text-yappr-500">•</span>
-                        You control who can see your private posts
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="text-yappr-500">•</span>
-                        Up to {TREE_CAPACITY.toLocaleString()} private followers
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="text-yappr-500">•</span>
-                        Revoke access at any time
-                      </li>
-                    </ul>
+                    <BulletList items={[
+                      'You control who can see your private posts',
+                      `Up to ${DEFAULT_FEED_CAPS.treeCapacity.toLocaleString()} private followers, with more room when you renew`,
+                      'Revoke access at any time',
+                    ]} />
                   </div>
                 </div>
 
                 {/* Show different UI based on whether user has encryption key on identity */}
                 {hasEncryptionKeyOnIdentity === false ? (
                   <div className="space-y-3">
-                    <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
-                      <div className="flex gap-3">
-                        <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                        <div className="space-y-1">
-                          <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                            Encryption key required
-                          </p>
-                          <p className="text-sm text-amber-700 dark:text-amber-300">
-                            To use private feeds, you need to add an encryption key to your identity first.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                    <EncryptionKeyRequiredNotice>
+                      To use private feeds, you need to add an encryption key to your identity first.
+                    </EncryptionKeyRequiredNotice>
                     <Button
                       className="w-full"
                       onClick={() => setShowAddKeyModal(true)}
@@ -484,20 +566,10 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
               </>
             ) : (
               <>
-                <div className="bg-amber-50 dark:bg-amber-950 p-4 rounded-lg">
-                  <div className="flex gap-3">
-                    <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                        Encryption key required
-                      </p>
-                      <p className="text-sm text-amber-700 dark:text-amber-300">
-                        Enter your identity encryption private key (WIF or hex format).
-                        This key is used to encrypt and decrypt your private feed data.
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                <EncryptionKeyRequiredNotice>
+                  Enter your identity encryption private key (WIF or hex format).
+                  This key is used to encrypt and decrypt your private feed data.
+                </EncryptionKeyRequiredNotice>
 
                 <div className="space-y-2">
                   {walletSession ? (
@@ -505,22 +577,22 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                       Your private feed will use the messaging key from your Dash wallet.
                     </p>
                   ) : (
-                  <>
-                  <label htmlFor={encryptionKeyId} className="text-sm font-medium">
-                    Encryption Private Key
-                  </label>
-                  <Input
-                    id={encryptionKeyId}
-                    type="password"
-                    placeholder="WIF (cXyz...) or hex (64 chars)"
-                    value={encryptionKeyInput}
-                    onChange={(e) => {
-                      setEncryptionKeyInput(e.target.value)
-                      setKeyError(null)
-                    }}
-                    className="font-mono text-sm"
-                  />
-                  </>
+                    <>
+                      <label htmlFor={encryptionKeyId} className="text-sm font-medium">
+                        Encryption Private Key
+                      </label>
+                      <Input
+                        id={encryptionKeyId}
+                        type="password"
+                        placeholder="WIF (cXyz...) or hex (64 chars)"
+                        value={encryptionKeyInput}
+                        onChange={(e) => {
+                          setEncryptionKeyInput(e.target.value)
+                          setKeyError(null)
+                        }}
+                        className="font-mono text-sm"
+                      />
+                    </>
                   )}
                   {keyError && (
                     <p className="text-sm text-red-600 dark:text-red-400">
@@ -561,32 +633,14 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
 
             <div className="pt-4 border-t">
               <h4 className="font-medium mb-2 text-sm">How it works:</h4>
-              <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Your private posts are encrypted with a unique feed key
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Only approved followers can decrypt and view your private posts
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Revoked followers lose access to new private posts
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  If someone reports a private post, the moderators can read it and your earlier private posts
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Attached images are not encrypted: anyone with an image&apos;s address can see it
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-yappr-500">•</span>
-                  Your encryption key is needed to manage your private feed
-                </li>
-              </ul>
+              <BulletList items={[
+                'Your private posts are encrypted with a unique feed key',
+                'Only approved followers can decrypt and view your private posts',
+                'Revoked followers lose access to new private posts',
+                'If someone reports a private post, the moderators can read it and the earlier posts in the same private feed',
+                'Attached images are not encrypted: anyone with an image\'s address can see it',
+                'Your encryption key is needed to manage your private feed',
+              ]} />
             </div>
           </>
         )}

@@ -39,35 +39,15 @@ export type {
   DiceBearStyle,
 } from './unified-profile-service';
 
-// Private feed crypto service
+// ECIES (private feeds, storefront orders and addresses, digital delivery)
 export { privateFeedCryptoService } from './private-feed-crypto-service';
-export type {
-  NodeKey,
-  EncryptedPost,
-  RekeyPacket,
-  GrantPayload,
-} from './private-feed-crypto-service';
-export { TREE_CAPACITY, MAX_KEY_GENERATION } from './private-feed-crypto-service';
 
-// Private feed key store
+// Private feeds (social v17: several write-once feeds per identity)
 export { privateFeedKeyStore } from './private-feed-key-store';
-export type {
-  StoredPathKey,
-  CachedCEK,
-  RecipientLeafMap,
-} from './private-feed-key-store';
-
-// Private feed service (owner operations)
 export { privateFeedService } from './private-feed-service';
-
-// Private feed follower service (follower operations)
 export { privateFeedFollowerService } from './private-feed-follower-service';
-export type {
-  FollowRequestDocument,
-  PrivateFeedGrantDocument,
-  DecryptResult,
-  EncryptedPostFields,
-} from './private-feed-follower-service';
+export type { AccessStatus } from './private-feed-follower-service';
+export type { FollowRequestDocument, PrivateFeedDocument } from './private-feed-reads';
 
 // Note: Private feed notification documents cannot be created due to ownership constraints
 // (actor can't sign documents owned by recipient). Notifications are derived by polling

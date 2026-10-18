@@ -5,7 +5,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Post } from '@/lib/types'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { getInitials, formatTime, truncateId } from '@/lib/utils'
-import { identifierToBytes } from '@/lib/services/sdk-helpers'
+import { privateContentOf } from '@/lib/services/private-feed-reader'
+import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
+import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
 import { Spinner } from '@/components/ui/spinner'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
@@ -274,7 +276,7 @@ type DecryptionState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'decrypted'; content: string }
-  | { status: 'locked' }
+  | { status: 'locked'; needsKey?: boolean }
   | { status: 'error' }
 
 // Shared header component for post previews
@@ -346,101 +348,26 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
     // Capture request ID to detect stale responses
     const currentRequestId = ++requestIdRef.current
 
-    if (!post.encryptedContent || post.keyGeneration == null || !post.nonce) {
-      if (currentRequestId === requestIdRef.current) {
-        setState({ status: 'error' })
-      }
-      return
-    }
-
-    if (!user) {
-      if (currentRequestId === requestIdRef.current) {
-        setState({ status: 'locked' })
-      }
+    const content = privateContentOf(post)
+    const isCurrent = () => currentRequestId === requestIdRef.current
+    if (!content || !user) {
+      if (isCurrent()) setState({ status: content ? 'locked' : 'error' })
       return
     }
 
     setState({ status: 'loading' })
 
     try {
-      const { privateFeedFollowerService, privateFeedKeyStore, privateFeedCryptoService, MAX_KEY_GENERATION } = await import('@/lib/services')
-
-      // Check if this request is stale
-      if (currentRequestId !== requestIdRef.current) return
-
-      // For posts, the encryption source is always the post author
-      // (Replies use inherited encryption but that's handled by reply-service)
-      const encryptionSourceOwnerId = post.author.id
-
-      // Check if this request is stale after async operations
-      if (currentRequestId !== requestIdRef.current) return
-
-      // Check if user is the encryption source owner (can decrypt with their own feed keys)
-      const isEncryptionSourceOwner = user.identityId === encryptionSourceOwnerId
-
-      if (isEncryptionSourceOwner) {
-        const feedSeed = privateFeedKeyStore.getFeedSeed()
-        if (!feedSeed) {
-          if (currentRequestId === requestIdRef.current) {
-            setState({ status: 'locked' })
-          }
-          return
-        }
-
-        const cached = privateFeedKeyStore.getCachedCEK(encryptionSourceOwnerId)
-        let cek: Uint8Array
-
-        if (cached && cached.keyGeneration === post.keyGeneration) {
-          cek = cached.cek
-        } else if (cached && cached.keyGeneration > post.keyGeneration) {
-          cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, post.keyGeneration)
-        } else {
-          const chain = privateFeedCryptoService.generateCekChain(feedSeed, MAX_KEY_GENERATION)
-          cek = chain[post.keyGeneration]
-        }
-
-        const ownerIdBytes = identifierToBytes(encryptionSourceOwnerId)
-        const decryptedContent = privateFeedCryptoService.decryptPostContent(
-          cek,
-          { ciphertext: post.encryptedContent, nonce: post.nonce, keyGeneration: post.keyGeneration },
-          ownerIdBytes
-        )
-
-        if (currentRequestId === requestIdRef.current) {
-          setState({ status: 'decrypted', content: decryptedContent })
-        }
+      const { decryptPostOrReply } = await import('@/lib/services/private-feed-reader')
+      const outcome = await decryptPostOrReply(post, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
+      if (!outcome) {
+        if (isCurrent()) setState({ status: 'error' })
         return
       }
-
-      const canDecrypt = await privateFeedFollowerService.canDecrypt(encryptionSourceOwnerId)
-      if (currentRequestId !== requestIdRef.current) return
-
-      if (!canDecrypt) {
-        if (currentRequestId === requestIdRef.current) {
-          setState({ status: 'locked' })
-        }
-        return
-      }
-
-      const result = await privateFeedFollowerService.decryptPost({
-        encryptedContent: post.encryptedContent,
-        keyGeneration: post.keyGeneration,
-        nonce: post.nonce,
-        $ownerId: encryptionSourceOwnerId,
-      }, user?.identityId)
-
-      if (currentRequestId !== requestIdRef.current) return
-
-      if (result.success && result.content !== undefined) {
-        setState({ status: 'decrypted', content: result.content })
-      } else {
-        setState({ status: 'locked' })
-      }
+      if (isCurrent()) setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked', needsKey: outcome.reason === 'needs-key' })
     } catch (error) {
       logger.error('Error decrypting quoted post preview:', error)
-      if (currentRequestId === requestIdRef.current) {
-        setState({ status: 'error' })
-      }
+      if (isCurrent()) setState({ status: 'error' })
     }
   }, [isPrivate, post, user])
 
@@ -456,6 +383,13 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
       attemptDecryption().catch(err => logger.error('Failed to decrypt:', err))
     }
   }, [isPrivate, state.status, attemptDecryption])
+
+  // Waiting on keys this device does not hold yet: opens once they are recovered elsewhere.
+  const awaitingKeys = state.status === 'locked' && state.needsKey === true
+  useEffect(() => {
+    if (!awaitingKeys) return
+    return privateFeedKeyStore.subscribe(() => setState({ status: 'idle' }))
+  }, [awaitingKeys])
 
   // Get author display for private posts (shows truncated ID as fallback)
   const authorDisplay = post.author.username && !post.author.username.startsWith('user_')

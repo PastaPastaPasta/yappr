@@ -12,7 +12,6 @@ import {
   CheckCircleIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline'
-import { TREE_CAPACITY, MAX_KEY_GENERATION } from '@/lib/services'
 import { formatTime } from '@/lib/utils'
 import Link from 'next/link'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
@@ -48,6 +47,7 @@ export function PrivateFeedDashboard() {
   const [pendingRequestCount, setPendingRequestCount] = useState(0)
   const [privatePostCount, setPrivatePostCount] = useState(0)
   const [currentKeyGeneration, setCurrentKeyGeneration] = useState(1)
+  const [caps, setCaps] = useState({ treeCapacity: 0, maxKeyGeneration: 2 })
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
   const requestIdRef = useRef(0)
   const refreshKey = usePrivateFeedRefreshStore((s) => s.refreshKey)
@@ -67,54 +67,39 @@ export function PrivateFeedDashboard() {
     }
 
     try {
-      const {
-        privateFeedService,
-        privateFeedFollowerService,
-      } = await import('@/lib/services')
-
-      // Check if private feed is enabled
-      const hasPrivateFeed = await privateFeedService.hasPrivateFeed(user.identityId)
+      const { privateFeedService } = await import('@/lib/services')
+      const overview = await privateFeedService.getOverview(user.identityId)
 
       // Bail out if a newer request has started
       if (currentRequestId !== requestIdRef.current) return
 
-      setIsEnabled(hasPrivateFeed)
+      setIsEnabled(overview !== null)
 
-      if (!hasPrivateFeed) {
+      if (!overview) {
         setIsLoading(false)
         return
       }
       const { postService } = await import('@/lib/services/post-service')
+      const { fetchRekeys } = await import('@/lib/services/private-feed-reads')
 
-      // Get followers from grants, without any revoked in this session
+      // The current feed's followers, without any revoked in this session
       const followers = withoutRevokedGrants(
-        await privateFeedService.getPrivateFollowers(user.identityId),
+        overview.followers,
         usePrivateFeedRefreshStore.getState().revokedGrantsFor(user.identityId)
       )
-
-      // Bail out if a newer request has started
-      if (currentRequestId !== requestIdRef.current) return
-
       setFollowerCount(followers.length)
+      setCaps({ treeCapacity: overview.feed.treeCapacity, maxKeyGeneration: overview.feed.maxKeyGeneration })
+      setCurrentKeyGeneration(overview.keyGeneration)
 
-      // Get pending requests
-      const requests = await privateFeedFollowerService.getFollowRequestsForOwner(user.identityId)
+      const [requests, rekeyDocs] = await Promise.all([
+        privateFeedService.getPendingRequests(user.identityId),
+        fetchRekeys(user.identityId, overview.feed.feed),
+      ])
 
       // Bail out if a newer request has started
       if (currentRequestId !== requestIdRef.current) return
 
       setPendingRequestCount(requests.length)
-
-      // Get current key generation
-      const rekeyDocs = await privateFeedService.getRekeyDocuments(user.identityId)
-      const keyGeneration = rekeyDocs.length < 2000
-        ? Math.max(1, ...rekeyDocs.map(doc => doc.keyGeneration))
-        : await privateFeedService.getLatestKeyGeneration(user.identityId)
-
-      // Bail out if a newer request has started
-      if (currentRequestId !== requestIdRef.current) return
-
-      setCurrentKeyGeneration(keyGeneration)
 
       // Count private posts by querying user's posts and filtering for those with encryptedContent
       // We'll do this by checking recent posts from the user
@@ -168,7 +153,7 @@ export function PrivateFeedDashboard() {
           type: 'revoked',
           userId: '',
           displayName: `Leaf ${rekey.revokedLeaf}`,
-          timestamp: new Date(rekey.$createdAt),
+          timestamp: new Date(rekey.createdAt),
         })
       }
 
@@ -195,7 +180,7 @@ export function PrivateFeedDashboard() {
   }, [loadDashboardData, refreshKey])
 
   // Calculate key generation usage percentage with clamping to avoid NaN/overflow
-  const rawKeyGenerationPercent = MAX_KEY_GENERATION > 1 ? ((currentKeyGeneration - 1) / (MAX_KEY_GENERATION - 1)) * 100 : 0
+  const rawKeyGenerationPercent = caps.maxKeyGeneration > 1 ? ((currentKeyGeneration - 1) / (caps.maxKeyGeneration - 1)) * 100 : 0
   const keyGenerationUsagePercent = Math.max(0, Math.min(100, rawKeyGenerationPercent))
   const isKeyGenerationWarning = keyGenerationUsagePercent > 90
 
@@ -245,7 +230,7 @@ export function PrivateFeedDashboard() {
           <div data-testid="follower-count-stat" className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/50 dark:to-blue-900/30 p-4 rounded-xl text-center">
             <UserGroupIcon className="h-6 w-6 mx-auto mb-2 text-blue-600 dark:text-blue-400" />
             <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{followerCount}</p>
-            <p className="text-xs text-blue-600/70 dark:text-blue-400/70">/{TREE_CAPACITY}</p>
+            <p className="text-xs text-blue-600/70 dark:text-blue-400/70">/{caps.treeCapacity.toLocaleString()}</p>
             <p className="text-xs font-medium text-blue-600 dark:text-blue-400 mt-1">Followers</p>
           </div>
 
@@ -269,9 +254,9 @@ export function PrivateFeedDashboard() {
         {/* Key generation usage */}
         <div data-testid="key-generation-progress" className="space-y-2">
           <div className="flex justify-between items-center text-sm">
-            <span className="font-medium">Key Generation Usage</span>
+            <span className="font-medium">Removals</span>
             <span className={`text-sm ${isKeyGenerationWarning ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-500'}`}>
-              {currentKeyGeneration - 1}/{MAX_KEY_GENERATION - 1} revocations
+              {currentKeyGeneration - 1}/{(caps.maxKeyGeneration - 1).toLocaleString()} removals
             </span>
           </div>
           <div className="h-2.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
@@ -282,12 +267,12 @@ export function PrivateFeedDashboard() {
           </div>
           {isKeyGenerationWarning && (
             <p className="text-xs text-red-600 dark:text-red-400">
-              Your private feed is approaching its revocation limit. Contact support for migration options.
+              Your private feed is nearly out of removals. Renew it above to keep removing followers.
             </p>
           )}
           {!isKeyGenerationWarning && keyGenerationUsagePercent > 50 && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
-              {Math.round(100 - keyGenerationUsagePercent)}% of revocation capacity remaining
+              {Math.round(100 - keyGenerationUsagePercent)}% of removals left
             </p>
           )}
         </div>

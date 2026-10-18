@@ -40,3 +40,15 @@ describe('the post timeline (timeline)', () => {
     })
   })
 })
+
+describe('a reply shown as a post (replyToPost)', () => {
+  it('keeps everything a private reply needs to be read and reported, the feed included', async () => {
+    const { replyToPost } = await import('./post-service')
+    const encrypted = { encryptedContent: new Uint8Array([1, 2]), nonce: new Uint8Array(24), keyGeneration: 3, feed: 2 }
+    const post = replyToPost({
+      id: 'r', author: { id: 'a' } as never, content: '', createdAt: new Date(0), likes: 0, reposts: 0, replies: 0, views: 0,
+      parentId: 'p', parentOwnerId: 'o', rootPostId: 'p', rootOwnerId: 'o', ...encrypted,
+    })
+    expect(post).toMatchObject({ targetKind: 'reply', rootOwnerId: 'o', ...encrypted })
+  })
+})

@@ -20,6 +20,8 @@ interface FollowRequestUser extends UserDetails {
   requestId: string
   requestedAt: Date
   publicKey?: Uint8Array
+  /** A follower asking for a fresh grant (their encryption key changed). */
+  renewal: boolean
 }
 
 export function PrivateFeedFollowRequests() {
@@ -39,7 +41,7 @@ export function PrivateFeedFollowRequests() {
 
     try {
       setIsLoading(true)
-      const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
+      const { privateFeedService } = await import('@/lib/services')
 
       // Check if user has private feed enabled
       const hasFeed = await privateFeedService.hasPrivateFeed(user.identityId)
@@ -50,8 +52,8 @@ export function PrivateFeedFollowRequests() {
         return
       }
 
-      // Get all follow requests targeting this user
-      const followRequests = await privateFeedFollowerService.getFollowRequestsForOwner(user.identityId)
+      // Requests waiting on this owner (requests persist while following, so granted ones are filtered out)
+      const followRequests = await privateFeedService.getPendingRequests(user.identityId)
 
       if (followRequests.length === 0) {
         setRequests([])
@@ -66,7 +68,8 @@ export function PrivateFeedFollowRequests() {
             ...details,
             requestId: request.$id,
             requestedAt: new Date(request.$createdAt),
-            publicKey: request.publicKey
+            publicKey: request.publicKey,
+            renewal: request.renewal,
           }
         })
 
@@ -134,9 +137,9 @@ export function PrivateFeedFollowRequests() {
         return
       }
 
-      if (!result.success && result.errorCode === 'FEED_NOT_ENABLED') {
-        // v9: consensus found no privateFeedState for this owner. Say so, not "failed".
-        toast.error(result.error ?? 'Enable your private feed before approving followers.')
+      if (!result.success && result.errorCode && result.errorCode !== 'SYNC_REQUIRED') {
+        // The owner's feed is off, full, moving, or needs renewing: say which, not "failed".
+        toast.error(result.error ?? 'Could not approve this follower')
         return
       }
 
@@ -148,7 +151,7 @@ export function PrivateFeedFollowRequests() {
         triggerRefresh()
       } else {
         // Check if this is a sync required error
-        if (result.error?.startsWith('SYNC_REQUIRED:')) {
+        if (result.errorCode === 'SYNC_REQUIRED') {
           const { useEncryptionKeyModal } = await import('@/hooks/use-encryption-key-modal')
           useEncryptionKeyModal.getState().open('sync_state', () => {
             toast('Please try approving again now that your keys are synced')
@@ -279,7 +282,7 @@ export function PrivateFeedFollowRequests() {
                       <p className="text-sm text-gray-500 truncate">@{request.username}</p>
                     )}
                     <p className="text-xs text-gray-400">
-                      Requested {formatTime(request.requestedAt)}
+                      {request.renewal ? 'Asked again' : 'Requested'} {formatTime(request.requestedAt)}
                     </p>
                   </div>
                 </Link>

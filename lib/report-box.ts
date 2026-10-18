@@ -3,24 +3,24 @@
  * (`report.box`, at most 5,120 bytes; docs/SOCIAL_V13.md §4).
  *
  * A private post is ciphertext under its feed's content key (CEK) for one key
- * generation. The moderators cannot read what they are asked to judge unless
+ * generation of one feed (social v17 keeps several feeds per identity). The moderators cannot read what they are asked to judge unless
  * the reporter, who can, hands them that key. The box does it without
  * trusting anyone else: one random 32-byte key R per report, wrapped to the
  * ENCRYPTION key of every member of the moderation team as it is seated when
  * the report is filed, and R seals the payload. Consensus never reads the box;
  * this module is its only definition.
  *
- * Format, version 1 (all integers big-endian):
+ * Format, version 2 (all integers big-endian):
  *
- *     box     = version (1 = 0x01) || n (1, 1..MAX) || wrap × n || nonce (12) || sealed
+ *     box     = version (2 = 0x02) || n (1, 1..MAX) || wrap × n || nonce (12) || sealed
  *     wrap    = hint (4) || ephemeralPub (33, compressed secp256k1) || R ⊕ k (32)
- *     hint    = sha256("yappr/report-box/v1/hint" || recipientPub)[0..4]
+ *     hint    = sha256("yappr/report-box/v2/hint" || recipientPub)[0..4]
  *     k       = HKDF-SHA256(ikm = ECDH x(ephemeralPriv, recipientPub),
  *                           salt = ephemeralPub,
- *                           info = "yappr/report-box/v1/wrap" || recipientPub)
+ *                           info = "yappr/report-box/v2/wrap" || recipientPub)
  *     sealed  = AES-256-GCM(key R, nonce, aad, payload) (payload || 16-byte tag)
- *     aad     = "yappr/report-box/v1" || version || n || wraps || targetId (32)
- *     payload = feedOwnerId (32) || keyGeneration (4) || CEK (32)
+ *     aad     = "yappr/report-box/v2" || version || n || wraps || targetId (32)
+ *     payload = feedOwnerId (32) || feed (2) || keyGeneration (2) || CEK (32)
  *
  * - Every wrap has its own ephemeral key, so wraps share nothing. The hint
  *   lets a moderator find their wrap without trying every one (a collision
@@ -34,7 +34,9 @@
  *   moderator needs to decrypt the post with that CEK. The CEK of a
  *   generation also opens that feed's earlier generations (the chain hashes
  *   backwards): the moderators get the context of the author's earlier
- *   private posts, by the product's choice.
+ *   private posts IN THE SAME FEED, by the product's choice (D12). It opens
+ *   no earlier feed: walking back through a renewal needs the feed's history
+ *   key, which no CEK yields (lib/private-feed/crypto.ts).
  * - There is no re-wrap: a moderator seated after the report cannot open it.
  * - AES-GCM does not commit to its key, so a reporter could craft wraps that
  *   hand different moderators different keys, each passing the tag. It gains
@@ -52,7 +54,7 @@ import { bytesEqual, concatBytes as concat } from './bytes'
 import { ecdhSharedX } from './crypto/ecdh'
 import { getPublicKey } from './crypto/keys'
 
-const REPORT_BOX_VERSION = 1
+const REPORT_BOX_VERSION = 2
 
 const HINT_BYTES = 4
 const PUBLIC_KEY_BYTES = 33
@@ -63,20 +65,22 @@ const ID_BYTES = 32
 const HEADER_BYTES = 2
 /** One recipient's wrap. */
 export const REPORT_BOX_WRAP_BYTES = HINT_BYTES + PUBLIC_KEY_BYTES + KEY_BYTES
-const PAYLOAD_BYTES = ID_BYTES + 4 + KEY_BYTES
+const PAYLOAD_BYTES = ID_BYTES + 2 + 2 + KEY_BYTES
 const SEALED_BYTES = NONCE_BYTES + PAYLOAD_BYTES + TAG_BYTES
 /** The `n` byte's ceiling (a full team is 26: the leader, 15 elected, 10 added). */
 const MAX_WRAPS = 255
 
 const utf8 = (text: string) => new TextEncoder().encode(text)
-const HINT_LABEL = utf8('yappr/report-box/v1/hint')
-const WRAP_LABEL = utf8('yappr/report-box/v1/wrap')
-const AAD_LABEL = utf8('yappr/report-box/v1')
+const HINT_LABEL = utf8('yappr/report-box/v2/hint')
+const WRAP_LABEL = utf8('yappr/report-box/v2/wrap')
+const AAD_LABEL = utf8('yappr/report-box/v2')
 
 /** What the box carries: the key that opens the reported private content. */
 export interface ReportBoxPayload {
   /** Base58 identity whose private feed encrypted the content. */
   feedOwnerId: string
+  /** Which of that identity's feeds (`feed` on the post or reply). */
+  feed: number
   /** The content's key generation (`keyGeneration` on the post or reply). */
   keyGeneration: number
   /** The feed's CEK for that generation (32 bytes). */
@@ -124,8 +128,11 @@ export function sealReportBox(payload: ReportBoxPayload, recipientKeys: readonly
   if (recipientKeys.length === 0) throw new ReportBoxError('A box needs at least one recipient')
   if (recipientKeys.length > MAX_WRAPS) throw new ReportBoxError(`A box holds at most ${MAX_WRAPS} recipients`)
   if (payload.cek.length !== KEY_BYTES) throw new ReportBoxError('The content key is not 32 bytes')
-  if (!Number.isInteger(payload.keyGeneration) || payload.keyGeneration < 1 || payload.keyGeneration > 0xffffffff) {
+  if (!Number.isInteger(payload.keyGeneration) || payload.keyGeneration < 1 || payload.keyGeneration > 0xffff) {
     throw new ReportBoxError('The key generation is out of range')
+  }
+  if (!Number.isInteger(payload.feed) || payload.feed < 1 || payload.feed > 0xffff) {
+    throw new ReportBoxError('The feed is out of range')
   }
   const reportKey = randomBytes(KEY_BYTES)
   const wraps = recipientKeys.map((recipientPub) => {
@@ -136,9 +143,10 @@ export function sealReportBox(payload: ReportBoxPayload, recipientKeys: readonly
     return concat(hintOf(recipientPub), ephemeralPub, xor(reportKey, k))
   })
   const header = concat(Uint8Array.of(REPORT_BOX_VERSION, recipientKeys.length), ...wraps)
-  const generation = new Uint8Array(4)
-  new DataView(generation.buffer).setUint32(0, payload.keyGeneration)
-  const plaintext = concat(decodeId(payload.feedOwnerId, 'The feed owner'), generation, payload.cek)
+  const position = new Uint8Array(4)
+  new DataView(position.buffer).setUint16(0, payload.feed)
+  new DataView(position.buffer).setUint16(2, payload.keyGeneration)
+  const plaintext = concat(decodeId(payload.feedOwnerId, 'The feed owner'), position, payload.cek)
   const nonce = randomBytes(NONCE_BYTES)
   const sealed = gcm(reportKey, nonce, aadOf(header, decodeId(targetId, 'The target'))).encrypt(plaintext)
   return concat(header, nonce, sealed)
@@ -174,9 +182,11 @@ export function openReportBox(box: Uint8Array, targetId: string, privateKey: Uin
     } catch {
       continue // a hint collision, or a tampered wrap: try the next one
     }
+    const position = new DataView(plaintext.buffer, plaintext.byteOffset + ID_BYTES, 4)
     return {
       feedOwnerId: bs58.encode(plaintext.slice(0, ID_BYTES)),
-      keyGeneration: new DataView(plaintext.buffer, plaintext.byteOffset + ID_BYTES, 4).getUint32(0),
+      feed: position.getUint16(0),
+      keyGeneration: position.getUint16(2),
       cek: plaintext.slice(ID_BYTES + 4),
     }
   }
