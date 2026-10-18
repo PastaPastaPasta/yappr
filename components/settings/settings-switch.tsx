@@ -25,7 +25,7 @@ export function SettingsSwitch({
       onCheckedChange={onCheckedChange}
       disabled={disabled}
       className={cn(
-        'w-11 h-6 rounded-full relative transition-colors',
+        'w-11 h-6 shrink-0 rounded-full relative transition-colors',
         checked ? 'bg-yappr-500' : 'bg-gray-200 dark:bg-gray-800',
         disabled && 'opacity-50 cursor-not-allowed',
         className

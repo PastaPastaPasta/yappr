@@ -48,7 +48,7 @@ export function PaymentHint({ docType }: { docType: 'post' | 'reply' }) {
         <button
           type="button"
           onClick={() => setPayWith(payWith === 'yapp' ? 'credits' : 'yapp')}
-          className="underline hover:text-yappr-600 dark:hover:text-yappr-400"
+          className="underline hover:text-yappr-600 dark:hover:text-yappr-600"
         >
           {toggle}
         </button>

@@ -219,6 +219,7 @@ export class PlatformAuthController {
   }
 
   public async restoreSession(): Promise<AuthUser | null> {
+    const startedAt = this.epoch
     this.patchState({ isAuthRestoring: true, error: null })
 
     try {
@@ -230,8 +231,11 @@ export class PlatformAuthController {
 
       const identityId = snapshot.user.identityId
       const hasPrivateKey = await this.deps.secretStore.hasPrivateKey(identityId)
+      if (startedAt !== this.epoch) return null
       if (!hasPrivateKey) {
-        await this.deps.sessionStore.clearSession()
+        // A different tab may hold a tab-only key for this shared snapshot.
+        // Failure to restore here does not end its session. Only logout removes it.
+        // Metadata may outlive lost keys; consumers must use the live controller state.
         this.patchState({ isAuthRestoring: false, user: null })
         return null
       }
@@ -254,7 +258,7 @@ export class PlatformAuthController {
       return snapshot.user
     } catch (error) {
       this.logger.error('platform-auth: failed to restore session', error)
-      await this.deps.sessionStore.clearSession()
+      if (startedAt !== this.epoch) return null
       this.patchState({
         user: null,
         error: error instanceof Error ? error.message : 'Failed to restore session',
@@ -439,18 +443,31 @@ export class PlatformAuthController {
     return this.exclusive(() => this.logoutNow())
   }
 
-  private async logoutNow(): Promise<PlatformAuthResult> {
+  /** Another tab already cleared shared storage. Do not erase a newer login or its keys. */
+  public logoutLocally(since = this.epoch): Promise<boolean> {
+    return this.exclusive(async () => {
+      if (this.epoch !== since || !this.state.user) return false
+      await this.logoutNow(true)
+      return true
+    })
+  }
+
+  private async logoutNow(localOnly = false): Promise<PlatformAuthResult> {
     const identityId = this.state.user?.identityId
     this.epoch += 1
 
-    await this.deps.sessionStore.clearSession()
-    if (identityId) {
+    if (!localOnly) await this.deps.sessionStore.clearSession()
+    if (identityId && localOnly) await this.deps.secretStore.clearTabSecrets?.(identityId)
+    if (identityId && !localOnly) {
       await this.deps.secretStore.clearPrivateKey(identityId)
       await this.deps.secretStore.clearEncryptionKey(identityId)
       await this.deps.secretStore.clearEncryptionKeyType(identityId)
       await this.deps.secretStore.clearTransferKey(identityId)
       await this.deps.secretStore.clearLoginKey(identityId)
-      await this.deps.sideEffects?.runLogoutCleanup?.(identityId)
+    }
+    if (identityId) {
+      if (localOnly) await this.deps.sideEffects?.runLocalLogoutCleanup?.(identityId)
+      else await this.deps.sideEffects?.runLogoutCleanup?.(identityId)
     }
 
     await this.deps.clientIdentity?.setIdentity('')

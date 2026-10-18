@@ -175,10 +175,9 @@ export default function PrivacyPage() {
           </div>
           <div>
             <p className="font-medium text-gray-700 dark:text-gray-300">Orders and addresses</p>
-            {/* R-M3: the next storefront cut encrypts status updates; drop the tracking/carrier/note clause with it. */}
             <p className="mt-1">
               What you ordered and your shipping address are encrypted so only you and the seller can read them. That you placed an
-              order with a store, when, and its status are public, along with any tracking number, carrier or note the seller adds.
+              order with a store, when, and its status are public. Tracking numbers, carrier details and seller notes are encrypted for you and the seller.
               Saved addresses are encrypted so only you can read them.
             </p>
           </div>

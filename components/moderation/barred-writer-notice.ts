@@ -5,7 +5,7 @@ import { moderationServiceFor } from '@/lib/services/moderation-service'
 
 /** Where a ban or suspension applies, as the user reads it. */
 const BARRED_FROM: Record<ModeratedContractKey, string> = {
-  social: 'this contract',
+  social: 'posting on Yappr',
   storefront: 'Yappr stores',
   blog: 'Yappr blogs',
 }
@@ -24,7 +24,7 @@ export function reportBarredWrite(error: unknown, identityId: string | undefined
   // What to say when the standing read cannot name the list or its reason: the
   // refusal itself already proved the account is barred.
   const barred = () => toast.error(contract === 'social'
-    ? 'This contract\'s moderators have barred your account from writing.'
+    ? 'Moderators have restricted your account from posting on Yappr.'
     : `Moderators have barred your account from ${where}.`)
   moderationServiceFor(contract).getStanding(identityId, { fresh: true }).then((standing) => {
     if (standing.banned) {

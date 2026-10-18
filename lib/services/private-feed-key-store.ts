@@ -246,8 +246,13 @@ class PrivateFeedKeyStore {
    * flight for it (a move, a recovery) stores nothing until {@link signIn}.
    */
   signOut(identityId: string): void {
-    this.signedOut.add(identityId)
+    this.signOutLocally(identityId)
     this.clearIdentity(identityId)
+  }
+
+  /** Fence this tab's in-flight work without deleting keys another tab may have just saved. */
+  signOutLocally(identityId: string): void {
+    this.signedOut.add(identityId)
   }
 
   signIn(identityId: string): void {

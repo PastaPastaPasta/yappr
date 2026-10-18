@@ -6,6 +6,7 @@ const { get, query, updateDocument, createDocument, deleteDocument } = vi.hoiste
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get, query } }) }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument, createDocument, deleteDocument } }))
 
+import { useDeletedBlogs } from '@/lib/blog/deleted-blogs'
 import { blogService } from './blog-service'
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 
@@ -22,6 +23,7 @@ const content = {
 const raw = { $id: blogId, $ownerId: ownerId, $revision: 7, $createdAt: 1700000000000, ...content }
 
 beforeEach(() => {
+  useDeletedBlogs.setState({ ids: new Set() })
   blogService.clearCache()
   get.mockReset().mockResolvedValue(raw)
   updateDocument.mockReset().mockImplementation(async (_contract, _type, id, owner, data, revision) => ({
@@ -219,6 +221,7 @@ describe('blog deletion', () => {
     await blogService.getBlog(blogId)
     deleteDocument.mockResolvedValueOnce({ success: true })
     expect(await blogService.deleteBlog(blogId, ownerId)).toBe(true)
+    expect(useDeletedBlogs.getState().ids.has(blogId)).toBe(true)
     expect(deleteDocument).toHaveBeenCalledWith(YAPPR_BLOG_CONTRACT_ID, 'blog', blogId, ownerId)
     get.mockResolvedValueOnce(null)
     expect(await blogService.getBlog(blogId)).toBeNull()
@@ -228,6 +231,7 @@ describe('blog deletion', () => {
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9')
     deleteDocument.mockResolvedValueOnce({ success: false, error: 'refused' })
     await expect(blogService.deleteBlog(blogId, ownerId)).rejects.toThrow('refused')
+    expect(useDeletedBlogs.getState().ids.has(blogId)).toBe(false)
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v8')
     await expect(blogService.deleteBlog(blogId, ownerId)).rejects.toThrow('Blogs cannot be deleted')
   })

@@ -457,7 +457,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
                 <span className="text-xs text-gray-600 dark:text-gray-400">Allow comments</span>
               </div>
               <span className="text-xs tabular-nums text-gray-600">
-                {compressedBytes.toLocaleString()} / {BLOG_POST_SIZE_LIMIT.toLocaleString()} bytes
+                {Math.min(100, Math.round(compressedBytes / BLOG_POST_SIZE_LIMIT * 100))}% of post limit
               </span>
             </div>
           </div>

@@ -98,7 +98,7 @@ function TrendingBody({ trending }: { trending: TrendingHashtag[] | null }) {
       <li>
         <Link
           href="/explore"
-          className="block px-4 py-3 text-sm text-yappr-500 hover:text-yappr-600 dark:hover:text-yappr-400 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+          className="block px-4 py-3 text-sm text-yappr-500 hover:text-yappr-600 dark:hover:text-yappr-600 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
         >
           Show more
         </Link>

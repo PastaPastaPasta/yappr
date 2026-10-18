@@ -88,14 +88,14 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
                 <X className="w-5 h-5" />
               </button>
 
-              <h1 className="text-2xl font-bold text-center mb-2">Choose a username</h1>
+              <h1 className="text-2xl font-bold text-center mb-2">{hasExistingUsernames ? 'Add a username' : 'Choose a username'}</h1>
               <p className="text-gray-600 dark:text-gray-400 text-center mb-6">
                 It&apos;s how people find and mention you. You can skip this and add one later.
               </p>
 
               {/* Registration Wizard */}
               {walletSession
-                ? <WalletUsernameGuide onComplete={handleComplete} onSkip={handleSkip} />
+                ? <WalletUsernameGuide onComplete={handleComplete} onSkip={handleSkip} additional={hasExistingUsernames} />
                 : <DpnsRegistrationWizard onComplete={handleComplete} onSkip={handleSkip} hasExistingUsernames={hasExistingUsernames} />}
             </div>
           </motion.div>

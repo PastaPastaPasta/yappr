@@ -8,14 +8,13 @@ import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
 import { BlogPostCard } from '@/components/blog/blog-post-card'
-import { formatNumber } from '@/lib/utils'
 import { useRouter } from 'next/navigation'
 import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
-import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
+import { TrendingHashtagRow } from '@/components/explore/trending-hashtag-row'
 import { likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
@@ -224,10 +223,6 @@ export default function ExplorePage() {
     const debounceTimer = setTimeout(searchAll, 300)
     return () => clearTimeout(debounceTimer)
   }, [searchQuery, user?.identityId])
-
-  const handleHashtagClick = (hashtag: string) => {
-    router.push(`/hashtag?tag=${encodeURIComponent(hashtag)}`)
-  }
 
   const handleBlogPostClick = (post: BlogPostWithAuthor) => {
     if (post.blogId && post.slug) {
@@ -444,36 +439,7 @@ export default function ExplorePage() {
                             <p className="text-sm text-gray-400 mt-1">Post with #hashtags or $cashtags to see them here!</p>
                           </div>
                         ) : (
-                          trendingHashtags.map((trend, index) => {
-                            const isCashtag = isCashtagStorage(trend.hashtag)
-                            const displayTag = isCashtag ? cashtagStorageToDisplay(trend.hashtag) : trend.hashtag
-                            const tagSymbol = isCashtag ? '$' : '#'
-
-                            return (
-                              <motion.div
-                                key={trend.hashtag}
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: index * 0.05 }}
-                                onClick={() => handleHashtagClick(trend.hashtag)}
-                                className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors text-left cursor-pointer"
-                              >
-                                <div className="flex items-center gap-3">
-                                  <span className="text-sm text-gray-400 w-6">#{index + 1}</span>
-                                  <div className="flex-1">
-                                    <p className="font-bold text-yappr-500 hover:underline">{tagSymbol}{displayTag}</p>
-                                    <p className="text-sm text-gray-500">
-                                      {/* v9's proved ranking counts LIKES on tagged
-                                          posts; earlier topologies count posts. */}
-                                      {prefixRankingsAvailable()
-                                        ? `${formatNumber(trend.postCount)} ${trend.postCount === 1 ? 'like' : 'likes'}`
-                                        : `${formatNumber(trend.postCount)} ${trend.postCount === 1 ? 'post' : 'posts'}`}
-                                    </p>
-                                  </div>
-                                </div>
-                              </motion.div>
-                            )
-                          })
+                          trendingHashtags.map((trend, index) => <TrendingHashtagRow key={trend.hashtag} trend={trend} index={index} />)
                         )}
                       </div>
                     </motion.div>

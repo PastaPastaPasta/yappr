@@ -152,7 +152,7 @@ export function BlogSettings({ blog, ownerId, onUpdated, onDeleted }: BlogSettin
       <section className="space-y-3 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
         <div>
           <h3 className="text-sm font-medium text-gray-800 dark:text-gray-200">Label Management</h3>
-          <p className="text-xs text-gray-500">Manage blog taxonomy labels used for post filtering and selection.</p>
+          <p className="text-xs text-gray-500">Organize your posts with labels.</p>
         </div>
 
         <div className="flex flex-wrap gap-2">

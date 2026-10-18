@@ -225,6 +225,11 @@ jobs:
             echo "::warning::devnet build failed or was skipped — deploying without an updated /devnet"
           fi
 
+      # Pages serves only site/404.html for every missing path. Generate it from
+      # staging even while master still contains the older application's 404.
+      - name: Install network-free deployment-aware fallback
+        run: node staging/scripts/write-static-404.mjs site ''
+
       # Expectations are kept outside the public site: they describe exactly
       # which commits, env files and snapshot hashes this deploy built.
       - name: Record monitoring expectations

@@ -1,5 +1,5 @@
 import { logger } from '@/lib/logger';
-import { SESSION_STORAGE_KEY } from '@/lib/storage-scope';
+import { currentIdentityId } from '@/lib/auth/active-identity';
 /**
  * SDK helper utilities for working with the v3 EvoSDK.
  *
@@ -235,22 +235,9 @@ export function documentToPlainObject(doc: unknown): Record<string, unknown> {
 }
 
 
-/**
- * Get current user ID from localStorage session.
- * Returns null if not in browser or no session exists.
- */
+/** The identity whose keys this tab actually restored, never shared metadata alone. */
 export function getCurrentUserId(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const savedSession = localStorage.getItem(SESSION_STORAGE_KEY);
-    if (savedSession) {
-      const sessionData = JSON.parse(savedSession);
-      return sessionData.user?.identityId || null;
-    }
-  } catch {
-    return null;
-  }
-  return null;
+  return currentIdentityId();
 }
 
 /**

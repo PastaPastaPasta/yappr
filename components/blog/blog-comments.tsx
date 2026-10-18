@@ -188,10 +188,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
           placeholder="Write a comment..."
           className="min-h-[90px] border-0 bg-transparent p-0 focus-visible:ring-0 dark:bg-transparent"
         />
-        <div className="mt-2 flex items-center justify-between">
-          <p className="text-xs text-[var(--blog-text)]/70">
-            {trimmedContent.length}/{MAX_COMMENT_LENGTH}
-          </p>
+        <div className="mt-2 flex items-center justify-end">
           <Button type="button" size="sm" onClick={handleSubmit} disabled={!canSubmit}>
             {isSubmitting ? 'Posting...' : blogCommentsCostYapp() ? `Post comment (${COMMENT_YAPP_COST} YAPP)` : 'Post comment'}
           </Button>

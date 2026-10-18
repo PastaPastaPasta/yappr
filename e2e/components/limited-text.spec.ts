@@ -5,10 +5,11 @@ test('pasted emoji stop at the UTF-8 cap and counters count complete code points
   const name = page.getByRole('textbox', { name: 'Blog name' })
   await name.fill('😀'.repeat(64))
   await expect(name).toHaveValue('😀'.repeat(48))
-  await expect(page.getByText('48/64 characters · 192/192 bytes')).toBeVisible()
+  await expect(page.getByText('48/64 characters')).toBeVisible()
+  await expect(page.getByText('Text was shortened to fit. Some characters take more space.')).toBeVisible()
   await page.getByRole('textbox', { name: 'Report details' }).fill('😀'.repeat(500))
   await expect(page.getByRole('textbox', { name: 'Report details' })).toHaveValue('😀'.repeat(375))
-  await expect(page.getByText('375/500 characters · 1500/1500 bytes')).toBeVisible()
+  await expect(page.getByText('375/500 characters')).toBeVisible()
 })
 test('the character cap binds for ASCII and the byte cap binds for non-ASCII URLs', async ({ page }) => {
   await page.goto('/limited-text.html')

@@ -1,6 +1,8 @@
 'use client'
 
 import { logger } from '@/lib/logger'
+import { bindCurrentIdentity } from '@/lib/auth/active-identity'
+import { observeSignOut } from '@/lib/auth/cross-tab-sign-out'
 import { hasSkippedUsername } from '@/lib/username-skip'
 import { signInDestination } from '@/lib/auth/intent-destination'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
@@ -94,7 +96,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const controller = useMemo(() => new PlatformAuthController(createYapprPlatformAuthDependencies()), [])
   const [controllerState, setControllerState] = useState(() => controller.getState())
 
-  useEffect(() => controller.subscribe(setControllerState), [controller])
+  useEffect(() => {
+    const unbind = bindCurrentIdentity(() => controller.getState().user?.identityId ?? null)
+    const unsubscribe = controller.subscribe(setControllerState)
+    return () => { unbind(); unsubscribe() }
+  }, [controller])
 
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */
   const revokeLogout = useRef<Promise<void> | null>(null)
@@ -160,6 +166,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       controller.dispose()
     }
   }, [controller])
+
+  useEffect(() => observeSignOut(() => {
+    if (!controller.getState().user) return
+    controller.logoutLocally().then((signedOut) => {
+      if (!signedOut || controller.getState().user) return
+      useUsernameModal.getState().close()
+      usePasskeyPrompts.getState().reset()
+      router.push('/')
+    })
+      .catch((error: unknown) => logger.error('Auth: cross-tab sign-out failed:', error))
+  }), [controller, router])
 
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     const next = signInDestination(intent)

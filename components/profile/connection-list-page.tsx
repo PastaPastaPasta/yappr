@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { MagnifyingGlassIcon, XMarkIcon, ArrowPathIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -534,7 +535,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   )
 }
 
-function ConnectionRow({
+export function ConnectionRow({
   user,
   showActions,
   followLabel,
@@ -572,15 +573,15 @@ function ConnectionRow({
           <div className="flex items-start justify-between">
             <div>
               <ProfileHoverCard userId={user.id} username={hoverUsername} displayName={user.displayName}>
-                <h3 onClick={goToProfile} className="font-semibold hover:underline cursor-pointer">
+                <Link href={`/user?id=${user.id}`} className="block font-semibold hover:underline">
                   {user.displayName}
-                </h3>
+                </Link>
               </ProfileHoverCard>
               {user.hasDpnsName ? (
                 <ProfileHoverCard userId={user.id} username={user.username} displayName={user.displayName}>
-                  <p onClick={goToProfile} className="text-sm text-gray-500 hover:underline cursor-pointer">
+                  <Link href={`/user?id=${user.id}`} className="block text-sm text-gray-500 hover:underline">
                     @{user.username}
-                  </p>
+                  </Link>
                 </ProfileHoverCard>
               ) : (
                 <TooltipProvider>

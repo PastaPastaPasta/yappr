@@ -1,9 +1,8 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { Toaster } from 'react-hot-toast'
-import { Providers } from '@/components/providers'
+import { RouteRuntime } from '@/components/route-runtime'
 import ErrorBoundary from '@/components/error-boundary'
-import { AppShell } from '@/components/layout/app-shell'
 import { APP_URL } from '@/lib/constants'
 import { monitoringContractConfig } from '@/lib/monitoring-contract-config'
 import { IMG_SRC, MEDIA_SRC } from '@/lib/media/media-csp'
@@ -62,13 +61,11 @@ export default function RootLayout({
       </head>
       <body className="font-sans h-full bg-white dark:bg-neutral-900">
         <ErrorBoundary level="app">
-          <Providers>
-            <AppShell>
-              <ErrorBoundary level="page">
-                {children}
-              </ErrorBoundary>
-            </AppShell>
-          </Providers>
+          <RouteRuntime>
+            <ErrorBoundary level="page">
+              {children}
+            </ErrorBoundary>
+          </RouteRuntime>
         </ErrorBoundary>
         <Toaster
           position="top-center"

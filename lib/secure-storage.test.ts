@@ -129,3 +129,23 @@ describe('a passkey\'s CRITICAL key', () => {
     expect(s.getPrivateKeyRecord(IDENTITY)).toEqual({ wif: CRITICAL_WIF, fromPasskey: true })
   })
 })
+
+describe('remote sign-out secrets', () => {
+  it('erases a tab-only key while preserving a newer shared key', async () => {
+    const s = await load()
+    s.storeSessionOnlyPrivateKey(IDENTITY, STORED_WIF)
+    s.storePrivateKey(IDENTITY, LOGIN_WIF)
+    s.clearTabSecrets(IDENTITY)
+    expect(s.getPrivateKey(IDENTITY)).toBe(LOGIN_WIF)
+    localStorage.clear()
+    expect(s.getPrivateKey(IDENTITY)).toBeNull()
+  })
+  it('erases the memory fallback when session storage is unavailable', async () => {
+    const s = await load()
+    sessionStorage.setItem = () => { throw new Error('Storage blocked') }
+    s.storeSessionOnlyPrivateKey(IDENTITY, STORED_WIF)
+    expect(s.getPrivateKey(IDENTITY)).toBe(STORED_WIF)
+    s.clearTabSecrets(IDENTITY)
+    expect(s.getPrivateKey(IDENTITY)).toBeNull()
+  })
+})

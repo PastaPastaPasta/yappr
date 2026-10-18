@@ -60,14 +60,14 @@ test('login page shows the login affordance', async ({ page }) => {
 
   // /login auto-opens the global login modal after hydration. Private-key
   // sign-in is the primary path, with the way to create an identity under it.
-  // There is no password or passkey sign-in.
+  // Passkey sign-in is also offered on supported deployments and browsers.
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
   await expect(dialog).toBeVisible()
   await expect(dialog.locator('#loginCredential')).toBeVisible()
   await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
   await expect(dialog.getByRole('link', { name: /Create a Dash identity|Get the Dash wallet/ })).toBeVisible()
-  await expect(dialog.getByText(/passkey|password/i)).toHaveCount(0)
+  await expect(dialog.getByText(/password/i)).toHaveCount(0)
 
   // Wallet sign-in is a collapsed secondary option, offered on App Connect builds only.
   const walletToggle = dialog.getByRole('button', { name: 'Sign in with a Dash wallet app' })

@@ -4,7 +4,7 @@ import { appUrl } from '../fixtures/app'
 test.use({ viewport: { width: 390, height: 844 } })
 
 test('closed mobile menu is absent from navigation and opens with usable focus', async ({ page }) => {
-  await page.goto(appUrl('/about/'))
+  await page.goto(appUrl('/explore/'))
   const sheet = page.locator('div.fixed.bottom-14')
   const nav = page.getByRole('navigation').filter({ has: page.locator('a[href$="/messages/"]') })
   const menuButton = nav.getByRole('button').last()
@@ -12,9 +12,9 @@ test('closed mobile menu is absent from navigation and opens with usable focus',
 
   await expect(page.getByRole('heading', { name: 'Menu', exact: true })).toHaveCount(0)
   await expect(sheet).toHaveAttribute('inert', '')
-  await page.getByRole('link', { name: 'Dash.org The Dash cryptocurrency project', exact: true }).focus()
+  await menuButton.focus()
   await page.keyboard.press('Tab')
-  await expect(nav.getByRole('link').first()).toBeFocused()
+  await expect(sheet.locator(':focus')).toHaveCount(0)
 
   await menuButton.focus()
   await menuButton.press('Enter')

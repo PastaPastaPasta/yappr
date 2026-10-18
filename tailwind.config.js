@@ -14,8 +14,8 @@ module.exports = {
           200: '#bae6fd',
           300: '#7dd3fc',
           400: '#38bdf8',
-          500: '#0ea5e9',
-          600: '#0284c7',
+          500: '#0369a1',
+          600: '#075985',
           700: '#0369a1',
           800: '#075985',
           900: '#0c4a6e',
@@ -25,6 +25,17 @@ module.exports = {
           750: '#323232',
           850: '#1a1a1a',
         }
+      },
+      textColor: {
+        yappr: {
+          400: 'rgb(var(--accent-text) / <alpha-value>)',
+          500: 'rgb(var(--accent-text) / <alpha-value>)',
+          600: 'rgb(var(--accent-text-hover) / <alpha-value>)',
+        },
+        gray: {
+          400: 'rgb(var(--text-muted) / <alpha-value>)',
+          500: 'rgb(var(--text-secondary) / <alpha-value>)',
+        },
       },
       fontFamily: {
         sans: [
@@ -67,7 +78,7 @@ module.exports = {
         }
       },
       backgroundImage: {
-        'gradient-yappr': 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+        'gradient-yappr': 'linear-gradient(135deg, #0369a1 0%, #075985 100%)',
         'gradient-dark': 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
       },
       boxShadow: {

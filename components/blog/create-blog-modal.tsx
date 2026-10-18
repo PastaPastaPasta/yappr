@@ -3,7 +3,7 @@
 import { fieldLimits } from '@/lib/field-limits'
 import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
 
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,8 @@ interface CreateBlogModalProps {
 }
 
 export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogModalProps) {
+  const nameId = useId()
+  const descriptionId = useId()
   const { user } = useAuth()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -83,7 +85,7 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
           <div className="mb-4 flex items-center justify-between">
             <Dialog.Title className="text-lg font-semibold">Create Blog</Dialog.Title>
             <Dialog.Close asChild>
-              <button className="rounded-full p-1 hover:bg-gray-200 dark:hover:bg-gray-800">
+              <button aria-label="Close" className="rounded-full p-1 hover:bg-gray-200 dark:hover:bg-gray-800">
                 <XMarkIcon className="h-5 w-5" />
               </button>
             </Dialog.Close>
@@ -97,13 +99,13 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
 
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
-              <LimitedInput contract="blog" document="blog" field="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Blog" />
+              <label htmlFor={nameId} className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Blog name</label>
+              <LimitedInput id={nameId} contract="blog" document="blog" field="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Blog" />
             </div>
 
             <div>
-              <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Description</label>
-              <LimitedTextarea contract="blog" document="blog" field="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="What this blog is about" />
+              <label htmlFor={descriptionId} className="mb-1 block text-sm text-gray-700 dark:text-gray-300">Description</label>
+              <LimitedTextarea id={descriptionId} contract="blog" document="blog" field="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="What this blog is about" />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">

@@ -1,5 +1,6 @@
 'use client'
 
+import { useDeletedBlogs } from '@/lib/blog/deleted-blogs'
 import { useEffect, useState } from 'react'
 import { PlusIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -16,6 +17,7 @@ interface MyBlogsListProps {
 }
 
 export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
+  const deletedIds = useDeletedBlogs((state) => state.ids)
   const [blogs, setBlogs] = useState<Blog[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
@@ -51,6 +53,8 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
     return () => { cancelled = true }
   }, [ownerId])
 
+  const visibleBlogs = blogs.filter((blog) => !deletedIds.has(blog.id))
+
   return (
     <div className="mb-6 space-y-4">
       <div className="flex items-center justify-between">
@@ -65,9 +69,9 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
         <p className="text-sm text-gray-500">Loading blogs...</p>
       ) : error ? (
         <p className="text-sm text-red-500">{error}</p>
-      ) : blogs.length === 0 ? null : (
+      ) : visibleBlogs.length === 0 ? null : (
         <div className="space-y-3">
-          {blogs.map((blog) => (
+          {visibleBlogs.map((blog) => (
             <button
               key={blog.id}
               onClick={() => onSelectBlog?.(blog)}

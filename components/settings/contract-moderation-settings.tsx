@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { ArrowUturnLeftIcon, BanknotesIcon, ClockIcon, ExclamationTriangleIcon, NoSymbolIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -16,6 +16,7 @@ import { barredAuthorsCanTombstone, contractTakesReports, deletesAreTombstones }
 import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import type { ReportTargetKind } from '@/lib/reports'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
+import { reconcileFeePot } from '@/lib/reconcile-fee-pot'
 import { forgetModeratedReads } from '@/lib/moderation-refresh'
 import {
   moderationServiceFor,
@@ -166,6 +167,10 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   const seatedReasons = useSeatedReasons(true, contract)
   const [reasonDocumentId, setReasonDocumentId] = useState('')
   const [pot, setPot] = useState<FeePotState | null>(null)
+  const [claimPending, setClaimPending] = useState(false)
+  const pendingClaim = useRef<{ previousEpoch: number | null } | null>(null)
+  const potRevision = useRef(0)
+  const latestClaimEpoch = useRef<number | null>(null)
   /** v11: counted actions per seated member since the last payout (what the action share splits by); null when not kept or unread. */
   const [actionCounts, setActionCounts] = useState<ReadonlyMap<string, number> | null>(null)
   /** v11: the seated team and its seats, for the pot panel; null while none is seated. */
@@ -174,6 +179,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   const [standing, setStanding] = useState<{ identityId: string; standing: ModerationStanding | null; error: string | null } | null>(null)
 
   const refresh = useCallback(async () => {
+    const revision = potRevision.current
     try {
       const [bans, suspensions, warnings, removedByKind, pots] = await Promise.all([
         service.listEntries('banlist'),
@@ -189,7 +195,22 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
       const all = removedByKind.flat().sort((a, b) => b.removedAt - a.removedAt)
       setRemovals(all)
       setRestorable(new Set(all.filter((removal) => service.canRestore(removal.kind, removal)).map(removalKey)))
-      setPot(pots?.moderators ?? null)
+      if (revision === potRevision.current) {
+        const pending = pendingClaim.current
+        const updated = pending
+          ? await reconcileFeePot(async () => (await service.getFeePots())?.moderators ?? null, pending.previousEpoch)
+          : pots?.moderators ?? null
+        // A pre-payout refresh or lagging replica never restores the pre-claim balance.
+        if (revision === potRevision.current && updated &&
+          (latestClaimEpoch.current === null || (updated.lastClaimEpoch !== null && updated.lastClaimEpoch >= latestClaimEpoch.current))) {
+          setPot(updated)
+          if (pending) {
+            latestClaimEpoch.current = updated.lastClaimEpoch
+            pendingClaim.current = null
+            setClaimPending(false)
+          }
+        }
+      }
     } catch (error) {
       logger.error('ContractModerationSettings: refresh failed', error)
       toast.error('Could not load the moderation lists')
@@ -234,7 +255,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   }
 
   const run = async (action: Exclude<Action, 'restore'>) => {
-    if (!user) return
+    if (!user || busy || (action === 'claim' && pendingClaim.current)) return
     const id = targetId.trim()
     if (action !== 'claim' && !id) {
       toast.error('Enter the identity ID to moderate')
@@ -286,10 +307,18 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
         result = await service.clearWarnings(me, id)
         succeeded = 'Warnings cleared'
         break
-      case 'claim':
-        result = await service.claimModeratorsPot(me)
+      case 'claim': {
+        potRevision.current += 1
+        const claimed = await service.claimModeratorsPot(me)
+        result = claimed
+        if (claimed.success) {
+          pendingClaim.current = { previousEpoch: pot?.lastClaimEpoch ?? null }
+          setClaimPending(true)
+          setPot((current) => current && claimed.remainingCredits !== undefined ? { ...current, credits: claimed.remainingCredits } : null)
+        }
         succeeded = 'Moderators pot paid out to the team'
         break
+      }
     }
     setBusy(null)
     if (result.errorCode === 'MAYBE_APPLIED') {
@@ -433,14 +462,15 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
           <div className="text-sm">
             <p className="font-semibold">{pot ? `${(Number(pot.credits) / CREDITS_PER_DASH).toFixed(6)} DASH` : '—'}</p>
             <p className="text-gray-500 dark:text-gray-400">
-              {pot?.lastClaimEpoch == null
+              {claimPending ? 'Payout confirmed. Updating claim history…' : pot?.lastClaimEpoch == null
                 ? 'Never claimed'
                 : `Last claimed in epoch ${pot.lastClaimEpoch}${pot.lastClaimantId ? ` by ${pot.lastClaimantId.slice(0, 8)}…` : ''}`}
             </p>
           </div>
-          <Button variant="outline" disabled={busy !== null || !pot || pot.credits === BigInt(0)} onClick={() => run('claim')} className="gap-2">
+          <Button variant="outline" disabled={busy !== null || claimPending || !pot || pot.credits === BigInt(0)} onClick={() => run('claim')} className="gap-2">
             <BanknotesIcon className="h-4 w-4" /> {busy?.action === 'claim' ? 'Claiming…' : 'Claim for the team'}
           </Button>
+          {claimPending && <Button variant="outline" size="sm" onClick={() => refresh()} disabled={busy !== null}>Refresh payout</Button>}
           {seatedTeam && <TeamCounts team={seatedTeam} counts={actionCounts} />}
         </CardContent>
       </Card>

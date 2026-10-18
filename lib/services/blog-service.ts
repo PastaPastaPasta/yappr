@@ -1,3 +1,4 @@
+import { useDeletedBlogs } from '@/lib/blog/deleted-blogs'
 import { stateTransitionService } from './state-transition-service'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import type { Blog } from '@/lib/types'
@@ -132,6 +133,7 @@ class BlogService extends BaseDocumentService<Blog> {
     if (!blogIsV9()) throw new Error('Blogs cannot be deleted on this network')
     const result = await stateTransitionService.deleteDocument(this.contractId, this.documentType, blogId, ownerId)
     if (!result.success) throw new Error(result.error || 'Failed to delete blog')
+    useDeletedBlogs.getState().mark(blogId)
     this.clearCache()
     return true
   }

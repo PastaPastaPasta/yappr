@@ -1,5 +1,6 @@
 'use client'
 
+import { useDeletedBlogs } from '@/lib/blog/deleted-blogs'
 import { useCallback, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
@@ -126,6 +127,7 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false, initialView
 }
 
 function BlogList({ sdkReady }: { sdkReady: boolean }) {
+  const deletedIds = useDeletedBlogs((state) => state.ids)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<BlogSort>('newest')
   const { user } = useAuth()
@@ -142,14 +144,15 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
   })
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return blogs
+    const available = blogs.filter((blog) => !deletedIds.has(blog.id))
+    if (!search.trim()) return available
     const q = search.trim().toLowerCase()
-    return blogs.filter(
+    return available.filter(
       (b) =>
         b.name.toLowerCase().startsWith(q) ||
         (b.username && b.username.toLowerCase().startsWith(q))
     )
-  }, [blogs, search])
+  }, [blogs, search, deletedIds])
 
   return (
     <div className="space-y-4">

@@ -493,8 +493,7 @@ function PostCardView({
     })
   }
 
-  const handleCardClick = (e: React.MouseEvent) => {
-    const url = `/post?id=${post.id}`
+  const prepareThreadNavigation = () => {
     // Hand the detail page what this card already shows, so it renders at once.
     useAppStore.getState().setPendingPostNavigation(enrichedPost, {
       username: usernameState,
@@ -507,6 +506,11 @@ function PostCardView({
       isFollowing: authorIsFollowing,
       replyTo: progressiveEnrichment?.replyTo,
     })
+  }
+
+  const handleCardClick = (e: React.MouseEvent) => {
+    prepareThreadNavigation()
+    const url = `/post?id=${post.id}`
     if (e.ctrlKey || e.metaKey) window.open(url, '_blank')
     else router.push(url)
   }
@@ -561,9 +565,11 @@ function PostCardView({
                   profileLoaded={profileLoaded}
                 />
               )}
-              <time dateTime={createdAtValid ? createdAtDate.toISOString() : undefined} title={createdAtValid ? createdAtDate.toLocaleString() : undefined} className="text-gray-500 flex-shrink-0">
-                {createdAtLabel}
-              </time>
+              <Link href={`/post?id=${post.id}`} onClick={(event) => { event.stopPropagation(); prepareThreadNavigation() }} aria-label={`Read thread · ${createdAtLabel}`} className="text-gray-500 flex-shrink-0 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-yappr-600">
+                <time dateTime={createdAtValid ? createdAtDate.toISOString() : undefined} title={createdAtValid ? createdAtDate.toLocaleString() : undefined}>
+                  {createdAtLabel}
+                </time>
+              </Link>
             </div>
 
             <div className="flex items-center gap-1 flex-shrink-0">
