@@ -45,7 +45,9 @@ function PostDetailContent() {
     hasMoreReplies,
     isLoadingMoreReplies,
     loadMoreReplies,
-    postEnrichment
+    postEnrichment,
+    error,
+    refresh
   } = usePostDetail({
     postId,
     enabled: !!postId
@@ -159,6 +161,17 @@ function PostDetailContent() {
           </div>
         </PageHeader>
 
+        {error && (
+          <div role="alert" className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
+            <p className="text-gray-500 mb-3">
+              {post ? 'Couldn’t refresh this thread. Try again.' : 'Couldn’t load this post. Try again.'}
+            </p>
+            <Button onClick={refresh} variant="outline" disabled={isLoading || isLoadingReplies}>
+              Try again
+            </Button>
+          </div>
+        )}
+
         {isLoading && !post ? (
           <div className="p-8 text-center">
             <Spinner size="md" className="mx-auto mb-4" />
@@ -249,7 +262,7 @@ function PostDetailContent() {
                   <Spinner size="sm" className="mx-auto mb-2" />
                   <p className="text-gray-500 text-sm">Loading replies...</p>
                 </div>
-              ) : replyThreads.length === 0 ? (
+              ) : replyThreads.length === 0 ? !error && (
                 <div className="p-8 text-center">
                   <p className="text-gray-500">{isDeleted || replyBlockedReason || (user && !canReplyToPrivate) ? 'No replies yet.' : 'No replies yet. Be the first to reply!'}</p>
                 </div>
@@ -275,7 +288,7 @@ function PostDetailContent() {
               )}
             </div>
           </>
-        ) : referencesMayDangle() ? (
+        ) : error ? null : referencesMayDangle() ? (
           // On a moderated contract an absent document may be a takedown: the
           // stub looks for a post OR reply removal record and only claims one
           // when it finds it; otherwise it says "unavailable".

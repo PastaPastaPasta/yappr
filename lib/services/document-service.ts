@@ -331,7 +331,7 @@ export abstract class BaseDocumentService<T> {
    * {@link get} without the catch: null only when Platform says the document
    * does not exist, and a failed read throws.
    */
-  protected async getOrThrow(documentId: string): Promise<T | null> {
+  async getOrThrow(documentId: string): Promise<T | null> {
     const cached = this.cache.get(documentId);
     if (cached !== undefined) return cached;
 

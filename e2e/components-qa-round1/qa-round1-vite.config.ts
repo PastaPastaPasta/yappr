@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url'
 import base from '../components/vite.config'
 const mocks = fileURLToPath(new URL('./qa-round1-mocks.tsx', import.meta.url))
 const boundaries = [
+  '@/lib/feed/prove-absent',
+  '@/hooks/use-post-enrichment', '@/lib/services/reply-service',
   '@/lib/services/social-stats-service', '@/hooks/use-profile-tabs', '@/hooks/use-block', '@/hooks/use-moderated-type-open',
   '@/components/profile/profile-tabs', '@/components/profile/yapp-flow', '@/components/dpns/username-modal',
   '@/components/ui/payment-qr-dialog', '@/components/settings/avatar-customization', '@/components/settings/banner-customization',

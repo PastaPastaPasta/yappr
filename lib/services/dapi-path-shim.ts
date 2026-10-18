@@ -22,11 +22,17 @@
  * untouched. A rewritten request is rebuilt with its body read into a buffer
  * (see `retarget`), and is otherwise the same request on the single-slash path.
  *
- * Remove the shim once platform fixes the SDK to stop emitting the double
- * slash.
+ * Also enforce the SDK's request deadline in the browser. wasm_channel ignores
+ * the transport timeout setting: grpc-timeout can bound server processing but
+ * cannot abort a stalled fetch. The signal stays active through response-body
+ * consumption so a stalled gRPC stream also fails over through the SDK.
+ *
+ * Remove these workarounds once the WASM transport handles paths and deadlines.
  */
 
 const DOUBLE_SLASH_PREFIX = '//org.dash.platform.';
+
+export const DAPI_REQUEST_TIMEOUT_MS = 8_000;
 
 /** Marks the installed wrapper and holds the origins it rewrites. */
 const SHIM_ORIGINS = Symbol.for('yappr.dapiPathShim.origins');
@@ -42,11 +48,8 @@ function originOf(address: string): string | null {
   }
 }
 
-/**
- * The single-slash form of `url` when it is a DAPI request to one of `origins`
- * with the doubled path. Otherwise null, meaning the request is left alone.
- */
-export function rewriteDapiUrl(url: string, origins: ReadonlySet<string>): string | null {
+/** Only gRPC requests on configured origins or the standard discovered DAPI ports. */
+function dapiUrl(url: string, origins: ReadonlySet<string>): URL | null {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -54,7 +57,14 @@ export function rewriteDapiUrl(url: string, origins: ReadonlySet<string>): strin
     return null;
   }
   const dapiOrigin = origins.has(parsed.origin) || (parsed.protocol === 'https:' && (parsed.port === '1443' || parsed.port === ''));
-  if (!dapiOrigin || !parsed.pathname.startsWith(DOUBLE_SLASH_PREFIX)) return null;
+  if (!dapiOrigin || !/^\/{1,2}org\.dash\.platform\./.test(parsed.pathname)) return null;
+  return parsed;
+}
+
+/** Collapse the doubled path on a DAPI request; leave other paths alone. */
+export function rewriteDapiUrl(url: string, origins: ReadonlySet<string>): string | null {
+  const parsed = dapiUrl(url, origins);
+  if (!parsed?.pathname.startsWith(DOUBLE_SLASH_PREFIX)) return null;
   return `${parsed.origin}${parsed.pathname.slice(1)}${parsed.search}${parsed.hash}`;
 }
 
@@ -62,6 +72,30 @@ function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === 'string') return input;
   if (input instanceof URL) return input.href;
   return input.url;
+}
+
+/** Honor per-method overrides, including the SDK's longer confirmation streams. */
+function requestTimeout(input: RequestInfo | URL, init?: RequestInit): number {
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  const timeout = headers.get('grpc-timeout')?.match(/^(\d{1,8})([HMSmun])$/);
+  if (!timeout) return DAPI_REQUEST_TIMEOUT_MS;
+  const units: Record<string, number> = { H: 3_600_000, M: 60_000, S: 1_000, m: 1, u: 0.001, n: 0.000001 };
+  const ms = Math.ceil(Number(timeout[1]) * units[timeout[2]]);
+  return ms > 0 && ms <= 2_147_483_647 ? ms : DAPI_REQUEST_TIMEOUT_MS;
+}
+
+/** Supported mobile WebViews predate AbortSignal.timeout/any. */
+function withDeadline(ms: number, caller?: AbortSignal | null): AbortSignal {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('DAPI request timed out', 'TimeoutError')), ms);
+  const cancel = () => controller.abort(caller?.reason);
+  controller.signal.addEventListener('abort', () => {
+    clearTimeout(timer);
+    caller?.removeEventListener('abort', cancel);
+  }, { once: true });
+  if (caller?.aborted) cancel();
+  else caller?.addEventListener('abort', cancel, { once: true });
+  return controller.signal;
 }
 
 /**
@@ -90,7 +124,7 @@ async function retarget(request: Request, url: string): Promise<Request> {
 }
 
 /**
- * Installs the rewrite for `addresses`. Call it before the SDK connects. It is
+ * Installs path normalization and a request deadline. Call before the SDK connects. It is
  * idempotent: later calls only add their origins to the installed wrapper. A
  * no-op when `fetch` is missing. Discovered HTTPS nodes on ports 443 and 1443 are always covered.
  */
@@ -107,10 +141,13 @@ export function installDapiPathShim(addresses: readonly string[] = []): void {
   const rewritten = new Set(origins);
   const original = globalThis.fetch.bind(globalThis);
   const wrapped: ShimmedFetch = async (input, init) => {
-    const fixed = rewriteDapiUrl(requestUrl(input), rewritten);
-    if (fixed === null) return original(input, init);
-    if (!(input instanceof Request)) return original(fixed, init);
-    return original(await retarget(input, fixed), init);
+    const url = requestUrl(input);
+    if (!dapiUrl(url, rewritten)) return original(input, init);
+    const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signal = withDeadline(requestTimeout(input, init), callerSignal);
+    const fixed = rewriteDapiUrl(url, rewritten);
+    const target = fixed === null ? input : input instanceof Request ? await retarget(input, fixed) : fixed;
+    return original(target, { ...init, signal });
   };
   wrapped[SHIM_ORIGINS] = rewritten;
   globalThis.fetch = wrapped;
