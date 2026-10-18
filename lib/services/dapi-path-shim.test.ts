@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { installDapiPathShim, rewriteDapiUrl } from './dapi-path-shim'
+import { DAPI_REQUEST_TIMEOUT_MS, installDapiPathShim, rewriteDapiUrl } from './dapi-path-shim'
 
 const NODE = 'https://68.67.122.224:1443'
 const ORIGINS = new Set([NODE])
@@ -57,6 +57,7 @@ describe('installDapiPathShim', () => {
   }
 
   beforeEach(() => {
+    vi.useFakeTimers()
     calls = []
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
@@ -67,6 +68,9 @@ describe('installDapiPathShim', () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it('rewrites a Request to a configured node and keeps its method, headers and body', async () => {
@@ -81,7 +85,11 @@ describe('installDapiPathShim', () => {
     await fetch(request, { method: 'POST', signal: controller.signal })
     expect(calls).toHaveLength(1)
     expect(calls[0].url).toBe(`${NODE}/${METHOD}`)
-    expect(calls[0].init).toEqual({ method: 'POST', signal: controller.signal })
+    expect(calls[0].init?.method).toBe('POST')
+    const signal = calls[0].init?.signal
+    expect(signal?.aborted).toBe(false)
+    controller.abort()
+    expect(signal?.aborted).toBe(true)
     const sent = sentRequest()
     expect(sent.method).toBe('POST')
     expect(sent.headers.get('content-type')).toBe('application/grpc-web+proto')
@@ -121,5 +129,69 @@ describe('installDapiPathShim', () => {
     installDapiPathShim()
     await fetch(`https://68.67.122.225:1443//${METHOD}`)
     expect(calls[0].url).toBe(`https://68.67.122.225:1443/${METHOD}`)
+  })
+
+  it.each(['/', '//'])('aborts a stalled discovered DAPI fetch on the %s path at the deadline', async (slash) => {
+    globalThis.fetch = vi.fn((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+    })) as typeof fetch
+    installDapiPathShim()
+    const read = fetch(`https://68.67.122.24:1443${slash}${METHOD}`)
+    const failed = expect(read).rejects.toThrow('DAPI request timed out')
+    await vi.advanceTimersByTimeAsync(DAPI_REQUEST_TIMEOUT_MS)
+    await failed
+  })
+
+  it('keeps the deadline active after headers arrive, until the response body is read', async () => {
+    globalThis.fetch = vi.fn(async (_input, init) => new Response(new ReadableStream({
+      start(controller) {
+        init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), { once: true })
+      },
+    }))) as typeof fetch
+    installDapiPathShim()
+    const response = await fetch(`${NODE}/${METHOD}`)
+    const failed = expect(response.arrayBuffer()).rejects.toThrow('DAPI request timed out')
+    await vi.advanceTimersByTimeAsync(DAPI_REQUEST_TIMEOUT_MS)
+    await failed
+  })
+
+  it('preserves Request cancellation and leaves non-DAPI fetch signals unchanged', async () => {
+    installDapiPathShim()
+    const caller = new AbortController()
+    await fetch(new Request(`${NODE}/${METHOD}`, { signal: caller.signal }))
+    const combined = calls[0].init?.signal
+    caller.abort()
+    expect(combined?.aborted).toBe(true)
+    await fetch('https://quorums.testnet.networks.dash.org/quorums', { signal: caller.signal })
+    expect(calls[1].init?.signal).toBe(caller.signal)
+  })
+
+  it.each([['300S', 300_000], ['8000000u', 8_000], ['1n', 1], ['invalid', 8_000]])('honors grpc-timeout %s, including long confirmation streams', async (header, ms) => {
+    installDapiPathShim()
+    await fetch(new Request(`${NODE}/${METHOD}`, { headers: { 'grpc-timeout': header } }))
+    const signal = calls[0].init?.signal
+    await vi.advanceTimersByTimeAsync(ms - 1)
+    expect(signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(signal?.aborted).toBe(true)
+  })
+
+  it('keeps an already cancelled request cancelled', async () => {
+    const caller = new AbortController()
+    caller.abort(new Error('cancelled'))
+    installDapiPathShim()
+    await fetch(`${NODE}/${METHOD}`, { signal: caller.signal })
+    expect(calls[0].init?.signal?.aborted).toBe(true)
+    expect(calls[0].init?.signal?.reason).toBe(caller.signal.reason)
+  })
+
+  it('enforces the deadline when mobile WebViews lack AbortSignal.timeout and any', async () => {
+    vi.stubGlobal('AbortSignal', {})
+    installDapiPathShim()
+    await fetch(`${NODE}/${METHOD}`)
+    const signal = calls[0].init?.signal
+    await vi.advanceTimersByTimeAsync(DAPI_REQUEST_TIMEOUT_MS)
+    expect(signal?.aborted).toBe(true)
+    expect(signal?.reason.name).toBe('TimeoutError')
   })
 })

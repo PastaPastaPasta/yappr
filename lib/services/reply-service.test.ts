@@ -58,6 +58,24 @@ describe('reply sensitive flag', () => {
   })
 })
 
+describe.each(['v2', 'v10'])('nested reply read failures on %s', (topology) => {
+  it('preserves fail-soft callers but rejects strict thread reads', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+    const { replyService: replies } = await import('./reply-service')
+    const options = { rootPostId: 'root', skipEnrichment: true }
+    query.mockRejectedValue(new Error('DAPI unavailable'))
+    try {
+      expect(await replies.getNestedReplies(['parent'], options)).toEqual(new Map([['parent', []]]))
+      await expect(replies.getNestedReplies(['parent'], { ...options, throwOnError: true })).rejects.toThrow('DAPI unavailable')
+      query.mockResolvedValue([])
+      expect(await replies.getNestedReplies(['parent'], { ...options, throwOnError: true })).toEqual(new Map([['parent', []]]))
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+})
+
 describe('reply notifications on v9', () => {
   const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
   const [ME, ROOT_MINE, ROOT_THEIRS, MY_REPLY] = [1, 2, 3, 4].map(idOf)

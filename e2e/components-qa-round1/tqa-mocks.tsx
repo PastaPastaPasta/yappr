@@ -20,6 +20,7 @@ let published = false
 let reads = 0
 let confirmations = 0
 let bookmarkReads = 0
+let postReads = 0
 let release: (() => void) | undefined
 let held = false
 export function finishThreadRead() { release?.() }
@@ -34,6 +35,11 @@ export function publishReply() {
 export function threadReads() { return reads }
 export const postService = {
   getPostById: async () => rootPost,
+  getOrThrow: async () => {
+    postReads++
+    if (published && scenario === 'post-outage' && postReads === 2) throw new TypeError('Failed to fetch')
+    return rootPost
+  },
   getPostsByIdsForDisplay: async (_ids: string[], options?: { throwOnError?: boolean }) => {
     bookmarkReads++
     if (!options?.throwOnError) throw new Error('Bookmark reads must distinguish absence from failure')
@@ -50,13 +56,14 @@ export const replyService = {
       held = true
       await new Promise<void>(resolve => { release = resolve })
     }
-    if (published && scenario !== 'slow' && (scenario === 'outage' || reads === 2)) throw new TypeError('Failed to fetch')
+    if (published && scenario !== 'slow' && scenario !== 'post-outage' && (scenario === 'outage' || reads === 2)) throw new TypeError('Failed to fetch')
     const beyondPage = scenario === 'paged' || scenario === 'indexing'
     if (published && scenario === 'child-page') return { documents: [acceptedReply], nextCursor: 'page2' }
     if (published && scenario === 'paged') return { documents: [], nextCursor: 'page2' }
     return { documents: published && !beyondPage && hasFlatThreads() ? [continuation, acceptedReply] : [continuation], nextCursor: beyondPage ? 'page2' : undefined }
   },
   getReplyById: async () => null,
+  getOrThrow: async () => null,
   getMany: async () => {
     confirmations++
     return published && (scenario !== 'indexing' || confirmations >= 2) ? [acceptedReply] : []

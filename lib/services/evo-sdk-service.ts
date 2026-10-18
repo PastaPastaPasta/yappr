@@ -6,7 +6,7 @@ import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CO
 import { profileBaseSource, profileExtensionSource } from '../profile/v10-profile';
 import type { AppNetwork } from '../constants';
 import { SDK_FACADES } from './sdk-facades';
-import { installDapiPathShim } from './dapi-path-shim';
+import { DAPI_REQUEST_TIMEOUT_MS, installDapiPathShim } from './dapi-path-shim';
 import { observeSdkFailures } from './sdk-failure-observer';
 import { installReadRetry } from './sdk-read-retry';
 
@@ -155,7 +155,7 @@ class EvoSdkService {
           trusted: true,
           ...(quorumUrl ? { quorumUrl } : {}),
           settings: {
-            timeoutMs: 8000,
+            timeoutMs: DAPI_REQUEST_TIMEOUT_MS,
           }
         });
       } else if (this.config.network === 'testnet') {
@@ -163,7 +163,7 @@ class EvoSdkService {
         this.sdk = EvoSDK.testnetTrusted({
           ...(quorumUrl ? { quorumUrl } : {}),
           settings: {
-            timeoutMs: 8000,
+            timeoutMs: DAPI_REQUEST_TIMEOUT_MS,
           }
         });
       } else {
@@ -171,7 +171,7 @@ class EvoSdkService {
         this.sdk = EvoSDK.mainnetTrusted({
           ...(quorumUrl ? { quorumUrl } : {}),
           settings: {
-            timeoutMs: 8000,
+            timeoutMs: DAPI_REQUEST_TIMEOUT_MS,
           }
         });
       }

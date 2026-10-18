@@ -206,3 +206,16 @@ test('T-SOC-01: the actual post page keeps accepted replies mounted during a slo
   await expect(accepted).toHaveAttribute('data-retained', 'true')
   await expect(accepted).toHaveCount(1)
 })
+
+test('T-SOC-01: the actual page retains accepted replies across a main-post transport failure', async ({ page }) => {
+  await page.clock.install()
+  await page.goto('/tqa.html?fixture=thread-page&scenario=post-outage')
+  await expect(page.getByText('Continuation', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Publish accepted reply' }).click()
+  await expect(page.locator('article[data-reply-id="accepted"]')).toBeVisible()
+  await expect(page.getByRole('alert')).toContainText('Couldn’t refresh this thread.')
+  await expect(page.getByText('Post not found', { exact: true })).toHaveCount(0)
+  await page.clock.runFor(1100)
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.locator('article[data-reply-id="accepted"]')).toHaveCount(1)
+})

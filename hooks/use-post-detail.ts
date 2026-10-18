@@ -108,7 +108,7 @@ function nestUnderReply(
 async function deletedReplyParents(replies: Reply[]): Promise<Set<string>> {
   if (!repliesOutliveTheirParent()) return new Set()
   const candidates = unloadedReplyParents(replies)
-  return candidates.length > 0 ? provenAbsent('reply', candidates) : new Set()
+  return candidates.length > 0 ? provenAbsent('reply', candidates, { throwOnError: true }) : new Set()
 }
 
 /**
@@ -239,7 +239,7 @@ export function usePostDetail({
 
     if (hasFlatThreads()) {
       const rootId = threadRootIdOf(mainPost)
-      const rootPost = await postService.getPostById(rootId, { skipEnrichment: true })
+      const rootPost = await postService.getOrThrow(rootId)
       if (rootPost) chain.push(rootPost)
       // The reply's `rootPostId` is a deletableDocument reference on v9: a
       // missing root is a moderator takedown (or on v10 its author's delete),
@@ -252,11 +252,11 @@ export function usePostDetail({
 
       while (currentParentId && chain.length < MAX_DEPTH) {
         // First try as a post
-        let parent = await postService.getPostById(currentParentId, { skipEnrichment: true })
+        let parent = await postService.getOrThrow(currentParentId)
 
         if (!parent) {
           // Try as a reply
-          const reply = await replyService.getReplyById(currentParentId, { skipEnrichment: true })
+          const reply = await replyService.getOrThrow(currentParentId)
           if (reply) {
             // The adapter (not a spread) so the Post shape is complete — a spread
             // leaves `quotes` undefined in a `quotes: number` field.
@@ -315,11 +315,14 @@ export function usePostDetail({
     try {
       // Load post (transformDocument returns post with defaults, no enrichment)
       // Try post first, then reply if not found (replies are a separate document type)
-      loadedPost = await postService.getPostById(postId, { skipEnrichment: true })
+      // The convenience getPostById/getReplyById helpers turn transport errors
+      // into null. Use the underlying read so an outage reaches the retry UI
+      // instead of looking like a proved missing document.
+      loadedPost = await postService.getOrThrow(postId)
 
       if (!loadedPost) {
         // Not a post - check if it's a reply
-        const reply = await replyService.getReplyById(postId, { skipEnrichment: true })
+        const reply = await replyService.getOrThrow(postId)
         if (reply) {
           // Treat the reply as the main "post" for this detail view, tagged with
           // the doctype it actually came from.
@@ -360,9 +363,15 @@ export function usePostDetail({
       setRootCheckedFor(postId)
 
       // Show the main post as soon as it's available
-      setState(current => current.post?.id === loadedPost?.id
-        ? { ...current, post: loadedPost, replyChain }
-        : { post: loadedPost, replies: [], replyThreads: [], replyChain })
+      setState(current => {
+        const sameThread = current.post?.id === postId
+        return {
+          post: loadedPost,
+          replies: sameThread ? current.replies : [],
+          replyThreads: sameThread ? current.replyThreads : [],
+          replyChain
+        }
+      })
       setIsLoading(false)
 
       // Enrich the main post without blocking replies or UI
@@ -373,10 +382,10 @@ export function usePostDetail({
       if (!isCurrent()) return
       logger.error('usePostDetail: Failed to load post:', err)
       setError('This post could not be loaded. Please try again.')
-      // Only clear state if we don't have navigation data to show
-      if (!usedNavigationDataRef.current) {
-        setState({ post: null, replies: [], replyThreads: [], replyChain: [] })
-      }
+      // Keep this thread's last successful data during a failed refresh.
+      setState(current => current.post?.id === postId
+        ? current
+        : { post: null, replies: [], replyThreads: [], replyChain: [] })
       setIsLoading(false)
       setIsLoadingReplies(false)
       return
@@ -387,6 +396,7 @@ export function usePostDetail({
     try {
       let replies: Reply[]
       let replyThreads: ReplyThread[] = []
+      let nextCursor: string | undefined
 
       if (hasFlatThreads()) {
         // One query for the entire thread, keyed on the root every reply shares
@@ -396,8 +406,7 @@ export function usePostDetail({
         const result = await replyService.getReplies(rootId)
         if (!isCurrent()) return
         replies = result.documents
-        replyCursorRef.current = result.nextCursor
-        setHasMoreReplies(Boolean(result.nextCursor))
+        nextCursor = result.nextCursor
 
         // Viewing a reply renders a slice of the thread — its own subtree — but
         // the thread query pages from the root (oldest first on v9, parent by
@@ -413,7 +422,7 @@ export function usePostDetail({
           const renderedDepth = MAX_NESTED_DEPTH + 1
           let frontier = [loadedPost.id]
           for (let depth = 0; depth < renderedDepth && frontier.length > 0; depth++) {
-            const childrenMap = await replyService.getNestedReplies(frontier, { rootPostId: rootId })
+            const childrenMap = await replyService.getNestedReplies(frontier, { rootPostId: rootId, throwOnError: true })
             if (!isCurrent()) return
             const known = new Set(replies.map((reply) => reply.id))
             const fresh = Array.from(childrenMap.values()).flat()
@@ -481,6 +490,11 @@ export function usePostDetail({
       if (!isCurrent()) return
       const quotedPost = loadedPost.quotedPost
 
+      // Publish pagination only after this page is complete. A failed nested
+      // read or parent proof must not allow pagination past an uncommitted page.
+      replyCursorRef.current = nextCursor
+      setHasMoreReplies(Boolean(nextCursor))
+
       // Update replies after they're ready, preserve any enriched main post and replyChain
       setState(current => {
         const mergedPost = current.post
@@ -508,18 +522,20 @@ export function usePostDetail({
     const cursor = replyCursorRef.current
     const rootId = threadRootIdRef.current
     if (!cursor || !rootId || isLoadingMoreReplies) return
+    const requestId = loadRequestIdRef.current
 
     setIsLoadingMoreReplies(true)
     try {
       const result = await replyService.getReplies(rootId, { startAfter: cursor })
       // Navigating away mid-flight would otherwise merge this thread's next page
       // into whatever post the page moved on to.
-      if (threadRootIdRef.current !== rootId) return
+      if (threadRootIdRef.current !== rootId || loadRequestIdRef.current !== requestId) return
       // A parent on an earlier page is present, so only deleted ones prove absent.
       const deletedParents = await deletedReplyParents(result.documents)
-      if (threadRootIdRef.current !== rootId) return
+      if (threadRootIdRef.current !== rootId || loadRequestIdRef.current !== requestId) return
       replyCursorRef.current = result.nextCursor
       setHasMoreReplies(Boolean(result.nextCursor))
+      setError(null)
 
       setState(current => {
         if (!current.post) return current
@@ -530,6 +546,9 @@ export function usePostDetail({
       })
     } catch (err) {
       logger.error('usePostDetail: Failed to load more replies:', err)
+      if (threadRootIdRef.current === rootId && loadRequestIdRef.current === requestId) {
+        setError('Replies could not be refreshed. Please try again.')
+      }
     } finally {
       setIsLoadingMoreReplies(false)
     }
@@ -746,7 +765,7 @@ async function loadV2Thread(
   // Helper to recursively fetch author's thread continuation
   const fetchAuthorThreadContinuation = async (parentIds: string[]): Promise<Reply[]> => {
     if (parentIds.length === 0) return []
-    const nestedMap = await replyService.getNestedReplies(parentIds)
+    const nestedMap = await replyService.getNestedReplies(parentIds, { throwOnError: true })
     const authorContinuations: Reply[] = []
 
     nestedMap.forEach((nested, parentId) => {
@@ -791,7 +810,7 @@ async function loadV2Thread(
     new Set([...directReplies.map(r => r.id), ...authorThreadChain.map(r => r.id)])
   )
   const nestedRepliesMap = allIdsForNested.length > 0
-    ? await replyService.getNestedReplies(allIdsForNested)
+    ? await replyService.getNestedReplies(allIdsForNested, { throwOnError: true })
     : new Map<string, Reply[]>()
 
   const orderedAuthorThread = authorThreadDepthFirst(mainAuthorId, directReplies, authorChildrenOf)

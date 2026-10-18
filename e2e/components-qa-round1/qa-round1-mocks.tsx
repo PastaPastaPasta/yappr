@@ -1,8 +1,9 @@
 // Offline boundaries only. The changed pages/components render their real JSX and run their real event handlers.
 import type { ReactNode } from 'react'
+import { useState } from 'react'
 import { ThreadView } from '@/components/messages/thread-view'
 import type { InboxRow } from '@/components/messages/conversation-list'
-import type { Store, StoreItem } from '@/lib/types'
+import type { Post, Store, StoreItem } from '@/lib/types'
 import { variantsFromRows } from '@/lib/storefront/variant-codec'
 const params = new URLSearchParams(window.location.search)
 const fixture = params.get('fixture')
@@ -25,7 +26,7 @@ export const ModeratorContentMenu = () => null
 export const PaymentQRCode = () => null
 export const PostTips = () => null
 export const PostCard = () => <div>Post content</div>
-export const ReplyThreadItem = () => null
+export const ReplyThreadItem = () => <div>Existing reply</div>
 export const flattenReplyThreads = () => []
 export const row: InboxRow = { key: 'group', kind: 'group', peerId: 'owner', name: 'DM QA friends — café ☕', memberIds: ['owner', 'peer'], preview: null, previewOwn: false, lastActivity: 0, unread: 0, hidden: false, legacyOnly: false, notice: null }
 export const details = new Map([['owner', { id: 'owner', displayName: 'Owner', hasDpns: false }], ['peer', { id: 'peer', displayName: 'Jakub Rahman', hasDpns: false }]])
@@ -36,7 +37,24 @@ export function LegacyMessages() { return <MessagesV5 /> }
 export const useInfiniteScroll = () => ({ sentinelRef: { current: null }, isSuspended: false, loadMore: noop })
 const deleted = params.get('state') !== 'live'
 const post = { id: 'post', author: { id: 'owner', displayName: 'Owner' }, content: '', createdAt: new Date(0), deleted }
-export const usePostDetail = () => ({ post, replyThreads: [], replyChain: [], removedChainIds: [], replyRootPending: false, isLoading: false, isLoadingReplies: false, hasMoreReplies: false, isLoadingMoreReplies: false, loadMoreReplies: async () => undefined })
+export const usePostDetail = () => {
+  const failure = params.get('failure')
+  const [error, setError] = useState(failure ? 'transport error: Failed to fetch' : null)
+  const [isLoadingReplies, setIsLoadingReplies] = useState(false)
+  return {
+    post: failure === 'post' && error ? null : post,
+    replyThreads: failure === 'refresh' ? [{ content: { id: 'existing-reply' } }] : [],
+    replyChain: [], removedChainIds: [], replyRootPending: false, isLoading: false,
+    isLoadingReplies, hasMoreReplies: false, isLoadingMoreReplies: false,
+    loadMoreReplies: async () => undefined, error,
+    refresh: async () => {
+      setError(null)
+      setIsLoadingReplies(true)
+      await new Promise(resolve => setTimeout(resolve, 100))
+      setIsLoadingReplies(false)
+    },
+  }
+}
 const enrichment = { enrichProgressively: noop, getPostEnrichment: noop, reset: noop }
 export const useProgressiveEnrichment = () => enrichment
 export const useCanReplyToPrivate = () => ({ canReply: true, isLoading: false })
@@ -45,9 +63,60 @@ export const privateFeedService = {
   getPendingRequests: async () => [], hasPrivateFeed: async () => false,
 }
 export const fetchRekeys = async () => [{ keyGeneration: 2, revokedLeaf: 0, createdAt: Date.now() }]
-export const postService = { getUserPosts: async () => ({ documents: [] }) }
+let postReads = 0
+let replyReads = 0
+let nestedReads = 0
+let proofReads = 0
+const nestedRefresh = params.get('failure') === 'nested-refresh'
+const proofRefresh = params.get('failure') === 'proof-refresh'
+const proofPagination = params.get('failure') === 'proof-pagination'
+const proofInitial = params.get('failure') === 'proof-initial'
+const focusedReply = { ...post, rootPostId: 'root', parentId: 'root' }
+const existingReply = { ...post, id: 'existing-reply', content: 'Existing reply', rootPostId: nestedRefresh ? 'root' : 'post', parentId: 'post', createdAt: new Date(1), ...(nestedRefresh ? { replyToReplyId: 'post' } : {}) }
+export const postService = {
+  getUserPosts: async () => ({ documents: [] }),
+  getOrThrow: async (id: string) => {
+    postReads++
+    if (params.get('failure') === 'post' && postReads === 1) throw new Error('DAPI unavailable')
+    if (nestedRefresh && id === 'post') return null
+    return { ...post, id }
+  },
+}
+export const replyService = {
+  getOrThrow: async () => focusedReply,
+  getReplies: async () => {
+    replyReads++
+    if (params.get('failure') === 'replies' && replyReads === 1 || params.get('failure') === 'refresh' && replyReads === 2) {
+      throw new Error('DAPI unavailable')
+    }
+    if (proofPagination) return replyReads === 1
+      ? { documents: [existingReply], nextCursor: 'first-page' }
+      : { documents: [{ ...existingReply, id: 'new-reply', content: 'New reply', replyToReplyId: 'missing-parent' }] }
+    if (proofInitial) return { documents: [{ ...existingReply, replyToReplyId: 'missing-parent' }], nextCursor: 'first-page' }
+    return nestedRefresh ? { documents: [focusedReply], nextCursor: 'first-page' } : { documents: [{ ...existingReply, ...(proofRefresh ? { replyToReplyId: 'missing-parent' } : {}) }] }
+  },
+  getNestedReplies: async (parentIds: string[], options: { throwOnError?: boolean }) => {
+    if (!parentIds.includes('post')) return new Map(parentIds.map(id => [id, []]))
+    nestedReads++
+    if (nestedReads === 2) {
+      if (options.throwOnError) throw new Error('DAPI unavailable')
+      return new Map([['post', []]])
+    }
+    return new Map([['post', [existingReply]]])
+  },
+}
+export const provenAbsent = async (_kind: string, ids: string[], options: { throwOnError?: boolean } = {}) => {
+  proofReads++
+  if (proofReads === (proofPagination || proofInitial ? 1 : 2)) {
+    if (options.throwOnError) throw new Error('DAPI unavailable')
+    return new Set<string>()
+  }
+  return new Set(ids)
+}
+const postEnrichment = { enrich: async (posts: Post[]) => posts, reset: noop }
+export const usePostEnrichment = () => postEnrichment
 export const resolveUserDetailsBatch = async () => new Map()
-export const replyToPost = noop
+export const replyToPost = (reply: typeof focusedReply) => ({ ...reply, targetKind: 'reply' as const })
 export const identityService = { hasEncryptionKey: async () => true, getIdentity: async () => ({ publicKeys: [] }) }
 export const resolveEncryptionPublicKey = async () => Uint8Array.from([2, ...new Array<number>(32).fill(1)])
 export const store: Store = { id: 'store', ownerId: 'owner', name: 'QA store', status: 'active', description: '', defaultCurrency: 'USD', createdAt: new Date(0), paymentUris: [{ uri: 'bitcoin:mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn', scheme: 'bitcoin:', label: 'Bitcoin' }] }

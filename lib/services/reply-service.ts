@@ -533,7 +533,7 @@ class ReplyService extends BaseDocumentService<Reply> {
    */
   async getNestedReplies(
     parentIds: string[],
-    options: PostQueryOptions & { rootPostId?: string } = {}
+    options: PostQueryOptions & { rootPostId?: string; throwOnError?: boolean } = {}
   ): Promise<Map<string, Reply[]>> {
     if (parentIds.length === 0) {
       return new Map();
@@ -605,6 +605,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       return result;
     } catch (error) {
       logger.error('Error getting nested replies:', error);
+      if (options.throwOnError) throw error;
       const result = new Map<string, Reply[]>();
       parentIds.forEach(id => result.set(id, []));
       return result;
