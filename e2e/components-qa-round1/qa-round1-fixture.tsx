@@ -36,6 +36,7 @@ function PostRecoveryFixture() {
     <div data-testid="hook-error">{detail.error}</div>
     <div data-testid="hook-replies">{threadContents(detail.replyThreads).join(',')}</div>
     <div data-testid="hook-loading">{String(detail.isLoading || detail.isLoadingReplies)}</div>
+    <div data-testid="hook-has-more">{String(detail.hasMoreReplies)}</div>
     <button onClick={detail.refresh}>Refresh thread</button>
     <button onClick={detail.loadMoreReplies}>Load more replies</button>
   </>

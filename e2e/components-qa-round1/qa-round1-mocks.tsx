@@ -70,6 +70,7 @@ let proofReads = 0
 const nestedRefresh = params.get('failure') === 'nested-refresh'
 const proofRefresh = params.get('failure') === 'proof-refresh'
 const proofPagination = params.get('failure') === 'proof-pagination'
+const proofInitial = params.get('failure') === 'proof-initial'
 const focusedReply = { ...post, rootPostId: 'root', parentId: 'root' }
 const existingReply = { ...post, id: 'existing-reply', content: 'Existing reply', rootPostId: nestedRefresh ? 'root' : 'post', parentId: 'post', createdAt: new Date(1), ...(nestedRefresh ? { replyToReplyId: 'post' } : {}) }
 export const postService = {
@@ -91,6 +92,7 @@ export const replyService = {
     if (proofPagination) return replyReads === 1
       ? { documents: [existingReply], nextCursor: 'first-page' }
       : { documents: [{ ...existingReply, id: 'new-reply', content: 'New reply', replyToReplyId: 'missing-parent' }] }
+    if (proofInitial) return { documents: [{ ...existingReply, replyToReplyId: 'missing-parent' }], nextCursor: 'first-page' }
     return nestedRefresh ? { documents: [focusedReply], nextCursor: 'first-page' } : { documents: [{ ...existingReply, ...(proofRefresh ? { replyToReplyId: 'missing-parent' } : {}) }] }
   },
   getNestedReplies: async (parentIds: string[], options: { throwOnError?: boolean }) => {
@@ -105,7 +107,7 @@ export const replyService = {
 }
 export const provenAbsent = async (_kind: string, ids: string[], options: { throwOnError?: boolean } = {}) => {
   proofReads++
-  if (proofReads === (proofPagination ? 1 : 2)) {
+  if (proofReads === (proofPagination || proofInitial ? 1 : 2)) {
     if (options.throwOnError) throw new Error('DAPI unavailable')
     return new Set<string>()
   }

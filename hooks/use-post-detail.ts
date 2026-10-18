@@ -392,6 +392,7 @@ export function usePostDetail({
     try {
       let replies: Reply[]
       let replyThreads: ReplyThread[]
+      let nextCursor: string | undefined
 
       if (hasFlatThreads()) {
         // One query for the entire thread, keyed on the root every reply shares
@@ -401,8 +402,7 @@ export function usePostDetail({
         const result = await replyService.getReplies(rootId)
         if (!isCurrent()) return
         replies = result.documents
-        replyCursorRef.current = result.nextCursor
-        setHasMoreReplies(Boolean(result.nextCursor))
+        nextCursor = result.nextCursor
 
         // Viewing a reply renders a slice of the thread — its own subtree — but
         // the thread query pages from the root (oldest first on v9, parent by
@@ -447,6 +447,11 @@ export function usePostDetail({
       await attachQuotedPosts([loadedPost])
       if (!isCurrent()) return
       const quotedPost = loadedPost.quotedPost
+
+      // Publish pagination only after this page is complete. A failed nested
+      // read or parent proof must not allow pagination past an uncommitted page.
+      replyCursorRef.current = nextCursor
+      setHasMoreReplies(Boolean(nextCursor))
 
       // Update replies after they're ready, preserve any enriched main post and replyChain
       setState(current => {

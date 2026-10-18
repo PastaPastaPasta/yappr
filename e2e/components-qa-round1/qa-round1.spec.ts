@@ -151,6 +151,21 @@ for (const failure of ['post', 'replies', 'refresh', 'nested-refresh', 'proof-re
     await expect(page.getByTestId('hook-loading')).toHaveText('false')
   })
 }
+test('DAPI recovery hook: a failed first-page proof cannot paginate past uncommitted replies', async ({ page }) => {
+  await page.goto('/qa-round1.html?fixture=post-recovery-hook&state=live&failure=proof-initial')
+  const error = page.getByTestId('hook-error')
+  const replies = page.getByTestId('hook-replies')
+  await expect(error).toHaveText('DAPI unavailable')
+  await expect(page.getByTestId('hook-has-more')).toHaveText('false')
+  await expect(page.getByTestId('hook-loading')).toHaveText('false')
+  await page.getByRole('button', { name: 'Load more replies' }).click()
+  await expect(error).toHaveText('DAPI unavailable')
+  await expect(replies).toBeEmpty()
+  await page.getByRole('button', { name: 'Refresh thread' }).click()
+  await expect(error).toBeEmpty()
+  await expect(replies).toHaveText('Existing reply')
+  await expect(page.getByTestId('hook-has-more')).toHaveText('true')
+})
 test('DAPI recovery hook: a failed pagination proof keeps the cursor and clears its error after retry', async ({ page }) => {
   await page.goto('/qa-round1.html?fixture=post-recovery-hook&state=live&failure=proof-pagination')
   const replies = page.getByTestId('hook-replies')
