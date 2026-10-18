@@ -617,6 +617,9 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey, stillWante
     if (!cancelled || !stillWanted()) await abandonPasskeyEnrolment(pending)
     throw error
   }
+  // Sent with no verdict yet: it may land, or have landed already (another tab may even have seen it and
+  // retired the record), so nothing here may drop it from the provider whatever is stored.
+  let unconfirmed = false
   try {
     // A provider that gives nothing at sign-in, or something else than at creation, cannot be trusted to open the entry later.
     if (!prf || prf.length !== 32 || (pending.createPrf && !bytesEqual(prf, pending.createPrf))) throw new PasskeyVaultError('no-prf')
@@ -625,11 +628,14 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey, stillWante
     // Derived from the passkey's own PRF output, right here.
     pending.verified = true
     // Remembered as this device's only once it is confirmed (passkeySaved): one that never lands leaves no marker.
-    if (!await sendEntry(pending, recipient.publicKey, true)) throw new PasskeyVaultError('pending')
+    if (!await sendEntry(pending, recipient.publicKey, true)) {
+      unconfirmed = true
+      throw new PasskeyVaultError('pending')
+    }
   } catch (error) {
-    // Still settling here: kept. Otherwise it was never sent (refused, another passkey still saving here,
-    // no PRF) and signs in to nothing.
-    await abandonPasskeyEnrolment(pending)
+    // Otherwise it was never sent, or a verdict says it never lands (refused, proved not recorded, another
+    // passkey still saving here, no PRF): it signs in to nothing.
+    if (!unconfirmed) await abandonPasskeyEnrolment(pending)
     throw error
   } finally {
     prf?.fill(0)
@@ -649,7 +655,8 @@ async function entryLanded(identityId: string, credentialId: Uint8Array, recipie
     } catch (error) {
       logger.debug('Passkey vault: checking a saved passkey failed:', error)
     }
-    await new Promise((resolve) => setTimeout(resolve, LANDED_READ_MS))
+    // No wait after the last read: an entry that lands then is only missed, never read as absent.
+    if (attempt < LANDED_READS - 1) await new Promise((resolve) => setTimeout(resolve, LANDED_READ_MS))
   }
   return false
 }
@@ -773,8 +780,10 @@ export async function confirmPendingEnrolment(pending: PendingPasskey): Promise<
 /**
  * The user left an enrolment that was made but not saved (the dialog closed,
  * the session ended, or the confirming sign-in failed): its PRF output is
- * wiped, and a passkey that was never sent is dropped from the provider (it
- * signs in to nothing). One still settling is kept: it may land.
+ * wiped, and the passkey is dropped from the provider (it signs in to
+ * nothing). Only for one never sent, or whose writes a verdict says never
+ * land: callers never pass one sent with no verdict. One still held as
+ * settling is kept regardless.
  */
 export async function abandonPasskeyEnrolment(pending: PendingPasskey): Promise<void> {
   pending.createPrf?.fill(0)

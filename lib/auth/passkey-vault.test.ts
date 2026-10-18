@@ -8,10 +8,13 @@ import bs58 from 'bs58'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { recipientFromPrf } from '@/lib/crypto/passkey-vault'
 import { bytesToBase64Url, bytesToHex } from '@/lib/bytes'
+import { keyNetwork } from '@/lib/constants'
+import { getPublicKey } from '@/lib/crypto/keys'
+import { privateKeyToWif } from '@/lib/crypto/wif'
 import { stubBrowserStorage } from '../test-storage'
 
 const IDENTITY = bs58.encode(new Uint8Array(32).fill(4))
-const CREDENTIAL = new Uint8Array([1, 2, 3, 4])
+const CREDENTIAL = new Uint8Array(16).fill(1)
 const prfOf = (seed: number) => new Uint8Array(32).fill(seed)
 /** The user handle a passkey of IDENTITY carries in this vault (identity ‖ vault contract). */
 const handleOf = (identityId: string) => new Uint8Array([...bs58.decode(identityId), ...bs58.decode(VAULT)])
@@ -23,6 +26,7 @@ const auth = vi.hoisted(() => ({
   signalUnknownPasskey: vi.fn(async () => undefined),
   createPasskeyWithPrf: vi.fn(),
 }))
+const port = vi.hoisted(() => ({ getIdentityFresh: vi.fn() }))
 const vault = vi.hoisted(() => ({
   find: vi.fn(async () => null),
   add: vi.fn(),
@@ -34,7 +38,7 @@ const stores = vi.hoisted(() => ({
   settlePasskeyCriticalKey: vi.fn(),
   storeEncryptionKey: vi.fn(),
   storeEncryptionKeyType: vi.fn(),
-  getPrivateKey: vi.fn(() => null),
+  getPrivateKey: vi.fn((): string | null => null),
   getEncryptionKeyBytes: vi.fn(() => null),
 }))
 
@@ -52,7 +56,7 @@ vi.mock('@/lib/constants', async (importOriginal) => ({
 vi.mock('@/lib/services/passkey-vault-service', () => ({ passkeyVaultService: vault }))
 vi.mock('@/lib/secure-storage', () => stores)
 vi.mock('@/lib/app-connect/config', () => ({ appConnectPins: () => null, isAppConnectBuild: () => false }))
-vi.mock('@/lib/app-connect/platform-port', () => ({ appConnectPlatformPort: {} }))
+vi.mock('@/lib/app-connect/platform-port', () => ({ appConnectPlatformPort: port }))
 vi.mock('@/lib/app-connect/session-manager', () => ({ appConnectSessions: { current: () => null } }))
 vi.mock('@/lib/app-connect/session-health', () => ({ primaryGroupKey: () => null }))
 vi.mock('@/lib/app-connect/wallet-sign-in', () => ({ wipeGrant: () => undefined }))
@@ -61,7 +65,7 @@ vi.mock('@/lib/app-connect/anchor-key-mark', () => ({ rememberAnchorKey: vi.fn()
 vi.mock('@/lib/crypto/encryption-key-lookup', () => ({ resolveEncryptionPublicKey: () => null }))
 
 import { PasskeyCancelledError } from 'platform-auth'
-import { rememberUnsettledPasskey, unsettledPasskey } from './passkey-device'
+import { forgetUnsettledPasskey, rememberUnsettledPasskey, unsettledPasskey } from './passkey-device'
 import {
   PasskeyVaultError,
   abandonPasskeyEnrolment,
@@ -227,6 +231,31 @@ describe('an enrolment left unfinished', () => {
     await expect(finishPasskeyEnrolment(pending, () => dialogOpen)).rejects.toMatchObject({ code: 'cancelled' })
     expect(pending.createPrf).toEqual(new Uint8Array(32))
     expect(auth.signalUnknownPasskey).toHaveBeenCalledWith('localhost', CREDENTIAL)
+  })
+
+  it('never drops a passkey whose first write went out unconfirmed, even once another tab saw it saved', async () => {
+    // A key session that can keep a passkey: its HIGH sign-in key, on chain.
+    const signIn = new Uint8Array(32).fill(11)
+    stores.getPrivateKey.mockReturnValue(privateKeyToWif(signIn, keyNetwork(), true))
+    port.getIdentityFresh.mockResolvedValue({ publicKeys: [{ id: 2, type: 0, purpose: 0, securityLevel: 2, data: getPublicKey(signIn) }] })
+    // The create goes out with no verdict; the hold before it stored the record.
+    vault.add.mockImplementation(async (_owner: string, _entry: unknown, options: { beforeBroadcast?: (receipt: unknown) => void }) => {
+      options.beforeBroadcast?.({ contractId: VAULT, documentType: 'vaultEntry', ownerId: IDENTITY, documentId: 'doc-1', nonce: BigInt(5), transition: new Uint8Array([1]) })
+      return { confirmed: false }
+    })
+    // While this tab reads back, the user signs out here and another tab sees the entry and retires the record.
+    vault.find.mockImplementation(async () => {
+      forgetPendingEnrolments()
+      forgetUnsettledPasskey(IDENTITY, bytesToBase64Url(CREDENTIAL))
+      return null
+    })
+    const pending = made()
+    auth.getPasskeyPrf.mockResolvedValue({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(5) })
+
+    await expect(settled(finishPasskeyEnrolment(pending))).rejects.toMatchObject({ code: 'pending' })
+    expect(vault.add).toHaveBeenCalledTimes(1)
+    expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
+    expect(pending.createPrf).toEqual(new Uint8Array(32))
   })
 
   it('wipes its PRF output and drops the never-sent passkey when the confirming sign-in fails', async () => {
