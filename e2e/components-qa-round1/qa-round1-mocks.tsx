@@ -66,7 +66,10 @@ export const fetchRekeys = async () => [{ keyGeneration: 2, revokedLeaf: 0, crea
 let postReads = 0
 let replyReads = 0
 let nestedReads = 0
+let proofReads = 0
 const nestedRefresh = params.get('failure') === 'nested-refresh'
+const proofRefresh = params.get('failure') === 'proof-refresh'
+const proofPagination = params.get('failure') === 'proof-pagination'
 const focusedReply = { ...post, rootPostId: 'root', parentId: 'root' }
 const existingReply = { ...post, id: 'existing-reply', content: 'Existing reply', rootPostId: nestedRefresh ? 'root' : 'post', parentId: 'post', createdAt: new Date(1), ...(nestedRefresh ? { replyToReplyId: 'post' } : {}) }
 export const postService = {
@@ -85,7 +88,10 @@ export const replyService = {
     if (params.get('failure') === 'replies' && replyReads === 1 || params.get('failure') === 'refresh' && replyReads === 2) {
       throw new Error('DAPI unavailable')
     }
-    return nestedRefresh ? { documents: [focusedReply], nextCursor: 'first-page' } : { documents: [existingReply] }
+    if (proofPagination) return replyReads === 1
+      ? { documents: [existingReply], nextCursor: 'first-page' }
+      : { documents: [{ ...existingReply, id: 'new-reply', content: 'New reply', replyToReplyId: 'missing-parent' }] }
+    return nestedRefresh ? { documents: [focusedReply], nextCursor: 'first-page' } : { documents: [{ ...existingReply, ...(proofRefresh ? { replyToReplyId: 'missing-parent' } : {}) }] }
   },
   getNestedReplies: async (parentIds: string[], options: { throwOnError?: boolean }) => {
     if (!parentIds.includes('post')) return new Map(parentIds.map(id => [id, []]))
@@ -96,6 +102,14 @@ export const replyService = {
     }
     return new Map([['post', [existingReply]]])
   },
+}
+export const provenAbsent = async (_kind: string, ids: string[], options: { throwOnError?: boolean } = {}) => {
+  proofReads++
+  if (proofReads === (proofPagination ? 1 : 2)) {
+    if (options.throwOnError) throw new Error('DAPI unavailable')
+    return new Set<string>()
+  }
+  return new Set(ids)
 }
 const postEnrichment = { enrich: async (posts: Post[]) => posts, reset: noop }
 export const usePostEnrichment = () => postEnrichment

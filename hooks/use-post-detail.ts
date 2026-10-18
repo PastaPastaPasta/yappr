@@ -108,7 +108,7 @@ function nestUnderReply(
 async function deletedReplyParents(replies: Reply[]): Promise<Set<string>> {
   if (!repliesOutliveTheirParent()) return new Set()
   const candidates = unloadedReplyParents(replies)
-  return candidates.length > 0 ? provenAbsent('reply', candidates) : new Set()
+  return candidates.length > 0 ? provenAbsent('reply', candidates, { throwOnError: true }) : new Set()
 }
 
 /**
@@ -475,18 +475,20 @@ export function usePostDetail({
     const cursor = replyCursorRef.current
     const rootId = threadRootIdRef.current
     if (!cursor || !rootId || isLoadingMoreReplies) return
+    const requestId = loadRequestIdRef.current
 
     setIsLoadingMoreReplies(true)
     try {
       const result = await replyService.getReplies(rootId, { startAfter: cursor })
       // Navigating away mid-flight would otherwise merge this thread's next page
       // into whatever post the page moved on to.
-      if (threadRootIdRef.current !== rootId) return
+      if (threadRootIdRef.current !== rootId || loadRequestIdRef.current !== requestId) return
       // A parent on an earlier page is present, so only deleted ones prove absent.
       const deletedParents = await deletedReplyParents(result.documents)
-      if (threadRootIdRef.current !== rootId) return
+      if (threadRootIdRef.current !== rootId || loadRequestIdRef.current !== requestId) return
       replyCursorRef.current = result.nextCursor
       setHasMoreReplies(Boolean(result.nextCursor))
+      setError(null)
 
       setState(current => {
         if (!current.post) return current
@@ -497,6 +499,9 @@ export function usePostDetail({
       })
     } catch (err) {
       logger.error('usePostDetail: Failed to load more replies:', err)
+      if (threadRootIdRef.current === rootId && loadRequestIdRef.current === requestId) {
+        setError(err instanceof Error ? err.message : 'Failed to load replies')
+      }
     } finally {
       setIsLoadingMoreReplies(false)
     }

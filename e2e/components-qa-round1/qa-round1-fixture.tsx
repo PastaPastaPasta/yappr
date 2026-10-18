@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { useState } from 'react'
+import type { ReplyThread } from '@/lib/types'
 // Bypass the page fixture's mocked @/hooks/use-post-detail alias.
 import { usePostDetail as useRealPostDetail } from '../../hooks/use-post-detail'
 import { Toaster } from 'react-hot-toast'
@@ -25,14 +26,18 @@ import '@/app/globals.css'
 const noop = () => undefined
 const params = new URLSearchParams(window.location.search)
 const fixture = params.get('fixture')
+function threadContents(threads: ReplyThread[]): string[] {
+  return threads.flatMap(thread => [thread.content.content, ...threadContents(thread.nestedReplies)]).filter(Boolean)
+}
 function PostRecoveryFixture() {
   const detail = useRealPostDetail({ postId: 'post' })
   return <>
     <div data-testid="hook-post">{detail.post?.id}</div>
     <div data-testid="hook-error">{detail.error}</div>
-    <div data-testid="hook-replies">{detail.replyThreads.map(thread => thread.content.content).join(',')}</div>
+    <div data-testid="hook-replies">{threadContents(detail.replyThreads).join(',')}</div>
     <div data-testid="hook-loading">{String(detail.isLoading || detail.isLoadingReplies)}</div>
     <button onClick={detail.refresh}>Refresh thread</button>
+    <button onClick={detail.loadMoreReplies}>Load more replies</button>
   </>
 }
 // Public scalar 1, for the offline checkout readiness check only.
