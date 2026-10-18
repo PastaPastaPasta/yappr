@@ -566,10 +566,12 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
               </>
             ) : (
               <>
-                <EncryptionKeyRequiredNotice>
-                  Enter your identity encryption private key (WIF or hex format).
-                  This key is used to encrypt and decrypt your private feed data.
-                </EncryptionKeyRequiredNotice>
+                {!walletSession && (
+                  <EncryptionKeyRequiredNotice>
+                    Enter your identity encryption private key (WIF or hex format).
+                    This key is used to encrypt and decrypt your private feed data.
+                  </EncryptionKeyRequiredNotice>
+                )}
 
                 <div className="space-y-2">
                   {walletSession ? (

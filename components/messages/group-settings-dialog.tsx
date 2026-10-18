@@ -129,7 +129,7 @@ export function GroupSettingsDialog({ open, onOpenChange, group, viewerId, detai
                     onClick={() =>
                       setConfirm({
                         title: 'Remove member?',
-                        message: `${displayNameOf(details, id)} will not be able to read new messages. This writes a new group key for everyone else.`,
+                        message: `${displayNameOf(details, id)} will not be able to read new messages.`,
                         confirmText: 'Remove',
                         run: () => run(`remove:${id}`, () => actions.remove(id), 'Member removed'),
                       })

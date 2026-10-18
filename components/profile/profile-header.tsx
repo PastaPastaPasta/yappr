@@ -303,7 +303,7 @@ export function ProfileHeader({
               </button>
               <button onClick={() => router.push(`/followers?id=${userId}`)} className="hover:underline">
                 <span className="font-bold">{formatNumber(profile?.followersCount || 0)}</span>
-                <span className="text-gray-500"> Followers</span>
+                <span className="text-gray-500"> {profile?.followersCount === 1 ? 'Follower' : 'Followers'}</span>
               </button>
             </div>
 

@@ -1,0 +1,49 @@
+import { createRoot } from 'react-dom/client'
+import { useState } from 'react'
+import { Toaster } from 'react-hot-toast'
+import InventoryPage from '@/app/store/inventory/page'
+import UserPage from '@/app/user/page'
+import MessagesPage from '@/app/messages/page'
+import PostPage from '@/app/post/page'
+import CheckoutPage from '@/app/checkout/page'
+import ManagePage from '@/app/store/manage/page'
+import StorePage from '@/app/store/view/page'
+import { NetworkPill } from '@/components/layout/network-pill'
+import { ConversationList } from '@/components/messages/conversation-list'
+import { GroupSettingsDialog } from '@/components/messages/group-settings-dialog'
+import { PrivateFeedDashboard } from '@/components/settings/private-feed-dashboard'
+import { InventoryTable } from '@/components/store/inventory-table'
+import { EMPTY_DRAFT } from '@/components/profile/profile-edit-form'
+import { ProfileHeader } from '@/components/profile/profile-header'
+import { details, row, eurItem } from './qa-round1-mocks'
+import { storeEncryptionKey } from '@/lib/secure-storage'
+import '@/app/globals.css'
+const noop = () => undefined
+const params = new URLSearchParams(window.location.search)
+const fixture = params.get('fixture')
+// Public scalar 1, for the offline checkout readiness check only.
+storeEncryptionKey('buyer', 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA')
+function InboxFixture() {
+  const [hidden, setHidden] = useState(false)
+  const [showHidden, setShowHidden] = useState(false)
+  return <><button onClick={() => setHidden(true)}>Delete fixture conversation</button><ConversationList rows={[{ ...row, hidden }]} selectedKey={null} details={details} isLoading={false} showHidden={showHidden} onToggleHidden={() => setShowHidden(!showHidden)} onSelect={noop} onNewMessage={noop} onNewGroup={noop} onOpenSettings={noop} /></>
+}
+function GroupFixture() {
+  return <GroupSettingsDialog open onOpenChange={noop} viewerId="owner" details={details} group={{ ...row, isOwner: true, lastMessage: null, unsaved: false, unreadable: false, removed: false, ended: false, blocked: false, draft: false, unreachable: false }} actions={{ rename: async () => undefined, add: async () => undefined, remove: async () => undefined, resendKeys: async () => undefined, leave: async () => undefined, end: async () => undefined }} />
+}
+const count = Number(params.get('count') ?? 1)
+const content = fixture === 'messages' ? <><NetworkPill /><MessagesPage /></>
+  : fixture === 'profile-page' ? <UserPage />
+  : fixture === 'export' ? <InventoryPage />
+  : fixture === 'inbox' ? <InboxFixture />
+  : fixture === 'group' ? <GroupFixture />
+  : fixture === 'private-activity' ? <PrivateFeedDashboard />
+  : fixture === 'post' ? <PostPage />
+  : fixture === 'checkout' ? <CheckoutPage />
+  : fixture === 'shipping' ? <ManagePage />
+  : fixture === 'store' ? <StorePage />
+  : fixture === 'inventory' ? <InventoryTable items={[eurItem, { ...eurItem, id: 'fallback', title: 'Store currency', currency: undefined, variants: undefined, basePrice: 600 }]} storeId="store" ownerId="owner" currency="USD" onEditItem={noop} onItemDeleted={noop} />
+  : <ProfileHeader userId="owner" profile={{ displayName: 'Owner', followersCount: count, followingCount: 0 }} displayName="Owner" isDisplayNameLoading={false} profileMissing={false} username={null} allUsernames={[]} viewerId="viewer" avatarKey={0} bannerKey={0} userStore={null} hasPrivateFeed={false} isPrivateFollower={false} isFollowing={false} followLoading={false} onFollow={noop} onTip={noop} onRequireAuth={noop} onOpenUsernameModal={noop} onSelectPayment={noop} edit={{ draft: EMPTY_DRAFT, onChange: noop, isSaving: false, onStart: noop, onCancel: noop, onSave: noop, onEditAvatar: noop, onEditBanner: noop, active: false }} />
+const root = document.getElementById('root')
+if (!root) throw new Error('Missing fixture root')
+createRoot(root).render(<>{content}<Toaster /></>)
