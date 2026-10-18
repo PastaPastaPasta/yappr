@@ -27,10 +27,11 @@ import { DASHPAY_CONTRACT_ID, SEEDED_TOPOLOGIES } from './seed/seed-lib.mjs';
 import { snapshotContractIds, snapshotEnvFiles } from './snapshot-contract-config.mjs';
 
 const prune = process.argv.includes('--prune');
+const staging = process.argv.includes('--staging');
 const net = network();
 const key = net === 'devnet' ? `devnet-${devnetName()}` : net;
 const ids = snapshotContractIds(
-  snapshotEnvFiles(net).map(file => readEnvFile(join(REPO_ROOT, file))),
+  snapshotEnvFiles(net, staging).map(file => readEnvFile(join(REPO_ROOT, file))),
   process.env.CONTRACT_IDS ?? '', DASHPAY_CONTRACT_ID, SEEDED_TOPOLOGIES,
 );
 if (ids.length === 0) {
@@ -48,12 +49,12 @@ const fetched = await sdk.contracts.getMany(ids);
 const missing = ids.filter(id => !fetched.get(id));
 if (missing.length) throw new Error(`Missing contracts on ${key}; snapshot unchanged: ${missing.join(', ')}`);
 
-const outDir = join(REPO_ROOT, 'lib', 'contracts', 'bundled');
+const outDir = join(REPO_ROOT, 'lib', 'contracts', staging ? 'snapshots' : 'bundled');
 mkdirSync(outDir, { recursive: true });
-const outPath = join(outDir, `${key}.json`);
-const bundle = existsSync(outPath) && !prune
+const outPath = join(outDir, `${staging ? 'testnet-staging' : key}.json`);
+const bundle = existsSync(outPath) && !prune && !staging
   ? JSON.parse(readFileSync(outPath, 'utf8'))
-  : { network: key, generatedAt: '', contracts: {} };
+  : { network: staging ? 'testnet' : key, generatedAt: '', contracts: {} };
 
 const platformVersion = PlatformVersion.latest();
 let refreshed = 0;

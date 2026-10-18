@@ -10,8 +10,7 @@ a human tapping through a wallet (ADR-001 E5.4). Given a `dash-key:` or
 | `dash-key:…&v=1` legacy key-exchange request | Parses it with `parseYapprKeyExchangeUri`. Derives the persona's login key for the app contract (see [Derivation](#derivation)). Does ECDH with the app's ephemeral key and encrypts the login key with AES-GCM. Then it creates the persona's `loginKeyResponse` on the key-exchange contract, or replaces it on a re-login, signed with keyId 2 (AUTHENTICATION/HIGH). |
 | `dash-st:` unsigned IdentityUpdate | Decodes it. Checks that it updates the persona's identity, that it only adds AUTHENTICATION/HIGH and ENCRYPTION/MEDIUM keys and disables none (the 1.0 key registration), and that its identity nonce is not stale. Signs it with keyId 0 (MASTER), broadcasts it, and waits for the result. |
 
-It only serves **devnet** (sakura) requests. A request whose `n=` names another
-network is refused, so it can never write to testnet or mainnet.
+It serves **devnet** or **testnet**, selected by one explicit env file. Requests for another network are refused before any write. Mainnet is always refused.
 
 ## Setup
 
@@ -31,12 +30,12 @@ run, then runs it. npm packages are left external and resolve from the root
 | Input | Source |
 | --- | --- |
 | Pool | `YAPPR_SAKURA_IDENTITIES`: path to the sakura ops `identities.json` (ENGINE.md §12.3). It is never copied into the repo, and no key material is ever printed. |
-| Network | One variant env file: `--env-file <path>`, else `YAPPR_ENV_FILE`, else `<repo>/.env.devnet`. It must set `NEXT_PUBLIC_NETWORK=devnet`, `NEXT_PUBLIC_DEVNET_NAME` and `NEXT_PUBLIC_DAPI_ADDRESSES`. `NEXT_PUBLIC_QUORUM_URL` is optional. Values missing from that file are errors; they never fall back to another file. |
+| Network | One variant env file: `--env-file <path>`, else `YAPPR_ENV_FILE`, else `<repo>/.env.devnet`. For devnet, set `NEXT_PUBLIC_NETWORK=devnet`, `NEXT_PUBLIC_DEVNET_NAME` and `NEXT_PUBLIC_DAPI_ADDRESSES`. For testnet, set `NEXT_PUBLIC_NETWORK=testnet` with no devnet or endpoint overrides; the SDK uses its trusted testnet configuration. `NEXT_PUBLIC_QUORUM_URL` is optional. Values missing from that file are errors; they never fall back to another file. |
 | Key-exchange contract | `NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID` in the same env file. It is needed for legacy `dash-key:` (`v=1`) only. |
-| App Connect state | `--state-file <path>`, else `YAPPR_APP_CONNECT_STATE`, else `~/.local/state/yappr-mobile-tools/app-connect-<devnet>.json`. See [Grant state](#grant-state). |
+| App Connect state | `--state-file <path>`, else `YAPPR_APP_CONNECT_STATE`, else `~/.local/state/yappr-mobile-tools/app-connect-<devnet>.json` on devnet or `app-connect-network-testnet.json` in the same directory on testnet. See [Grant state](#grant-state). |
 
-The pool is tagged with its devnet (`"network": "devnet-sakura"`). The
-responder refuses to start when the env file targets a different devnet. That
+The pool is tagged with its network (`"network": "devnet-sakura"` or `"network": "testnet"`). The
+responder refuses to start when the env file targets a different network. That
 catches a stale `.env.devnet`: staging's still points at the abandoned bonsia.
 
 ## Usage
@@ -111,7 +110,7 @@ describe. It reuses `vendor/platform-auth/src/app-connect/` for the request
 codec and the response crypto, so it cannot drift from the app side:
 
 1. **Decode strictly** with `parseAppConnectUri`. Codec errors are refused as
-   `unsupported` or `invalid`. Only `n=d` (devnet) requests are served.
+   `unsupported` or `invalid`. Only requests matching the configured devnet (`n=d`) or testnet (`n=t`) are served.
 2. **Freshness**: refused as `stale` when created more than 10 minutes ago or
    more than 2 minutes ahead.
 3. **Identity hint**: with an `IDENTITY_HINT`, only that identity answers.
@@ -231,7 +230,7 @@ its own registration.
 
 ### Grant state
 
-One JSON file per devnet, outside the repo, records per (identity, app):
+One JSON file per network, outside the repo, records per (identity, app):
 
 - the responses the responder published, with their three values. The
   indexOnly delete needs them, and nothing on chain lists responses by owner;
@@ -295,7 +294,18 @@ for `dash-st:`.
 | `src/app-connect/wallet.ts` | App Connect wallet rules, key plan, sealing, renew and revoke; Platform access goes through `AppConnectPorts` |
 | `src/app-connect/derive.ts`, `faults.ts`, `state.ts` | Key derivation, fault flags, grant state file |
 | `src/app-connect/platform.ts` | The live App Connect ports (identity update, key limits, response delete and create) |
-| `src/platform.ts` | The live ports: devnet SDK from `scripts/sdk-env.mjs`, the `loginKeyResponse` write, the broadcast |
+| `src/platform.ts` | The live ports: network-selected SDK from `scripts/sdk-env.mjs`, the `loginKeyResponse` write, the broadcast |
 | `src/pool.ts`, `src/config.ts` | Pool and env-file loading |
 | `src/main.ts` | CLI and HTTP server |
 | `test/` | A full app ↔ wallet round trip with the write stubbed; `dash-st:` parse, sign and signature check; App Connect against an in-memory chain (`test/app-connect-chain.ts`) judged by the shared verifier, and the interop vectors through the responder's sealing |
+
+### Testnet staging rehearsal
+
+Use the protected staging persona ledger as the pool and the committed staging env file:
+
+```sh
+npm --prefix mobile/tools run build
+YAPPR_SAKURA_IDENTITIES="$STAGING_PERSONA_LEDGER" node mobile/tools/test-wallet-responder.mjs --serve 127.0.0.1:8789 --env-file .env.staging
+```
+
+Set `STAGING_PERSONA_LEDGER` to the protected testnet ledger path. Run `--help` for the persona selection options. The pool must be tagged `testnet`. App Connect requests carry the staging APP_ID; grant state is stored in the testnet namespace. Messaging derives from the persona's CRITICAL key and the requested app anchor, matching staging provisioning.

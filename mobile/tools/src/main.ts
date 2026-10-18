@@ -18,10 +18,11 @@ import {
   loadConfig,
   requireKeyExchangeContract,
   requirePoolMatchesNetwork,
+  responderNetwork,
   type ResponderConfig,
 } from './config'
 import { errorMessage } from './errors'
-import { connectDevnet, livePorts } from './platform'
+import { connectNetwork, livePorts } from './platform'
 import { loadPool, POOL_ENV_VAR, selectPersona, type Pool } from './pool'
 import { respond, type RespondResult, type ResponderPorts } from './responder'
 import { FAULT_NAMES, parseFaults, type AppConnectFaults } from './app-connect/faults'
@@ -109,7 +110,7 @@ class Responder {
   }
 
   private connect(): Promise<ResponderPorts & { appConnect: AppConnectPorts }> {
-    this.ports ??= connectDevnet(REPO_ROOT, this.config.devnet).then(
+    this.ports ??= connectNetwork(REPO_ROOT, this.config).then(
       (sdk) => ({ ...livePorts(sdk, this.config, log), appConnect: liveAppConnectPorts(sdk, this.grants, log) }),
       (error: unknown) => {
         this.ports = undefined
@@ -132,6 +133,7 @@ class Responder {
     const spamIdxs = request.spamPersonaIdxs ?? (request.faults?.spam ? MOBILE_PERSONAS : undefined)
     return respond({
       uri,
+      network: this.config.network,
       persona,
       keyIndex: request.keyIndex,
       faults: request.faults,
@@ -176,9 +178,10 @@ export async function main(argv: string[]): Promise<number> {
     const config = loadConfig(envFile)
     const pool = loadPool()
     requirePoolMatchesNetwork(pool, config)
-    const statePath = resolve(values['state-file'] ?? process.env[STATE_FILE_VAR] ?? defaultStatePath(config.devnet.devnetName))
-    log(`devnet ${config.devnet.devnetName} from ${envFile}; key-exchange contract ${config.keyExchangeContractId ?? '(unset)'}; App Connect state ${statePath}`)
-    const responder = new Responder(pool, config, fileGrantStore(statePath, config.devnet.devnetName))
+    const stateNamespace = config.network === 'testnet' ? 'network-testnet' : config.devnet.devnetName
+    const statePath = resolve(values['state-file'] ?? process.env[STATE_FILE_VAR] ?? defaultStatePath(stateNamespace))
+    log(`${responderNetwork(config)} from ${envFile}; key-exchange contract ${config.keyExchangeContractId ?? '(unset)'}; App Connect state ${statePath}`)
+    const responder = new Responder(pool, config, fileGrantStore(statePath, stateNamespace))
 
     if (values.serve) {
       await serve(responder, values.serve)

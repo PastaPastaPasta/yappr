@@ -180,6 +180,50 @@ describe('release build configuration', () => {
       }
     })
 
+  it.each([
+    { file: '.env.staging', basePath: '/staging', network: 'testnet', succeeds: true },
+    { file: '.env.staging', basePath: '/staging', network: 'testnet', succeeds: true, entry: 'build-web.mjs' },
+    { file: '.env.staging', basePath: '', network: 'testnet', succeeds: false },
+    { file: '.env.staging', basePath: '/staging', network: 'mainnet', succeeds: false },
+    { file: '.env.testnet', basePath: '', network: 'testnet', succeeds: true },
+  ])('isolates the rehearsal loader from other release builds: %j', ({ file, basePath, network, succeeds, entry = 'build-release.mjs' }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'yappr-staging-env-'))
+    try {
+      mkdirSync(join(dir, 'scripts'))
+      for (const name of ['build-web.mjs', 'build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+        copyFileSync(new URL(name, import.meta.url), join(dir, 'scripts', name))
+      }
+      mkdirSync(join(dir, 'node_modules/next/dist/bin'), { recursive: true })
+      symlinkSync(fileURLToPath(new URL('../node_modules/bs58', import.meta.url)), join(dir, 'node_modules/bs58'), 'dir')
+      writeFileSync(join(dir, 'node_modules/next/dist/bin/next'), `
+        const fs = require('node:fs');
+        fs.mkdirSync('out');
+        fs.writeFileSync('out/effective-env.json', JSON.stringify({
+          NEXT_PUBLIC_YAPPR_CONTRACT_ID: process.env.NEXT_PUBLIC_YAPPR_CONTRACT_ID,
+          YAPPR_STAGING_REHEARSAL: process.env.YAPPR_STAGING_REHEARSAL,
+        }));
+      `)
+      const configured = { ...completeEnv(), NEXT_PUBLIC_NETWORK: network }
+      writeFileSync(join(dir, file), Object.entries(configured).map(([key, value]) => `${key}=${value}`).join('\n'))
+      const result = spawnSync(process.execPath, [join(dir, 'scripts', entry), ...(entry === 'build-release.mjs' ? [file] : [])], {
+        cwd: dir, encoding: 'utf8', env: {
+          ...process.env, BASE_PATH: basePath, NEXT_PUBLIC_YAPPR_CONTRACT_ID: 'ambient-wrong-id',
+          YAPPR_STAGING_REHEARSAL: 'ambient-wrong-snapshot',
+        },
+      })
+      expect(result.status, result.stderr).toBe(succeeds ? 0 : 1)
+      if (succeeds) {
+        const effective = JSON.parse(readFileSync(join(dir, 'out/effective-env.json'), 'utf8'))
+        expect(effective.NEXT_PUBLIC_YAPPR_CONTRACT_ID).toBe(configured.NEXT_PUBLIC_YAPPR_CONTRACT_ID)
+        expect(effective.YAPPR_STAGING_REHEARSAL).toBe(file === '.env.staging' ? '1' : undefined)
+      } else {
+        expect(result.stderr).toContain('staging rehearsal requires')
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it.each([undefined, '', 'bad:scope'])('requires a clean-start storage epoch (%s)', epoch => {
     expect(() => assertReleaseConfig({ ...completeEnv(), STORAGE_EPOCH: epoch })).toThrow('STORAGE_EPOCH')
   })

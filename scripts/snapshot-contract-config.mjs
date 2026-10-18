@@ -1,5 +1,9 @@
 /** Every deployment on a network shares a bundled snapshot; keep their union. */
-export function snapshotEnvFiles(network) {
+export function snapshotEnvFiles(network, staging = false) {
+  if (staging) {
+    if (network !== 'testnet') throw new Error('The staging snapshot requires NETWORK=testnet')
+    return ['.env.staging']
+  }
   if (network === 'devnet') return ['.env.devnet']
   if (network === 'testnet') return ['.env.testing', '.env.testnet']
   return []

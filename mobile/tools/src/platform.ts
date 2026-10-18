@@ -29,11 +29,14 @@ const SDK_TIMEOUT_MS = 30_000
 
 interface SdkEnvModule {
   devnetSdk(options: { timeoutMs?: number; config: DevnetConfig }): EvoSDK
+  buildSdk(options: { timeoutMs?: number; net: 'testnet' }): EvoSDK
 }
 
-export async function connectDevnet(repoRoot: string, devnet: DevnetConfig): Promise<EvoSDK> {
+export async function connectNetwork(repoRoot: string, config: ResponderConfig): Promise<EvoSDK> {
   const sdkEnv = (await import(pathToFileURL(join(repoRoot, 'scripts/sdk-env.mjs')).href)) as SdkEnvModule
-  const sdk = sdkEnv.devnetSdk({ timeoutMs: SDK_TIMEOUT_MS, config: devnet })
+  const sdk = config.network === 'testnet'
+    ? sdkEnv.buildSdk({ timeoutMs: SDK_TIMEOUT_MS, net: 'testnet' })
+    : sdkEnv.devnetSdk({ timeoutMs: SDK_TIMEOUT_MS, config: config.devnet })
   await sdk.connect()
   return sdk
 }

@@ -18,12 +18,11 @@ export interface DevnetConfig {
   quorumUrl: string | null
 }
 
-export interface ResponderConfig {
+export type ResponderConfig = {
   envFile: string
-  devnet: DevnetConfig
   /** Unset until the sakura Yappr contracts are published (W-SAKURA). */
   keyExchangeContractId: string | undefined
-}
+} & ({ network: 'devnet'; devnet: DevnetConfig } | { network: 'testnet'; devnet?: never })
 
 export function loadConfig(envFile: string): ResponderConfig {
   if (!existsSync(envFile)) throw new Error(`Env file not found: ${envFile}`)
@@ -31,8 +30,18 @@ export function loadConfig(envFile: string): ResponderConfig {
   const value = (name: string) => env[name]?.trim() || undefined
 
   const network = value('NEXT_PUBLIC_NETWORK')
-  if (network !== 'devnet') {
-    throw new Error(`${envFile} sets NEXT_PUBLIC_NETWORK=${network ?? '(unset)'}; the responder only serves devnet (sakura)`)
+  if (network !== 'devnet' && network !== 'testnet') {
+    throw new Error(`${envFile} sets NEXT_PUBLIC_NETWORK=${network ?? '(unset)'}; the responder only serves devnet or testnet`)
+  }
+  const keyExchangeContractId = value(KEY_EXCHANGE_CONTRACT_VAR)
+  if (keyExchangeContractId !== undefined && !isIdentifier(keyExchangeContractId)) {
+    throw new Error(`${envFile}: ${KEY_EXCHANGE_CONTRACT_VAR} is not a base58 identifier`)
+  }
+  if (network === 'testnet') {
+    for (const name of ['NEXT_PUBLIC_DEVNET_NAME', 'NEXT_PUBLIC_DAPI_ADDRESSES', 'NEXT_PUBLIC_QUORUM_URL', 'NEXT_PUBLIC_INSIGHT_API_URL']) {
+      if (value(name)) throw new Error(`${envFile}: testnet must not set ${name}`)
+    }
+    return { envFile, network, keyExchangeContractId }
   }
   const devnetName = value('NEXT_PUBLIC_DEVNET_NAME')
   if (!devnetName) throw new Error(`${envFile} has no NEXT_PUBLIC_DEVNET_NAME`)
@@ -43,25 +52,25 @@ export function loadConfig(envFile: string): ResponderConfig {
     .map((address) => (address.includes('://') ? address : `https://${address}`))
   if (addresses.length === 0) throw new Error(`${envFile} has no NEXT_PUBLIC_DAPI_ADDRESSES`)
 
-  const keyExchangeContractId = value(KEY_EXCHANGE_CONTRACT_VAR)
-  if (keyExchangeContractId !== undefined && !isIdentifier(keyExchangeContractId)) {
-    throw new Error(`${envFile}: ${KEY_EXCHANGE_CONTRACT_VAR} is not a base58 identifier`)
-  }
-
   return {
     envFile,
+    network,
     devnet: { devnetName, addresses, quorumUrl: value('NEXT_PUBLIC_QUORUM_URL') ?? null },
     keyExchangeContractId,
   }
 }
 
+export function responderNetwork(config: ResponderConfig): string {
+  return config.network === 'testnet' ? 'testnet' : `devnet-${config.devnet.devnetName}`
+}
+
 /** The pool is tagged with its devnet (`devnet-sakura`); the env file must target the same one. */
 export function requirePoolMatchesNetwork(pool: Pool, config: ResponderConfig): void {
-  const expected = `devnet-${config.devnet.devnetName}`
+  const expected = responderNetwork(config)
   if (pool.network !== expected) {
     throw new Error(
       `The pool is for ${pool.network || '(untagged)'} but ${config.envFile} targets ${expected}. ` +
-        `Pass --env-file (or ${ENV_FILE_VAR}) for the pool's devnet.`,
+        `Pass --env-file (or ${ENV_FILE_VAR}) for the pool's network.`,
     )
   }
 }
@@ -70,7 +79,7 @@ export function requireKeyExchangeContract(config: ResponderConfig): string {
   if (!config.keyExchangeContractId) {
     throw new Error(
       `${KEY_EXCHANGE_CONTRACT_VAR} is unset in ${config.envFile}: the key-exchange contract is not published on ` +
-        `devnet ${config.devnet.devnetName} yet (W-SAKURA), so legacy dash-key: (v=1) requests cannot be answered. App Connect (v=2) and dash-st: still work.`,
+        `${config.network === 'testnet' ? 'testnet' : `devnet ${config.devnet.devnetName}`} yet, so legacy dash-key: (v=1) requests cannot be answered. App Connect (v=2) and dash-st: still work.`,
     )
   }
   return config.keyExchangeContractId

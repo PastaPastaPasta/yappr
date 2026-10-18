@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && node scripts/write-static-404.mjs out",
+    "build": "node scripts/build-web.mjs",
     "build:release": "node scripts/build-release.mjs",
+    "build:staging": "BASE_PATH=/staging node scripts/build-release.mjs .env.staging",
     "build:subpath": "BASE_PATH=/yappr next build && node scripts/write-static-404.mjs out /yappr",
     "build:testing": "set -a && . ./.env.testing && set +a && BASE_PATH=/testing next build && node scripts/write-static-404.mjs out /testing",
     "build:devnet": "set -a && . ./.env.devnet && set +a && BASE_PATH=/devnet next build && node scripts/write-static-404.mjs out /devnet",

@@ -50,6 +50,7 @@ const APP = bs58.encode(APP_ID)
 const CONNECTION = '0c'.repeat(16)
 
 interface AnswerOptions {
+  network?: 'devnet' | 'testnet'
   persona?: Persona
   faults?: string[]
   otherPersona?: Persona
@@ -59,6 +60,7 @@ interface AnswerOptions {
 function answer(chain: MemoryChain, uri: string, options: AnswerOptions = {}): Promise<AppConnectResult> {
   return respondToAppConnect({
     uri,
+    network: options.network,
     persona: options.persona ?? alice,
     faults: parseFaults(options.faults ?? []),
     otherPersona: options.otherPersona,
@@ -322,6 +324,21 @@ describe('App Connect login', () => {
 })
 
 describe('App Connect wallet rules', () => {
+  it('answers testnet requests when configured for testnet', async () => {
+    const chain = newChain()
+    const { request, appPrivateKey } = newRequest()
+    await answer(chain, buildAppConnectUri(request, 'testnet', CALLBACK), { network: 'testnet' })
+    expect((await verdictFor(chain, request, appPrivateKey)).ok).toBe(true)
+    expect(chain.calls).toEqual(['update 90 +3 -[]', 'create 90'])
+  })
+
+  it.each(['devnet', 'mainnet'] as const)('refuses %s requests in testnet mode before writing', async (network) => {
+    const chain = newChain()
+    const { request } = newRequest()
+    await refusalOf(answer(chain, buildAppConnectUri(request, network, CALLBACK), { network: 'testnet' }))
+    expect(chain.calls).toEqual([])
+  })
+
   it('refuses a request for another network without touching the chain', async () => {
     const chain = newChain()
     const { request } = newRequest()

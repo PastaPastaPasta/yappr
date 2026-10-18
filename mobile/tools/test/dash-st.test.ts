@@ -143,6 +143,19 @@ describe('dash-st: IdentityUpdate', () => {
     expect(broadcasts).toHaveLength(0)
   })
 
+  it.each(['testnet', 'devnet', 'mainnet'] as const)('gates %s identity update requests in testnet mode', async network => {
+    const uri = buildYapprStateTransitionUri(unsignedUpdate().toBytes(), network)
+    const { ports, broadcasts } = capturingPorts()
+    const result = respond({ uri, persona: testPersona(), network: 'testnet' }, ports)
+    if (network === 'testnet') {
+      await expect(result).resolves.toBeDefined()
+      expect(broadcasts).toHaveLength(1)
+    } else {
+      await expect(result).rejects.toThrow(/this responder serves testnet/)
+      expect(broadcasts).toHaveLength(0)
+    }
+  })
+
   it('refuses a transition for another network', async () => {
     const uri = buildYapprStateTransitionUri(unsignedUpdate().toBytes(), 'testnet')
     const { ports, broadcasts } = capturingPorts()

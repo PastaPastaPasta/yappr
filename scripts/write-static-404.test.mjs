@@ -77,11 +77,12 @@ it.each(['', '/yappr'])('ordinary npm builds retain the Next-resolved environmen
   try {
     mkdirSync(join(directory, 'scripts'))
     copyFileSync(new URL('./write-static-404.mjs', import.meta.url), join(directory, 'scripts/write-static-404.mjs'))
+    copyFileSync(new URL('./build-web.mjs', import.meta.url), join(directory, 'scripts/build-web.mjs'))
     const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
     writeFileSync(join(directory, 'package.json'), JSON.stringify({ scripts: { build: scripts.build } }))
-    mkdirSync(join(directory, 'node_modules/.bin'), { recursive: true })
+    mkdirSync(join(directory, 'node_modules/next/dist/bin'), { recursive: true })
     // Next's production env loading and manifest are represented without compiling the full app.
-    writeFileSync(join(directory, 'node_modules/.bin/next'), `#!/usr/bin/env node
+    writeFileSync(join(directory, 'node_modules/next/dist/bin/next'), `#!/usr/bin/env node
       const fs = require('node:fs');
       const { parseEnv } = require('node:util');
       const configured = parseEnv(fs.readFileSync('.env.production', 'utf8'));
