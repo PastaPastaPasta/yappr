@@ -10,6 +10,7 @@ export default defineConfig({
   esbuild: { jsx: 'automatic' },
   resolve: {
     alias: [
+      { find: /^next\/navigation$/, replacement: fromHere('./security-navigation-mock.ts') },
       { find: /^@\/contexts\/auth-context$/, replacement: mocks },
       { find: /^@\/lib\/services$/, replacement: mocks },
       { find: /^@\/lib\/services\/identity-service$/, replacement: mocks },

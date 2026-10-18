@@ -1,5 +1,6 @@
 'use client'
 
+import { filterPaymentUris } from '@/lib/utils/payment-uri'
 import { useRouter } from 'next/navigation'
 import {
   BuildingStorefrontIcon,
@@ -113,6 +114,7 @@ export function ProfileHeader({
   edit,
 }: ProfileHeaderProps) {
   const router = useRouter()
+  const paymentUris = filterPaymentUris(profile?.paymentUris)
   const copy = useCopy()
   const hasDpns = allUsernames.length > 0
   const isOwnProfile = viewerId === userId
@@ -333,14 +335,14 @@ export function ProfileHeader({
               </div>
             )}
 
-            {profile?.paymentUris && profile.paymentUris.length > 0 && (
+            {paymentUris.length > 0 && (
               <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
                 <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                   <CurrencyDollarIcon className="h-3 w-3 inline mr-1" />
                   Tip Addresses
                 </h4>
                 <div className="space-y-2">
-                  {profile.paymentUris.map((payment, index) => (
+                  {paymentUris.map((payment, index) => (
                     <button
                       key={index}
                       onClick={() => onSelectPayment(payment)}

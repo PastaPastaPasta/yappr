@@ -205,3 +205,45 @@ failed at the same hook. The loader separately rejected missing and incomplete
 `.env.testnet` files, including an omitted epoch when the runner exports one.
 Lint, all 3,552 unit tests and dead-code checks passed;
 Opus approved the final code review and Sonnet reviewed simplifications.
+
+## Cloudflare response headers (owner action)
+
+`yap.pr` uses GitHub Pages behind Cloudflare. GitHub Pages cannot set these
+response headers, and a CSP meta tag cannot enforce `frame-ancestors`. Configure
+Cloudflare **Rules → Transform Rules → Modify Response Header** on the proxied
+`yap.pr` hostname (and apply equivalent rules to each active mirror):
+
+1. For **all paths**, set static response headers:
+   - `Strict-Transport-Security: max-age=31536000`
+   - `Referrer-Policy: strict-origin-when-cross-origin`
+2. For **all paths except embed routes**, set static response headers:
+   - `Content-Security-Policy: frame-ancestors 'none'`
+   - `X-Frame-Options: DENY`
+
+The second rule's Cloudflare expression is:
+
+```text
+(http.host eq "yap.pr" and not (
+  http.request.uri.path eq "/embed" or starts_with(http.request.uri.path, "/embed/") or
+  http.request.uri.path eq "/staging/embed" or starts_with(http.request.uri.path, "/staging/embed/") or
+  http.request.uri.path eq "/testing/embed" or starts_with(http.request.uri.path, "/testing/embed/") or
+  http.request.uri.path eq "/devnet/embed" or starts_with(http.request.uri.path, "/devnet/embed/")
+))
+```
+
+Keep both anti-framing headers absent on these embed routes. If another rule or
+origin already sets them, remove them for the embed paths in a later rule.
+`/embed.js` (including deployment-prefixed copies) remains usable as a script;
+these document framing headers do not restrict script inclusion. Preserve the
+existing CSP directives if adding `frame-ancestors` to an existing header.
+Do not enable HSTS `includeSubDomains` or `preload` without separately confirming
+HTTPS coverage for every affected hostname.
+
+Purge cached HTML after applying the rules. Verify response headers on `/`,
+`/login/`, `/staging/`, `/testing/`, `/devnet/` and an unknown/404 path, then verify
+that a foreign-origin iframe is rejected by the browser. Check that `/embed/`
+and each prefixed embed route still load from a foreign parent, including via
+`embed.js`. Repeat for mirrors. The root layout also keeps providers, sign-in
+and key inputs unmounted until it verifies that every ancestor is same-origin;
+embed routes explicitly skip this fallback guard. The Cloudflare headers remain
+the primary defence and must be configured before release.

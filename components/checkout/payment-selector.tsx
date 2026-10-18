@@ -1,3 +1,4 @@
+import { filterPaymentUris, parsePaymentUri } from '@/lib/utils/payment-uri'
 import { useState, useCallback } from 'react'
 import { CreditCardIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { PaymentQRCode } from '@/components/ui/payment-qr-code'
@@ -17,8 +18,8 @@ interface PaymentSelectorProps {
 }
 
 export function PaymentSelector({
-  paymentUris,
-  selected,
+  paymentUris: storedPaymentUris,
+  selected: storedSelected,
   onSelect,
   txid,
   onTxidChange,
@@ -26,6 +27,8 @@ export function PaymentSelector({
   orderTotal,
   orderCurrency
 }: PaymentSelectorProps) {
+  const paymentUris = filterPaymentUris(storedPaymentUris)
+  const selected = parsePaymentUri(storedSelected)
   const [detectedAmount, setDetectedAmount] = useState<number | null>(null)
   const [wasAutoFilled, setWasAutoFilled] = useState(false)
 
