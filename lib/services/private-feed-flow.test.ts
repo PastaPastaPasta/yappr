@@ -290,6 +290,9 @@ describe('private feeds v2 end to end', () => {
     expect(sealed.data.feed).toBe(current?.feed)
     const reply: PrivateContent = { feedOwnerId: O, feed: sealed.data.feed, keyGeneration: sealed.data.keyGeneration, nonce: sealed.data.nonce, encryptedContent: sealed.data.encryptedContent, authorId: F1, kind: 'reply' }
     expect([await read(O, reply), await read(F4, reply), await read(F3, reply), await read(F2, reply)]).toEqual(['a reply', 'a reply', '<no-access>', '<no-access>'])
+    // Quoted, the reply comes as a post by F1: its thread root's owner is whose feed opens it.
+    const quoted = { author: { id: F1 }, targetKind: 'reply' as const, parentId: 'root', rootOwnerId: O, ...sealed.data }
+    expect(await s.reader.decryptPostOrReply(quoted, F4, keys[F4])).toEqual({ ok: true, text: 'a reply' })
     // F3 left and was not carried: no reply into the current feed.
     expect(await s.owner.prepareInheritedEncryption('nope', { ownerId: O }, F3)).toMatchObject({ success: false })
   })
@@ -429,10 +432,14 @@ describe('private feeds v2 end to end', () => {
     const oldFeed = await fetchFeed(O, before)
     if (!oldFeed) throw new Error('old feed missing')
     expect((await s.owner.privateFeedService.revokeLeaf(O, oldFeed, source.leafIndex as number, source.keyGeneration as number, keys[O])).success).toBe(true)
+    // Their own new request, made after the removal, is not the owner approving them again.
+    expect(await s.follower.leave(O, target)).toEqual({ success: true })
+    expect(await s.follower.requestAccess(O, target)).toEqual({ success: true })
     // A third device finds the move unfinished and takes the grant back.
     expect(await s.move.adoptUnfinishedMove(O)).toBeGreaterThan(0)
     expect(await s.move.runMove(O, keys[O])).toEqual({ success: true })
     expect((await s.owner.privateFeedService.getPrivateFollowers(O)).map((f) => f.recipientId)).not.toContain(target)
+    // The take-back answers that request too (fail closed): they can ask again.
     expect(await s.follower.getAccessStatus(O, target)).toBe('revoked')
   })
 })
@@ -508,6 +515,19 @@ describe('private feeds v2: every authorised path to history', () => {
     expect(await s.owner.privateFeedService.approveFollower(P, F1, getPublicKey(keys[F1]), keys[P])).toEqual({ success: true })
     expect(grantsOf(P, feed)).toContain(F1)
     expect(await read(F1, asked)).toBe('after asking')
+  })
+
+  it('a follower who leaves and asks again while a move is paused waits for approval instead of being moved', async () => {
+    expect((await s.owner.privateFeedService.openFeed(P, keys[P])).success).toBe(true)
+    const feed = (await s.owner.privateFeedService.getCurrentFeed(P, { fresh: true }))?.feed as number
+    expect(await s.move.adoptUnfinishedMove(P)).toBeGreaterThan(0)
+    const { loadMove } = await import('./private-feed-move-job')
+    expect(loadMove(P)?.recipients).toContain(F1)
+    expect(await s.follower.leave(P, F1)).toEqual({ success: true })
+    expect(await s.follower.requestAccess(P, F1)).toEqual({ success: true })
+    expect(await s.move.runMove(P, keys[P])).toEqual({ success: true })
+    expect(grantsOf(P, feed)).not.toContain(F1)
+    expect((await s.owner.privateFeedService.getPendingRequests(P)).map((r) => r.$ownerId)).toContain(F1)
   })
 
   it('a renewal planned from a feed another device has renewed since is refused', async () => {

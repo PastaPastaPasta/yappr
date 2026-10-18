@@ -93,6 +93,7 @@ export function replyToPost(reply: Reply): Post {
     encryptedContent: reply.encryptedContent,
     keyGeneration: reply.keyGeneration,
     nonce: reply.nonce,
+    feed: reply.feed,
     parentId: reply.parentId,
     parentOwnerId: reply.parentOwnerId,
     rootPostId: reply.rootPostId,

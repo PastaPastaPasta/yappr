@@ -169,7 +169,6 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
     }
   })
 
-  privateFeedKeyStore.signIn(identityId)
   void import('@/lib/services/private-feed-follower-service').then(async ({ privateFeedFollowerService }) => {
     if (!context.isSessionActive()) {
       logger.debug('Auth: Skipping private feed sync - session no longer active')
@@ -233,6 +232,8 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       getSession: readStoredSession,
       setSession(snapshot) {
         if (typeof window === 'undefined') return
+        // Every login commits here (post-login work is skipped behind the username prompt): lift a sign-out's key fence.
+        privateFeedKeyStore.signIn(snapshot.user.identityId)
         localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(toStoredSession(snapshot)))
       },
       clearSession() {

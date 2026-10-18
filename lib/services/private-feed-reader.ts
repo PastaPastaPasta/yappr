@@ -231,6 +231,24 @@ export async function contentKeyFor(
 }
 
 /**
+ * Decrypt a post or reply whose feed owner the caller does not know: a reply
+ * is tried in its thread root owner's feed (replies inherit the root's
+ * encryption), then, for a private reply under a public root, in its own
+ * author's. The content binding rejects a wrong owner. Null when not private.
+ */
+export async function decryptPostOrReply(
+  post: Parameters<typeof privateContentOf>[0] & { rootOwnerId?: string }, viewerId: string, encryptionPrivateKey?: Uint8Array,
+): Promise<DecryptOutcome | null> {
+  const owner = targetKindOf(post) === 'reply' ? post.rootOwnerId ?? post.author.id : post.author.id
+  const content = privateContentOf(post, owner)
+  if (!content) return null
+  const outcome = await decryptPrivateContent(content, viewerId, encryptionPrivateKey)
+  if (outcome.ok || owner === post.author.id || (outcome.reason !== 'no-access' && outcome.reason !== 'failed')) return outcome
+  const own = await decryptPrivateContent({ ...content, feedOwnerId: post.author.id }, viewerId, encryptionPrivateKey)
+  return own.ok ? own : outcome
+}
+
+/**
  * A post or reply as private content, or null when it is not private.
  * `feedOwnerId` is whose feed encrypted it: the author by default; for a reply
  * in a private thread, the thread root's author.

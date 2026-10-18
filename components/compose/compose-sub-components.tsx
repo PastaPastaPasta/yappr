@@ -348,7 +348,6 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
     // Capture request ID to detect stale responses
     const currentRequestId = ++requestIdRef.current
 
-    // A quote is always of a top-level post, encrypted in its author's feed.
     const content = privateContentOf(post)
     const isCurrent = () => currentRequestId === requestIdRef.current
     if (!content || !user) {
@@ -359,8 +358,12 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
     setState({ status: 'loading' })
 
     try {
-      const { decryptPrivateContent } = await import('@/lib/services/private-feed-reader')
-      const outcome = await decryptPrivateContent(content, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
+      const { decryptPostOrReply } = await import('@/lib/services/private-feed-reader')
+      const outcome = await decryptPostOrReply(post, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
+      if (!outcome) {
+        if (isCurrent()) setState({ status: 'error' })
+        return
+      }
       if (isCurrent()) setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked', needsKey: outcome.reason === 'needs-key' })
     } catch (error) {
       logger.error('Error decrypting quoted post preview:', error)

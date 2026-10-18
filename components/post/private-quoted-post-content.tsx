@@ -51,9 +51,7 @@ export function PrivateQuotedPostContent({
   const authorDisplay = getAuthorDisplay(quotedPost.author)
 
   const attemptDecryption = useCallback(async () => {
-    // A quote is always of a top-level post, encrypted in its author's feed.
-    const content = privateContentOf(quotedPost)
-    if (!content) {
+    if (!privateContentOf(quotedPost)) {
       setState({ status: 'error' })
       return
     }
@@ -63,8 +61,12 @@ export function PrivateQuotedPostContent({
     }
     setState({ status: 'loading' })
     try {
-      const { decryptPrivateContent } = await import('@/lib/services/private-feed-reader')
-      const outcome = await decryptPrivateContent(content, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
+      const { decryptPostOrReply } = await import('@/lib/services/private-feed-reader')
+      const outcome = await decryptPostOrReply(quotedPost, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
+      if (!outcome) {
+        setState({ status: 'error' })
+        return
+      }
       setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked', needsKey: outcome.reason === 'needs-key' })
     } catch (error) {
       logger.error('Error decrypting quoted private post:', error)

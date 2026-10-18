@@ -89,9 +89,9 @@ async function feedFollowers(ownerId: string, feed: number) {
 
 /**
  * Followers holding a grant in force in feed `to` whose grant in `from` was
- * revoked after it (the move wrote the new grant while another device removed
- * them, and that device did not see it yet). A request made since the removal
- * was approved again, and that grant stands.
+ * revoked (the move wrote the new grant while another device removed them,
+ * and that device did not see it yet). The grant stands only when the owner
+ * wrote it in answer to a request made since the removal: a re-approval.
  */
 async function movedThenRemoved(
   ownerId: string, to: number, moved: readonly GrantDocument[], old: { grants: readonly GrantDocument[]; rekeys: readonly RekeyDocument[]; requests: readonly FollowRequestDocument[] },
@@ -104,7 +104,9 @@ async function movedThenRemoved(
   }
   const candidates = moved.filter((grant) => {
     const at = removedAt.get(grant.recipientId)
-    return at !== undefined && (askedAt.get(grant.recipientId) ?? 0) <= at
+    if (at === undefined) return false
+    const asked = askedAt.get(grant.recipientId)
+    return !(asked !== undefined && asked > at && grant.createdAt >= asked)
   })
   if (candidates.length === 0) return []
   return activeGrants(candidates, await fetchRekeys(ownerId, to, 1)).map((grant) => grant.recipientId)
@@ -281,9 +283,11 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       } else {
         // Re-read their old grant and its revocations now: removed since the plan, on any device, they stay behind.
         const source = await fetchGrant(ownerId, job.from, recipientId)
-        const stillMember = source !== null && !blocked.has(recipientId) && !(await grantIsRevoked(source))
         const request = requestOf.get(recipientId)
-        const key = stillMember && request ? await recipientKey(recipientId, request.publicKey) : null
+        // Still consenting: the request their old grant answered (one made since waits for the owner's approval).
+        const consenting = request !== undefined && source !== null && request.$createdAt <= source.createdAt
+        const stillMember = consenting && !blocked.has(recipientId) && !(await grantIsRevoked(source))
+        const key = stillMember ? await recipientKey(recipientId, request.publicKey) : null
         const leafIndex = leafFor(planned)
         if (!key) settle('skipped', recipientId)
         else if (leafIndex === null) return pause('Your renewed private feed is full.')
