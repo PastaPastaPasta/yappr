@@ -78,7 +78,7 @@ describe('App Connect storefront seed keys', () => {
     let rows = [{ identityId: bs58.encode(bytes(30)), keys: [] }, { identityId: actor.identityId, keys: [key] }];
     const battery = { readback: f => f(), sdk: { identities: { contractKeys: async () => rows } } };
     await expect(verifySeedEncryptionKeys(battery, ledger, { 200: 220 }, appId)).resolves.toBeUndefined();
-    for (const keys of [[], [key, key], [{ data: getPublicKey(bytes(12), true) }]]) {
+    for (const keys of [[], [key, key], [{ ...key, disabledAt: 1700000000000 }], [{ data: getPublicKey(bytes(12), true) }]]) {
       rows = [{ identityId: actor.identityId, keys }];
       await expect(verifySeedEncryptionKeys(battery, ledger, { 200: 220 }, appId)).rejects.toThrow('advertised');
     }

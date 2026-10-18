@@ -633,7 +633,7 @@ export async function verifySeedEncryptionKeys(battery, ledger, actorMap, appId)
     const result = await battery.readback(() => battery.sdk.identities.contractKeys({ identityIds: [expected.identityId], contractId: appId, purposes: [1] }));
     const keys = result.find(r => normalizeId(r.identityId) === expected.identityId)?.keys ?? [];
     const actual = keys[0]?.data;
-    if (keys.length !== 1 || !Buffer.from(typeof actual === 'string' ? Buffer.from(actual, 'hex') : actual ?? []).equals(Buffer.from(expected.publicKey))) throw new Error(`persona ${idx}: test wallet encryption key does not match the advertised App Connect key`);
+    if (keys.length !== 1 || keys[0].disabledAt !== undefined || !Buffer.from(typeof actual === 'string' ? Buffer.from(actual, 'hex') : actual ?? []).equals(Buffer.from(expected.publicKey))) throw new Error(`persona ${idx}: test wallet encryption key does not match an enabled advertised App Connect key`);
   }
 }
 
