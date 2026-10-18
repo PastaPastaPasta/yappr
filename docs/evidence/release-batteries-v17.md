@@ -7,9 +7,16 @@ contracts registered by seed persona 63, not the devnet maker. The published
 | Contract | Cut | Throwaway ID |
 | --- | --- | --- |
 | Social | v17 | `C7dekFJE2inDet6YybjZ8RDLUYj8KRxj39Zs7YaGtg6w` |
-| Blog | v9 | `AHxeMag66mxfzaWDcBqsr43FpsXGVXxjeanQ8NLb6Dvt` |
+| Blog | amended v9 (PR #792) | `GMDGphpxsC6AucUxWmD6piYV43o2CDefmYeWTfRJzLxh` |
 | Storefront | v10 | `D9hakoJZadyFKKvTiSfAdY8ietNV7Bc6mnu2YrC17BFB` |
 | Pollr | v8 | `JBGmaZ1FCpgBBJaGLdUjZFm8YjNwA4BRAX6ySijq7fRv` |
+
+The amended blog copy matches the release JSON after staging PR #792 (SHA256
+`a03012221e543b850d7524b27148e6b9c2b84fae3a0c291426e22de30d6dccef`).
+The original v9 rehearsal used `AHxeMag66mxfzaWDcBqsr43FpsXGVXxjeanQ8NLb6Dvt`;
+its historical results are retained below. Cleanup detects the deployed owner
+indexes and whether an orphan tombstone may omit `blogId`, preserving the
+original v9 and older cuts as well as the amended release.
 
 Pollr uses its reusable test-contract registry. Ballots cannot be deleted, so
 balloted polls remain confined to that copy. The merged-count proof registers
@@ -45,10 +52,11 @@ unchanged. The wrapper and local identities/configuration are not committed.
 ## Validation
 
 Local lint, standalone TypeScript checking, production build and dead-code checks pass. The full unit suite
-passes 238 files / 3,477 tests after merging staging elections updates and the
+passes 239 files / 3,487 tests after merging staging elections/blog amendments and the
 review regressions. Offline social/seed checks cover both v16 and
 v17; each seeder self-test reports 98 PASS / 0 FAIL. Social-shape tests report
 595 PASS / 0 FAIL, and App Connect self-tests report 30 PASS / 0 FAIL.
+The amended blog battery self-test passes 22 checks plus its moderation-rule declarations.
 
 Live results and cleanup evidence are recorded below after each full run.
 The query-bundle run used nonempty social pages (20 posts and one reply);
@@ -58,7 +66,9 @@ bundle is explicitly skipped because no DM v4 contract exists on this chain.
 | Battery | PASS | FAIL | Scope |
 | --- | ---: | ---: | --- |
 | `verify-v10` full | 407 | 0 | Social v17; persona 63 moderator; fresh bot 3 |
-| `verify-blog` full, final rerun | 104 | 0 | Blog v9; personas 60/61/62, moderator 63 |
+| `verify-blog` full, original v9 rerun | 104 | 0 | Original blog v9; personas 60/61/62, moderator 63 |
+| `verify-blog` full, amended v9 corrected runner | 105 | 1 | b8 quorum-key read abort; exact failure below |
+| Amended blog b1+b8 isolated replay | 15 | 0 | Fresh fixtures; all owner-deletion/orphan-retraction cases |
 | `verify-storefront` full | 164 | 0 | Storefront v10; personas 80/81/82, moderator 63 |
 | `verify-pollr` full | 77 | 0 | Reusable pollr v8 test contract; personas 63/83/84 |
 | `verify-dm-v5` full | 107 | 0 | Published DM v5 plus bot-2-owned layout variants |
@@ -119,8 +129,16 @@ the reader found and deleted the comment through the permanent comment index;
 a read by ID confirmed removal. Its final fixture cleanup found no remaining
 actions. All eight checks passed.
 
-Both full blog runs removed their 6 comments, 1 follow, 7 live posts (by
+Both original-v9 full blog runs removed their 6 comments, 1 follow, 7 live posts (by
 tombstone) and 3 blogs (by moderator removal), with no failed cleanup actions.
+
+The first amended-v9 run deleted 6 comments, 1 follow and 3 blogs and
+tombstoned 8 remaining live posts. The corrected full run deleted 6 comments,
+1 follow and 4 blogs and tombstoned 8 live posts, including the interrupted
+b8 fixture scope. Both cleanups reported no failed actions. The focused b1+b8
+replay deleted 3 comments, 2 follows and 1 blog and tombstoned 2 posts, also
+without failures. The first run also deleted and retracted its separate b8
+blog/post inside that case.
 
 Tips ran all six applicable credit-transfer checks. Its t1–t5 YAPP-transfer
 cases explicitly skip the release token, whose transfers are locked; document
@@ -159,6 +177,40 @@ refused it first with 10101 (`JsonSchemaError: "publishedAt" is a required
 property`). The harness now requires that specific missing-field error on
 published-only contracts and retains 40128 on older contracts. The full rerun
 is reported in the final table.
+
+The first full run on amended blog v9 completed 108 PASS / 1 FAIL and exposed
+a battery fixture bug in b19:
+`live post requires a blog` deliberately omitted `blogId`, but the live runner
+unconditionally restored it while substituting the fixture reference. The
+valid post was accepted and the strict refusal assertion failed. Fixture
+binding now substitutes only a reference already present in the case; two
+self-test checks preserve omission and verify ordinary reference binding.
+The expected `hasBody` refusal remains unchanged and passed live with code
+10422 on the corrected run. The original transcript is
+retained alongside the corrected full rerun; this was not a contract failure.
+
+## Amended-blog quorum read failure
+
+The corrected full amended-v9 run completed 105 PASS / 1 FAIL. b8 passed its
+permanent-post delete refusal and created the separate deletable blog, then
+aborted before the post-create probe completed. A proved read within that
+probe exhausted four reconnect attempts with:
+
+```
+quorum key unavailable for quorum 107:562a103d43a312726a6041238fc9be892aa2d014b86cdadeeb63892729d39ac8
+invalid quorum: Quorum not found in cache
+```
+
+This is a proof/quorum-resolution failure, not a consensus refusal. b8c-f
+have no verdict in this run; a failed read does not establish whether the
+create landed. Cleanup covered the complete actor/time scope. Later probes
+reconnected and proceeded;
+the corrected b19 missing-blog probe received the exact `hasBody` refusal
+10422. The preceding amended full run passed all six b8 assertions but had the
+separate b19 harness failure described above. The full-run failure is retained
+rather than combined with another run to report an all-green full result.
+A separate b1+b8 replay on fresh fixtures passed 15/0, including every b8
+assertion. Its transport honored five explicit Envoy reset refusals.
 
 ## Review regressions
 
