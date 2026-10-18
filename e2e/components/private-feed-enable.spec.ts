@@ -110,3 +110,17 @@ test('successful chain enable: prefilled derived key keeps its type label', asyn
   expect(result.keyType).toBe('derived')
   expect(externalRequests).toEqual([])
 })
+
+// PFQA-01: wallet sign-ins have no manual key field and must not tell people to find a private key.
+test('wallet enable explains wallet messaging without a manual-key warning', async ({ page, baseURL }) => {
+  const externalRequests: string[] = []
+  await blockExternalRequests(page, baseURL, externalRequests)
+  await page.goto('/?scenario=wallet')
+  await page.getByTestId('enable-private-feed-btn').click()
+  await expect(page.getByText('Your private feed will use the messaging key from your Dash wallet.')).toBeVisible()
+  await expect(page.getByText('Encryption key required', { exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('Encryption Private Key', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Enable', exact: true }).click()
+  await expect(page.getByTestId('private-feed-enabled')).toBeVisible()
+  expect(externalRequests).toEqual([])
+})

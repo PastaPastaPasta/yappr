@@ -39,6 +39,37 @@ function shapeOf(variants: ItemVariants | undefined) {
 }
 
 describe('inventory CSV export', () => {
+  it.each([false, true])('omits digital products and reports them to the caller (mixed: %s)', (mixed) => {
+    const digital = storeItem({ id: 'digital', title: 'Download', fulfillment: 'digital', basePrice: 200 })
+    const items = mixed ? [toy(), digital] : [digital]
+    const result = inventoryToCsv(items, 'USD')
+    expect(result.digitalOmitted).toEqual([digital])
+    expect(result.csv).not.toContain('Download')
+    if (mixed) expect(parseInventoryCSV(result.csv).items.map(item => item.title)).toEqual(['Squishy toy'])
+    else expect(result.csv.split('\n')).toHaveLength(1)
+    expect(digital.fulfillment).toBe('digital')
+  })
+
+  it('archived digital products never prevent exporting physical inventory', () => {
+    const archived = storeItem({ id: 'archived', title: 'Old download', fulfillment: 'digital', status: 'deleted', unreadableVariants: { axes: [], selectors: [] } })
+    const result = inventoryToCsv([toy(), archived], 'USD')
+    expect(result.digitalOmitted).toEqual([archived])
+    expect(result.omitted).toEqual([])
+    expect(parseInventoryCSV(result.csv).items.map(item => item.title)).toEqual(['Squishy toy'])
+  })
+
+  it.each(['Fulfillment', 'Fulfilment', 'Fulfillment Type', 'Fulfilment Type'])('refuses digital imports, including later grouped rows (%s)', (column) => {
+    const csv = `Group,Title,Price,Option1 Name,Option1 Value,${column}\na,Download,2.00,Edition,Standard,physical\na,,3.00,Edition,Plus,digital`
+    const result = parseInventoryCSV(csv)
+    expect(result.items).toEqual([])
+    expect(result.errors).toEqual([{ row: 3, column: 'fulfillment', message: 'CSV import supports physical products only. Use "physical" for shipped products. Add digital products individually so you can set up their delivery content.' }])
+  })
+
+  it('still imports explicitly physical products and refuses unknown delivery types', () => {
+    expect(parseInventoryCSV('Title,Price,Fulfillment\nMug,2.00,physical').errors).toEqual([])
+    expect(parseInventoryCSV('Title,Price,Fulfillment\nDownload,2.00,download').items).toEqual([])
+  })
+
   it('writes one row per combination with Shopify-style option columns', () => {
     const [header, first, second] = inventoryToCsv([toy()], 'USD').csv.split('\n')
     expect(header).toBe('Group,Title,Description,Section,Category,Subcategory,Tags,SKU,Price,Quantity,Weight,Currency,Item SKU,Option1 Name,Option1 Value,Option2 Name,Option2 Value,Image1,Image2,Image3,Image URL')

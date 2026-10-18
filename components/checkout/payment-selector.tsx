@@ -1,5 +1,5 @@
+import { useId, useState, useCallback } from 'react'
 import { filterPaymentUris, parsePaymentUri } from '@/lib/utils/payment-uri'
-import { useState, useCallback } from 'react'
 import { CreditCardIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { PaymentQRCode } from '@/components/ui/payment-qr-code'
 import { isDashScheme } from '@/lib/services/insight-api-service'
@@ -27,6 +27,7 @@ export function PaymentSelector({
   orderTotal,
   orderCurrency
 }: PaymentSelectorProps) {
+  const txidId = useId()
   const paymentUris = filterPaymentUris(storedPaymentUris)
   const selected = parsePaymentUri(storedSelected)
   const [detectedAmount, setDetectedAmount] = useState<number | null>(null)
@@ -93,7 +94,7 @@ export function PaymentSelector({
           />
 
           <div>
-            <label className="block text-sm font-medium mb-1 flex items-center gap-2">
+            <label htmlFor={txidId} className="block text-sm font-medium mb-1 flex items-center gap-2">
               Transaction ID (optional)
               {wasAutoFilled && (
                 <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
@@ -103,6 +104,7 @@ export function PaymentSelector({
               )}
             </label>
             <input
+              id={txidId}
               type="text"
               value={txid}
               maxLength={txidMaxLength}

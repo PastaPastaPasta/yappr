@@ -135,9 +135,12 @@ function InventoryPage() {
     }
 
     // One row per combination, in the format the import reads (an upload creates new listings).
-    const { csv, omitted, zonesGone, zonesAmbiguous } = inventoryToCsv(items, store?.defaultCurrency || 'USD', zones)
-    if (omitted.length === items.length) {
-      toast.error("These items' options couldn't be read, so there is nothing to export")
+    const { csv, digitalOmitted, omitted, zonesGone, zonesAmbiguous } = inventoryToCsv(items, store?.defaultCurrency || 'USD', zones)
+    if (digitalOmitted.length > 0) {
+      toast(`${digitalOmitted.length} digital product${digitalOmitted.length === 1 ? ' was' : 's were'} left out. CSV can't include digital products or their delivery content.`, { duration: 8000 })
+    }
+    if (omitted.length + digitalOmitted.length === items.length) {
+      toast.error('Nothing to export. CSV includes physical products with readable options only.')
       return
     }
 
@@ -160,7 +163,7 @@ function InventoryPage() {
     }
     if (omitted.length > 0) {
       toast.success(`Inventory exported, except ${omitted.length} item${omitted.length !== 1 ? 's' : ''} whose options couldn't be read`)
-    } else {
+    } else if (digitalOmitted.length === 0) {
       toast.success('Inventory exported')
     }
   }, [items, store?.id, store?.name, store?.defaultCurrency])
@@ -242,6 +245,11 @@ function InventoryPage() {
           </PageHeader>
 
           <div className="p-4">
+            {items.some((item) => item.fulfillment === 'digital') && (
+              <p className="mb-4 text-sm text-gray-500">
+                CSV includes physical products only. Digital products and their delivery content are left out.
+              </p>
+            )}
             <InventoryTable
               items={items}
               storeId={store.id}

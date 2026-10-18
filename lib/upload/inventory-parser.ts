@@ -21,7 +21,7 @@ import { readZoneCell } from '../storefront/item-zones'
 
 /** The single-valued columns the parser reads, by internal name. */
 type Column =
-  | 'currency' | 'itemSku' | 'group' | 'section' | 'category' | 'subcategory' | 'itemName' | 'description' | 'sku' | 'tags'
+  | 'fulfillment' | 'currency' | 'itemSku' | 'group' | 'section' | 'category' | 'subcategory' | 'itemName' | 'description' | 'sku' | 'tags'
   | 'variant' | 'subVariant' | 'price' | 'quantity' | 'shippingCost' | 'combine' | 'weight' | 'image' | 'shippingZones'
 
 // Parsed inventory row before grouping
@@ -97,6 +97,7 @@ export interface InventoryParseResult {
 
 // Column headers, matched case-insensitively
 const COLUMN_ALIASES: Record<Column, string[]> = {
+  fulfillment: ['fulfillment', 'fulfilment', 'fulfillment type', 'fulfilment type'],
   currency: ['currency', 'currency code'],
   itemSku: ['item sku'],
   group: ['group', 'group_id', 'groupid', 'listing_id', 'listingid', 'handle'],
@@ -855,6 +856,17 @@ export function parseInventoryCSV(content: string, currency = 'USD', zones: read
   if (columns.fields.shippingZones !== undefined && zones === null) {
     errors.push({ row: 1, column: 'shippingZones', message: "Your shipping zones couldn't be loaded, so the Shipping Zones column can't be checked. Try again in a moment." })
     return { items: [], errors, warnings }
+  }
+
+  const fulfillmentColumn = columns.fields.fulfillment
+  if (fulfillmentColumn !== undefined) {
+    for (let i = 1; i < csvRows.length; i++) {
+      const fulfillment = (csvRows[i][fulfillmentColumn] ?? '').trim().toLowerCase()
+      if (fulfillment && fulfillment !== 'physical') {
+        errors.push({ row: i + 1, column: 'fulfillment', message: 'CSV import supports physical products only. Use "physical" for shipped products. Add digital products individually so you can set up their delivery content.' })
+      }
+    }
+    if (errors.length > 0) return { items: [], errors, warnings }
   }
 
   const parsedRows: ParsedInventoryRow[] = []
