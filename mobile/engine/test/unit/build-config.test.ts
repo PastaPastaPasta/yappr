@@ -47,7 +47,7 @@ describe('native release configuration', () => {
       const snapshotDir = path.join(dir, 'lib/contracts/snapshots')
       mkdirSync(snapshotDir, { recursive: true })
       const snapshot = JSON.parse(readFileSync(path.join(root, 'lib/contracts/snapshots/testnet-staging.json'), 'utf8'))
-      const id = Object.keys(snapshot.contracts)[0]
+      const id = parseEnv(readFileSync(path.join(dir, '.env.staging'), 'utf8')).NEXT_PUBLIC_APP_CONNECT_APP_ID
       snapshot.contracts[id].version += 1
       writeFileSync(path.join(snapshotDir, 'testnet-staging.json'), JSON.stringify(snapshot))
       expect(() => variantConfig(dir, 'staging-testnet')).toThrow('exact testnet release contract pins')
