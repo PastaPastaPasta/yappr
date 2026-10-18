@@ -132,8 +132,7 @@ export default function AboutPage() {
           </p>
           <p>
             Use Report where available to publish a report for the elected team, or block anyone to control what you see.
-            The app may not display some media because web and mobile builds include a media denylist maintained in the source
-            repository. It does not remove anything from the network. Read the{' '}
+            Read the{' '}
             <Link href={COMMUNITY_RULES_HREF} className="underline">Community Rules</Link>.
           </p>
         </Prose>

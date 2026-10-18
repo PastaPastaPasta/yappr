@@ -1,6 +1,6 @@
 import type { EmbedBlock, EmbedRenderOptions } from './embed-types'
 import { isSafeCssValue } from '@/lib/blog/theme-types'
-import { imageSourceFor, isDeniedMedia } from '@/lib/media/remote-media'
+import { imageSourceFor, isSafeMediaUrl } from '@/lib/media/remote-media'
 
 // Keep in sync with the first path-format entry of IPFS_GATEWAYS
 // (lib/utils/ipfs-gateway.ts) - ipfs.io rate-limits image bursts with 403s.
@@ -43,7 +43,7 @@ function sanitizeUrl(value: string, options?: EmbedRenderOptions): string {
 
 /**
  * Where an embedded image may load from (lib/media/remote-media): IPFS via
- * the gateway, other https via the image proxy, never a denied, plain-http
+ * the gateway, other https via the image proxy, never a malformed, plain-http
  * or inline one.
  */
 function imageSrc(value: string, options?: EmbedRenderOptions): string {
@@ -196,7 +196,7 @@ function renderBlock(block: EmbedBlock, options?: EmbedRenderOptions): string {
 
   if (type === 'video' || type === 'videoEmbed') {
     const url = sanitizeUrl(ensureString(props?.url), options)
-    if (!url || isDeniedMedia(ensureString(props?.url))) return ''
+    if (!url || !isSafeMediaUrl(ensureString(props?.url))) return ''
     const label = ensureString(props?.caption) || ensureString(props?.name) || 'Watch video'
     return `<p><a href="${escapeHtml(url)}" target="_top" rel="noopener noreferrer">${escapeHtml(label)}</a></p>`
   }

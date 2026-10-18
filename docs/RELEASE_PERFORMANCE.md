@@ -258,7 +258,7 @@ minutes-long backoff. Polling failures provide the longer load backoff.
 
 No quorum-list response cache is added: freezing proof-key lists across a quorum
 rotation would need explicit freshness/invalidation policy and a rotation test.
-No denylist of testnet node operators or upstream SDK/node changes is included.
+No filtering of testnet node operators or upstream SDK/node changes is included.
 
 ## Validation
 

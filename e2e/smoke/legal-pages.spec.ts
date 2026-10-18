@@ -36,7 +36,7 @@ test('legal and support copy explains the independent moderation model', async (
   await expect(body).toContainText('authors and contributors are not liable')
   await expect(body).toContainText('Yappr is not a party to any sale')
   await expect(body).toContainText('You pay the seller directly')
-  await expect(body).toContainText('The Yappr app may not display some media')
+  await expect(body).not.toContainText('The Yappr app may not display some media')
 })
 
 test('the sign-in dialog links the terms, rules and privacy policy', async ({ page }) => {

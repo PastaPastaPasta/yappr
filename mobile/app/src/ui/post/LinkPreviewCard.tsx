@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { PlayIcon } from 'react-native-heroicons/solid';
 
-import { cn, isDeniedMedia } from '~/lib-allowlist';
+import { cn, isSafeMediaUrl } from '~/lib-allowlist';
 
 import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
@@ -48,8 +48,8 @@ export function LinkPreviewCard({
   const [failedImage, setFailedImage] = useState<string>();
   const urls = useMediaUrls();
 
-  // A link on the takedown denylist gets no card at all.
-  if (preview === 'error' || (preview !== 'loading' && isDeniedMedia(preview.url))) return null;
+  // Refuse malformed URLs before rendering a card.
+  if (preview === 'error' || (preview !== 'loading' && !isSafeMediaUrl(preview.url))) return null;
   if (preview === 'loading') {
     return (
       <SkeletonGroup label="Loading link preview" className={FRAME} testID="link-preview-skeleton">

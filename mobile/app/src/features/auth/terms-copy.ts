@@ -37,10 +37,6 @@ export const COMMUNITY_RULES: readonly { title: string; body: string }[] = [
       'Reports are public documents signed by the reporter. General questions: support@dash.org. Email does not file an on-chain report or guarantee moderator action. If a child is in danger, contact your local police.',
   },
   {
-    title: 'Media in the app',
-    body: 'The Yappr app may not display some media. Web and mobile builds include a media denylist maintained in the source repository. It does not remove media from Dash Platform, IPFS or other websites.',
-  },
-  {
     title: 'Blocking',
     body: 'You can block anyone. Their posts, replies, mentions and messages stop reaching you.',
   },

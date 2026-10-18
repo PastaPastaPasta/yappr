@@ -235,7 +235,7 @@ development never waits on mainnet; only the switch of the network flag does.
   edit, DPNS username registration via the wallet, Explore, search, hashtags,
   bookmarks.
 - **Safety baseline.** Block, report posts and replies (v10 `report`), the
-  sensitive-content filter, the moderation denylist, and the EULA gate.
+  sensitive-content filter and the EULA gate.
 - **Notifications.** Foreground only: the tab, badges, and the same derivation
   as web.
 - **Web workstream.**
@@ -336,13 +336,13 @@ Details and fallbacks are in the linked docs.
 | W9 | Wallets | Confirm the dHash avatar fingerprint matches DashPay's `avatarFingerprint` | G2 | Yappr writes its own fingerprint only when it sets the avatar |
 | Y0 | Yappr | On bonsia: `yappr-push` deployed; mobile test-pool slots provisioned | G1 | None |
 | Y1 | Yappr | **The next social cut (mainnet candidate):** report identity target and DM-key envelope (D7), media arrays (D8). On bonsia with the owner as interim; then on testnet with `notYetUsable` (D5), together with DM v5, `yappr-push`, `key-exchange-v2` (while W2 is pending) and `/testing` copies, when PL0 lands | Week 14 (bonsia) | General support contact only (D35); one image per post |
-| Y2 | Yappr | The **mainnet** contract set: the Y1 social cut with `notYetUsable`, DM v5, `yappr-push`, `key-exchange-v2` only if W2 is late; no denylist publishing identity, moderation rota or response SLA (D35) | G3 | None |
+| Y2 | Yappr | The **mainnet** contract set: the Y1 social cut with `notYetUsable`, DM v5, `yappr-push`, `key-exchange-v2` only if W2 is late; no client content-filter publishing identity, moderation rota or response SLA (D35/D37) | G3 | None |
 | M1 | Dash community, masternodes | Charter candidates stand and masternodes vote, so a charter is **seated before App Review** on mainnet (and on testnet for a testnet public beta). Yappr recruits candidates and staff do not stand (D5). At protocol 14 a seat is never replaced, so the first charter is long-lived. | G3 | None. Nobody can post until a charter is seated. |
 | Y3 | Yappr | App Connect login support in `vendor/platform-auth`, shared with web | With W2 | Keep the `key-exchange-v2` path |
 | Y4 | Yappr | ENCRYPTION key selection rule in `lib/crypto/encryption-key-lookup.ts` (still returns the first active key): prefer the key bound to the contract in use, then an unbound key, then the newest | G1 | None. Without it, DMs break once identities carry bound keys. |
 | Y5 | Yappr | *(Not a 1.0 dependency per D17; step R3 of the post-1.0 Rust track.)* `lib/` platform seams (see [ARCHITECTURE.md](ARCHITECTURE.md#platform-seams-in-lib-the-minimal-yappr-change)) | Seams 1–2 by G0, 3–5 by G1 | None. Mobile cannot share `lib/` without them. |
 | Y6 | Yappr | DM v5 encryption-key rotation (DM_V5 Appendix A), which enables "Reset messaging keys" after a lost device | 1.x | 1.0 documents the lost-device DM exposure |
-| Y7 | Yappr web | **Y7a (superseded by D35):** no new centralized moderation list; existing bundled media filter unchanged pending owner decision. Terms and community guidelines remain. **Y7b:** `/delete-account` page; `.well-known` app-site association; `/app/connect` page; `lib/push/ping.ts`; profile and DM report UI | Y7a by G1, Y7b by G2 | None. These are store blockers. |
+| Y7 | Yappr web | **Y7a (superseded by D35/D37):** no centralized moderation list or bundled client media filter. Terms and community guidelines remain. **Y7b:** `/delete-account` page; `.well-known` app-site association; `/app/connect` page; `lib/push/ping.ts`; profile and DM report UI | Y7a by G1, Y7b by G2 | None. These are store blockers. |
 
 ## Staffing
 

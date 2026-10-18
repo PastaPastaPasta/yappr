@@ -1,5 +1,0 @@
-{
-  "$comment": "Media takedown denylist, enforced by every web and mobile image, video and link-preview renderer. Edit with scripts/media-denylist.mjs only, never by hand; the runbook is docs/MEDIA_TAKEDOWN.md. Entries never describe the content.",
-  "cids": [],
-  "urlSha256": []
-}
