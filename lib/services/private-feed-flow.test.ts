@@ -562,6 +562,31 @@ describe('private feeds v2: every authorised path to history', () => {
     expect(await s.follower.getAccessStatus(P, F4)).toBe('revoked')
   })
 
+  it('a follower blocked on another device during a move is not moved, even when their old grant could not be revoked', async () => {
+    for (const follower of [F1, F5]) {
+      expect(await s.follower.requestAccess(P, follower)).toEqual({ success: true })
+    }
+    await approveBy(P, F1, F5)
+    expect((await s.owner.privateFeedService.openFeed(P, keys[P])).success).toBe(true)
+    const feed = (await s.owner.privateFeedService.getCurrentFeed(P, { fresh: true }))?.feed as number
+    expect(await s.move.adoptUnfinishedMove(P)).toBeGreaterThan(1)
+    const { loadMove } = await import('./private-feed-move-job')
+    const recipients = loadMove(P)?.recipients ?? []
+    const later = recipients.at(-1) as string
+    // The other device's block lands while the move runs; its revocation in the old feed does not (that feed's key changes are used up, say).
+    const { blockService } = await import('./block-service')
+    let blockedNow = false
+    const getBlock = vi.spyOn(blockService, 'getBlock').mockImplementation(async (target, blocker) => (blockedNow && target === later && blocker === P ? ({ blockedId: later } as never) : null))
+    chain.afterGrant = async () => {
+      blockedNow = true
+    }
+    expect(await s.move.runMove(P, keys[P])).toEqual({ success: true })
+    getBlock.mockRestore()
+    const now = (await s.owner.privateFeedService.getPrivateFollowers(P)).map((f) => f.recipientId)
+    expect(now).not.toContain(later)
+    expect(now.length).toBeGreaterThan(0)
+  })
+
   it('a renewal planned from a feed another device has renewed since is refused', async () => {
     const current = (await s.owner.privateFeedService.getCurrentFeed(P, { fresh: true }))?.feed as number
     expect(await s.owner.privateFeedService.openFeed(P, keys[P], { after: current - 1 })).toMatchObject({ success: false, errorCode: 'FEED_CHANGED' })

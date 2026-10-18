@@ -68,6 +68,12 @@ async function blockedBy(ownerId: string): Promise<Set<string>> {
   return new Set((await blockService.getUserBlocks(ownerId)).map((block) => block.blockedId))
 }
 
+/** Whether `ownerId` blocks `recipientId` now, read fresh (a block on another device during a move counts); a failed read throws. */
+async function blocksNow(ownerId: string, recipientId: string): Promise<boolean> {
+  const { blockService } = await import('./block-service')
+  return (await blockService.getBlock(recipientId, ownerId, { throwOnError: true })) !== null
+}
+
 /**
  * The members of `feed` to move: grants in force (a revoked grant stays as a
  * record, never a member) whose holder still stands by their request (PF8)
@@ -87,17 +93,19 @@ async function feedFollowers(ownerId: string, feed: number) {
   const movable = activeGrants(grants, rekeys)
     .filter((grant) => (askedAt.get(grant.recipientId) ?? Infinity) <= grant.createdAt && !blocked.has(grant.recipientId))
     .map((grant) => grant.recipientId)
-  return { grants, rekeys, requests, movable }
+  return { grants, rekeys, requests, blocked, movable }
 }
 
 /**
  * Followers holding a grant in force in feed `to` whose grant in `from` was
  * revoked (the move wrote the new grant while another device removed them,
- * and that device did not see it yet). The grant stands only when the owner
- * wrote it in answer to a request made since the removal: a re-approval.
+ * and that device did not see it yet), or whom the owner blocks (a block
+ * whose revocation could not be written). The grant stands only when the
+ * owner wrote it in answer to a request made since the removal: a re-approval.
  */
 async function movedThenRemoved(
-  ownerId: string, to: number, moved: readonly GrantDocument[], old: { grants: readonly GrantDocument[]; rekeys: readonly RekeyDocument[]; requests: readonly FollowRequestDocument[] },
+  ownerId: string, to: number, moved: readonly GrantDocument[],
+  old: { grants: readonly GrantDocument[]; rekeys: readonly RekeyDocument[]; requests: readonly FollowRequestDocument[]; blocked: ReadonlySet<string> },
 ): Promise<string[]> {
   const askedAt = askedAtOf(old.requests)
   const removedAt = new Map<string, number>()
@@ -106,6 +114,7 @@ async function movedThenRemoved(
     if (answer.revoked) removedAt.set(grant.recipientId, answer.at)
   }
   const candidates = moved.filter((grant) => {
+    if (old.blocked.has(grant.recipientId)) return true
     const at = removedAt.get(grant.recipientId)
     if (at === undefined) return false
     const asked = askedAt.get(grant.recipientId)
@@ -268,7 +277,7 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
     const settleGranted = async (recipientId: string, moved: GrantDocument): Promise<PrivateFeedResult | null> => {
       const [source, request] = await Promise.all([fetchGrant(ownerId, job.from, recipientId), fetchFollowRequest(ownerId, recipientId)])
       const askedAgain = source !== null && request !== null && request.$createdAt > source.createdAt && request.$createdAt <= moved.createdAt
-      const removed = askedAgain || blocked.has(recipientId) || (source !== null && (await grantIsRevoked(source)))
+      const removed = askedAgain || blocked.has(recipientId) || (await blocksNow(ownerId, recipientId)) || (source !== null && (await grantIsRevoked(source)))
       if (!removed) {
         settle('done', recipientId)
         return null
@@ -303,7 +312,7 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
         const request = (await fetchFollowRequest(ownerId, recipientId)) ?? undefined
         // Still consenting: the request their old grant answered.
         const consenting = request !== undefined && source !== null && request.$createdAt <= source.createdAt
-        const stillMember = consenting && !blocked.has(recipientId) && !(await grantIsRevoked(source))
+        const stillMember = consenting && !blocked.has(recipientId) && !(await blocksNow(ownerId, recipientId)) && !(await grantIsRevoked(source))
         const key = stillMember ? await recipientKey(recipientId, request.publicKey) : null
         const leafIndex = leafFor(planned)
         if (!key) settle('skipped', recipientId)
