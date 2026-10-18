@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { expectFocusContrast } from '../fixtures/focus-contrast'
 
 for (const width of [390, 1440]) {
   test(`Create Blog fields, close control, focus and AA checks at ${width}px`, async ({ page }) => {
@@ -116,10 +117,12 @@ for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.addInitScript((value) => localStorage.setItem('theme', value), theme)
     await page.goto('/?scenario=trends')
+    if (theme === 'dark') await expect(page.locator('html')).toHaveClass(/dark/)
+    else await expect(page.locator('html')).not.toHaveClass(/dark/)
     const topic = page.getByRole('link', { name: /#yappr/ })
     await page.getByRole('button', { name: 'All time', exact: true }).focus()
     await page.keyboard.press('Tab')
-    await expect(topic).toBeFocused()
+    await expectFocusContrast(topic)
     await expect(topic.locator('..')).toHaveCSS('opacity', '1')
     await expect(page.getByRole('link', { name: /\$DASH/ }).locator('..')).toHaveCSS('opacity', '1')
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([])

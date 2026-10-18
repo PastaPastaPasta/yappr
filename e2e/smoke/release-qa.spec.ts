@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { expectFocusContrast } from '../fixtures/focus-contrast'
 import { appUrl, scopedKey } from '../fixtures/app'
 import { expectedStorefrontTopology } from '../fixtures/contracts'
 
@@ -13,20 +14,25 @@ for (const theme of ['light', 'dark'] as const) {
   })
 }
 
-test('a post permalink can be reached and opened using the keyboard', async ({ page }) => {
-  await page.goto(appUrl('/feed/'))
-  const post = page.locator('article').first()
-  const thread = post.getByRole('link', { name: /^Read thread/ })
-  await expect(thread).toBeVisible()
-  await thread.focus()
-  await page.keyboard.press('Shift+Tab')
-  await page.keyboard.press('Tab')
-  await expect(thread).toBeFocused()
-  const href = await thread.getAttribute('href')
-  const expected = new URL(href!, page.url()).toString()
-  await page.keyboard.press('Enter')
-  await expect(page).toHaveURL(expected)
-})
+for (const theme of ['light', 'dark']) {
+  test(`a post permalink supports keyboard focus and contrast in ${theme} mode`, async ({ page }) => {
+    await page.addInitScript((value) => localStorage.setItem('theme', value), theme)
+    await page.goto(appUrl('/feed/'))
+    if (theme === 'dark') await expect(page.locator('html')).toHaveClass(/dark/)
+    else await expect(page.locator('html')).not.toHaveClass(/dark/)
+    const post = page.locator('article').first()
+    const thread = post.getByRole('link', { name: /^Read thread/ })
+    await expect(thread).toBeVisible()
+    await thread.focus()
+    await page.keyboard.press('Shift+Tab')
+    await page.keyboard.press('Tab')
+    await expectFocusContrast(thread)
+    const href = await thread.getAttribute('href')
+    const expected = new URL(href!, page.url()).toString()
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(expected)
+  })
+}
 
 for (const route of ['/terms/', '/privacy/', '/cookies/', '/about/', '/about/private-feeds/']) {
   test(`${route} stays readable without Platform initialization`, async ({ page }) => {

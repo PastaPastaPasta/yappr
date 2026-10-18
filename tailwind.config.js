@@ -37,6 +37,11 @@ module.exports = {
           500: 'rgb(var(--text-secondary) / <alpha-value>)',
         },
       },
+      outlineColor: {
+        yappr: {
+          600: 'rgb(var(--accent-text-hover) / <alpha-value>)',
+        },
+      },
       fontFamily: {
         sans: [
           '-apple-system',
