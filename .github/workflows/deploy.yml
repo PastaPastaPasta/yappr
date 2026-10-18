@@ -230,7 +230,9 @@ jobs:
       - name: Install network-free deployment-aware fallback
         env:
           BASE_PATH: ${{ vars.BASE_PATH }}
-        run: node staging/scripts/write-static-404.mjs site
+        run: |
+          node staging/scripts/write-static-404.mjs site
+          node staging/scripts/write-static-404.mjs site/testing /testing
 
       # Expectations are kept outside the public site: they describe exactly
       # which commits, env files and snapshot hashes this deploy built.

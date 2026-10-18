@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -43,21 +43,28 @@ describe('GitHub Pages shared root 404', () => {
 })
 
 
-it('assembles the production fallback with the configured project Pages prefix', () => {
+it.each(['', '/yappr'])('replaces legacy master fallbacks during assembly (base %s)', (base) => {
   const workflow = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8')
   const step = workflow.split('- name: Install network-free deployment-aware fallback')[1].split('\n      #')[0]
   expect(step).toContain('BASE_PATH: ${{ vars.BASE_PATH }}')
-  const command = step.match(/run: (.+)/)[1]
+  const command = step.match(/run: \|\n([\s\S]+)/)[1]
   const directory = mkdtempSync(join(tmpdir(), 'yappr-404-'))
   try {
     mkdirSync(join(directory, 'staging/scripts'), { recursive: true })
     copyFileSync(new URL('./write-static-404.mjs', import.meta.url), join(directory, 'staging/scripts/write-static-404.mjs'))
-    const result = spawnSync(command, { shell: true, cwd: directory, env: { ...process.env, BASE_PATH: '/yappr' }, encoding: 'utf8' })
+    mkdirSync(join(directory, 'site/testing'), { recursive: true })
+    const legacy = '<script src="/testing/_next/legacy-runtime.js"></script>'
+    writeFileSync(join(directory, 'site/404.html'), legacy)
+    writeFileSync(join(directory, 'site/testing/404.html'), legacy)
+    const result = spawnSync(command, { shell: true, cwd: directory, env: { ...process.env, BASE_PATH: base }, encoding: 'utf8' })
     expect(result.status, result.stderr).toBe(0)
     const html = readFileSync(join(directory, 'site/404.html'), 'utf8')
-    expect(html).toContain('href="/yappr/"')
-    expect(html).toContain('href="/yappr/explore/"')
+    expect(html).toContain(`href="${base}/"`)
+    expect(html).toContain(`href="${base}/explore/"`)
     expect(html).not.toMatch(/_next|sdk|src=/i)
+    const testing = readFileSync(join(directory, 'site/testing/404.html'), 'utf8')
+    expect(testing).toBe(staticNotFound('/testing'))
+    expect(testing).not.toMatch(/_next|sdk|src=/i)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

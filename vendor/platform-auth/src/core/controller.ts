@@ -350,8 +350,10 @@ export class PlatformAuthController {
           options.afterStore?.()
         }
         await this.deps.clientIdentity?.setIdentity(identity.id)
+        this.restoringIdentityId = null
         this.patchState({
           user,
+          isAuthRestoring: false,
           error: null,
         })
       })

@@ -403,3 +403,39 @@ it('ignores external logout in a signed-out tab, preserving a new sign-in alread
   release()
   expect((await signingIn).user?.identityId).toBe('new-user')
 })
+
+
+describe('interactive sign-in supersedes startup restoration', () => {
+  it.each([
+    ['snapshot', 'key'], ['snapshot', 'ring'], ['key', 'key'], ['key', 'ring'],
+  ] as const)('finishes %s restoration when a %s sign-in commits first', async (waitFor, loginKind) => {
+    let release: () => void = () => undefined
+    const pending = new Promise<void>(resolve => { release = resolve })
+    const snapshot = { user: { identityId: IDENTITY_ID, balance: 1, publicKeys: [] }, timestamp: 0 }
+    const getSession = vi.fn(async () => { if (waitFor === 'snapshot') await pending; return snapshot })
+    const hasPrivateKey = vi.fn(async () => { if (waitFor === 'key') await pending; return true })
+    const events: PlatformAuthEvent[] = []
+    const setSession = vi.fn()
+    const controller = new PlatformAuthController({
+      network: 'testnet',
+      sessionStore: { getSession, setSession, clearSession: vi.fn() },
+      secretStore: { hasPrivateKey, storePrivateKey: vi.fn() } as unknown as SecretStore,
+      identity: { getIdentity: async id => ({ id, balance: 2, publicKeys: [] }), getBalance: async () => 2 },
+      features: { balanceRefresh: false, postLoginTasks: false, autoDeriveEncryptionKey: false },
+      onEvent: event => { events.push(event) },
+    })
+    const restoring = controller.restoreSession()
+    await vi.waitFor(() => expect(waitFor === 'key' ? hasPrivateKey : getSession).toHaveBeenCalled())
+    const result = loginKind === 'key'
+      ? await controller.loginWithAuthKey('new-user', 'new-key')
+      : await controller.loginWithKeyRing('new-user')
+    expect(result.user?.identityId).toBe('new-user')
+    expect(controller.getState()).toMatchObject({ user: { identityId: 'new-user' }, isAuthRestoring: false, isLoading: false })
+    release()
+    expect(await restoring).toBeNull()
+    expect(controller.getState()).toMatchObject({ user: { identityId: 'new-user' }, isAuthRestoring: false })
+    expect(setSession).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ user: expect.objectContaining({ identityId: 'new-user' }) }))
+    expect(events.some(event => event.type === 'session-restored')).toBe(false)
+    if (waitFor === 'snapshot') expect(hasPrivateKey).not.toHaveBeenCalled()
+  })
+})
