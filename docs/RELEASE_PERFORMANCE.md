@@ -19,8 +19,11 @@ turning on HTTP compression would not fix the bottleneck. A local Brotli
 experiment produced 6,872,245 B at quality 5, but Chromium 151 does not support
 `DecompressionStream('brotli')`; adding a decoder is outside this change.
 
-Feed, post and profile HTML start the download while the document parses,
-before hydration. The SDK consumes that same promise and streams decompression
+The root document head includes a path-filtered bootstrap: feed, post and
+profile HTML start the download while the document parses, before hydration.
+It stays outside the frame guard that suppresses application HTML during SSR;
+other routes do not prefetch. The SDK consumes that same promise and streams
+decompression
 into wasm-bindgen's `WebAssembly.instantiateStreaming`. Download and compile
 can overlap; there is no base64 decode, worker handoff or second WASM instance.
 Already HTTP-decoded WASM is accepted too. Cache Storage keeps the versioned
@@ -44,7 +47,9 @@ additional sequential work, which remains a possible follow-up. Feed loading
 copy now says “Loading posts…” instead of describing the Platform connection.
 
 Measurements below use separate static exports of baseline
-`520c72ba361b78bab3c4c832b68c45571a756609` and this change, the same live Sakura
+`520c72ba361b78bab3c4c832b68c45571a756609` and streaming/cache implementation
+`b78353ee2568c5b6270a220038ab93c2558ef8ba`, before integration with later staging
+changes, the same live Sakura
 read-only routes, Chromium 151, and a local gzip server with a four-hour HTTP
 cache policy for hashed assets. This reproduces the hosted transfer shape;
 it does not measure Cloudflare/origin latency. Mobile: 390×844, 9 Mbps down,
@@ -56,6 +61,21 @@ sample per cell, with other release work active; small desktop differences
 are noise and these are not production percentiles. The public data can change
 between probes. The earlier lane's hosted samples are context, not the
 baseline for this paired comparison.
+
+After merging staging `14d76e5b`, its new frame guard suppressed the route-level
+bootstrap in server HTML. The bootstrap was moved to the root head and the
+export-size check now requires a real head script and matching WASM file on
+all three data routes. A fresh paired rerun was attempted against `14d76e5b`,
+but both the baseline and integrated build produced no article within 90 seconds:
+proof verification
+reported quorum `107:08a5c9d8884b6b574556bf8b2cb1fe0fc276c1e7170c63b1e5afef79c935e39f`
+missing from both freshly fetched quorum lists. Verification was kept intact.
+The earlier successful table below is retained with its exact revisions;
+it is not a complete first-data measurement of the final integrated head.
+The integrated mobile probe still confirms the parser-time asset starts at
+0.309 s, finishes downloading at 9.889 s, and streaming instantiation spans
+2.736–9.986 s. Queries then fail on the missing quorum key. These are an
+additional diagnostic sample, not a replacement paired first-content result.
 
 | Profile / route | Cold before → after, s | Warm before → after, s |
 | --- | ---: | ---: |
@@ -88,19 +108,25 @@ earlier shares bandwidth with shell JS (hence its later load event), while
 removing the sequential post-download preparation. Detailed cross-origin
 TTFB/body sizes remain unavailable without Timing-Allow-Origin.
 
-Final validation: web lint, dead-code check, 249 test files / 3,673 tests,
+Final validation: web lint, dead-code check, 251 test files / 3,729 tests,
 production and devnet exports, and export-size budgets pass. Both mobile
 engine variants build and the engine typecheck passes. The final exported
-bootstrap was checked for all three routes: it has no speculative cache write
-and remains self-contained. Independent Opus review approved the final code;
+head bootstrap was checked for all three routes: it has no speculative cache write
+and remains self-contained. Executing the exported script across 32 route cases
+verified its allowlist; removing the head script makes the export check fail.
+Independent Opus review approved the integration;
 Sonnet simplification review found no remaining blockers.
 
 The read-only probe is `scripts/measure-first-content.mjs URL/devnet result.json`.
 It records browser-clock resource timings, WASM calls, console milestones,
 paint entries, errors and article timestamps for all twelve route/profile/cache
-combinations. The post and profile IDs are fixed in that script. Local evidence
+combinations. A failed sample saves its diagnostics and stops the probe. The post
+and profile IDs are fixed in that script. Local evidence
 (including the gzip server, full exports and raw JSON) is retained under
 `~/.local/share/yappr-release-audit-20261016/perf2/`.
+`before.json` / `final-after.json` contain the successful paired results;
+`head-after.json` and `head-baseline-quorum-failure.json` document the later
+quorum failure. `head-after-export/` preserves the corrected devnet HTML.
 
 An extra browser check cleared the HTTP cache, disabled it, blocked WASM
 network requests, and reloaded the feed: 20 articles rendered from Cache Storage

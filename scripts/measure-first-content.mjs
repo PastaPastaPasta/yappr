@@ -61,8 +61,11 @@ try {
           const errors = []
           const onError = error => errors.push(error.message)
           page.on('pageerror', onError)
-          await page.goto(`${base.replace(/\/$/, '')}/${path}`, { waitUntil: 'domcontentloaded', timeout: 60000 })
-          await page.waitForSelector('article', { timeout: 90000 })
+          let failure
+          try {
+            await page.goto(`${base.replace(/\/$/, '')}/${path}`, { waitUntil: 'domcontentloaded', timeout: 60000 })
+            await page.waitForSelector('article', { timeout: 90000 })
+          } catch (error) { failure = error.message }
           // First article can precede completion of the first page's enrichment.
           await page.waitForTimeout(1500)
           const data = await page.evaluate(() => ({
@@ -72,11 +75,13 @@ try {
             navigation: performance.getEntriesByType('navigation').map(entry => entry.toJSON()),
             loadingCopy: document.body.innerText.includes('Connecting to Dash Platform'),
           }))
-          const result = { profile, route, cache, errors, ...data }
+          const result = { profile, route, cache, errors, failure, ...data }
           results.push(result)
           writeFileSync(output, JSON.stringify({ base, browser: browser.version(), results }, null, 2))
-          console.log(JSON.stringify({ profile, route, cache, articleMs: data.firstContent.article, errors }))
+          console.log(JSON.stringify({ profile, route, cache, articleMs: data.firstContent?.article ?? null, errors, failure }))
           page.off('pageerror', onError)
+          // Keep diagnostics, then stop instead of hammering an unhealthy gateway.
+          if (failure) throw new Error(failure)
         }
       } finally { await context.close() }
     }
