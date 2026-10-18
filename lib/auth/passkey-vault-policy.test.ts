@@ -68,6 +68,14 @@ describe('passkey vault policy: keys', () => {
     expect(privateKeyMatches(new Uint8Array(32), { type: 0, data: getPublicKey(HIGH_KEY) })).toBe(false)
   })
 
+  it.each([0, 1, 19, 21, 33, 65])('refuses HASH160 sign-in key data of %i bytes', (length) => {
+    const data = new Uint8Array(length)
+    data.set(hash160(getPublicKey(HIGH_KEY)).subarray(0, length))
+    const malformed = key({ id: 2, type: 2, data })
+    expect(privateKeyMatches(HIGH_KEY, malformed)).toBe(false)
+    expect(checkSignInKey(slotFor(malformed, HIGH_KEY), [malformed], NOW, 'g').ok).toBe(false)
+  })
+
   it('accepts an enabled HIGH sign-in key, and a CRITICAL one only with a moderator check when unbound', () => {
     const keys = [key({ id: 2 }), key({ id: 1, securityLevel: 1, data: getPublicKey(CRITICAL_KEY) })]
     expect(checkSignInKey(slotFor(keys[0], HIGH_KEY), keys, NOW, 'g')).toMatchObject({ ok: true, needsModerator: false })

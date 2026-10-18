@@ -121,7 +121,7 @@ const SIGNATURE_ALLOWANCE = 100;
  * pinned by hash. The wasm-sdk parse does not run it; wasm-dpp2 does, and this
  * ajv pass names the failing path more precisely. The property type shorthands
  * never reach it: the node expands them first, and so does `metaSchemaProblems`.
- * The wasm-dpp2 5.0.0-rc.3 build embeds this same document (compared as JSON), so the pin stands.
+ * The wasm-dpp2 5.0.0-rc.4 build embeds this same document (compared as JSON), so the pin stands.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
 const META_SCHEMA_SHA256 = '742f99130f75940a3ba2962f243713fb745be0689093cd48d496f5026afc0d15';
