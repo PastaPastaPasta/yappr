@@ -72,8 +72,6 @@ export const DELETE_FORBIDDEN = /can ?not be deleted/i;
  */
 export const DELETE_CONSTRAINT = /\b40147\b|deleteConstraints rule/i;
 export const DUPLICATE_UNIQUE = /\b40105\b|duplicate unique properties/i;
-export const TOKEN_AGREEMENT_MISSING = /token|payment|agree/i;
-export const FOREIGN_SIGNATURE = /invalid.{0,40}signature|signature.{0,40}(invalid|mismatch)|4020\d/i;
 /**
  * A ranked read on a grid bucket no document ever landed in fails proof
  * generation instead of proving an empty ranking; that error IS the empty
