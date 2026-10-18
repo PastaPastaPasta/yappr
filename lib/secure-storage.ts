@@ -125,13 +125,20 @@ function getSessionOnlyPrivateKey(identityId: string): string | null {
 }
 
 /**
- * Whether the key {@link getPrivateKey} returns for `identityId` is a
+ * The key {@link getPrivateKey} returns for `identityId`, and whether it is a
  * moderator's CRITICAL key from a passkey (token transitions ask for the key
- * typed in instead).
+ * typed in instead), both from the one record it was read from: another tab
+ * changing the stored keys between two reads can never pair one key with
+ * another's provenance.
  */
-export function privateKeyIsFromPasskey(identityId: string): boolean {
-  if (browserSecretStore.getPrivateKey(identityId) !== null) return false
-  return getSessionOnlyRecord(identityId)?.startsWith(PASSKEY_TAG) ?? false
+export function getPrivateKeyRecord(identityId: string): { wif: string; fromPasskey: boolean } | null {
+  const persisted = browserSecretStore.getPrivateKey(identityId)
+  if (persisted !== null) return { wif: persisted, fromPasskey: false }
+  const record = getSessionOnlyRecord(identityId)
+  if (record === null) return null
+  return record.startsWith(PASSKEY_TAG)
+    ? { wif: record.slice(PASSKEY_TAG.length), fromPasskey: true }
+    : { wif: record, fromPasskey: false }
 }
 
 export function getPrivateKey(identityId: string): string | null {

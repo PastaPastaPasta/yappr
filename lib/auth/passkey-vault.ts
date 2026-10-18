@@ -391,6 +391,8 @@ export interface PendingPasskey {
   createPrf: Uint8Array | null
   /** Set once its entry was sent: the recipient key it was sealed to, for {@link passkeySaved}. */
   sentTo?: Uint8Array
+  /** When its entry was sent (ms). */
+  sentAt?: number
 }
 
 /**
@@ -451,13 +453,14 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<v
       wipeBundle(bundle)
     }
     const confirmed = await passkeyVaultService.add(pending.identityId, sealed)
-    // Remembered either way: if a write that is still settling lands, this is the device that made it.
-    rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipient.publicKey))
     if (!confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipient.publicKey)) {
+      // Remembered as this device's only once it is confirmed (passkeySaved): one that never lands leaves no marker.
       pending.sentTo = recipient.publicKey
+      pending.sentAt = Date.now()
       pendingEnrolments.set(pending.identityId, pending)
       throw new PasskeyVaultError('pending')
     }
+    rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipient.publicKey))
   } finally {
     prf?.fill(0)
     pending.createPrf?.fill(0)
@@ -489,8 +492,38 @@ async function entryLanded(identityId: string, credentialId: Uint8Array, recipie
 export async function passkeySaved(pending: PendingPasskey): Promise<boolean> {
   if (!pending.sentTo) return false
   const landed = await entryLanded(pending.identityId, pending.credentialId, pending.sentTo)
-  if (landed && pendingEnrolments.get(pending.identityId) === pending) pendingEnrolments.delete(pending.identityId)
+  if (landed) {
+    rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, pending.sentTo))
+    if (pendingEnrolments.get(pending.identityId) === pending) pendingEnrolments.delete(pending.identityId)
+  }
   return landed
+}
+
+/**
+ * How long an unconfirmed entry may still land. A Platform transition is
+ * executed within a few blocks of its broadcast or never: well past this, an
+ * entry that is still absent is not coming.
+ */
+const PENDING_SETTLE_MS = 10 * 60_000
+
+/** Whether a pending enrolment is past its settle window, so the user may start over. */
+export function pendingEnrolmentStale(pending: PendingPasskey, now = Date.now()): boolean {
+  return pending.sentAt !== undefined && now - pending.sentAt > PENDING_SETTLE_MS
+}
+
+/**
+ * Ends a pending enrolment whose entry never landed: checks once more, then
+ * tells the provider to drop the passkey (it signs in to nothing) and forgets
+ * the enrolment, so a new passkey can be added. `waiting` before its settle
+ * window has passed, `saved` if the entry has landed after all.
+ */
+export async function abandonPendingEnrolment(pending: PendingPasskey): Promise<'abandoned' | 'saved' | 'waiting'> {
+  if (!pendingEnrolmentStale(pending)) return 'waiting'
+  if (await passkeySaved(pending)) return 'saved'
+  const found = setup()
+  if (found) await signalUnknownPasskey(found.rp.id, pending.credentialId)
+  if (pendingEnrolments.get(pending.identityId) === pending) pendingEnrolments.delete(pending.identityId)
+  return 'abandoned'
 }
 
 /** What opening a passkey restores. */

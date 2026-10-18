@@ -74,21 +74,20 @@ describe('a passkey\'s CRITICAL key', () => {
     s.storeSessionOnlyPrivateKey(IDENTITY, CRITICAL_WIF)
     s.settlePasskeyCriticalKey(IDENTITY)
     expect(s.getPrivateKey(IDENTITY)).toBe(CRITICAL_WIF)
-    expect(s.privateKeyIsFromPasskey(IDENTITY)).toBe(true)
+    expect(s.getPrivateKeyRecord(IDENTITY)).toEqual({ wif: CRITICAL_WIF, fromPasskey: true })
     // A reload of the tab keeps the record, and its provenance with it.
     const reloaded = await load()
-    expect(reloaded.getPrivateKey(IDENTITY)).toBe(CRITICAL_WIF)
-    expect(reloaded.privateKeyIsFromPasskey(IDENTITY)).toBe(true)
+    expect(reloaded.getPrivateKeyRecord(IDENTITY)).toEqual({ wif: CRITICAL_WIF, fromPasskey: true })
   })
 
   it('tags only the exact key the commit expected', async () => {
     const s = await load()
     s.expectPasskeyCriticalKey(IDENTITY, CRITICAL_WIF)
     s.storeSessionOnlyPrivateKey(IDENTITY, TYPED_WIF)
-    expect(s.privateKeyIsFromPasskey(IDENTITY)).toBe(false)
+    expect(s.getPrivateKeyRecord(IDENTITY)?.fromPasskey).toBe(false)
     // The expectation was spent by that store: a later store of the passkey key is not tagged either.
     s.storeSessionOnlyPrivateKey(IDENTITY, CRITICAL_WIF)
-    expect(s.privateKeyIsFromPasskey(IDENTITY)).toBe(false)
+    expect(s.getPrivateKeyRecord(IDENTITY)?.fromPasskey).toBe(false)
   })
 
   it('does not hold back a persisted key that took over, and comes back with its tag if that one goes', async () => {
@@ -96,11 +95,10 @@ describe('a passkey\'s CRITICAL key', () => {
     s.expectPasskeyCriticalKey(IDENTITY, CRITICAL_WIF)
     s.storeSessionOnlyPrivateKey(IDENTITY, CRITICAL_WIF)
     s.storePrivateKey(IDENTITY, LOGIN_WIF)
-    expect(s.getPrivateKey(IDENTITY)).toBe(LOGIN_WIF)
-    expect(s.privateKeyIsFromPasskey(IDENTITY)).toBe(false)
+    // The key and its provenance come from the same record: the persisted key, unrestricted.
+    expect(s.getPrivateKeyRecord(IDENTITY)).toEqual({ wif: LOGIN_WIF, fromPasskey: false })
     // Another tab signs out and removes the shared persisted key: the passkey key is still restricted.
     localStorage.clear()
-    expect(s.getPrivateKey(IDENTITY)).toBe(CRITICAL_WIF)
-    expect(s.privateKeyIsFromPasskey(IDENTITY)).toBe(true)
+    expect(s.getPrivateKeyRecord(IDENTITY)).toEqual({ wif: CRITICAL_WIF, fromPasskey: true })
   })
 })

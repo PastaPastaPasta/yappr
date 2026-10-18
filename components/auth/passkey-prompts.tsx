@@ -14,8 +14,10 @@ import {
   finishPasskeyEnrolment,
   forgetPendingEnrolments,
   listPasskeys,
+  abandonPendingEnrolment,
   passkeySaved,
   pendingEnrolmentFor,
+  pendingEnrolmentStale,
   passkeyEligibility,
   passkeysOffered,
   removeAllPasskeys,
@@ -182,6 +184,20 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
       })
   }, [changed])
 
+  const startOver = useCallback((pending: PendingPasskey) => {
+    setStep({ kind: 'pending', pending, checking: true })
+    abandonPendingEnrolment(pending)
+      .then((outcome) => {
+        changed()
+        // Dropped: a new passkey can be added. Landed after all: it is saved.
+        setStep(outcome === 'abandoned' ? { kind: 'intro' } : outcome === 'saved' ? { kind: 'done' } : { kind: 'pending', pending, checking: false })
+      })
+      .catch((error: unknown) => {
+        logger.warn('Passkeys: starting over failed:', error)
+        setStep({ kind: 'pending', pending, checking: false })
+      })
+  }, [changed])
+
   return (
     <Modal open onOpenChange={(next) => { if (!next && !busy) onClose() }} className="w-[440px] max-w-[92vw]">
       {step.kind === 'done' ? (
@@ -208,10 +224,18 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           {step.kind === 'error' && <InlineError>{step.message}</InlineError>}
           <div className="flex flex-col gap-3">
             {step.kind === 'pending' ? (
-              <Button className="w-full gap-2" onClick={() => checkAgain(step.pending)} disabled={busy}>
-                {busy && <Spinner size="sm" />}
-                Check again
-              </Button>
+              <>
+                <Button className="w-full gap-2" onClick={() => checkAgain(step.pending)} disabled={busy}>
+                  {busy && <Spinner size="sm" />}
+                  Check again
+                </Button>
+                {/* Only well past when the entry could still land: before that, adding another could replace it. */}
+                {pendingEnrolmentStale(step.pending) && (
+                  <Button variant="outline" className="w-full" onClick={() => startOver(step.pending)} disabled={busy}>
+                    Start over
+                  </Button>
+                )}
+              </>
             ) : step.kind === 'confirm' ? (
               <Button className="w-full" onClick={() => confirm(step.pending)} data-testid="passkey-confirm">Confirm</Button>
             ) : (
