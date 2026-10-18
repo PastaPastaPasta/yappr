@@ -410,7 +410,7 @@ export function ComposeModal() {
                             <XMarkIcon className="h-5 w-5" />
                           </IconButton>
                           {user && <UserAvatar userId={user.identityId} size="sm" alt="Your avatar" />}
-                          {privateFeedClientSupported() && !(replyingTo && isPrivatePost(replyingTo)) && (
+                          {privateFeedClientSupported() && !(replyingTo && isPrivatePost(replyingTo) && (inherited.source || inherited.loading || inherited.error)) && (
                             <VisibilitySelector
                               visibility={visibility}
                               onVisibilityChange={setFirstPostVisibility}

@@ -229,3 +229,26 @@ describe('profile replies on v17 (the live marker)', () => {
     vi.unstubAllEnvs()
   })
 })
+
+describe('the encryption a reply inherits (getEncryptionSource)', () => {
+  it('is the private root\'s feed, none under a public root, and refuses when the thread cannot be told', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
+    const { getEncryptionSource } = await import('./reply-service')
+    const { postService } = await import('./post-service')
+    const reply = { id: 'r', targetKind: 'reply' as const, parentId: 'p', rootPostId: 'root' }
+    const encrypted = { encryptedContent: new Uint8Array([1]), nonce: new Uint8Array(24), keyGeneration: 2, feed: 3 }
+    const read = vi.spyOn(postService, 'getPostById')
+    read.mockResolvedValueOnce({ author: { id: 'owner' }, ...encrypted } as never)
+    expect(await getEncryptionSource(reply)).toEqual({ ownerId: 'owner', feed: 3, keyGeneration: 2, inherited: true })
+    // A private reply under a public root: the thread is public, so a reply to it may be public too.
+    read.mockResolvedValueOnce({ author: { id: 'owner' } } as never)
+    expect(await getEncryptionSource(reply)).toBeNull()
+    read.mockResolvedValueOnce(null)
+    await expect(getEncryptionSource(reply)).rejects.toThrow(/could not be read/)
+    read.mockResolvedValueOnce({ author: { id: 'owner' }, deleted: true } as never)
+    await expect(getEncryptionSource(reply)).rejects.toThrow(/deleted/)
+    expect(read.mock.calls.every(([id]) => id === 'root')).toBe(true)
+    vi.unstubAllEnvs()
+  })
+})

@@ -586,6 +586,8 @@ describe('private feeds v2: every authorised path to history', () => {
     await approveBy(P, F1, F3)
     const oldFeed = await fetchFeed(P, current)
     if (!oldFeed) throw new Error('feed missing')
+    const older = await post('before the renewal', P)
+    let gap: PrivateContent | null = null
     const removedLeaf = chain.docs.find((doc) => doc.$type === 'privateFeedGrant' && doc.$ownerId === P && doc.feed === current && norm(doc.recipientId) === F5) as Record<string, unknown>
     chain.afterGrant = async () => {
       // Another device's removal in the old feed, ordered before the new feed was opened.
@@ -593,11 +595,27 @@ describe('private feeds v2: every authorised path to history', () => {
       const rekey = chain.docs.filter((doc) => doc.$type === 'privateFeedRekey' && doc.$ownerId === P && doc.feed === current).at(-1) as Record<string, unknown>
       const opened = chain.docs.find((doc) => doc.$type === 'privateFeed' && doc.$ownerId === P && doc.feed === current + 1) as Record<string, unknown>
       rekey.$createdAt = (opened.$createdAt as number) - 0.5
+      // ...and its post at that generation, which the link does not carry.
+      const { cekAt, encryptContent } = await import('@/lib/private-feed/crypto')
+      const { identifierToBytes } = await import('./sdk-helpers')
+      const held = s.store.ownerKeys(P, current)
+      if (!held) throw new Error('owner keys missing')
+      const binding = { feedOwnerId: identifierToBytes(P), feed: current, keyGeneration: held.keyGeneration, authorId: identifierToBytes(P), kind: 'post' as const }
+      const sealed = encryptContent(cekAt(held.seed, held.maxKeyGeneration, held.keyGeneration), 'in the gap', binding)
+      gap = { feedOwnerId: P, feed: current, keyGeneration: held.keyGeneration, nonce: sealed.nonce, encryptedContent: sealed.ciphertext, authorId: P, kind: 'post' }
     }
     // Reported as a renewal without the history link: the copy says older posts stay with those who follow already.
     expect(await s.move.renewPrivateFeed(P, keys[P], { bringHistory: true })).toMatchObject({ success: true, historyLinked: false })
     expect(grantsOf(P, current + 1)).toEqual(expect.arrayContaining([F1, F3]))
     expect(grantsOf(P, current)).toEqual(expect.arrayContaining([F1, F3]))
+    // A device that walked the link through this feed (to older posts) holds its history entry, which stops short of the gap:
+    // the kept grant of that feed still opens the post in it.
+    if (!gap) throw new Error('no post in the gap')
+    const inGap: PrivateContent = gap
+    s.store.clearIdentity(F3)
+    s.store.storeHistoryKeys(F3, P, current, { finalKeyGeneration: inGap.keyGeneration - 1, cek: new Uint8Array(32), history: new Uint8Array(32) })
+    expect(await read(F3, inGap)).toBe('in the gap')
+    expect(await read(F3, older)).toBe('before the renewal')
   })
 
   it('the owner reads an old post through a feed whose seed this device kept, past the discovery window and a fresh start', async () => {

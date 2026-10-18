@@ -193,7 +193,9 @@ export async function contentKeyFor(
     }
 
     if (direct) note(direct.reason)
-    else {
+    // This feed's own keys, unless this device holds a member's already (directKey caught those up):
+    // a history entry reached through a later carry may stop short of the generation asked for.
+    if (isOwner || !privateFeedKeyStore.memberKeys(viewerId, ownerId, feed)) {
       const doc = await feedDoc(feeds, ownerId, feed)
       const opened = doc ? await openFeedKeys(viewerId, ownerId, doc, grantIn(feed), encryptionPrivateKey) : 'none'
       if (opened === 'recovered') {

@@ -7,9 +7,11 @@ import type { EncryptionSource } from '@/lib/services/post-service'
 import { isPrivatePost } from '@/components/post/private-post-content'
 
 /**
- * A reply to a private post is encrypted to that post's feed (PRD §5.5). This
- * resolves the source while the composer is open on such a reply; an error
- * blocks posting until a retry succeeds.
+ * A reply in a private thread is encrypted to the thread root's feed (PRD
+ * §5.5). This resolves the source while the composer is open on a reply to
+ * private content: none for a private reply under a public root (the thread
+ * is public, so the visibility is the replier's choice); an error (the thread
+ * could not be read) blocks posting until a retry succeeds.
  */
 export function useInheritedEncryption(isOpen: boolean, replyingTo: Post | null) {
   const [source, setSource] = useState<EncryptionSource | null>(null)
@@ -28,7 +30,6 @@ export function useInheritedEncryption(isOpen: boolean, replyingTo: Post | null)
       const resolved = await getEncryptionSource(post)
       if (!isCurrent()) return
       setSource(resolved)
-      setError(!resolved)
     } catch (err) {
       logger.error('Failed to check inherited encryption:', err)
       if (!isCurrent()) return

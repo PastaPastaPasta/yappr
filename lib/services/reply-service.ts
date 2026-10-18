@@ -764,22 +764,25 @@ class ReplyService extends BaseDocumentService<Reply> {
  * the root can read every reply under it, and a reply goes into that author's
  * current private feed. Private feeds are social v17's, whose replies name
  * their root directly, so this is one lookup.
+ *
+ * Null when the thread is public (a private reply under a public root is in
+ * its replier's own feed, and a reply to it is the replier's choice, like any
+ * reply in a public thread). Throws when that cannot be told: the root could
+ * not be read, or it was deleted (its tombstone no longer says whether it was
+ * private), so nothing is posted in the clear by mistake.
  */
 export async function getEncryptionSource(
   target: { id: string; targetKind?: TargetKind; parentId?: string; rootPostId?: string }
 ): Promise<EncryptionSource | null> {
   if (!hasFlatThreads()) return null;
-  try {
-    const { postService } = await import('./post-service');
-    const rootPost = await postService.getPostById(threadRootIdOf(target), { skipEnrichment: true });
-    if (!rootPost?.encryptedContent || rootPost.keyGeneration === undefined || !rootPost.nonce || rootPost.feed === undefined) {
-      return null;
-    }
-    return { ownerId: rootPost.author.id, feed: rootPost.feed, keyGeneration: rootPost.keyGeneration, inherited: true };
-  } catch (error) {
-    logger.error('Error getting encryption source:', error);
+  const { postService } = await import('./post-service');
+  const rootPost = await postService.getPostById(threadRootIdOf(target), { skipEnrichment: true });
+  if (!rootPost) throw new Error('The thread could not be read');
+  if (rootPost.deleted) throw new Error('The first post of this thread was deleted');
+  if (!rootPost.encryptedContent || rootPost.keyGeneration === undefined || !rootPost.nonce || rootPost.feed === undefined) {
     return null;
   }
+  return { ownerId: rootPost.author.id, feed: rootPost.feed, keyGeneration: rootPost.keyGeneration, inherited: true };
 }
 
 // Singleton instance
