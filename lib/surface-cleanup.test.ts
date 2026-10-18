@@ -5,6 +5,7 @@ import { createBattery, contractFileSha256, contractTarget, recordedTestContract
 import { createDocWriter, ensureTokens } from '../scripts/seed/feature-seed-lib.mjs'
 import { parseArgs } from '../scripts/clean-test-content.mjs'
 import { blogPostTombstone, cleanBlog, cleanPollr, cleanStorefront, contentOf, createdSince, withStatus } from '../scripts/surface-cleanup.mjs'
+import { CHOICES_MIN_ITEMS, CHOICES_UNIQUE_ITEMS } from '../scripts/pollr-schema-refusals.mjs'
 
 // The pure half of the feature-surface cleanup (scripts/surface-cleanup.mjs) and of the batteries'
 // test contracts (scripts/battery-lib.mjs). The chain half runs in the blog, storefront and pollr
@@ -317,6 +318,46 @@ describe('battery rejection verdicts', () => {
     const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
     battery.expectRejected('invalid reference', { ok: false, error: 'Failed to wait for state transition result: state transition broadcast error: referenced identity not found | code=40120' }, /40120/);
     expect(battery.failures).toBe(0);
+  });
+});
+
+describe('Pollr choices schema verdicts', () => {
+  it.each([
+    [CHOICES_MIN_ITEMS, 'Failed to broadcast: Protocol error: JsonSchemaError: [] has less than 1 item, path: /choices | code=10101'],
+    [CHOICES_MIN_ITEMS, 'data/choices must NOT have fewer than 1 items'],
+    [CHOICES_MIN_ITEMS, 'data.choices should have at least 1 item'],
+    [CHOICES_UNIQUE_ITEMS, 'JsonSchemaError: [1,1] has non-unique elements, path: /choices | code=10101'],
+    [CHOICES_UNIQUE_ITEMS, 'data/choices must NOT have duplicate items (items ## 1 and 0 are identical)'],
+    [CHOICES_UNIQUE_ITEMS, 'data.choices should NOT have duplicate items'],
+  ])('requires positive evidence of the expected schema rule: %s, %s', (pattern, error) => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('choices schema', { ok: false, error }, pattern);
+    expect(battery.failures).toBe(0);
+  });
+
+  it.each([CHOICES_MIN_ITEMS, CHOICES_UNIQUE_ITEMS])('rejects ambiguous or unrelated outcomes: %s', (pattern) => {
+    for (const error of [
+      'Object already exists: tx already exists in cache',
+      'AlreadyExists: transaction already exists in cache',
+      'the SDK reported no error, but the write is not on chain',
+      'Failed to wait for state transition result',
+      '',
+      'JsonSchemaError: [] has less than 1 item, path: /options | code=10101',
+      'JsonSchemaError: [1,2] is too long, path: /choices | code=10101',
+    ]) {
+      const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+      battery.expectRejected('choices schema', { ok: false, error }, pattern);
+      expect(battery.failures, error).toBe(1);
+    }
+  });
+
+  it.each([
+    [CHOICES_MIN_ITEMS, 'JsonSchemaError: [1,1] has non-unique elements, path: /choices | code=10101'],
+    [CHOICES_UNIQUE_ITEMS, 'JsonSchemaError: [] has less than 1 item, path: /choices | code=10101'],
+  ])('rejects evidence for the other schema condition: %s', (pattern, error) => {
+    const battery = createBattery({ handle: { sdk: {} }, contractId: b58(9), socialId: b58(9) });
+    battery.expectRejected('choices schema', { ok: false, error }, pattern);
+    expect(battery.failures).toBe(1);
   });
 });
 

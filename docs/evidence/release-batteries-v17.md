@@ -52,11 +52,20 @@ unchanged. The wrapper and local identities/configuration are not committed.
 ## Validation
 
 Local lint, standalone TypeScript checking, production build and dead-code checks pass. The full unit suite
-passes 239 files / 3,487 tests after merging staging elections/blog amendments and the
+passes 239 files / 3,497 tests after merging staging elections/blog amendments and the
 review regressions. Offline social/seed checks cover both v16 and
 v17; each seeder self-test reports 98 PASS / 0 FAIL. Social-shape tests report
 595 PASS / 0 FAIL, and App Connect self-tests report 30 PASS / 0 FAIL.
-The amended blog battery self-test passes 22 checks plus its moderation-rule declarations.
+The amended blog battery self-test passes 26 checks plus its moderation-rule declarations.
+Opus r14/r15 approved the final blog topology and Pollr refusal changes; Sonnet r3
+found no required simplifications. Pollr p2b/p2c require positive evidence of
+`/choices` minItems/uniqueItems validation (DPP schema error or AJV client
+validation), with 10 regression tests rejecting cache/confirmation ambiguity,
+wrong fields and the other rule. The targeted suite passes 51/51. The focused
+Sakura p1+p2 replay passed 9/0 using those stricter assertions: both schema
+refusals were code10101 on `/choices` with their exact condition text. Cleanup
+removed three unballoted polls; the closing poll and its immutable ballot
+remain on the reusable throwaway. Two explicit Envoy resets were honored.
 
 Live results and cleanup evidence are recorded below after each full run.
 The query-bundle run used nonempty social pages (20 posts and one reply);
@@ -69,8 +78,11 @@ bundle is explicitly skipped because no DM v4 contract exists on this chain.
 | `verify-blog` full, original v9 rerun | 104 | 0 | Original blog v9; personas 60/61/62, moderator 63 |
 | `verify-blog` full, amended v9 corrected runner | 105 | 1 | b8 quorum-key read abort; exact failure below |
 | Amended blog b1+b8 isolated replay | 15 | 0 | Fresh fixtures; all owner-deletion/orphan-retraction cases |
+| Original-v9 b19+b22 topology replay | 19 | 0 | Required blogId schema10101 and original-v9 live/tombstone constraints |
+| Amended-v9 b19 strict constraint replay | 9 | 0 | Missing blog remains exact hasBody10422; fixture blog removed |
 | `verify-storefront` full | 164 | 0 | Storefront v10; personas 80/81/82, moderator 63 |
 | `verify-pollr` full | 77 | 0 | Reusable pollr v8 test contract; personas 63/83/84 |
+| Pollr p1+p2 strict schema replay | 9 | 0 | Positive minItems/uniqueItems evidence, same reusable copy |
 | `verify-dm-v5` full | 107 | 0 | Published DM v5 plus bot-2-owned layout variants |
 | `verify-tips` full | 6 | 0 | Isolated credit-tip personas 85/86 |
 | App Connect self-tests | 30 | 0 | Offline contract/derivation checks |
@@ -128,6 +140,14 @@ tombstoned that post, then moderator-removed its blog. Cleanup scoped only to
 the reader found and deleted the comment through the permanent comment index;
 a read by ID confirmed removal. Its final fixture cleanup found no remaining
 actions. All eight checks passed.
+
+The final original-v9 b19+b22 replay passed 19/0, including the specific
+missing-`blogId` schema refusal 10101 and frozen-publishedAt/tombstone checks;
+cleanup removed its one blog with no failed actions. The amended-v9 b19
+replay passed 9/0 with the exact missing-blog `hasBody` refusal 10422 and
+removed its one fixture blog. Its transport honored four explicit Envoy resets. Offline schema-profile
+checks cover v8 (no `live`, optional `publishedAt`), original v9 (required
+`blogId`) and amended v9 (optional orphan reference with live `hasBody`).
 
 Both original-v9 full blog runs removed their 6 comments, 1 follow, 7 live posts (by
 tombstone) and 3 blogs (by moderator removal), with no failed cleanup actions.

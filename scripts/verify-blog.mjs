@@ -78,6 +78,7 @@ const publishedOnly = () => SCHEMAS.blogPost.required.includes('publishedAt');
 /** A JSON-schema refusal (10101): an unknown property or a missing required field. */
 const SCHEMA_REFUSED = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror|additional ?propert/i;
 const MISSING_PUBLISHED_AT = /(?=.*(?:\b10101\b|jsonschemaerror))(?=.*publishedAt)(?=.*required)/is;
+const MISSING_BLOG_ID = /(?=.*(?:\b10101\b|jsonschemaerror))(?=.*blogId)(?=.*required)/is;
 
 /** An index `docType` declares, by name (undefined when it declares none). */
 const index = (docType, name) => (SCHEMAS[docType].indices ?? []).find((entry) => entry.name === name);
@@ -115,6 +116,24 @@ const commentData = ({ blogPostId, content }) => ({ blogPostId, content });
 
 /** Bind a constraint probe's reference without restoring a deliberately omitted field. */
 const withFixtureBlog = (data, blogId) => ({ ...data, ...(Object.hasOwn(data, 'blogId') ? { blogId: id32(blogId) } : {}) });
+
+/** Shared probes as the deployed cut accepts them; older cuts have no live rule. */
+function blogConstraintProbes(cases, { schema = SCHEMAS.blogPost, prefix } = {}) {
+  return cases.filter(([label, , rule]) => {
+    if (schema.propertyConstraints?.[rule]) return true;
+    if (prefix) console.log(`SKIP  ${prefix} ${label} — ${rule} is not declared on this blog cut`);
+    return false;
+  }).map(([label, data, rule]) => {
+    const payload = { ...data };
+    if (!schema.properties.live) delete payload.live;
+    const requiredBlog = !Object.hasOwn(payload, 'blogId') && schema.required.includes('blogId');
+    return {
+      label, data: payload, rule,
+      expect: requiredBlog ? MISSING_BLOG_ID : constraintViolation(rule),
+      reason: requiredBlog ? '10101: required blogId' : `10422 ${rule}`,
+    };
+  });
+}
 
 // ---- Cases ------------------------------------------------------------------
 
@@ -400,8 +419,8 @@ async function caseB19PropertyConstraints(ctx) {
   console.log('\n--- b19. propertyConstraints on a create (10422): chunks contiguous, a body, publishedAt not ahead ---');
   // Under b1's fixture blog, or (for `--only b19`) a fresh one; b1b/b1c (one chunk each) are the accepted side.
   if (!(await ensureFixtureBlog(ctx, 'b19'))) return;
-  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, 'blogPost')) {
-    await battery.probeCreate(`b19 ${label} is refused (10422 ${rule})`, constraintViolation(rule), author, 'blogPost', { ...withFixtureBlog(data, ctx.blogId), slug: `gap-${run}-${Date.now()}` });
+  for (const { label, data, expect, reason } of blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost'), { prefix: 'b19' })) {
+    await battery.probeCreate(`b19 ${label} is refused (${reason})`, expect, author, 'blogPost', { ...withFixtureBlog(data, ctx.blogId), slug: `gap-${run}-${Date.now()}` });
   }
 }
 
@@ -455,8 +474,8 @@ async function caseB22Tombstone(ctx) {
   if (!fixture) return;
   const { replace } = fixture;
   // The refused shapes come from the shared table, so the offline oracle judged them first.
-  for (const [label, data, rule] of refusedReplaces(CONTRACT_FILE, 'blogPost')) {
-    await replace(`b22 ${label} is refused (10422 ${rule})`, constraintViolation(rule), { ...data, blogId: id32(ctx.blogId), slug: fixture.slug, publishedAt: fixture.publishedAt });
+  for (const { label, data, expect, reason } of blogConstraintProbes(refusedReplaces(CONTRACT_FILE, 'blogPost'), { prefix: 'b22' })) {
+    await replace(`b22 ${label} is refused (${reason})`, expect, { ...data, blogId: id32(ctx.blogId), slug: fixture.slug, publishedAt: fixture.publishedAt });
   }
   await replace(`b22a a tombstone that drops publishedAt is refused (${publishedOnly() ? '10101: required field' : '40128: frozen once set'})`,
     publishedOnly() ? MISSING_PUBLISHED_AT : IMMUTABLE_CHANGED, drop(tombstoneData(ctx, fixture), 'publishedAt'));
@@ -533,9 +552,21 @@ function selfTestV7() {
   const fee = (docType) => actionFeeFor(docType, SCHEMAS)?.moderators;
   const missingBlog = refusedCreates(CONTRACT_FILE, 'blogPost').find(([label]) => label === 'blogPost: live post requires a blog')?.[1];
   const fixtureId = new Uint8Array(32).fill(7);
+  const legacySchema = structuredClone(SCHEMAS.blogPost);
+  legacySchema.required.push('blogId');
+  const originalV9Probes = blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost'), { schema: legacySchema });
+  delete legacySchema.properties.live;
+  delete legacySchema.propertyConstraints.live;
+  legacySchema.required = legacySchema.required.filter((field) => field !== 'publishedAt');
+  const legacyProbes = blogConstraintProbes([...refusedCreates(CONTRACT_FILE, 'blogPost'), ...refusedReplaces(CONTRACT_FILE, 'blogPost')], { schema: legacySchema });
+  const missingBlogProbe = (probes) => probes.find((probe) => probe.label === 'blogPost: live post requires a blog');
   return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v9)`, [
     ['constraint fixture binding keeps the missing-blog refusal intact', missingBlog !== undefined && !Object.hasOwn(withFixtureBlog(missingBlog, bs58.encode(fixtureId)), 'blogId')],
     ['constraint fixture binding replaces an existing blog reference', JSON.stringify(withFixtureBlog({ blogId: new Uint8Array(32) }, bs58.encode(fixtureId)).blogId) === JSON.stringify(fixtureId)],
+    ['older cuts skip only undeclared live constraints and omit the live marker', legacyProbes.length > 0 && legacyProbes.every((probe) => probe.rule !== 'live' && !Object.hasOwn(probe.data, 'live'))],
+    ['older cuts require the specific missing-blog schema refusal', missingBlogProbe(legacyProbes)?.expect.test('JsonSchemaError: "blogId" is a required property | code=10101') && !missingBlogProbe(legacyProbes)?.expect.test('JsonSchemaError: "title" is a required property | code=10101')],
+    ['original v9 keeps live markers and the required-blog schema refusal', originalV9Probes.some((probe) => probe.data.live === true) && missingBlogProbe(originalV9Probes)?.reason === '10101: required blogId'],
+    ['amended v9 keeps the exact hasBody refusal for a missing blog', missingBlogProbe(blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost')))?.expect.test('A document of type "blogPost" breaks its propertyConstraints rule "hasBody": it does not hold') && !missingBlogProbe(blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost')))?.expect.test('JsonSchemaError: "blogId" is a required property | code=10101')],
     ['author management and cleanup have independent owner indexes', JSON.stringify(index('blogPost', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"live":"asc"},{"$createdAt":"asc"}]' && JSON.stringify(index('blogComment', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"$createdAt":"asc"}]'],
     ['only tombstones may omit blogId after parent deletion', !SCHEMAS.blogPost.required.includes('blogId') && SCHEMAS.blogPost.propertyConstraints.hasBody.anyOf[1].allOf.some((rule) => rule.present === 'blogId')],
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
