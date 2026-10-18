@@ -495,8 +495,9 @@ class StateTransitionService {
       await sdk.stateTransitions.broadcastStateTransition(stateTransition);
       await sdk.stateTransitions.waitForResponse(stateTransition);
     } catch (error) {
-      // Already in flight, or no verdict: only the proof below decides.
-      refused = isConsensusRefusal(error);
+      // Already in flight, or no verdict: only the proof below decides. A nonce clash says nothing
+      // about these bytes ("already present" is what a landed one gets), so it is no refusal here.
+      refused = isConsensusRefusal(error) && !isIdentityNonceConflictError(error);
       logger.warn(`Re-sending ${documentType} ${documentId} gave no verdict:`, extractErrorMessage(error));
     }
     const after = outcome(await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, nonce));

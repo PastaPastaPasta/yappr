@@ -123,7 +123,7 @@ type EnrolStep =
   | { kind: 'confirm'; pending: PendingPasskey }
   | { kind: 'saving' }
   /** Sent but not confirmed: only checking again is offered, never another passkey. */
-  | { kind: 'pending'; pending: PendingPasskey; checking: boolean }
+  | { kind: 'pending'; pending: PendingPasskey; checking: boolean; message?: string }
   | { kind: 'done' }
   | { kind: 'error'; message: string }
 
@@ -189,8 +189,9 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
         else setStep({ kind: 'pending', pending, checking: false })
       })
       .catch((error: unknown) => {
+        // Saving it again was refused (say, no balance left): still pending, with the reason.
         logger.warn('Passkeys: checking a saved passkey failed:', error)
-        setStep({ kind: 'pending', pending, checking: false })
+        setStep({ kind: 'pending', pending, checking: false, message: enrolErrorCopy(error) ?? undefined })
       })
   }, [changed, fail])
 
@@ -218,6 +219,7 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
             <p className="text-sm text-gray-500 mb-5">Saving it costs less than 3¢ from your balance.</p>
           )}
           {step.kind === 'error' && <InlineError>{step.message}</InlineError>}
+          {step.kind === 'pending' && step.message && <InlineError>{step.message}</InlineError>}
           <div className="flex flex-col gap-3">
             {step.kind === 'pending' ? (
               <Button className="w-full gap-2" onClick={() => checkAgain(step.pending)} disabled={busy}>
