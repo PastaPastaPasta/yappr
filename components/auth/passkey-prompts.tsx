@@ -11,6 +11,8 @@ import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { markPasskeyOfferMade, passkeyOfferMade, passkeysHere } from '@/lib/auth/passkey-device'
 import {
   PasskeyVaultError,
+  abandonPasskeyEnrolment,
+  confirmPendingEnrolment,
   finishPasskeyEnrolment,
   forgetPendingEnrolments,
   listPasskeys,
@@ -122,8 +124,11 @@ type EnrolStep =
   | { kind: 'creating' }
   | { kind: 'confirm'; pending: PendingPasskey }
   | { kind: 'saving' }
-  /** Sent but not confirmed: only checking again is offered, never another passkey. */
-  | { kind: 'pending'; pending: PendingPasskey; checking: boolean; message?: string }
+  /**
+   * Sent but not confirmed: only checking again is offered, never another
+   * passkey. `needsConfirm`: saving it again needs the passkey to vouch for it first.
+   */
+  | { kind: 'pending'; pending: PendingPasskey; checking: boolean; message?: string; needsConfirm?: boolean }
   | { kind: 'done' }
   | { kind: 'error'; message: string }
 
@@ -137,6 +142,16 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
     return pending ? { kind: 'pending', pending, checking: false } : { kind: 'intro' }
   })
   const busy = step.kind === 'creating' || step.kind === 'saving' || (step.kind === 'pending' && step.checking)
+
+  // Made but never saved when the dialog goes (closed, or the session ended): its PRF output is wiped and
+  // the passkey, which signs in to nothing, is dropped from the provider.
+  const stepRef = useRef(step)
+  stepRef.current = step
+  useEffect(() => () => {
+    const last = stepRef.current
+    if (last.kind !== 'confirm') return
+    abandonPasskeyEnrolment(last.pending).catch((error: unknown) => logger.warn('Passkeys: dropping an unsaved passkey failed:', error))
+  }, [])
   // A check can take a minute; the enrolment outlives the dialog (reopening resumes it), so it may close meanwhile.
   const closable = step.kind === 'pending' || !busy
 
@@ -178,20 +193,29 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
       })
   }, [changed, fail, resume])
 
-  const checkAgain = useCallback((pending: PendingPasskey) => {
-    setStep({ kind: 'pending', pending, checking: true })
-    checkPendingEnrolment(pending)
+  /** `confirming`: saving it again behind the passkey's own confirmation, which the user may close. */
+  const settle = useCallback((pending: PendingPasskey, confirming: boolean) => {
+    setStep({ kind: 'pending', pending, checking: true, needsConfirm: confirming })
+    const outcome = confirming ? confirmPendingEnrolment(pending) : checkPendingEnrolment(pending)
+    outcome
       .then((outcome) => {
         changed()
         if (outcome === 'saved') setStep({ kind: 'done' })
         // Proved never saved: the passkey was dropped, and a new one can be added.
         else if (outcome === 'not-saved') fail(new PasskeyVaultError('failed'), { kind: 'intro' })
-        else setStep({ kind: 'pending', pending, checking: false })
+        else setStep({ kind: 'pending', pending, checking: false, needsConfirm: outcome === 'confirm' })
       })
       .catch((error: unknown) => {
-        // Saving it again was refused (say, no balance left): still pending, with the reason.
+        // A closed sheet asks again; a refused re-save (say, no balance left) stays pending, with the reason.
         logger.warn('Passkeys: checking a saved passkey failed:', error)
-        setStep({ kind: 'pending', pending, checking: false, message: enrolErrorCopy(error) ?? undefined })
+        const cancelled = error instanceof PasskeyVaultError && error.code === 'cancelled'
+        // A record the passkey would not vouch for was dropped: nothing is pending any more.
+        if (confirming && !cancelled && !pendingEnrolmentFor(pending.identityId)) {
+          changed()
+          fail(error, { kind: 'intro' })
+          return
+        }
+        setStep({ kind: 'pending', pending, checking: false, needsConfirm: confirming, message: cancelled ? undefined : enrolErrorCopy(error) ?? undefined })
       })
   }, [changed, fail])
 
@@ -211,7 +235,9 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-3">
             Use Face ID, Touch ID, Windows Hello or your phone to sign in to Yappr on any device. Your sign-in is saved encrypted, and only your passkey can open it.
           </Dialog.Description>
-          {step.kind === 'pending' ? (
+          {step.kind === 'pending' && step.needsConfirm ? (
+            <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">To finish saving your passkey, confirm it once more.</p>
+          ) : step.kind === 'pending' ? (
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">{enrolErrorCopy(new PasskeyVaultError('pending'))}</p>
           ) : step.kind === 'confirm' ? (
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">Almost done. Confirm your passkey once more.</p>
@@ -222,9 +248,9 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
           {step.kind === 'pending' && step.message && <InlineError>{step.message}</InlineError>}
           <div className="flex flex-col gap-3">
             {step.kind === 'pending' ? (
-              <Button className="w-full gap-2" onClick={() => checkAgain(step.pending)} disabled={busy}>
+              <Button className="w-full gap-2" onClick={() => settle(step.pending, step.needsConfirm === true)} disabled={busy}>
                 {busy && <Spinner size="sm" />}
-                Check again
+                {step.needsConfirm ? 'Confirm' : 'Check again'}
               </Button>
             ) : step.kind === 'confirm' ? (
               <Button className="w-full" onClick={() => confirm(step.pending)} data-testid="passkey-confirm">Confirm</Button>

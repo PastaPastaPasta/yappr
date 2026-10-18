@@ -627,7 +627,7 @@ class ModerationService {
    */
   async getTeam({ fresh = false }: { fresh?: boolean } = {}): Promise<ModerationTeam | null> {
     if (fresh) this.invalidateTeam();
-    const read = this.readTeam();
+    const read = this.readTeam(fresh);
     return read === null ? null : (await read).team;
   }
 
@@ -665,12 +665,19 @@ class ModerationService {
     return moderatedTypeOpenFor(interim, seated);
   }
 
-  private readTeam(): Promise<TeamRead> | null {
+  /**
+   * `fresh`: the contract comes from a proved network answer, never from the
+   * SDK's contract cache (which keeps fetched and bundled contracts, and could
+   * still hold an appointed moderator a later contract update removed).
+   */
+  private readTeam(fresh = false): Promise<TeamRead> | null {
     if (!this.contract.moderated()) return null;
     if (!this.team || Date.now() - this.team.at >= ModerationService.TEAM_TTL_MS) {
       const promise = (async () => {
         const sdk = await getEvoSdk();
-        const contract = await sdk.contracts.fetch(this.contract.contractId);
+        const contract = fresh
+          ? (await sdk.contracts.fetchWithProof(this.contract.contractId)).data
+          : await sdk.contracts.fetch(this.contract.contractId);
         if (!contract) throw new Error(`${this.contract.label} contract not found`);
         const moderators = contract.config.moderation?.moderators;
         const seated = moderators?.$type === 'elected' ? await this.seatedTeam(sdk, moderators.maxAddedModerators ?? 0) : null;

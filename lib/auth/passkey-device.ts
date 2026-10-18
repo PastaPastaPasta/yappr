@@ -12,29 +12,22 @@
  * - A passkey added here whose entry was sent but not yet confirmed, until it
  *   settles (public facts only).
  */
-import { readScoped, writeScoped } from '@/lib/storage-scope'
+import { readScoped, removeScoped, scopedKeysWithPrefix, writeScoped } from '@/lib/storage-scope'
 
-const DEVICE_KEY = 'yappr_passkeys_here'
-const NAMES_KEY = 'yappr_passkey_names'
+/**
+ * One storage value per fact (per marker, per name, per identity's unsettled
+ * passkey), never a shared map: tabs writing at once can never drop each
+ * other's records with a read-modify-write.
+ */
+const HERE_PREFIX = 'yappr_passkey_here:'
+const NAME_PREFIX = 'yappr_passkey_name:'
 const OFFER_KEY = 'yappr_passkey_offered'
-const UNSETTLED_KEY = 'yappr_passkey_unsettled'
+const UNSETTLED_PREFIX = 'yappr_passkey_unsettled:'
 
 export const MAX_PASSKEY_NAME_LENGTH = 40
 
-function readMap(key: string): Record<string, unknown> {
-  const raw = readScoped(key)
-  if (!raw) return {}
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
-  } catch {
-    return {}
-  }
-}
-
-function stringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-}
+const hereKey = (identityId: string, marker: string) => `${HERE_PREFIX}${identityId}:${marker}`
+const unsettledKey = (identityId: string) => `${UNSETTLED_PREFIX}${identityId}`
 
 /**
  * A passkey as this browser knows it: its credential id (base64url) and the
@@ -48,22 +41,25 @@ export function passkeyMarker(credentialId: string, recipientKeyHex: string): st
   return `${credentialId}.${recipientKeyHex}`
 }
 
-/** The markers ({@link passkeyMarker}) of the passkeys added or used for `identityId` in this browser. */
+/**
+ * The markers ({@link passkeyMarker}) of the passkeys added or used for
+ * `identityId` in this browser. What this browser stored is trusted here:
+ * its storage is part of what "This device" rests on (docs/PASSKEY_VAULT.md).
+ */
 export function passkeysHere(identityId: string): string[] {
-  return stringList(readMap(DEVICE_KEY)[identityId])
+  const prefix = `${HERE_PREFIX}${identityId}:`
+  return scopedKeysWithPrefix(prefix).map((key) => key.slice(prefix.length))
 }
 
 export function rememberPasskeyHere(identityId: string, marker: string): void {
-  const map = readMap(DEVICE_KEY)
-  const markers = stringList(map[identityId])
-  if (markers.includes(marker)) return
-  writeScoped(DEVICE_KEY, JSON.stringify({ ...map, [identityId]: [...markers, marker] }))
+  writeScoped(hereKey(identityId, marker), '1')
 }
 
 /** Forgets every marker of the passkey `credentialId` (base64url). */
 export function forgetPasskeyHere(identityId: string, credentialId: string): void {
-  const map = readMap(DEVICE_KEY)
-  writeScoped(DEVICE_KEY, JSON.stringify({ ...map, [identityId]: stringList(map[identityId]).filter((marker) => !marker.startsWith(`${credentialId}.`)) }))
+  for (const marker of passkeysHere(identityId)) {
+    if (marker.startsWith(`${credentialId}.`)) removeScoped(hereKey(identityId, marker))
+  }
 }
 
 /**
@@ -72,17 +68,15 @@ export function forgetPasskeyHere(identityId: string, credentialId: string): voi
  * with another recipient key never inherits the real passkey's name.
  */
 export function passkeyName(marker: string): string | null {
-  const name = readMap(NAMES_KEY)[marker]
-  return typeof name === 'string' && name.trim() ? name : null
+  const name = readScoped(NAME_PREFIX + marker)
+  return name?.trim() ? name : null
 }
 
 /** Names a passkey (by its marker) in this browser; an empty name clears it. */
 export function setPasskeyName(marker: string, name: string): void {
-  const map = readMap(NAMES_KEY)
   const trimmed = name.trim().slice(0, MAX_PASSKEY_NAME_LENGTH)
-  if (trimmed) map[marker] = trimmed
-  else delete map[marker]
-  writeScoped(NAMES_KEY, JSON.stringify(map))
+  if (trimmed) writeScoped(NAME_PREFIX + marker, trimmed)
+  else removeScoped(NAME_PREFIX + marker)
 }
 
 /** Whether this browser has already been offered a passkey after a sign-in (it is offered once, ever). */
@@ -132,7 +126,14 @@ function receiptOf(value: unknown): UnsettledReceipt | undefined {
 
 /** The unsettled passkey added here for `identityId`, or null. */
 export function unsettledPasskey(identityId: string): UnsettledPasskey | null {
-  const value = readMap(UNSETTLED_KEY)[identityId]
+  const raw = readScoped(unsettledKey(identityId))
+  if (!raw) return null
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return null
+  }
   if (!value || typeof value !== 'object') return null
   const { vault, credentialId, recipientKey, receipts } = value as Record<string, unknown>
   if (typeof vault !== 'string' || typeof credentialId !== 'string' || typeof recipientKey !== 'string' || !Array.isArray(receipts)) return null
@@ -144,15 +145,12 @@ export function unsettledPasskey(identityId: string): UnsettledPasskey | null {
 
 /** Keeps it; false when this browser could not store it. */
 export function rememberUnsettledPasskey(identityId: string, passkey: UnsettledPasskey): boolean {
-  return writeScoped(UNSETTLED_KEY, JSON.stringify({ ...readMap(UNSETTLED_KEY), [identityId]: passkey }))
+  return writeScoped(unsettledKey(identityId), JSON.stringify(passkey))
 }
 
 /** Forgets the unsettled passkey for `identityId` if it is `credentialId` (base64url): it settled. */
 export function forgetUnsettledPasskey(identityId: string, credentialId: string): void {
   const stored = unsettledPasskey(identityId)
   if (stored && stored.credentialId !== credentialId) return
-  const map = readMap(UNSETTLED_KEY)
-  if (!(identityId in map)) return
-  delete map[identityId]
-  writeScoped(UNSETTLED_KEY, JSON.stringify(map))
+  removeScoped(unsettledKey(identityId))
 }

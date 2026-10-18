@@ -62,7 +62,14 @@ import { primaryGroupKey } from '@/lib/app-connect/session-health'
 import { wipeGrant } from '@/lib/app-connect/wallet-sign-in'
 import { buildYapprAppConnectRequest } from '@/lib/app-connect/yappr-request'
 import { rememberAnchorKey } from '@/lib/app-connect/anchor-key-mark'
-import { getEncryptionKeyBytes, getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib/secure-storage'
+import {
+  expectPasskeyCriticalKey,
+  getEncryptionKeyBytes,
+  getPrivateKey,
+  settlePasskeyCriticalKey,
+  storeEncryptionKey,
+  storeEncryptionKeyType,
+} from '@/lib/secure-storage'
 import { passkeyVaultService, type VaultEntryDocument } from '@/lib/services/passkey-vault-service'
 import type { CreateReceipt } from '@/lib/services/state-transition-service'
 import { withIdentityWriteLock } from '@/lib/identity-write-lock'
@@ -333,7 +340,7 @@ async function rawKeySessionBundle(identityId: string): Promise<VaultBundle> {
   const signIn = slotFor(match.key, parsePrivateKey(wif).privateKey)
   let messaging: VaultKey | null = null
   try {
-    const check = checkSignInKey(signIn, keys, Date.now())
+    const check = checkSignInKey(signIn, keys, Date.now(), appConnectPins()?.groupId ?? null)
     if (!check.ok || !await signInKeyAllowed(identityId, check.needsModerator)) throw new PasskeyVaultError('not-eligible')
     const messagingKey = getEncryptionKeyBytes(identityId)
     messaging = messagingKey ? await messagingSlot(identityId, messagingKey, keys) : null
@@ -466,6 +473,8 @@ function writePending(pending: PendingPasskey): boolean {
 function refreshPending(pending: PendingPasskey): boolean {
   const stored = restorePending(pending.identityId)
   if (!stored || !bytesEqual(stored.credentialId, pending.credentialId)) return false
+  // A recipient key that changed under this tab is storage's word again, not the passkey's.
+  if (stored.sentTo && pending.sentTo && !bytesEqual(stored.sentTo, pending.sentTo)) pending.verified = false
   pending.sentTo = stored.sentTo
   pending.receipts = mergeReceipts(stored.receipts, pending.receipts)
   return true
@@ -479,6 +488,7 @@ function refreshPending(pending: PendingPasskey): boolean {
  */
 async function sendEntry(pending: PendingPasskey, recipientKey: Uint8Array, retireOnVerdict: boolean, replacesNonce?: bigint): Promise<boolean> {
   const { contractId } = requireSetup()
+  if (!pending.verified) throw new PasskeyVaultError('failed', 'the passkey has not vouched for this recipient key')
   const bundle = await sessionBundle(pending.identityId)
   let sealed
   try {
@@ -533,6 +543,12 @@ export interface PendingPasskey {
   createPrf: Uint8Array | null
   /** Set once its entry was sent: the recipient key it was sealed to, for {@link passkeySaved}. */
   sentTo?: Uint8Array
+  /**
+   * Whether `sentTo` came from this passkey's PRF in this tab. One restored
+   * from storage is not until {@link confirmPendingEnrolment} proves it: the
+   * session is never sealed again to a recipient key only storage vouches for.
+   */
+  verified?: boolean
   /** Every write sent for its entry, which settle it ({@link checkPendingEnrolment}). */
   receipts?: CreateReceipt[]
 }
@@ -579,26 +595,29 @@ export async function startPasskeyEnrolment(user: { identityId: string; username
  * outcome wipes it.
  */
 export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<void> {
-  const { rp, contractId } = requireSetup()
-  const prf = (await ceremony(() => getPasskeyPrf({ rpId: rp.id, prfInput: prfInput(contractId), allowCredentialIds: [pending.credentialId] }))).prfOutput
+  const { contractId } = requireSetup()
+  let prf: Uint8Array | null
+  try {
+    prf = (await ceremony(() => getPasskeyPrf({ rpId: requireSetup().rp.id, prfInput: prfInput(contractId), allowCredentialIds: [pending.credentialId] }))).prfOutput
+  } catch (error) {
+    // A closed sheet keeps it (and its PRF output) for another tap on Confirm; anything else ends it.
+    if (!(error instanceof PasskeyVaultError && error.code === 'cancelled')) await abandonPasskeyEnrolment(pending)
+    throw error
+  }
   try {
     // A provider that gives nothing at sign-in, or something else than at creation, cannot be trusted to open the entry later.
-    if (!prf || prf.length !== 32 || (pending.createPrf && !bytesEqual(prf, pending.createPrf))) {
-      await signalUnknownPasskey(rp.id, pending.credentialId)
-      throw new PasskeyVaultError('no-prf')
-    }
+    if (!prf || prf.length !== 32 || (pending.createPrf && !bytesEqual(prf, pending.createPrf))) throw new PasskeyVaultError('no-prf')
     const recipient = recipientFromPrf(prf)
     recipient.privateKey.fill(0)
-    let saved
-    try {
-      saved = await sendEntry(pending, recipient.publicKey, true)
-    } catch (error) {
-      // Another passkey of this identity is still being saved here: this one was never sent, and signs in to nothing.
-      if (error instanceof PasskeyVaultError && error.code === 'pending') await signalUnknownPasskey(rp.id, pending.credentialId)
-      throw error
-    }
+    // Derived from the passkey's own PRF output, right here.
+    pending.verified = true
     // Remembered as this device's only once it is confirmed (passkeySaved): one that never lands leaves no marker.
-    if (!saved) throw new PasskeyVaultError('pending')
+    if (!await sendEntry(pending, recipient.publicKey, true)) throw new PasskeyVaultError('pending')
+  } catch (error) {
+    // Still settling here: kept. Otherwise it was never sent (refused, another passkey still saving here,
+    // no PRF) and signs in to nothing.
+    await abandonPasskeyEnrolment(pending)
+    throw error
   } finally {
     prf?.fill(0)
     pending.createPrf?.fill(0)
@@ -645,7 +664,7 @@ async function passkeySaved(pending: PendingPasskey): Promise<boolean> {
  * passkey, which signs in to nothing, and the enrolment is forgotten, so a new
  * one can be added. Anything short of proof, a failed read included, is `waiting`.
  */
-export async function checkPendingEnrolment(pending: PendingPasskey): Promise<'saved' | 'not-saved' | 'waiting'> {
+export async function checkPendingEnrolment(pending: PendingPasskey): Promise<'saved' | 'not-saved' | 'waiting' | 'confirm'> {
   if (await passkeySaved(pending)) return 'saved'
   // Settled in another tab (seen, proved never recorded, or removed): nothing is left here to settle or send.
   if (!refreshPending(pending)) {
@@ -683,9 +702,52 @@ export async function checkPendingEnrolment(pending: PendingPasskey): Promise<'s
   // nonce from the first one on, and byCredential is unique: whichever lands is the entry, and it opens
   // with this passkey.
   if (!pending.sentTo) return 'waiting'
+  // Restored from storage: the passkey vouches for the recipient key first (a gesture, so the UI asks).
+  if (!pending.verified) return 'confirm'
   const stalled = receipts.filter((_, index) => outcomes[index] === 'stalled').map((receipt) => receipt.nonce)
   const replaces = stalled.length > 0 ? stalled.reduce((low, nonce) => (nonce < low ? nonce : low)) : undefined
   return await sendEntry(pending, pending.sentTo, false, replaces) ? 'saved' : 'waiting'
+}
+
+/**
+ * For a pending enrolment restored from storage that needs saving again
+ * (`checkPendingEnrolment` said `confirm`): one sign-in restricted to its
+ * passkey, whose PRF must give exactly the recipient key on record. Only then
+ * is the session sealed to it. A record the passkey does not vouch for is
+ * dropped (it can only be a damaged or planted one), and nothing is sealed.
+ */
+export async function confirmPendingEnrolment(pending: PendingPasskey): Promise<'saved' | 'not-saved' | 'waiting' | 'confirm'> {
+  const { rp, contractId } = requireSetup()
+  const assertion = await ceremony(() => getPasskeyPrf({ rpId: rp.id, prfInput: prfInput(contractId), allowCredentialIds: [pending.credentialId] }))
+  const prf = assertion.prfOutput
+  try {
+    const recipient = prf && prf.length === 32 ? recipientFromPrf(prf) : null
+    recipient?.privateKey.fill(0)
+    const vouched = recipient !== null && pending.sentTo !== undefined && bytesEqual(assertion.credentialId, pending.credentialId)
+      && bytesEqual(recipient.publicKey, pending.sentTo)
+    if (!vouched) {
+      retirePending(pending.identityId, pending.credentialId)
+      throw new PasskeyVaultError('failed', 'the passkey does not open what this browser recorded for it')
+    }
+    pending.verified = true
+  } finally {
+    prf?.fill(0)
+  }
+  return await checkPendingEnrolment(pending)
+}
+
+/**
+ * The user left an enrolment that was made but not saved (the dialog closed,
+ * the session ended, or the confirming sign-in failed): its PRF output is
+ * wiped, and a passkey that was never sent is dropped from the provider (it
+ * signs in to nothing). One still settling is kept: it may land.
+ */
+export async function abandonPasskeyEnrolment(pending: PendingPasskey): Promise<void> {
+  pending.createPrf?.fill(0)
+  const held = pendingEnrolmentFor(pending.identityId)
+  if (held && bytesEqual(held.credentialId, pending.credentialId)) return
+  const found = setup()
+  if (found) await signalUnknownPasskey(found.rp.id, pending.credentialId)
 }
 
 /** What opening a passkey restores. */
@@ -723,7 +785,7 @@ async function unlockKeyRing(identityId: string, bundle: VaultBundle): Promise<P
 async function unlockRawKey(identityId: string, bundle: VaultBundle): Promise<PasskeyUnlock> {
   const keys = await freshKeys(identityId)
   const [signIn, ...rest] = bundle.keys
-  const check = checkSignInKey(signIn, keys, Date.now())
+  const check = checkSignInKey(signIn, keys, Date.now(), appConnectPins()?.groupId ?? null)
   if (!check.ok) throw new PasskeyVaultError('stale')
   if (!await signInKeyAllowed(identityId, check.needsModerator)) throw new PasskeyVaultError('not-eligible')
   // A copy: the bundle's own key is wiped with the bundle, and this one below whatever the check says.
@@ -973,7 +1035,26 @@ export async function removeAllPasskeys(identityId: string): Promise<{ removed: 
  * held. {@link unlockWithPasskey} already checked it is the identity's
  * current one, so it counts as confirmed.
  */
-export function restorePasskeyMessagingKey(identityId: string, wif: string): void {
+/**
+ * The hooks a raw-key passkey sign-in runs inside the controller's commit,
+ * around storing the sign-in key, and only if that commit is still current:
+ * a CRITICAL key is expected right before, so it is stored as one tagged
+ * record and never exists without its provenance (lib/secure-storage.ts), and
+ * the messaging key is stored only once the sign-in key is. A sign-out or
+ * another sign-in meanwhile runs neither, so nothing of this one is left behind.
+ */
+export function rawKeyStoreHooks(unlocked: Extract<PasskeyUnlock, { kind: 'raw-key' }>): { beforeStore: () => void; afterStore: () => void } {
+  const { identityId, signInWif, messagingWif, critical } = unlocked
+  return {
+    beforeStore: () => { if (critical) expectPasskeyCriticalKey(identityId, signInWif) },
+    afterStore: () => {
+      settlePasskeyCriticalKey(identityId)
+      if (messagingWif) restorePasskeyMessagingKey(identityId, messagingWif)
+    },
+  }
+}
+
+function restorePasskeyMessagingKey(identityId: string, wif: string): void {
   storeEncryptionKey(identityId, wif)
   storeEncryptionKeyType(identityId, 'external')
   rememberAnchorKey(identityId, getPublicKey(parsePrivateKey(wif).privateKey))

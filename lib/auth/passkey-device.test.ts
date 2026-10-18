@@ -50,7 +50,35 @@ describe('unsettled passkeys', () => {
     device.rememberUnsettledPasskey(IDENTITY, { ...UNSETTLED, receipts: [{ ...UNSETTLED.receipts[0], nonce: '-1' }] })
     expect(device.unsettledPasskey(IDENTITY)).toBeNull()
 
-    localStorage.setItem('yappr_passkey_unsettled', JSON.stringify({ [IDENTITY]: { vault: 1 } }))
+    localStorage.setItem(`yappr_passkey_unsettled:${IDENTITY}`, JSON.stringify({ vault: 1 }))
     expect(device.unsettledPasskey(IDENTITY)).toBeNull()
+  })
+})
+
+describe('records kept per fact', () => {
+  it('never drop another identity\'s or another tab\'s record', async () => {
+    const tab1 = await load()
+    // Two tabs, each with the module state it loaded (a read-modify-write of a shared map would lose one).
+    const tab2 = await load()
+    tab1.rememberPasskeyHere(IDENTITY, 'cred1.aa')
+    tab2.rememberPasskeyHere(IDENTITY, 'cred2.bb')
+    tab2.rememberPasskeyHere('identity-2', 'cred3.cc')
+    tab1.rememberUnsettledPasskey(IDENTITY, UNSETTLED)
+    tab2.rememberUnsettledPasskey('identity-2', { ...UNSETTLED, credentialId: 'b3RoZXI' })
+    tab1.setPasskeyName('cred1.aa', 'Laptop')
+    tab2.setPasskeyName('cred2.bb', 'Phone')
+
+    const after = await load()
+    expect(after.passkeysHere(IDENTITY).sort()).toEqual(['cred1.aa', 'cred2.bb'])
+    expect(after.passkeysHere('identity-2')).toEqual(['cred3.cc'])
+    expect(after.unsettledPasskey(IDENTITY)).toEqual(UNSETTLED)
+    expect(after.unsettledPasskey('identity-2')?.credentialId).toBe('b3RoZXI')
+    expect([after.passkeyName('cred1.aa'), after.passkeyName('cred2.bb')]).toEqual(['Laptop', 'Phone'])
+
+    after.forgetPasskeyHere(IDENTITY, 'cred1')
+    expect(after.passkeysHere(IDENTITY)).toEqual(['cred2.bb'])
+    expect(after.passkeysHere('identity-2')).toEqual(['cred3.cc'])
+    after.setPasskeyName('cred1.aa', '  ')
+    expect(after.passkeyName('cred1.aa')).toBeNull()
   })
 })

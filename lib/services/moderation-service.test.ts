@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const sdk = vi.hoisted(() => ({
   contracts: {
     fetch: vi.fn(),
+    fetchWithProof: vi.fn(),
     warnUser: vi.fn(),
     clearUserWarnings: vi.fn(),
     banUser: vi.fn(),
@@ -182,7 +183,19 @@ describe('who moderates (mirrors Drive ContractModerators::may_moderate)', () =>
     expect((await moderationService.getTeam())?.appointed).toEqual([LEADER, MEMBER])
     sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [], electedMembers: [], seats: () => 1, free: vi.fn() })
     expect((await moderationService.getTeam())?.appointed).toEqual([LEADER, MEMBER])
+    sdk.contracts.fetchWithProof.mockResolvedValue({ data: contract, metadata: {} })
     expect((await moderationService.getTeam({ fresh: true }))?.appointed).toEqual([LEADER])
+  })
+
+  it('reads the contract itself from a proved answer on a fresh request, never from the SDK\'s contract cache', async () => {
+    const contract = (appointed: string[]) => ({ ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: { $type: 'appointedModerators', identities: appointed } } } })
+    // The cache still holds the version that appointed MEMBER; the network's current one has removed them.
+    sdk.contracts.fetch.mockResolvedValue(contract([LEADER, MEMBER]))
+    sdk.contracts.fetchWithProof.mockResolvedValue({ data: contract([LEADER]), metadata: {} })
+    const team = await moderationService.getTeam({ fresh: true })
+    expect(sdk.contracts.fetchWithProof).toHaveBeenCalledTimes(1)
+    expect(sdk.contracts.fetch).not.toHaveBeenCalled()
+    expect(team?.appointed).toEqual([LEADER])
   })
 
   it('re-reads the team after its TTL', async () => {
