@@ -42,10 +42,22 @@ describe('loadConfig', () => {
     expect(requireKeyExchangeContract(config)).toBe(id)
   })
 
-  it('refuses a non-devnet env file and a pool for another devnet', () => {
-    expect(() => loadConfig(envFile('NEXT_PUBLIC_NETWORK=testnet\n'))).toThrow(/only serves devnet/)
+  it('refuses mainnet and a pool for another devnet', () => {
+    expect(() => loadConfig(envFile('NEXT_PUBLIC_NETWORK=mainnet\n'))).toThrow(/only serves devnet or testnet/)
     const config = loadConfig(envFile(SAKURA_ENV.replace('DEVNET_NAME=test', 'DEVNET_NAME=bonsia-g1')))
     expect(() => requirePoolMatchesNetwork(testPool(), config)).toThrow(/pool is for devnet-test .* targets devnet-bonsia-g1/)
+  })
+
+  it('accepts explicit testnet wiring only with a testnet pool', () => {
+    const config = loadConfig(envFile('NEXT_PUBLIC_NETWORK=testnet\n'))
+    expect(config.network).toBe('testnet')
+    expect(config.devnet).toBeUndefined()
+    expect(() => requirePoolMatchesNetwork({ ...testPool(), network: 'testnet' }, config)).not.toThrow()
+    expect(() => requirePoolMatchesNetwork(testPool(), config)).toThrow(/targets testnet/)
+  })
+
+  it.each(['DEVNET_NAME', 'DAPI_ADDRESSES', 'QUORUM_URL', 'INSIGHT_API_URL'])('rejects %s overrides on testnet', name => {
+    expect(() => loadConfig(envFile(`NEXT_PUBLIC_NETWORK=testnet\nNEXT_PUBLIC_${name}=wrong\n`))).toThrow(`testnet must not set NEXT_PUBLIC_${name}`)
   })
 })
 

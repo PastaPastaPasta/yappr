@@ -139,6 +139,19 @@ describe('dash-key: round trip', () => {
     await expect(decryptYapprKeyExchangeResponse(asDocument(fields), stranger.privateKey)).rejects.toThrow()
   })
 
+  it.each(['testnet', 'devnet', 'mainnet'] as const)('gates %s key exchange requests in testnet mode', async network => {
+    const uri = buildYapprKeyExchangeUri({ appEphemeralPubKey: generateYapprEphemeralKeyPair().publicKey, contractId: APP_CONTRACT }, network)
+    const { ports, writes } = memoryPorts()
+    const result = respond({ uri, persona: testPersona(), network: 'testnet' }, ports)
+    if (network === 'testnet') {
+      await expect(result).resolves.toBeDefined()
+      expect(writes).toHaveLength(1)
+    } else {
+      await expect(result).rejects.toThrow(/this responder serves testnet/)
+      expect(writes).toHaveLength(0)
+    }
+  })
+
   it('refuses a request for another network without writing', async () => {
     const app = generateYapprEphemeralKeyPair()
     const uri = buildYapprKeyExchangeUri({ appEphemeralPubKey: app.publicKey, contractId: APP_CONTRACT }, 'testnet')

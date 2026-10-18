@@ -142,6 +142,7 @@ export interface AppConnectPorts {
 }
 
 export interface AppConnectInput {
+  network?: 'devnet' | 'testnet'
   uri: string
   persona: Persona
   faults?: AppConnectFaults
@@ -242,9 +243,9 @@ export async function respondToAppConnect(input: AppConnectInput, ports: AppConn
   try {
     const parsed = parseAppConnectUri(input.uri)
     callbackUrl = parsed.callbackUrl
-    // The pool is sakura's: nothing is ever written for another network.
-    if (parsed.network !== 'devnet') {
-      throw new AppConnectRefusal('invalid', `Request is for ${parsed.network}; this responder serves devnet (sakura pool identities only)`)
+    const served = input.network ?? 'devnet'
+    if (parsed.network !== served) {
+      throw new AppConnectRefusal('invalid', `Request is for ${parsed.network}; this responder serves ${served}`)
     }
     const { request } = parsed
     const now = ports.now()

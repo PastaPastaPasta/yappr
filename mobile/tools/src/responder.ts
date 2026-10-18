@@ -26,9 +26,6 @@ import {
   type AppConnectResult,
 } from './app-connect/wallet'
 
-/** The pool is sakura's: requests for any other network are refused, so nothing reaches testnet or mainnet. */
-const SERVED_NETWORK: YapprKeyExchangeNetworkName = 'devnet'
-
 /** The persona's current `loginKeyResponse` for one app contract. */
 export interface StoredResponse {
   documentId: string
@@ -62,6 +59,7 @@ export interface ResponderPorts {
 }
 
 export interface RespondInput {
+  network?: 'devnet' | 'testnet'
   uri: string
   persona: Persona
   /** Rotation: ask for this keyIndex instead of reusing the stored one. */
@@ -107,7 +105,7 @@ async function respondToKeyExchange(input: RespondInput, ports: ResponderPorts):
   const parsed = parseYapprKeyExchangeUri(input.uri)
   // Spec §10.2: no bytes after the label (the vendor parser ignores them).
   if (!parsed || !isExactRequest(input.uri, parsed.request)) throw new Error('Malformed dash-key: request')
-  requireServedNetwork(parsed.network)
+  requireServedNetwork(parsed.network, input.network ?? 'devnet')
 
   const { persona } = input
   const { request } = parsed
@@ -141,7 +139,7 @@ async function respondToKeyExchange(input: RespondInput, ports: ResponderPorts):
 async function respondToStateTransition(input: RespondInput, ports: ResponderPorts): Promise<RespondResult> {
   const parsed = parseYapprStateTransitionUri(input.uri)
   if (!parsed) throw new Error('Malformed dash-st: request')
-  requireServedNetwork(parsed.network)
+  requireServedNetwork(parsed.network, input.network ?? 'devnet')
   // Spec §11.5: a `k=` signing key must be the MASTER key.
   const signingKey = new URLSearchParams(input.uri.slice(input.uri.indexOf('?') + 1)).get('k')
   if (signingKey !== null && signingKey !== '0') throw new Error(`dash-st: k=${signingKey} is not the MASTER key (keyId 0)`)
@@ -173,8 +171,8 @@ function isExactRequest(uri: string, request: YapprKeyExchangeRequest): boolean 
   return bytesToHex(payload) === bytesToHex(serializeYapprKeyExchangeRequest(request))
 }
 
-function requireServedNetwork(requested: YapprKeyExchangeNetworkName): void {
-  if (requested !== SERVED_NETWORK) {
-    throw new Error(`Request is for ${requested}; this responder serves ${SERVED_NETWORK} (sakura pool identities only)`)
+function requireServedNetwork(requested: YapprKeyExchangeNetworkName, served: 'devnet' | 'testnet'): void {
+  if (requested !== served) {
+    throw new Error(`Request is for ${requested}; this responder serves ${served}`)
   }
 }

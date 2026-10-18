@@ -30,6 +30,16 @@ describe('release configuration', () => {
       expect(readNetwork(root, 'testing').pins).toEqual([{ id }]);
     } finally { rmSync(root, { recursive: true }); }
   });
+  it('pins the staging rehearsal snapshot independently of production', async () => {
+    const { expectations } = await import('./manifest.mjs');
+    const config = await expectations(process.cwd(), 'staging');
+    expect(config.network).toBe('testnet');
+    expect(config.pins).toHaveLength(11);
+    const snapshot = JSON.parse(readFileSync(new URL('../../lib/contracts/snapshots/testnet-staging.json', import.meta.url), 'utf8'));
+    expect(new Set(Object.keys(snapshot.contracts))).toEqual(new Set(config.pins.map(pin => pin.id)));
+    expect(config.pins.every(pin => !pin.error && pin.schemaHash)).toBe(true);
+    expect(config.env.NEXT_PUBLIC_APP_CONNECT_APP_ID).toBe('AwjuEqZtXwBq5jU9tg8UnRMmXrwb3nozSgGx59ghD1c1');
+  });
   it('hashes schema values independently of object key order', () => {
     expect(schemaHash({ b: { z: 1, a: 2 }, a: [1, 2] })).toBe(schemaHash({ a: [1, 2], b: { a: 2, z: 1 } }));
     expect(schemaHash({ required: ['a', 'b'] })).not.toBe(schemaHash({ required: ['b', 'a'] }));
@@ -113,7 +123,7 @@ it('rejects a wrong active role even when a snapshot bundle contains the expecte
   await expect(smokeSite({ url: 'https://yap.pr/', buildId: 'abc1234', config: { env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }, pins: [{ id }] } })).rejects.toThrow('Active NEXT_PUBLIC_YAPPR_CONTRACT_ID: wrong-active-id');
 });
 
-it.each(['testing', 'devnet'])('exposes every configured role for the %s build, including disabled and auxiliary registrations', async name => {
+it.each(['testing', 'devnet', 'staging'])('exposes every configured role for the %s build, including disabled and auxiliary registrations', async name => {
   const config = readNetwork(process.cwd(), name);
   try {
     vi.resetModules();

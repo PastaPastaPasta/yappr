@@ -1,3 +1,5 @@
+> **D36 rehearsal override (2026-10-18):** `/staging` temporarily serves the throwaway testnet set in `.env.staging`, built with `npm run build:staging`, and uses epoch `testnet-staging-20261018:staging`. `BASE_PATH=/staging npm run build` selects the same configuration so older master Pages workflows cannot revert it. Root, `/testing` and `/devnet` retain their existing configurations. The production cut-over instructions below apply to production; do not replace the rehearsal set until the owner's all-clear. At that point, retire these staging IDs, change `.env.staging` to the separately registered production pins with a new epoch, refresh its snapshot, and update monitoring expectations in the same reviewed PR. See [TESTNET_STAGING_REHEARSAL.md](TESTNET_STAGING_REHEARSAL.md).
+
 # Testnet configuration and cut-over
 
 The preparation PR adds an opt-in release build mechanism. It does **not**

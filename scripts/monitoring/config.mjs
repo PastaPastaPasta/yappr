@@ -5,11 +5,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 
-export const NETWORKS = { production: '.env.testnet', testing: '.env.testing', devnet: '.env.devnet' };
+export const NETWORKS = { production: '.env.testnet', staging: '.env.staging', testing: '.env.testing', devnet: '.env.devnet' };
 export const SITES = [
   { name: 'production', url: 'https://yap.pr/', network: 'production', source: 'master' },
   { name: 'testing', url: 'https://yap.pr/testing/', network: 'testing', source: 'master' },
-  { name: 'staging', url: 'https://yap.pr/staging/', network: 'production', source: 'staging' },
+  { name: 'staging', url: 'https://yap.pr/staging/', network: 'staging', source: 'staging' },
   { name: 'devnet', url: 'https://yap.pr/devnet/', network: 'devnet', source: 'staging' },
   { name: 'mirror', url: 'https://yappr.pages.dev/', network: 'production', source: 'master' },
 ];

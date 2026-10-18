@@ -174,7 +174,7 @@ jobs:
         working-directory: staging
         run: |
           npm ci
-          npm run build
+          npm run build:staging
           mv out out-staging
         env:
           BASE_PATH: /staging
