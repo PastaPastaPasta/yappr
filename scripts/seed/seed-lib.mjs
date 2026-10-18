@@ -20,8 +20,8 @@
  *    all callers hold a proxy handle that can be re-pointed.
  *  - Never print private keys or WIFs; ledgers are written with mode 600.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, chmodSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readFileSync, renameSync, writeFileSync, appendFileSync, chmodSync } from 'node:fs';
+import { join } from 'node:path';
 import { getPublicKey, utils as secpUtils } from '@noble/secp256k1';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -1324,9 +1324,4 @@ export async function readback(handle, fn, { attempts = 4 } = {}) {
     }
   }
   throw new Error(`read failed after ${attempts} attempts: ${describeErr(lastError)}`);
-}
-
-/** Ensures the parent directory of `path` exists. */
-export function ensureDir(path) {
-  mkdirSync(dirname(path), { recursive: true });
 }

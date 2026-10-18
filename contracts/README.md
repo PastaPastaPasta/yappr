@@ -126,9 +126,9 @@ and their batteries are not kept in the tree; recover them from git history.
 A new cut is edited in place as a new `yappr-social-contract-vN.json`, checked
 with the offline validator, registered with
 `scripts/register-social-v3-draft.mjs`, and proven live with the
-`verify-v10.mjs` battery (`--contract-file` selects v10 or v11) and
-`prove-merged-counts.mjs` (`verify-v8.mjs` covers the moderation grammar on a
-v9 chain).
+`verify-v10.mjs` battery (`--contract-file` selects v10–v17) and
+`prove-merged-counts.mjs`. The v9-only `verify-v8.mjs` and v3-draft
+`verify-refersto.mjs` experiments were retired; recover them from git history.
 
 ## App Connect anchor
 
@@ -136,7 +136,7 @@ v9 chain).
 
 ## Feature contracts
 
-- `yappr-blocks-contract.json` — `block`, `blockFilter` and `blockFollow`, split out of social v13 (bare schemas, unmoderated; `block.ownerBlocks` dropped, everything else as social v12 declared them). Live on sakura since the 2026-10-13 beta.6 genesis as `6QCijw1i…` (`NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`), read and written by the client on topologies `v13` to `v16`. See [docs/SOCIAL_V13.md](../docs/SOCIAL_V13.md#5-the-blocks-contract). Not to be confused with the legacy `yappr-block-contract.json` below
+- `yappr-blocks-contract.json` — `block`, `blockFilter` and `blockFollow`, split out of social v13 (bare schemas, unmoderated; `block.ownerBlocks` dropped, everything else as social v12 declared them). Live on sakura since the 2026-10-13 beta.6 genesis as `6QCijw1i…` (`NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`), read and written by the client on topologies `v13` to `v16`. See [docs/SOCIAL_V13.md](../docs/SOCIAL_V13.md#5-the-blocks-contract).
 - `yappr-profile-contract.json` — unified profile contract (avatar/banner live here, not in the social contract). **Retired on v10**, where the DashPay `profile` plus social `yapprProfile` replace it; topologies v2 and v9 still read it. **This file is the beta.4 cut (v2): `paymentUris` and `socialLinks` are typed string arrays (`socialLinks` as `"platform:handle"`), where v1 (testnet/prod) stores JSON strings** — see [docs/SOCIAL_V9.md](../docs/SOCIAL_V9.md)
 - `yappr-dm-contract.json` — encrypted direct messages (`conversationInvite`, `directMessage`, `readReceipt`). **This file is the beta.2 re-cut, registered on the moutai devnet; testnet (`J7MP9YU1…`) still runs the previous cut.** It adds `rangeCountable` on `directMessage.conversation` (unread is a count query, not a 100-message download), `refersTo: {type: identity}` on `conversationInvite.recipientId`, and an `immutable` list per doctype. See `docs/NON_SOCIAL_CONTRACTS.md`
 - `yappr-blog-contract.json` — long-form blog posts, comments, follows, reports. **This file is blog v9, the testnet production cut (topology v9: a `live` marker keys the post listings, `publishedAt` required, byte caps, a `report` type; [docs/NON_SOCIAL_CONTRACTS.md](../docs/NON_SOCIAL_CONTRACTS.md#what-v9-changed-from-v8-1)), not yet registered. Before it, blog v8, the 5.0.0-beta.5 re-cut (topology v8: a comment's open post is a `where` condition), live on sakura as `8XAk3nrb…` since the 2026-10-13 beta.6 genesis (`C5zxo8z6…` on beta.5). Before it, blog v7, the 5.0.0-beta.2 mainnet-ready cut (topology v7, live on sakura as `4F1Wi4di…` from 2026-10-08 to the beta.5 wipe): elected moderation, action fees instead of YAPP comments (blog 80M, post 80M, comment 16M), `blog.timeline`/`blogPost.timeline`, merged count twins, 72h `followersTrend`/`discussedRecent` windows, and an author's post tombstone with `retractedWhen` ([docs/NON_SOCIAL_CONTRACTS.md](../docs/NON_SOCIAL_CONTRACTS.md#blog)).** Before it, blog v6, the 5.0.0-beta.1 re-cut (topology v6): `moderatedDocument` references at `blog`/`blogPost`, a conditional `immutable` entry for `publishedAt`, and no `blogComment.blogPostOwnerId` (`postOwnerAndTime` derives it as `blogPostId.$ownerId`) ([docs/PLATFORM_V5_BETA1_UPGRADE.md](../docs/PLATFORM_V5_BETA1_UPGRADE.md)).** Before it, the beta.7 translation of the beta.6 cut (topology v5, comments-off and owner gate kept). Before that, the beta.4 cut (v4): v3 plus a warning list and `labels` as typed string arrays ([docs/SOCIAL_V9.md](../docs/SOCIAL_V9.md)).** v3 (beta.3) was the moderated re-cut, with `blog`/`blogPost`/`blogComment` moderator-deletable and NO edit history any more (see [docs/SOCIAL_V8.md](../docs/SOCIAL_V8.md)); testnet (`9jfarXPw…`) still runs the v1 cut.** On top of the beta.2 cut, which adds the refersTo chain (post→blog, comment→post with a `blogPostOwnerId` agreement against the post's `$ownerId`, follow→blog), countable/ranked comment and follower trees, a daily-grid `followersByDay`, frozen `blogId`/write-once `publishedAt`, and YAPP-priced comments
@@ -161,10 +161,9 @@ verified live by the `scripts/verify-*.mjs` batteries. Superseded versions are
 not kept in the tree; recover them from git history. Devnet ids and the full
 per-contract reference are in `docs/NON_SOCIAL_CONTRACTS.md`.
 
-## Legacy (merged into the social contract)
+## Removed scratch and standalone contracts
 
-- `yappr-hashtag-contract.json`, `yappr-mention-contract.json`,
-  `yappr-block-contract.json` — early standalone contracts whose document
-  types were folded into the social contract (the block types leave it again
-  on v13, for `yappr-blocks-contract.json` above)
-- `yappr-minimal.json` — minimal post+profile scratch contract for SDK testing
+The early standalone hashtag, mention and singular block JSONs, and the
+`yappr-minimal.json` scratch schema, have no code/script/test references and
+were removed in WP17. Recover them from git history. The current standalone
+blocks contract is **plural**: `yappr-blocks-contract.json`.
