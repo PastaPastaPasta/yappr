@@ -13,7 +13,7 @@ import { IdentityConfirmCard } from './identity-confirm-card'
 
 interface AppConnectLoginPanelProps {
   /** Signs in (or renews) with the grant the user confirmed. The grant's keys are wiped by the callee. */
-  onGrant: (grant: AppConnectGrant) => Promise<void>
+  onGrant: (grant: AppConnectGrant) => Promise<unknown>
   /** Called once signed in and the panel is done. */
   onComplete: () => void
   /** Renewal: only this identity may answer, and it is accepted without asking. */

@@ -16,6 +16,7 @@ import { COMMUNITY_RULES_HREF, MINIMUM_AGE } from '@/lib/legal'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { KeyLoginForm } from './key-login-form'
+import { PasskeySignIn } from './passkey-sign-in'
 
 /** Where newcomers go: the wallet on mainnet, the identity bridge elsewhere. */
 const DASH_WALLET_DOWNLOAD_URL = 'https://www.dash.org/download/'
@@ -134,6 +135,9 @@ export function LoginModal() {
                 </p>
                 </Dialog.Description>
               </div>
+
+              {/* Fastest where it works: a passkey added on an earlier sign-in */}
+              <PasskeySignIn onComplete={close} />
 
               {/* Primary: private key */}
               <KeyLoginForm onComplete={close} />

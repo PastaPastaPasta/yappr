@@ -66,20 +66,49 @@ const SESSION_ONLY_KEY_PREFIX = scopedKey('yappr_session_pk_')
 /** Where sessionStorage is blocked the key is kept in memory instead, so it still signs until the tab closes. */
 const sessionOnlyMemory = new Map<string, string>()
 
+/**
+ * A moderator's CRITICAL key a passkey gave (docs/PASSKEY_VAULT.md) is kept
+ * in the same session-only record, tagged: the key and its provenance are one
+ * write, so neither can be stored, lost or restored without the other. Such a
+ * key moderates but never signs token transitions (owner decision V2).
+ * (WIF is base58, so it never contains the tag's colon.)
+ */
+const PASSKEY_TAG = 'passkey:'
+
+/** The passkey CRITICAL key the commit under way is about to store, by identity (normalized WIF). */
+const expectedPasskeyKeys = new Map<string, string>()
+
+function normalizeWif(wif: string): string {
+  return privateKeyToWif(parsePrivateKey(wif).privateKey, keyNetwork(), true)
+}
+
+/** Inside a sign-in commit, right before it stores `wif`: that store is a passkey's CRITICAL key, and is tagged. */
+export function expectPasskeyCriticalKey(identityId: string, wif: string): void {
+  expectedPasskeyKeys.set(identityId, normalizeWif(wif))
+}
+
+/** After that store (or if it never came): nothing further is expected. */
+export function settlePasskeyCriticalKey(identityId: string): void {
+  expectedPasskeyKeys.delete(identityId)
+}
+
 export function storeSessionOnlyPrivateKey(identityId: string, wif: string): void {
   if (typeof window === 'undefined') return
-  const normalized = privateKeyToWif(parsePrivateKey(wif).privateKey, keyNetwork(), true)
+  const normalized = normalizeWif(wif)
+  const fromPasskey = expectedPasskeyKeys.get(identityId) === normalized
+  expectedPasskeyKeys.delete(identityId)
+  const record = fromPasskey ? PASSKEY_TAG + normalized : normalized
   try {
-    sessionStorage.setItem(SESSION_ONLY_KEY_PREFIX + identityId, normalized)
+    sessionStorage.setItem(SESSION_ONLY_KEY_PREFIX + identityId, record)
     sessionOnlyMemory.delete(identityId)
   } catch {
-    sessionOnlyMemory.set(identityId, normalized)
+    sessionOnlyMemory.set(identityId, record)
   }
   // Only now that this tab holds it is the persisted copy dropped.
   browserSecretStore.clearPrivateKey(identityId)
 }
 
-function getSessionOnlyPrivateKey(identityId: string): string | null {
+function getSessionOnlyRecord(identityId: string): string | null {
   if (typeof window === 'undefined') return null
   try {
     const stored = sessionStorage.getItem(SESSION_ONLY_KEY_PREFIX + identityId)
@@ -88,6 +117,28 @@ function getSessionOnlyPrivateKey(identityId: string): string | null {
     // Storage blocked: fall back to the in-memory copy.
   }
   return sessionOnlyMemory.get(identityId) ?? null
+}
+
+function getSessionOnlyPrivateKey(identityId: string): string | null {
+  const record = getSessionOnlyRecord(identityId)
+  return record?.startsWith(PASSKEY_TAG) ? record.slice(PASSKEY_TAG.length) : record
+}
+
+/**
+ * The key {@link getPrivateKey} returns for `identityId`, and whether it is a
+ * moderator's CRITICAL key from a passkey (token transitions ask for the key
+ * typed in instead), both from the one record it was read from: another tab
+ * changing the stored keys between two reads can never pair one key with
+ * another's provenance.
+ */
+export function getPrivateKeyRecord(identityId: string): { wif: string; fromPasskey: boolean } | null {
+  const persisted = browserSecretStore.getPrivateKey(identityId)
+  if (persisted !== null) return { wif: persisted, fromPasskey: false }
+  const record = getSessionOnlyRecord(identityId)
+  if (record === null) return null
+  return record.startsWith(PASSKEY_TAG)
+    ? { wif: record.slice(PASSKEY_TAG.length), fromPasskey: true }
+    : { wif: record, fromPasskey: false }
 }
 
 export function getPrivateKey(identityId: string): string | null {

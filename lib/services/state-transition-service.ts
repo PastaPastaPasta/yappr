@@ -30,12 +30,23 @@ import {
 import type { TokenPaymentInfoOptions } from '@dashevo/wasm-sdk';
 
 
+/** A create sent with no verdict: enough to settle its outcome later ({@link StateTransitionService.settleCreate}). */
+export interface CreateReceipt {
+  contractId: string;
+  documentType: string;
+  ownerId: string;
+  documentId: string;
+  nonce: bigint;
+}
+
 export interface StateTransitionResult {
   success: boolean;
   transactionHash?: string;
   document?: Record<string, unknown>;
   /** Whether the document is confirmed query-visible on Platform. */
   confirmed?: boolean;
+  /** On an unconfirmed create: how to settle it later. */
+  receipt?: CreateReceipt;
   error?: string;
 }
 
@@ -457,6 +468,32 @@ class StateTransitionService {
   }
 
   /**
+   * The outcome of a create reported unconfirmed: `landed`, `not-recorded`
+   * (proved it never will: its nonce spent and the document proved absent),
+   * or null while that is unknown. A create whose nonce is still free is sent
+   * again first, with the same signed bytes, so it either executes or its
+   * nonce goes, and an outcome can be proved.
+   */
+  async settleCreate(receipt: CreateReceipt): Promise<'landed' | 'not-recorded' | null> {
+    const { contractId, documentType, ownerId, documentId, nonce } = receipt;
+    const sdk = await getEvoSdk();
+    const outcome = (settled: StateTransitionResult | null) => settled === null ? null : settled.success ? 'landed' : 'not-recorded';
+    const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, nonce);
+    if (settled) return outcome(settled);
+    const cached = loadPendingSTBytes(documentId);
+    if (!cached) return null;
+    try {
+      const stateTransition = StateTransition.fromBytes(cached);
+      await sdk.stateTransitions.broadcastStateTransition(stateTransition);
+      await sdk.stateTransitions.waitForResponse(stateTransition);
+    } catch (error) {
+      // Refused, already in flight, or no verdict: only the proof below decides.
+      logger.debug(`Re-sending ${documentType} ${documentId} gave no verdict:`, extractErrorMessage(error));
+    }
+    return outcome(await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, nonce));
+  }
+
+  /**
    * Create a document with idempotent retry via ST byte caching.
    *
    * This is the typed write path: `documentData` should already use `Uint8Array` for binary
@@ -620,7 +657,7 @@ class StateTransitionService {
         const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
         if (settled) return decided(settled);
         logger.warn(`${documentType} ${documentId} refused for its nonce with its outcome unproven — reporting it unconfirmed:`, extractErrorMessage(refusal));
-        return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
+        return unconfirmed();
       };
 
       const entropy = crypto.getRandomValues(new Uint8Array(32));
@@ -637,6 +674,11 @@ class StateTransitionService {
         { entropy, identityContractNonce: newNonce }
       );
       const resultDocument = { $id: documentId, $ownerId: ownerId, $type: documentType, ...resolvedData };
+      // Sent with no verdict yet: the receipt lets a caller settle it later (settleCreate).
+      const unconfirmed = (): StateTransitionResult => ({
+        success: true, transactionHash: documentId, document: resultDocument, confirmed: false,
+        receipt: { contractId, documentType, ownerId, documentId, nonce: newNonce },
+      });
 
       // --- Check for a cached ST from a previous timed-out attempt ---
       // Meaningless in affectedState mode: the replay flow settles through
@@ -767,7 +809,7 @@ class StateTransitionService {
           if (affectedStateMode) return { success: false, error: messageWithConsensusCode(broadcastErr) };
           const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
           if (settled) return decided(settled);
-          return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
+          return unconfirmed();
         }
         logger.debug(`Broadcast of ${documentId} already in flight, waiting for it:`, extractErrorMessage(broadcastErr));
       }
@@ -814,7 +856,7 @@ class StateTransitionService {
           // Leave ST bytes cached for next retry — don't throw yet, return optimistic success
           // since broadcast succeeded and the ST is valid
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-          return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
+          return unconfirmed();
         }
         if (isAlreadyExistsError(waitErr)) {
           let doc = null;
@@ -824,12 +866,8 @@ class StateTransitionService {
           if (doc) decided({ success: true });
           clearPendingSTBytes(documentId);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-          return {
-            success: true,
-            transactionHash: documentId,
-            document: doc || resultDocument,
-            confirmed: Boolean(doc)
-          };
+          if (!doc) return unconfirmed();
+          return { success: true, transactionHash: documentId, document: doc, confirmed: true };
         }
         // Non-fatal verification errors (e.g. newly deployed contract not yet propagated
         // to all nodes). Broadcast succeeded, so check Platform then return optimistic success.
@@ -846,7 +884,7 @@ class StateTransitionService {
           const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
           if (settled) return decided(settled);
           try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-          return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
+          return unconfirmed();
         }
         // Refused: it never executes, and nothing was written.
         if (isConsensusRefusal(waitErr)) {
@@ -863,7 +901,7 @@ class StateTransitionService {
         const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, newNonce);
         if (settled) return decided(settled);
         try { await wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-        return { success: true, transactionHash: documentId, document: resultDocument, confirmed: false };
+        return unconfirmed();
       }
 
       // Cleanup old entries periodically

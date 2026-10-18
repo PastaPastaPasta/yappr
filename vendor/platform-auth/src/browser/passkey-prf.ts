@@ -1,231 +1,218 @@
 'use client'
 
-import { sha256 } from '@noble/hashes/sha2.js'
-import { generatePrfInput } from './secret-store'
-import type {
-  DiscoverablePasskeySelectionResult,
-  EnrollPasskeyOptions,
-  PasskeyCredentialDescriptor,
-  PasskeyPrfAssertionResult,
-} from '../core/types'
+/**
+ * WebAuthn ceremonies with the PRF extension, for a passkey whose PRF output
+ * an app uses as key material (Yappr's passkey vault). Free of app types: the
+ * caller supplies the relying party, the user handle and the PRF input.
+ *
+ * PRF support is only ever known from an actual output. Browsers report what
+ * they would forward (`getClientCapabilities`), not what a provider returns,
+ * so every function here hands back `prfOutput: null` rather than guessing.
+ */
 
-type PrfEvalDescriptor = {
-  first: Uint8Array
-  second?: Uint8Array
+export interface PasskeyRelyingParty {
+  id: string
+  name: string
 }
 
-type PrfCredentialMap = Record<string, PrfEvalDescriptor>
+export interface CreatePasskeyOptions {
+  rp: PasskeyRelyingParty
+  /** The user handle (up to 64 bytes); a discoverable sign-in returns it. */
+  userId: Uint8Array
+  /** Shown in the passkey picker. */
+  userName: string
+  displayName: string
+  /** PRF `first` input, evaluated during creation where the authenticator can. */
+  prfInput: Uint8Array
+  /** Passkeys this user already has here: the browser refuses to make another in the same provider. */
+  excludeCredentialIds?: Uint8Array[]
+  timeoutMs?: number
+}
 
-type BrowserPrfResult = {
+export interface CreatedPasskey {
+  credentialId: Uint8Array
+  /** The PRF output at creation, when the authenticator evaluated it then (many only do at sign-in). */
+  prfOutput: Uint8Array | null
+  /** What the browser said about PRF at creation: false means the passkey will never give one. */
+  prfEnabled: boolean | undefined
+}
+
+export interface GetPasskeyPrfOptions {
+  rpId: string
+  prfInput: Uint8Array
+  /** Restrict to these passkeys (enrolment's confirmation); omit for a discoverable sign-in. */
+  allowCredentialIds?: Uint8Array[]
+  timeoutMs?: number
+}
+
+export interface PasskeyPrfAssertion {
+  credentialId: Uint8Array
+  /** The user handle the passkey was created with, or null when the authenticator gave none. */
+  userHandle: Uint8Array | null
+  prfOutput: Uint8Array | null
+}
+
+/** The user closed the passkey sheet, or it timed out: nothing to report. */
+export class PasskeyCancelledError extends Error {
+  constructor() {
+    super('The passkey request was cancelled')
+    this.name = 'PasskeyCancelledError'
+  }
+}
+
+/** Creation refused because the user already has one of the excluded passkeys in this provider. */
+export class PasskeyExistsError extends Error {
+  constructor() {
+    super('A passkey for this account already exists here')
+    this.name = 'PasskeyExistsError'
+  }
+}
+
+interface PrfClientOutput {
   enabled?: boolean
-  results?: {
-    first?: ArrayBuffer
-    second?: ArrayBuffer
-  }
+  results?: { first?: BufferSource }
 }
 
-interface PublicKeyCredentialWithExtensions extends PublicKeyCredential {
-  getClientExtensionResults(): AuthenticationExtensionsClientOutputs & {
-    prf?: BrowserPrfResult
-  }
+type ExtensionOutputs = AuthenticationExtensionsClientOutputs & { prf?: PrfClientOutput }
+
+const DEFAULT_TIMEOUT_MS = 60_000
+
+/** Whether this page can run WebAuthn at all (a secure context with the API). PRF is only known from an output. */
+export function passkeysAvailable(): boolean {
+  return typeof window !== 'undefined' && window.isSecureContext === true && typeof window.PublicKeyCredential === 'function'
 }
 
-interface PublicKeyCredentialWithAssertionResponse extends PublicKeyCredential {
-  response: AuthenticatorAssertionResponse
-}
-
-const DEFAULT_RP_NAME = 'Platform Auth'
-
-export function getDefaultRpId(): string {
-  if (typeof window === 'undefined') {
-    throw new Error('Passkeys require a browser environment')
-  }
-
-  return window.location.hostname
+function requirePasskeys(): void {
+  if (!passkeysAvailable()) throw new Error('Passkeys need a secure browser page with WebAuthn support')
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = ''
-  for (let index = 0; index < bytes.length; index += 1) {
-    binary += String.fromCharCode(bytes[index])
+function toBytes(source: BufferSource | null | undefined): Uint8Array | null {
+  if (!source) return null
+  if (source instanceof ArrayBuffer) return new Uint8Array(source.slice(0))
+  return new Uint8Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength))
+}
+
+function prfFirst(credential: PublicKeyCredential): { output: Uint8Array | null; enabled: boolean | undefined } {
+  const prf = (credential.getClientExtensionResults() as ExtensionOutputs).prf
+  return { output: toBytes(prf?.results?.first), enabled: prf?.enabled }
+}
+
+function translateCeremonyError(error: unknown): unknown {
+  if (error instanceof DOMException) {
+    if (error.name === 'NotAllowedError' || error.name === 'AbortError') return new PasskeyCancelledError()
+    if (error.name === 'InvalidStateError') return new PasskeyExistsError()
   }
-
-  return btoa(binary)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '')
+  return error
 }
 
-function extractPrfFirst(result: BrowserPrfResult | undefined): Uint8Array | null {
-  if (!result?.results?.first) return null
-  return new Uint8Array(result.results.first)
+function descriptors(ids: Uint8Array[] | undefined): PublicKeyCredentialDescriptor[] | undefined {
+  return ids?.map((id) => ({ id: toArrayBuffer(id), type: 'public-key' as const }))
 }
 
-function decodeUserHandle(userHandle: ArrayBuffer | null | undefined): string | undefined {
-  if (!userHandle) return undefined
-
-  const decoded = new TextDecoder().decode(new Uint8Array(userHandle)).trim()
-  return decoded || undefined
-}
-
-function ensureBrowserPasskeys(): void {
-  if (typeof window === 'undefined' || !window.isSecureContext || !window.PublicKeyCredential) {
-    throw new Error('Passkey enrollment requires a secure browser with WebAuthn support.')
+/**
+ * Creates a discoverable, user-verified passkey and asks for its PRF output
+ * at once (CTAP2.0 keys enable hmac-secret only when asked at creation).
+ */
+export async function createPasskeyWithPrf(options: CreatePasskeyOptions): Promise<CreatedPasskey> {
+  requirePasskeys()
+  let credential: Credential | null
+  try {
+    credential = await navigator.credentials.create({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rp: options.rp,
+        user: { id: toArrayBuffer(options.userId), name: options.userName, displayName: options.displayName },
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7 },
+          { type: 'public-key', alg: -8 },
+          { type: 'public-key', alg: -257 },
+        ],
+        timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        attestation: 'none',
+        authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'required' },
+        excludeCredentials: descriptors(options.excludeCredentialIds),
+        extensions: {
+          credProps: true,
+          prf: { eval: { first: toArrayBuffer(options.prfInput) } },
+        } as AuthenticationExtensionsClientInputs,
+      },
+    })
+  } catch (error) {
+    throw translateCeremonyError(error)
   }
+  if (!(credential instanceof PublicKeyCredential)) throw new PasskeyCancelledError()
+  const { output, enabled } = prfFirst(credential)
+  return { credentialId: new Uint8Array(credential.rawId), prfOutput: output, prfEnabled: enabled }
 }
 
-export async function createPasskeyWithPrf(
-  options: EnrollPasskeyOptions,
-): Promise<PasskeyPrfAssertionResult & { label: string }> {
-  ensureBrowserPasskeys()
-
-  const rpId = options.rpId ?? getDefaultRpId()
-  const challenge = crypto.getRandomValues(new Uint8Array(32))
-  const userId = new TextEncoder().encode(options.identityId).slice(0, 64)
-
-  const credential = await navigator.credentials.create({
-    publicKey: {
-      challenge,
-      rp: {
-        id: rpId,
-        name: options.rpName ?? DEFAULT_RP_NAME,
-      },
-      user: {
-        id: userId,
-        name: options.username,
-        displayName: options.displayName,
-      },
-      pubKeyCredParams: [
-        { type: 'public-key', alg: -7 },
-        { type: 'public-key', alg: -8 },
-        { type: 'public-key', alg: -257 },
-      ],
-      timeout: 60000,
-      attestation: 'none',
-      authenticatorSelection: {
-        residentKey: 'required',
+/**
+ * A user-verified assertion that evaluates the PRF with `prfInput`. Without
+ * `allowCredentialIds` it is discoverable: the user picks any passkey this
+ * relying party has, and the user handle says whose it is.
+ */
+export async function getPasskeyPrf(options: GetPasskeyPrfOptions): Promise<PasskeyPrfAssertion> {
+  requirePasskeys()
+  let credential: Credential | null
+  try {
+    credential = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rpId: options.rpId,
+        timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         userVerification: 'required',
+        allowCredentials: descriptors(options.allowCredentialIds),
+        extensions: { prf: { eval: { first: toArrayBuffer(options.prfInput) } } } as AuthenticationExtensionsClientInputs,
       },
-      extensions: {
-        prf: {},
-      } as AuthenticationExtensionsClientInputs,
-    },
-  })
-
-  if (!(credential instanceof PublicKeyCredential)) {
-    throw new Error('Failed to create passkey credential')
+    })
+  } catch (error) {
+    throw translateCeremonyError(error)
   }
-
-  const createExtensions = (credential as PublicKeyCredentialWithExtensions).getClientExtensionResults()
-  if (createExtensions.prf?.enabled === false) {
-    throw new Error('This passkey/provider did not enable PRF during registration.')
-  }
-
-  const credentialId = new Uint8Array(credential.rawId)
-  const prfInput = generatePrfInput()
-  const assertion = await getPrfAssertionForCredentials([{ credentialId, prfInput, rpId }])
-
+  if (!(credential instanceof PublicKeyCredential)) throw new PasskeyCancelledError()
+  const response = credential.response as AuthenticatorAssertionResponse
   return {
-    ...assertion,
-    label: options.label,
+    credentialId: new Uint8Array(credential.rawId),
+    userHandle: toBytes(response.userHandle),
+    prfOutput: prfFirst(credential).output,
   }
 }
 
-export async function getPrfAssertionForCredentials(
-  credentials: PasskeyCredentialDescriptor[],
-): Promise<PasskeyPrfAssertionResult> {
-  ensureBrowserPasskeys()
+function base64Url(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
 
-  if (credentials.length === 0) {
-    throw new Error('No passkey credentials available')
-  }
+interface CredentialSignals {
+  signalUnknownCredential?: (options: { rpId: string; credentialId: string }) => Promise<void>
+  signalAllAcceptedCredentials?: (options: { rpId: string; userId: string; allAcceptedCredentialIds: string[] }) => Promise<void>
+}
 
-  const challenge = crypto.getRandomValues(new Uint8Array(32))
-  const rpId = credentials[0].rpId
-  const allowCredentials = credentials.map((entry) => ({
-    id: toArrayBuffer(entry.credentialId),
-    type: 'public-key' as const,
-  }))
+function signals(): CredentialSignals | null {
+  return passkeysAvailable() ? (window.PublicKeyCredential as unknown as CredentialSignals) : null
+}
 
-  const evalByCredential = credentials.reduce<PrfCredentialMap>((accumulator, entry) => {
-    accumulator[base64UrlEncode(entry.credentialId)] = { first: entry.prfInput }
-    return accumulator
-  }, {})
-
-  const credential = await navigator.credentials.get({
-    publicKey: {
-      challenge,
-      rpId,
-      timeout: 60000,
-      userVerification: 'required',
-      allowCredentials,
-      extensions: {
-        prf: {
-          evalByCredential,
-        },
-      } as AuthenticationExtensionsClientInputs,
-    },
-  })
-
-  if (!(credential instanceof PublicKeyCredential)) {
-    throw new Error('Passkey assertion failed')
-  }
-
-  const typedCredential = credential as PublicKeyCredentialWithExtensions
-  const prfOutput = extractPrfFirst(typedCredential.getClientExtensionResults().prf)
-  if (!prfOutput) {
-    throw new Error('This passkey/provider did not return PRF output.')
-  }
-
-  const credentialId = new Uint8Array(credential.rawId)
-  const descriptor = credentials.find((entry) => base64UrlEncode(entry.credentialId) === base64UrlEncode(credentialId))
-  if (!descriptor) {
-    throw new Error('Selected passkey is not registered for this identity.')
-  }
-
-  return {
-    credentialId,
-    credentialIdHash: sha256(credentialId),
-    prfInput: descriptor.prfInput,
-    prfOutput,
-    rpId: descriptor.rpId,
+/**
+ * Tells the passkey provider this relying party no longer accepts the
+ * passkey, so it can hide or drop it (Chrome 132+, Safari 26). Best effort:
+ * resolves whether or not the browser supports the signal.
+ */
+export async function signalUnknownPasskey(rpId: string, credentialId: Uint8Array): Promise<void> {
+  try {
+    await signals()?.signalUnknownCredential?.({ rpId, credentialId: base64Url(credentialId) })
+  } catch {
+    // An unsupported or refused signal changes nothing for the app.
   }
 }
 
-export async function selectDiscoverablePasskey(
-  rpId = getDefaultRpId(),
-): Promise<DiscoverablePasskeySelectionResult> {
-  ensureBrowserPasskeys()
-
-  const challenge = crypto.getRandomValues(new Uint8Array(32))
-  const credential = await navigator.credentials.get({
-    publicKey: {
-      challenge,
-      rpId,
-      timeout: 60000,
-      userVerification: 'required',
-    },
-  })
-
-  if (!(credential instanceof PublicKeyCredential)) {
-    throw new Error('Passkey assertion failed')
+/** Tells the provider which of this user's passkeys still work here, so it hides the others. Best effort. */
+export async function signalAcceptedPasskeys(rpId: string, userId: Uint8Array, credentialIds: Uint8Array[]): Promise<void> {
+  try {
+    await signals()?.signalAllAcceptedCredentials?.({ rpId, userId: base64Url(userId), allAcceptedCredentialIds: credentialIds.map(base64Url) })
+  } catch {
+    // As above.
   }
-
-  const assertionCredential = credential as PublicKeyCredentialWithAssertionResponse
-  const credentialId = new Uint8Array(credential.rawId)
-
-  return {
-    credentialId,
-    credentialIdHash: sha256(credentialId),
-    userHandle: decodeUserHandle(assertionCredential.response.userHandle),
-    rpId,
-  }
-}
-
-export function getPasskeyAllowCredentialIds(credentials: PasskeyCredentialDescriptor[]): Uint8Array[] {
-  return credentials.map((entry) => new Uint8Array(toArrayBuffer(entry.credentialId)))
 }

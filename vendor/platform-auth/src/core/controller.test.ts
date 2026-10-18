@@ -155,6 +155,29 @@ describe('PlatformAuthController username sync', () => {
     await vi.waitFor(() => expect(controller.getState().user?.username).toBe('alice.dash'))
   })
 
+  it('runs beforeStore and afterStore around the key store, and neither for a superseded sign-in', async () => {
+    const { controller, storePrivateKey } = setup(async () => 'alice.dash')
+    const order: string[] = []
+    storePrivateKey.mockImplementation(async () => { order.push('store') })
+    await controller.loginWithAuthKey(IDENTITY_ID, 'private-key', { beforeStore: () => order.push('before'), afterStore: () => order.push('after') })
+    expect(order).toEqual(['before', 'store', 'after'])
+
+    // A store that fails runs beforeStore but never afterStore.
+    order.length = 0
+    storePrivateKey.mockImplementation(async () => { throw new Error('storage full') })
+    await expect(controller.loginWithAuthKey(IDENTITY_ID, 'private-key', { beforeStore: () => order.push('before'), afterStore: () => order.push('after') }))
+      .rejects.toThrow('storage full')
+    expect(order).toEqual(['before'])
+    storePrivateKey.mockImplementation(async () => undefined)
+
+    let superseded = 0
+    const stale = controller.sessionEpoch()
+    await controller.loginWithAuthKey(IDENTITY_ID, 'private-key')
+    await expect(controller.loginWithAuthKey(IDENTITY_ID, 'private-key', { since: stale, beforeStore: () => { superseded += 1 } }))
+      .rejects.toBeInstanceOf(SupersededSignInError)
+    expect(superseded).toBe(0)
+  })
+
   it('still sends a user with no username to registration on login', async () => {
     const { controller } = setup(async () => null)
 

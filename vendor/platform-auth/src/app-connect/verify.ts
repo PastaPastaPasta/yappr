@@ -132,11 +132,42 @@ export async function verifyAppConnectCandidate(input: VerifyAppConnectCandidate
     return reject(new Rejection(error instanceof AppConnectPayloadError ? error.code : 'decrypt'))
   }
 
+  return verifyKeys({ request, ownerId: candidate.ownerId, identity: input.identity, now: input.now, expiryMarginMs: input.expiryMarginMs }, slots)
+}
+
+/** What a grant is checked against, whether its keys came from a wallet's answer or were kept from one. */
+interface VerifyContext {
+  request: Pick<AppConnectRequest, 'authBindings' | 'encBindings'>
+  ownerId: string
+  identity: AppConnectIdentityPort
+  now: number
+  expiryMarginMs?: number
+}
+
+export interface VerifyAppConnectKeysInput extends VerifyContext {
+  /** The private keys of one earlier grant, in any order; wiped when they are refused. */
+  privateKeys: Uint8Array[]
+}
+
+/**
+ * Verifies private keys an app kept from an earlier grant (Yappr's passkey
+ * vault) exactly as {@link verifyAppConnectCandidate} verifies a wallet's
+ * answer, against the request the app makes today: every key must still be
+ * a live key of `ownerId` that matches one binding (bounds, purpose, level,
+ * limits), the primary binding must be there, and nothing may be expired,
+ * spent or superseded. A refusal says why, so an expired or spent grant can
+ * lead to a renewal in the wallet rather than a dead session.
+ */
+export function verifyAppConnectKeys(input: VerifyAppConnectKeysInput): Promise<AppConnectVerification> {
+  return verifyKeys(input, input.privateKeys)
+}
+
+async function verifyKeys(context: VerifyContext, slots: Uint8Array[]): Promise<AppConnectVerification> {
   try {
-    if (slots.length > request.authBindings.length + request.encBindings.length) {
+    if (slots.length > context.request.authBindings.length + context.request.encBindings.length) {
       throw new Rejection('framing')
     }
-    const grant = await verifySlots(input, slots)
+    const grant = await verifySlots(context, slots)
     return { ok: true, grant }
   } catch (error) {
     slots.forEach(clearSensitiveBytes)
@@ -149,10 +180,9 @@ function reject(rejection: Rejection): AppConnectVerification {
   return { ok: false, reason: rejection.reason, retryable: RETRYABLE.has(rejection.reason), slot: rejection.slot }
 }
 
-async function verifySlots(input: VerifyAppConnectCandidateInput, slots: Uint8Array[]): Promise<AppConnectGrant> {
-  const { request, candidate, identity, now } = input
+async function verifySlots(input: VerifyContext, slots: Uint8Array[]): Promise<AppConnectGrant> {
+  const { request, ownerId, identity, now } = input
   const margin = input.expiryMarginMs ?? APP_CONNECT_EXPIRY_MARGIN_MS
-  const ownerId = candidate.ownerId
 
   const record = await identity.getIdentityFresh(ownerId)
   if (!record || record.id !== ownerId) throw new Rejection('identity-not-found')
@@ -225,7 +255,7 @@ function findKeyForSlot(keys: AppConnectIdentityKey[], privateKey: Uint8Array, s
 }
 
 function matchBinding(
-  request: AppConnectRequest,
+  request: Pick<AppConnectRequest, 'authBindings' | 'encBindings'>,
   key: AppConnectIdentityKey,
   slot: number,
 ): { role: AppConnectKeyRole; bindingIndex: number } {
@@ -273,7 +303,7 @@ function authLevelAllowed(binding: AppConnectAuthBinding, level: number): boolea
 function checkKeyLimits(
   key: AppConnectIdentityKey,
   match: { role: AppConnectKeyRole; bindingIndex: number },
-  request: AppConnectRequest,
+  request: Pick<AppConnectRequest, 'authBindings' | 'encBindings'>,
   now: number,
   margin: number,
   slot: number,
