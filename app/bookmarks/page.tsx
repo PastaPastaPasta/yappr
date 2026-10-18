@@ -20,6 +20,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import toast from 'react-hot-toast'
 import { useSettingsStore } from '@/lib/store'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
+import { canBookmark } from '@/lib/contract-topology'
 import type { BookmarkDocument } from '@/lib/services/bookmark-service'
 import type { Post } from '@/lib/types'
 import { useHydratedPages } from '@/hooks/use-hydrated-pages'
@@ -37,9 +38,15 @@ const UNAVAILABLE_POST = 'This post is no longer available.'
 
 /** One row per saved post, including unavailable targets, in bookmark order. */
 async function hydrateBookmarks(bookmarkDocs: BookmarkDocument[]): Promise<SavedPost[]> {
-  const { postService } = await import('@/lib/services/post-service')
+  const { postService, replyToPost } = await import('@/lib/services/post-service')
   const page = await postService.getPostsByIdsForDisplay(bookmarkDocs.map(bookmark => bookmark.postId), { throwOnError: true })
   const postsById = new Map(page.posts.map(post => [post.id, post]))
+  const missingIds = bookmarkDocs.map(bookmark => bookmark.postId).filter(id => !postsById.has(id))
+  if (missingIds.length > 0 && canBookmark('reply')) {
+    const { replyService } = await import('@/lib/services/reply-service')
+    const replies = await replyService.getMany(missingIds, { throwOnError: true })
+    for (const reply of replies) postsById.set(reply.id, replyToPost(reply))
+  }
   const kept = bookmarkDocs.flatMap((bookmark) => {
     const post = postsById.get(bookmark.postId)
     // Deleted posts drop out; v11: so does a post its author tombstoned.

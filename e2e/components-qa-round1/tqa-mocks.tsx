@@ -20,6 +20,7 @@ let published = false
 let reads = 0
 let confirmations = 0
 let bookmarkReads = 0
+let replyBookmarkReads = 0
 let postReads = 0
 let release: (() => void) | undefined
 let held = false
@@ -44,11 +45,14 @@ export const postService = {
     bookmarkReads++
     if (!options?.throwOnError) throw new Error('Bookmark reads must distinguish absence from failure')
     if (scenario === 'bookmark-outage' && bookmarkReads === 1) throw new TypeError('Failed to fetch')
+    if (scenario?.startsWith('reply-bookmark')) return { posts: [], preloaded: {} }
+    if (!hasFlatThreads() && scenario !== 'bookmark-outage') return { posts: [], preloaded: {} }
     return { posts: [{ ...rootPost, deleted: scenario !== 'bookmark-outage' }], preloaded: {} }
   },
   enrichPostsBatch: async (posts: Post[]) => posts,
 }
-export const replyToPost = (reply: Reply) => ({ ...reply, quotes: 0 })
+export const replyToPost = (reply: Reply) => ({ ...reply, targetKind: 'reply' as const, quotes: 0 })
+export const PostCard = ({ post }: { post: Post }) => <article data-target-kind={post.targetKind}>{post.content}<span>Post content</span></article>
 export const replyService = {
   getReplies: async () => {
     reads++
@@ -64,7 +68,13 @@ export const replyService = {
   },
   getReplyById: async () => null,
   getOrThrow: async () => null,
-  getMany: async () => {
+  getMany: async (ids: string[], options?: { throwOnError?: boolean }) => {
+    if (scenario?.startsWith('reply-bookmark')) {
+      replyBookmarkReads++
+      if (!options?.throwOnError || ids.length !== 1 || ids[0] !== continuation.id) throw new Error('Reply bookmark hydration must strictly read missing targets')
+      if (scenario === 'reply-bookmark-outage' && replyBookmarkReads === 1) throw new TypeError('Failed to fetch')
+      return scenario === 'reply-bookmark-deleted' ? [] : [continuation]
+    }
     confirmations++
     return published && (scenario !== 'indexing' || confirmations >= 2) ? [acceptedReply] : []
   },
@@ -78,7 +88,7 @@ export const usePostEnrichment = () => enrichment
 export const attachQuotedPosts = async () => undefined
 let bookmarkDeleted = false
 export const bookmarkService = {
-  getUserBookmarks: async () => bookmarkDeleted ? [] : [{ $id: 'bookmark', $ownerId: 'owner', $createdAt: 1, postId: 'root' }],
+  getUserBookmarks: async () => bookmarkDeleted ? [] : [{ $id: 'bookmark', $ownerId: 'owner', $createdAt: 1, postId: scenario?.startsWith('reply-bookmark') ? continuation.id : 'root' }],
   removeBookmark: async () => { bookmarkDeleted = true; return true },
 }
 

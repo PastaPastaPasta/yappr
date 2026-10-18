@@ -219,3 +219,32 @@ test('T-SOC-01: the actual page retains accepted replies across a main-post tran
   await expect(page.getByRole('alert')).toHaveCount(0)
   await expect(page.locator('article[data-reply-id="accepted"]')).toHaveCount(1)
 })
+
+for (const scenario of ['live', 'outage', 'deleted']) {
+  test(`T-SOC-02: legacy reply bookmarks distinguish ${scenario} targets`, async ({ page }) => {
+    test.skip(process.env.TQA_SOCIAL_TOPOLOGY !== 'v2', 'Only legacy contracts support reply bookmarks')
+    await page.goto(`/tqa.html?fixture=bookmarks&scenario=reply-bookmark-${scenario}`)
+    if (scenario === 'outage') {
+      await expect(page.getByRole('alert')).toContainText('Bookmarks could not be loaded.')
+      await expect(page.getByText('This post is no longer available.', { exact: true })).toHaveCount(0)
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
+    }
+    await expect(page.getByText('1 saved post', { exact: true })).toBeVisible()
+    if (scenario === 'deleted') {
+      await expect(page.getByText('This post is no longer available.', { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Remove bookmark', exact: true }).click()
+      await expect(page.getByText('0 saved posts', { exact: true })).toBeVisible()
+    } else {
+      await expect(page.locator('article[data-target-kind="reply"]')).toContainText('Continuation')
+      await expect(page.getByText('This post is no longer available.', { exact: true })).toHaveCount(0)
+    }
+  })
+}
+
+test('T-SOC-02: modern bookmarks do not query unsupported reply targets', async ({ page }) => {
+  test.skip(process.env.TQA_SOCIAL_TOPOLOGY === 'v2', 'Modern contracts forbid reply bookmarks')
+  await page.goto('/tqa.html?fixture=bookmarks&scenario=reply-bookmark-live')
+  await expect(page.getByText('1 saved post', { exact: true })).toBeVisible()
+  await expect(page.getByText('This post is no longer available.', { exact: true })).toBeVisible()
+  await expect(page.locator('article[data-target-kind="reply"]')).toHaveCount(0)
+})
