@@ -552,6 +552,7 @@ export function InventoryTable({
                 const isExpanded = expandedItems.has(item.id)
                 const priceRange = storeItemService.getPriceRange(item)
                 const drafts = stockDrafts[item.id] ?? {}
+                const itemCurrency = item.currency || currency
                 const draftCount = Object.keys(drafts).length
                 const itemStock = totalStock(item, drafts)
 
@@ -584,7 +585,7 @@ export function InventoryTable({
                           {combo.sku || '-'}
                         </td>
                         <td className="px-3 py-2 text-right">
-                          {formatPrice(combo.price, currency)}
+                          {formatPrice(combo.price, itemCurrency)}
                         </td>
                         <td className="px-3 py-2 text-right">
                           {renderStockCell(item, draftedStock(combo, drafts) ?? Infinity, combo.id)}
@@ -652,8 +653,8 @@ export function InventoryTable({
                       </td>
                       <td className="px-3 py-3 text-right">
                         {priceRange.min === priceRange.max
-                          ? formatPrice(priceRange.min, currency)
-                          : `${formatPrice(priceRange.min, currency)} - ${formatPrice(priceRange.max, currency)}`
+                          ? formatPrice(priceRange.min, itemCurrency)
+                          : `${formatPrice(priceRange.min, itemCurrency)} - ${formatPrice(priceRange.max, itemCurrency)}`
                         }
                       </td>
                       <td className="px-3 py-3 text-right">

@@ -27,7 +27,7 @@ if (scenario === 'stale-key') {
 }
 // The prefilled-derived scenario already holds the accepted key under its 'derived' label,
 // as it would for a wallet or login-key user whose key was derived at sign-in.
-if (scenario === 'prefilled-derived') {
+if (scenario === 'prefilled-derived' || scenario === 'wallet') {
   localStorage.setItem(storageKey, JSON.stringify(EXPECTED_WIF))
 }
 
@@ -83,3 +83,6 @@ export const RenewPrivateFeedDialog = () => null
 export const AddEncryptionKeyModal = () => null
 
 export { blogService, blogPostService } from './blog-management-mocks'
+
+export const useWalletSession = () => scenario === 'wallet'
+export const WalletEncryptionKeyPrompt = () => null

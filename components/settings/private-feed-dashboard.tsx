@@ -145,14 +145,13 @@ export function PrivateFeedDashboard() {
       if (currentRequestId !== requestIdRef.current) return
 
 
-      // For revocations, we track them from rekey documents but don't have the user info directly
-      // We can only show "Follower revoked" without the user details since grant is deleted
+      // Rekeys identify a tree position, so use a neutral label for removal activity.
       for (const rekey of rekeyDocs.slice(-5).reverse()) {
         activity.push({
           id: `rekey-${rekey.keyGeneration}`,
           type: 'revoked',
           userId: '',
-          displayName: `Leaf ${rekey.revokedLeaf}`,
+          displayName: 'Follower',
           timestamp: new Date(rekey.createdAt),
         })
       }
@@ -310,7 +309,7 @@ export function PrivateFeedDashboard() {
                     ) : (
                       <span>
                         <span className="font-medium">{activity.displayName}</span>
-                        {' '}revoked
+                        {' '}removed
                       </span>
                     )}
                   </div>

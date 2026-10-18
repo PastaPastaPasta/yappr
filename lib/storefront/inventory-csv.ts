@@ -46,6 +46,8 @@ const text = (value: number | string | undefined) => (value === undefined ? '' :
 /** An inventory export: the CSV text, and the listings it leaves out. */
 export interface InventoryExport {
   csv: string
+  /** Digital products: CSV cannot carry their encrypted delivery content. Always disclose these omissions. */
+  digitalOmitted: StoreItem[]
   /**
    * Listings whose options could not be read (`unreadableVariants`): as rows
    * they would come back as free, unlimited products without options, so they
@@ -76,12 +78,14 @@ export interface InventoryExport {
  * is not one of them is left out.
  */
 export function inventoryToCsv(allItems: readonly StoreItem[], defaultCurrency: string, zones: readonly Pick<ShippingZone, 'id' | 'name'>[] = []): InventoryExport {
-  const omitted = allItems.filter((item) => item.unreadableVariants !== undefined)
-  const items = allItems.filter((item) => item.unreadableVariants === undefined)
+  const digitalOmitted = allItems.filter((item) => item.fulfillment === 'digital')
+  const physical = allItems.filter((item) => item.fulfillment !== 'digital')
+  const omitted = physical.filter((item) => item.unreadableVariants !== undefined)
+  const items = physical.filter((item) => item.unreadableVariants === undefined)
   const axisCount = Math.max(0, ...items.map((item) => item.variants?.axes.length ?? 0))
   const imageCount = Math.max(0, ...items.map((item) => item.imageUrls?.length ?? 0))
   const rows: string[][] = [headerRow(axisCount, imageCount)]
-  const zonesGone = storefrontSupportsItemZones() ? items.filter((item) => item.fulfillment !== 'digital' && itemZones(item, zones)?.length === 0) : []
+  const zonesGone = storefrontSupportsItemZones() ? items.filter((item) => itemZones(item, zones)?.length === 0) : []
 
   for (const item of items) {
     const currency = item.currency || defaultCurrency
@@ -124,7 +128,7 @@ export function inventoryToCsv(allItems: readonly StoreItem[], defaultCurrency: 
         return Boolean(cell) && readZoneCell(cell, zones).ambiguous
       })
     : []
-  return { csv: toCsv(rows), omitted, zonesGone, zonesAmbiguous }
+  return { csv: toCsv(rows), digitalOmitted, omitted, zonesGone, zonesAmbiguous }
 }
 
 /**

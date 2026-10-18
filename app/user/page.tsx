@@ -491,7 +491,7 @@ function UserProfileContent() {
               ) : (
                 <h1 className="text-xl font-extrabold">{displayName}</h1>
               )}
-              <p className="text-sm text-gray-500">{displayedPostCount !== null ? displayedPostCount : '–'} posts</p>
+              <p className="text-sm text-gray-500">{displayedPostCount !== null ? displayedPostCount : '–'} {displayedPostCount === 1 ? 'post' : 'posts'}</p>
             </div>
           </div>
         </PageHeader>

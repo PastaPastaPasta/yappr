@@ -95,7 +95,9 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Type check component fixtures
-        run: npx tsc --noEmit -p e2e/components/tsconfig.json
+        run: |
+          npx tsc --noEmit -p e2e/components/tsconfig.json
+          npx tsc --noEmit -p e2e/components-qa-round1/tsconfig.json
 
       # Isolated component fixtures simulate service failures; no live network
       # credentials or Platform writes are involved in these browser checks.

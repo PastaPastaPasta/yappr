@@ -670,12 +670,14 @@ function StoreManagePage() {
                         </div>
                         <div className="flex gap-1">
                           <button
+                            aria-label={`Edit ${zone.name}`}
                             onClick={() => setEditingZone(zone)}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
                           >
                             <PencilIcon className="h-4 w-4 text-gray-500" />
                           </button>
                           <button
+                            aria-label={`Delete ${zone.name}`}
                             onClick={() => setDeleteZoneId(zone.id)}
                             className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-lg"
                           >

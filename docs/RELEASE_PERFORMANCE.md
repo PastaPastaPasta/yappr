@@ -108,7 +108,7 @@ earlier shares bandwidth with shell JS (hence its later load event), while
 removing the sequential post-download preparation. Detailed cross-origin
 TTFB/body sizes remain unavailable without Timing-Allow-Origin.
 
-Final validation: web lint, dead-code check, 251 test files / 3,729 tests,
+Final validation: web lint, dead-code check, 251 test files / 3,737 tests,
 production and devnet exports, and export-size budgets pass. Both mobile
 engine variants build and the engine typecheck passes. The final exported
 head bootstrap was checked for all three routes: it has no speculative cache write

@@ -122,7 +122,9 @@ export function ConversationList({
       ) : (
         <div className="flex-1 overflow-y-auto">
           {visible.length === 0 && (
-            <div className="p-8 text-center text-gray-500 text-sm">No conversations match your search</div>
+            <div className="p-8 text-center text-gray-500 text-sm">
+              {needle ? 'No conversations match your search' : 'Your conversations will appear here'}
+            </div>
           )}
           {visible.map((row) => (
             <button
