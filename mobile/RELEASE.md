@@ -219,8 +219,9 @@ Setup by the owner:
 4. Run `npx eas-cli build --profile preview --platform all`, then
    `npx eas-cli submit --profile preview`.
 
-`eas-build-post-install` (package.json) installs the root and engine
-dependencies that the engine build needs at prebuild.
+`eas-build-pre-install` (package.json) installs the root and engine
+dependencies before Expo evaluates app config or runs prebuild. The shared
+release validator needs those root dependencies even before an engine exists.
 
 ## TestFlight
 
