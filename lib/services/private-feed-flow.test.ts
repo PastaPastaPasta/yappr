@@ -595,6 +595,21 @@ describe('private feeds v2: every authorised path to history', () => {
     expect(grantsOf(P, current + 1)).toEqual(expect.arrayContaining([F1, F3]))
     expect(grantsOf(P, current)).toEqual(expect.arrayContaining([F1, F3]))
   })
+
+  it('a follower who leaves and asks again while an earlier follower\'s grant is being written is not moved', async () => {
+    expect((await s.owner.privateFeedService.openFeed(P, keys[P])).success).toBe(true)
+    const feed = (await s.owner.privateFeedService.getCurrentFeed(P, { fresh: true }))?.feed as number
+    expect(await s.move.adoptUnfinishedMove(P)).toBe(2)
+    const { loadMove } = await import('./private-feed-move-job')
+    const [first, second] = loadMove(P)?.recipients ?? []
+    chain.afterGrant = async () => {
+      expect(await s.follower.leave(P, second)).toEqual({ success: true })
+      expect(await s.follower.requestAccess(P, second)).toEqual({ success: true })
+    }
+    expect(await s.move.runMove(P, keys[P])).toEqual({ success: true })
+    expect(grantsOf(P, feed)).toEqual([first])
+    expect((await s.owner.privateFeedService.getPendingRequests(P)).map((r) => r.$ownerId)).toContain(second)
+  })
 })
 
 describe('private feeds v2: this device\'s key store', () => {

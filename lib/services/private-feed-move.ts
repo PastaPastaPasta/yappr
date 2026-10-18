@@ -24,7 +24,7 @@
 import { logger } from '@/lib/logger'
 import { privateFeedService, type OwnerFeedState, type PrivateFeedResult } from './private-feed-service'
 import {
-  activeGrants, answeredThrough, fetchCurrentFeed, fetchFeeds, fetchFollowRequestsTo, fetchGrant, fetchMembers, fetchRekeys, grantIsRevoked, mainFeeds,
+  activeGrants, answeredThrough, fetchCurrentFeed, fetchFeeds, fetchFollowRequest, fetchFollowRequestsTo, fetchGrant, fetchMembers, fetchRekeys, grantIsRevoked, mainFeeds,
   type FollowRequestDocument, type GrantDocument, type PrivateFeedDocument, type RekeyDocument,
 } from './private-feed-reads'
 import { clearMove, loadMove, moveProgress, saveMove, type MoveJob } from './private-feed-move-job'
@@ -231,11 +231,10 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       clearMove(ownerId)
       return { success: false, error: 'Your private feed was renewed again on another device. Move your followers from there.' }
     }
-    const [requests, existing, blocked] = await Promise.all([fetchFollowRequestsTo(ownerId), fetchMembers(ownerId, job.to), blockedBy(ownerId)])
+    const [existing, blocked] = await Promise.all([fetchMembers(ownerId, job.to), blockedBy(ownerId)])
     // Anyone who joined the old feed since the move was planned moves too.
     const joined = (await movableFollowers(ownerId, job.from)).filter((id) => !job.recipients.includes(id))
     if (joined.length > 0) job = { ...job, recipients: [...job.recipients, ...joined] }
-    const requestOf = new Map(requests.map((request) => [request.$ownerId, request]))
     const grantedTo = new Map(existing.map((grant) => [grant.recipientId, grant]))
     const taken = new Set(existing.map((grant) => grant.leafIndex))
     const capacity = synced.state.feed.treeCapacity
@@ -248,12 +247,15 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
     }
     /**
      * Settle a follower who holds `moved` in the new feed: kept while their old
-     * grant is in force and they are not blocked; otherwise (removed on any
-     * device meanwhile) exactly that grant is revoked, or the move pauses.
+     * grant is in force, they are not blocked, and the grant did not answer a
+     * request made since the old grant (they left and asked again while it was
+     * being written: that is the owner's to approve); otherwise exactly that
+     * grant is revoked, or the move pauses.
      */
     const settleGranted = async (recipientId: string, moved: GrantDocument): Promise<PrivateFeedResult | null> => {
-      const source = await fetchGrant(ownerId, job.from, recipientId)
-      const removed = blocked.has(recipientId) || (source !== null && (await grantIsRevoked(source)))
+      const [source, request] = await Promise.all([fetchGrant(ownerId, job.from, recipientId), fetchFollowRequest(ownerId, recipientId)])
+      const askedAgain = source !== null && request !== null && request.$createdAt > source.createdAt && request.$createdAt <= moved.createdAt
+      const removed = askedAgain || blocked.has(recipientId) || (source !== null && (await grantIsRevoked(source)))
       if (!removed) {
         settle('done', recipientId)
         return null
@@ -284,8 +286,9 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       } else {
         // Re-read their old grant and its revocations now: removed since the plan, on any device, they stay behind.
         const source = await fetchGrant(ownerId, job.from, recipientId)
-        const request = requestOf.get(recipientId)
-        // Still consenting: the request their old grant answered (one made since waits for the owner's approval).
+        // Read now, not at the start: a follower who left and asked again meanwhile waits for the owner's approval.
+        const request = (await fetchFollowRequest(ownerId, recipientId)) ?? undefined
+        // Still consenting: the request their old grant answered.
         const consenting = request !== undefined && source !== null && request.$createdAt <= source.createdAt
         const stillMember = consenting && !blocked.has(recipientId) && !(await grantIsRevoked(source))
         const key = stillMember ? await recipientKey(recipientId, request.publicKey) : null
