@@ -12,8 +12,8 @@ export const dpnsService = {
   batchCheckAvailability: async (labels: string[]) => new Map(labels.map(label => [label.toLowerCase(), { available: true, contested: false }])),
 }
 export const storeItemService = { ...items, get: async () => ({ ...eurItem, variants: undefined, stockQuantity: 42 }), hasInventoryTracking: () => true, getAllByStore: async () => [eurItem], getByStore: async () => ({ items: [eurItem] }) }
-export const rootPost: Post = { id: 'root', author: { id: 'author', username: 'author', displayName: 'Author', followers: 0, following: 0 }, content: 'Root', createdAt: new Date(1), likes: 0, replies: 1, reposts: 0, quotes: 0, views: 0 }
-export const continuation: Reply = { ...rootPost, id: 'continuation', parentId: 'root', rootPostId: hasFlatThreads() ? 'root' : undefined, content: 'Continuation', __targetKind: 'reply' }
+export const rootPost: Post = { id: 'root', author: { id: 'author', username: 'author', displayName: 'Author', avatar: '', joinedAt: new Date(0), followers: 0, following: 0 }, content: 'Root', createdAt: new Date(1), likes: 0, replies: 1, reposts: 0, quotes: 0, views: 0 }
+export const continuation: Reply = { ...rootPost, id: 'continuation', parentId: 'root', parentOwnerId: 'author', rootPostId: hasFlatThreads() ? 'root' : undefined, content: 'Continuation' }
 export const acceptedReply: Reply = { ...continuation, id: 'accepted', author: { ...rootPost.author, id: 'reader' }, parentId: 'continuation', replyToReplyId: hasFlatThreads() ? 'continuation' : undefined, content: 'Accepted nested reply', createdAt: new Date(2) }
 let published = false
 let reads = 0
