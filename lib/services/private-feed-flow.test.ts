@@ -584,7 +584,7 @@ describe('private feeds v2: every authorised path to history', () => {
     getBlock.mockRestore()
     const now = (await s.owner.privateFeedService.getPrivateFollowers(P)).map((f) => f.recipientId)
     expect(now).not.toContain(later)
-    expect(now.length).toBeGreaterThan(0)
+    expect(grantsOf(P, feed)).toContain(recipients[0])
   })
 
   it('a renewal planned from a feed another device has renewed since is refused', async () => {
