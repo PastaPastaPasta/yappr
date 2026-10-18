@@ -352,11 +352,12 @@ export async function enrichBlogPostsWithAuthors<T extends { ownerId: string; bl
  * read by id (one query per 100) for their names. A post whose blog does not
  * come back is dropped: an author may delete a blog or a moderator remove it
  * while its posts stay stored, and a post page needs its blog, so
- * such a card would only lead to "Blog not found".
+ * such a card would only lead to "Blog not found". Discovery can opt into
+ * strict hydration so failed reads are not mistaken for deleted blogs.
  */
-export async function enrichBlogPostsWithBlogNames<T extends { ownerId: string; blogId: string }>(posts: T[]) {
+export async function enrichBlogPostsWithBlogNames<T extends { ownerId: string; blogId: string }>(posts: T[], options: { throwOnError?: boolean } = {}) {
   if (posts.length === 0) return []
   const { blogService } = await import('@/lib/services/blog-service')
-  const blogs = new Map((await blogService.getMany(Array.from(new Set(posts.map((post) => post.blogId))))).map((blog) => [blog.id, blog]))
+  const blogs = new Map((await blogService.getMany(Array.from(new Set(posts.map((post) => post.blogId))), options)).map((blog) => [blog.id, blog]))
   return enrichBlogPostsWithAuthors(posts.filter((post) => blogs.has(post.blogId)), blogs)
 }

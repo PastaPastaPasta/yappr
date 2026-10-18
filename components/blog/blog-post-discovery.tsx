@@ -53,7 +53,7 @@ export function BlogPostDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
   const [sort, setSort] = useState<PostSort>('latest')
   const loadPage = useCallback(async (cursor?: string): Promise<CursorPage<ListedPost>> => {
     const page = sort === 'latest' ? await latestPage(cursor) : { posts: await discussedPosts(), nextCursor: undefined }
-    return { items: await enrichBlogPostsWithBlogNames(page.posts), nextCursor: page.nextCursor }
+    return { items: await enrichBlogPostsWithBlogNames(page.posts, { throwOnError: true }), nextCursor: page.nextCursor }
   }, [sort])
   const { items: posts, cursor, loading, loadingMore, error, loadMore } = useCursorList(loadPage, {
     enabled: sdkReady, loadError: 'Posts are unavailable right now. Please try again.', moreError: 'Failed to load more posts',
