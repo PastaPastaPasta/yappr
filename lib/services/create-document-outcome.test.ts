@@ -289,6 +289,26 @@ describe('settleCreate (a receipt for a create reported unconfirmed)', () => {
     expect(await stateTransitionService.settleCreate(receipt)).toBeNull()
   })
 
+  it('signs a replacement at the stalled create\'s own nonce, and sends nothing once that nonce is spent', async () => {
+    await unconfirmedCreate()
+    // The stalled create took 101; the tip moved past it (102 executed) with 101 still missing.
+    const missing101 = n(102) | (BigInt(1) << BigInt(40))
+    sdk.identities.contractNonce.mockResolvedValue(missing101)
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+    const replacement = await stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'again' }, { replacesNonce: n(101) })
+    expect(replacement).toMatchObject({ success: true, confirmed: true, transactionHash: 'doc-101' })
+
+    // 101 spent: there is nothing left to replace, and nothing is sent.
+    sdk.identities.contractNonce.mockResolvedValue(n(102))
+    sdk.stateTransitions.broadcastStateTransition.mockClear()
+    vi.useFakeTimers()
+    const late = stateTransitionService.createDocument(CONTRACT, 'post', OWNER, { text: 'late' }, { replacesNonce: n(101) })
+    await vi.runAllTimersAsync()
+    expect(await late).toEqual({ success: false, error: PENDING_WRITE_ERROR })
+    vi.useRealTimers()
+    expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
+  })
+
   it('leaves the outcome unknown when the reads fail, however often they are tried', async () => {
     const receipt = await unconfirmedCreate()
     sdk.identities.contractNonceWithProof.mockRejectedValue(new Error('transport error: unavailable'))

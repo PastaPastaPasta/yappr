@@ -90,6 +90,33 @@ describe('a passkey\'s CRITICAL key', () => {
     expect(s.getPrivateKeyRecord(IDENTITY)?.fromPasskey).toBe(false)
   })
 
+  it('never leaves an untagged record of the same key in charge when the tagged one cannot be written', async () => {
+    const s = await load()
+    // A typed CRITICAL-key sign-in left the key untagged in this tab.
+    s.storeSessionOnlyPrivateKey(IDENTITY, CRITICAL_WIF)
+    // The longer tagged record does not fit.
+    const setItem = sessionStorage.setItem.bind(sessionStorage)
+    sessionStorage.setItem = (key: string, value: string) => {
+      if (value.startsWith('passkey:')) throw new Error('QuotaExceededError')
+      setItem(key, value)
+    }
+    s.expectPasskeyCriticalKey(IDENTITY, CRITICAL_WIF)
+    s.storeSessionOnlyPrivateKey(IDENTITY, CRITICAL_WIF)
+    expect(s.getPrivateKeyRecord(IDENTITY)).toEqual({ wif: CRITICAL_WIF, fromPasskey: true })
+    // A reload does not bring the untagged record back: the key is simply gone.
+    const reloaded = await load()
+    expect(reloaded.getPrivateKeyRecord(IDENTITY)).toBeNull()
+  })
+
+  it('fails the store when the old record can be neither replaced nor removed', async () => {
+    const s = await load()
+    s.storeSessionOnlyPrivateKey(IDENTITY, CRITICAL_WIF)
+    sessionStorage.setItem = () => { throw new Error('QuotaExceededError') }
+    sessionStorage.removeItem = () => { throw new Error('SecurityError') }
+    s.expectPasskeyCriticalKey(IDENTITY, CRITICAL_WIF)
+    expect(() => s.storeSessionOnlyPrivateKey(IDENTITY, CRITICAL_WIF)).toThrow()
+  })
+
   it('does not hold back a persisted key that took over, and comes back with its tag if that one goes', async () => {
     const s = await load()
     s.expectPasskeyCriticalKey(IDENTITY, CRITICAL_WIF)

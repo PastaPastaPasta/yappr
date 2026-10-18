@@ -106,9 +106,9 @@ class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
   async add(
     ownerId: string,
     entry: SealedVaultEntry,
-    beforeBroadcast?: (receipt?: CreateReceipt) => void
+    options: { beforeBroadcast?: (receipt?: CreateReceipt) => void; replacesNonce?: bigint } = {}
   ): Promise<{ confirmed: true } | { confirmed: false; receipt?: CreateReceipt }> {
-    const result = await stateTransitionService.createDocument(this.contractId, this.documentType, ownerId, contentOf(entry), { beforeBroadcast })
+    const result = await stateTransitionService.createDocument(this.contractId, this.documentType, ownerId, contentOf(entry), options)
     assertWritten(result, 'the passkey could not be saved')
     return result.confirmed === false ? { confirmed: false, receipt: result.receipt } : { confirmed: true }
   }

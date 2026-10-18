@@ -102,21 +102,32 @@ export function storeSessionOnlyPrivateKey(identityId: string, wif: string): voi
     sessionStorage.setItem(SESSION_ONLY_KEY_PREFIX + identityId, record)
     sessionOnlyMemory.delete(identityId)
   } catch {
+    // The record already there (another key, or this key untagged) would outrank the in-memory copy and
+    // outlive a reload: it goes first, or nothing is stored and the sign-in fails.
+    try {
+      sessionStorage.removeItem(SESSION_ONLY_KEY_PREFIX + identityId)
+    } catch {
+      // Storage blocked outright: nothing durable is there to outrank the in-memory copy.
+    }
+    if (sessionStorageRecord(identityId) !== null) throw new Error('This browser could not keep your sign-in key')
     sessionOnlyMemory.set(identityId, record)
   }
   // Only now that this tab holds it is the persisted copy dropped.
   browserSecretStore.clearPrivateKey(identityId)
 }
 
+function sessionStorageRecord(identityId: string): string | null {
+  try {
+    return sessionStorage.getItem(SESSION_ONLY_KEY_PREFIX + identityId)
+  } catch {
+    // Storage blocked: only the in-memory copy can exist.
+    return null
+  }
+}
+
 function getSessionOnlyRecord(identityId: string): string | null {
   if (typeof window === 'undefined') return null
-  try {
-    const stored = sessionStorage.getItem(SESSION_ONLY_KEY_PREFIX + identityId)
-    if (stored !== null) return stored
-  } catch {
-    // Storage blocked: fall back to the in-memory copy.
-  }
-  return sessionOnlyMemory.get(identityId) ?? null
+  return sessionStorageRecord(identityId) ?? sessionOnlyMemory.get(identityId) ?? null
 }
 
 function getSessionOnlyPrivateKey(identityId: string): string | null {

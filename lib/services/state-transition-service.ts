@@ -592,6 +592,14 @@ class StateTransitionService {
       /** Stored with the nonce reservation: what this create writes (see `PendingTransition.scope`). */
       reservationScope?: string;
       /**
+       * Signs at this nonce, that of an earlier create of this browser that has
+       * not executed and may (a stalled one, see `settleCreate`), instead of the
+       * next free one: at most one of the two can ever execute, so this one
+       * replaces it rather than leaving it to land later. Not sent once that
+       * nonce is spent ({@link PENDING_WRITE_ERROR}).
+       */
+      replacesNonce?: bigint;
+      /**
        * Called just before the transition is broadcast (each time it is):
        * after every read and build that comes first (the identity, its nonce,
        * the payment), and before its nonce is reserved or its bytes cached.
@@ -642,7 +650,10 @@ class StateTransitionService {
       // Platform shows it landed (awaitNonce re-reads the tip for a few seconds).
       let nonceRead: { current: bigint | undefined; value: bigint };
       try {
-        nonceRead = await awaitNonce(ownerId, contractId, allocateNonce);
+        const replaces = options?.replacesNonce;
+        nonceRead = await awaitNonce(ownerId, contractId, replaces === undefined
+          ? allocateNonce
+          : (current) => (identityContractNonceConsumed(current, replaces) ? null : replaces));
       } catch (error) {
         if (extractErrorMessage(error) === PENDING_WRITE_ERROR) return { success: false, error: PENDING_WRITE_ERROR };
         throw error;
