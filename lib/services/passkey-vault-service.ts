@@ -113,8 +113,8 @@ class PasskeyVaultService extends BaseDocumentService<VaultEntryDocument> {
     return result.confirmed === false ? { confirmed: false, receipt: result.receipt } : { confirmed: true }
   }
 
-  /** Settles an unconfirmed {@link add}: `landed`, `not-recorded` (proved it never will), or null while unknown. */
-  settleAdd(receipt: CreateReceipt): Promise<'landed' | 'not-recorded' | null> {
+  /** Settles an unconfirmed {@link add}: `landed`, `not-recorded` (proved it never will), `stalled` (refused now), or null while unknown. */
+  settleAdd(receipt: CreateReceipt): Promise<'landed' | 'not-recorded' | 'stalled' | null> {
     return stateTransitionService.settleCreate(receipt)
   }
 

@@ -6,7 +6,7 @@ const UNSETTLED = {
   vault: 'vault-contract',
   credentialId: 'Y3JlZA',
   recipientKey: 'ab'.repeat(32),
-  receipt: { contractId: 'vault-contract', documentType: 'vaultEntry', ownerId: IDENTITY, documentId: 'doc-1', nonce: '18446744073709551615', transition: 'AQID' },
+  receipts: [{ contractId: 'vault-contract', documentType: 'vaultEntry', ownerId: IDENTITY, documentId: 'doc-1', nonce: '18446744073709551615', transition: 'AQID' }],
 }
 
 /** A fresh module, as after a reload: only what the browser stored survives. */
@@ -44,10 +44,11 @@ describe('unsettled passkeys', () => {
     expect(device.unsettledPasskey(IDENTITY)).toEqual(UNSETTLED)
   })
 
-  it('drop a malformed receipt, and refuse a malformed record', async () => {
+  it('refuse a record with a malformed receipt, or a malformed record', async () => {
     const device = await load()
-    device.rememberUnsettledPasskey(IDENTITY, { ...UNSETTLED, receipt: { ...UNSETTLED.receipt, nonce: '-1' } })
-    expect(device.unsettledPasskey(IDENTITY)).toEqual({ vault: UNSETTLED.vault, credentialId: UNSETTLED.credentialId, recipientKey: UNSETTLED.recipientKey })
+    // Dropping the receipt alone would let the rest look settled.
+    device.rememberUnsettledPasskey(IDENTITY, { ...UNSETTLED, receipts: [{ ...UNSETTLED.receipts[0], nonce: '-1' }] })
+    expect(device.unsettledPasskey(IDENTITY)).toBeNull()
 
     localStorage.setItem('yappr_passkey_unsettled', JSON.stringify({ [IDENTITY]: { vault: 1 } }))
     expect(device.unsettledPasskey(IDENTITY)).toBeNull()

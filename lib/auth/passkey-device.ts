@@ -117,7 +117,8 @@ export interface UnsettledPasskey {
   credentialId: string
   /** The recipient key its entry is sealed to (hex). */
   recipientKey: string
-  receipt?: UnsettledReceipt
+  /** Every write sent for it: any of them may land (the vault keeps one entry per passkey). */
+  receipts: UnsettledReceipt[]
 }
 
 function receiptOf(value: unknown): UnsettledReceipt | undefined {
@@ -133,10 +134,12 @@ function receiptOf(value: unknown): UnsettledReceipt | undefined {
 export function unsettledPasskey(identityId: string): UnsettledPasskey | null {
   const value = readMap(UNSETTLED_KEY)[identityId]
   if (!value || typeof value !== 'object') return null
-  const { vault, credentialId, recipientKey, receipt } = value as Record<string, unknown>
-  if (typeof vault !== 'string' || typeof credentialId !== 'string' || typeof recipientKey !== 'string') return null
-  const settled = receiptOf(receipt)
-  return { vault, credentialId, recipientKey, ...(settled ? { receipt: settled } : {}) }
+  const { vault, credentialId, recipientKey, receipts } = value as Record<string, unknown>
+  if (typeof vault !== 'string' || typeof credentialId !== 'string' || typeof recipientKey !== 'string' || !Array.isArray(receipts)) return null
+  // A receipt that does not parse is kept out, and with it the claim that every write was settled.
+  const parsed = receipts.map(receiptOf)
+  if (parsed.some((receipt) => receipt === undefined)) return null
+  return { vault, credentialId, recipientKey, receipts: parsed.filter((receipt): receipt is UnsettledReceipt => receipt !== undefined) }
 }
 
 /** Keeps it; false when this browser could not store it. */

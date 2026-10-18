@@ -273,6 +273,14 @@ describe('settleCreate (a receipt for a create reported unconfirmed)', () => {
     expect(await stateTransitionService.settleCreate(receipt)).toBe('not-recorded')
   })
 
+  it('reports a create stalled when its re-send is refused and its nonce stays free', async () => {
+    const receipt = await unconfirmedCreate()
+    sdk.identities.contractNonceWithProof.mockResolvedValue(proved(n(100), 60))
+    sdk.stateTransitions.broadcastStateTransition.mockRejectedValue({ code: 40100, message: 'invalid signature', name: 'Consensus' })
+
+    expect(await stateTransitionService.settleCreate(receipt)).toBe('stalled')
+  })
+
   it('leaves the outcome unknown when the reads fail, however often they are tried', async () => {
     const receipt = await unconfirmedCreate()
     sdk.identities.contractNonceWithProof.mockRejectedValue(new Error('transport error: unavailable'))

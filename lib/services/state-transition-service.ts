@@ -480,22 +480,28 @@ class StateTransitionService {
    * unknown. A create whose nonce is still free is sent again first, with the
    * same signed bytes from the receipt (never from the replay cache, which
    * expires), so it either executes or its nonce goes, and an outcome can be proved.
+   * `stalled` when that re-send is refused and its nonce is still free: it
+   * cannot execute now, though it might later.
    */
-  async settleCreate(receipt: CreateReceipt): Promise<'landed' | 'not-recorded' | null> {
+  async settleCreate(receipt: CreateReceipt): Promise<'landed' | 'not-recorded' | 'stalled' | null> {
     const { contractId, documentType, ownerId, documentId, nonce } = receipt;
     const sdk = await getEvoSdk();
     const outcome = (settled: StateTransitionResult | null) => settled === null ? null : settled.success ? 'landed' : 'not-recorded';
     const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, nonce);
     if (settled) return outcome(settled);
+    let refused = false;
     try {
       const stateTransition = StateTransition.fromBytes(receipt.transition);
       await sdk.stateTransitions.broadcastStateTransition(stateTransition);
       await sdk.stateTransitions.waitForResponse(stateTransition);
     } catch (error) {
-      // Refused, already in flight, or no verdict: only the proof below decides.
+      // Already in flight, or no verdict: only the proof below decides.
+      refused = isConsensusRefusal(error);
       logger.warn(`Re-sending ${documentType} ${documentId} gave no verdict:`, extractErrorMessage(error));
     }
-    return outcome(await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, nonce));
+    const after = outcome(await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, nonce));
+    // Refused now with its nonce still free: it may execute later (say, once its cause is gone), but not today.
+    return after ?? (refused ? 'stalled' : null);
   }
 
   /**

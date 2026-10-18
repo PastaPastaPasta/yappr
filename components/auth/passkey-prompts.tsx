@@ -146,12 +146,19 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
     setStep(message ? { kind: 'error', message } : back)
   }, [])
 
+  /** A passkey of this identity is still being saved here (maybe from another tab): show that one. */
+  const resume = useCallback((error: unknown): boolean => {
+    const pending = error instanceof PasskeyVaultError && error.code === 'pending' ? pendingEnrolmentFor(identityId) : null
+    if (pending) setStep({ kind: 'pending', pending, checking: false })
+    return pending !== null
+  }, [identityId])
+
   const create = useCallback(() => {
     setStep({ kind: 'creating' })
     startPasskeyEnrolment({ identityId, username })
       .then((pending) => setStep({ kind: 'confirm', pending }))
-      .catch((error: unknown) => fail(error, { kind: 'intro' }))
-  }, [fail, identityId, username])
+      .catch((error: unknown) => { if (!resume(error)) fail(error, { kind: 'intro' }) })
+  }, [fail, identityId, resume, username])
 
   const confirm = useCallback((pending: PendingPasskey) => {
     setStep({ kind: 'saving' })
@@ -161,15 +168,15 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
         setStep({ kind: 'done' })
       })
       .catch((error: unknown) => {
-        if (error instanceof PasskeyVaultError && error.code === 'pending') {
-          // Kept past this dialog (the vault module holds it): reopening resumes it, and Settings may show the entry once it lands.
+        // Kept past this dialog (the vault module holds it): reopening resumes it, and Settings may show the entry once it lands.
+        // Its own write still settling, or another passkey's from another tab (then this one was never sent).
+        if (resume(error)) {
           changed()
-          setStep({ kind: 'pending', pending, checking: false })
           return
         }
         fail(error, { kind: 'confirm', pending })
       })
-  }, [changed, fail])
+  }, [changed, fail, resume])
 
   const checkAgain = useCallback((pending: PendingPasskey) => {
     setStep({ kind: 'pending', pending, checking: true })

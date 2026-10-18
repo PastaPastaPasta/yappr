@@ -412,31 +412,75 @@ function restorePending(identityId: string): PendingPasskey | null {
     return null
   }
   if (!credentialId || sentTo.length !== 32) return null
-  let receipt: CreateReceipt | undefined
-  if (stored.receipt) {
-    try {
-      receipt = { ...stored.receipt, nonce: BigInt(stored.receipt.nonce), transition: base64ToBytes(stored.receipt.transition) }
-    } catch {
-      receipt = undefined
-    }
+  let receipts: CreateReceipt[]
+  try {
+    receipts = stored.receipts.map((receipt) => ({ ...receipt, nonce: BigInt(receipt.nonce), transition: base64ToBytes(receipt.transition) }))
+  } catch {
+    return null
   }
-  return { identityId, credentialId, createPrf: null, sentTo, ...(receipt ? { receipt } : {}) }
+  // Only this identity's writes to this vault settle it.
+  if (receipts.some((receipt) => receipt.ownerId !== identityId || receipt.contractId !== YAPPR_PASSKEY_VAULT_CONTRACT_ID)) return null
+  return { identityId, credentialId, createPrf: null, sentTo, receipts }
 }
 
 /**
- * Holds an enrolment whose entry is about to be sent, in this tab and in this
- * browser; false when the browser could not store it.
+ * Holds an enrolment whose entry is about to be sent (one more write), in
+ * this tab and in this browser. Runs under the identity's cross-tab write
+ * lock, right before the broadcast: `busy` when this browser already holds
+ * another passkey's unsettled enrolment for the identity (one at a time, so
+ * no record is ever overwritten), `unstored` when the browser could not store it.
  */
-function holdPending(pending: PendingPasskey, sentTo: Uint8Array, receipt: CreateReceipt | undefined): boolean {
+function holdPending(pending: PendingPasskey, sentTo: Uint8Array, receipt: CreateReceipt | undefined): 'held' | 'busy' | 'unstored' {
+  const credentialId = bytesToBase64Url(pending.credentialId)
+  const stored = unsettledPasskey(pending.identityId)
+  // A record for another vault (a retired contract) is not this one's to keep.
+  if (stored && stored.vault === YAPPR_PASSKEY_VAULT_CONTRACT_ID && stored.credentialId !== credentialId) return 'busy'
   pending.sentTo = sentTo
-  pending.receipt = receipt
+  pending.receipts = [...(pending.receipts ?? []), ...(receipt ? [receipt] : [])]
   pendingEnrolments.set(pending.identityId, pending)
-  return rememberUnsettledPasskey(pending.identityId, {
+  const kept = rememberUnsettledPasskey(pending.identityId, {
     vault: YAPPR_PASSKEY_VAULT_CONTRACT_ID,
-    credentialId: bytesToBase64Url(pending.credentialId),
+    credentialId,
     recipientKey: bytesToHex(sentTo),
-    ...(receipt ? { receipt: { ...receipt, nonce: receipt.nonce.toString(), transition: bytesToBase64(receipt.transition) } } : {}),
+    receipts: pending.receipts.map((sent) => ({ ...sent, nonce: sent.nonce.toString(), transition: bytesToBase64(sent.transition) })),
   })
+  return kept ? 'held' : 'unstored'
+}
+
+/**
+ * Seals the session to `recipientKey` for `pending`'s passkey and sends it,
+ * holding the enrolment before anything goes out. True once the entry is
+ * confirmed or seen; false while it settles. `retireOnVerdict`: a refusal (or
+ * nothing sent) ends the enrolment, true only for its first write.
+ */
+async function sendEntry(pending: PendingPasskey, recipientKey: Uint8Array, retireOnVerdict: boolean): Promise<boolean> {
+  const { contractId } = requireSetup()
+  const bundle = await sessionBundle(pending.identityId)
+  let sealed
+  try {
+    sealed = sealEntry({ contractId, ownerId: identityBytes(pending.identityId), credentialId: pending.credentialId, recipientKey, bundle })
+  } finally {
+    wipeBundle(bundle)
+  }
+  let held: ReturnType<typeof holdPending> | null = null
+  let written
+  try {
+    written = await passkeyVaultService.add(pending.identityId, sealed, (receipt) => {
+      // Kept before anything is sent: a reload from here on resumes it, and no new passkey can replace it.
+      held = holdPending(pending, recipientKey, receipt)
+      if (held !== 'held') throw new Error(held === 'busy' ? 'another passkey is still being saved' : 'this browser could not keep the passkey while it is saved')
+    })
+  } catch (error) {
+    if (held === 'busy') throw new PasskeyVaultError('pending')
+    // A verdict (refused, or proved not recorded) or nothing sent. Only a first write ends the
+    // enrolment with it: a later one's earlier writes may still land.
+    if (retireOnVerdict) retirePending(pending.identityId, pending.credentialId)
+    throw error
+  }
+  if (!written.confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipientKey)) return false
+  rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipientKey))
+  retirePending(pending.identityId, pending.credentialId)
+  return true
 }
 
 /** The enrolment of `credentialId` for `identityId` settled: its entry was seen, proved never recorded, or removed. */
@@ -453,8 +497,8 @@ export interface PendingPasskey {
   createPrf: Uint8Array | null
   /** Set once its entry was sent: the recipient key it was sealed to, for {@link passkeySaved}. */
   sentTo?: Uint8Array
-  /** The unconfirmed write's receipt, which settles it ({@link checkPendingEnrolment}). */
-  receipt?: CreateReceipt
+  /** Every write sent for its entry, which settle it ({@link checkPendingEnrolment}). */
+  receipts?: CreateReceipt[]
 }
 
 /**
@@ -463,6 +507,8 @@ export interface PendingPasskey {
  */
 export async function startPasskeyEnrolment(user: { identityId: string; username?: string }): Promise<PendingPasskey> {
   const { rp, contractId } = requireSetup()
+  // One at a time: a passkey still being saved here is checked again, never joined by another.
+  if (pendingEnrolmentFor(user.identityId)) throw new PasskeyVaultError('pending')
   const eligibility = await passkeyEligibility(user.identityId)
   if (eligibility) throw new PasskeyVaultError(eligibility)
   const existing = await passkeyVaultService.list(user.identityId)
@@ -507,31 +553,16 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey): Promise<v
     }
     const recipient = recipientFromPrf(prf)
     recipient.privateKey.fill(0)
-    const bundle = await sessionBundle(pending.identityId)
-    let sealed
+    let saved
     try {
-      sealed = sealEntry({ contractId, ownerId: identityBytes(pending.identityId), credentialId: pending.credentialId, recipientKey: recipient.publicKey, bundle })
-    } finally {
-      wipeBundle(bundle)
-    }
-    let written
-    try {
-      written = await passkeyVaultService.add(pending.identityId, sealed, (receipt) => {
-        // Kept before anything is sent: a reload from here on resumes it, and no new passkey can replace it.
-        if (!holdPending(pending, recipient.publicKey, receipt)) throw new Error('this browser could not keep the passkey while it is saved')
-      })
+      saved = await sendEntry(pending, recipient.publicKey, true)
     } catch (error) {
-      // A verdict (refused, or proved not recorded) or nothing sent: it settled.
-      retirePending(pending.identityId, pending.credentialId)
+      // Another passkey of this identity is still being saved here: this one was never sent, and signs in to nothing.
+      if (error instanceof PasskeyVaultError && error.code === 'pending') await signalUnknownPasskey(rp.id, pending.credentialId)
       throw error
     }
-    if (!written.confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipient.publicKey)) {
-      // Remembered as this device's only once it is confirmed (passkeySaved): one that never lands leaves no marker.
-      pending.receipt = written.receipt ?? pending.receipt
-      throw new PasskeyVaultError('pending')
-    }
-    rememberPasskeyHere(pending.identityId, markerOf(pending.credentialId, recipient.publicKey))
-    retirePending(pending.identityId, pending.credentialId)
+    // Remembered as this device's only once it is confirmed (passkeySaved): one that never lands leaves no marker.
+    if (!saved) throw new PasskeyVaultError('pending')
   } finally {
     prf?.fill(0)
     pending.createPrf?.fill(0)
@@ -580,14 +611,23 @@ async function passkeySaved(pending: PendingPasskey): Promise<boolean> {
  */
 export async function checkPendingEnrolment(pending: PendingPasskey): Promise<'saved' | 'not-saved' | 'waiting'> {
   if (await passkeySaved(pending)) return 'saved'
-  if (!pending.receipt) return 'waiting'
-  const outcome = await passkeyVaultService.settleAdd(pending.receipt)
-  if (outcome === 'landed') return await passkeySaved(pending) ? 'saved' : 'waiting'
-  if (outcome !== 'not-recorded') return 'waiting'
-  const found = setup()
-  if (found) await signalUnknownPasskey(found.rp.id, pending.credentialId)
-  retirePending(pending.identityId, pending.credentialId)
-  return 'not-saved'
+  const receipts = pending.receipts ?? []
+  const outcomes = []
+  for (const receipt of receipts) outcomes.push(await passkeyVaultService.settleAdd(receipt))
+  if (outcomes.includes('landed')) return await passkeySaved(pending) ? 'saved' : 'waiting'
+  // One still in flight may land: nothing else is sent meanwhile.
+  if (outcomes.includes(null)) return 'waiting'
+  if (receipts.length > 0 && outcomes.every((outcome) => outcome === 'not-recorded')) {
+    const found = setup()
+    if (found) await signalUnknownPasskey(found.rp.id, pending.credentialId)
+    retirePending(pending.identityId, pending.credentialId)
+    return 'not-saved'
+  }
+  // Every write so far is refused for now or proved never recorded, and one may still land later: save it
+  // again with this session, sealed to the same recipient key. The vault keeps one entry per passkey
+  // (byCredential is unique), so whichever lands first is the passkey's entry, and it opens with this passkey.
+  if (!pending.sentTo) return 'waiting'
+  return await sendEntry(pending, pending.sentTo, false) ? 'saved' : 'waiting'
 }
 
 /** What opening a passkey restores. */
