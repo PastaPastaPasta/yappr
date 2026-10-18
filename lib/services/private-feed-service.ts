@@ -556,7 +556,7 @@ export type PrepareEncryptionResult = { success: true; data: EncryptedPostData }
 function plaintextTooLong(content: string): { success: false; error: string } | null {
   const size = new TextEncoder().encode(content).length
   const max = contentLimits().encryptedMaxBytes - CONTENT_OVERHEAD
-  return size > max ? { success: false, error: `Your post is too long. Use fewer characters and try again.` } : null
+  return size > max ? { success: false, error: `This is too long. Use fewer characters and try again.` } : null
 }
 
 const UNVERIFIED_ERROR = 'Could not confirm your private feed\'s current keys, so nothing was posted. Check your connection and try again.'
