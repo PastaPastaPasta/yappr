@@ -293,6 +293,11 @@ describe('private feeds v2 end to end', () => {
     // Quoted, the reply comes as a post by F1: its thread root's owner is whose feed opens it.
     const quoted = { author: { id: F1 }, targetKind: 'reply' as const, parentId: 'root', rootOwnerId: O, ...sealed.data }
     expect(await s.reader.decryptPostOrReply(quoted, F4, keys[F4])).toEqual({ ok: true, text: 'a reply' })
+    // On v17 a reply names no root owner: the root is read, and a private one's author is whose feed it is.
+    vi.doMock('./post-service', () => ({ postService: { getPostById: async (id: string) => (id === 'root' ? { author: { id: O }, encryptedContent: new Uint8Array([1]) } : null) } }))
+    const fetched = { author: { id: F1 }, targetKind: 'reply' as const, parentId: 'root', rootPostId: 'root', ...sealed.data }
+    expect(await s.reader.decryptPostOrReply(fetched, F4, keys[F4])).toEqual({ ok: true, text: 'a reply' })
+    vi.doUnmock('./post-service')
     // F3 left and was not carried: no reply into the current feed.
     expect(await s.owner.prepareInheritedEncryption('nope', { ownerId: O }, F3)).toMatchObject({ success: false })
   })
@@ -542,6 +547,18 @@ describe('private feeds v2: every authorised path to history', () => {
     expect(await s.move.adoptUnfinishedMove(P)).toBe(1)
     expect(await s.move.runMove(P, keys[P])).toEqual({ success: true })
     expect(loadMove(P)).toBeNull()
+  })
+
+  it('a removed follower still reads what was posted before the removal, caught up to just before it', async () => {
+    for (const follower of [F4, F5]) expect(await s.follower.requestAccess(P, follower)).toEqual({ success: true })
+    await approveBy(P, F4, F5)
+    expect(await read(F5, await post('before', P))).toBe('before')
+    expect(await s.owner.privateFeedService.revokeFollower(P, F4, keys[P])).toEqual({ success: true })
+    const second = await post('after F4 left', P)
+    expect(await s.owner.privateFeedService.revokeFollower(P, F5, keys[P])).toEqual({ success: true })
+    // F5's keys stop one generation short of this post; catching up reaches it, then stops at F5's own removal.
+    expect(await read(F5, second)).toBe('after F4 left')
+    expect(await read(F5, await post('after F5 left', P))).toBe('<revoked>')
   })
 })
 

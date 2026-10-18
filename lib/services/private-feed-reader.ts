@@ -101,15 +101,17 @@ async function directKey(viewerId: string, ownerId: string, feed: number, keyGen
   if (member && keyGeneration > member.keyGeneration) {
     const { privateFeedFollowerService } = await import('./private-feed-follower-service')
     let caught = await privateFeedFollowerService.catchUp(ownerId, feed, viewerId)
+    let reason: LockReason = 'failed'
     if (!caught.success && caught.error.startsWith('RECOVERY_NEEDED:')) {
       const grant = encryptionPrivateKey ? await fetchGrant(ownerId, feed, viewerId) : null
-      if (!grant || !encryptionPrivateKey) return historyCek(viewerId, ownerId, feed, keyGeneration) ?? { reason: 'needs-key' }
-      caught = await privateFeedFollowerService.recoverFromGrant(grant, viewerId, encryptionPrivateKey)
-      if (!caught.success) return historyCek(viewerId, ownerId, feed, keyGeneration) ?? { reason: 'needs-key' }
+      if (grant && encryptionPrivateKey) caught = await privateFeedFollowerService.recoverFromGrant(grant, viewerId, encryptionPrivateKey)
+      if (!caught.success) reason = 'needs-key'
+    } else if (!caught.success && caught.error.startsWith('REVOKED:')) {
+      reason = 'revoked'
     }
-    if (!caught.success) return historyCek(viewerId, ownerId, feed, keyGeneration) ?? { reason: caught.error.startsWith('REVOKED:') ? 'revoked' : 'failed' }
+    // Catch-up keeps every generation it reached before it stopped (at a later removal, say): that may be enough.
     member = privateFeedKeyStore.memberKeys(viewerId, ownerId, feed)
-    if (member && keyGeneration > member.keyGeneration) return historyCek(viewerId, ownerId, feed, keyGeneration) ?? { reason: 'failed' }
+    if (member && keyGeneration > member.keyGeneration) return historyCek(viewerId, ownerId, feed, keyGeneration) ?? { reason }
   }
   if (member && keyGeneration <= member.keyGeneration) return { cek: hashBack(member.cek, member.keyGeneration, keyGeneration) }
   return historyCek(viewerId, ownerId, feed, keyGeneration)
@@ -231,15 +233,29 @@ export async function contentKeyFor(
 }
 
 /**
+ * Whose feed a private reply is most likely in: the thread root's owner when
+ * the root is private (named on the reply where the contract stores it, else
+ * read), otherwise the replier's own.
+ */
+async function replyFeedOwner(reply: { author: { id: string }; rootOwnerId?: string; rootPostId?: string }): Promise<string> {
+  if (reply.rootOwnerId) return reply.rootOwnerId
+  if (!reply.rootPostId) return reply.author.id
+  const { postService } = await import('./post-service')
+  const root = await postService.getPostById(reply.rootPostId, { skipEnrichment: true })
+  return root && !root.deleted && root.encryptedContent?.length ? root.author.id : reply.author.id
+}
+
+/**
  * Decrypt a post or reply whose feed owner the caller does not know: a reply
  * is tried in its thread root owner's feed (replies inherit the root's
  * encryption), then, for a private reply under a public root, in its own
  * author's. The content binding rejects a wrong owner. Null when not private.
  */
 export async function decryptPostOrReply(
-  post: Parameters<typeof privateContentOf>[0] & { rootOwnerId?: string }, viewerId: string, encryptionPrivateKey?: Uint8Array,
+  post: Parameters<typeof privateContentOf>[0] & { rootOwnerId?: string; rootPostId?: string }, viewerId: string, encryptionPrivateKey?: Uint8Array,
 ): Promise<DecryptOutcome | null> {
-  const owner = targetKindOf(post) === 'reply' ? post.rootOwnerId ?? post.author.id : post.author.id
+  if (!privateContentOf(post)) return null
+  const owner = targetKindOf(post) === 'reply' ? await replyFeedOwner(post) : post.author.id
   const content = privateContentOf(post, owner)
   if (!content) return null
   const outcome = await decryptPrivateContent(content, viewerId, encryptionPrivateKey)
