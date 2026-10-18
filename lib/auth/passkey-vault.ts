@@ -538,8 +538,8 @@ async function sendEntry(pending: PendingPasskey, recipientKey: Uint8Array, reti
       return 'still-out'
     })
     if (outcome === 'settled-elsewhere') throw new SettledElsewhere()
-    // Another tab's later write is still out: this passkey may yet be saved.
-    if (retireOnVerdict && outcome === 'still-out') throw new PasskeyVaultError('pending')
+    // Another tab's later write is still out: this passkey may yet be saved, whatever storage says later.
+    if (retireOnVerdict && outcome === 'still-out') throw new StillOut()
     throw error
   }
   if (!written.confirmed && !await entryLanded(pending.identityId, pending.credentialId, recipientKey)) return false
@@ -619,6 +619,13 @@ function vouchedForRecord(pending: PendingPasskey): boolean {
   return pending.vouchedFor !== undefined && pending.sentTo !== undefined && bytesEqual(pending.vouchedFor, pending.sentTo)
 }
 
+/** A first write was refused while another tab's later write for the same passkey was out: it stays pending. */
+class StillOut extends PasskeyVaultError {
+  constructor() {
+    super('pending', 'another tab has a later write out for this passkey')
+  }
+}
+
 /** A pending enrolment's record went while this tab was working on it: another tab settled it. */
 class SettledElsewhere extends Error {
   constructor() {
@@ -671,6 +678,9 @@ export async function finishPasskeyEnrolment(pending: PendingPasskey, stillWante
       if (await passkeySaved(pending)) return
       throw new PasskeyVaultError('failed', error.message)
     }
+    // Another tab's later write for it was out when this write's verdict came: that one may land (or have
+    // landed, its record retired since), so the passkey is never dropped here.
+    if (error instanceof StillOut) throw error
     // Otherwise it was never sent, or a verdict says it never lands (refused, proved not recorded, another
     // passkey still saving here, no PRF): it signs in to nothing.
     if (!unconfirmed) await abandonPasskeyEnrolment(pending)

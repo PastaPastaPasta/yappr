@@ -344,6 +344,33 @@ describe('an enrolment left unfinished', () => {
     expect(unsettledPasskey(IDENTITY)?.receipts.map((sent) => sent.documentId)).toEqual(['doc-2'])
   })
 
+  it('never drops a passkey once another tab\'s later write was out, even if that write lands and retires the record right after', async () => {
+    keySession()
+    const key = `yappr_passkey_unsettled:${IDENTITY}`
+    let retireAfterNextRead = false
+    const getItem = localStorage.getItem.bind(localStorage)
+    localStorage.getItem = (name: string) => {
+      const value = getItem(name)
+      // R2 lands and its tab retires the record just after this tab's cleanup has read it.
+      if (retireAfterNextRead && name === key) {
+        retireAfterNextRead = false
+        localStorage.removeItem(name)
+      }
+      return value
+    }
+    vault.add.mockImplementation(async (_owner: string, _entry: unknown, options: { beforeBroadcast?: (sent: unknown) => void }) => {
+      options.beforeBroadcast?.(receipt('doc-1'))
+      rememberUnsettledPasskey(IDENTITY, { vault: VAULT, credentialId: bytesToBase64Url(CREDENTIAL), recipientKey: bytesToHex(recipientFromPrf(prfOf(5)).publicKey), receipts: [storedReceipt('doc-1'), storedReceipt('doc-2')] })
+      forgetPendingEnrolments()
+      retireAfterNextRead = true
+      throw new Error('refused')
+    })
+    auth.getPasskeyPrf.mockImplementation(async () => ({ credentialId: CREDENTIAL, userHandle: HANDLE, prfOutput: prfOf(5) }))
+
+    await expect(settled(finishPasskeyEnrolment(made()))).rejects.toMatchObject({ code: 'pending' })
+    expect(auth.signalUnknownPasskey).not.toHaveBeenCalled()
+  })
+
   it('never drops a passkey whose refused first write was overtaken by another tab saving it', async () => {
     keySession()
     const recipient = recipientFromPrf(prfOf(5)).publicKey
