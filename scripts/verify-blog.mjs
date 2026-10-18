@@ -6,7 +6,7 @@
  * post-level aggregates are exact without a baseline.
  *
  *   NETWORK=devnet node scripts/verify-blog.mjs --contract <id> \
- *     [--author 210] [--reader 211] [--stranger 212] [--moderator 260|maker|personal] [--only b4,b5] [--keep-content]
+ *     [--author 210] [--reader 211] [--stranger 212] [--moderator 260|maker|personal] [--only b4,b5] [--reason-doc <seated-charter-reason-id>] [--keep-content]
  *
  * `--moderator` is the contract's owner or one it appointed at publish time:
  * a seed-ledger persona index, `maker` or `personal` (ledger persona 900); v3 (beta.3) is a moderated cut, so b13/b14
@@ -66,7 +66,7 @@ import {
   MODERATOR_FLAG, id32, reportSelfTest, runBattery,
 } from './battery-lib.mjs';
 import { REPO_ROOT, actionFeeAgreementOptions, actionFeeFor, feeAgreementFor, feeMultiplierPermille, randomEntropy } from './seed/seed-lib.mjs';
-import { ARRAY_OUT_OF_BOUNDS, BANNED, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
+import { ARRAY_OUT_OF_BOUNDS, BANNED, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, caseWarn, moderationReason, selfTestModerated } from './battery-moderation.mjs';
 import { AGREEMENT_MISMATCH, AGREEMENT_NOT_SET, liftBar } from './social-battery-lib.mjs';
 import { DECLARED_RULES, constraintViolation, drop, refusedCreates, refusedReplaces } from './property-constraint-cases.mjs';
 import { cleanBlog, printReport } from './surface-cleanup.mjs';
@@ -504,7 +504,7 @@ async function caseB23BarredRetraction(ctx) {
   try {
     let banned = true;
     try {
-      await sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: author.ownerId, reason: { text: 'b23 battery ban' }, signer: moderator.signer });
+      await sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: author.ownerId, reason: moderationReason(ctx, 'b23 battery ban'), signer: moderator.signer });
     } catch (e) {
       banned = (await standing().catch(() => ({ banned: false }))).banned === true;
       if (!banned) battery.check('b23 the moderator bans the author', false, String(e?.message ?? e).slice(0, 200));
@@ -621,7 +621,7 @@ await runBattery({
   cleanup: cleanUpRun,
   cases: CASES,
   actors: { author: 210, reader: 211, stranger: 212 },
-  flags: { moderator: { ...MODERATOR_FLAG, default: '260' } },
+  flags: { moderator: { ...MODERATOR_FLAG, default: '260' }, 'reason-doc': null },
   selfTest: () => Math.max(selfTestV7(), selfTestModerated(CONTRACT_FILE, {
     // b20/b24: a post whose commentsEnabled is false takes no comment, a where condition
     // (v8) with no copy and no rule. b4d: the notification key is the post's own $ownerId,
