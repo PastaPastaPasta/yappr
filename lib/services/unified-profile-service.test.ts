@@ -17,7 +17,7 @@ const content = {
   displayName: 'Ava', bio: 'Original bio', location: 'Chicago',
   website: 'https://example.com', bannerUri: 'ipfs://banner', pronouns: 'she/her',
   avatar: '{ "style": "thumbs", "seed": "original-seed" }',
-  paymentUris: '[ "dash:original-address" ]',
+  paymentUris: '[ "dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ" ]',
   socialLinks: '[ { "platform": "github", "handle": "example" } ]',
   nsfw: true,
 };
@@ -53,7 +53,7 @@ describe('profile replacements', () => {
     expect(result).toMatchObject({
       id: ownerId, documentId, bio: 'New bio', $revision: 8,
       joinedAt: new Date(raw.$createdAt),
-      paymentUris: [{ scheme: 'dash:', uri: 'dash:original-address' }],
+      paymentUris: [{ scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' }],
     });
   });
 
@@ -257,9 +257,9 @@ describe('profile v2 typed arrays (docs/archive/SOCIAL_V9.md)', () => {
   });
 
   it('reads a v2 document stored as lists', async () => {
-    get.mockResolvedValueOnce({ ...raw, paymentUris: ['dash:listed'], socialLinks: ['mastodon:@a@host.social'] });
+    get.mockResolvedValueOnce({ ...raw, paymentUris: ['dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ'], socialLinks: ['mastodon:@a@host.social'] });
     const user = await unifiedProfileService.get(documentId);
-    expect(user?.paymentUris).toEqual([{ scheme: 'dash:', uri: 'dash:listed' }]);
+    expect(user?.paymentUris).toEqual([{ scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' }]);
     expect(user?.socialLinks).toEqual([{ platform: 'mastodon', handle: '@a@host.social' }]);
   });
 });
@@ -287,7 +287,7 @@ describe('stored avatar settings', () => {
 describe('getPaymentUris', () => {
   it('returns the profile addresses, and none for an identity without a profile', async () => {
     await expect(unifiedProfileService.getPaymentUris(ownerId)).resolves.toEqual([
-      { scheme: 'dash:', uri: 'dash:original-address' },
+      { scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' },
     ]);
     unifiedProfileService.clearCache();
     cacheManager.invalidateByTag(`user:${ownerId}`);
@@ -302,5 +302,16 @@ describe('getPaymentUris', () => {
     await expect(unifiedProfileService.getPaymentUris(ownerId)).rejects.toThrow('DAPI down');
     // getProfile keeps its forgiving contract.
     await expect(unifiedProfileService.getProfile(ownerId)).resolves.toBeNull();
+  });
+});
+
+
+describe('profile payment read validation (SEC-02)', () => {
+  it.each([false, true])('filters hostile stored profile lists (typed=%s)', (typed) => {
+    const list = ['javascript:alert(1)', 'data:text/html,SECURITY_QA', 'dash:invalid',
+      'TDASH:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw?label=Verified%20Bitcoin'];
+    expect(unifiedProfileService.parsePaymentUris(typed ? list : JSON.stringify(list))).toEqual([
+      { scheme: 'tdash:', uri: 'tdash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw?label=Verified%20Bitcoin', label: 'tDash' },
+    ]);
   });
 });

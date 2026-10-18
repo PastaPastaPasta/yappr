@@ -1,5 +1,6 @@
 'use client'
 
+import { parsePaymentUri } from '@/lib/utils/payment-uri'
 import { useState, useMemo } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { ClipboardIcon, CheckIcon, ArrowLeftIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
@@ -50,7 +51,14 @@ function buildUriWithAmount(uri: string, amount: number | null): string {
   return `${uri}${separator}amount=${amount.toFixed(8)}`
 }
 
-export function PaymentQRCode({
+/** Revalidate at the QR/navigation boundary, including records restored from caches. */
+export function PaymentQRCode(props: PaymentQRCodeProps) {
+  const paymentUri = parsePaymentUri(props.paymentUri)
+  if (!paymentUri) return null
+  return <ValidPaymentQRCode {...props} paymentUri={paymentUri} />
+}
+
+function ValidPaymentQRCode({
   paymentUri,
   onBack,
   size = 200,
@@ -120,7 +128,8 @@ export function PaymentQRCode({
   }
 
   const handleOpenWallet = () => {
-    window.open(uriWithAmount, '_blank', 'noopener,noreferrer')
+    const validated = parsePaymentUri(uriWithAmount)
+    if (validated) window.open(validated.uri, '_blank', 'noopener,noreferrer')
   }
 
   return (

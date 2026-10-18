@@ -1,5 +1,6 @@
 'use client'
 
+import { parsePaymentUri } from '@/lib/utils/payment-uri'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal, ModalTitle } from './modal'
 import { XMarkIcon, QrCodeIcon } from '@heroicons/react/24/outline'
@@ -20,13 +21,14 @@ interface PaymentQRCodeDialogProps {
 export function PaymentQRCodeDialog({
   isOpen,
   onClose,
-  paymentUri,
+  paymentUri: storedPaymentUri,
   recipientName,
   watchForTransaction = false,
   onTransactionDetected,
   onWatchTimeout,
   onDone
 }: PaymentQRCodeDialogProps) {
+  const paymentUri = parsePaymentUri(storedPaymentUri)
   if (!paymentUri) return null
 
   const displayName = recipientName || 'this user'

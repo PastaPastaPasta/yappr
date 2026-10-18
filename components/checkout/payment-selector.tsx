@@ -1,4 +1,5 @@
 import { useId, useState, useCallback } from 'react'
+import { filterPaymentUris, parsePaymentUri } from '@/lib/utils/payment-uri'
 import { CreditCardIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { PaymentQRCode } from '@/components/ui/payment-qr-code'
 import { isDashScheme } from '@/lib/services/insight-api-service'
@@ -17,8 +18,8 @@ interface PaymentSelectorProps {
 }
 
 export function PaymentSelector({
-  paymentUris,
-  selected,
+  paymentUris: storedPaymentUris,
+  selected: storedSelected,
   onSelect,
   txid,
   onTxidChange,
@@ -27,6 +28,8 @@ export function PaymentSelector({
   orderCurrency
 }: PaymentSelectorProps) {
   const txidId = useId()
+  const paymentUris = filterPaymentUris(storedPaymentUris)
+  const selected = parsePaymentUri(storedSelected)
   const [detectedAmount, setDetectedAmount] = useState<number | null>(null)
   const [wasAutoFilled, setWasAutoFilled] = useState(false)
 

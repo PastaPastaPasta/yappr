@@ -73,7 +73,7 @@ test('STORE-02: checkout controls can be found and filled by their visible label
   await page.goto('/qa-round1.html?fixture=checkout')
   await page.getByRole('button', { name: 'Continue', exact: true }).click()
   await page.getByRole('button', { name: 'Continue to Review', exact: true }).click()
-  await page.getByRole('button', { name: /Bitcoin bitcoin:example/ }).click()
+  await page.getByRole('button', { name: /Bitcoin bitcoin:mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn/ }).click()
   for (const label of ['Transaction ID (optional)', 'Refund Address (optional)', 'Order Notes (optional)']) {
     const field = page.getByLabel(label, { exact: false })
     await expect(field).toBeVisible()

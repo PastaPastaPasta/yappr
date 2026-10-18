@@ -50,7 +50,7 @@ export const resolveUserDetailsBatch = async () => new Map()
 export const replyToPost = noop
 export const identityService = { hasEncryptionKey: async () => true, getIdentity: async () => ({ publicKeys: [] }) }
 export const resolveEncryptionPublicKey = async () => Uint8Array.from([2, ...new Array<number>(32).fill(1)])
-export const store: Store = { id: 'store', ownerId: 'owner', name: 'QA store', status: 'active', description: '', defaultCurrency: 'USD', createdAt: new Date(0), paymentUris: [{ uri: 'bitcoin:example', scheme: 'bitcoin:', label: 'Bitcoin' }] }
+export const store: Store = { id: 'store', ownerId: 'owner', name: 'QA store', status: 'active', description: '', defaultCurrency: 'USD', createdAt: new Date(0), paymentUris: [{ uri: 'bitcoin:mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn', scheme: 'bitcoin:', label: 'Bitcoin' }] }
 export const eurItem: StoreItem = { id: 'eur', ownerId: 'owner', storeId: 'store', title: 'Euro variants', status: 'active', createdAt: new Date(0), currency: 'EUR', variants: variantsFromRows(['Size'], [{ optionNames: ['S'], price: 325 }, { optionNames: ['L'], price: 475 }]).variants ?? undefined }
 const digitalItem: StoreItem = { id: 'digital', ownerId: 'owner', storeId: 'store', title: 'Download', status: params.get('state') === 'archived' ? 'deleted' : 'active', createdAt: new Date(0), currency: 'USD', fulfillment: 'digital', basePrice: 200 }
 export const storeService = { getById: async () => store, getCurrent: async () => store, getByOwner: async () => store }
