@@ -607,9 +607,10 @@ class ModerationService {
   private moderatorPot: FeePotState | null = null;
   private confirmedModeratorEpoch: number | null = null;
   private moderatorPayoutPending = false;
+  private moderatorClaimInFlight = false;
 
   moderatorsPotStatus(): { pot: FeePotState | null; pending: boolean } {
-    return { pot: this.moderatorPot, pending: this.moderatorPayoutPending };
+    return { pot: this.moderatorPot, pending: this.moderatorPayoutPending || this.moderatorClaimInFlight };
   }
 
   async reconcileModeratorsPot(): Promise<void> {
@@ -1453,19 +1454,25 @@ class ModerationService {
   /** Pays the moderators pot out to the whole team (any member may claim). */
   async claimModeratorsPot(moderatorId: string): Promise<ModerationResult & { remainingCredits?: bigint }> {
     if (this.moderatorPayoutPending) return { success: false, error: 'The payout is confirmed. Wait for claim history to update.', errorCode: 'ALREADY_CLAIMED' };
-    let remainingCredits: bigint | undefined;
-    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
-      const claimed = await send(() => sdk.contracts.claimFees({ ...auth, contractId: this.contract.contractId, pot: 'moderators' }));
-      remainingCredits = claimed.remainingCredits;
-      this.confirmedModeratorEpoch = claimed.lastClaimEpoch;
-      this.moderatorPot = {
-        credits: claimed.remainingCredits,
-        lastClaimEpoch: claimed.lastClaimEpoch,
-        lastClaimantId: identifierToBase58(claimed.lastClaimantId),
-      };
-      this.moderatorPayoutPending = true;
-    });
-    return remainingCredits === undefined ? result : { ...result, remainingCredits };
+    if (this.moderatorClaimInFlight) return { success: false, error: 'A payout is already in progress.', errorCode: 'ALREADY_CLAIMED' };
+    this.moderatorClaimInFlight = true;
+    try {
+      let remainingCredits: bigint | undefined;
+      const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
+        const claimed = await send(() => sdk.contracts.claimFees({ ...auth, contractId: this.contract.contractId, pot: 'moderators' }));
+        remainingCredits = claimed.remainingCredits;
+        this.confirmedModeratorEpoch = claimed.lastClaimEpoch;
+        this.moderatorPot = {
+          credits: claimed.remainingCredits,
+          lastClaimEpoch: claimed.lastClaimEpoch,
+          lastClaimantId: identifierToBase58(claimed.lastClaimantId),
+        };
+        this.moderatorPayoutPending = true;
+      });
+      return remainingCredits === undefined ? result : { ...result, remainingCredits };
+    } finally {
+      this.moderatorClaimInFlight = false;
+    }
   }
 
   /**

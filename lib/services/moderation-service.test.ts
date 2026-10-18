@@ -1071,3 +1071,39 @@ describe('proved moderators payouts survive view lifetimes', () => {
     expect((await remounted.getFeePots())?.moderators).toMatchObject({ credits: 2n, lastClaimEpoch: 6 })
   })
 })
+
+
+describe('in-flight moderator payout exclusion', () => {
+  it.each([true, false])('survives a remount and releases its active guard after success=%s', async (success) => {
+    vi.resetModules()
+    const { moderationServiceFor } = await import('./moderation-service')
+    const service = moderationServiceFor('social')
+    const pot = { credits: 100n, lastClaimEpoch: 4, lastClaimantId: MODERATOR }
+    sdk.contracts.feePots.mockResolvedValue({ owner: pot, moderators: pot })
+    await service.getFeePots()
+    const receipt = { remainingCredits: 0n, lastClaimEpoch: 6, lastClaimantId: MODERATOR }
+    let finishClaim!: () => void
+    sdk.contracts.claimFees.mockReturnValue(new Promise<typeof receipt>((resolve, reject) => {
+      finishClaim = () => success ? resolve(receipt) : reject(new Error('Payout refused'))
+    }))
+    const first = service.claimModeratorsPot(MODERATOR)
+    // The exclusion is synchronous, before signer setup or the SDK write can yield.
+    const remounted = moderationServiceFor('social')
+    expect(remounted.moderatorsPotStatus().pending).toBe(true)
+    expect(moderationServiceFor('blog').moderatorsPotStatus().pending).toBe(false)
+    await vi.waitFor(() => expect(sdk.contracts.claimFees).toHaveBeenCalledTimes(1))
+    // A refresh during the broadcast cannot clear the separate in-flight guard.
+    await remounted.getFeePots()
+    expect(remounted.moderatorsPotStatus().pending).toBe(true)
+    expect(await remounted.claimModeratorsPot(MODERATOR)).toMatchObject({ success: false })
+    expect(sdk.contracts.claimFees).toHaveBeenCalledTimes(1)
+    finishClaim()
+    expect(await first).toMatchObject({ success })
+    expect(remounted.moderatorsPotStatus().pending).toBe(success)
+    if (!success) {
+      sdk.contracts.claimFees.mockResolvedValue(receipt)
+      expect(await remounted.claimModeratorsPot(MODERATOR)).toMatchObject({ success: true })
+      expect(sdk.contracts.claimFees).toHaveBeenCalledTimes(2)
+    }
+  })
+})

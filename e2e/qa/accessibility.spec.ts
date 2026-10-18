@@ -134,7 +134,7 @@ test('confirmed storefront payout never re-enables a stale pot, then reconciles 
   await expect(page.getByText('Never claimed', { exact: true })).toBeVisible()
   await expect(claim).toBeEnabled()
   await claim.click()
-  await expect(page.getByText('Payout confirmed. Updating claim history…', { exact: true })).toBeVisible()
+  await expect(page.getByText('Updating payout status…', { exact: true })).toBeVisible()
   await expect(page.getByText('0.000000 DASH', { exact: true })).toBeVisible()
   await expect(claim).toBeDisabled()
   // Exhaust the bounded reconciliation on a replica that still says Never claimed.
@@ -145,7 +145,7 @@ test('confirmed storefront payout never re-enables a stale pot, then reconciles 
   await page.getByRole('button', { name: 'Remount payout' }).click()
   await expect(page.getByText('0.000000 DASH', { exact: true })).toBeVisible()
   await expect(claim).toBeDisabled()
-  await expect(page.getByText('Payout confirmed. Updating claim history…', { exact: true })).toBeVisible()
+  await expect(page.getByText('Updating payout status…', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Replica catches up' }).click()
   await page.getByRole('button', { name: 'Refresh payout', exact: true }).click()
   await expect(page.getByText(/Last claimed in epoch 123/)).toBeVisible()

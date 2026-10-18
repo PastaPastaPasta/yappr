@@ -439,7 +439,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
           <div className="text-sm">
             <p className="font-semibold">{pot ? `${(Number(pot.credits) / CREDITS_PER_DASH).toFixed(6)} DASH` : '—'}</p>
             <p className="text-gray-500 dark:text-gray-400">
-              {claimPending ? 'Payout confirmed. Updating claim history…' : pot?.lastClaimEpoch == null
+              {claimPending ? 'Updating payout status…' : pot?.lastClaimEpoch == null
                 ? 'Never claimed'
                 : `Last claimed in epoch ${pot.lastClaimEpoch}${pot.lastClaimantId ? ` by ${pot.lastClaimantId.slice(0, 8)}…` : ''}`}
             </p>
