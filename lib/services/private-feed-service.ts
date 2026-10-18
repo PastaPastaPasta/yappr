@@ -283,6 +283,8 @@ class PrivateFeedService {
       // or the walk would skip one and the move would read grants that feed's successor already answered.
       const after = options.after ?? options.carryFrom?.feed
       if (after !== undefined && (after !== mainFeeds(feeds)[0]?.feed || (options.carryFrom && options.carryFrom.feed !== after))) return failure('FEED_CHANGED')
+      // The carry must hold the predecessor's last key: a removal there since it was taken would leave later posts out.
+      if (options.carryFrom && (await fetchLatestKeyGeneration(ownerId, options.carryFrom.feed)) !== options.carryFrom.finalKeyGeneration) return failure('FEED_CHANGED')
       const seed = generateSeed()
       const ownerBytes = identifierToBytes(ownerId)
       const data: Record<string, unknown> = {

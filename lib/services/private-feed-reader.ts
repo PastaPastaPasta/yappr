@@ -232,36 +232,43 @@ export async function contentKeyFor(
   }
 }
 
+type ThreadedContent = Parameters<typeof privateContentOf>[0] & { rootOwnerId?: string; rootPostId?: string }
+
 /**
- * Whose feed a private reply is most likely in: the thread root's owner when
- * the root is private (named on the reply where the contract stores it, else
- * read), otherwise the replier's own.
+ * Whose feed a private reply is in: the thread root's author when the root is
+ * private (replies inherit its encryption), the replier's own under a public
+ * root. The root is read (cached) where it can be; otherwise the reply's own
+ * `rootOwnerId`, or `rootOwnerHint` (who started the thread), is the guess.
  */
-async function replyFeedOwner(reply: { author: { id: string }; rootOwnerId?: string; rootPostId?: string }): Promise<string> {
-  if (reply.rootOwnerId) return reply.rootOwnerId
-  if (!reply.rootPostId) return reply.author.id
-  const { postService } = await import('./post-service')
-  const root = await postService.getPostById(reply.rootPostId, { skipEnrichment: true })
-  return root && !root.deleted && root.encryptedContent?.length ? root.author.id : reply.author.id
+async function replyFeedOwner(reply: ThreadedContent, rootOwnerHint?: string): Promise<string> {
+  if (reply.rootPostId) {
+    const { postService } = await import('./post-service')
+    const root = await postService.getPostById(reply.rootPostId, { skipEnrichment: true })
+    if (root && !root.deleted) return root.encryptedContent?.length ? root.author.id : reply.author.id
+  }
+  return reply.rootOwnerId ?? rootOwnerHint ?? reply.author.id
 }
 
 /**
- * Decrypt a post or reply whose feed owner the caller does not know: a reply
- * is tried in its thread root owner's feed (replies inherit the root's
- * encryption), then, for a private reply under a public root, in its own
- * author's. The content binding rejects a wrong owner. Null when not private.
+ * Decrypt a post or reply, working out whose feed encrypted it (a reply: see
+ * {@link replyFeedOwner}). When that owner does not open it, a reply's other
+ * candidate is tried: the replier's own feed, or the thread's root owner. The
+ * content binding rejects a wrong owner. Returns the outcome and the owner it
+ * is about (the one that opened it, else the likelier one); null when the
+ * content is not private.
  */
 export async function decryptPostOrReply(
-  post: Parameters<typeof privateContentOf>[0] & { rootOwnerId?: string; rootPostId?: string }, viewerId: string, encryptionPrivateKey?: Uint8Array,
-): Promise<DecryptOutcome | null> {
-  if (!privateContentOf(post)) return null
-  const owner = targetKindOf(post) === 'reply' ? await replyFeedOwner(post) : post.author.id
-  const content = privateContentOf(post, owner)
+  post: ThreadedContent, viewerId: string, encryptionPrivateKey?: Uint8Array, rootOwnerHint?: string,
+): Promise<{ outcome: DecryptOutcome; feedOwnerId: string } | null> {
+  const content = privateContentOf(post)
   if (!content) return null
-  const outcome = await decryptPrivateContent(content, viewerId, encryptionPrivateKey)
-  if (outcome.ok || owner === post.author.id || (outcome.reason !== 'no-access' && outcome.reason !== 'failed')) return outcome
-  const own = await decryptPrivateContent({ ...content, feedOwnerId: post.author.id }, viewerId, encryptionPrivateKey)
-  return own.ok ? own : outcome
+  if (targetKindOf(post) !== 'reply') return { outcome: await decryptPrivateContent(content, viewerId, encryptionPrivateKey), feedOwnerId: post.author.id }
+  const owner = await replyFeedOwner(post, rootOwnerHint)
+  const outcome = await decryptPrivateContent({ ...content, feedOwnerId: owner }, viewerId, encryptionPrivateKey)
+  const other = owner !== post.author.id ? post.author.id : post.rootOwnerId ?? rootOwnerHint
+  if (outcome.ok || !other || other === owner) return { outcome, feedOwnerId: owner }
+  const second = await decryptPrivateContent({ ...content, feedOwnerId: other }, viewerId, encryptionPrivateKey)
+  return second.ok ? { outcome: second, feedOwnerId: other } : { outcome, feedOwnerId: owner }
 }
 
 /**

@@ -163,10 +163,10 @@ export function PrivatePostContent({
   onFailedMentionClick,
   mediaGate,
 }: PrivatePostContentProps) {
-  // Whose CEK this content was encrypted under. For a top-level post that is its
-  // author; for a reply it is the ROOT author, because replies inherit the
-  // thread's encryption (PRD §5.5).
-  const encryptionSourceOwnerId = rootPostOwnerId ?? post.author.id
+  // Whose feed encrypted this: a post's author; for a reply in a private thread
+  // the root's author (replies inherit its encryption), and for a private reply
+  // under a public root the replier. Settled by the reader, which reads the root.
+  const [encryptionSourceOwnerId, setEncryptionSourceOwnerId] = useState(post.rootOwnerId ?? rootPostOwnerId ?? post.author.id)
   const { user } = useAuth()
   const [state, setState] = useState<DecryptionState>({ status: 'idle' })
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
@@ -213,8 +213,7 @@ export function PrivatePostContent({
   }
 
   const attemptDecryption = useCallback(async () => {
-    const content = privateContentOf(post, encryptionSourceOwnerId)
-    if (!content) {
+    if (!privateContentOf(post)) {
       setState({ status: 'error', message: 'Invalid private post data' })
       return
     }
@@ -225,20 +224,21 @@ export function PrivatePostContent({
 
     setState({ status: 'loading' })
     try {
-      const { decryptPrivateContent } = await import('@/lib/services/private-feed-reader')
-      const encryptionKey = getEncryptionKeyBytes(user.identityId) ?? undefined
-      let outcome = await decryptPrivateContent(content, user.identityId, encryptionKey)
-      // A private reply under a public root is in its own author's feed, not the root's.
-      if (!outcome.ok && (outcome.reason === 'no-access' || outcome.reason === 'failed') && content.feedOwnerId !== post.author.id) {
-        const own = await decryptPrivateContent({ ...content, feedOwnerId: post.author.id }, user.identityId, encryptionKey)
-        if (own.ok) outcome = own
+      const { decryptPostOrReply } = await import('@/lib/services/private-feed-reader')
+      const opened = await decryptPostOrReply(post, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined, rootPostOwnerId)
+      if (!opened) {
+        setState({ status: 'error', message: 'Invalid private post data' })
+        return
       }
+      const { outcome, feedOwnerId } = opened
+      setEncryptionSourceOwnerId(feedOwnerId)
+      const isOwner = user.identityId === feedOwnerId
       if (outcome.ok) {
         let followerCount: number | undefined
         if (isOwner) {
           try {
             const { privateFeedService } = await import('@/lib/services')
-            followerCount = await privateFeedService.getPrivateFollowerCount(encryptionSourceOwnerId)
+            followerCount = await privateFeedService.getPrivateFollowerCount(feedOwnerId)
           } catch (err) {
             logger.warn('Failed to fetch private follower count:', err)
           }
@@ -265,11 +265,11 @@ export function PrivatePostContent({
         return
       }
       const { privateFeedFollowerService } = await import('@/lib/services')
-      const accessStatus = await privateFeedFollowerService.getAccessStatus(encryptionSourceOwnerId, user.identityId)
+      const accessStatus = await privateFeedFollowerService.getAccessStatus(feedOwnerId, user.identityId)
       if (accessStatus === 'pending') {
         // Seed the shared cache so the author's other posts show pending too
         const { setPrivateFeedRequestStatus } = await import('@/lib/caches/user-status-cache')
-        setPrivateFeedRequestStatus(`${user.identityId}:${encryptionSourceOwnerId}`, 'pending')
+        setPrivateFeedRequestStatus(`${user.identityId}:${feedOwnerId}`, 'pending')
         setState({ status: 'locked', reason: 'pending' })
       } else if (accessStatus === 'renewing') {
         setState({ status: 'locked', reason: 'renewing' })
@@ -282,7 +282,7 @@ export function PrivatePostContent({
       logger.error('Error decrypting private post:', error)
       setState({ status: 'error', message: 'Unable to decrypt this post.' })
     }
-  }, [post, user, isOwner, encryptionSourceOwnerId])
+  }, [post, user, rootPostOwnerId])
 
   // "Recover": enter the encryption key, then read again with it.
   const handleRecoverAccess = useCallback(() => {
@@ -292,7 +292,8 @@ export function PrivatePostContent({
   // Reset state when post or user changes to avoid stale decryption data
   useEffect(() => {
     setState({ status: 'idle' })
-  }, [post.id, user?.identityId])
+    setEncryptionSourceOwnerId(post.rootOwnerId ?? rootPostOwnerId ?? post.author.id)
+  }, [post.id, user?.identityId, post.rootOwnerId, rootPostOwnerId, post.author.id])
 
   // Attempt decryption on mount
   useEffect(() => {

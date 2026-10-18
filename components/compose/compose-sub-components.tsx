@@ -359,11 +359,12 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
 
     try {
       const { decryptPostOrReply } = await import('@/lib/services/private-feed-reader')
-      const outcome = await decryptPostOrReply(post, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
-      if (!outcome) {
+      const opened = await decryptPostOrReply(post, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
+      if (!opened) {
         if (isCurrent()) setState({ status: 'error' })
         return
       }
+      const { outcome } = opened
       if (isCurrent()) setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked', needsKey: outcome.reason === 'needs-key' })
     } catch (error) {
       logger.error('Error decrypting quoted post preview:', error)

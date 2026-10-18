@@ -62,11 +62,12 @@ export function PrivateQuotedPostContent({
     setState({ status: 'loading' })
     try {
       const { decryptPostOrReply } = await import('@/lib/services/private-feed-reader')
-      const outcome = await decryptPostOrReply(quotedPost, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
-      if (!outcome) {
+      const opened = await decryptPostOrReply(quotedPost, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
+      if (!opened) {
         setState({ status: 'error' })
         return
       }
+      const { outcome } = opened
       setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked', needsKey: outcome.reason === 'needs-key' })
     } catch (error) {
       logger.error('Error decrypting quoted private post:', error)

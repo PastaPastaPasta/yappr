@@ -292,11 +292,13 @@ describe('private feeds v2 end to end', () => {
     expect([await read(O, reply), await read(F4, reply), await read(F3, reply), await read(F2, reply)]).toEqual(['a reply', 'a reply', '<no-access>', '<no-access>'])
     // Quoted, the reply comes as a post by F1: its thread root's owner is whose feed opens it.
     const quoted = { author: { id: F1 }, targetKind: 'reply' as const, parentId: 'root', rootOwnerId: O, ...sealed.data }
-    expect(await s.reader.decryptPostOrReply(quoted, F4, keys[F4])).toEqual({ ok: true, text: 'a reply' })
+    expect(await s.reader.decryptPostOrReply(quoted, F4, keys[F4])).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
     // On v17 a reply names no root owner: the root is read, and a private one's author is whose feed it is.
     vi.doMock('./post-service', () => ({ postService: { getPostById: async (id: string) => (id === 'root' ? { author: { id: O }, encryptedContent: new Uint8Array([1]) } : null) } }))
     const fetched = { author: { id: F1 }, targetKind: 'reply' as const, parentId: 'root', rootPostId: 'root', ...sealed.data }
-    expect(await s.reader.decryptPostOrReply(fetched, F4, keys[F4])).toEqual({ ok: true, text: 'a reply' })
+    expect(await s.reader.decryptPostOrReply(fetched, F4, keys[F4])).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
+    // A card that names the thread's starter but not the root: still O's feed.
+    expect(await s.reader.decryptPostOrReply({ ...fetched, rootPostId: undefined }, F4, keys[F4], O)).toEqual({ outcome: { ok: true, text: 'a reply' }, feedOwnerId: O })
     vi.doUnmock('./post-service')
     // F3 left and was not carried: no reply into the current feed.
     expect(await s.owner.prepareInheritedEncryption('nope', { ownerId: O }, F3)).toMatchObject({ success: false })
@@ -559,6 +561,39 @@ describe('private feeds v2: every authorised path to history', () => {
     // F5's keys stop one generation short of this post; catching up reaches it, then stops at F5's own removal.
     expect(await read(F5, second)).toBe('after F4 left')
     expect(await read(F5, await post('after F5 left', P))).toBe('<revoked>')
+  })
+
+  it('a private reply under a public root opens in the replier\'s own feed, whatever the card names as the root\'s owner', async () => {
+    const sealed = await s.owner.prepareOwnerEncryption(P, 'my own reply', 'reply', undefined, keys[P])
+    if (!sealed.success) throw new Error(sealed.error)
+    vi.doMock('./post-service', () => ({ postService: { getPostById: async () => ({ author: { id: O } }) } }))
+    const reply = { author: { id: P }, targetKind: 'reply' as const, parentId: 'public-root', rootPostId: 'public-root', rootOwnerId: O, ...sealed.data }
+    expect(await s.reader.decryptPostOrReply(reply, P, keys[P], O)).toEqual({ outcome: { ok: true, text: 'my own reply' }, feedOwnerId: P })
+    vi.doUnmock('./post-service')
+  })
+
+  it('a history link that misses a later key of its predecessor is refused, and one committed anyway keeps the old grants', async () => {
+    const current = (await s.owner.privateFeedService.getCurrentFeed(P, { fresh: true }))?.feed as number
+    const { fetchLatestKeyGeneration, fetchFeed } = await import('./private-feed-reads')
+    const generation = await fetchLatestKeyGeneration(P, current)
+    const stale = { feed: current, finalKeyGeneration: generation - 1, cek: new Uint8Array(32), history: new Uint8Array(32) }
+    expect(await s.owner.privateFeedService.openFeed(P, keys[P], { carryFrom: stale })).toMatchObject({ success: false, errorCode: 'FEED_CHANGED' })
+
+    for (const follower of [F1, F3]) await s.follower.requestAccess(P, follower)
+    await approveBy(P, F1, F3)
+    const oldFeed = await fetchFeed(P, current)
+    if (!oldFeed) throw new Error('feed missing')
+    const removedLeaf = chain.docs.find((doc) => doc.$type === 'privateFeedGrant' && doc.$ownerId === P && doc.feed === current && norm(doc.recipientId) === F5) as Record<string, unknown>
+    chain.afterGrant = async () => {
+      // Another device's removal in the old feed, ordered before the new feed was opened.
+      expect((await s.owner.privateFeedService.revokeLeaf(P, oldFeed, removedLeaf.leafIndex as number, removedLeaf.keyGeneration as number, keys[P])).success).toBe(true)
+      const rekey = chain.docs.filter((doc) => doc.$type === 'privateFeedRekey' && doc.$ownerId === P && doc.feed === current).at(-1) as Record<string, unknown>
+      const opened = chain.docs.find((doc) => doc.$type === 'privateFeed' && doc.$ownerId === P && doc.feed === current + 1) as Record<string, unknown>
+      rekey.$createdAt = (opened.$createdAt as number) - 0.5
+    }
+    expect(await s.move.renewPrivateFeed(P, keys[P], { bringHistory: true })).toMatchObject({ success: true, historyLinked: true })
+    expect(grantsOf(P, current + 1)).toEqual(expect.arrayContaining([F1, F3]))
+    expect(grantsOf(P, current)).toEqual(expect.arrayContaining([F1, F3]))
   })
 })
 

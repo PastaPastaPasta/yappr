@@ -22,7 +22,7 @@
  */
 
 import { logger } from '@/lib/logger'
-import { privateFeedService, type PrivateFeedResult } from './private-feed-service'
+import { privateFeedService, type OwnerFeedState, type PrivateFeedResult } from './private-feed-service'
 import {
   activeGrants, answeredThrough, fetchCurrentFeed, fetchFeeds, fetchFollowRequestsTo, fetchGrant, fetchMembers, fetchRekeys, grantIsRevoked, mainFeeds,
   type FollowRequestDocument, type GrantDocument, type PrivateFeedDocument, type RekeyDocument,
@@ -34,7 +34,8 @@ import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { normalizeBytes } from '@/lib/bytes'
 import { scopedKey } from '@/lib/storage-scope'
 import { isDuplicateUniqueIndexError } from '@/lib/error-utils'
-import { cekAt, DEFAULT_FEED_CAPS, historyKey, MAX_TREE_CAPACITY, type CarriedFeed } from '@/lib/private-feed/crypto'
+import { cekAt, DEFAULT_FEED_CAPS, historyKey, MAX_TREE_CAPACITY, openCarry, type CarriedFeed } from '@/lib/private-feed/crypto'
+import { identifierToBytes } from './sdk-helpers'
 
 /** Measured on sakura (docs/SOCIAL_V17.md): a grant 51–76M credits, a new feed 24–39M. Estimates sit at the upper middle. */
 const GRANT_CREDITS = 65_000_000
@@ -309,7 +310,7 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
       saveMove(job)
       onProgress?.(moveProgress(job))
     }
-    if (job.deleteOldGrants) {
+    if (job.deleteOldGrants && (await historyLinkCovers(ownerId, synced.state, job.from))) {
       // PF6: the moved followers read the old feed through the history link now. Grants of
       // removed followers stay: they are the record that their request was answered.
       const moved = new Set(job.done)
@@ -324,6 +325,22 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
     logger.error('Error moving private followers:', error)
     return pause(error instanceof Error ? error.message : 'The move paused.')
   }
+}
+
+/**
+ * Whether the history link of `state`'s feed covers everything posted in
+ * feed `from`: it carries `from`'s key up to a generation no later key change
+ * made before the link was opened goes past. When it does not (another device
+ * removed someone in between), the old grants stay, so their holders keep
+ * reading those posts.
+ */
+async function historyLinkCovers(ownerId: string, state: OwnerFeedState, from: number): Promise<boolean> {
+  const { carry, feed, createdAt } = state.feed
+  if (!carry) return false
+  const carried = openCarry(historyKey(state.keys.seed), identifierToBytes(ownerId), feed, carry)
+  if (carried.feed !== from) return false
+  const later = await fetchRekeys(ownerId, from, carried.finalKeyGeneration)
+  return !later.some((rekey) => rekey.createdAt <= createdAt)
 }
 
 /**
