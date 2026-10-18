@@ -6,6 +6,8 @@ import type { Post } from '@/lib/types'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { getInitials, formatTime, truncateId } from '@/lib/utils'
 import { privateContentOf } from '@/lib/services/private-feed-reader'
+import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
+import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
 import { Spinner } from '@/components/ui/spinner'
 import { LockClosedIcon as LockClosedIconSolid } from '@heroicons/react/24/solid'
@@ -274,7 +276,7 @@ type DecryptionState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'decrypted'; content: string }
-  | { status: 'locked' }
+  | { status: 'locked'; needsKey?: boolean }
   | { status: 'error' }
 
 // Shared header component for post previews
@@ -358,8 +360,8 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
 
     try {
       const { decryptPrivateContent } = await import('@/lib/services/private-feed-reader')
-      const outcome = await decryptPrivateContent(content, user.identityId)
-      if (isCurrent()) setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked' })
+      const outcome = await decryptPrivateContent(content, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
+      if (isCurrent()) setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked', needsKey: outcome.reason === 'needs-key' })
     } catch (error) {
       logger.error('Error decrypting quoted post preview:', error)
       if (isCurrent()) setState({ status: 'error' })
@@ -378,6 +380,13 @@ export function QuotedPostPreview({ post }: QuotedPostPreviewProps) {
       attemptDecryption().catch(err => logger.error('Failed to decrypt:', err))
     }
   }, [isPrivate, state.status, attemptDecryption])
+
+  // Waiting on keys this device does not hold yet: opens once they are recovered elsewhere.
+  const awaitingKeys = state.status === 'locked' && state.needsKey === true
+  useEffect(() => {
+    if (!awaitingKeys) return
+    return privateFeedKeyStore.subscribe(() => setState({ status: 'idle' }))
+  }, [awaitingKeys])
 
   // Get author display for private posts (shows truncated ID as fallback)
   const authorDisplay = post.author.username && !post.author.username.startsWith('user_')

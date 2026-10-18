@@ -11,6 +11,8 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { cn } from '@/lib/utils'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { privateContentOf } from '@/lib/services/private-feed-reader'
+import { privateFeedKeyStore } from '@/lib/services/private-feed-key-store'
+import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useAuth } from '@/contexts/auth-context'
 import { useMediaGate } from '@/hooks/use-media-gate'
 
@@ -23,7 +25,7 @@ type DecryptionState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'decrypted'; content: string }
-  | { status: 'locked' }
+  | { status: 'locked'; needsKey?: boolean }
   | { status: 'error' }
 
 /**
@@ -62,8 +64,8 @@ export function PrivateQuotedPostContent({
     setState({ status: 'loading' })
     try {
       const { decryptPrivateContent } = await import('@/lib/services/private-feed-reader')
-      const outcome = await decryptPrivateContent(content, user.identityId)
-      setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked' })
+      const outcome = await decryptPrivateContent(content, user.identityId, getEncryptionKeyBytes(user.identityId) ?? undefined)
+      setState(outcome.ok ? { status: 'decrypted', content: outcome.text } : { status: 'locked', needsKey: outcome.reason === 'needs-key' })
     } catch (error) {
       logger.error('Error decrypting quoted private post:', error)
       setState({ status: 'error' })
@@ -82,6 +84,13 @@ export function PrivateQuotedPostContent({
       attemptDecryption().catch((err) => logger.error('Decryption failed:', err))
     }
   }, [state.status, attemptDecryption])
+
+  // Waiting on keys this device does not hold yet: opens once they are recovered elsewhere (another post, another tab).
+  const awaitingKeys = state.status === 'locked' && state.needsKey === true
+  useEffect(() => {
+    if (!awaitingKeys) return
+    return privateFeedKeyStore.subscribe(() => setState({ status: 'idle' }))
+  }, [awaitingKeys])
 
   // Common link wrapper for all states
   const renderLink = (children: React.ReactNode) => (

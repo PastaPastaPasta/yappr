@@ -169,6 +169,7 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
     }
   })
 
+  privateFeedKeyStore.signIn(identityId)
   void import('@/lib/services/private-feed-follower-service').then(async ({ privateFeedFollowerService }) => {
     if (!context.isSessionActive()) {
       logger.debug('Auth: Skipping private feed sync - session no longer active')
@@ -179,7 +180,7 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
       const result = await privateFeedFollowerService.syncFollowedFeeds(identityId)
       if (!context.isSessionActive()) {
         logger.debug('Auth: Private feed sync completed but session ended - clearing keys')
-        privateFeedKeyStore.clearIdentity(identityId)
+        privateFeedKeyStore.signOut(identityId)
         return
       }
       // A follower move this device started and did not finish (a reload or a crash), or one the
@@ -189,8 +190,8 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
         const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
         const moved = await runMove(identityId, getEncryptionKeyBytes(identityId) ?? undefined)
         if (!moved.success) logger.debug('Auth: Private feed follower move paused:', moved.error)
-        // Signed out while it ran: whatever keys it recovered meanwhile go with the session.
-        if (!context.isSessionActive()) privateFeedKeyStore.clearIdentity(identityId)
+        // Signed out while it ran: the sign-out stopped its key writes; this covers a session ended without one.
+        if (!context.isSessionActive()) privateFeedKeyStore.signOut(identityId)
       }
 
       if (result.synced.length > 0 || result.failed.length > 0) {
@@ -219,7 +220,7 @@ async function runPostLogin(identityId: string, context: { delayMs: number; isSe
 async function runLogoutCleanup(identityId: string): Promise<void> {
   sessionStorage.removeItem(scopedKey('yappr_dpns_username'))
   invalidateBlockCache(identityId)
-  privateFeedKeyStore.clearIdentity(identityId)
+  privateFeedKeyStore.signOut(identityId)
 }
 
 export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies {

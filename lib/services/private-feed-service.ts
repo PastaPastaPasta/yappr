@@ -255,7 +255,7 @@ class PrivateFeedService {
   async openFeed(
     ownerId: string,
     encryptionPrivateKey: Uint8Array,
-    options: { carryFrom?: CarriedFeed; caps?: FeedCaps } = {},
+    options: { carryFrom?: CarriedFeed; caps?: FeedCaps; after?: number } = {},
   ): Promise<PrivateFeedResult & { feed?: PrivateFeedDocument }> {
     const caps = options.caps ?? DEFAULT_FEED_CAPS
     try {
@@ -279,8 +279,10 @@ class PrivateFeedService {
 
       const feeds = await fetchFeeds(ownerId, { fresh: true })
       const feed = (feeds[0]?.feed ?? 0) + 1
-      // Two devices renewing at once: the carry must name the feed right before this one, or the walk would skip one.
-      if (options.carryFrom && options.carryFrom.feed !== mainFeeds(feeds)[0]?.feed) return failure('FEED_CHANGED')
+      // Two devices renewing at once: the renewal (and its carry) must follow the feed it was planned from,
+      // or the walk would skip one and the move would read grants that feed's successor already answered.
+      const after = options.after ?? options.carryFrom?.feed
+      if (after !== undefined && (after !== mainFeeds(feeds)[0]?.feed || (options.carryFrom && options.carryFrom.feed !== after))) return failure('FEED_CHANGED')
       const seed = generateSeed()
       const ownerBytes = identifierToBytes(ownerId)
       const data: Record<string, unknown> = {

@@ -104,7 +104,8 @@ class PrivateFeedFollowerService {
     const answered = await answeredThrough(grant)
     if (answered.revoked) return request && request.$createdAt > answered.at ? 'pending' : 'revoked'
     if (!request) return 'none'
-    if (grant.feed !== feed.feed) return 'renewing'
+    // Asked again since the older grant was written (they left meanwhile): the renewal does not move them, the owner approves.
+    if (grant.feed !== feed.feed) return request.$createdAt > answered.at ? 'pending' : 'renewing'
     const keys = privateFeedKeyStore.memberKeys(myId, ownerId, feed.feed)
     return keys && keys.leafIndex === grant.leafIndex && keys.keyGeneration >= grant.keyGeneration ? 'approved' : 'approved-no-keys'
   }

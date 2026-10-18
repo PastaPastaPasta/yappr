@@ -398,7 +398,7 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
                 <p className="text-xs text-gray-600 dark:text-gray-400">
                   {move.job.error ?? 'Private posting pauses until everyone has been moved.'}
                 </p>
-                {move.job.error && (
+                {(move.job.error || move.done >= move.total) && (
                   <Button size="sm" variant="outline" onClick={handleContinueMove}>Continue</Button>
                 )}
               </div>

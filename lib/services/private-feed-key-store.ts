@@ -9,7 +9,9 @@
  *
  * The first identity in every key is the account the entry belongs to, so one
  * account's keys are never read for another on a shared device, and signing
- * out clears only that account's ({@link clearIdentity}).
+ * out clears only that account's ({@link signOut}). Entries in any other
+ * shape are the v1 layout's (an unscoped seed, path keys and CEKs per owner)
+ * and are removed on load.
  */
 
 import { scopedKey } from '@/lib/storage-scope'
@@ -73,12 +75,27 @@ function read<T>(key: string, decode: (raw: Record<string, unknown>) => T): T | 
   }
 }
 
-function write(key: string, value: Record<string, unknown>): void {
+/** Store an entry; true when it changed (rewriting the same keys notifies nobody). */
+function write(key: string, value: Record<string, unknown>): boolean {
   try {
-    storage()?.setItem(PREFIX + key, JSON.stringify(value))
+    const store = storage()
+    const encoded = JSON.stringify(value)
+    if (!store || store.getItem(PREFIX + key) === encoded) return false
+    store.setItem(PREFIX + key, encoded)
+    return true
   } catch (error) {
     logger.error('PrivateFeedKeyStore: could not store a key', error)
+    return false
   }
+}
+
+const CURRENT_LAYOUT = /^[ofh]:/
+
+/** Remove the v1 layout's entries (its seed, path keys and cached CEKs), which no account owns. */
+function purgeLegacyEntries(): void {
+  const store = storage()
+  if (!store) return
+  for (const key of keysWith('').filter((rest) => !CURRENT_LAYOUT.test(rest))) store.removeItem(PREFIX + key)
 }
 
 function keysWith(prefix: string): string[] {
@@ -103,6 +120,13 @@ const decodeNodeKeys = (value: unknown): NodeKey[] => {
 }
 
 class PrivateFeedKeyStore {
+  /** Accounts signed out in this tab. */
+  private readonly signedOut = new Set<string>()
+
+  constructor() {
+    purgeLegacyEntries()
+  }
+
   private listeners = new Set<() => void>()
 
   /** Observe key changes in this tab and others (member and history keys; no key material is emitted). */
@@ -136,10 +160,11 @@ class PrivateFeedKeyStore {
   }
 
   storeOwnerKeys(ownerId: string, feed: number, keys: OwnerFeedKeys): void {
-    write(ownerKey(ownerId, feed), {
+    if (this.signedOut.has(ownerId)) return
+    const changed = write(ownerKey(ownerId, feed), {
       seed: b64(keys.seed), sealed: b64(keys.sealedSeed), gen: keys.keyGeneration, revoked: keys.revokedLeaves, cap: keys.treeCapacity, max: keys.maxKeyGeneration,
     })
-    this.changed()
+    if (changed) this.changed()
   }
 
   forgetOwnerKeys(ownerId: string, feed: number): void {
@@ -163,11 +188,12 @@ class PrivateFeedKeyStore {
   }
 
   storeMemberKeys(viewerId: string, ownerId: string, feed: number, keys: MemberFeedKeys): void {
-    write(memberKey(viewerId, ownerId, feed), {
+    if (this.signedOut.has(viewerId)) return
+    const changed = write(memberKey(viewerId, ownerId, feed), {
       at: keys.grantedAt, leaf: keys.leafIndex, gen: keys.keyGeneration, cek: b64(keys.cek), h: b64(keys.history),
       path: encodeNodeKeys(keys.pathKeys), cap: keys.treeCapacity, max: keys.maxKeyGeneration,
     })
-    this.changed()
+    if (changed) this.changed()
   }
 
   /** Every feed `viewerId` holds member keys for, as `{ ownerId, feed }`. */
@@ -193,8 +219,8 @@ class PrivateFeedKeyStore {
   }
 
   storeHistoryKeys(viewerId: string, ownerId: string, feed: number, keys: HistoryFeedKeys): void {
-    write(historyKeyName(viewerId, ownerId, feed), { gen: keys.finalKeyGeneration, cek: b64(keys.cek), h: b64(keys.history) })
-    this.changed()
+    if (this.signedOut.has(viewerId)) return
+    if (write(historyKeyName(viewerId, ownerId, feed), { gen: keys.finalKeyGeneration, cek: b64(keys.cek), h: b64(keys.history) })) this.changed()
   }
 
   /**
@@ -208,6 +234,19 @@ class PrivateFeedKeyStore {
     if (member && member.keyGeneration >= keyGeneration) return true
     const history = this.historyKeys(viewerId, ownerId, feed)
     return !!history && history.finalKeyGeneration >= keyGeneration
+  }
+
+  /**
+   * Sign `identityId` out of this tab: its entries go, and work still in
+   * flight for it (a move, a recovery) stores nothing until {@link signIn}.
+   */
+  signOut(identityId: string): void {
+    this.signedOut.add(identityId)
+    this.clearIdentity(identityId)
+  }
+
+  signIn(identityId: string): void {
+    this.signedOut.delete(identityId)
   }
 
   /** Remove every entry belonging to `identityId`: its own feeds' seeds and what it holds of others' feeds. */

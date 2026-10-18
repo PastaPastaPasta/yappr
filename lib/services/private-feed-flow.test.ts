@@ -414,6 +414,27 @@ describe('private feeds v2 end to end', () => {
     expect((await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true }))?.feed).toBe(before + 1)
     expect(grantsIn(before + 1)).toEqual(members)
   })
+
+  it('a follower moved, then removed in the old feed by a device that did not see the move, loses the new grant on the next device', async () => {
+    const before = (await s.owner.privateFeedService.getCurrentFeed(O, { fresh: true }))?.feed as number
+    const target = (await s.owner.privateFeedService.getPrivateFollowers(O)).map((f) => f.recipientId)[0]
+    expect(target).toBeDefined()
+    expect((await s.owner.privateFeedService.openFeed(O, keys[O])).success).toBe(true)
+    // Device A writes the new grant and closes before settling it; device B, not seeing it, removes them in the old feed.
+    const synced = await s.owner.privateFeedService.ownerFeedState(O, keys[O])
+    if (!synced.success) throw new Error('owner state')
+    expect(await s.owner.privateFeedService.writeGrant(O, synced.state, target, getPublicKey(keys[target]), 0)).toEqual({ success: true })
+    const source = chain.docs.find((doc) => doc.$type === 'privateFeedGrant' && doc.$ownerId === O && doc.feed === before && norm(doc.recipientId) === target) as Record<string, unknown>
+    const { fetchFeed } = await import('./private-feed-reads')
+    const oldFeed = await fetchFeed(O, before)
+    if (!oldFeed) throw new Error('old feed missing')
+    expect((await s.owner.privateFeedService.revokeLeaf(O, oldFeed, source.leafIndex as number, source.keyGeneration as number, keys[O])).success).toBe(true)
+    // A third device finds the move unfinished and takes the grant back.
+    expect(await s.move.adoptUnfinishedMove(O)).toBeGreaterThan(0)
+    expect(await s.move.runMove(O, keys[O])).toEqual({ success: true })
+    expect((await s.owner.privateFeedService.getPrivateFollowers(O)).map((f) => f.recipientId)).not.toContain(target)
+    expect(await s.follower.getAccessStatus(O, target)).toBe('revoked')
+  })
 })
 
 describe('private feeds v2: every authorised path to history', () => {
@@ -478,6 +499,7 @@ describe('private feeds v2: every authorised path to history', () => {
     const feed = (await post('while away', P)).feed
     expect(grantsOf(P, feed)).not.toContain(F1)
     expect(await s.follower.requestAccess(P, F1)).toEqual({ success: true })
+    expect(await s.follower.getAccessStatus(P, F1)).toBe('pending')
     const { loadMove } = await import('./private-feed-move-job')
     const asked = await post('after asking', P)
     expect(loadMove(P)).toBeNull()
@@ -486,5 +508,43 @@ describe('private feeds v2: every authorised path to history', () => {
     expect(await s.owner.privateFeedService.approveFollower(P, F1, getPublicKey(keys[F1]), keys[P])).toEqual({ success: true })
     expect(grantsOf(P, feed)).toContain(F1)
     expect(await read(F1, asked)).toBe('after asking')
+  })
+
+  it('a renewal planned from a feed another device has renewed since is refused', async () => {
+    const current = (await s.owner.privateFeedService.getCurrentFeed(P, { fresh: true }))?.feed as number
+    expect(await s.owner.privateFeedService.openFeed(P, keys[P], { after: current - 1 })).toMatchObject({ success: false, errorCode: 'FEED_CHANGED' })
+  })
+
+  it('a saved move with everyone settled still finishes its clean-up', async () => {
+    const current = (await s.owner.privateFeedService.getCurrentFeed(P, { fresh: true }))?.feed as number
+    const { loadMove, saveMove } = await import('./private-feed-move-job')
+    saveMove({ ownerId: P, from: current - 1, to: current, recipients: [], done: [], skipped: [], deleteOldGrants: false })
+    expect(await s.move.adoptUnfinishedMove(P)).toBe(1)
+    expect(await s.move.runMove(P, keys[P])).toEqual({ success: true })
+    expect(loadMove(P)).toBeNull()
+  })
+})
+
+describe('private feeds v2: this device\'s key store', () => {
+  it('drops the v1 layout\'s entries on load and keeps the current ones', async () => {
+    const { scopedKey } = await import('@/lib/storage-scope')
+    const { PrivateFeedKeyStore } = await import('./private-feed-key-store')
+    const prefix = scopedKey('yappr:pf:')
+    window.localStorage.setItem(prefix + 'feed_seed', 'legacy')
+    window.localStorage.setItem(prefix + 'path_keys:' + O, 'legacy')
+    new PrivateFeedKeyStore()
+    expect(window.localStorage.getItem(prefix + 'feed_seed')).toBeNull()
+    expect(window.localStorage.getItem(prefix + 'path_keys:' + O)).toBeNull()
+    expect(s.store.ownerKeys(P, 1)).not.toBeNull()
+  })
+
+  it('stores nothing for an account signed out while work for it was still running', () => {
+    const keys = { finalKeyGeneration: 1, cek: new Uint8Array(32).fill(1), history: new Uint8Array(32).fill(2) }
+    s.store.signOut(F5)
+    s.store.storeHistoryKeys(F5, O, 99, keys)
+    expect(s.store.historyKeys(F5, O, 99)).toBeNull()
+    s.store.signIn(F5)
+    s.store.storeHistoryKeys(F5, O, 99, keys)
+    expect(s.store.historyKeys(F5, O, 99)).not.toBeNull()
   })
 })

@@ -24,8 +24,8 @@
 import { logger } from '@/lib/logger'
 import { privateFeedService, type PrivateFeedResult } from './private-feed-service'
 import {
-  activeGrants, fetchCurrentFeed, fetchFeeds, fetchFollowRequestsTo, fetchGrant, fetchMembers, fetchRekeys, grantIsRevoked, mainFeeds,
-  type GrantDocument, type PrivateFeedDocument,
+  activeGrants, answeredThrough, fetchCurrentFeed, fetchFeeds, fetchFollowRequestsTo, fetchGrant, fetchMembers, fetchRekeys, grantIsRevoked, mainFeeds,
+  type FollowRequestDocument, type GrantDocument, type PrivateFeedDocument, type RekeyDocument,
 } from './private-feed-reads'
 import { clearMove, loadMove, moveProgress, saveMove, type MoveJob } from './private-feed-move-job'
 import { identityService } from './identity-service'
@@ -73,12 +73,41 @@ async function blockedBy(ownerId: string): Promise<Set<string>> {
  * and is not blocked by the owner, in leaf order.
  */
 async function movableFollowers(ownerId: string, feed: number): Promise<string[]> {
+  return (await feedFollowers(ownerId, feed)).movable
+}
+
+/** {@link movableFollowers}, with the reads it was taken from. */
+async function feedFollowers(ownerId: string, feed: number) {
   const [grants, rekeys, requests, blocked] = await Promise.all([fetchMembers(ownerId, feed), fetchRekeys(ownerId, feed, 1), fetchFollowRequestsTo(ownerId), blockedBy(ownerId)])
   // Only a request the grant answered: one made since (they left and asked again) waits for the owner's approval.
   const askedAt = new Map(requests.map((request) => [request.$ownerId, request.$createdAt]))
-  return activeGrants(grants, rekeys)
+  const movable = activeGrants(grants, rekeys)
     .filter((grant) => (askedAt.get(grant.recipientId) ?? Infinity) <= grant.createdAt && !blocked.has(grant.recipientId))
     .map((grant) => grant.recipientId)
+  return { grants, rekeys, requests, movable }
+}
+
+/**
+ * Followers holding a grant in force in feed `to` whose grant in `from` was
+ * revoked after it (the move wrote the new grant while another device removed
+ * them, and that device did not see it yet). A request made since the removal
+ * was approved again, and that grant stands.
+ */
+async function movedThenRemoved(
+  ownerId: string, to: number, moved: readonly GrantDocument[], old: { grants: readonly GrantDocument[]; rekeys: readonly RekeyDocument[]; requests: readonly FollowRequestDocument[] },
+): Promise<string[]> {
+  const askedAt = new Map(old.requests.map((request) => [request.$ownerId, request.$createdAt]))
+  const removedAt = new Map<string, number>()
+  for (const grant of old.grants) {
+    const answer = await answeredThrough(grant, old.rekeys)
+    if (answer.revoked) removedAt.set(grant.recipientId, answer.at)
+  }
+  const candidates = moved.filter((grant) => {
+    const at = removedAt.get(grant.recipientId)
+    return at !== undefined && (askedAt.get(grant.recipientId) ?? 0) <= at
+  })
+  if (candidates.length === 0) return []
+  return activeGrants(candidates, await fetchRekeys(ownerId, to, 1)).map((grant) => grant.recipientId)
 }
 
 /**
@@ -125,7 +154,7 @@ export async function renewPrivateFeed(
     const recipients = await movableFollowers(ownerId, current.feed)
     const treeCapacity = recipients.length > current.treeCapacity / 2 ? Math.min(current.treeCapacity * 2, MAX_TREE_CAPACITY) : current.treeCapacity
     const opened = await privateFeedService.openFeed(ownerId, encryptionPrivateKey, {
-      carryFrom, caps: { treeCapacity: Math.max(treeCapacity, DEFAULT_FEED_CAPS.treeCapacity), maxKeyGeneration: DEFAULT_FEED_CAPS.maxKeyGeneration },
+      after: current.feed, carryFrom, caps: { treeCapacity: Math.max(treeCapacity, DEFAULT_FEED_CAPS.treeCapacity), maxKeyGeneration: DEFAULT_FEED_CAPS.maxKeyGeneration },
     })
     if (!opened.success || !opened.feed) return opened
     saveMove({ ownerId, from: current.feed, to: opened.feed.feed, recipients, done: [], skipped: [], deleteOldGrants: carryFrom !== undefined })
@@ -298,29 +327,36 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
  * was saved, or a move begun on another device): followers in force of the
  * previous feed who still stand by their request and have no grant in the
  * current one. Saves it as this device's job, paused until it runs; returns
- * how many are left.
+ * how many are left. A saved job counts at least one until it finishes: with
+ * every follower settled, its clean-up (PF6) is still to run.
  */
 export async function adoptUnfinishedMove(ownerId: string): Promise<number> {
   const existing = loadMove(ownerId)
-  if (existing) return moveProgress(existing).total - moveProgress(existing).done
+  if (existing) {
+    const { done, total } = moveProgress(existing)
+    return Math.max(total - done, 1)
+  }
   const [current, previous] = mainFeeds(await fetchFeeds(ownerId, { fresh: true }))
   if (!current || !previous) return 0
-  const [recipients, moved, requests] = await Promise.all([movableFollowers(ownerId, previous.feed), fetchMembers(ownerId, current.feed), fetchFollowRequestsTo(ownerId)])
-  const granted = new Set(moved.map((grant) => grant.recipientId))
-  const requestOf = new Map(requests.map((request) => [request.$ownerId, request]))
+  const [old, moved] = await Promise.all([feedFollowers(ownerId, previous.feed), fetchMembers(ownerId, current.feed)])
+  // Moved, then removed on a device that did not see the new grant yet: the move takes it back.
+  const takeBack = await movedThenRemoved(ownerId, current.feed, moved, old)
+  const recipients = [...old.movable, ...takeBack.filter((id) => !old.movable.includes(id))]
+  const granted = new Set(moved.map((grant) => grant.recipientId).filter((id) => !takeBack.includes(id)))
+  const requestOf = new Map(old.requests.map((request) => [request.$ownerId, request]))
   // Left behind here, or with no encryption key to seal a grant to (every device would only skip them again).
   const behind = new Set(leftBehind({ ownerId, from: previous.feed, to: current.feed }))
   const behindBefore = behind.size
-  for (const recipientId of recipients) {
+  for (const recipientId of old.movable) {
     if (granted.has(recipientId) || behind.has(recipientId)) continue
     if (!(await recipientKey(recipientId, requestOf.get(recipientId)?.publicKey))) behind.add(recipientId)
   }
   if (behind.size > behindBefore) rememberLeftBehind({ ownerId, from: previous.feed, to: current.feed }, [...behind])
-  const left = recipients.filter((recipientId) => !granted.has(recipientId) && !behind.has(recipientId))
+  const left = recipients.filter((recipientId) => takeBack.includes(recipientId) || (!granted.has(recipientId) && !behind.has(recipientId)))
   if (left.length === 0) return 0
   saveMove({
     ownerId, from: previous.feed, to: current.feed, recipients,
-    done: recipients.filter((id) => granted.has(id)), skipped: recipients.filter((id) => behind.has(id)),
+    done: recipients.filter((id) => granted.has(id)), skipped: recipients.filter((id) => behind.has(id) && !takeBack.includes(id)),
     deleteOldGrants: current.carry !== undefined, error: 'Some of your followers have not been moved to your renewed private feed yet.',
   })
   return left.length
