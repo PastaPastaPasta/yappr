@@ -5,6 +5,8 @@ import toast from 'react-hot-toast'
 import { ArrowUturnLeftIcon, BanknotesIcon, ClockIcon, ExclamationTriangleIcon, NoSymbolIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
+import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import { CharterReasonPicker, useSeatedReasons } from '@/components/moderation/charter-reason-picker'
@@ -139,6 +141,7 @@ function barredOwnDeleteNote(): string {
  */
 export function ContractModerationSettings({ contract = 'social', citation }: { contract?: ModeratedContractKey; citation?: ModerationCitation }) {
   const { user } = useAuth()
+  const canAuthorize = useModerationAuthorization()
   const service = moderationServiceFor(contract)
   const copy = PANEL_COPY[contract]
   const social = contract === 'social'
@@ -214,7 +217,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   }, [refresh])
 
   const restore = async (removal: KindedRemoval) => {
-    if (!user || busy) return
+    if (!canAuthorize || !user || busy) return
     setBusy({ action: 'restore', id: removalKey(removal) })
     const result = await service.restoreDocument(user.identityId, removal.kind, removal.documentId)
     setBusy(null)
@@ -235,7 +238,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   }
 
   const run = async (action: Exclude<Action, 'restore'>) => {
-    if (!user || busy || (action === 'claim' && service.moderatorsPotStatus().pending)) return
+    if (!canAuthorize || !user || busy || (action === 'claim' && service.moderatorsPotStatus().pending)) return
     const id = targetId.trim()
     if (action !== 'claim' && !id) {
       toast.error('Enter the identity ID to moderate')
@@ -345,6 +348,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
 
   return (
     <div className="space-y-4">
+      <ModerationKeyNotice authorized={canAuthorize} />
       <ElectionStatusPanel contract={contract} />
       {social && contractTakesReports() && <ReportQueue seatedReasons={seatedReasons} onModerateAuthor={moderateAuthor} />}
       {contract !== 'social' && moderatedContract(contract).reportsResolved() && <ContractReportQueue contract={contract} seatedReasons={seatedReasons} />}
@@ -400,24 +404,24 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
             <Button variant="outline" disabled={busy !== null || !targetId.trim()} onClick={() => { lookUp(targetId).catch(() => { /* reported inside */ }) }}>
               Check status
             </Button>
-            <Button variant="destructive" disabled={busy !== null} onClick={() => run('ban')} className="gap-2">
+            <Button variant="destructive" disabled={!canAuthorize || busy !== null} onClick={() => run('ban')} className="gap-2">
               <NoSymbolIcon className="h-4 w-4" /> {busy?.action === 'ban' ? 'Banning…' : 'Ban'}
             </Button>
-            <Button variant="outline" disabled={busy !== null} onClick={() => run('unban')} className="gap-2">
+            <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('unban')} className="gap-2">
               <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unban' ? 'Unbanning…' : 'Unban'}
             </Button>
-            <Button variant="outline" disabled={busy !== null} onClick={() => run('suspend')} className="gap-2">
+            <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('suspend')} className="gap-2">
               <ClockIcon className="h-4 w-4" /> {busy?.action === 'suspend' ? 'Suspending…' : 'Suspend'}
             </Button>
-            <Button variant="outline" disabled={busy !== null} onClick={() => run('unsuspend')} className="gap-2">
+            <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('unsuspend')} className="gap-2">
               <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unsuspend' ? 'Lifting…' : 'Unsuspend'}
             </Button>
             {canWarn && (
               <>
-                <Button variant="outline" disabled={busy !== null} onClick={() => run('warn')} className="gap-2">
+                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('warn')} className="gap-2">
                   <ExclamationTriangleIcon className="h-4 w-4" /> {busy?.action === 'warn' ? 'Warning…' : 'Warn'}
                 </Button>
-                <Button variant="outline" disabled={busy !== null} onClick={() => run('clearWarnings')} className="gap-2">
+                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('clearWarnings')} className="gap-2">
                   <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'clearWarnings' ? 'Clearing…' : 'Clear warnings'}
                 </Button>
               </>
@@ -445,7 +449,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
                 : `Last claimed in epoch ${pot.lastClaimEpoch}${pot.lastClaimantId ? ` by ${pot.lastClaimantId.slice(0, 8)}…` : ''}`}
             </p>
           </div>
-          <Button variant="outline" disabled={busy !== null || claimPending || !pot || pot.credits === BigInt(0)} onClick={() => run('claim')} className="gap-2">
+          <Button variant="outline" disabled={!canAuthorize || busy !== null || claimPending || !pot || pot.credits === BigInt(0)} onClick={() => run('claim')} className="gap-2">
             <BanknotesIcon className="h-4 w-4" /> {busy?.action === 'claim' ? 'Claiming…' : 'Claim for the team'}
           </Button>
           {claimPending && <Button variant="outline" size="sm" onClick={() => refresh()} disabled={busy !== null}>Refresh payout</Button>}
@@ -476,7 +480,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
         )}
         onPick={(removal) => setTargetId(removal.documentOwnerId)}
         action={(removal) => restorable.has(removalKey(removal)) && (
-          <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => restore(removal)} className="shrink-0">
+          <Button variant="outline" size="sm" disabled={!canAuthorize || busy !== null} onClick={() => restore(removal)} className="shrink-0">
             {busy?.action === 'restore' && busy.id === removalKey(removal) ? 'Restoring…' : 'Restore'}
           </Button>
         )} />

@@ -10,6 +10,8 @@ import toast from 'react-hot-toast'
 import type { Post } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { useAppStore, useSettingsStore } from '@/lib/store'
+import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
+import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useRelativeTime } from '@/hooks/use-relative-time'
@@ -351,6 +353,7 @@ function PostCardView({
   // removes: Drive refuses it, paid (41102).
   const { isModerator, isProtected, protectedIds } = useModerationRole()
   const canModerate = isModerator && !isOwnPost && !protectedIds.has(post.author.id) && moderatorDeletableTypes().includes(targetKind)
+  const canAuthorize = useModerationAuthorization(canModerate)
   const { open: openReportModal } = useReportPostModal()
   // Anyone but the author may report a live post or reply to the moderators
   // (v9); consensus refuses a self-report (10419) anyway. A moderator removes
@@ -596,7 +599,7 @@ function PostCardView({
                   </Tooltip.Root>
                 </Tooltip.Provider>
                 <DropdownMenu.Portal>
-                  <DropdownMenu.Content className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
+                  <DropdownMenu.Content className="min-w-[200px] max-w-[min(24rem,calc(100vw-2rem))] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
                     {!isOwnPost && (
                       <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleFollow)} disabled={followLoading} className={cn(CARD_MENU_ITEM, 'disabled:opacity-50')}>
                         {isFollowing ? 'Unfollow' : 'Follow'} {authorLabel}
@@ -642,8 +645,10 @@ function PostCardView({
                         Report {isReply ? 'reply' : 'post'}
                       </DropdownMenu.Item>
                     )}
+                    {canModerate && <ModerationKeyNotice authorized={canAuthorize} />}
                     {canModerate && (
                       <DropdownMenu.Item
+                        disabled={!canAuthorize}
                         data-testid={`moderator-remove-${post.id}`}
                         onClick={(e) => {
                           e.stopPropagation()

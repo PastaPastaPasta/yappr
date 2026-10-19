@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
+import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
+import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { LimitedTextarea } from '@/components/ui/limited-text'
@@ -15,6 +17,7 @@ import { CharterReasonPicker, type SeatedReasonsState } from './charter-reason-p
 
 export function ContractReportQueue({ contract, seatedReasons }: { contract: ReportingContract; seatedReasons: SeatedReasonsState }) {
   const { user } = useAuth()
+  const canAuthorize = useModerationAuthorization()
   const generation = useRef(0)
   const [reports, setReports] = useState<ContractReport[]>([])
   const [view, setView] = useState('open')
@@ -44,6 +47,7 @@ export function ContractReportQueue({ contract, seatedReasons }: { contract: Rep
   }, [load])
   return <section className="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
     <h3 className="font-semibold">Reports</h3>
+    <ModerationKeyNotice authorized={canAuthorize} />
     <label className="text-sm">Show <select value={view} onChange={e => setView(e.target.value)} className="bg-transparent border rounded p-1">
       <option value="open">Waiting for review</option>
       {REPORT_STATUSES.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
@@ -52,12 +56,12 @@ export function ContractReportQueue({ contract, seatedReasons }: { contract: Rep
     <Button variant="outline" disabled={loading} onClick={() => load()}>Refresh</Button>
     {failed && <p role="alert">Could not load reports. Try refreshing.</p>}
     {!loading && !failed && reports.length === 0 && <p className="text-sm text-gray-500">No reports to show.</p>}
-    {reports.map(report => <ReportRow key={report.id} contract={contract} report={report} seatedReasons={seatedReasons} changed={() => load()} />)}
+    {reports.map(report => <ReportRow key={report.id} contract={contract} report={report} seatedReasons={seatedReasons} canAuthorize={canAuthorize} changed={() => load()} />)}
     {loading && <p role="status">Loading reports…</p>}
     {next && <Button disabled={loading} variant="outline" onClick={() => load(next)}>Load more</Button>}
   </section>
 }
-function ReportRow({ contract, report, seatedReasons, changed }: { contract: ReportingContract; report: ContractReport; seatedReasons: SeatedReasonsState; changed: () => Promise<void> }) {
+function ReportRow({ contract, report, seatedReasons, canAuthorize, changed }: { canAuthorize: boolean; contract: ReportingContract; report: ContractReport; seatedReasons: SeatedReasonsState; changed: () => Promise<void> }) {
   const { user } = useAuth()
   const [status, setStatus] = useState<ReportStatus>(report.status ?? 1)
   const [note, setNote] = useState(report.resolution ?? '')
@@ -67,7 +71,7 @@ function ReportRow({ contract, report, seatedReasons, changed }: { contract: Rep
   const problem = resolutionInputProblem(status, note)
   const unchanged = status === report.status && (note.trim() || null) === report.resolution
   const resolve = async () => {
-    if (!user || busy || problem) return
+    if (!canAuthorize || !user || busy || problem) return
     setBusy(true)
     try {
       const result = await moderationServiceFor(contract).resolveReports(user.identityId, [report], { status, note }, {
@@ -104,6 +108,6 @@ function ReportRow({ contract, report, seatedReasons, changed }: { contract: Rep
     </select></label>
     <label className="block">Resolution (optional, public)<LimitedTextarea contract={contract} document="report" field="resolution" value={note} onChange={e => setNote(e.target.value)} disabled={busy} /></label>
     <CharterReasonPicker id={`report-charter-${report.id}`} state={seatedReasons} value={charter} onChange={setCharter} />
-    <Button disabled={busy || seatedReasons.loading || seatedReasons.failed || (seatedReasons.required && !charter) || problem !== null || unchanged} onClick={resolve}>{busy ? 'Resolving…' : 'Resolve report'}</Button>
+    <Button disabled={!canAuthorize || busy || seatedReasons.loading || seatedReasons.failed || (seatedReasons.required && !charter) || problem !== null || unchanged} onClick={resolve}>{busy ? 'Resolving…' : 'Resolve report'}</Button>
   </article>
 }

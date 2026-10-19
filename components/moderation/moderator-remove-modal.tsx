@@ -6,6 +6,8 @@ import { ShieldExclamationIcon, UserGroupIcon } from '@heroicons/react/24/outlin
 import toast from 'react-hot-toast'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
+import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
+import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { logger } from '@/lib/logger'
@@ -38,6 +40,7 @@ function windowLabel(seconds: number | null): string {
 export function ModeratorRemoveModal() {
   const { user } = useAuth()
   const { isOpen, target, onRemoved, close } = useModeratorRemoveModal()
+  const canAuthorize = useModerationAuthorization(isOpen)
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const contract = target?.contract ?? 'social'
@@ -146,7 +149,7 @@ export function ModeratorRemoveModal() {
   }
 
   const handleRemove = async () => {
-    if (!target || !user || busy || !reasonReady()) return
+    if (!canAuthorize || !target || !user || busy || !reasonReady()) return
     setBusy(true)
     const result = await service.removeDocument(user.identityId, kind, target.documentId, {
       text: reason.trim(),
@@ -192,7 +195,7 @@ export function ModeratorRemoveModal() {
   }
 
   const handlePropose = async () => {
-    if (!target || !user || busy || route?.route !== 'team' || !route.reachable || !reasonReady()) return
+    if (!canAuthorize || !target || !user || busy || route?.route !== 'team' || !route.reachable || !reasonReady()) return
     if (!reasonDocumentId) {
       toast.error('Choose the charter reason this removal is taken on')
       return
@@ -232,7 +235,7 @@ export function ModeratorRemoveModal() {
 
   /** Approves the proposal another member already made for this document, rather than splitting the team's approvals. */
   const handleApproveExisting = async () => {
-    if (!user || busy || !existing || existing.viewerSigned) return
+    if (!canAuthorize || !user || busy || !existing || existing.viewerSigned) return
     setBusy(true)
     const result = await service.approveTeamAction(user.identityId, existing.actionId)
     setBusy(false)
@@ -303,6 +306,7 @@ export function ModeratorRemoveModal() {
           </>
         )}
       </Dialog.Description>
+      <ModerationKeyNotice authorized={canAuthorize} />
       {target?.preview && (
         <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
           <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">{target.preview}</p>
@@ -335,16 +339,16 @@ export function ModeratorRemoveModal() {
       <div className="flex flex-col gap-3">
         {team && existing ? (
           !existing.viewerSigned && (
-            <Button onClick={handleApproveExisting} disabled={busy} className="w-full bg-red-500 hover:bg-red-600 text-white">
+            <Button onClick={handleApproveExisting} disabled={!canAuthorize || busy} className="w-full bg-red-500 hover:bg-red-600 text-white">
               {busy ? 'Approving…' : 'Approve the proposed removal'}
             </Button>
           )
         ) : team ? (
-          <Button onClick={handlePropose} disabled={busy || seatedReasons.loading || !team.reachable} className="w-full bg-red-500 hover:bg-red-600 text-white">
+          <Button onClick={handlePropose} disabled={!canAuthorize || busy || seatedReasons.loading || !team.reachable} className="w-full bg-red-500 hover:bg-red-600 text-white">
             {busy ? 'Proposing…' : 'Propose team removal'}
           </Button>
         ) : !blocked && !routeFailed && (
-          <Button onClick={handleRemove} disabled={busy || seatedReasons.loading || effectiveRoute === null} className="w-full bg-red-500 hover:bg-red-600 text-white">
+          <Button onClick={handleRemove} disabled={!canAuthorize || busy || seatedReasons.loading || effectiveRoute === null} className="w-full bg-red-500 hover:bg-red-600 text-white">
             {busy ? 'Removing…' : effectiveRoute === null ? 'Checking…' : `Remove ${noun}`}
           </Button>
         )}

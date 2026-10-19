@@ -8,6 +8,8 @@ import toast from 'react-hot-toast'
 import { CheckCircleIcon, ExclamationTriangleIcon, FlagIcon, LockOpenIcon, ShieldExclamationIcon, TrashIcon, UserIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
+import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { postRemovalTarget, useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { logger } from '@/lib/logger'
@@ -162,6 +164,7 @@ interface ReportQueueProps {
  */
 export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProps) {
   const { user } = useAuth()
+  const canAuthorize = useModerationAuthorization()
   const { open: openModeratorRemoveModal } = useModeratorRemoveModal()
   const resolving = moderationService.canResolveReports()
   const [view, setView] = useState<ReportView>(OPEN_REPORTS)
@@ -344,7 +347,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
    * protected reporters' reports are left.
    */
   const dismiss = async (group: ReportedTarget) => {
-    if (!user || dismissing || loading) return
+    if (!canAuthorize || !user || dismissing || loading) return
     if (!charterReasonReady(resolving ? 'purges' : 'dismissals')) return
     const key = keyOf(group)
     const state = targets.get(key)?.state
@@ -421,7 +424,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
    * ones already reading exactly this way are skipped.
    */
   const resolve = async (group: ReportedTarget, form: ResolveForm) => {
-    if (!user || dismissing || loading) return
+    if (!canAuthorize || !user || dismissing || loading) return
     const { status } = form
     const problem = resolutionInputProblem(status, form.note)
     if (problem || status === null) {
@@ -514,6 +517,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <ModerationKeyNotice authorized={canAuthorize} />
         {views.length > 0 && (
           <div role="tablist" aria-label="Which reports" className="flex flex-wrap gap-1">
             {views.map(({ label, view: option }) => (
@@ -636,7 +640,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                 </details>
                 {form && (
                   <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2" data-testid={`report-resolve-form-${group.targetId}`}>
-                    <fieldset disabled={dismissing !== null}>
+                    <fieldset disabled={!canAuthorize || dismissing !== null}>
                       <legend className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">How were these reports resolved?</legend>
                       {differ?.statusesDiffer && (
                         <p className="text-xs text-amber-700 dark:text-amber-400 mb-1">These reports were resolved differently. The outcome chosen here applies to all of them.</p>
@@ -665,7 +669,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                       id={`report-resolution-${key}`}
                       value={form.note}
                       rows={2}
-                      disabled={dismissing !== null}
+                      disabled={!canAuthorize || dismissing !== null}
                       onChange={(e) => setResolveForm({ ...form, note: e.target.value })}
                       className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     />
@@ -677,7 +681,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                     <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
-                        disabled={dismissing !== null || resolutionInputProblem(form.status, form.note) !== null}
+                        disabled={!canAuthorize || dismissing !== null || resolutionInputProblem(form.status, form.note) !== null}
                         onClick={() => { resolve(group, form).catch(() => { /* reported inside */ }) }}
                         className="gap-1"
                       >
@@ -690,20 +694,20 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                 )}
                 <div className="flex flex-wrap gap-2">
                   {target?.state === 'live' && !protectedIds.has(group.targetOwnerId) && (
-                    <Button variant="destructive" size="sm" disabled={dismissing !== null} onClick={() => remove(group, target.post)} className="gap-1">
+                    <Button variant="destructive" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => remove(group, target.post)} className="gap-1">
                       <ShieldExclamationIcon className="h-4 w-4" /> Remove {noun}
                     </Button>
                   )}
                   {/* A protected author (a moderator, or an ownerProtected owner) is moderated by nobody: 41102, paid. */}
                   {!protectedIds.has(group.targetOwnerId) && (
-                    <Button variant="outline" size="sm" disabled={dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
+                    <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
                       <UserIcon className="h-4 w-4" /> Warn, suspend or ban the author
                     </Button>
                   )}
                   {resolving ? (
                     <>
                       {!form && (
-                        <Button variant="outline" size="sm" disabled={dismissing !== null || loading || target === undefined} onClick={() => openResolveForm(group)} className="gap-1">
+                        <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null || loading || target === undefined} onClick={() => openResolveForm(group)} className="gap-1">
                           <CheckCircleIcon className="h-4 w-4" /> {viewingOpen ? 'Resolve reports' : 'Change resolution'}
                         </Button>
                       )}
@@ -711,7 +715,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                         variant="ghost"
                         size="sm"
                         title="Delete these reports outright, for spam reports: no record is kept and their reporters see nothing"
-                        disabled={dismissing !== null || loading || target === undefined || target.state === 'unknown'}
+                        disabled={!canAuthorize || dismissing !== null || loading || target === undefined || target.state === 'unknown'}
                         onClick={() => { dismiss(group).catch(() => { /* reported inside */ }) }}
                         className="gap-1"
                       >
@@ -720,7 +724,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                       </Button>
                     </>
                   ) : (
-                    <Button variant="outline" size="sm" disabled={dismissing !== null || loading || target === undefined || target.state === 'unknown'} onClick={() => { dismiss(group).catch(() => { /* reported inside */ }) }} className="gap-1">
+                    <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null || loading || target === undefined || target.state === 'unknown'} onClick={() => { dismiss(group).catch(() => { /* reported inside */ }) }} className="gap-1">
                       <CheckCircleIcon className="h-4 w-4" />
                       {busy && dismissing
                         ? `Dismissing ${dismissing.done} of ${dismissing.total}…`
