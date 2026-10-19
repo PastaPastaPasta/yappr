@@ -6,6 +6,10 @@ const user = { identityId: 'offline-identity', dpnsUsername: 'alice.dash' }
 export function useAuth() {
   return { user, controller: { getState: () => ({ user: { username: 'alice.dash' } }) }, refreshDpnsUsernames: async () => undefined, login: async () => undefined }
 }
+// These offline views mock the signer; payout tests model an authorized moderator.
+export function useModerationAuthorization() {
+  return new URLSearchParams(location.search).get('authorization') !== 'wallet'
+}
 export const entry: PasskeyEntryView = { entryId: 'removed-id', credentialId: 'credential', updatedAt: 1700000000000, name: null, marker: 'marker', addedAt: 1700000000000, thisDevice: true, needsUpdate: false }
 export async function listPasskeys() { return [entry] } // A node still behind the confirmed delete.
 export async function passkeyEligibility() { return null }

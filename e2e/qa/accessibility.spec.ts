@@ -131,6 +131,18 @@ for (const theme of ['light', 'dark']) {
   })
 }
 
+test('wallet moderation explains how to sign in and disables writes before submission', async ({ page }) => {
+  await page.goto('/?scenario=pot&authorization=wallet')
+  const notice = page.getByTestId('moderation-key-notice')
+  await expect(notice).toContainText("Moderation actions need your account's CRITICAL key.")
+  await expect(notice).toContainText('sign in with that key or a passkey that holds it')
+  await expect(page.getByRole('button', { name: 'Ban', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Unban', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Suspend', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Unsuspend', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Claim for the team' })).toBeDisabled()
+})
+
 test('confirmed storefront payout never re-enables a stale pot, then reconciles claim history', async ({ page }) => {
   await page.goto('/?scenario=pot')
   const claim = page.getByRole('button', { name: 'Claim for the team' })

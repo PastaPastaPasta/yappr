@@ -5,6 +5,7 @@ const mocks = path('./mocks.tsx')
 export default defineConfig({
   root: path('./'), esbuild: { jsx: 'automatic' },
   resolve: { alias: [
+    { find: '@/hooks/use-moderation-authorization', replacement: mocks },
     ...['components/layout/page-shell', 'lib/services/follow-service', 'lib/services/unified-profile-service', 'lib/services/social-stats-service', 'lib/services/identity-batch', 'lib/services/moderation-service', 'components/moderation/charter-reason-picker', 'components/moderation/contract-report-queue', 'components/moderation/report-queue', 'components/moderation/team-actions-panel', 'contexts/auth-context', 'contexts/sdk-context', 'lib/services/moderation-election-service', 'lib/services/blog-follow-service', 'hooks/use-blog-follow', 'lib/services', 'lib/services/key-validation-service', 'lib/services/identity-service', 'lib/services/dpns-service', 'lib/auth/passkey-vault', 'hooks/use-moderated-type-open', 'components/ui/profile-image-upload', 'components/moderation/barred-writer-notice'].map((name) => ({ find: new RegExp('^@/' + name + '$'), replacement: mocks })),
     { find: '@', replacement: path('../../') },
   ], dedupe: ['react', 'react-dom'] },
