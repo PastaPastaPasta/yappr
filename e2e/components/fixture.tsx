@@ -6,6 +6,7 @@ import { VariantEditorFixture } from './variant-editor-fixture'
 import { LiveThreadStatusFixture, ThreadStatusFixture } from './thread-status-fixture'
 import { BlogManagementFixture } from './blog-management-fixture'
 import { BlogEditorFixture } from './blog-editor-fixture'
+import { PasskeyEnrolFixture } from './passkey-enrol-fixture'
 
 declare global {
   interface Window {
@@ -20,7 +21,9 @@ if (!root) throw new Error('Component fixture root is missing')
 const fixture = new URLSearchParams(window.location.search).get('fixture')
 const threadState = fixture?.startsWith('thread-') ? fixture.slice('thread-'.length) : null
 createRoot(root).render(
-  fixture === 'blog-management' ? (
+  fixture === 'passkey-enrol' ? (
+    <PasskeyEnrolFixture />
+  ) : fixture === 'blog-management' ? (
     <BlogManagementFixture />
   ) : fixture === 'blog-editor' ? (
     <BlogEditorFixture />
