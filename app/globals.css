@@ -151,6 +151,12 @@
 .bn-editor[contenteditable="false"] [class*="bn-add-block"] {
   display: none !important;
 }
+
+/* Read-only viewers should not show BlockNote's node-selection outline. */
+.blog-theme-prose .bn-editor[contenteditable="false"] .bn-block-content.ProseMirror-selectednode > *,
+.blog-theme-prose .bn-editor[contenteditable="false"] .ProseMirror-selectednode > .bn-block-content > * {
+  outline: none;
+}
 /* Metadata follows the author's (or reader override's) full-contrast text. */
 .blog-theme-scope {
   --blog-muted: var(--blog-text);
