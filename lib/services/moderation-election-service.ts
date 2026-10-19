@@ -190,9 +190,11 @@ function toContest(state: VoteState, endsAtMs: number | null): ElectionContest {
       return mapped;
     });
     const winner = state.winner;
+    const block = winner?.block;
     const decided = winner
-      ? { kind: winner.kind, identityId: identifierToBase58(winner.identityId) ?? null, decidedAtMs: winner.block ? Number(winner.block.timeMs) : null }
+      ? { kind: winner.kind, identityId: identifierToBase58(winner.identityId) ?? null, decidedAtMs: block ? Number(block.timeMs) : null }
       : null;
+    block?.free();
     winner?.free();
     return {
       contenders: contenders.sort((a, b) => (b.votes ?? 0) - (a.votes ?? 0)),

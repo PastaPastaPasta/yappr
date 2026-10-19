@@ -17,6 +17,8 @@ import { BlogViewer } from '@/components/blog/blog-viewer'
 import { BlogDiscovery } from '@/components/blog/blog-discovery'
 import { useDeletedBlogs } from '@/lib/blog/deleted-blogs'
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import type { ModeratedContractKey } from '@/lib/moderated-contracts'
 import { SettingsSwitch } from '@/components/settings/settings-switch'
 import { PasskeySettings } from '@/components/settings/passkey-settings'
@@ -33,10 +35,13 @@ function ReaderFixture() {
 function Fixture() {
   const [revision, setRevision] = useState(0)
   const [open, setOpen] = useState(false)
+  const removalTarget = useModeratorRemoveModal(state => state.target)
+  const menuContract = new URLSearchParams(location.search).get('contract') === 'storefront' ? 'storefront' : 'blog'
   return <AppRouterContext.Provider value={router}><ThemeProvider attribute="class" defaultTheme="light"><main className="bg-white text-gray-900 dark:bg-neutral-900 dark:text-white min-h-screen p-5">
     <h1>Release regression fixture</h1>
     {scenario === 'tokens' ? <><IconButton variant="primary" aria-label="Primary action">Go</IconButton><button className="text-gray-400 hover:text-gray-500">Muted action</button></> : scenario === 'connection' ? <ConnectionRow user={{ id: 'offline-person', username: 'alice', displayName: 'Alice', hasProfile: false, hasDpnsName: true, followersCount: 0, followingCount: 0, isFollowing: false, allUsernames: ['alice'] }} showActions={false} followLabel="Follow" busy={false} onToggleFollow={() => undefined} /> : scenario === 'comments' ? <BlogComments blogPostId="offline-post" blogPostOwnerId="author" commentsEnabled /> : scenario === 'pot' ? <><button onClick={exposePayoutHistory}>Replica catches up</button><button onClick={exposeIntermediatePayoutHistory}>Replica advances before payout</button><button onClick={() => setRevision(value => value + 1)}>Remount payout</button><ContractModerationSettings key={revision} contract="storefront" /></> : scenario === 'copy' ? <><BlogSettings blog={{ id: 'blog', ownerId: 'author', name: 'Fixture blog', createdAt: new Date() }} ownerId="author" onDeleted={() => undefined} /><PollEditor draft={createPollDraft()} question="Tea or coffee?" onChange={() => undefined} onRemove={() => undefined} /></> : scenario === 'trends' ? <><RankingWindowToggle axis="hashtags" testIdPrefix="trends" value="all" onChange={() => undefined} /><TrendingHashtagRow trend={{ hashtag: 'yappr', postCount: 12 }} index={0} /><TrendingHashtagRow trend={{ hashtag: 'dash_cashtag', postCount: 1 }} index={1} /></> : scenario === 'session' ? <SessionFixture /> : scenario === 'discovery' ? <><button onClick={() => useDeletedBlogs.getState().mark('delete-me')}>Confirm deletion</button><button onClick={() => setRevision((value) => value + 1)}>Remount discovery</button><BlogDiscovery key={revision} /></>
       : scenario?.startsWith('election-') ? <ElectionStatusPanel contract={scenario.slice(9) as ModeratedContractKey} />
+      : scenario === 'moderator-menu' ? <><ModeratorContentMenu target={{ contract: menuContract, docType: menuContract === 'blog' ? 'blogPost' : 'store', documentId: 'offline-menu-item', createdAt: 1700000000000, preview: 'Offline content', noun: 'item' }} ownerId="author" onRemoved={() => undefined} /><output data-testid="removal-target">{removalTarget?.documentId ?? 'none'}</output></>
       : scenario === 'create' ? <><button onClick={() => setOpen(true)}>New blog</button><CreateBlogModal open={open} onOpenChange={setOpen} /></>
       : scenario === 'reader' ? <ReaderFixture />
       : scenario === 'passkeys' ? <PasskeySettings />

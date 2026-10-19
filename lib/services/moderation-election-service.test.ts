@@ -80,6 +80,19 @@ describe('reading the contest', () => {
     await expect(moderationElectionService.getContest(target)).resolves.toEqual({ contest: null, endTimeFailed: false });
   });
 
+  it('reads the real decision block time for a completed contest without an end-date entry', async () => {
+    const block = { timeMs: 1_792_349_661_780n, free: vi.fn() };
+    const winner = { kind: 'WonByIdentity', identityId: leader, block, free: vi.fn() };
+    const completed = { ...state([]), winner };
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(completed);
+    sdk.voting.votePollsByEndDate.mockResolvedValueOnce([]);
+    const { contest } = await moderationElectionService.getContest(target);
+    expect(contest).toMatchObject({ endsAtMs: null, winner: { kind: 'WonByIdentity', identityId: leader, decidedAtMs: 1_792_349_661_780 } });
+    expect(block.free).toHaveBeenCalledOnce();
+    expect(winner.free).toHaveBeenCalledOnce();
+    expect(completed.free).toHaveBeenCalledOnce();
+  });
+
   it('pages past the first 100 vote polls to find the end time', async () => {
     sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 3 }]));
     sdk.voting.votePollsByEndDate

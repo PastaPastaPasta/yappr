@@ -4,6 +4,8 @@ import { useRouter } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { NoSymbolIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
 import { IconButton } from '@/components/ui/icon-button'
+import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
+import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { useModerationRole } from '@/hooks/use-is-moderator'
 import { useModeratorRemoveModal, type ModeratorRemoveTarget } from '@/hooks/use-moderator-remove-modal'
@@ -44,6 +46,7 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, className }: 
   const router = useRouter()
   const { user } = useAuth()
   const { isModerator, protectedIds } = useModerationRole(target.contract)
+  const canAuthorize = useModerationAuthorization(isModerator)
   const { open } = useModeratorRemoveModal()
   if (!isModerator || !user || !ownerId || ownerId === user.identityId || protectedIds.has(ownerId)) return null
 
@@ -64,11 +67,14 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, className }: 
         </IconButton>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content className="min-w-[220px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
+        <DropdownMenu.Content className="min-w-[220px] max-w-[min(24rem,calc(100vw-2rem))] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
+          <ModerationKeyNotice authorized={canAuthorize} />
           <DropdownMenu.Item
+            disabled={!canAuthorize}
             data-testid={`moderator-remove-${target.documentId}`}
             onClick={(e) => {
               e.stopPropagation()
+              if (!canAuthorize) return
               open(target, onRemoved)
             }}
             className={cn(MENU_ITEM, 'text-red-500')}
@@ -77,9 +83,11 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, className }: 
             {settled ? `Remove ${target.noun} (settled: team only)` : `Remove ${target.noun}`}
           </DropdownMenu.Item>
           <DropdownMenu.Item
+            disabled={!canAuthorize}
             data-testid={`moderator-author-${target.documentId}`}
             onClick={(e) => {
               e.stopPropagation()
+              if (!canAuthorize) return
               router.push(moderateAuthorHref(target, ownerId))
             }}
             className={MENU_ITEM}

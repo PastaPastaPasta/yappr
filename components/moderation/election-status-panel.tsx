@@ -6,13 +6,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { useSdk } from '@/contexts/sdk-context'
 import { logger } from '@/lib/logger'
-import { isV10 } from '@/lib/contract-topology'
+import { electionResult } from '@/lib/election-result'
 import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import { createElectionStatusLoader } from '@/lib/election-status-loader'
 import { electionView, moderationElectionService, type ElectionStatus } from '@/lib/services/moderation-election-service'
 
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id)
-const when = (ms: number | null) => (ms === null ? 'unknown' : new Date(ms).toLocaleString())
 const hours = (seconds: number) => `${Math.round(seconds / 3600)} h`
 /** What stays closed under a `notYetUsable` interim, per contract. */
 const CLOSED_UNTIL_SEATED: Record<ModeratedContractKey, string> = {
@@ -138,17 +137,7 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
         {contest && (
           <section data-testid="election-contest">
             <h4 className="font-semibold mb-1">Contest for the seat</h4>
-            <p>
-              Voting ends: <span data-testid="election-ends">{when(contest.endsAtMs)}</span>
-              {declaration && contest.endsAtMs === null && !contest.winner && isV10() && (
-                <span className="text-gray-500">
-                  {' '}(at most {hours(declaration.joinWindowSeconds + declaration.voteWindowSeconds)} after the first charter entered)
-                </span>
-              )}
-            </p>
-            {contest.winner && (
-              <p>Outcome: {contest.winner.kind}{contest.winner.identityId ? ` — ${contest.winner.identityId}` : ''} ({when(contest.winner.decidedAtMs)})</p>
-            )}
+            <p data-testid="election-result">{electionResult(contest, seated)}</p>
             <table className="w-full table-fixed mt-2">
               <thead><tr className="text-left text-gray-500"><th>Contender (leader)</th><th className="w-20 text-right">Votes</th></tr></thead>
               <tbody>
@@ -168,7 +157,7 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
             <ul className="space-y-2">
               {status.proposals.map((proposal) => (
                 <li key={proposal.id} className="border border-gray-200 dark:border-gray-800 rounded p-2">
-                  <p>Leader <code>{proposal.leaderId}</code>{proposal.createdAt ? ` · filed ${when(proposal.createdAt)}` : ''}</p>
+                  <p>Leader <code>{proposal.leaderId}</code>{proposal.createdAt ? ` · filed ${new Date(proposal.createdAt).toLocaleString()}` : ''}</p>
                   {proposal.description && <p className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{proposal.description}</p>}
                   <p className="text-gray-500">
                     {proposal.reasonIds.length} reason{proposal.reasonIds.length === 1 ? '' : 's'}
