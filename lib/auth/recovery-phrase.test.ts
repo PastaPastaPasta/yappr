@@ -79,6 +79,11 @@ describe('phraseMessagingState (#1210 rules)', () => {
     expect(phraseMessagingState(mine, null, [encryptionKey(5, foreign.publicKey)], ANCHOR)).toBe('another-wallet')
   })
 
+  it('is current when the read lags but the newest live anchor key is the phrase\'s', () => {
+    expect(phraseMessagingState(mine, null, [encryptionKey(5, foreign.publicKey, ANCHOR, { disabledAt: 1 }), encryptionKey(6, mine)], ANCHOR)).toBe('current')
+    expect(phraseMessagingState(mine, null, [encryptionKey(5, mine), encryptionKey(6, foreign.publicKey)], ANCHOR)).toBe('another-wallet')
+  })
+
   it('does not re-add the phrase\'s key once it was disabled', () => {
     expect(phraseMessagingState(mine, null, [encryptionKey(5, mine, ANCHOR, { disabledAt: 1 })], ANCHOR)).toBe('another-wallet')
   })

@@ -7,7 +7,7 @@ import {
   APP_KEY_PURPOSE,
   appEncryptionKeyPath,
   identityAuthKeyPath,
-  isValidRecoveryPhrase,
+  InvalidPhraseError,
   normalizeRecoveryPhrase,
   openDip13Wallet,
   sessionAuthKeyPath,
@@ -78,9 +78,7 @@ describe('DIP-13 keys from a recovery phrase', () => {
 
   it('refuse a phrase whose checksum fails', async () => {
     const broken = TEST_PHRASE.replace(/about$/, 'abandon')
-    expect(await isValidRecoveryPhrase(TEST_PHRASE)).toBe(true)
-    expect(await isValidRecoveryPhrase(broken)).toBe(false)
-    await expect(openDip13Wallet(broken, 'testnet')).rejects.toThrow('Invalid recovery phrase')
+    await expect(openDip13Wallet(broken, 'testnet')).rejects.toBeInstanceOf(InvalidPhraseError)
   })
 })
 

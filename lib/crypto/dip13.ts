@@ -92,19 +92,19 @@ function fromHex(hex: unknown, length: number, what: string): Uint8Array {
   return bytes
 }
 
-/** Whether `phrase` (already normalized) is a BIP-39 English phrase with a valid checksum. */
-export async function isValidRecoveryPhrase(phrase: string): Promise<boolean> {
-  try {
-    return (await wasm()).validateMnemonic(phrase, 'en')
-  } catch {
-    return false
+/** The phrase is not a BIP-39 English phrase with a valid checksum (as opposed to the SDK failing to load). */
+export class InvalidPhraseError extends Error {
+  constructor() {
+    super('Invalid recovery phrase')
   }
 }
 
 /**
  * A key-deriving handle for one phrase (empty BIP-39 passphrase, as DashPay
  * uses). The phrase stays inside the closure; callers drop the handle when
- * done. Every key comes back as fresh bytes the caller may wipe.
+ * done. Every key comes back as fresh bytes the caller may wipe. Wiping is
+ * best effort: the SDK hands keys over as hex strings, and JS strings (the
+ * phrase among them) cannot be zeroed.
  */
 export interface Dip13Wallet {
   derive(path: string): Dip13Key
@@ -116,7 +116,7 @@ export async function openDip13Wallet(phrase: string, network: Dip13Network): Pr
 
 /** {@link openDip13Wallet} on statics the caller already initialised (the test wallet, whose derivations are synchronous). */
 export function dip13Wallet(sdk: Dip13Wasm, phrase: string, network: Dip13Network): Dip13Wallet {
-  if (!sdk.validateMnemonic(phrase, 'en')) throw new Error('Invalid recovery phrase')
+  if (!sdk.validateMnemonic(phrase, 'en')) throw new InvalidPhraseError()
   return {
     derive(path) {
       const result = sdk.deriveKeyFromSeedWithExtendedPath({ mnemonic: phrase, path, network })

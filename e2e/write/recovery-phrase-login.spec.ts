@@ -16,7 +16,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { expect, test, type Browser, type Page } from '@playwright/test'
-import { appUrl, isAppConnectBuild, scopedKey } from '../fixtures/app'
+import { appUrl, isAppConnectBuild } from '../fixtures/app'
 import { bubbles, gotoMessages, send, thread } from '../fixtures/dm'
 
 const PHRASE_FILE = process.env.E2E_RECOVERY_PHRASE_FILE?.trim()
@@ -38,10 +38,13 @@ test.beforeEach(() => {
 
 /** A fresh browser (its own storage) signed in with the phrase as `username`. */
 async function signInWithPhrase(browser: Browser, username: string): Promise<Page> {
-  const context = await browser.newContext()
-  // DMs need no YAPP: keep the starter-grant prompt out of the way.
-  await context.addInitScript((key) => window.localStorage.setItem(key, JSON.stringify([])), scopedKey('yappr_starter_grant_settled'))
-  const page = await context.newPage()
+  const page = await (await browser.newContext()).newPage()
+  // DMs need no YAPP, and this test adds no passkey: decline both offers whenever they show.
+  const claim = page.getByRole('dialog', { name: 'Claim your starter YAPP' })
+  // Either may sit under the other, so the click goes to the button itself rather than to what is on top.
+  await page.addLocatorHandler(claim, () => claim.getByRole('button', { name: 'Not now' }).dispatchEvent('click'))
+  const offer = page.getByRole('dialog', { name: 'Sign in faster with a passkey' })
+  await page.addLocatorHandler(offer, () => offer.getByRole('button', { name: 'Not now' }).dispatchEvent('click'))
   await page.goto(appUrl('/login/'))
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
   await dialog.getByRole('button', { name: 'Sign in with your recovery phrase' }).click()
@@ -54,8 +57,6 @@ async function signInWithPhrase(browser: Browser, username: string): Promise<Pag
   await expect(field).toHaveCount(0)
   await accounts.getByRole('button', { name: new RegExp(`^${username}`) }).click()
   await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 180_000 })
-  const offer = page.getByRole('dialog', { name: 'Sign in faster with a passkey' })
-  if (await offer.isVisible().catch(() => false)) await offer.getByRole('button', { name: 'Not now' }).click()
   return page
 }
 

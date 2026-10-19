@@ -224,6 +224,10 @@ enc    = m/9'/coin'/5'/7'/0'/identityId'/appId'/purpose'                 (rotati
 auth_i = m/9'/coin'/5'/6'/0'/identityId'/hash256(appEphPub || u8(i))'      (#1210's leaf)
 ```
 
+Do not add `identityIndex` to a persona whose anchor key the legacy scheme
+registered: the responder would no longer derive that key, and would leave the
+encryption slot out ("another wallet").
+
 `identityId'` and `appId'` are DIP-14 256-bit hardened children; coin is `5'`
 on mainnet, `1'` on testnet and devnets. The encryption key is normative, so a
 DashPay build that restores the phrase, and Yappr's recovery-phrase sign-in, find

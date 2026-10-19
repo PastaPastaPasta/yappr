@@ -12,7 +12,7 @@
  *    none, and left alone when another wallet's key is there.
  *
  * The phrase is passed in, never stored, logged or sent; derived key bytes are
- * zeroed once their WIFs are taken.
+ * zeroed once their WIFs are taken (best effort: see dip13.ts).
  */
 import bs58 from 'bs58'
 import { messagingAnchorId } from '@/lib/app-connect/config'
@@ -22,6 +22,7 @@ import {
   appEncryptionKeyPath,
   identityAuthKeyPath,
   IDENTITY_GAP_LIMIT,
+  InvalidPhraseError,
   MASTER_KEY_INDEX,
   openDip13Wallet,
   type Dip13Wallet,
@@ -35,6 +36,7 @@ import {
   addMessagingKeyWithMasterKey,
   anchorKeyState,
   MessagingAlreadySetUpError,
+  type AnchorKeyState,
   type MessagingKeyDraft,
 } from '@/lib/services/messaging-key-service'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
@@ -57,12 +59,19 @@ export interface OpenedPhrase {
   accounts: PhraseAccount[]
 }
 
-/** The phrase does not check out (BIP-39 checksum or word list). */
-export class InvalidRecoveryPhraseError extends Error {
-  constructor() {
-    super('That recovery phrase isn\'t valid. Check each word and try again.')
+/** The refusal of a phrase that fails its checksum: the one failure that leaves the phrase in its field to correct. */
+export const INVALID_PHRASE = 'That recovery phrase isn\'t valid. Check each word and try again.'
+
+/** A sign-in that cannot go on, with words fit to show the user as they are. */
+export class PhraseSignInError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PhraseSignInError'
   }
 }
+
+/** The sign-in was abandoned (its dialog closed) before anything was written. */
+export class PhraseSignInCancelled extends Error {}
 
 /**
  * Opens `phrase` (normalized) and finds its identities on this network.
@@ -73,8 +82,10 @@ export async function openRecoveryPhrase(phrase: string): Promise<OpenedPhrase> 
   let wallet: Dip13Wallet
   try {
     wallet = await openDip13Wallet(phrase, network)
-  } catch {
-    throw new InvalidRecoveryPhraseError()
+  } catch (error) {
+    // Only a phrase that fails its checksum is the user's to fix; a failed SDK load is not.
+    if (error instanceof InvalidPhraseError) throw new PhraseSignInError(INVALID_PHRASE)
+    throw error
   }
   const accounts: PhraseAccount[] = []
   let misses = 0
@@ -114,62 +125,72 @@ export interface PhraseSession {
   messaging: PhraseMessaging
 }
 
-function wipe(keys: readonly PhraseKey[]): void {
-  for (const key of keys) key.privateKey.fill(0)
-}
-
-/** Add the phrase's messaging key with its MASTER key, then wait until Platform shows it as current. */
-async function addMessagingKey(draft: MessagingKeyDraft, master: PhraseKey): Promise<boolean> {
+/**
+ * Add the phrase's messaging key with its MASTER key, then wait until
+ * Platform shows it as current. `addEncryptionKey` already settles a
+ * broadcast whose answer was lost, so a refusal is final: one check, no wait.
+ */
+async function addMessagingKey(draft: MessagingKeyDraft, master: PhraseKey): Promise<AnchorKeyState | null> {
   const masterWif = privateKeyToWif(master.privateKey, keyNetwork(), true)
+  let refused = false
   try {
     await addMessagingKeyWithMasterKey(draft, masterWif)
   } catch (error) {
-    if (error instanceof MessagingAlreadySetUpError) return false
-    // An answer lost after the broadcast may still land: keep checking below.
-    logger.warn('Recovery phrase sign-in: adding the messaging key reported an error:', error)
+    refused = true
+    if (!(error instanceof MessagingAlreadySetUpError)) logger.warn('Recovery phrase sign-in: adding the messaging key failed:', error)
   }
-  for (let attempt = 0; attempt < CONFIRM_ATTEMPTS; attempt++) {
+  const attempts = refused ? 1 : CONFIRM_ATTEMPTS
+  let state: AnchorKeyState | null = null
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) await sleep(CONFIRM_DELAY_MS)
-    const state = await anchorKeyState(draft).catch(() => null)
-    if (state === 'this-key') return true
-    if (state === 'other-key') return false
+    state = await anchorKeyState(draft).catch(() => null)
+    if (state === 'this-key' || state === 'other-key') return state
   }
-  return false
+  return state
 }
 
 /**
  * The session for `account` of an opened phrase, with its messaging key ready
- * or added. Throws when the phrase holds no key that may sign in.
+ * or added. `cancelled` is asked before anything is written. Throws a
+ * PhraseSignInError when the phrase holds no key that may sign in.
  */
-export async function preparePhraseSession(wallet: Dip13Wallet, account: PhraseAccount): Promise<PhraseSession> {
+export async function preparePhraseSession(
+  wallet: Dip13Wallet,
+  account: PhraseAccount,
+  cancelled: () => boolean = () => false,
+): Promise<PhraseSession> {
   const network = keyNetwork()
   const { identityId, identityIndex } = account
   const identity = await identityService.getIdentity(identityId, { fresh: true })
-  if (!identity) throw new Error('This account couldn\'t be found. Try again in a moment.')
+  if (!identity) throw new PhraseSignInError('This account couldn\'t be found. Try again in a moment.')
   const held = phraseKeys(identity.publicKeys, (keyIndex) => wallet.derive(identityAuthKeyPath(network, identityIndex, keyIndex)))
+  let messagingKey: MessagingKeyDraft | null = null
   try {
     const signIn = sessionKey(held)
-    if (!signIn) throw new Error('This recovery phrase can\'t sign in to this account.')
+    if (!signIn) throw new PhraseSignInError('This recovery phrase can\'t sign in to this account.')
     const session = { identityId, signInWif: privateKeyToWif(signIn.privateKey, network, true) }
 
     const anchorId = messagingAnchorId()
     if (!anchorId) return { ...session, messagingKey: null, messaging: 'unavailable' }
     const key = wallet.derive(appEncryptionKeyPath(network, bs58.decode(identityId), bs58.decode(anchorId)))
-    const draft: MessagingKeyDraft = { identityId, anchorId, privateKey: key.privateKey, publicKey: key.publicKey }
+    messagingKey = { identityId, anchorId, privateKey: key.privateKey, publicKey: key.publicKey }
     const current = await resolveEncryptionPublicKey(identityId, async () => null)
     const state = phraseMessagingState(key.publicKey, current, identity.publicKeys, anchorId)
-    if (state === 'current') return { ...session, messagingKey: draft, messaging: 'ready' }
+    if (state === 'another-wallet') return { ...session, messagingKey: null, messaging: 'another-wallet' }
     if (state === 'absent') {
       const master = masterKey(held)
-      if (master && await addMessagingKey(draft, master)) return { ...session, messagingKey: draft, messaging: 'ready' }
-      key.privateKey.fill(0)
+      if (cancelled()) throw new PhraseSignInCancelled()
+      const added = master ? await addMessagingKey(messagingKey, master) : null
       // Another device may have set messaging up meanwhile: say which.
-      const now = await anchorKeyState(draft).catch(() => null)
-      return { ...session, messagingKey: null, messaging: now === 'other-key' ? 'another-wallet' : 'not-set-up' }
+      if (added === 'other-key') return { ...session, messagingKey: null, messaging: 'another-wallet' }
+      if (added !== 'this-key') return { ...session, messagingKey: null, messaging: 'not-set-up' }
     }
-    key.privateKey.fill(0)
-    return { ...session, messagingKey: null, messaging: 'another-wallet' }
+    const ready = messagingKey
+    messagingKey = null
+    return { ...session, messagingKey: ready, messaging: 'ready' }
   } finally {
-    wipe(held)
+    // Everything but a messaging key handed back is wiped, whichever way this ends.
+    for (const key of held) key.privateKey.fill(0)
+    messagingKey?.privateKey.fill(0)
   }
 }

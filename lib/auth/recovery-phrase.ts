@@ -68,7 +68,8 @@ export type PhraseMessagingState = 'current' | 'absent' | 'another-wallet'
 
 /**
  * `current` is the anchor's current key as `identities.contractKeys` reports
- * it (null for none); `identityKeys` the identity's keys, read fresh.
+ * it (null for none); `identityKeys` the identity's keys, read fresh, whose
+ * newest live anchor key stands in when that read finds none.
  * - current: the phrase's key is the current one: use it.
  * - absent: there is none, and the phrase's key was never on the identity: add it.
  * - another-wallet: another key is current or live, or the phrase's key was
@@ -82,7 +83,12 @@ export function phraseMessagingState(
   anchorId: string,
 ): PhraseMessagingState {
   if (current) return bytesEqual(current, derivedPublicKey) ? 'current' : 'another-wallet'
-  if (findAnchorEncryptionKey([...identityKeys], anchorId)) return 'another-wallet'
+  // The current-key read can lag the identity: its newest live anchor key decides then, as in #1210.
+  const newest = findAnchorEncryptionKey([...identityKeys], anchorId)
+  if (newest) {
+    const data = normalizeBytes(newest.data)
+    return data !== null && bytesEqual(data, derivedPublicKey) ? 'current' : 'another-wallet'
+  }
   const onIdentity = identityKeys.some((key) => {
     const data = normalizeBytes(key.data)
     return data !== null && bytesEqual(data, derivedPublicKey)
