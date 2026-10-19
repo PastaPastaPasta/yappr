@@ -21,6 +21,7 @@ test('adding a passkey shows both prompts up front and ticks off the first befor
 
   await page.getByTestId('passkey-confirm').click()
   await expect(page.getByTestId('passkey-add')).toHaveText('Saving…')
+  await expect(progress(page).locator('[aria-current="step"]')).toHaveText('Confirm it to save your sign-in')
   await release(page)
   await expect(page.getByRole('dialog', { name: 'Passkey added' })).toBeVisible()
 })

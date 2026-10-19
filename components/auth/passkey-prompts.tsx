@@ -142,15 +142,17 @@ const ENROL_BUTTON: Partial<Record<EnrolStep['kind'], string>> = { creating: 'Wa
 
 type ProgressState = 'todo' | 'active' | 'done'
 
-/** Where each of the two passkey prompts stands; only the steps before anything is sent show it. */
+/** Where each of the two passkey prompts stands; a step with something sent (pending) or saved (done) shows none. */
 const ENROL_PROGRESS: Partial<Record<EnrolStep['kind'], [ProgressState, ProgressState]>> = {
   intro: ['todo', 'todo'],
+  // After an error, "Add a passkey" starts both prompts again.
+  error: ['todo', 'todo'],
   creating: ['active', 'todo'],
   confirm: ['done', 'todo'],
   saving: ['done', 'active'],
 }
 
-function ProgressRow({ state, number, label, doneLabel, current }: { state: ProgressState; number: number; label: string; doneLabel: string; current: boolean }) {
+function ProgressRow({ state, number, label, current }: { state: ProgressState; number: number; label: string; current: boolean }) {
   return (
     <li
       className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm ${current ? 'bg-yappr-500/10 ring-1 ring-yappr-500/40 text-gray-900 dark:text-white font-medium' : 'text-gray-600 dark:text-gray-400'}`}
@@ -159,11 +161,12 @@ function ProgressRow({ state, number, label, doneLabel, current }: { state: Prog
       {state === 'done' ? (
         <CheckCircleIcon className="h-5 w-5 shrink-0 text-green-500" aria-hidden="true" />
       ) : state === 'active' ? (
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center"><Spinner size="sm" /></span>
+        // The row's label says what is happening; the live region should not also read "Loading".
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true"><Spinner size="sm" /></span>
       ) : (
         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full ring-1 ring-current text-xs" aria-hidden="true">{number}</span>
       )}
-      <span className={state === 'done' ? 'text-green-700 dark:text-green-400' : undefined}>{state === 'done' ? doneLabel : label}</span>
+      <span className={state === 'done' ? 'text-green-700 dark:text-green-400' : undefined}>{label}</span>
     </li>
   )
 }
@@ -177,8 +180,9 @@ function EnrolProgress({ states }: { states: [ProgressState, ProgressState] }) {
   const [create, save] = states
   return (
     <ol className="space-y-2 mb-5" aria-live="polite" data-testid="passkey-progress">
-      <ProgressRow state={create} number={1} label="Create your passkey" doneLabel="Passkey created" current={create !== 'done'} />
-      <ProgressRow state={save} number={2} label="Confirm it to save your sign-in" doneLabel="Sign-in saved" current={create === 'done'} />
+      <ProgressRow state={create} number={1} label={create === 'done' ? 'Passkey created' : 'Create your passkey'} current={create !== 'done'} />
+      {/* Once saved, the dialog shows "Passkey added" instead, so this row is never ticked. */}
+      <ProgressRow state={save} number={2} label="Confirm it to save your sign-in" current={create === 'done'} />
     </ol>
   )
 }
