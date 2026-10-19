@@ -5,8 +5,6 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   ChatBubbleLeftIcon,
   EllipsisHorizontalIcon,
-  HeartIcon,
-  BookmarkIcon,
   LinkIcon,
 } from '@heroicons/react/24/outline'
 import { useTheme } from 'next-themes'
@@ -39,7 +37,6 @@ const X_ICON_PATH = 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.8
 
 const DROPDOWN_ITEM_CLASS = 'flex items-center gap-2 px-4 py-2 text-sm outline-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800'
 const SIDEBAR_BUTTON_ACTIVE_CLASS = 'group rounded-full p-2 transition hover:bg-black/5 dark:hover:bg-white/10'
-const SIDEBAR_BUTTON_PASSIVE_CLASS = 'rounded-full p-2 cursor-default opacity-40'
 
 const BlogViewer = dynamic(() => import('./blog-viewer').then((module) => module.BlogViewer), { ssr: false })
 
@@ -171,6 +168,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   }
 
   const readingTime = useMemo(() => estimateReadingTime(post.content), [post.content])
+  const blogLayout = normalizeBlogThemeConfig(blog.themeConfig).layout
 
   const scrollToComments = () => {
     commentsRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -365,19 +363,19 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         </article>
 
         {/* Floating action sidebar -- xl+ only */}
-        <aside className="absolute left-[calc(50%+540px)] top-0 hidden xl:block">
+        <aside
+          className={
+            blogLayout === 'narrow' || blogLayout === 'magazine'
+              ? 'absolute right-[calc(100%+1rem)] top-0 hidden xl:block'
+              : 'absolute right-0 top-0 hidden xl:block'
+          }
+        >
           <div className="sticky top-24 flex flex-col items-center gap-4">
-            <button type="button" className={SIDEBAR_BUTTON_PASSIVE_CLASS} aria-label="Like" aria-disabled="true">
-              <HeartIcon className="h-5 w-5 text-gray-400" />
-            </button>
             <button type="button" className={SIDEBAR_BUTTON_ACTIVE_CLASS} aria-label="Jump to comments" onClick={scrollToComments}>
               <ChatBubbleLeftIcon className="h-5 w-5 text-gray-400 transition group-hover:text-blue-500" />
               {commentsEnabled && commentCount > 0 && (
                 <span className="mt-0.5 block text-center text-[10px] text-gray-400">{commentCount}</span>
               )}
-            </button>
-            <button type="button" className={SIDEBAR_BUTTON_PASSIVE_CLASS} aria-label="Bookmark" aria-disabled="true">
-              <BookmarkIcon className="h-5 w-5 text-gray-400" />
             </button>
             <button type="button" className={SIDEBAR_BUTTON_ACTIVE_CLASS} aria-label="Share on X" onClick={handleShareX}>
               <svg className="h-5 w-5 text-gray-400 transition-colors group-hover:text-gray-700 dark:group-hover:text-white" viewBox="0 0 24 24" fill="currentColor"><path d={X_ICON_PATH} /></svg>
