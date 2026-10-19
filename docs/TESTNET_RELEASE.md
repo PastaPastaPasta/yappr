@@ -105,7 +105,7 @@ Every PR goes to `staging` through the normal gates (lint, unit tests, build, de
 
 - **Registration tooling (WP1).**
   - An explicit publisher key source that fails closed and refuses group- or world-readable key files.
-  - `--interim` and `--election-delay` required off devnet and recorded in the journal.
+  - `--interim`, `--election-delay` and `--challenge-cool-down` required off devnet and recorded in the journal.
   - A balance check before signing.
   - `NETWORK` required, plus `--production` for maker-signed writes off devnet.
   - A mode-0600 journal.
