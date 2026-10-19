@@ -4,7 +4,7 @@ This is the D36 rehearsal on Dash **testnet**, chain `dash-testnet-51`, using Pl
 
 ## Registered set
 
-Maker: `At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF`. Group: `ePtSmVdSqxJESyegxxRGcS7CwznyWSAn2FULYow8Dks`. Every member is version 1. The proved initial maker nonce was 0; registration consumed nonces 1–8. Plan, unsigned dry run and signed dry run preceded the journaled live registration with `--interim notYetUsable --election-windows 3600,3600`.
+Maker: `At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF`. Group: `ePtSmVdSqxJESyegxxRGcS7CwznyWSAn2FULYow8Dks`. Every member is version 1. The proved initial maker nonce was 0; registration consumed nonces 1–8. Plan, unsigned dry run and signed dry run preceded the journaled live registration with `--interim notYetUsable --election-windows 3600,3600 --election-delay 3600`. Lesson: the first charter cannot be filed until the registration block plus the one-hour D40 delay; read the chain block time before filing.
 
 | Member | ID | Nonce | Inclusion H | Credits | Reference ¢ |
 |---|---|---:|---:|---:|---:|

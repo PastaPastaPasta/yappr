@@ -30,6 +30,7 @@
  * rendered with:
  *   --interim <kind>                 the moderation interim (contractOwner | notYetUsable | noModeration)
  *   --election-windows <join>,<vote> the election windows, in seconds (mainnet: at least 86400 each)
+ *   --election-delay <seconds>       delay after contract creation before the first charter
  * On a devnet both are optional and default to the committed file's values.
  * On testnet and mainnet (production networks) they are REQUIRED, never a
  * default, since both are frozen into the contracts for good; and:
@@ -44,7 +45,7 @@
  *   --journal                        must sit in a directory only its owner may enter (0700).
  * Testnet (owner decision D1):
  *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --plan --maker <id> --start-nonce <n> \
- *     --interim notYetUsable --election-windows 3600,3600
+ *     --interim notYetUsable --election-windows 3600,3600 --election-delay 3600
  *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --journal <0700 dir>/journal.json \
  *     --maker <id> --maker-key-file <0600 file> --maker-key-id <n> --interim notYetUsable --election-windows 3600,3600
  *
@@ -82,7 +83,7 @@ import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOu
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
 import { describeErr, resolveKeyFileOwner, signerFor } from './owner-keys.mjs';
 import { auditModeration, contractSource, registrationJson, withInterim } from './register-lib.mjs';
-import { balanceGate, createCostEstimate, directoryProblem, formatCredits, isElected, registrationPolicy, withElectionWindows } from './registration-policy.mjs';
+import { balanceGate, createCostEstimate, directoryProblem, formatCredits, isElected, registrationPolicy, withElectionDelay, withElectionWindows } from './registration-policy.mjs';
 import { envValue, keyNetwork, network } from './sdk-env.mjs';
 import { NONCE_SEQUENCE_MASK, createSdkHandle, readback, sleep } from './seed/seed-lib.mjs';
 import { resolveMakerOwner } from './social-battery-lib.mjs';
@@ -95,7 +96,7 @@ const big = (_key, value) => (typeof value === 'bigint' ? String(value) : value)
 function parseArgs(argv) {
   const args = {
     mode: null, maker: null, startNonce: null, journal: null, upto: null, retryRefused: false,
-    interim: null, electionWindows: null, production: false, keyFile: null, keyId: null,
+    interim: null, electionWindows: null, electionDelay: null, production: false, keyFile: null, keyId: null,
   };
   const value = (i, flag) => {
     const next = argv[i];
@@ -117,6 +118,7 @@ function parseArgs(argv) {
       case '--retry-refused': args.retryRefused = true; break;
       case '--interim': args.interim = value(++i, arg); break;
       case '--election-windows': args.electionWindows = value(++i, arg); break;
+      case '--election-delay': args.electionDelay = value(++i, arg); break;
       case '--production': args.production = true; break;
       case '--maker-key-file': args.keyFile = value(++i, arg); break;
       case '--maker-key-id': args.keyId = value(++i, arg); break;
@@ -145,7 +147,7 @@ function makerFor(args) {
  */
 function renderConfig(config, policy) {
   if (!isElected(config)) return config;
-  return withElectionWindows(withInterim(config, { network: network(), interim: policy.interim ?? undefined }), policy.electionWindows);
+  return withElectionDelay(withElectionWindows(withInterim(config, { network: network(), interim: policy.interim ?? undefined }), policy.electionWindows), policy.electionDelay);
 }
 
 /** The assembled create JSON for one entry, refusing a file whose bytes are not the pinned ones. */
@@ -233,12 +235,14 @@ function prepare(entry, { plan, platformVersion, signing, policy, feeMultiplierP
 /** How the run renders the elected contracts, as printed and journaled: null means the committed file's value. */
 function describePolicy(policy) {
   const windows = policy.electionWindows ? `join ${policy.electionWindows.joinWindow} s, vote ${policy.electionWindows.voteWindow} s` : "the files' own";
-  return `interim ${policy.interim ?? "the files' own"}; election windows ${windows}`;
+  const delay = policy.electionDelay === null ? "the files' own" : `${policy.electionDelay} s`;
+  return `interim ${policy.interim ?? "the files' own"}; election windows ${windows}; election delay ${delay}`;
 }
 
 function printPlan(plan, makerSource, policy) {
   console.log(`App Connect contract set on ${network()}: maker ${plan.groupOwner} (${makerSource}), anchor nonce ${plan.anchor.nonce}`);
   console.log(`elected contracts register with: ${describePolicy(policy)}`);
+  if (network() === 'mainnet') console.log('D40: mainnet election-delay value is provisional (604800 s) — confirm the final value with the owner before release.');
   console.log(`APP_ID=${plan.appId}`);
   console.log(`GROUP_ID=${plan.groupId}`);
   console.log(`GROUP_OWNER=${plan.groupOwner}`);
@@ -255,7 +259,7 @@ function printEnv(set, heading) {
 }
 
 /** What a journal records of the rendering, compared on resume (an older journal without it rendered the files' own values). */
-const journalPolicy = (policy) => ({ interim: policy.interim, electionWindows: policy.electionWindows });
+const journalPolicy = (policy) => ({ interim: policy.interim, electionWindows: policy.electionWindows, electionDelay: policy.electionDelay });
 
 /**
  * A journal that matches the plan: same network, maker, anchor nonce, group,
@@ -266,7 +270,7 @@ function checkJournal(journal, plan, path, policy) {
   for (const [key, want] of [['network', network()], ['makerId', plan.groupOwner], ['startNonce', String(plan.anchor.nonce)], ['groupId', plan.groupId]]) {
     if (journal[key] !== want) throw new Error(`journal ${path}: ${key} is ${journal[key]}, this run's is ${want}`);
   }
-  const recorded = JSON.stringify({ interim: journal.interim ?? null, electionWindows: journal.electionWindows ?? null });
+  const recorded = JSON.stringify({ interim: journal.interim ?? null, electionWindows: journal.electionWindows ?? null, electionDelay: journal.electionDelay ?? null });
   if (recorded !== JSON.stringify(journalPolicy(policy))) throw new Error(`journal ${path} was rendered with ${recorded}, this run with ${JSON.stringify(journalPolicy(policy))}; refusing to mix`);
   for (const c of plan.contracts) {
     const saved = journal.contracts[c.name];

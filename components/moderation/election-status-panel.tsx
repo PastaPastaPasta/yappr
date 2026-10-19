@@ -119,6 +119,12 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
           </div>
         )}
 
+        {status && !seated && !contest && status.electionOpensAtMs !== null && status.chainTimeMs !== null && status.chainTimeMs < status.electionOpensAtMs && (
+          <p role="status" data-testid="election-delay-notice" className="rounded border border-blue-200 bg-blue-50 p-3 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
+            Moderator elections open on {new Date(status.electionOpensAtMs).toLocaleString()}. Posting opens after a team is elected.
+          </p>
+        )}
+
         {seated && (
           <section data-testid="election-seated-team">
             <h4 className="font-semibold mb-1">Seated team</h4>

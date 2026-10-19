@@ -53,6 +53,7 @@ import { readFileSync } from 'node:fs';
 import { DataContract, DataContractCreateTransition, Document, PlatformVersion, documentCreateCost, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as NodeRulesPlatformVersion } from '@dashevo/wasm-dpp2';
 import { contractSource, registrationJson, renderModeration, withInterim } from './register-lib.mjs';
+import { parseElectionDelay, withElectionDelay } from './registration-policy.mjs';
 import { CREATE_TRANSITION_BUDGET, STATE_TRANSITION_CAP, auditNodeRules, createTransitionSize, metaSchemaProblems, runContractProbes } from './contract-probes.mjs';
 import { runConstraintCases } from './property-constraint-cases.mjs';
 
@@ -85,10 +86,15 @@ function parseArgs(argv) {
   if ((interimEquals || interimIndex !== -1) && !interim) throw new Error('--interim takes a kind (contractOwner, notYetUsable or noModeration)');
   // Skip each flag's value, so `--immutable post,reply <file>` does not
   // resolve the positional to "post,reply".
-  const valueIndexes = new Set([flagIndex, networkIndex, interimIndex].filter((index) => index !== -1).map((index) => index + 1));
+  const delayIndex = argv.indexOf('--election-delay');
+  const delayEquals = argv.find((arg) => arg.startsWith('--election-delay='));
+  const rawDelay = delayEquals ? delayEquals.slice('--election-delay='.length) : delayIndex === -1 ? undefined : argv[delayIndex + 1];
+  const electionDelay = rawDelay === undefined ? undefined : parseElectionDelay(rawDelay);
+  if (delayEquals || delayIndex !== -1) if (electionDelay === null) throw new Error('--election-delay takes nonnegative seconds');
+  const valueIndexes = new Set([flagIndex, networkIndex, interimIndex, delayIndex].filter((index) => index !== -1).map((index) => index + 1));
   const file = argv.find((arg, index) => !arg.startsWith('--') && !valueIndexes.has(index));
   if (!file && !probes && !constraints) throw new Error('usage: node scripts/validate-contract-offline.mjs <contract.json> [--network n] [--interim kind] [--immutable a,b] [--cost] | --probes | --constraints');
-  return { file, immutable, probes, constraints, cost, strictSize, network, interim };
+  return { file, immutable, probes, constraints, cost, strictSize, network, interim, electionDelay };
 }
 
 /**
@@ -96,9 +102,9 @@ function parseArgs(argv) {
  * schemas, config (file or default, with the network's elected interim, see
  * `withInterim`), tokens.
  */
-function loadContractSource(file, { network, interim } = {}) {
+function loadContractSource(file, { network, interim, electionDelay } = {}) {
   const source = contractSource(readFileSync(file, 'utf8').replaceAll(`"${SOCIAL_PLACEHOLDER}"`, JSON.stringify(SOCIAL_STAND_IN)));
-  return { ...source, config: withInterim(source.config, { network, interim }) };
+  return { ...source, config: withElectionDelay(withInterim(source.config, { network, interim }), electionDelay) };
 }
 
 /** The JSON the registration scripts publish, under placeholder ids. */
@@ -133,9 +139,9 @@ const describeReference = (reference) => {
   return `${reference.type} ${reference.documentType}${foreign}${findBy}${where}`;
 };
 
-function validateFile(file, { immutable, strictSize, network, interim }) {
-  const declared = loadContractSource(file);
-  const source = { ...declared, config: withInterim(declared.config, { network, interim }) };
+function validateFile(file, { immutable, strictSize, network, interim, electionDelay }) {
+  const declared = loadContractSource(file, { network, interim, electionDelay });
+  const source = { ...declared, config: withElectionDelay(withInterim(declared.config, { network, interim }), electionDelay) };
   const platformVersion = PlatformVersion.latest();
   const contract = parseContract(source, platformVersion);
   console.log(`OK  ${file} parses under FULL validation (wasm-sdk)`);
@@ -313,9 +319,9 @@ function printWriteCosts(contract, source, platformVersion) {
 async function main() {
   // The wasm modules back every class below; nothing works before they load.
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
-  const { file, immutable, probes, constraints, cost, strictSize, network, interim } = parseArgs(process.argv.slice(2));
+  const { file, immutable, probes, constraints, cost, strictSize, network, interim, electionDelay } = parseArgs(process.argv.slice(2));
   if (file) {
-    const { contract, source } = validateFile(file, { immutable, strictSize, network, interim });
+    const { contract, source } = validateFile(file, { immutable, strictSize, network, interim, electionDelay });
     if (cost) printCosts(contract, source);
   }
   if (probes) {

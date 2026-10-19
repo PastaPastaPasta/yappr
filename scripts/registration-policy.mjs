@@ -6,7 +6,7 @@
  * are the ones users write to, and what a create carries is frozen for good.
  * Nothing there may follow from a default, so off devnet:
  *   - NETWORK must be set (no script picks a network on its own);
- *   - the moderation interim and the election windows of an elected contract
+ *   - the moderation interim, election windows, and election delay of an elected contract
  *     are named on the command line (`--interim`, `--election-windows`), never
  *     taken silently from the committed file;
  *   - the maker signs only with an explicit key file and key id, in a file
@@ -54,6 +54,18 @@ export function withElectionWindows(config, windows) {
   return { ...config, moderation: { ...config.moderation, moderators: { ...moderators, joinWindow: windows.joinWindow, voteWindow: windows.voteWindow } } };
 }
 
+/** Replace an elected declaration's first-election delay, preserving all other config. */
+export function withElectionDelay(config, delaySeconds) {
+  if (delaySeconds === null || delaySeconds === undefined || !isElected(config)) return config;
+  return { ...config, moderation: { ...config.moderation, moderators: { ...config.moderation.moderators, electionDelay: delaySeconds } } };
+}
+
+export function parseElectionDelay(text) {
+  if (!/^\s*\d+\s*$/.test(text ?? '')) return null;
+  const value = Number(text);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
 const SIGNING_MODES = ['signed-dry-run', 'live'];
 
 /**
@@ -64,7 +76,7 @@ const SIGNING_MODES = ['signed-dry-run', 'live'];
  * `options`: `{ network, mode, maker, interim, electionWindows (the raw flag), production, keyFile, keyId (the raw flag) }`.
  */
 export function registrationPolicy(options) {
-  const { network, mode, maker, interim = null, electionWindows: rawWindows = null, production = false, keyFile = null, keyId = null } = options;
+  const { network, mode, maker, interim = null, electionWindows: rawWindows = null, electionDelay: rawDelay = null, production = false, keyFile = null, keyId = null } = options;
   const devnet = network === 'devnet';
   const problems = [];
   if (interim !== null && !INTERIM_KINDS.includes(interim)) problems.push(`--interim must be one of ${INTERIM_KINDS.join(', ')} (got "${interim}")`);
@@ -72,6 +84,8 @@ export function registrationPolicy(options) {
   const electionWindows = rawWindows === null ? null : parseElectionWindows(rawWindows);
   if (rawWindows !== null && !electionWindows) problems.push(`--election-windows takes <joinSeconds>,<voteSeconds> (got "${rawWindows}")`);
   if (electionWindows) problems.push(...electionWindowProblems(electionWindows, network).map((p) => `--election-windows: ${p}`));
+  const electionDelay = rawDelay === null ? null : parseElectionDelay(rawDelay);
+  if (rawDelay !== null && electionDelay === null) problems.push(`--election-delay takes nonnegative seconds (got "${rawDelay}")`);
   if ((keyFile === null) !== (keyId === null)) problems.push('--maker-key-file and --maker-key-id go together');
   if (keyId !== null && !/^\d+$/.test(keyId)) problems.push(`--maker-key-id takes a key id (got "${keyId}")`);
   if (devnet) {
@@ -80,11 +94,12 @@ export function registrationPolicy(options) {
     if (!maker) problems.push(`--maker <identityId> is required on ${network}`);
     if (interim === null) problems.push(`--interim <kind> is required on ${network}: it is frozen into every elected contract`);
     if (rawWindows === null) problems.push(`--election-windows <join>,<vote> is required on ${network}: they are frozen into every elected contract`);
+    if (rawDelay === null) problems.push(`--election-delay <seconds> is required on ${network}: it is frozen into every elected contract`);
     if (SIGNING_MODES.includes(mode) && keyFile === null) problems.push(`--${mode} on ${network} signs with --maker-key-file <path> --maker-key-id <id>; no key is ever derived or looked up`);
     if (mode === 'live' && !production) problems.push(`--live on ${network} broadcasts to a production network: add --production`);
   }
   if (problems.length > 0) throw new Error(problems.join('\n  '));
-  return { interim, electionWindows, keyId: keyId === null ? null : Number(keyId) };
+  return { interim, electionWindows, electionDelay, keyId: keyId === null ? null : Number(keyId) };
 }
 
 /**

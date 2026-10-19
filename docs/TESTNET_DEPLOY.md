@@ -2,6 +2,15 @@
 
 # Testnet configuration and cut-over
 
+## D40 election timing
+
+Testnet registration must pass `--election-delay 3600` with the one-hour join
+and vote windows. The first charter is filed only after the registration
+contract's creation block plus that delay; the charter tool reads proved chain
+time and waits before broadcasting. Mainnet is provisionally
+`--election-delay 604800` (one week), marked TBD until the owner confirms the
+final value before release.
+
 The preparation PR adds an opt-in release build mechanism. It does **not**
 activate the release, register contracts, change today's `build` command, change
 any hosting settings. Native testnet builds now require this release configuration;

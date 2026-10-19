@@ -385,16 +385,19 @@ import { cleanTestContent } from './test-content-cleanup.mjs';
 import { envValue } from './sdk-env.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
 import { withInterim } from './register-lib.mjs';
-import { parseElectionWindows, withElectionWindows } from './registration-policy.mjs';
+import { parseElectionDelay, parseElectionWindows, withElectionDelay, withElectionWindows } from './registration-policy.mjs';
 
 const CONTRACT_FILE = takeFlag('--contract-file', 'contracts/yappr-social-contract-v10.json');
 const V10 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
 const electionWindowsFlag = takeFlag('--election-windows', null);
 const electionWindows = electionWindowsFlag === null ? null : parseElectionWindows(electionWindowsFlag);
 if (electionWindowsFlag !== null && !electionWindows) throw new Error('--election-windows needs <joinSeconds>,<voteSeconds>');
-const expectedModerators = withElectionWindows(withInterim(V10.config, {
+const electionDelayFlag = takeFlag('--election-delay', null);
+const electionDelay = electionDelayFlag === null ? null : parseElectionDelay(electionDelayFlag);
+if (electionDelayFlag !== null && electionDelay === null) throw new Error('--election-delay needs nonnegative seconds');
+const expectedModerators = withElectionDelay(withElectionWindows(withInterim(V10.config, {
   interim: takeFlag('--interim', undefined),
-}), electionWindows).moderation.moderators;
+}), electionWindows), electionDelay).moderation.moderators;
 const CONTRACT_NAME = CONTRACT_FILE.replace(/^.*\//, '');
 /** Every document this battery writes, built for the cut the file declares (v13: live, rootOwnerId, media arrays…). */
 const SOCIAL = socialShapes(V10);
@@ -3236,7 +3239,7 @@ await runBattery({
   contractEnvVar: 'V10_CONTRACT_ID',
   usage:
     'Usage: node scripts/verify-v10.mjs --contract <id> [--bot <n>] [--bot2 <n>] [--fresh-bot <n> [--fresh-owner <id>]]\n' +
-    '       [--interim contractOwner|notYetUsable] [--election-windows joinSeconds,voteSeconds] [--moderator maker] [--owner <id>] [--owner2 <id>] [--team-member bot:<n> --reason-doc <id>] [--only e0,x1] [--keep-content] [--dry-run|--self-test]',
+    '       [--interim contractOwner|notYetUsable] [--election-windows joinSeconds,voteSeconds] [--election-delay seconds] [--moderator maker] [--owner <id>] [--owner2 <id>] [--team-member bot:<n> --reason-doc <id>] [--only e0,x1] [--keep-content] [--dry-run|--self-test]',
   cases: CASES,
   cleanup: cleanUpRun,
   shapes: SHAPES,

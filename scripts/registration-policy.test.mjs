@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   balanceGate, createCostEstimate, directoryProblem, electionWindowProblems, formatCredits, keyFileProblem,
-  parseElectionWindows, registrationFee, registrationPolicy, requireNetwork, withElectionWindows,
+  parseElectionDelay, parseElectionWindows, registrationFee, registrationPolicy, requireNetwork, withElectionDelay, withElectionWindows,
 } from './registration-policy.mjs';
 
 const MAKER = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A';
-const TESTNET = { network: 'testnet', maker: MAKER, interim: 'notYetUsable', electionWindows: '3600,3600' };
+const TESTNET = { network: 'testnet', maker: MAKER, interim: 'notYetUsable', electionWindows: '3600,3600', electionDelay: '3600' };
 const stat = (mode, { file = true, uid = 501 } = {}) => ({ isFile: () => file, isDirectory: () => !file, mode, uid });
 
 describe('requireNetwork', () => {
@@ -22,6 +22,12 @@ describe('requireNetwork', () => {
 });
 
 describe('election windows', () => {
+  it('parses a nonnegative election delay', () => {
+    expect(parseElectionDelay('3600')).toBe(3600);
+    expect(parseElectionDelay(' 604800 ')).toBe(604800);
+    expect(parseElectionDelay('-1')).toBeNull();
+    expect(parseElectionDelay('1h')).toBeNull();
+  });
   it('parses <join>,<vote> seconds', () => {
     expect(parseElectionWindows('3600,3600')).toEqual({ joinWindow: 3600, voteWindow: 3600 });
     expect(parseElectionWindows(' 604800 , 259200 ')).toEqual({ joinWindow: 604800, voteWindow: 259200 });
@@ -44,6 +50,7 @@ describe('election windows', () => {
     const appointed = { moderation: { moderators: { $type: 'appointedModerators', identities: [] } } };
     expect(withElectionWindows(appointed, { joinWindow: 1, voteWindow: 1 })).toBe(appointed);
     expect(withElectionWindows(elected, null)).toBe(elected);
+    expect(withElectionDelay(elected, 3600).moderation.moderators.electionDelay).toBe(3600);
   });
 });
 
@@ -54,12 +61,12 @@ describe('registrationPolicy', () => {
     expect(() => registrationPolicy({ ...TESTNET, electionWindows: null, mode: 'dry-run' })).toThrow(/--election-windows <join>,<vote> is required on testnet/);
   });
   it('answers the rendering for testnet', () => {
-    expect(registrationPolicy({ ...TESTNET, mode: 'plan' })).toEqual({ interim: 'notYetUsable', electionWindows: { joinWindow: 3600, voteWindow: 3600 }, keyId: null });
+    expect(registrationPolicy({ ...TESTNET, mode: 'plan' })).toEqual({ interim: 'notYetUsable', electionWindows: { joinWindow: 3600, voteWindow: 3600 }, electionDelay: 3600, keyId: null });
     expect(() => registrationPolicy({ ...TESTNET, electionWindows: '1h,1h', mode: 'plan' })).toThrow(/--election-windows takes <joinSeconds>,<voteSeconds>/);
   });
   it('keeps the files\' values on a devnet unless named', () => {
-    expect(registrationPolicy({ network: 'devnet', mode: 'live' })).toEqual({ interim: null, electionWindows: null, keyId: null });
-    expect(registrationPolicy({ network: 'devnet', mode: 'plan', interim: 'notYetUsable', electionWindows: '0,0' })).toEqual({ interim: 'notYetUsable', electionWindows: { joinWindow: 0, voteWindow: 0 }, keyId: null });
+    expect(registrationPolicy({ network: 'devnet', mode: 'live' })).toEqual({ interim: null, electionWindows: null, electionDelay: null, keyId: null });
+    expect(registrationPolicy({ network: 'devnet', mode: 'plan', interim: 'notYetUsable', electionWindows: '0,0' })).toEqual({ interim: 'notYetUsable', electionWindows: { joinWindow: 0, voteWindow: 0 }, electionDelay: null, keyId: null });
   });
   it('refuses an unknown or file-only interim', () => {
     expect(() => registrationPolicy({ ...TESTNET, interim: 'nobody', mode: 'plan' })).toThrow(/--interim must be one of/);

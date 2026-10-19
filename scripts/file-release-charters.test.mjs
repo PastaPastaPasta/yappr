@@ -7,15 +7,19 @@ import bs58 from 'bs58';
 const connected = vi.hoisted(() => ({ document: vi.fn(), connect: vi.fn(), decoded: vi.fn((bytes) => ({ bytes })) }));
 vi.mock('./sdk-env.mjs', () => ({ connectSdk: connected.connect, keyNetwork: () => 'testnet', devnetName: () => 'sakura' }));
 vi.mock('@dashevo/evo-sdk', async (original) => { const actual = await original(); return { ...actual, Document: { fromBytes: connected.document, fromObject: actual.Document.fromObject }, StateTransition: { fromBytes: connected.decoded } }; });
-import { assertRegistered, existsStep, importNonceFloors, nextNonce, manifestHash, balancesFor, charterOptions, commitStep, main, validateManifest, watchContract, writeCheckpoint } from './file-release-charters.mjs';
+import { assertRegistered, electionOpensAtMs, existsStep, importNonceFloors, nextNonce, manifestHash, balancesFor, charterOptions, commitStep, main, validateManifest, watchContract, writeCheckpoint } from './file-release-charters.mjs';
 import { APP_CONNECT_ENTRIES, contractFilePath } from './app-connect-set.mjs';
 
 const id = (n) => bs58.encode(new Uint8Array(32).fill(n));
 const actor = (n) => ({ identityId: id(n), keyFile: `/missing/actor-${n}.json`, keyId: 1, masterKeyFile: `/missing/actor-${n}.json`, masterKeyId: 0 });
-const manifest = () => ({ contract: 'social', targetContractId: id(1), expected: { ownerId: id(6), joinWindow: 3600, voteWindow: 3600, challengeCoolDown: 2592000, documentTypes: ['post', 'reply'], interim: 'notYetUsable' }, leader: actor(2), members: [actor(3), actor(4), actor(5)], reasons: [{ code: 'SPM', label: 'Spam' }], description: 'Release moderation team' });
+const manifest = () => ({ contract: 'social', targetContractId: id(1), expected: { ownerId: id(6), joinWindow: 3600, voteWindow: 3600, challengeCoolDown: 2592000, electionDelay: 3600, documentTypes: ['post', 'reply'], interim: 'notYetUsable' }, leader: actor(2), members: [actor(3), actor(4), actor(5)], reasons: [{ code: 'SPM', label: 'Spam' }], description: 'Release moderation team' });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe('charter release safety policy', () => {
+  it('computes the opening time from the creation block and delay', () => {
+    expect(electionOpensAtMs(1_700_000_000_000, 3600)).toBe(1_700_003_600_000);
+    expect(electionOpensAtMs(1_700_000_000_000, -1)).toBeNull();
+  });
   it('requires NETWORK and an explicit, single mode', () => {
     expect(() => charterOptions(['--plan', '--config', 'x'], {})).toThrow('NETWORK');
     expect(() => charterOptions(['--live', '--plan', '--config', 'x'], { NETWORK: 'devnet' })).toThrow('exactly one');
