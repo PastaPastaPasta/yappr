@@ -74,6 +74,7 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, className }: 
             data-testid={`moderator-remove-${target.documentId}`}
             onClick={(e) => {
               e.stopPropagation()
+              if (!canAuthorize) return
               open(target, onRemoved)
             }}
             className={cn(MENU_ITEM, 'text-red-500')}
@@ -86,6 +87,7 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, className }: 
             data-testid={`moderator-author-${target.documentId}`}
             onClick={(e) => {
               e.stopPropagation()
+              if (!canAuthorize) return
               router.push(moderateAuthorHref(target, ownerId))
             }}
             className={MENU_ITEM}

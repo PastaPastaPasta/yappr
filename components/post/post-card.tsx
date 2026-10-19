@@ -652,6 +652,7 @@ function PostCardView({
                         data-testid={`moderator-remove-${post.id}`}
                         onClick={(e) => {
                           e.stopPropagation()
+                          if (!canAuthorize) return
                           openModeratorRemoveModal(postRemovalTarget(post), () => {
                             setLocallyRemoved(true)
                             onDelete?.(post.id)

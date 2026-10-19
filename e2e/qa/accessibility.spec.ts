@@ -143,6 +143,28 @@ test('wallet moderation explains how to sign in and disables writes before submi
   await expect(page.getByRole('button', { name: 'Claim for the team' })).toBeDisabled()
 })
 
+for (const contract of ['blog', 'storefront']) {
+  test(`wallet ${contract} moderator menu ignores pointer clicks on disabled actions`, async ({ page }) => {
+    await page.goto(`/?scenario=moderator-menu&contract=${contract}&authorization=wallet`)
+    const initialUrl = page.url()
+    await page.getByRole('button', { name: 'Moderate this item' }).click()
+    await expect(page.getByTestId('moderation-key-notice')).toBeVisible()
+    const remove = page.getByTestId('moderator-remove-offline-menu-item')
+    const author = page.getByTestId('moderator-author-offline-menu-item')
+    await expect(remove).toHaveAttribute('aria-disabled', 'true')
+    await expect(author).toHaveAttribute('aria-disabled', 'true')
+    // Real pointers still reach a disabled Radix div's custom onClick handler.
+    await remove.click({ force: true })
+    await expect(page.getByTestId('removal-target')).toHaveText('none')
+    const navigation = page.waitForRequest(request => request.isNavigationRequest(), { timeout: 500 })
+      .then(() => true, () => false)
+    await author.click({ force: true })
+    expect(await navigation).toBe(false)
+    await expect(page).toHaveURL(initialUrl)
+    await expect(page.getByTestId('removal-target')).toHaveText('none')
+  })
+}
+
 test('confirmed storefront payout never re-enables a stale pot, then reconciles claim history', async ({ page }) => {
   await page.goto('/?scenario=pot')
   const claim = page.getByRole('button', { name: 'Claim for the team' })

@@ -10,6 +10,9 @@ export function useAuth() {
 export function useModerationAuthorization() {
   return new URLSearchParams(location.search).get('authorization') !== 'wallet'
 }
+export function useModerationRole() {
+  return { isModerator: true, isProtected: false, protectedIds: new Set<string>() }
+}
 export const entry: PasskeyEntryView = { entryId: 'removed-id', credentialId: 'credential', updatedAt: 1700000000000, name: null, marker: 'marker', addedAt: 1700000000000, thisDevice: true, needsUpdate: false }
 export async function listPasskeys() { return [entry] } // A node still behind the confirmed delete.
 export async function passkeyEligibility() { return null }
@@ -58,6 +61,7 @@ let historyEpoch: number | null = null
 export function exposePayoutHistory() { historyEpoch = 123 }
 export function exposeIntermediatePayoutHistory() { historyEpoch = 122 }
 const moderation = {
+  isSettled: () => false,
   canWarn: () => false,
   contract: { countsActions: () => false },
   listEntries: async () => ({ entries: [] }),
