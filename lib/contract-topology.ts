@@ -1889,8 +1889,11 @@ export interface SettledDeletionRule {
 }
 
 /**
- * The settled-deletion rule of `docType` (v11 post and reply: a week, then
- * the leader plus two members), or null when moderators may delete it at any
+ * The settled-deletion rule of `docType` (post and reply: a week on v11–v16,
+ * a day on v17 (D39), then the leader plus two members) as the committed
+ * file declares it; a registered contract may differ, so the moderation
+ * service reads the window it judges by from the chain. Null when
+ * moderators may delete it at any
  * age (no `deleteWithin`) or nobody may delete it once settled (no
  * `deleteSettled`). Past the window a single moderator's delete is refused
  * (41116); the team proposes (`moderatorDeleteSettledDocument`, the proposal

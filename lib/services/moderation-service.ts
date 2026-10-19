@@ -77,8 +77,9 @@ import { signerService } from './signer-service';
  *   `rootPostId` and `$createdAt` (`DocumentRemoval.kept`), so a hole can say
  *   what it was;
  * - **settled documents** (`deleteWithin` + `deleteSettled`): one moderator
- *   deletes a post or reply alone for a week after it was written (41116
- *   past that); after that only the seated team does, together: a member
+ *   deletes a post or reply alone for its window after it was written (a
+ *   day on v17 since D39, a week on v11–v16; 41116 past that); after that
+ *   only the seated team does, together: a member
  *   proposes (`moderatorDeleteSettledDocument`, its own approval) and the
  *   others approve (`moderatorApproveTeamAction`) until the leader and enough
  *   members agree. Such a deletion is never restored (41209);
@@ -203,6 +204,24 @@ export type DeletionPhase = 'open' | 'closing' | 'settled';
 
 /** How far block time may sit from this device's clock around a deletion window's end. */
 export const SETTLE_MARGIN_MS = 60_000;
+
+/**
+ * Pure: each of `docTypes`' `moderatorAbilities.deleteWithin` (seconds, null
+ * where it declares none) in a fetched contract's `schemas`, which carry it
+ * as a bigint. A type the schemas lack is left out, so the template answers
+ * for it; null when there are no schemas to read.
+ */
+export function registeredDeleteWindowsOf(schemas: unknown, docTypes: readonly string[]): ReadonlyMap<string, number | null> | null {
+  if (!schemas || typeof schemas !== 'object') return null;
+  const windows = new Map<string, number | null>();
+  for (const docType of docTypes) {
+    const schema: unknown = (schemas as Record<string, unknown>)[docType];
+    if (!schema || typeof schema !== 'object') continue;
+    const declared = (schema as { moderatorAbilities?: { deleteWithin?: unknown } }).moderatorAbilities?.deleteWithin;
+    windows.set(docType, typeof declared === 'bigint' || typeof declared === 'number' ? Number(declared) : null);
+  }
+  return windows;
+}
 
 export function deletionPhase(windowSeconds: number | null, createdAtMs: number, now = Date.now()): DeletionPhase {
   if (windowSeconds === null || !Number.isFinite(createdAtMs)) return 'open';
@@ -631,6 +650,12 @@ class ModerationService {
    */
   private team: { promise: Promise<TeamRead>; at: number } | null = null;
   private static readonly TEAM_TTL_MS = 60_000;
+  /**
+   * The REGISTERED contract's single-moderator windows, from the latest team
+   * read; null until then, when the committed template answers. A window is
+   * fixed with its type, so it stays across {@link invalidateTeam}.
+   */
+  private registeredWindows: ReadonlyMap<string, number | null> | null = null;
   private standingCache = new Map<string, { standing: ModerationStanding; at: number }>();
   /** Standing rarely changes; a page of cards must not re-query it per card. */
   private static readonly STANDING_TTL_MS = 60_000;
@@ -701,6 +726,12 @@ class ModerationService {
           ? (await sdk.contracts.fetchWithProof(this.contract.contractId)).data
           : await sdk.contracts.fetch(this.contract.contractId);
         if (!contract) throw new Error(`${this.contract.label} contract not found`);
+        try {
+          this.registeredWindows = registeredDeleteWindowsOf(contract.schemas, this.contract.deletableTypes());
+        } catch (error) {
+          // A display and routing input only: the moderator checks must never fail on it.
+          logger.warn('moderationService: could not read the registered deletion windows', error);
+        }
         const moderators = contract.config.moderation?.moderators;
         const seated = moderators?.$type === 'elected' ? await this.seatedTeam(sdk, moderators.maxAddedModerators ?? 0) : null;
         const interim = moderators?.$type === 'elected' ? moderators.interim.$type as InterimKind : null;
@@ -803,9 +834,24 @@ class ModerationService {
     return this.contract.deletableTypes().some((type) => this.contract.settledDeletionFor(type) !== null);
   }
 
+  /**
+   * Seconds after its last change in which one moderator removes a `kind`
+   * alone, or null when there is no limit. The registered contract's value
+   * once a team read has seen it, else the committed template's: a deployment
+   * registered from an earlier cut of the same file (/staging's social v17 and
+   * blog v9 carry 604800, the file 86400 since D39) keeps its own window.
+   * Only the window is read from the chain: whether a type settles at all and
+   * its rule (leader, approvals) stay the template's, which every current
+   * build shares with its registered contract.
+   */
+  deleteWindowSeconds(kind: string): number | null {
+    const registered = this.registeredWindows?.get(kind);
+    return registered === undefined ? this.contract.deleteWindowSeconds(kind) : registered;
+  }
+
   /** Where a `kind` written at `createdAt` stands against its deletion window ({@link DeletionPhase}); always `open` before v11. */
   deletionPhaseOf(kind: string, createdAt: Date | number, now = Date.now()): DeletionPhase {
-    return deletionPhase(this.contract.deleteWindowSeconds(kind), createdAt instanceof Date ? createdAt.getTime() : createdAt, now);
+    return deletionPhase(this.deleteWindowSeconds(kind), createdAt instanceof Date ? createdAt.getTime() : createdAt, now);
   }
 
   /**
@@ -821,9 +867,14 @@ class ModerationService {
   /**
    * How `viewerId` may take down a `kind` written at `createdAt`: alone while
    * its window is open, by proposing to the seated team once it settled, or
-   * not at all. Reads the (cached) seated team only for a settled document.
+   * not at all. Reads the (cached) team first while the registered window is
+   * unknown, and the seated team only for a settled document.
    */
   async removalRoute(viewerId: string, kind: string, createdAt: Date | number, now = Date.now()): Promise<RemovalRoute> {
+    // The phase is judged by the registered window, so it is read first; a
+    // failed read rejects (the caller offers a retry) rather than guess from
+    // the template, which on /staging would send an open post to the team.
+    if (this.registeredWindows === null && this.contract.deleteWindowSeconds(kind) !== null) await this.readTeam();
     const phase = this.deletionPhaseOf(kind, createdAt, now);
     if (phase !== 'settled') return removalRouteFor(phase, null, null, viewerId);
     const rule = this.contract.settledDeletionFor(kind);

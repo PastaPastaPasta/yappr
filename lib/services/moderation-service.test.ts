@@ -96,7 +96,7 @@ vi.stubGlobal('localStorage', {
 
 import {
   SETTLE_MARGIN_MS, countedSigners, deletionPhase, missingDocumentState, moderationService, neededApprovals, protectedIdentities, teamActionTargetState,
-  moderatedTypeOpenFor, postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
+  moderatedTypeOpenFor, postedOnLabel, registeredDeleteWindowsOf, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
 } from './moderation-service'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
@@ -759,6 +759,56 @@ describe('settled documents (v11 deleteWithin + deleteSettled)', () => {
     expect(route).toEqual({ route: 'team', needed: 3, leaderRequired: true, leaderId: LEADER, viewerIsLeader: false, reachable: false })
     expect(seats).toHaveBeenCalledWith(10)
     await expect(moderationService.getSeatedTeam()).resolves.toEqual({ leaderId: LEADER, members: [MEMBER], electedMembers: [MEMBER], seats: 12 })
+  })
+
+  it('reads each type\'s registered window off the fetched schemas (bigints), leaving out what they lack', () => {
+    const schemas = {
+      post: { moderatorAbilities: { delete: true, deleteWithin: BigInt(86400) } },
+      reply: { moderatorAbilities: { delete: true } },
+    }
+    expect(registeredDeleteWindowsOf(schemas, ['post', 'reply', 'report'])).toEqual(new Map([['post', 86400], ['reply', null]]))
+    expect(registeredDeleteWindowsOf(undefined, ['post'])).toBeNull()
+  })
+
+  it('judges the phase by the REGISTERED window, not the committed template, in either direction', async () => {
+    topology.v11 = true
+    const DAY_MS = 86_400_000
+    const registered = (deleteWithin?: bigint) => ({
+      ownerId: { toBase58: () => OWNER },
+      config: { moderation: { moderators: { ...elected({ $type: 'contractOwner' }), maxAddedModerators: 10 } } },
+      ...(deleteWithin === undefined ? {} : {
+        schemas: Object.fromEntries(['post', 'reply'].map((type) => [type, { moderatorAbilities: { delete: true, deleteWithin, deleteSettled: { leader: true, approvals: BigInt(3) } } }])),
+      }),
+    })
+    sdk.moderationCharters.team.mockResolvedValue({
+      leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], electedMembers: [{ toBase58: () => MEMBER }], seats: () => 3, free: vi.fn(),
+    })
+    try {
+      // Before any read the template (a week here) answers, and a route is not guessed from it.
+      expect(moderationService.deleteWindowSeconds('post')).toBe(604800)
+      sdk.contracts.fetch.mockRejectedValueOnce(new Error('offline'))
+      await expect(moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 2 * DAY_MS)).rejects.toThrow('offline')
+      sdk.contracts.fetch.mockResolvedValue(registered(BigInt(86400)))
+      // The route reads the team first, so a two-day-old post is settled by the registered day.
+      expect(await moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 2 * DAY_MS)).toMatchObject({ route: 'team' })
+      expect(moderationService.deleteWindowSeconds('reply')).toBe(86400)
+      expect(moderationService.isSettled('post', createdAt, createdAt + 2 * DAY_MS)).toBe(true)
+      // It survives the team being dropped after an action: a window is fixed with its type.
+      moderationService.invalidateTeam()
+      expect(moderationService.isSettled('post', createdAt, createdAt + 2 * DAY_MS)).toBe(true)
+      // The /staging shape: the registered window is LONGER than the template's
+      // (there 604800 against the file's 86400; here two weeks against a
+      // week), so a ten-day-old post is still one moderator's to remove.
+      sdk.contracts.fetch.mockResolvedValue(registered(BigInt(1_209_600)))
+      await moderationService.getTeam()
+      expect(await moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 10 * DAY_MS)).toEqual({ route: 'single', closing: false })
+      expect(moderationService.isSettled('reply', createdAt, createdAt + 10 * DAY_MS)).toBe(false)
+    } finally {
+      sdk.contracts.fetch.mockResolvedValue(registered())
+      moderationService.invalidateTeam()
+      await moderationService.getTeam()
+    }
+    expect(moderationService.deleteWindowSeconds('post')).toBe(604800)
   })
 
   it('counts only the signers still on the team', () => {

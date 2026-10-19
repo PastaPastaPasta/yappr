@@ -141,8 +141,8 @@ describe('pure declaration readers', () => {
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9')
     const blog = moderatedContract('blog')
     for (const type of ['blogPost', 'blogComment']) {
-      expect(blog.settledDeletionFor(type)).toEqual({ windowSeconds: 604800, leaderRequired: true, approvals: 3 })
-      expect(blog.deleteWindowSeconds(type)).toBe(604800)
+      expect(blog.settledDeletionFor(type)).toEqual({ windowSeconds: 86400, leaderRequired: true, approvals: 3 })
+      expect(blog.deleteWindowSeconds(type)).toBe(86400)
       expect(blog.keepsRecord(type)).toBe(true)
     }
     expect(blog.authorsDelete('blog')).toBe(true)

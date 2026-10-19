@@ -2774,9 +2774,11 @@ function selfTestTimeless(schemas, { expect, index, shape, names }) {
   expect('like / likeReply byPost / byReply [target] terminal $ownerId: the heart state (n2c, n2f)',
     shape('like', 'byPost') === 'postId' && index('like', 'byPost').terminal === '$ownerId' && shape('likeReply', 'byReply') === 'replyId' && index('likeReply', 'byReply').terminal === '$ownerId');
   // v16 keeps the post's whole tag list (`tags`) where v11–v15 kept its `hashtag`.
+  // v17 (D39) shortens the single-moderator window to a day; v11–v16 keep a week.
+  const [windowSeconds, windowText] = PRIVATE_FEEDS ? [86_400, 'a day'] : [604_800, 'a week'];
   for (const [type, kept] of [['post', [SOCIAL.tagField, '$createdAt']], ['reply', ['rootPostId', '$createdAt']]]) {
-    expect(`${type}: one moderator deletes for a week, then the leader plus two members (deleteWithin 604800, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
-      JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: 604_800, deleteSettled: { leader: true, approvals: 3 } }));
+    expect(`${type}: one moderator deletes for ${windowText}, then the leader plus two members (deleteWithin ${windowSeconds}, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
+      JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: windowSeconds, deleteSettled: { leader: true, approvals: 3 } }));
   }
 }
 

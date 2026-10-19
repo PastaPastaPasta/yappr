@@ -1406,7 +1406,7 @@ const PROBES = [
     return d.blog.canBeDeleted === true
       && [d.blogPost.properties.blogId, d.blogFollow.properties.blogId, d.report.properties.blogId].every((p) => p.refersTo.type === 'deletableDocument')
       && d.blogPost.canBeDeleted === false && d.blogComment.properties.blogPostId.refersTo.type === 'moderatedDocument'
-      && ['blogPost', 'blogComment'].every((name) => d[name].moderatorAbilities.deleteWithin === 604800
+      && ['blogPost', 'blogComment'].every((name) => d[name].moderatorAbilities.deleteWithin === 86400
         && d[name].moderatorAbilities.deleteKeepsRecord !== false
         && JSON.stringify(d[name].moderatorAbilities.deleteSettled) === '{"leader":true,"approvals":3}');
   } },

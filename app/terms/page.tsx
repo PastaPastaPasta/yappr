@@ -7,11 +7,14 @@ import { SupportEmailLink } from '@/components/layout/legal-links'
 import { LEGAL_UPDATED, MINIMUM_AGE } from '@/lib/legal'
 import {
   declaredActionFee,
+  settledDeletionFor,
   starterGrantAmount,
   tokenCostFor,
   yappIsLocked,
   yappIsTransferable,
 } from '@/lib/contract-topology'
+import { moderatedContract } from '@/lib/moderated-contracts'
+import { formatDuration } from '@/lib/utils/format'
 
 const COMMUNITY_RULES = [
   { title: 'Nothing illegal', body: 'Don’t post, sell or link to anything that is illegal where you or the people you share it with live.' },
@@ -47,6 +50,19 @@ function yappCostCopy(): string {
   if (yappIsLocked()) sentences.push('YAPP has no monetary value, and Yappr never sells it.')
   if (!yappIsTransferable()) sentences.push('YAPP can’t be sent to other people.')
   return ` ${sentences.join(' ')}`
+}
+
+/**
+ * When a removal needs the team, from the settled-deletion rule the build's
+ * contracts declare (a day on the release set, D39); empty where moderators
+ * remove at any age.
+ */
+function settledRemovalCopy(): string {
+  const seconds = settledDeletionFor('post')?.windowSeconds
+  if (seconds === undefined) return ''
+  const blogToo = moderatedContract('blog').settledDeletionFor('blogPost')?.windowSeconds === seconds
+  const what = blogToo ? 'a post, reply, blog post or blog comment' : 'a post or reply'
+  return ` Removing ${what} that is more than ${formatDuration(seconds)} old needs the team’s leader and two more moderators to agree.`
 }
 
 export default function TermsPage() {
@@ -153,8 +169,7 @@ export default function TermsPage() {
           </BulletList>
           <p>
             Moderation happens in the open. Every removal, warning, suspension or ban leaves a public record of who did it, to what,
-            and when. Removing a post or reply
-            that is more than a week old needs the team&apos;s leader and two more moderators to agree.
+            and when.{settledRemovalCopy()}
           </p>
           <p>
             Before a team is elected, posting and reporting may be closed under the contract’s rules. Yappr’s authors do not

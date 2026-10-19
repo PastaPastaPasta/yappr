@@ -19,6 +19,8 @@ Maker: `At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF`. Group: `ePtSmVdSqxJESyegx
 
 Total registration: **275,596,968,840 credits (16,535.82¢)**. Reference conversion throughout is 1M credits ≈ 0.06¢. Maker identity registration cost 133,806,160 credits (8.03¢). Funding principal and charter deposits are accounted separately from fees.
 
+This set was registered from social v17 `b21d61f7…` and blog v9 `a0301222…`, whose post, reply, blog post and blog comment carry `deleteWithin: 604800`. D39 (2026-10-19) changed the committed files to 86,400 s (`ae4d3e7d…`, `6f8b07e0…`), so /staging keeps the seven-day single-moderator window until the set is re-cut. The client's removal routing reads the window the registered contract declares, so /staging moderators keep seven days; the Terms sentence follows the build's committed file and says one day there.
+
 All eight inclusion heights were recovered through a read-only authenticated session to a known testnet evonode's local Tenderdash RPC. Its live status proved `dash-testnet-51`; every RPC transaction hash exactly matched the hash computed privately from the saved signed bytes, and every registration `gas_used` exactly matched the measured debit above. Inclusion spanned **17:46:12.031–17:54:52.398 UTC**. The public testnet explorer backend returned HTTP503, so the run did not depend on its indexer. Contract/group/version readback remained separately proved through the SDK.
 
 ## Elections and batteries

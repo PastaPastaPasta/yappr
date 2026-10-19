@@ -696,7 +696,7 @@
           "tags",
           "$createdAt"
         ],
-        "deleteWithin": 604800,
+        "deleteWithin": 86400,
         "deleteSettled": {
           "leader": true,
           "approvals": 3
@@ -1475,7 +1475,7 @@
           "rootPostId",
           "$createdAt"
         ],
-        "deleteWithin": 604800,
+        "deleteWithin": 86400,
         "deleteSettled": {
           "leader": true,
           "approvals": 3

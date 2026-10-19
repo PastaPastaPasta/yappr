@@ -575,10 +575,10 @@ function selfTestV7() {
     ['blogComment creates declare a 16M moderators fee', fee('blogComment') === 16_000_000n],
     ['blog owners may delete their blog; every reference to it admits deletion',
       SCHEMAS.blog.canBeDeleted === true && [SCHEMAS.blogPost.properties.blogId, SCHEMAS.blogFollow.properties.blogId, SCHEMAS.report.properties.blogId].every((p) => p.refersTo.type === 'deletableDocument')],
-    ['posts and comments mirror social settled deletion: 7 days, leader and three approvals, recorded removals',
+    ['posts and comments mirror social settled deletion: 1 day (D39), leader and three approvals, recorded removals',
       ['blogPost', 'blogComment'].every((name) => {
         const a = SCHEMAS[name].moderatorAbilities;
-        return a.delete === true && a.deleteWithin === 604800 && a.deleteKeepsRecord !== false
+        return a.delete === true && a.deleteWithin === 86400 && a.deleteKeepsRecord !== false
           && a.deleteSettled.leader === true && a.deleteSettled.approvals === 3;
       })],
     ['removal records keep the parent and creation time',

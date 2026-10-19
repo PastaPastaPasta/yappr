@@ -70,10 +70,10 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 | Nonce | Entry | File | sha256 | Signed create | Env |
 | ---: | --- | --- | --- | ---: | --- |
 | N | `app` (registers the group) | `yappr-app-contract.json` | `d3acd888…` | 707 B | `NEXT_PUBLIC_APP_CONNECT_APP_ID` |
-| N+1 | `social` (v17) | `yappr-social-contract-v17.json` | `b21d61f7…` | ~18,019 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
+| N+1 | `social` (v17) | `yappr-social-contract-v17.json` | `ae4d3e7d…` | ~18,019 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
 | N+2 | `blocks` | `yappr-blocks-contract.json` | `ba0ef67a…` | 1,258 B | `NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID` |
 | N+3 | `dmV5` | `yappr-dm-contract-v5.json` | `4fe2b3f4…` | 3,557 B | `NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID` |
-| N+4 | `blog` (v9) | `yappr-blog-contract.json` | `a0301222…` | ~9,247 B | `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` |
+| N+4 | `blog` (v9) | `yappr-blog-contract.json` | `6f8b07e0…` | ~9,247 B | `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` |
 | N+5 | `pollr` (v8) | `pollr-contract.json` | `a77afe5f…` | ~3,568 B | `NEXT_PUBLIC_POLLR_CONTRACT_ID` |
 | N+6 | `storefront` (v10) | `yappr-storefront-contract.json` | `581122bb…` | ~18,704 B | `NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID` |
 | N+7 | `passkeyVault` ([PASSKEY_VAULT.md](PASSKEY_VAULT.md)) | `yappr-passkey-vault-contract.json` | `14094cad…` | 1,008 B | `NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID` |
