@@ -390,11 +390,10 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
         if (!isCurrent()) return;
         logger.error('Feed: Failed to load posts from platform:', error);
 
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         // Keep the current page visible during refresh and pagination failures.
         // The feed list renders this error alongside the preserved posts with a
         // retry action, so a transient DAPI/composite failure is recoverable.
-        setError(errorMessage);
+        setError('Posts are temporarily unavailable. Please try again in a moment.');
       } finally {
         if (isCurrent()) setLoading(false);
       }

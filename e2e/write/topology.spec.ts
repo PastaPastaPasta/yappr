@@ -36,12 +36,29 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Browser, Locator, Page } from '@playwright/test'
 import { appUrl, openBuildDetails } from '../fixtures/app'
-import { expect, hasSeedPhrase, NO_SEED_REASON, otherBotIdentity, seedContext, test, type BotIdentity } from '../fixtures/auth'
+import { expect, hasSeedPhrase, NO_SEED_REASON, otherBotIdentity, seedContext, test as authTest, type BotIdentity } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
 import { CONTRACT_TOPOLOGIES } from '../../lib/constants'
 import { deletesAreTombstones, tombstonesAreHidden, repostsAreQuotes, inlineTags, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
+
+// v17 refuses self-likes. Keep the author and the first liker distinct, with
+// a third identity available for rankings that need a second like.
+const test = authTest.extend<{ likerPage: Page }>({
+  likerPage: async ({ browser }, use) => {
+    const liker = await otherBotIdentity()
+    test.skip(!liker, 'Liking requires a provisioned identity other than the author')
+    if (!liker) return
+    const context = await browser.newContext()
+    try {
+      await seedContext(context, liker)
+      await use(await context.newPage())
+    } finally {
+      await context.close()
+    }
+  },
+})
 
 test.describe.configure({ mode: 'serial' })
 
@@ -314,9 +331,8 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     await expect(dialog).toBeVisible()
     await submitCompose(dialog, nestedReplyText)
 
-    // Optimistic insert first, then the real read-back from the root's thread query.
-    await expect(page.getByText(nestedReplyText)).toBeVisible()
-
+    // Another DAPI node can serve a valid earlier snapshot immediately after
+    // confirmation. Assert persisted root-thread membership via read-back.
     await reloadUntilVisible(page, appUrl(`/post?id=${rootPostId}`), (p) =>
       p.locator('[data-testid^="post-card-"]').filter({ hasText: nestedReplyText })
     )
@@ -352,12 +368,16 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     await page.keyboard.press('Escape')
   })
 
-  test('liking a reply toggles and persists', async ({ page }) => {
+  test('liking a reply toggles and persists', async ({ page: authorPage, likerPage: page }) => {
     // A reply's like is a `likeReply` document keyed on replyId, a doctype the v2
     // contract does not have — so a persisted toggle proves the split wiring end
     // to end (write, unique-index read-back, and count).
     test.setTimeout(300_000)
 
+    if (SPEC_TOPOLOGY === 'v17') {
+      await authorPage.goto(appUrl(`/post?id=${rootPostId}`))
+      await expect(authorPage.getByTestId(`like-btn-${firstReplyId}`)).toBeDisabled({ timeout: 60_000 })
+    }
     await page.goto(appUrl(`/post?id=${rootPostId}`))
     const likeButton = page.getByTestId(`like-btn-${firstReplyId}`)
     await expect(likeButton).toBeVisible({ timeout: 60_000 })
@@ -562,7 +582,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
   let hashtags: string[] = []
   let taggedPostId = ''
   let untaggedPostId = ''
-  /** A second pool identity whose like lifts the tagged target to 2 for the profile Top (null on a one-identity pool). */
+  /** Another liker's vote lifts the tagged target to 2 for profile Top (requires three pool identities). */
   let secondLiker: BotIdentity | null = null
 
   test.afterAll(async ({ browser }) => {
@@ -693,7 +713,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     untaggedPostId = await composePost(page, bot.identityId, `${runTag} untagged target`)
   })
 
-  test('liking the TAGGED post persists and its count is served from the count tree', async ({ page }) => {
+  test('liking the TAGGED post persists and its count is served from the count tree', async ({ likerPage: page }) => {
     test.setTimeout(420_000)
 
     await likeAndVerify(page, taggedPostId)
@@ -701,7 +721,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toContainText('1')
   })
 
-  test('the liked state survives a feed listing (batched membership)', async ({ page, bot }) => {
+  test('the liked state survives a feed listing (batched membership)', async ({ likerPage: page, bot }) => {
     test.setTimeout(180_000)
 
     // The profile feed resolves liked-state for the whole page in ONE
@@ -712,7 +732,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     )
   })
 
-  test('liking the UNTAGGED post mirrors the absence and persists', async ({ page }) => {
+  test('liking the UNTAGGED post mirrors the absence and persists', async ({ likerPage: page }) => {
     test.setTimeout(300_000)
 
     // The create must omit the like's tag property (like.hashtag, on v16
@@ -722,7 +742,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     await likeAndVerify(page, untaggedPostId)
   })
 
-  test('unliking the UNTAGGED post reproduces the absence in the delete tuple', async ({ page }) => {
+  test('unliking the UNTAGGED post reproduces the absence in the delete tuple', async ({ likerPage: page }) => {
     test.setTimeout(420_000)
 
     // Delete-by-values rebuilds the tuple through the same boundary translation
@@ -731,7 +751,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     await unlikeAndRelike(page, untaggedPostId)
   })
 
-  test('unliking the TAGGED post still round-trips with the value present', async ({ page }) => {
+  test('unliking the TAGGED post still round-trips with the value present', async ({ likerPage: page }) => {
     test.setTimeout(420_000)
 
     // On v16 the value is the post's whole list: the delete tuple repeats both
@@ -810,7 +830,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     // leaves its tagged and untagged targets on the bot's profile at one like each,
     // so this run's one-like target only ranks in while fewer than ten others do.
     // A second like (taken back in afterAll) lifts it above all of them.
-    secondLiker = await otherBotIdentity()
+    secondLiker = await otherBotIdentity(2)
     if (secondLiker) await setSecondLike(browser, secondLiker, taggedPostId, true)
 
     // The at-form covers [postAuthor, postId]: the leaderboard groups at the
@@ -848,7 +868,7 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
   /** The target's tags ({@link runTagsFor}): one on a one-tag cut, two on v16. */
   let hashtags: string[] = []
   let taggedPostId = ''
-  /** A second pool identity whose like lifts the run's target to 2 (null on a one-identity pool). */
+  /** Another liker's vote lifts the target to 2 (requires at least three pool identities). */
   let secondLiker: BotIdentity | null = null
 
   test.beforeAll(async ({ browser, bot }) => {
@@ -872,7 +892,17 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
       )
       taggedPostId = ((await card.getAttribute('data-testid')) ?? '').replace('post-card-', '')
       expect(taggedPostId).not.toBe('')
+    } finally {
+      await context.close()
+    }
 
+    const liker = await otherBotIdentity()
+    test.skip(!liker, 'Liking requires a provisioned identity other than the author')
+    if (!liker) return
+    const likerContext = await browser.newContext()
+    try {
+      await seedContext(likerContext, liker)
+      const page = await likerContext.newPage()
       // Like it (on v9 the like lands first, then a beat in a second transition).
       await page.goto(appUrl(`/post?id=${taggedPostId}`))
       const likeButton = page.getByTestId(`like-btn-${taggedPostId}`)
@@ -884,13 +914,13 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
         p.getByTestId(`like-btn-${taggedPostId}`).and(p.locator('[aria-pressed="true"]'))
       )
     } finally {
-      await context.close()
+      await likerContext.close()
     }
     // A second like from another pool identity. Every earlier run leaves its own
     // target on the bot's profile at one like, so with two this run's target
     // outranks all of them on the bot's capped Top list, however many there are
     // and however ties order (afterAll takes the second like back).
-    secondLiker = await otherBotIdentity()
+    secondLiker = await otherBotIdentity(2)
     if (secondLiker) await setSecondLike(browser, secondLiker, taggedPostId, true)
   })
 

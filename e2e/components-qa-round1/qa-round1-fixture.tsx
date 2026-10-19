@@ -3,6 +3,8 @@ import { useState } from 'react'
 import type { ReplyThread } from '@/lib/types'
 // Bypass the page fixture's mocked @/hooks/use-post-detail alias.
 import { usePostDetail as useRealPostDetail } from '../../hooks/use-post-detail'
+import { useFeedData } from '../../hooks/use-feed-data'
+import { FeedPostList } from '@/components/feed/feed-post-list'
 import { Toaster } from 'react-hot-toast'
 import InventoryPage from '@/app/store/inventory/page'
 import UserPage from '@/app/user/page'
@@ -39,6 +41,14 @@ function PostRecoveryFixture() {
     <div data-testid="hook-has-more">{String(detail.hasMoreReplies)}</div>
     <button onClick={detail.refresh}>Refresh thread</button>
     <button onClick={detail.loadMoreReplies}>Load more replies</button>
+  </>
+}
+function FeedRecoveryFixture() {
+  const feed = useFeedData({ activeTab: 'forYou' })
+  return <>
+    <button onClick={feed.refresh}>Refresh posts</button>
+    <FeedPostList {...feed} posts={feed.filteredPosts} activeTab="forYou" onShowNewPosts={feed.showNewPosts}
+      onLoadMore={feed.loadMore} onRetry={feed.refresh} onPostDelete={feed.handlePostDelete} />
   </>
 }
 // Public scalar 1, for the offline checkout readiness check only.
@@ -83,6 +93,7 @@ const content = fixture === 'messages' ? <><NetworkPill /><MessagesPage /></>
   : fixture === 'private-activity' ? <PrivateFeedDashboard />
   : fixture === 'post' ? <PostPage />
   : fixture === 'post-recovery-hook' ? <PostRecoveryFixture />
+  : fixture === 'feed-recovery' ? <FeedRecoveryFixture />
   : fixture === 'checkout' ? <CheckoutPage />
   : fixture === 'shipping' ? <ManagePage />
   : fixture === 'store' ? <StorePage />
