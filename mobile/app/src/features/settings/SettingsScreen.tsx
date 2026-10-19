@@ -6,6 +6,7 @@ import {
   ChevronRightIcon,
   EnvelopeIcon,
   InformationCircleIcon,
+  LockClosedIcon,
   PaintBrushIcon,
   ShieldCheckIcon,
   UserGroupIcon,
@@ -126,6 +127,15 @@ export function SettingsScreen() {
             iconTint={colors.yappr500}
             onPress={go('/settings/messages')}
             testID="settings-messages"
+          />
+        ) : null}
+        {signedIn && capabilities?.privateFeeds ? (
+          <SettingsRow
+            label={copy.sections.privateFeed}
+            icon={LockClosedIcon}
+            iconTint={colors.purple500}
+            onPress={go('/settings/private-feed')}
+            testID="settings-private-feed"
           />
         ) : null}
         <SettingsRow

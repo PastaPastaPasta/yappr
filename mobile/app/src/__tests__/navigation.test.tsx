@@ -263,6 +263,7 @@ describe('app shell', () => {
     ['/settings/licenses', null],
     ['/settings/feed-language', null],
     ['/settings/wallet', null],
+    ['/settings/private-feed', null],
     ['/compose', null],
     ['/media?postId=abc123&index=0', null],
     ['/terms-gate', null],

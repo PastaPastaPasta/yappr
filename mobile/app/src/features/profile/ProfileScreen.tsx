@@ -22,6 +22,7 @@ import { sendWrite } from '~/data/writes';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { copyText } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
+import { PrivateFeedAccessButton } from '~/features/private-feed/PrivateFeedAccessButton';
 import { blockWrite, useAuthorBlocked, useBlockBusy } from '~/features/safety/block-state';
 import { copy as safetyCopy } from '~/features/safety/copy';
 import { cn } from '~/lib-allowlist';
@@ -478,6 +479,11 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
           onOpenFollowers: () => router.push({ pathname: '/user/[id]/followers', params: { id: profileId } }),
           onOpenFollowing: () => router.push({ pathname: '/user/[id]/following', params: { id: profileId } }),
         }}
+        privateAccess={
+          !isSelf && viewerId ? (
+            <PrivateFeedAccessButton ownerId={profileId} following={following} name={profile.displayName} />
+          ) : null
+        }
       />
       {isSelf && ownTab && !profile.username ? <UsernameCard identityId={profileId} className="mx-4 mb-3" /> : null}
     </View>

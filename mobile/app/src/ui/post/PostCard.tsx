@@ -61,7 +61,6 @@ export interface PostCardActions extends RichTextHandlers {
   onMediaPress?: (index: number) => void;
   onLinkPreviewPress?: (url: string) => void;
   onVotePress?: () => void;
-  onOpenPrivate?: () => void;
   /** Detail only: a count in the counts row, to open that engagements tab (UX_SPEC §4.9). */
   onCountPress?: (tab: EngagementCountTab) => void;
 }
@@ -124,6 +123,15 @@ export interface PostCardProps {
   menu?: PostCardMenu;
   tagMaxLength?: number;
   actions?: PostCardActions;
+  /**
+   * A private post's body (the decrypted text, or why it doesn't open), in
+   * place of the "Private post" panel.
+   */
+  privateBody?: ReactNode;
+  /** Whether Reply is offered; by default not on a private or deleted post. */
+  canReply?: boolean;
+  /** A private post's decrypted text, for the screen-reader summary. */
+  privateText?: string;
 }
 
 export interface PostCardMenu {
@@ -345,13 +353,15 @@ function postAccessibilityLabel(
     quoteCovered: boolean;
     /** Detail: the counts row's reposts and quotes, which the summary repeats (D-L4a-009). */
     repostSplit?: RepostQuoteCounts | null;
+    /** A private post's decrypted text. */
+    privateText?: string;
   },
 ): string {
   const parts = [`${post.author.displayName}, ${handleOf(post.author)}, ${extras.time}.`];
   if (extras.repostedBy) parts.push(`Reposted by ${extras.repostedBy}.`);
   if (extras.replyingTo) parts.push(`Replying to @${extras.replyingTo}.`);
   if (post.deleted) parts.push(stubText('deleted', post.kind));
-  else if (post.encrypted) parts.push('Private post.');
+  else if (post.encrypted) parts.push(extras.privateText ? `Private post: ${extras.privateText}.` : 'Private post.');
   else if (extras.content) parts.push(`${extras.content}.`);
   const { quoted } = post;
   if (quoted?.viewer?.authorBlocked) {
@@ -404,6 +414,9 @@ export const PostCard = memo(function PostCard({
   tagMaxLength,
   menu,
   actions = {},
+  privateBody,
+  canReply: replyable,
+  privateText,
 }: PostCardProps) {
   const [revealed, reveal] = useSensitiveReveal(post.id);
   const { external } = useMediaUrls();
@@ -449,7 +462,7 @@ export const PostCard = memo(function PostCard({
     variant === 'optimistic' &&
     (writeStatus?.status.state === 'posting' || writeStatus?.status.state === 'threadProgress');
   const showActionBar = (variant === 'feed' || detail) && !post.deleted;
-  const canReply = !post.encrypted && !post.deleted;
+  const canReply = replyable ?? (!post.encrypted && !post.deleted);
   const repostTotal = post.stats.reposts + post.stats.quotes;
   const reposter = post.repostedBy
     ? post.repostedBy.id === viewerId
@@ -461,7 +474,7 @@ export const PostCard = memo(function PostCard({
   if (post.deleted) {
     body = <DeletedLine kind={post.kind} />;
   } else if (post.encrypted) {
-    body = <PrivatePostPlaceholder onOpenWeb={actions.onOpenPrivate} />;
+    body = privateBody ?? <PrivatePostPlaceholder />;
   } else {
     let quoteSlot: ReactNode = null;
     if (post.quoted?.viewer?.authorBlocked) {
@@ -623,6 +636,7 @@ export const PostCard = memo(function PostCard({
               replyingTo,
               quoteCovered: (quoteNsfwGated ?? post.quoted?.sensitive) === true,
               repostSplit: detail ? repostQuoteCounts : undefined,
+              privateText,
             })
       }
       accessibilityActions={available.map(({ name, label }) => ({ name, label }))}

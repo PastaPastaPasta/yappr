@@ -584,7 +584,7 @@ function PostCardsC() {
           onRevealMedia={() => setRevealed(true)}
           actions={{ onMore: noop }}
         />
-        <PostCard post={POSTS.private} actions={{ onMore: noop, onOpenPrivate: noop }} />
+        <PostCard post={POSTS.private} actions={{ onMore: noop }} />
       </Bleed>
       <Bleed title="Stubs: tombstone, removed, deleted, failed, unavailable, blocked">
         <PostCard post={POSTS.tombstone} />

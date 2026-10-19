@@ -14,6 +14,7 @@ export const copy = {
     notifications: 'Notifications',
     privacy: 'Privacy & Safety',
     messages: 'Messages',
+    privateFeed: 'Private feed',
     appearance: 'Appearance',
     about: 'About',
     /** About's last row (PRD SET-08): the diagnostics screen, reachable signed out. */

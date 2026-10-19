@@ -53,6 +53,13 @@ const READS = new Set([
   'dm.refresh',
   'safety.followedBlockLists',
   'safety.reportsOpen',
+  // Private feeds: reads (a replayed `read` may store keys it recovered, the same keys either engine would).
+  'privateFeed.read',
+  'privateFeed.access',
+  'privateFeed.overview',
+  'privateFeed.requests',
+  'privateFeed.followers',
+  'privateFeed.renewal',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 

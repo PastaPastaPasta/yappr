@@ -119,4 +119,21 @@ export const queryKeys = {
 
   /** `session.appConnectConnections`: the keys the account's wallets granted Yappr. Never persisted. */
   walletConnections: (identityId: string) => [...root, 'walletConnections', identityId] as const,
+
+  /** Private feeds. Never persisted: decrypted text must not reach MMKV. */
+  privateFeed: {
+    all: [...root, 'privateFeed'] as const,
+    /** `privateFeed.read`: one private post or reply, decrypted or why not. */
+    post: (id: string) => [...root, 'privateFeed', 'post', id] as const,
+    /** Every `post` read: a prefix of the key above. */
+    posts: [...root, 'privateFeed', 'post'] as const,
+    /** `privateFeed.access`: where the viewer stands with one owner's private feed. */
+    access: (ownerId: string) => [...root, 'privateFeed', 'access', ownerId] as const,
+    /** The viewer's own feed: `overview`, `requests`, `followers` and `renewal`. */
+    owner: [...root, 'privateFeed', 'owner'] as const,
+    overview: [...root, 'privateFeed', 'owner', 'overview'] as const,
+    requests: [...root, 'privateFeed', 'owner', 'requests'] as const,
+    followers: [...root, 'privateFeed', 'owner', 'followers'] as const,
+    renewal: [...root, 'privateFeed', 'owner', 'renewal'] as const,
+  },
 } as const;

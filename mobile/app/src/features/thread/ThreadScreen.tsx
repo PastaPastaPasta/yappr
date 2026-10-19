@@ -7,6 +7,7 @@ import { DocumentMagnifyingGlassIcon } from 'react-native-heroicons/outline';
 import { usePostRemoved } from '~/data/optimistic';
 import { readErrorMessage } from '~/data/read-error';
 import { useEngineStatus } from '~/engine/hooks';
+import { usePrivatePost } from '~/features/private-feed/private-feed-data';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { LinkText } from '~/ui/LinkText';
@@ -73,6 +74,8 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const focusId = focus?.id ?? id;
   const focusRemoved = usePostRemoved(focusId);
   const { state: engineState } = useEngineStatus();
+  // A private post takes replies from those who can read it (the same read as its card).
+  const privateFocus = usePrivatePost({ id: focusId, encrypted: focus?.encrypted === true });
 
   // Flat threads list only the root above a reply: read its direct parent for the context line.
   const parentId = focus?.parentId;
@@ -212,7 +215,12 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
     );
   }
 
-  const block = replyBlockOf(focus ?? undefined, focusRemoved, (thread !== undefined && !thread.focus) || focusUnavailable);
+  const block = replyBlockOf(
+    focus ?? undefined,
+    focusRemoved,
+    (thread !== undefined && !thread.focus) || focusUnavailable,
+    privateFocus.data?.state === 'open',
+  );
   const connecting = !thread && !seed && engineState !== 'ready';
 
   return (

@@ -15,12 +15,15 @@ import { tw } from '~/ui/tokens';
 /** Why the focus takes no replies; `null` when it does. */
 export type ReplyBlock = 'deleted' | 'unavailable' | 'private' | null;
 
-/** `unavailable`: the thread read no longer finds the post shown. */
-export function replyBlockOf(post: PostDTO | undefined, removedHere: boolean, unavailable = false): ReplyBlock {
+/**
+ * `unavailable`: the thread read no longer finds the post shown.
+ * `privateOpen`: a private post opened for the viewer, who may then reply (web `useCanReplyToPrivate`).
+ */
+export function replyBlockOf(post: PostDTO | undefined, removedHere: boolean, unavailable = false, privateOpen = false): ReplyBlock {
   if (!post) return null;
   if (post.deleted || removedHere) return 'deleted';
   if (unavailable) return 'unavailable';
-  return post.encrypted ? 'private' : null;
+  return post.encrypted && !privateOpen ? 'private' : null;
 }
 
 function BarFrame({ children }: { children: ReactNode }) {
@@ -41,7 +44,7 @@ function ViewerAvatar({ identityId }: { identityId: string }) {
  * The docked "Post your reply" bar under a thread (PRD POST-10, UX_SPEC
  * §4.9): opens compose in reply mode for the focused post. Signed out it
  * reads "Sign in to reply"; a deleted or unavailable post shows why it takes no replies;
- * a private post (no replies in 1.0) shows nothing.
+ * a private post the viewer can't read shows nothing (its card says why).
  */
 export function ReplyBar({ post, block }: { post: PostDTO; block: ReplyBlock }) {
   const { status, identityId } = useSession();

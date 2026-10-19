@@ -10,6 +10,7 @@ import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useProvisionalViewerId, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { usePendingWriteStatus } from '~/features/compose/pending-posts';
+import { usePrivateBody } from '~/features/private-feed/PrivatePostBody';
 import { tagMaxLength } from '~/features/compose/text';
 import { usePostSafety } from '~/features/safety/use-post-safety';
 import { showActionSheet, type SheetAction } from '~/ui/action-sheet';
@@ -384,12 +385,17 @@ export const PostItem = memo(function PostItem({
       onHashtagPress: openHashtag,
       onCashtagPress: openHashtag,
       onVotePress: openOnWeb,
-      onOpenPrivate: openOnWeb,
     };
     const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined);
     const menu: PostCardMenu | undefined = items.length > 0 ? { items, onSelect } : undefined;
     return { actions, menu };
   }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external, detail, onRemoveBookmark, listed]);
+  // A private post: decrypted for the viewer, or why not (and what to do about it).
+  const privateCard = usePrivateBody(post, {
+    variant: detail ? 'detail' : 'feed',
+    tagMaxLength: tagMaxLength(capabilities?.hashtagsInline === true),
+    handlers: actions,
+  });
 
   if ((removed && !asStub) || safety.hidden) return null;
 
@@ -423,6 +429,7 @@ export const PostItem = memo(function PostItem({
       repostQuoteCounts={repostQuoteCounts}
       actions={actions}
       menu={menu}
+      {...privateCard}
     />
   );
 });
