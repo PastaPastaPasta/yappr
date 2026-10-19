@@ -42,8 +42,6 @@ import {
 } from '@/lib/services/messaging-key-service'
 import { masterKey, phraseKeys, phraseMessagingState, sessionKey, type PhraseKey } from './recovery-phrase'
 
-/** Identity indexes probed at most, whatever the gaps (a bound on the lookups one phrase can cause). */
-const MAX_IDENTITY_INDEX = 32
 /** After adding the messaging key: how long to wait for Platform to show it as current (the setup dialog's pattern). */
 const CONFIRM_ATTEMPTS = 6
 const CONFIRM_DELAY_MS = 2_000
@@ -52,11 +50,6 @@ export interface PhraseAccount {
   identityIndex: number
   identityId: string
   username: string | null
-}
-
-export interface OpenedPhrase {
-  wallet: Dip13Wallet
-  accounts: PhraseAccount[]
 }
 
 /** The refusal of a phrase that fails its checksum: the one failure that leaves the phrase in its field to correct. */
@@ -70,26 +63,29 @@ export class PhraseSignInError extends Error {
   }
 }
 
-/** The sign-in was abandoned (its dialog closed) before anything was written. */
+/** The sign-in was abandoned (its dialog closed, or another sign-in or sign-out came first) before anything was written. */
 class PhraseSignInCancelled extends Error {}
 
-/**
- * Opens `phrase` (normalized) and finds its identities on this network.
- * Network failures throw: an unanswered lookup never reads as "no account".
- */
-export async function openRecoveryPhrase(phrase: string): Promise<OpenedPhrase> {
-  const network = keyNetwork()
-  let wallet: Dip13Wallet
+/** Opens `phrase` (normalized), checking its BIP-39 checksum: no network yet. */
+export async function openRecoveryPhrase(phrase: string): Promise<Dip13Wallet> {
   try {
-    wallet = await openDip13Wallet(phrase, network)
+    return await openDip13Wallet(phrase, keyNetwork())
   } catch (error) {
     // Only a phrase that fails its checksum is the user's to fix; a failed SDK load is not.
     if (error instanceof InvalidPhraseError) throw new PhraseSignInError(INVALID_PHRASE)
     throw error
   }
+}
+
+/**
+ * The phrase's identities on this network, as a wallet discovers them: no
+ * bound but the gap limit (rs-platform-wallet `discover`). Network failures
+ * throw: an unanswered lookup never reads as "no account".
+ */
+export async function findPhraseAccounts(wallet: Dip13Wallet): Promise<PhraseAccount[]> {
+  const network = keyNetwork()
   const accounts: PhraseAccount[] = []
-  let misses = 0
-  for (let identityIndex = 0; identityIndex < MAX_IDENTITY_INDEX && misses < IDENTITY_GAP_LIMIT; identityIndex++) {
+  for (let identityIndex = 0, misses = 0; misses < IDENTITY_GAP_LIMIT; identityIndex++) {
     const key = wallet.derive(identityAuthKeyPath(network, identityIndex, MASTER_KEY_INDEX))
     key.privateKey.fill(0)
     const identityId = await identityService.getIdentityIdByPublicKeyHash(hash160(key.publicKey))
@@ -103,7 +99,7 @@ export async function openRecoveryPhrase(phrase: string): Promise<OpenedPhrase> 
   await Promise.all(accounts.map(async (account) => {
     account.username = await dpnsService.resolveUsername(account.identityId).catch(() => null)
   }))
-  return { wallet, accounts }
+  return accounts
 }
 
 /** What happened to messaging during a phrase sign-in, for the one line the dialog says about it. */

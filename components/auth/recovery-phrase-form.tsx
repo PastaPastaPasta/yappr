@@ -8,13 +8,13 @@ import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { logger } from '@/lib/logger'
-import { normalizeRecoveryPhrase } from '@/lib/crypto/dip13'
+import { normalizeRecoveryPhrase, type Dip13Wallet } from '@/lib/crypto/dip13'
 import {
+  findPhraseAccounts,
   INVALID_PHRASE,
   openRecoveryPhrase,
   PhraseSignInError,
   preparePhraseSession,
-  type OpenedPhrase,
   type PhraseAccount,
   type PhraseMessaging,
 } from '@/lib/auth/recovery-phrase-sign-in'
@@ -57,10 +57,17 @@ export function RecoveryPhraseForm({ onComplete }: { onComplete: () => void }) {
   const field = useRef<HTMLInputElement>(null)
   const [hasText, setHasText] = useState(false)
   const [show, setShow] = useState(false)
+  /**
+   * Masked as text where the browser supports CSS text masking (a password
+   * field would be offered for saving); elsewhere, such as older Firefox, a
+   * password field, so the phrase is never shown unasked.
+   */
+  const [cssMasking, setCssMasking] = useState(true)
+  useEffect(() => setCssMasking(typeof CSS !== 'undefined' && CSS.supports('-webkit-text-security', 'disc')), [])
   const [phase, setPhase] = useState<Phase>({ kind: 'enter' })
   const [error, setError] = useState<string | null>(null)
   /** The opened phrase while an account is chosen; taken by the sign-in that uses it. */
-  const opened = useRef<OpenedPhrase | null>(null)
+  const opened = useRef<Dip13Wallet | null>(null)
   /** The session epoch the phrase was entered on: a sign-in or sign-out since supersedes this one. */
   const since = useRef(0)
   /** False once the dialog closes: a sign-in under way then stops before writing anything. */
@@ -84,23 +91,27 @@ export function RecoveryPhraseForm({ onComplete }: { onComplete: () => void }) {
     if (!alive.current) return
     logger.warn('Recovery phrase sign-in did not complete:', failure)
     // Its own refusals and a superseded sign-in say what happened; anything else is the network.
-    const speaks = failure instanceof SupersededSignInError || failure instanceof PhraseSignInError
-    setError(speaks ? failure.message : CONNECTION_FAILURE)
+    if (failure instanceof PhraseSignInError) setError(failure.message)
+    else if (failure instanceof SupersededSignInError || controller.sessionEpoch() !== since.current) setError(new SupersededSignInError().message)
+    else setError(CONNECTION_FAILURE)
     setPhase({ kind: 'enter' })
   }
 
+  /** Whether the dialog closed, or another sign-in or a sign-out came first: nothing may be written then. */
+  const superseded = () => !alive.current || controller.sessionEpoch() !== since.current
+
   const signIn = async (account: PhraseAccount) => {
-    const wallet = opened.current?.wallet
+    const wallet = opened.current
     // Taken once: a second click on the chooser finds nothing to sign in with.
     opened.current = null
     if (!wallet) return
     setPhase({ kind: 'signing-in' })
     try {
-      // A dialog closed mid-sign-in makes preparePhraseSession throw PhraseSignInCancelled, which `fail` ignores once not alive.
-      const session = await preparePhraseSession(wallet, account, () => !alive.current)
-      if (!alive.current) {
+      // Superseded, preparePhraseSession stops before adding the messaging key; `fail` ignores that once the dialog closed.
+      const session = await preparePhraseSession(wallet, account, superseded)
+      if (superseded()) {
         session.messagingKey?.privateKey.fill(0)
-        return
+        throw new SupersededSignInError()
       }
       await loginWithRecoveryPhrase(session, since.current)
       const notice = MESSAGING_NOTICE[session.messaging]
@@ -121,18 +132,19 @@ export function RecoveryPhraseForm({ onComplete }: { onComplete: () => void }) {
     since.current = controller.sessionEpoch()
     setPhase({ kind: 'finding' })
     try {
-      const found = await openRecoveryPhrase(normalized)
-      // A valid phrase has been used: it leaves the page now.
+      const wallet = await openRecoveryPhrase(normalized)
+      // A valid phrase has been used: it leaves the page before any lookup.
       clearField()
+      const accounts = await findPhraseAccounts(wallet)
       if (!alive.current) return
-      if (found.accounts.length === 0) {
+      if (accounts.length === 0) {
         setError('No Dash account uses this recovery phrase yet.')
         setPhase({ kind: 'enter' })
         return
       }
-      opened.current = found
-      if (found.accounts.length === 1) await signIn(found.accounts[0])
-      else setPhase({ kind: 'choose', accounts: found.accounts })
+      opened.current = wallet
+      if (accounts.length === 1) await signIn(accounts[0])
+      else setPhase({ kind: 'choose', accounts })
     } catch (failure) {
       // A phrase that fails its checksum stays to be corrected; after any other failure it goes.
       if (!(failure instanceof Error && failure.message === INVALID_PHRASE)) clearField()
@@ -167,14 +179,14 @@ export function RecoveryPhraseForm({ onComplete }: { onComplete: () => void }) {
           <input
             ref={field}
             id={inputId}
-            type="text"
+            type={show || cssMasking ? 'text' : 'password'}
             onInput={(event) => { setHasText(event.currentTarget.value.trim().length > 0); setError(null) }}
             onKeyDown={(event) => { if (event.key === 'Enter' && !busy) submit().catch(fail) }}
             placeholder="Your 12 or 24 words"
             aria-describedby={noteId}
             disabled={busy}
-            // Masked without type=password, which browsers would offer to save; never autofilled or corrected.
-            style={show ? undefined : { WebkitTextSecurity: 'disc' } as React.CSSProperties}
+            // Masked without type=password where CSS can (browsers offer to save passwords); never autofilled or corrected.
+            style={show || !cssMasking ? undefined : { WebkitTextSecurity: 'disc' } as React.CSSProperties}
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="none"
