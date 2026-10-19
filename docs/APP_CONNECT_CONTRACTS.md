@@ -115,6 +115,8 @@ NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --maker <m
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --start-nonce <N>   # devnet maker from .env.devnet
 NETWORK=testnet node scripts/register-app-connect-contracts.mjs --plan --maker <makerId> --start-nonce <N> \
   --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600              # testnet (D41)
+NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --plan --maker <makerId> --start-nonce <N> \
+  --interim notYetUsable --election-windows 604800,604800 --election-delay 259200 --challenge-cool-down 2592000 # mainnet (D41)
 
 # 2. Read-only against the network: the maker's nonce (N defaults to chain nonce + 1), and that no
 #    contract of the set and not the group exists yet
