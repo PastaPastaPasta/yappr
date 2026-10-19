@@ -12,6 +12,7 @@ On a device where you are signed in, you add a passkey. Yappr writes one public 
 | A HIGH key | That key, plus your messaging key when this device has the current one | A key session, as if you had pasted the key |
 | A CRITICAL key, as a moderator | That key (only while you are on a social, storefront or blog moderation team), plus your messaging key | A key session for this tab, like a typed CRITICAL key. It never signs token transitions. |
 | A CRITICAL key, not a moderator | Nothing: "To add a passkey, sign in with your Dash wallet or your everyday sign-in key." | — |
+| Your recovery phrase (App Connect builds, D38) | What the phrase gave the session: its HIGH sign-in key (else its CRITICAL key, under the CRITICAL rows above), plus the messaging key it derived when that key is the current one. Never the phrase, nor its MASTER key | A key session, exactly as for the key the phrase derived |
 
 MASTER and TRANSFER keys never go in. The primary flow (V3) is: sign in with the Dash wallet, add a passkey when Yappr offers it, and sign in with the passkey from then on.
 

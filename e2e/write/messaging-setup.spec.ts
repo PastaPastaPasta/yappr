@@ -1,8 +1,10 @@
 /**
  * "Anchor key only; prompt others" on App Connect builds (#742): an identity
  * without an anchor-bound encryption key shows as not set up to the people
- * who try to reach it, and its own owner is offered "Set up messaging", whose
- * wallet hand-off carries exactly one IdentityUpdate adding that key.
+ * who try to reach it, and its own owner is offered "Set up messaging": a
+ * wallet or recovery-phrase sign-in, and under its developer options the
+ * sign-in-key setup, whose wallet hand-off carries exactly one IdentityUpdate
+ * adding that key.
  *
  * Pool slot 0 is the identity left WITHOUT a messaging key on sakura (the ops
  * script skips it on purpose); slots 1-8 have one. Nothing here writes to the
@@ -86,7 +88,12 @@ test.describe('Messaging setup (App Connect)', () => {
 
     const dialog = page.getByRole('dialog')
     await expect(dialog.getByRole('heading', { name: 'Set up messaging' })).toBeVisible({ timeout: 60_000 })
-    await expect(dialog.getByRole('button', { name: 'Use your master key instead' })).toBeVisible()
+    // D38: the way in is a wallet or recovery-phrase sign-in; a key made from the sign-in key is a developer option.
+    await expect(dialog.getByRole('button', { name: 'Sign in with wallet or recovery phrase' })).toBeVisible()
+    await dialog.getByRole('button', { name: 'Advanced: developer options' }).click()
+    await expect(dialog.getByText('For developers. Not for normal use.')).toBeVisible()
+    await dialog.getByRole('button', { name: 'Set up messaging with this sign-in key' }).click()
+    await expect(dialog.getByRole('button', { name: 'Use your master key instead' })).toBeVisible({ timeout: 60_000 })
     await dialog.getByRole('button', { name: 'Approve in your wallet' }).click()
 
     const link = dialog.getByRole('link', { name: 'Open in wallet app' })

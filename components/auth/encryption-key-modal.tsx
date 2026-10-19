@@ -154,6 +154,15 @@ function KeyEntryEncryptionKeyModal() {
 
       // Step 3: Neither backup nor derivation worked - show manual entry
       if (!isModalActiveRef.current) return
+      // App Connect builds (D38): the messaging key comes from the wallet or its recovery phrase,
+      // and entering one by hand is a developer option of that prompt.
+      if (isAppConnectBuild()) {
+        setAutoRecoveryStatus('failed')
+        setAutoRecoveryMessage('')
+        setOpenedForSetup(true)
+        setShowAddKeyModal(true)
+        return
+      }
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('Auto-recovery not available. Please enter your key manually.')
     } catch (err) {
@@ -434,7 +443,7 @@ function KeyEntryEncryptionKeyModal() {
         isOpen={showAddKeyModal}
         onClose={() => {
           setShowAddKeyModal(false)
-          // App Connect builds: someone who has no messaging key and declines setup has no key to enter either.
+          // App Connect builds: the prompt it opened instead of key entry (no messaging key, or one only a wallet unlocks) is the whole flow.
           if (openedForSetup && isAppConnectBuild()) close()
         }}
         onSuccess={handleAddKeySuccess}

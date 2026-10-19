@@ -15,7 +15,7 @@ test('touch login reveals Copy link after an attempted wallet launch', async ({ 
   await page.goto(appUrl('/login/'))
 
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
-  await dialog.getByRole('button', { name: 'Sign in with a Dash wallet app' }).click()
+  await dialog.getByRole('button', { name: 'Sign in with your Dash wallet' }).click()
   const openWallet = dialog.getByRole('link', { name: 'Open in wallet app' })
   await expect(openWallet).toHaveAttribute('href', /^dash-key:/)
   await expect(dialog.getByText('Open in a wallet on this device')).toBeVisible()

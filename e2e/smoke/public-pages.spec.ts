@@ -58,23 +58,37 @@ for (const route of ['/store/view/', '/store/view/?id=']) {
 test('login page shows the login affordance', async ({ page }) => {
   await page.goto(appUrl('/login/'))
 
-  // /login auto-opens the global login modal after hydration. Private-key
-  // sign-in is the primary path, with the way to create an identity under it.
-  // Passkey sign-in is also offered on supported deployments and browsers.
+  // /login auto-opens the global login modal after hydration. Passkey sign-in
+  // is also offered on supported deployments and browsers.
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
   await expect(dialog).toBeVisible()
-  await expect(dialog.locator('#loginCredential')).toBeVisible()
-  await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
-  await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
   await expect(dialog.getByRole('link', { name: /Create a Dash identity|Get the Dash wallet/ })).toBeVisible()
   await expect(dialog.getByText(/password/i)).toHaveCount(0)
 
-  // Wallet sign-in is a collapsed secondary option, offered on App Connect builds only.
-  const walletToggle = dialog.getByRole('button', { name: 'Sign in with a Dash wallet app' })
+  const walletToggle = dialog.getByRole('button', { name: 'Sign in with your Dash wallet' })
   if (!isAppConnectBuild()) {
+    // Other builds: private-key sign-in is the primary path, and there is no wallet option.
+    await expect(dialog.locator('#loginCredential')).toBeVisible()
+    await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
     await expect(walletToggle).toHaveCount(0)
     return
   }
+
+  // App Connect builds (D38): the wallet, then its recovery phrase, then a private key under Advanced.
+  const options = dialog.getByTestId('sign-in-options').getByRole('button', { expanded: false })
+  await expect(options).toHaveText(['Sign in with your Dash wallet', 'Sign in with your recovery phrase', 'Advanced: sign in with a private key'])
+  await expect(dialog.locator('#loginCredential')).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Sign in with your recovery phrase' }).click()
+  const phrase = dialog.getByLabel('Recovery phrase', { exact: true })
+  await expect(phrase).toHaveAttribute('type', 'password')
+  await expect(phrase).toHaveAttribute('autocomplete', 'off')
+  await expect(dialog.getByText('Your recovery phrase stays on this device and is never saved. Only enter it on yap.pr.')).toBeVisible()
+  await dialog.getByRole('button', { name: 'Advanced: sign in with a private key' }).click()
+  await expect(dialog.getByLabel('Recovery phrase', { exact: true })).toHaveCount(0)
+  await expect(dialog.locator('#loginCredential')).toBeVisible()
+  await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
+
   await expect(dialog.getByRole('link', { name: 'Open in wallet app' })).toHaveCount(0)
   await walletToggle.click()
 

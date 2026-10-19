@@ -12,7 +12,9 @@ import toast from 'react-hot-toast'
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants'
 import { WalletEncryptionKeyPrompt, useWalletSession } from './wallet-encryption-key-prompt'
 import { SetUpMessaging, type MessagingSetupContext } from './set-up-messaging'
+import { MessagingSignInPrompt } from './messaging-sign-in-prompt'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
+import { useLoginModal } from '@/hooks/use-login-modal'
 
 type EncryptionKeyContext = MessagingSetupContext
 
@@ -24,7 +26,7 @@ interface AddEncryptionKeyModalProps {
   context?: EncryptionKeyContext
 }
 
-type Step = 'checking' | 'existing-key' | 'enter-existing' | 'intro' | 'generate' | 'critical-key' | 'adding' | 'success' | 'error'
+type Step = 'checking' | 'existing-key' | 'enter-existing' | 'intro' | 'developer-setup' | 'generate' | 'critical-key' | 'adding' | 'success' | 'error'
 
 /**
  * AddEncryptionKeyModal Component
@@ -32,6 +34,11 @@ type Step = 'checking' | 'existing-key' | 'enter-existing' | 'intro' | 'generate
  * Modal for deriving and adding an encryption key to an identity.
  * Uses HKDF derivation from auth key for zero-friction setup.
  * Implements PRD §6.2 - Key Addition Flow
+ *
+ * App Connect builds (D38): the messaging key is the wallet's, so a
+ * private-key session is sent to sign in with the wallet or its recovery
+ * phrase; setting messaging up from the sign-in key, or entering a key, are
+ * developer options (MessagingSignInPrompt).
  *
  * NOTE: Adding an encryption key to an identity requires a MASTER
  * security level key for signing. The typical HIGH security level login key
@@ -379,6 +386,12 @@ function KeyEntryAddEncryptionKeyModal({
     onClose()
   }, [onClose])
 
+  // Messaging comes with a wallet or recovery-phrase sign-in, which replaces this session.
+  const signInInstead = useCallback(() => {
+    handleClose()
+    useLoginModal.getState().open()
+  }, [handleClose])
+
   const successTitle = appConnect
     ? (isEnterExistingPath ? 'Messaging unlocked' : 'Messaging is set up')
     : (isEnterExistingPath ? 'Encryption Key Restored' : 'Encryption Key Added')
@@ -409,17 +422,28 @@ function KeyEntryAddEncryptionKeyModal({
         )
 
       case 'existing-key':
+        if (appConnect) {
+          return (
+            <MessagingSignInPrompt
+              context={context}
+              hasKey
+              busy={isValidatingExistingKey}
+              onSignIn={signInInstead}
+              onDeveloperSetUp={() => setStep('developer-setup')}
+              onDeveloperEnterKey={() => { enterExistingKey().catch((err) => logger.error('Unlocking messaging failed:', err)) }}
+              onCancel={handleClose}
+            />
+          )
+        }
         return (
           <>
             <ModalTitle>
               <KeyIcon className="h-6 w-6 text-yappr-500" />
-              {appConnect ? 'Messaging is already set up' : 'Encryption Key Already Set Up'}
+              Encryption Key Already Set Up
             </ModalTitle>
 
             <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-              {appConnect
-                ? 'Your account already has a messaging key. Unlock it to use messaging on this device.'
-                : 'Your identity already has an encryption key registered on Dash Platform.'}
+              Your identity already has an encryption key registered on Dash Platform.
             </Dialog.Description>
 
             <div className="space-y-4 mb-6">
@@ -427,11 +451,9 @@ function KeyEntryAddEncryptionKeyModal({
                 <div className="flex gap-3">
                   <ShieldCheckIcon className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                   <div className="text-sm text-blue-700 dark:text-blue-300">
-                    <p className="font-medium">{appConnect ? 'Messaging key found' : 'Key found on your identity'}</p>
+                    <p className="font-medium">Key found on your identity</p>
                     <p className="mt-1">
-                      {appConnect
-                        ? 'If you set up messaging with the key you signed in with, it unlocks automatically. Otherwise enter your messaging key.'
-                        : 'Enter your existing encryption key to restore access in this session. If your key was derived from your login key, it will be recovered automatically.'}
+                      Enter your existing encryption key to restore access in this session. If your key was derived from your login key, it will be recovered automatically.
                     </p>
                   </div>
                 </div>
@@ -452,17 +474,14 @@ function KeyEntryAddEncryptionKeyModal({
                   </>
                 )}
               </Button>
-              {/* App Connect builds never replace the messaging key here: everything sent to it would be lost. */}
-              {!appConnect && (
-                <Button
-                  onClick={() => setStep('intro')}
-                  variant="outline"
-                  className="w-full text-sm"
-                  disabled={isValidatingExistingKey}
-                >
-                  Create Replacement Key Instead
-                </Button>
-              )}
+              <Button
+                onClick={() => setStep('intro')}
+                variant="outline"
+                className="w-full text-sm"
+                disabled={isValidatingExistingKey}
+              >
+                Create Replacement Key Instead
+              </Button>
               <Button onClick={handleClose} variant="outline" className="w-full" disabled={isValidatingExistingKey}>
                 Cancel
               </Button>
@@ -551,15 +570,28 @@ function KeyEntryAddEncryptionKeyModal({
           </>
         )
 
+      case 'developer-setup':
+        // App Connect builds, developer option: the messaging key derived from the sign-in key, bound to the anchor.
+        return user ? (
+          <SetUpMessaging
+            identityId={user.identityId}
+            context={context}
+            onDone={handleMessagingReady}
+            onAlreadySetUp={() => setStep('existing-key')}
+            onCancel={handleClose}
+          />
+        ) : null
+
       case 'intro':
-        // App Connect builds: the messaging key is bound to the anchor and needs a MASTER signature (wallet or key).
-        if (appConnect && user) {
+        if (appConnect) {
           return (
-            <SetUpMessaging
-              identityId={user.identityId}
+            <MessagingSignInPrompt
               context={context}
-              onDone={handleMessagingReady}
-              onAlreadySetUp={() => setStep('existing-key')}
+              hasKey={false}
+              busy={false}
+              onSignIn={signInInstead}
+              onDeveloperSetUp={() => setStep('developer-setup')}
+              onDeveloperEnterKey={() => setStep('enter-existing')}
               onCancel={handleClose}
             />
           )

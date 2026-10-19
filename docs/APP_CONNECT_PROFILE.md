@@ -254,6 +254,31 @@ The group has no admins. Its members are the anchor, social v15, blocks, DM v5, 
 
 **Still outside App Connect** (wallet `dash-st:` links or native wallet flows): credit tips (TRANSFER), DPNS registration, revoking keys and raising limits, and contract moderation.
 
+## Recovery-phrase sign-in (Yappr, D38)
+
+An app may also sign a user in with their wallet's recovery phrase. It has to
+derive exactly what a wallet holding the phrase derives, or the user's messages
+are lost the next time they sign in with the wallet. Yappr follows the reference
+wallet (dashwallet-ios #1210, rs-platform-wallet, key-wallet), in
+`lib/crypto/dip13.ts` and `lib/auth/recovery-phrase-sign-in.ts`:
+
+- **Identity:** DIP-13 discovery. For identity index 0, 1, ..., derive
+  `m/9'/coin'/5'/0'/0'/index'/0'` (the MASTER key) and look the identity up by
+  that key's hash160. Stop after 5 unused indexes in a row (`IDENTITY_GAP_LIMIT`).
+- **Session key:** each enabled key of the identity is derived at key index =
+  key id and kept only if it matches. The session signs with the HIGH
+  authentication key, else the CRITICAL one, stored as if it had been typed in.
+- **Encryption key:** rule 7's key, rotation 0. It is current: use it. None:
+  add it in one MASTER-signed IdentityUpdate, with the phrase's MASTER key, and
+  wait until `contractKeys` returns it. Another wallet's key, or this key
+  disabled: leave it alone, and say messaging was set up with another wallet.
+- **The phrase** is never stored, logged or sent. Its field is cleared once
+  used.
+
+A typed-in private key still signs in. On App Connect builds, a messaging key
+derived from it (HKDF info `yappr/app-connect/encryption-key/v1:<anchor>`) is a
+developer option only: no wallet derives it.
+
 ## Plan B: v1 plus a brand map
 
 If wallet teams prefer not to ship v2, an app can send a v1 request whose contract id is its anchor, and the wallet's brand-map entry for that anchor defines the binding set and limits (for Yappr: the group key, the DashPay profile key and the anchor encryption key). The app-side verifier is the same. Plan B loses the request-carried limits, the identity hint, connection-id supersession and the AAD, so it is a fallback, not the proposal.
