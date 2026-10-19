@@ -54,6 +54,7 @@ const m = vi.hoisted(() => ({
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   settleReplaces: vi.fn(async () => 0),
+  getEncryptionSource: vi.fn(),
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
   notificationService: { getInitialNotifications: vi.fn(), pollNewNotifications: vi.fn() },
 }))
@@ -66,6 +67,7 @@ vi.mock('@/lib/contract-topology', async (load) => {
     ...Object.fromEntries(FLAGS.map(flag => [flag, () => m.topology[flag] === true])),
     canRepost: (kind: string) => m.topology[`repost:${kind}`] !== false,
     canBookmark: (kind: string) => m.topology[`bookmark:${kind}`] !== false,
+    privateFeedClientSupported: () => m.topology.privateFeeds === true,
     electedModeration: () => m.elected,
   }
 })
@@ -91,7 +93,7 @@ vi.mock('@/lib/services/like-service', () => ({ likeService: m.likeService }))
 vi.mock('@/lib/services/bookmark-service', () => ({ bookmarkService: m.bookmarkService }))
 vi.mock('@/lib/services/repost-service', () => ({ repostService: m.repostService }))
 vi.mock('@/lib/services/post-service', async (load) => ({ ...await load<object>(), postService: m.postService }))
-vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>(), replyService: m.replyService }))
+vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>(), replyService: m.replyService, getEncryptionSource: m.getEncryptionSource }))
 vi.mock('@/lib/services/follow-service', () => ({ followService: m.followService }))
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
@@ -982,7 +984,38 @@ describe('posts.publish and posts.delete', () => {
     expect(m.replyService.createReply).not.toHaveBeenCalled()
   })
 
-  it('replies to a loaded target, refuses a private one, and carries v10 media hashes', async () => {
+  it('encrypts a private post with its image link inside, and a reply in a private thread to the root\'s feed', async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.topology.privateFeeds = true
+    m.topology.mediaCarriesHashes = true
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'secret' }], visibility: 'private-with-teaser', teaser: 'a peek', mediaUrl: 'https://img.example/a.png' }))
+    expect(ticket.state).toBe('confirmed')
+    const [, content, options] = m.postService.createPost.mock.calls[0] as [string, string, Record<string, unknown>]
+    expect(content).toBe('secret\n\nhttps://img.example/a.png')
+    expect(options.encryption).toMatchObject({ type: 'owner', teaser: 'a peek' })
+    // No media field and no fingerprint: anyone could read those.
+    expect(options.media).toBeUndefined()
+    expect(m.imageDigest).not.toHaveBeenCalled()
+
+    m.postService.getPostById.mockResolvedValue(post(TARGET.id, { encryptedContent: new Uint8Array(4), nonce: new Uint8Array(24), keyGeneration: 1, feed: 1 }))
+    m.getEncryptionSource.mockResolvedValue({ ownerId: AUTHOR, feed: 1, keyGeneration: 1, inherited: true })
+    expect((await outcome(posts.publish({ parts: [{ text: 'a private reply' }], replyTo: TARGET }))).state).toBe('confirmed')
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'a private reply', expect.anything(), expect.objectContaining({
+      encryption: expect.objectContaining({ type: 'inherited', source: { ownerId: AUTHOR } }),
+    }))
+
+    // The thread could not be read: nothing goes out in the clear.
+    m.replyService.createReply.mockClear()
+    m.getEncryptionSource.mockRejectedValue(new Error('The thread could not be read'))
+    expect(await outcome(posts.publish({ parts: [{ text: 'maybe clear' }], replyTo: TARGET }))).toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
+    expect(m.replyService.createReply).not.toHaveBeenCalled()
+
+    // A private post is never quoted.
+    expect(await outcome(posts.publish({ parts: [{ text: 'quoting' }], quote: TARGET }))).toMatchObject({ state: 'failed', error: { code: 'NOT_SUPPORTED' } })
+  })
+
+  it('replies to a loaded target, refuses a private one where the network has no private feeds, and carries v10 media hashes', async () => {
     const { outcome, posts } = engine()
     creating()
     m.postService.getPostById.mockResolvedValue(null)

@@ -6,6 +6,7 @@ import { createDmModule } from './dm'
 import { createGraphWrites, graph } from './graph'
 import { createNotificationsModule } from './notifications'
 import { createPostWrites, posts } from './posts'
+import { createPrivateFeedWrites, privateFeedReads } from './private-feed'
 import { createProfileWrites, profiles } from './profiles'
 import { createSafetyModule } from './safety'
 import { createMobileAuthController, createSessionModule, foregroundBalanceRefresh, type SessionEvents } from './session'
@@ -71,6 +72,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     explore,
     safety: createSafetyModule(tickets),
     notifications: notifications.api,
+    privateFeed: { ...privateFeedReads, ...createPrivateFeedWrites(tickets) },
   }
 }
 
@@ -82,6 +84,7 @@ export type * from './dto'
 export type * from './dm'
 export type { ContentCreatedEvent, DraftDTO } from './posts'
 export type { ProfilePatchDTO } from './profiles'
+export type * from './private-feed'
 export type * from './safety'
 export type * from './notifications'
 export type * from './session'

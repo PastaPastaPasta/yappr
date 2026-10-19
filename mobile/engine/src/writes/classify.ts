@@ -205,7 +205,7 @@ const RULES: readonly Rule[] = [
 const ENGINE_CODES: ReadonlySet<string> = new Set<EngineErrorCode>([
   'ABORTED', 'BAD_REQUEST', 'NOT_SUPPORTED', 'NOT_SIGNED_IN', 'NOT_RETRYABLE', 'ENGINE_RESTARTED', 'RESTART_REQUIRED',
   'PARENT_UNCONFIRMED', 'QUOTE_HAS_TEXT', 'PRIVATE_FEED_SYNC_REQUIRED', 'STILL_BLOCKED', 'REPORT_GONE',
-  'REPORT_RESOLVED', 'MEDIA_UNREADABLE',
+  'REPORT_RESOLVED', 'MEDIA_UNREADABLE', 'PRIVATE_FEED', 'NO_MESSAGING_KEY',
 ])
 
 function isEngineCode(code: unknown): code is EngineErrorCode {
@@ -231,6 +231,13 @@ const FAILED_ACTION: Record<WriteOp, string> = {
   'profile.update': 'update profile',
   'dm.send': 'send message',
   'dm.group': 'update group',
+  'privateFeed.enable': 'turn on your private feed',
+  'privateFeed.request': 'request access',
+  'privateFeed.leave': 'withdraw your request',
+  'privateFeed.approve': 'approve this request',
+  'privateFeed.revoke': 'remove this follower',
+  'privateFeed.renew': 'renew your private feed',
+  'privateFeed.move': 'move your private followers',
 }
 
 /** Map any write error to an engine code (ENGINE.md §7.3), walking `RULES` in order. */
