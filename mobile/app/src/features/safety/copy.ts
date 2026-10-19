@@ -62,7 +62,6 @@ export const copy = {
     emptyDescription: 'Accounts you block show up here.',
     /** Only for someone who follows at least one block list (set up on web). */
     listsNote: (lists: number) => `Also hidden by ${lists} block ${lists === 1 ? 'list' : 'lists'} you follow`,
-    listsLink: 'Manage block lists',
     signIn: 'Sign in to see the accounts you blocked',
   },
   report: {

@@ -7,8 +7,10 @@ import { Screen } from '~/ui/Screen'
 import { Text } from '~/ui/Text'
 import { toast } from '~/ui/toast'
 import { tw } from '~/ui/tokens'
+import { useSession } from '~/data/session'
 
 export default function UsernameScreen() {
+  const { signedIn } = useSession()
   const [label, setLabel] = useState('')
   const [checking, setChecking] = useState(false)
   const [availability, setAvailability] = useState<{ available: boolean; contested: boolean; error?: string } | null>(null)
@@ -20,10 +22,13 @@ export default function UsernameScreen() {
   return <Screen>
     <Stack.Screen options={{ title: 'Choose a username' }} />
     <View className="gap-4 p-4">
+      {!signedIn ? <><Text variant="headline">Sign in to choose a username</Text><Text variant="body" tone="secondary">Your wallet sign-in is needed to register a name.</Text><Button label="Sign in" size="block" onPress={() => router.push('/sign-in')} /></> : null}
+      {signedIn ? <>
       <Text variant="body" tone="secondary">Pick a name people can use to find you. Names with fewer than 20 characters may require a network vote and an extra fee.</Text>
       <TextInput value={label} onChangeText={setLabel} autoCapitalize="none" autoCorrect={false} placeholder="username" accessibilityLabel="Username" className={`min-h-[52px] rounded-lg border px-3 text-base ${tw.border}`} />
       <Button label={checking ? 'Checking…' : 'Check availability'} size="block" onPress={check} disabled={!label.trim() || checking} />
       {availability ? <View className="gap-2"><Text variant="bodyStrong">{availability.error ?? (availability.available ? 'Available' : 'Already taken')}</Text>{availability.contested ? <Text variant="subhead" tone="secondary">This name is contested. Registration may cost more while the community vote is open.</Text> : null}<Button label="Register username" size="block" onPress={register} disabled={!availability.available} /></View> : null}
+      </> : null}
     </View>
   </Screen>
 }

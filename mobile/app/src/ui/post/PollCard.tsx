@@ -1,5 +1,5 @@
 import { Pressable, View } from 'react-native';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChartBarIcon } from 'react-native-heroicons/outline';
 
 import { cn, formatNumber } from '~/lib-allowlist';
@@ -38,8 +38,13 @@ export interface PollCardProps {
 /** A read-only Pollr poll in a post (UX_SPEC §2.4.8, web poll-card.tsx results view). */
 export function PollCard({ poll, onVotePress }: PollCardProps) {
   const c = useColors();
-  const [now] = useState(Date.now);
+  const [now, setNow] = useState(Date.now);
   const [selected, setSelected] = useState<number[]>(poll === 'loading' || poll === 'error' ? [] : poll.myVotes ?? []);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   if (poll === 'loading') {
     return (
@@ -111,7 +116,7 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
           variant="outline"
           accessibilityLabel={selected.length > 0 ? 'Save vote' : 'Withdraw vote'}
           onPress={() => onVotePress?.(selected)}
-          disabled={!onVotePress || poll.endsAt !== null && poll.endsAt.getTime() <= now}
+          disabled={!onVotePress || (poll.endsAt !== null && poll.endsAt.getTime() <= now)}
         />
       </View>
     </View>
