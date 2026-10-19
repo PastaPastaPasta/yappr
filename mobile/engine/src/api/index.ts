@@ -12,6 +12,7 @@ import { createMobileAuthController, createSessionModule, foregroundBalanceRefre
 import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
+import { store } from './store'
 
 /**
  * The engine API. The RN host imports `type EngineApi` only and calls it
@@ -71,6 +72,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     explore,
     safety: createSafetyModule(tickets),
     notifications: notifications.api,
+    store,
   }
 }
 
@@ -88,4 +90,5 @@ export type * from './session'
 export type * from './settings'
 export type * from './writes'
 export type { EngineNotice } from '../shims/toast'
+export type * from './store'
 export type { PlatformInfoDTO } from '../dto/capabilities'

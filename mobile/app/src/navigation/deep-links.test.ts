@@ -170,8 +170,9 @@ describe('resolveLink: what a link does beyond its route (SR-13, PRD NET-11)', (
 
   it.each([
     ['yappr://dpns/register', 'https://yap.pr/dpns/register'],
-    ['yappr://store', 'https://yap.pr/store'],
-    ['https://yap.pr/store/view?id=1', 'https://yap.pr/store/view?id=1'],
+    ['yappr://store', '/store'],
+    [`yappr://store/${X}`, `/store/${X}`],
+    [`yappr://item/${X}`, `/item/${X}`],
     ['yappr://blog/hello-world', 'https://yap.pr/blog/hello-world'],
     ['yappr://terms', 'https://yap.pr/terms'],
     ['yappr://about/team', 'https://yap.pr/about/team'],

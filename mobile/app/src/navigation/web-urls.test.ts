@@ -12,11 +12,13 @@ describe.each(Object.keys(VARIANTS) as Variant[])('%s web handoffs', (variant) =
 
   it('keeps polls, private posts, stores and blogs in the selected deployment', () => {
     expect(webUrl(config, '/post', { id: ID })).toBe(`${v.webBaseUrl}/post?id=${ID}`);
-    for (const path of ['/store', '/blog', '/item', '/checkout', '/orders']) {
+    for (const path of ['/blog', '/checkout', '/orders']) {
       const url = webUrl(config, path, { id: ID });
       expect(resolveLink(url, options)).toEqual({ kind: 'browser', url });
       expect(resolveLink(`${v.scheme}://${path.slice(1)}?id=${ID}`, options)).toEqual({ kind: 'browser', url });
     }
+    expect(resolveLink(webUrl(config, '/store', { id: ID }), options)).toEqual({ kind: 'route', route: `/store/${ID}` });
+    expect(resolveLink(webUrl(config, '/item', { id: ID }), options)).toEqual({ kind: 'route', route: `/item/${ID}` });
     expect(resolveLink(`${v.webBaseUrl}/post?id=${ID}`, options)).toEqual({ kind: 'route', route: `/post/${ID}` });
   });
 

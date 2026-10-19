@@ -64,8 +64,6 @@ const WEB_ONLY = [
   '/cookies',
   '/contract',
   '/dpns/register',
-  '/store',
-  '/item',
   '/cart',
   '/checkout',
   '/orders',
@@ -192,6 +190,8 @@ const WEB_ROUTES: Record<string, (q: Query, viewerId: string | null) => string |
     const t = tag(q.tag);
     return t ? `/hashtag/${encodeURIComponent(t)}` : null;
   },
+  '/store': (q) => id(q.id) ? `/store/${id(q.id)}` : '/store',
+  '/item': (q) => id(q.id) ? `/item/${id(q.id)}` : null,
 };
 
 /**
@@ -202,6 +202,10 @@ function pathFormRoute(path: string, q: Query): string | null | undefined {
   const [, head, value = '', tail, ...rest] = path.split('/');
   if (rest.length > 0) return undefined;
   switch (head) {
+    case 'store':
+      return id(value) && tail === undefined ? `/store/${value}` : null;
+    case 'item':
+      return id(value) && tail === undefined ? `/item/${value}` : null;
     case 'post':
       if (!id(value)) return null;
       if (tail === undefined) return withQuery(`/post/${value}`, { reply: id(q.reply) });

@@ -54,7 +54,7 @@ const READS = new Set([
   'safety.followedBlockLists',
   'safety.reportsOpen',
 ]);
-const READ_MODULES = new Set(['feed', 'explore']);
+const READ_MODULES = new Set(['feed', 'explore', 'store']);
 
 export function methodKind(path: string): MethodKind {
   const module = path.slice(0, path.indexOf('.'));

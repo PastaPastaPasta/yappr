@@ -30,6 +30,14 @@ const sorted = <Q extends { sort?: Sort; window?: RankingWindow }>(q: Q) => ({
 export const queryKeys = {
   /** Every engine query on this network. */
   all: root,
+  store: {
+    all: [...root, 'store'] as const,
+    discover: (sort: 'newest' | 'topRated' | 'mostOrdered' = 'newest') => [...root, 'store', 'discover', sort] as const,
+    detail: (id: string) => [...root, 'store', id] as const,
+    items: (id: string) => [...root, 'store', id, 'items'] as const,
+    item: (id: string) => [...root, 'store', 'item', id] as const,
+    reviews: (id: string) => [...root, 'store', id, 'reviews'] as const,
+  },
 
   feed: {
     all: [...root, 'feed'] as const,
