@@ -296,12 +296,12 @@ describe('Messages inbox (DM-01, DM-02)', () => {
       expect(screen.getByTestId('dm-setup-qr')).toBeTruthy();
     });
 
-    it('sends the account to yap.pr when this sign-in cannot set messaging up', async () => {
+    it('guides the account back through native DashPay sign-in when messaging is unavailable', async () => {
       fakeEngine.method('dm.setUpMessaging').mockReset().mockResolvedValueOnce({ unlocked: false, reason: 'no-key-on-identity' });
       await openSetup();
       fireEvent.press(screen.getByTestId('dm-setup-wallet'));
       await act(async () => {});
-      expect(screen.getByText('Open yap.pr')).toBeTruthy();
+      expect(screen.getByText('Sign in with DashPay')).toBeTruthy();
       expect(openURL).not.toHaveBeenCalled();
     });
 

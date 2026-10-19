@@ -291,9 +291,10 @@ describe('PostCard embeds', () => {
   it('shows the poll results and sends voting to the web', () => {
     const onVotePress = jest.fn();
     render(<PostCard post={POSTS.poll} poll={SAMPLE_POLL} actions={{ onVotePress }} />);
-    expect(screen.getByLabelText('Home, 62%')).toBeTruthy();
+    expect(screen.getByLabelText('Home, 62 percent')).toBeTruthy();
     expect(screen.getByText('50 votes · Ends in 2d')).toBeTruthy();
-    fireEvent.press(screen.getByText('Vote on yap.pr'));
+    fireEvent.press(screen.getByLabelText('Home, 62 percent'));
+    fireEvent.press(screen.getByText('Save vote'));
     expect(onVotePress).toHaveBeenCalled();
   });
 

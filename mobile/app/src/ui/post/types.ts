@@ -32,6 +32,8 @@ export interface CardPoll {
   totalVotes: number;
   /** null: no end date. */
   endsAt: Date | null;
+  multiChoice?: boolean;
+  myVotes?: number[] | null;
 }
 
 /** Async slots: the data, still loading, or failed. */

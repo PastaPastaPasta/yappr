@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { memo, useMemo } from 'react';
 
 import { queryKeys } from '~/data/keys';
+import { engine } from '~/engine';
 import { usePostRemoved } from '~/data/optimistic';
 import { useEngineQuery } from '~/data/queries';
 import { NO_READ_RETRY } from '~/data/read-retry';
@@ -26,6 +27,7 @@ import {
 } from '~/ui/post/PostCard';
 import type { CardPoll, Loadable } from '~/ui/post/types';
 import { toast } from '~/ui/toast';
+import { queryClient } from '~/state/query-client';
 
 import {
   copyText,
@@ -137,6 +139,8 @@ function usePoll(post: PostDTO): Loadable<CardPoll> | undefined {
       options,
       totalVotes: data.totalVotes ?? options.reduce((sum, o) => sum + o.votes, 0),
       endsAt: data.endsAt,
+      multiChoice: data.multiChoice,
+      myVotes: data.myVotes,
     };
   }, [poll, data, isError]);
 }
@@ -383,7 +387,13 @@ export const PostItem = memo(function PostItem({
       onMentionPress: openUser,
       onHashtagPress: openHashtag,
       onCashtagPress: openHashtag,
-      onVotePress: openOnWeb,
+      onVotePress: (choices) => {
+        if (!post.poll) return;
+        engine.api.posts.vote(post.poll.id, choices).then(() => {
+          queryClient.invalidateQueries({ queryKey: queryKeys.post.poll(post.poll!.id) }).catch(() => undefined);
+          toast.success(choices.length ? 'Vote saved' : 'Vote withdrawn');
+        }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : 'Could not save your vote'));
+      },
       onOpenPrivate: openOnWeb,
     };
     const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined);

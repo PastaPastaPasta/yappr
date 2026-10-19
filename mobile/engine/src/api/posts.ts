@@ -27,7 +27,7 @@ import { assembleFlatThread, assembleV2Thread, flattenThreads, RENDERED_DEPTH, t
 import { assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { documentExists, fromDeleteBoolean } from '../writes/lib-results'
 import { createPublishHandler, validateDraft, type DraftDTO, type FindOwnDocuments, type OwnDocument } from '../writes/publish'
-import type { TicketStore } from '../writes/tickets'
+import type { TicketStore, WriteResult } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
 import {
   toPostDTO,
@@ -281,6 +281,35 @@ function toPollDTO(poll: Poll, tally: PollTally | null, myVotes?: number[] | nul
     totalVotes: tally ? tally.total : null,
     tallyIncludesLate: tally?.lateIncluded === true,
     ...(myVotes !== undefined ? { myVotes } : {}),
+  }
+}
+
+export interface PollVoteArgs { pollId: string; choices: number[] }
+
+/** Native Pollr writes. The service owns v3/v7 ballot semantics and topology gates. */
+export function createPollWrites(tickets: TicketStore) {
+  tickets.register<PollVoteArgs>('poll.vote', {
+    persistArgs: true,
+    async run({ pollId, choices }, ctx): Promise<WriteResult> {
+      const poll = await pollrPollService.getPoll(pollId)
+      if (!poll) return { state: 'failed', error: new RpcError('This poll is no longer available', 'TARGET_GONE') }
+      const ownerId = signer(ctx)
+      const editable = await pollrVoteService.setVote(poll, choices, ownerId)
+      if (editable.success) return { state: 'confirmed' }
+      if (editable.error !== 'setVote is the v7 ballot path') {
+        return { state: editable.unconfirmed ? 'unconfirmed' : 'failed', error: new Error(editable.error ?? 'Could not save your vote') }
+      }
+      const legacy = await pollrVoteService.castVote(poll, choices, ownerId)
+      return legacy.success
+        ? { state: 'confirmed' }
+        : { state: 'failed', error: new Error(legacy.error ?? 'Could not save your vote') }
+    },
+  })
+  return {
+    async vote(pollId: string, choices: number[]): Promise<WriteTicket> {
+      if (!pollId || !Array.isArray(choices)) throw new RpcError('Choose an option', 'BAD_REQUEST')
+      return tickets.submit<PollVoteArgs>({ op: 'poll.vote', args: { pollId, choices: [...choices] }, target: null })
+    },
   }
 }
 

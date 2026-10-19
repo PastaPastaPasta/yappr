@@ -1477,7 +1477,7 @@ describe('BlockedAccountsScreen', () => {
     withProviders(<BlockedAccountsScreen />);
     await settle();
     expect(screen.getByText(note)).toBeTruthy();
-    expect(screen.getByText('Manage on yap.pr')).toBeTruthy();
+    expect(screen.getByText('Manage block lists')).toBeTruthy();
   });
 
   it('says nothing about block lists to someone who follows none', async () => {

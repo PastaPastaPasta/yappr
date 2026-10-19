@@ -1,9 +1,10 @@
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { useState } from 'react';
 import { ChartBarIcon } from 'react-native-heroicons/outline';
 
 import { cn, formatNumber } from '~/lib-allowlist';
 
-import { LinkText } from '../LinkText';
+import { Button } from '../Button';
 import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
 import { tw, useColors } from '../tokens';
@@ -31,13 +32,14 @@ export function pollPercents(poll: CardPoll): number[] {
 
 export interface PollCardProps {
   poll: Loadable<CardPoll>;
-  /** Voting happens on web in 1.0. */
-  onVotePress?: () => void;
+  onVotePress?: (choices: number[]) => void;
 }
 
 /** A read-only Pollr poll in a post (UX_SPEC §2.4.8, web poll-card.tsx results view). */
 export function PollCard({ poll, onVotePress }: PollCardProps) {
   const c = useColors();
+  const [now] = useState(Date.now);
+  const [selected, setSelected] = useState<number[]>(poll === 'loading' || poll === 'error' ? [] : poll.myVotes ?? []);
 
   if (poll === 'loading') {
     return (
@@ -70,12 +72,15 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
       <View className="mt-3 gap-2">
         {poll.options.map((option, i) => {
           const lead = poll.totalVotes > 0 && option.votes === leading;
+          const picked = selected.includes(i);
           return (
-            <View
+            <Pressable
               key={i}
               accessible
-              accessibilityLabel={`${option.label}, ${percents[i]}%`}
-              className={cn('overflow-hidden rounded-lg border', tw.border)}
+              accessibilityRole="button"
+              accessibilityLabel={`${option.label}, ${percents[i]} percent${picked ? ', selected' : ''}`}
+              onPress={() => setSelected(current => poll.multiChoice ? (current.includes(i) ? current.filter(v => v !== i) : [...current, i]) : [i])}
+              className={cn('overflow-hidden rounded-lg border', tw.border, picked && 'border-yappr-500')}
             >
               <View
                 className={cn(
@@ -92,7 +97,7 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
                   {percents[i]}%
                 </Text>
               </View>
-            </View>
+            </Pressable>
           );
         })}
       </View>
@@ -100,7 +105,14 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
         <Text variant="caption" tone="secondary">
           {votes} · {end}
         </Text>
-        <LinkText label="Vote on yap.pr" variant="captionStrong" onPress={onVotePress} />
+        <Button
+          label={selected.length > 0 ? 'Save vote' : 'Withdraw vote'}
+          size="sm"
+          variant="outline"
+          accessibilityLabel={selected.length > 0 ? 'Save vote' : 'Withdraw vote'}
+          onPress={() => onVotePress?.(selected)}
+          disabled={!onVotePress || poll.endsAt !== null && poll.endsAt.getTime() <= now}
+        />
       </View>
     </View>
   );

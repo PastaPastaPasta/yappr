@@ -524,9 +524,9 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     expect(toastMessage()).toBe('Account ID copied');
 
     // Already has a name: another one.
-    expect(byId('account-register')).toHaveTextContent('Register another username on yap.pr');
+    expect(byId('account-register')).toHaveTextContent('Choose another username');
     fireEvent.press(byId('account-register'));
-    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/devnet/dpns/register');
+    expect(router.push).toHaveBeenCalledWith('/settings/username');
   });
 
   it('offers to register a username when there is none', async () => {
@@ -535,7 +535,7 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     await settle();
 
     expect(byId('account-no-username')).toBeTruthy();
-    expect(byId('account-register')).toHaveTextContent('Register a username on yap.pr');
+    expect(byId('account-register')).toHaveTextContent('Choose a username');
   });
 
   it('reads the balance again on open, quietly, with no refresh button', async () => {

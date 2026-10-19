@@ -4,12 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { router } from 'expo-router';
 import { Keyboard, View } from 'react-native';
 
-import { config } from '~/config';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { copy as authCopy } from '~/features/auth/copy';
-import { openExternal } from '~/features/post/post-navigation';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
 import { useBlockScreenCapture } from '~/ui/screen-capture';
@@ -187,13 +185,17 @@ function UnlockBody({
       {phase === 'no-key' ? (
         <View className="gap-4 pb-2">
           <Text variant="body" tone="secondary">
-            Set up messaging for this account on yap.pr, then come back to read and send messages here.
+            Messaging is unlocked by your DashPay wallet sign-in. Sign in again to provide this account&apos;s secure messaging key.
           </Text>
           <Button
-            label="Open yap.pr"
+            label="Sign in with DashPay"
             variant="outline"
             size="block"
-            onPress={() => openExternal(`${config.webBaseUrl}/messages`)}
+            onPress={() => {
+              onClose();
+              router.push('/sign-in/wallet');
+            }}
+            accessibilityLabel="Sign in with DashPay to unlock messaging"
           />
         </View>
       ) : null}

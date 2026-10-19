@@ -51,6 +51,7 @@ interface BlockArgs {
   targetId: string
   message?: string
 }
+interface BlockListFollowArgs { targetId: string }
 
 interface ReportArgs {
   target: TargetRef
@@ -127,6 +128,20 @@ export function createSafetyModule(tickets: TicketStore) {
       return fromTransitionResult(result)
     },
     probe: ownBlock(false),
+  })
+  tickets.register<BlockListFollowArgs>('block-list.follow', {
+    persistArgs: true,
+    async run({ targetId }, ctx) {
+      const result = await blockService.followUserBlocks(signer(ctx), targetId)
+      return result.success ? { state: 'confirmed' } : { state: 'failed', error: new Error(result.error ?? 'Could not follow this block list') }
+    },
+  })
+  tickets.register<BlockListFollowArgs>('block-list.unfollow', {
+    persistArgs: true,
+    async run({ targetId }, ctx) {
+      const result = await blockService.unfollowUserBlocks(signer(ctx), targetId)
+      return result.success ? { state: 'confirmed' } : { state: 'failed', error: new Error(result.error ?? 'Could not unfollow this block list') }
+    },
   })
   tickets.register<ReportArgs>('report', {
     persistArgs: true,
@@ -285,6 +300,24 @@ export function createSafetyModule(tickets: TicketStore) {
       } catch (error) {
         throw readFailure(error)
       }
+    },
+
+    /** The identities whose block lists this account follows. */
+    async followedBlockListIds(): Promise<string[]> {
+      return blockService.getBlockFollows(requireViewer('Block lists'))
+    },
+
+    async followBlockList(targetId: string): Promise<WriteTicket> {
+      assertId(targetId, 'targetId')
+      const viewer = requireViewer('Following a block list')
+      if (viewer === targetId) throw badRequest('You cannot follow your own blocks')
+      return tickets.submit<BlockListFollowArgs>({ op: 'block-list.follow', args: { targetId }, target: { identityId: targetId } })
+    },
+
+    async unfollowBlockList(targetId: string): Promise<WriteTicket> {
+      assertId(targetId, 'targetId')
+      requireViewer('Unfollowing a block list')
+      return tickets.submit<BlockListFollowArgs>({ op: 'block-list.unfollow', args: { targetId }, target: { identityId: targetId } })
     },
 
     /**

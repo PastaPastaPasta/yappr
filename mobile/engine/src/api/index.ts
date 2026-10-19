@@ -5,13 +5,14 @@ import { feed } from './feed'
 import { createDmModule } from './dm'
 import { createGraphWrites, graph } from './graph'
 import { createNotificationsModule } from './notifications'
-import { createPostWrites, posts } from './posts'
+import { createPollWrites, createPostWrites, posts } from './posts'
 import { createProfileWrites, profiles } from './profiles'
 import { createSafetyModule } from './safety'
 import { createMobileAuthController, createSessionModule, foregroundBalanceRefresh, type SessionEvents } from './session'
 import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
+import { createDpnsModule } from './dpns'
 
 /**
  * The engine API. The RN host imports `type EngineApi` only and calls it
@@ -22,6 +23,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
   const emit = runtime.emit ?? (() => undefined)
   setNoticeSink(notice => emit('engine.notice', notice))
   const tickets = createEngineTicketStore(emit)
+  const dpns = createDpnsModule(tickets)
   /** Shared by the session module, its controller and messages (`SessionModuleOptions.unhydrated`). */
   const unhydrated = new Set<string>()
   const dm = createDmModule({ emit, tickets, secureDurable: runtime.secureDurable, unhydrated })
@@ -50,7 +52,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     // A read whose proof names a quorum the SDK has no key for yet is retried inside lib's SDK wrapper
     // (lib/services/sdk-read-retry.ts); writes never are.
     feed,
-    posts: { ...posts, ...createPostWrites(tickets, emit) },
+    posts: { ...posts, ...createPostWrites(tickets, emit), ...createPollWrites(tickets) },
     engage: { ...engage, ...createEngageWrites(tickets) },
     profiles: { ...profiles, ...createProfileWrites(tickets) },
     session: createSessionModule({
@@ -71,6 +73,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     explore,
     safety: createSafetyModule(tickets),
     notifications: notifications.api,
+    dpns,
   }
 }
 

@@ -266,6 +266,14 @@ export interface PollDTO {
   myVotes?: number[] | null
 }
 
+/** DPNS availability plus the network's contested-name classification. */
+export interface DpnsAvailabilityDTO {
+  label: string
+  available: boolean
+  contested: boolean
+  error?: string
+}
+
 export interface TagDTO {
   /** Storage form: lowercase, no `#`/`$`; a cashtag ends in `_cashtag`. */
   tag: string
