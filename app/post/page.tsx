@@ -160,11 +160,10 @@ function PostDetailContent() {
             <h1 className="text-xl font-bold">Post</h1>
           </div>
         </PageHeader>
-
         {error && (
           <div role="alert" className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
             <p className="text-gray-500 mb-3">
-              {post ? 'Couldn’t refresh this thread. Try again.' : 'Couldn’t load this post. Try again.'}
+              {error.startsWith('Your reply') ? error : post ? 'Couldn’t refresh this thread. Try again.' : 'Couldn’t load this post. Try again.'}
             </p>
             <Button onClick={refresh} variant="outline" disabled={isLoading || isLoadingReplies}>
               Try again
@@ -257,7 +256,7 @@ function PostDetailContent() {
             )}
 
             <div className="divide-y divide-gray-200 dark:divide-gray-800">
-              {isLoadingReplies ? (
+              {isLoadingReplies && replyThreads.length === 0 ? (
                 <div className="p-6 text-center">
                   <Spinner size="sm" className="mx-auto mb-2" />
                   <p className="text-gray-500 text-sm">Loading replies...</p>

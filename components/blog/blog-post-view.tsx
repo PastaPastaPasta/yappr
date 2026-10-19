@@ -200,13 +200,13 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
           </h1>
 
           {summaryText && !summaryHidden && (
-            <p className="mt-2 text-lg" style={{ color: 'var(--blog-text)', opacity: 0.7 }}>
+            <p className="mt-2 text-lg" style={{ color: 'var(--blog-muted)' }}>
               {summaryText}
             </p>
           )}
 
           {commentsEnabled && (
-            <p className="mt-4 text-sm" style={{ color: 'var(--blog-text)', opacity: 0.6 }}>
+            <p className="mt-4 text-sm" style={{ color: 'var(--blog-muted)' }}>
               {commentCount} {commentCount === 1 ? 'comment' : 'comments'}
             </p>
           )}
@@ -218,7 +218,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
               <p className="truncate text-sm font-semibold" style={{ color: 'var(--blog-heading)' }}>
                 {blog.name}
               </p>
-              <p className="truncate text-xs" style={{ color: 'var(--blog-text)', opacity: 0.6 }}>
+              <p className="truncate text-xs" style={{ color: 'var(--blog-muted)' }}>
                 {authorHandle} · {relativeTime}
               </p>
             </div>
@@ -253,7 +253,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
             className="mt-4 flex items-center justify-between gap-3 border-y py-2.5"
             style={{ borderColor: 'var(--blog-border)' }}
           >
-            <div className="flex flex-wrap items-center gap-2 text-xs" style={{ color: 'var(--blog-text)', opacity: 0.6 }}>
+            <div className="flex flex-wrap items-center gap-2 text-xs" style={{ color: 'var(--blog-muted)' }}>
               <span>{readingTime} min read</span>
               {post.labels && (
                 <>
@@ -277,7 +277,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
                     className="rounded-full p-1.5 transition hover:bg-black/5 dark:hover:bg-white/10"
                     aria-label="More actions"
                   >
-                    <EllipsisHorizontalIcon className="h-5 w-5" style={{ color: 'var(--blog-text)', opacity: 0.6 }} />
+                    <EllipsisHorizontalIcon className="h-5 w-5" style={{ color: 'var(--blog-muted)' }} />
                   </button>
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>

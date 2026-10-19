@@ -999,14 +999,14 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /** Referenced-post screens need the bodies and enrichment together. */
-  async getPostsByIdsForDisplay(postIds: string[]): Promise<{ posts: Post[]; preloaded: PreloadedEnrichment }> {
+  async getPostsByIdsForDisplay(postIds: string[], options: { throwOnError?: boolean } = {}): Promise<{ posts: Post[]; preloaded: PreloadedEnrichment }> {
     const ids = Array.from(new Set(postIds.filter(Boolean)));
     const pages = await mapLimit(chunk(ids, 100), 2, async batch => {
       try {
         return await this.queryForDisplay({ where: [['$id', 'in', batch]], limit: batch.length });
       } catch (error) {
         logger.warn('Referenced post page failed; using cached/per-id recovery', error);
-        return { documents: await this.getMany(batch), preloaded: undefined };
+        return { documents: await this.getMany(batch, { throwOnError: options.throwOnError }), preloaded: undefined };
       }
     });
     const byId = new Map(pages.flatMap(page => page.documents).map(post => [post.id, post]));

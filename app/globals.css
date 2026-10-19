@@ -13,6 +13,9 @@
     --accent-text-hover: 7 89 133;
     --text-muted: 99 109 123;
     --text-secondary: 83 93 107;
+    --status-positive: 21 128 61;
+    --status-negative: 185 28 28;
+    --status-positive-fill: 21 128 61;
     --foreground: 222.2 84% 4.9%;
   }
 
@@ -22,6 +25,8 @@
     --accent-text-hover: 125 211 252;
     --text-muted: 189 189 189;
     --text-secondary: 163 163 163;
+    --status-positive: 134 239 172;
+    --status-negative: 252 165 165;
     --foreground: 210 40% 98%;
   }
 }
@@ -145,4 +150,13 @@
 .bn-editor[contenteditable="false"] [class*="bn-drag-handle"],
 .bn-editor[contenteditable="false"] [class*="bn-add-block"] {
   display: none !important;
+}
+/* Metadata follows the author's (or reader override's) full-contrast text. */
+.blog-theme-scope {
+  --blog-muted: var(--blog-text);
+}
+
+/* BlockNote gives quotes a fixed grey that ignores the blog's background. */
+.blog-theme-prose [data-content-type="quote"] blockquote {
+  color: var(--blog-text);
 }

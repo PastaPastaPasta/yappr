@@ -63,6 +63,35 @@ describe('DmEngine views', () => {
     expect(alice.getSnapshot().conversations[0].unread).toBe(1)
   })
 
+  it('keeps a sender-deleted conversation hidden when the same message gets its later chain timestamp (T-DM-002)', async () => {
+    const ledger = new MemoryLedger()
+    const kv = new MapKv()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV, kv))
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV))
+    const key = await alice.startDirect(bob58)
+    await alice.send(key, 'sent locally')
+    const sent = ledger.messages.at(-1)
+    if (!sent) throw new Error('Missing sent document')
+    // A local confirmed send has a provisional timestamp; the actual block is later.
+    sent.createdAt += 10_000
+    ledger.time += 4000
+    alice.hide(key)
+    expect(alice.getSnapshot().conversations[0].hidden).toBe(true)
+    await alice.flush()
+    const reloaded = await started(engine(ledger, ALICE_ID, ALICE_PRIV, kv))
+    expect(reloaded.getSnapshot().conversations[0].hidden).toBe(true)
+    await bob.tick()
+    await bob.send(await bob.startDirect(alice58), 'a genuinely newer message')
+    // The new peer message sorts before the hidden own message's chain time.
+    expect(ledger.messages.at(-1)?.createdAt).toBeLessThan(sent.createdAt)
+    await reloaded.tick()
+    expect(reloaded.getSnapshot().conversations[0].hidden).toBe(false)
+    reloaded.hide(key)
+    await reloaded.flush()
+    await reloaded.send(key, 'new own message')
+    expect(reloaded.getSnapshot().conversations[0].hidden).toBe(false)
+  })
+
   it('shows a draft only while it is open, and never writes until the first send', async () => {
     const ledger = new MemoryLedger()
     const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))

@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import * as RadioGroup from '@radix-ui/react-radio-group'
 import { StarIcon } from '@heroicons/react/24/outline'
-import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid'
 
 interface StarRatingInputProps {
   value: number
@@ -52,19 +51,11 @@ export function StarRatingInput({
               : 'cursor-pointer hover:scale-110'
           }`}
         >
-          {star <= displayRating ? (
-            <StarIconSolid
-              className={`${sizeClasses[size]} ${
-                hoverRating > 0
-                  ? 'text-yellow-300'
-                  : 'text-yellow-400'
-              }`}
-            />
-          ) : (
-            <StarIcon
-              className={`${sizeClasses[size]} text-gray-300 dark:text-gray-600`}
-            />
-          )}
+          <StarIcon
+            className={`${sizeClasses[size]} pointer-events-none ${star <= displayRating
+              ? `fill-current ${hoverRating > 0 ? 'text-yellow-300' : 'text-yellow-400'}`
+              : 'text-gray-300 dark:text-gray-600'}`}
+          />
         </RadioGroup.Item>
       ))}
     </RadioGroup.Root>

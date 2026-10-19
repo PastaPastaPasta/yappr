@@ -98,7 +98,7 @@ export function NewGroupDialog({ open, onOpenChange, viewerId, onCreate }: NewGr
           hint={`${picked.length + 1} of ${MAX_GROUP_MEMBERS} members, including you`}
         />
         <p className="text-xs text-gray-500 mb-4">
-          Each member gets the group key in a private message from you. Nobody outside the group can see who is in it.
+          Nobody outside the group can see who is in it.
         </p>
         <div className="flex gap-3">
           <Button type="button" variant="outline" className="flex-1" onClick={close}>Cancel</Button>

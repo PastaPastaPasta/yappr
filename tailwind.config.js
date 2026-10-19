@@ -8,6 +8,9 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        success: 'rgb(var(--status-positive) / <alpha-value>)',
+        danger: 'rgb(var(--status-negative) / <alpha-value>)',
+        'success-solid': 'rgb(var(--status-positive-fill) / <alpha-value>)',
         yappr: {
           50: '#f0f9ff',
           100: '#e0f2fe',

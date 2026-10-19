@@ -3,11 +3,10 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { X } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { Modal, ModalTitle } from '@/components/ui/modal'
 import { useAuth } from '@/contexts/auth-context'
 import { rememberUsernameSkip } from '@/lib/username-skip'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
-import { useSettingsStore } from '@/lib/store'
 import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 
 import { DpnsRegistrationWizard } from './registration-wizard'
@@ -31,7 +30,6 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
   const router = useRouter()
   const { user } = useAuth()
   const { reset } = useDpnsRegistration()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const currentIdentityId = customIdentityId || user?.identityId || ''
   // A wallet (App Connect) sign-in holds no key that can register names: that happens in the wallet.
@@ -57,50 +55,26 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
   const handleDismiss = onDismiss ?? onClose
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={handleDismiss}
-            className={`fixed inset-0 bg-black/50 z-50 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
-          />
+    <Modal open={isOpen} onOpenChange={(open) => { if (!open) handleDismiss() }}
+      className="p-8 max-w-md w-full max-h-[90vh] overflow-y-auto">
+      {/* Close button */}
+      <button
+        aria-label="Close"
+        onClick={handleDismiss}
+        className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+      >
+        <X className="w-5 h-5" />
+      </button>
 
-          {/* Modal */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 flex items-center justify-center z-50 px-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8 max-w-md w-full relative max-h-[90vh] overflow-y-auto">
-              {/* Close button */}
-              <button
-                aria-label="Close"
-                onClick={handleDismiss}
-                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+      <ModalTitle className="text-2xl justify-center mb-2">{hasExistingUsernames ? 'Add a username' : 'Choose a username'}</ModalTitle>
+      <p className="text-gray-600 dark:text-gray-400 text-center mb-6">
+        It&apos;s how people find and mention you. You can skip this and add one later.
+      </p>
 
-              <h1 className="text-2xl font-bold text-center mb-2">{hasExistingUsernames ? 'Add a username' : 'Choose a username'}</h1>
-              <p className="text-gray-600 dark:text-gray-400 text-center mb-6">
-                It&apos;s how people find and mention you. You can skip this and add one later.
-              </p>
-
-              {/* Registration Wizard */}
-              {walletSession
-                ? <WalletUsernameGuide onComplete={handleComplete} onSkip={handleSkip} additional={hasExistingUsernames} />
-                : <DpnsRegistrationWizard onComplete={handleComplete} onSkip={handleSkip} hasExistingUsernames={hasExistingUsernames} />}
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+      {/* Registration Wizard */}
+      {walletSession
+        ? <WalletUsernameGuide onComplete={handleComplete} onSkip={handleSkip} additional={hasExistingUsernames} />
+        : <DpnsRegistrationWizard onComplete={handleComplete} onSkip={handleSkip} hasExistingUsernames={hasExistingUsernames} />}
+    </Modal>
   )
 }

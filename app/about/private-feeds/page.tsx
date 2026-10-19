@@ -227,18 +227,18 @@ export default function PrivateFeedsPage() {
                   <tbody>
                     <tr>
                       <td className="p-3 border border-gray-200 dark:border-gray-700">Encrypt per-follower</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono text-red-600 dark:text-red-400">O(N)</td>
+                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono text-danger">O(N)</td>
                       <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">O(1)</td>
                     </tr>
                     <tr className="bg-gray-50 dark:bg-gray-900">
                       <td className="p-3 border border-gray-200 dark:border-gray-700">Share one key</td>
                       <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">O(1)</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono text-red-600 dark:text-red-400">O(N) or impossible</td>
+                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono text-danger">O(N) or impossible</td>
                     </tr>
                     <tr>
                       <td className="p-3 border border-gray-200 dark:border-gray-700">Re-encrypt on revoke</td>
                       <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono">O(1)</td>
-                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono text-red-600 dark:text-red-400">O(posts × N)</td>
+                      <td className="p-3 border border-gray-200 dark:border-gray-700 font-mono text-danger">O(posts × N)</td>
                     </tr>
                     <tr className="bg-green-50 dark:bg-green-950/30">
                       <td className="p-3 border border-gray-200 dark:border-gray-700 font-semibold text-green-700 dark:text-green-300">What we need</td>
@@ -368,10 +368,10 @@ export default function PrivateFeedsPage() {
 
                   {/* Leaf slots - Alice */}
                   <g transform="translate(60, 290)">
-                    <rect x="-28" y="-15" width="56" height="26" rx="5" className="fill-green-500 dark:fill-green-600" />
+                    <rect x="-28" y="-15" width="56" height="26" rx="5" className="fill-success-solid" />
                     <text x="0" y="3" textAnchor="middle" className="fill-white text-xs font-medium">Slot 1</text>
                   </g>
-                  <text x="60" y="315" textAnchor="middle" className="fill-green-600 dark:fill-green-400 text-xs font-medium">Alice</text>
+                  <text x="60" y="315" textAnchor="middle" className="fill-success text-xs font-medium">Alice</text>
 
                   {/* Leaf slots - empty */}
                   <g transform="translate(120, 290)">
@@ -444,7 +444,7 @@ export default function PrivateFeedsPage() {
 
                     {/* Slot 1 */}
                     <div className="flex items-center gap-4 relative pl-16">
-                      <div className="relative z-10 px-4 py-2 bg-green-500 dark:bg-green-600 text-white rounded-lg text-sm font-semibold min-w-[85px] text-center shadow-sm">
+                      <div className="relative z-10 px-4 py-2 bg-success-solid text-white rounded-lg text-sm font-semibold min-w-[85px] text-center shadow-sm">
                         Slot 1
                       </div>
                       <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
@@ -455,7 +455,7 @@ export default function PrivateFeedsPage() {
                   </div>
                 </div>
                 <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
-                  <p className="text-sm text-red-600 dark:text-red-400">
+                  <p className="text-sm text-danger">
                     <strong>Alice does NOT know:</strong> <span className="text-gray-600 dark:text-gray-400">Node B, Node D, Node E, etc. (these are on other followers&apos; paths)</span>
                   </p>
                 </div>
@@ -551,14 +551,14 @@ export default function PrivateFeedsPage() {
                   </p>
                   <div className="flex flex-col sm:flex-row gap-3 text-sm">
                     <div className="flex items-center gap-2 px-3 py-2 bg-green-50 dark:bg-green-950/30 rounded-lg border border-green-200 dark:border-green-800">
-                      <span className="text-green-600 dark:text-green-400 font-bold">✓</span>
+                      <span className="text-success font-bold">✓</span>
                       <span className="text-green-700 dark:text-green-300">CEK[5] → CEK[4] → CEK[3]</span>
-                      <span className="text-green-600/70 dark:text-green-400/70 text-xs">(CAN derive older)</span>
+                      <span className="text-success text-xs">(CAN derive older)</span>
                     </div>
                     <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 rounded-lg border border-red-200 dark:border-red-800">
-                      <span className="text-red-600 dark:text-red-400 font-bold">✗</span>
+                      <span className="text-danger font-bold">✗</span>
                       <span className="text-red-700 dark:text-red-300">CEK[3] → CEK[4] → CEK[5]</span>
-                      <span className="text-red-600/70 dark:text-red-400/70 text-xs">(CANNOT derive newer)</span>
+                      <span className="text-danger text-xs">(CANNOT derive newer)</span>
                     </div>
                   </div>
                 </div>
@@ -649,7 +649,7 @@ export default function PrivateFeedsPage() {
                       <rect x="-35" y="-14" width="70" height="28" rx="5" className="fill-red-100 dark:fill-red-900/50" />
                       <text x="0" y="4" textAnchor="middle" className="fill-red-700 dark:fill-red-300 text-xs font-medium">Alice (v1)</text>
                     </g>
-                    <text x="40" y="175" textAnchor="middle" className="fill-red-500 text-xs font-bold">↑ REVOKED</text>
+                    <text x="40" y="175" textAnchor="middle" className="fill-danger text-xs font-bold">↑ REVOKED</text>
 
                     {/* Bob */}
                     <g transform="translate(100, 148)">
@@ -669,7 +669,7 @@ export default function PrivateFeedsPage() {
                 <div className="p-5 bg-green-50 dark:bg-green-950/30 rounded-xl border border-green-200 dark:border-green-800">
                   <div className="text-center mb-4">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-green-700 dark:text-green-300">After Revoking Alice</h4>
-                    <p className="text-xs text-green-600/70 dark:text-green-400/70 mt-1">(Key generation 2)</p>
+                    <p className="text-xs text-success mt-1">(Key generation 2)</p>
                   </div>
                   <svg viewBox="0 0 280 180" className="w-full" style={{ maxHeight: '180px' }}>
                     {/* Lines */}
@@ -683,17 +683,17 @@ export default function PrivateFeedsPage() {
 
                     {/* Root - NEW */}
                     <g transform="translate(140, 22)">
-                      <rect x="-45" y="-12" width="90" height="26" rx="5" className="fill-green-500 dark:fill-green-600" />
+                      <rect x="-45" y="-12" width="90" height="26" rx="5" className="fill-success-solid" />
                       <text x="0" y="5" textAnchor="middle" className="fill-white text-xs font-semibold">Root (v2)</text>
                     </g>
-                    <text x="195" y="26" className="fill-green-600 dark:fill-green-400 text-xs font-medium">New!</text>
+                    <text x="195" y="26" className="fill-success text-xs font-medium">New!</text>
 
                     {/* Node 2 - NEW */}
                     <g transform="translate(70, 85)">
-                      <rect x="-45" y="-12" width="90" height="26" rx="5" className="fill-green-500 dark:fill-green-600" />
+                      <rect x="-45" y="-12" width="90" height="26" rx="5" className="fill-success-solid" />
                       <text x="0" y="5" textAnchor="middle" className="fill-white text-xs font-semibold">Node 2 (v2)</text>
                     </g>
-                    <text x="125" y="89" className="fill-green-600 dark:fill-green-400 text-xs font-medium">New!</text>
+                    <text x="125" y="89" className="fill-success text-xs font-medium">New!</text>
 
                     {/* Node 3 - Same */}
                     <g transform="translate(210, 85)">
@@ -705,9 +705,9 @@ export default function PrivateFeedsPage() {
                     {/* Alice - revoked */}
                     <g transform="translate(40, 148)">
                       <rect x="-35" y="-14" width="70" height="28" rx="5" className="fill-red-100 dark:fill-red-900/30" strokeDasharray="4,2" stroke="currentColor" strokeWidth="1" style={{ stroke: 'rgb(239 68 68 / 0.5)' }} />
-                      <text x="0" y="4" textAnchor="middle" className="fill-red-400 dark:fill-red-500 text-xs line-through">Alice (v1)</text>
+                      <text x="0" y="4" textAnchor="middle" className="fill-danger text-xs line-through">Alice (v1)</text>
                     </g>
-                    <text x="40" y="175" textAnchor="middle" className="fill-red-500 dark:fill-red-400 text-xs">Can&apos;t decrypt</text>
+                    <text x="40" y="175" textAnchor="middle" className="fill-danger text-xs">Can&apos;t decrypt</text>
 
                     {/* Bob */}
                     <g transform="translate(100, 148)">
@@ -789,7 +789,7 @@ export default function PrivateFeedsPage() {
                       <div className="flex-1 min-w-0">
                         <div className="text-sm">{item.content}</div>
                         <div className="text-xs text-gray-500 mt-1">
-                          → <span className="text-green-600 dark:text-green-400">{item.who}</span> can decrypt
+                          → <span className="text-success">{item.who}</span> can decrypt
                           {item.why && <span className="text-gray-400"> ({item.why})</span>}
                         </div>
                       </div>
@@ -799,7 +799,7 @@ export default function PrivateFeedsPage() {
                 <div className="px-4 py-3 bg-red-50 dark:bg-red-950/30 border-t border-gray-200 dark:border-gray-700">
                   <p className="text-sm text-red-700 dark:text-red-300">
                     <strong>Alice can read these packets, but can&apos;t decrypt ANY of them.</strong>
-                    <span className="text-red-600 dark:text-red-400"> She doesn&apos;t have Bob&apos;s leaf key, Node3, or the new versions.</span>
+                    <span className="text-danger"> She doesn&apos;t have Bob&apos;s leaf key, Node3, or the new versions.</span>
                   </p>
                 </div>
               </div>

@@ -407,7 +407,7 @@ function ItemDetailContent() {
 
             {/* Stock Status */}
             {(hasInventoryTracking || isOutOfStock) && (
-              <div className={`text-sm ${isOutOfStock ? 'text-red-500' : 'text-green-600'}`}>
+              <div className={`text-sm ${isOutOfStock ? 'text-danger' : 'text-success'}`}>
                 {isOutOfStock ? 'Out of stock' : `${currentStock} in stock`}
                 {quantityInCart > 0 && ` · ${quantityInCart} in your cart`}
               </div>

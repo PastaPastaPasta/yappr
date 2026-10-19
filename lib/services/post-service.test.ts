@@ -52,3 +52,23 @@ describe('a reply shown as a post (replyToPost)', () => {
     expect(post).toMatchObject({ targetKind: 'reply', rootOwnerId: 'o', ...encrypted })
   })
 })
+
+describe('strict bookmarked post hydration (T-SOC-02)', () => {
+  it('propagates fallback read failures rather than claiming a live target is absent', async () => {
+    const { postService } = await import('./post-service')
+    const query = vi.spyOn(postService, 'queryForDisplay').mockRejectedValue(new TypeError('Failed to fetch'))
+    const fallback = vi.spyOn(postService, 'getMany').mockImplementation(async (_ids, options) => {
+      if (options?.throwOnError) throw new TypeError('Failed to fetch')
+      return []
+    })
+    try {
+      await expect(postService.getPostsByIdsForDisplay(['saved'], { throwOnError: true })).rejects.toThrow('Failed to fetch')
+      expect(fallback).toHaveBeenCalledWith(['saved'], { throwOnError: true })
+      fallback.mockResolvedValue([])
+      await expect(postService.getPostsByIdsForDisplay(['gone'], { throwOnError: true })).resolves.toMatchObject({ posts: [] })
+    } finally {
+      query.mockRestore()
+      fallback.mockRestore()
+    }
+  })
+})

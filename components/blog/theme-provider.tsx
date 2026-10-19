@@ -92,8 +92,8 @@ function ThemeHeader({
           <h1 className="mt-1 text-3xl font-semibold leading-tight text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
             {headline}
           </h1>
-          {subline && <p className="mt-2 text-sm text-[var(--blog-text)]/80">{subline}</p>}
-          {meta && <div className="mt-3 text-sm text-[var(--blog-text)]/75">{meta}</div>}
+          {subline && <p className="mt-2 text-sm text-[var(--blog-muted)]">{subline}</p>}
+          {meta && <div className="mt-3 text-sm text-[var(--blog-muted)]">{meta}</div>}
         </div>
       </header>
     )
@@ -107,9 +107,9 @@ function ThemeHeader({
           <h1 className="mt-1 text-2xl font-semibold text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
             {headline}
           </h1>
-          {subline && <p className="mt-1 text-sm text-[var(--blog-text)]/90">{subline}</p>}
+          {subline && <p className="mt-1 text-sm text-[var(--blog-muted)]">{subline}</p>}
         </div>
-        {meta && <div className="border-t border-[var(--blog-border)] bg-[var(--blog-surface)] px-4 py-2 text-sm text-[var(--blog-text)]/80">{meta}</div>}
+        {meta && <div className="border-t border-[var(--blog-border)] bg-[var(--blog-surface)] px-4 py-2 text-sm text-[var(--blog-muted)]">{meta}</div>}
       </header>
     )
   }
@@ -126,8 +126,8 @@ function ThemeHeader({
         <h1 className="mt-1 text-3xl font-semibold text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
           {headline}
         </h1>
-        {subline && <p className="mt-2 max-w-3xl text-sm text-[var(--blog-text)]/85">{subline}</p>}
-        {meta && <div className="mt-3 text-sm text-[var(--blog-text)]/75">{meta}</div>}
+        {subline && <p className="mt-2 max-w-3xl text-sm text-[var(--blog-muted)]">{subline}</p>}
+        {meta && <div className="mt-3 text-sm text-[var(--blog-muted)]">{meta}</div>}
       </div>
     </header>
   )
@@ -218,7 +218,7 @@ export function BlogThemeProvider({
         {theme.layout === 'magazine' ? (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <div className="blog-theme-prose min-w-0" style={contentFontSize ? { fontSize: contentFontSize } : undefined}>{children}</div>
-            <aside className="h-fit rounded-xl border border-[var(--blog-border)] bg-[var(--blog-surface)] p-4 text-sm text-[var(--blog-text)]/85">
+            <aside className="h-fit rounded-xl border border-[var(--blog-border)] bg-[var(--blog-surface)] p-4 text-sm text-[var(--blog-muted)]">
               <h3 className="text-base font-semibold text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
                 About this blog
               </h3>

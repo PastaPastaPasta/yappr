@@ -611,6 +611,8 @@ export function InventoryTable({
                       <td className="px-3 py-3">
                         {hasVariants && (
                           <button
+                            aria-label={`${isExpanded ? "Hide" : "Show"} variants for ${item.title}`}
+                            aria-expanded={isExpanded}
                             onClick={() => toggleExpand(item.id)}
                             className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
                           >
@@ -702,6 +704,7 @@ export function InventoryTable({
                       <td className="px-3 py-3">
                         <div className="flex justify-end gap-1">
                           <button
+                            aria-label={`Edit ${item.title}`}
                             onClick={() => onEditItem(item)}
                             className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
                             title="Edit"
@@ -709,6 +712,7 @@ export function InventoryTable({
                             <PencilIcon className="h-4 w-4 text-gray-500" />
                           </button>
                           <button
+                            aria-label={`Delete ${item.title}`}
                             onClick={() => setDeleteItemId(item.id)}
                             className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded"
                             title="Delete"
