@@ -38,7 +38,7 @@ import {
 import { getYapprPublicKey } from '../../../../vendor/platform-auth/src/key-exchange/yappr-protocol'
 import { consensusCode, errorMessage } from '../errors'
 import type { Persona } from '../pool'
-import { appConnectDerivationTag, deriveAppConnectAuthKey, deriveAppConnectEncryptionKey } from './derive'
+import { appConnectDerivationTag, type AuthKeySource } from './derive'
 import { describeFaults, noFaults, type AppConnectFaults } from './faults'
 import type { ConnectionGrant, GrantStore, GrantedAuthKey, StoredRenewal, StoredResponse } from './state'
 
@@ -212,6 +212,11 @@ interface Plan {
   /** Granted bindings with their request positions. */
   auth: Array<{ binding: AppConnectAuthBinding; index: number }>
   enc: Array<{ binding: AppConnectEncBinding; index: number }>
+}
+
+/** What a grant record keeps of the request so its keys can be re-derived (hex). */
+function recordTags(plan: Plan): Pick<GrantedAuthKey, 'derivationTag' | 'appEphemeralPubKey'> {
+  return { derivationTag: bytesToHex(plan.derivationTag), appEphemeralPubKey: bytesToHex(plan.request.appEphemeralPubKey) }
 }
 
 interface Slot {
@@ -430,6 +435,14 @@ async function requireIdentityKeys(persona: Persona, ports: AppConnectPorts): Pr
   return keys
 }
 
+/** What re-derives a recorded grant key: the request's ephemeral key when the record has it, else its tag. */
+function recordedSource(key: Pick<GrantedAuthKey, 'derivationTag' | 'appEphemeralPubKey'>): AuthKeySource {
+  return {
+    derivationTag: hexToBytes(key.derivationTag),
+    ...(key.appEphemeralPubKey ? { appEphemeralPubKey: hexToBytes(key.appEphemeralPubKey) } : {}),
+  }
+}
+
 /**
  * The grant key's private key when it re-derives to `chainKey`: proof that
  * this wallet made that key for this grant. Undefined otherwise, including
@@ -437,12 +450,7 @@ async function requireIdentityKeys(persona: Persona, ports: AppConnectPorts): Pr
  */
 function rederiveGrantKey(persona: Persona, grantKey: GrantedAuthKey, chainKey: AppConnectIdentityKey): Uint8Array | undefined {
   try {
-    const privateKey = deriveAppConnectAuthKey(
-      persona.key('critical').privateKey,
-      persona.identityIdBytes,
-      hexToBytes(grantKey.derivationTag),
-      grantKey.bindingIndex,
-    )
+    const privateKey = persona.connect.authKey(recordedSource(grantKey), grantKey.bindingIndex)
     return bytesEqual(chainKey.data, getYapprPublicKey(privateKey)) ? privateKey : undefined
   } catch {
     return undefined
@@ -453,12 +461,7 @@ function rederiveGrantKey(persona: Persona, grantKey: GrantedAuthKey, chainKey: 
 function resolvePendingKeys(persona: Persona, grant: ConnectionGrant, chainKeys: AppConnectIdentityKey[]): GrantedAuthKey[] {
   return (grant.pending ?? []).flatMap((pending) => {
     try {
-      const privateKey = deriveAppConnectAuthKey(
-        persona.key('critical').privateKey,
-        persona.identityIdBytes,
-        hexToBytes(pending.derivationTag),
-        pending.bindingIndex,
-      )
+      const privateKey = persona.connect.authKey(recordedSource(pending), pending.bindingIndex)
       const publicKey = getYapprPublicKey(privateKey)
       const chainKey = chainKeys.find((key) => bytesEqual(key.data, publicKey))
       return chainKey ? [{ ...pending, keyId: chainKey.id }] : []
@@ -559,7 +562,7 @@ async function answerAs(
     const grant = record.connections[plan.connectionId] ?? { keys: [], grantedAt: new Date(plan.now).toISOString() }
     grant.pending = [
       ...(grant.pending ?? []),
-      ...pendingAuth.map(({ slot }) => ({ bindingIndex: slot.bindingIndex, derivationTag: bytesToHex(plan.derivationTag), bounds: slot.bounds })),
+      ...pendingAuth.map(({ slot }) => ({ bindingIndex: slot.bindingIndex, ...recordTags(plan), bounds: slot.bounds })),
     ]
     record.connections[plan.connectionId] = grant
     ports.grants.put(persona.identityId, plan.appId, record)
@@ -580,7 +583,7 @@ async function answerAs(
         .map((slot): GrantedAuthKey => ({
           keyId: slot.keyId!,
           bindingIndex: slot.bindingIndex,
-          derivationTag: bytesToHex(plan.derivationTag),
+          ...recordTags(plan),
           bounds: slot.bounds,
         })),
       grantedAt: new Date(plan.now).toISOString(),
@@ -626,10 +629,10 @@ function planAuthKeys(
   chainKeys: AppConnectIdentityKey[],
   toAdd: Array<{ slot: Slot; key: NewIdentityKey }>,
 ): Slot[] {
-  const baseKey = persona.key('critical').privateKey
+  const source: AuthKeySource = { appEphemeralPubKey: plan.request.appEphemeralPubKey, derivationTag: plan.derivationTag }
   const firstNonGroup = plan.auth.find(({ binding }) => binding.kind !== 'contractGroup')?.index
   return plan.auth.map(({ binding, index }) => {
-    const privateKey = deriveAppConnectAuthKey(baseKey, persona.identityIdBytes, plan.derivationTag, index)
+    const privateKey = persona.connect.authKey(source, index)
     const slot: Slot = { role: binding.kind, bindingIndex: index, privateKey }
     if (faults.unregisteredKey && index === 0) return slot
 
@@ -756,11 +759,11 @@ function renewalTarget(binding: AppConnectAuthBinding, key: AppConnectIdentityKe
 
 /**
  * Wallet rule 7: one encryption key per (identity, app), shared by every
- * device. Re-send the current key when this wallet derives it, at any
- * rotation (an operator may have registered a later one, e.g.
- * `scripts/verify-appconnect.mjs --restore-anchor-key`), register rotation 0
- * when there is none, and leave the slot out when another wallet made the
- * current one or rotation 0 was disabled. Never rotate.
+ * device, with dashwallet-ios #1210's states: re-send the current key when
+ * this wallet derives it (a legacy persona at any rotation an operator
+ * registered, e.g. `scripts/verify-appconnect.mjs --restore-anchor-key`),
+ * register rotation 0 when there is none, and leave the slot out when another
+ * wallet made the current one or rotation 0 was disabled. Never rotate.
  */
 async function prepareEncryptionKey(
   persona: Persona,
@@ -770,17 +773,16 @@ async function prepareEncryptionKey(
   chainKeys: AppConnectIdentityKey[],
   ports: AppConnectPorts,
 ): Promise<{ slot: Slot; register?: NewIdentityKey } | undefined> {
-  const derive = (rotation: number) =>
-    deriveAppConnectEncryptionKey(persona.key('critical').privateKey, persona.identityIdBytes, binding.contractId, binding.purpose, rotation)
-  const privateKey = derive(0)
+  // Rotation 0 first. A seeded persona holds rotation 0 only (#1210); a legacy one may hold later
+  // rotations an operator registered, each its own key added lowest first, so fewer exist than the keys it holds.
+  const held = persona.connect.encryptionKeys(binding.contractId, binding.purpose, chainKeys.length)
+  const privateKey = held[0]
   const publicKey = getYapprPublicKey(privateKey)
   const role: AppConnectSlotRole = binding.purpose === KeyPurpose.ENCRYPTION ? 'encryption' : 'decryption'
   const current = (await ports.contractKeys(persona.identityId, bs58.encode(binding.contractId), binding.purpose))
     .filter((key) => key.disabledAt === undefined)
 
-  // Each rotation is its own key on the identity, added lowest first, so fewer exist than the keys it holds.
-  for (let rotation = 0; current.length > 0 && rotation <= chainKeys.length; rotation++) {
-    const candidate = rotation === 0 ? privateKey : derive(rotation)
+  for (const candidate of current.length > 0 ? held : []) {
     const candidatePublicKey = getYapprPublicKey(candidate)
     const mine = current.find((key) => bytesEqual(key.data, candidatePublicKey))
     if (mine) return { slot: { role, bindingIndex: index, privateKey: candidate, keyId: mine.id } }
