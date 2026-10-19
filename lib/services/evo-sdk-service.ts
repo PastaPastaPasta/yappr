@@ -1,6 +1,7 @@
 import { logger } from '@/lib/logger';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
+import { rememberRegisteredContract } from '@/lib/registered-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
 import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
 import { profileBaseSource, profileExtensionSource } from '../profile/v10-profile';
@@ -68,6 +69,17 @@ function errorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+/**
+ * Records what each fetched contract declares (lib/registered-contracts.ts),
+ * so the app judges fees, windows and protection by the registered contract
+ * rather than the committed template.
+ */
+function rememberFetched(contracts: ReadonlyMap<string, unknown>): void {
+  for (const [id, contract] of contracts) {
+    if (contract && typeof contract === 'object') rememberRegisteredContract(id, contract as { schemas?: unknown; config?: unknown });
+  }
 }
 
 class EvoSdkService {
@@ -292,6 +304,7 @@ class EvoSdkService {
       return;
     }
 
+    rememberFetched(contracts);
     const missing = toFetch.filter(({ id }) => !contracts.get(id));
     logger.debug(`EvoSdkService: ${toFetch.length - missing.length}/${toFetch.length} contracts resolved`);
     for (const { id, name } of missing) {
@@ -329,6 +342,7 @@ class EvoSdkService {
         // accepted under older ones (a deployed contract can fail a rule added
         // since), and the fetch path skips it too; the snapshot is trusted.
         const contract = DataContract.fromBase64(entry.bytes, false, platformVersion);
+        rememberRegisteredContract(id, contract);
         if (await sdk.contracts.addKnown(contract)) seeded.add(id);
       } catch (error) {
         logger.warn(`EvoSdkService: bundled contract ${id} did not load, fetching it instead:`, error);
@@ -368,7 +382,7 @@ class EvoSdkService {
         }
         logger.info(`EvoSdkService: ${stale.length} bundled contract(s) are stale, refetching:`, stale);
         // The fetch replaces the seeded entries in the SDK's cache.
-        await getMany(stale);
+        rememberFetched(await getMany(stale));
       } catch (error) {
         // Nodes below the query's protocol version answer UNIMPLEMENTED; the
         // seeded contracts stay in use and the SDK's own staleness guard applies.

@@ -52,7 +52,7 @@ moderation or legal/entity/governing-law gates for the testnet release.
 | Behavior | Social v2 (testnet prod today) | Social v10 (bonsia) | Mainnet cut (Y2) | iOS 1.0 | Android 1.0 |
 | --- | --- | --- | --- | --- | --- |
 | YAPP charged to create post (10) / reply (3) / like (1) | **Required** by consensus | **Optional**; credits are the alternative | Optional | Credits only; no YAPP anywhere in the UI | Credits only |
-| Post / reply action fee (cap 80M / 16M credits, scaled by the fee multiplier; a seated charter may charge a share of it) | None | To a moderators pot; the **contract owner is the interim claimant** until a charter is seated | To a moderators pot that **only a seated charter can claim**; posting is closed until one is seated (`notYetUsable`) | Shown as "moderation fee (goes to elected moderators)", at the charged amount | Same |
+| Post / reply action fee (cap 20M / 10M credits on v17, D41; 80M / 16M before, scaled by the fee multiplier; a seated charter may charge a share of it) | None | To a moderators pot; the **contract owner is the interim claimant** until a charter is seated | To a moderators pot that **only a seated charter can claim**; posting is closed until one is seated (`notYetUsable`) | Shown as "moderation fee (goes to elected moderators)", at the charged amount | Same |
 | Buy YAPP with credits | Available | **Refused** (40721; YAPP is locked) | Refused | — | — |
 | YAPP starter grant | Contract-dependent | 100 per identity, once, CRITICAL claim | Same | Not surfaced | Not surfaced |
 | Tips on posts and replies | YAPP transfer | YAPP transfer **refused** (40711); web offers unprovable credit transfers | Proved credit tips (1.x design) | **Hidden** | 1.x |
@@ -70,8 +70,8 @@ moderation or legal/entity/governing-law gates for the testnet release.
     evonodes) are gas. Every Platform client pays them, and Yappr receives
     nothing. The UI calls these "network fee".
   - *Action fees.* `post` and `reply` declare
-    `actionFees: {pricing: feeMultiplier, create: {moderators: 80000000}}`
-    (16,000,000 for reply), paid into a moderators pot. On v10 the contract
+    `actionFees: {pricing: feeMultiplier, create: {moderators: 20000000}}`
+    (10,000,000 for reply; 80,000,000 and 16,000,000 before D41), paid into a moderators pot. On v10 the contract
     owner is the interim claimant, which on iOS would be a crypto payment to
     the developer to unlock posting.
   - **Settled (D5): the testnet and mainnet cuts use `interim: {"$type": "notYetUsable"}`** (bonsia keeps the owner as interim, for development only). The testnet release confirms this ([TESTNET_RELEASE.md](../TESTNET_RELEASE.md), D1): testnet uses 3600 s join and vote windows (mainnet needs at least 86400 s each), and the charters are filed in the block after registration, so posting opens about two hours later.
@@ -84,7 +84,7 @@ moderation or legal/entity/governing-law gates for the testnet release.
     **Yappr staff do not stand for the charter**, so no share of the pot can
     reach the developer through a seat either. Likes, follows and the other
     unmoderated types work from day one.
-  - **What the user pays.** The declared 80M / 16M credits are a cap, scaled
+  - **What the user pays.** The declared 20M / 10M credits (v17) are a cap, scaled
     by the current fee multiplier. A seated charter may charge only a
     `moderatorsShare` of it; the fee agreement must then match the charter's
     share (40139 otherwise). The compose cost line and the `TxBuilder` read

@@ -58,11 +58,21 @@ function yappCostCopy(): string {
  * remove at any age.
  */
 function settledRemovalCopy(): string {
-  const seconds = settledDeletionFor('post')?.windowSeconds
-  if (seconds === undefined) return ''
-  const blogToo = moderatedContract('blog').settledDeletionFor('blogPost')?.windowSeconds === seconds
+  const rule = settledDeletionFor('post')
+  if (!rule) return ''
+  const blogRule = moderatedContract('blog').settledDeletionFor('blogPost')
+  const blogToo = blogRule?.windowSeconds === rule.windowSeconds && blogRule.approvals === rule.approvals && blogRule.leaderRequired === rule.leaderRequired
   const what = blogToo ? 'a post, reply, blog post or blog comment' : 'a post or reply'
-  return ` Removing ${what} that is more than ${formatDuration(seconds)} old needs the team’s leader and two more moderators to agree.`
+  return ` Removing ${what} that is more than ${formatDuration(rule.windowSeconds)} old needs ${approversCopy(rule)} to agree.`
+}
+
+const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+
+/** Who must agree to a settled removal: "the team’s leader and one more moderator" for two approvals with the leader (D41). */
+function approversCopy({ approvals, leaderRequired }: { approvals: number; leaderRequired: boolean }): string {
+  const count = (n: number, noun: string) => `${COUNT_WORDS[n] ?? n} ${noun}${n === 1 ? '' : 's'}`
+  if (!leaderRequired) return `${count(approvals, 'moderator')} of the team`
+  return approvals <= 1 ? 'the team’s leader' : `the team’s leader and ${count(approvals - 1, 'more moderator')}`
 }
 
 export default function TermsPage() {

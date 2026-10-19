@@ -44,9 +44,6 @@ interface InventoryUploadModalProps {
 
 type UploadStep = 'select' | 'preview' | 'uploading' | 'complete'
 
-/** What one new listing pays into the fee pots on storefront v6 (null before v6). */
-const listingFeeCredits = storefrontCreateFeeCredits('storeItem')
-
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
 
 /** A product's message without the leading product name, which its row already shows. */
@@ -81,6 +78,8 @@ export function InventoryUploadModal({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const openerRef = useRef<HTMLElement | null>(null)
   const isUploadingRef = useRef(false)
+  /** What one new listing pays into the fee pots on storefront v6 (null before v6): the registered contract's, read at render, not at module load before the SDK has recorded it. */
+  const listingFeeCredits = storefrontCreateFeeCredits('storeItem')
   // Testnet registers the storefront `notYetUsable`: listings open with its first seated team (41200 before).
   const listingsOpen = useModeratedTypeOpen('storeItem', isOpen, 'storefront')
   const [step, setStep] = useState<UploadStep>('select')

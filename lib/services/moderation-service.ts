@@ -5,6 +5,7 @@ import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { keyNetwork } from '@/lib/constants';
 import { authorDeletesLeaveHoles, settledDeletionFor, type ElectedModerationDeclaration, type SettledDeletionRule } from '@/lib/contract-topology';
+import { registeredDeleteWindow, registeredOr, registeredOwnerProtected, registeredSettledRule, rememberRegisteredContract } from '@/lib/registered-contracts';
 import { documentNoun, moderatedContract, type ModeratedContract, type ModeratedContractKey } from '@/lib/moderated-contracts';
 import { storedTags } from '@/lib/post-helpers';
 import { matchIdentityKey } from '@/lib/crypto/keys';
@@ -204,24 +205,6 @@ export type DeletionPhase = 'open' | 'closing' | 'settled';
 
 /** How far block time may sit from this device's clock around a deletion window's end. */
 export const SETTLE_MARGIN_MS = 60_000;
-
-/**
- * Pure: each of `docTypes`' `moderatorAbilities.deleteWithin` (seconds, null
- * where it declares none) in a fetched contract's `schemas`, which carry it
- * as a bigint. A type the schemas lack is left out, so the template answers
- * for it; null when there are no schemas to read.
- */
-export function registeredDeleteWindowsOf(schemas: unknown, docTypes: readonly string[]): ReadonlyMap<string, number | null> | null {
-  if (!schemas || typeof schemas !== 'object') return null;
-  const windows = new Map<string, number | null>();
-  for (const docType of docTypes) {
-    const schema: unknown = (schemas as Record<string, unknown>)[docType];
-    if (!schema || typeof schema !== 'object') continue;
-    const declared = (schema as { moderatorAbilities?: { deleteWithin?: unknown } }).moderatorAbilities?.deleteWithin;
-    windows.set(docType, typeof declared === 'bigint' || typeof declared === 'number' ? Number(declared) : null);
-  }
-  return windows;
-}
 
 export function deletionPhase(windowSeconds: number | null, createdAtMs: number, now = Date.now()): DeletionPhase {
   if (windowSeconds === null || !Number.isFinite(createdAtMs)) return 'open';
@@ -650,12 +633,6 @@ class ModerationService {
    */
   private team: { promise: Promise<TeamRead>; at: number } | null = null;
   private static readonly TEAM_TTL_MS = 60_000;
-  /**
-   * The REGISTERED contract's single-moderator windows, from the latest team
-   * read; null until then, when the committed template answers. A window is
-   * fixed with its type, so it stays across {@link invalidateTeam}.
-   */
-  private registeredWindows: ReadonlyMap<string, number | null> | null = null;
   private standingCache = new Map<string, { standing: ModerationStanding; at: number }>();
   /** Standing rarely changes; a page of cards must not re-query it per card. */
   private static readonly STANDING_TTL_MS = 60_000;
@@ -726,12 +703,8 @@ class ModerationService {
           ? (await sdk.contracts.fetchWithProof(this.contract.contractId)).data
           : await sdk.contracts.fetch(this.contract.contractId);
         if (!contract) throw new Error(`${this.contract.label} contract not found`);
-        try {
-          this.registeredWindows = registeredDeleteWindowsOf(contract.schemas, this.contract.deletableTypes());
-        } catch (error) {
-          // A display and routing input only: the moderator checks must never fail on it.
-          logger.warn('moderationService: could not read the registered deletion windows', error);
-        }
+        // What the registered contract declares (windows, settled rules, owner protection); never throws.
+        rememberRegisteredContract(this.contract.contractId, contract);
         const moderators = contract.config.moderation?.moderators;
         const seated = moderators?.$type === 'elected' ? await this.seatedTeam(sdk, moderators.maxAddedModerators ?? 0) : null;
         const interim = moderators?.$type === 'elected' ? moderators.interim.$type as InterimKind : null;
@@ -840,13 +813,21 @@ class ModerationService {
    * once a team read has seen it, else the committed template's: a deployment
    * registered from an earlier cut of the same file (/staging's social v17 and
    * blog v9 carry 604800, the file 86400 since D39) keeps its own window.
-   * Only the window is read from the chain: whether a type settles at all and
-   * its rule (leader, approvals) stay the template's, which every current
-   * build shares with its registered contract.
+   * Whether a type is deleted by the team at all ({@link teamDeletesSettled})
+   * stays the template's, which every current build shares with its
+   * registered contract.
    */
   deleteWindowSeconds(kind: string): number | null {
-    const registered = this.registeredWindows?.get(kind);
-    return registered === undefined ? this.contract.deleteWindowSeconds(kind) : registered;
+    return registeredOr(registeredDeleteWindow(this.contract.contractId, kind), () => this.contract.deleteWindowSeconds(kind));
+  }
+
+  /**
+   * How a settled `kind` is removed (window, leader, approvals), from the
+   * registered contract once a team read has seen it, else the template:
+   * /staging and sakura registered three approvals, the files ask two since D41.
+   */
+  settledRule(kind: string): SettledDeletionRule | null {
+    return registeredOr(registeredSettledRule(this.contract.contractId, kind), () => this.contract.settledDeletionFor(kind));
   }
 
   /** Where a `kind` written at `createdAt` stands against its deletion window ({@link DeletionPhase}); always `open` before v11. */
@@ -874,10 +855,10 @@ class ModerationService {
     // The phase is judged by the registered window, so it is read first; a
     // failed read rejects (the caller offers a retry) rather than guess from
     // the template, which on /staging would send an open post to the team.
-    if (this.registeredWindows === null && this.contract.deleteWindowSeconds(kind) !== null) await this.readTeam();
+    if (registeredDeleteWindow(this.contract.contractId, kind) === undefined && this.contract.deleteWindowSeconds(kind) !== null) await this.readTeam();
     const phase = this.deletionPhaseOf(kind, createdAt, now);
     if (phase !== 'settled') return removalRouteFor(phase, null, null, viewerId);
-    const rule = this.contract.settledDeletionFor(kind);
+    const rule = this.settledRule(kind);
     return removalRouteFor(phase, rule, rule ? await this.getSeatedTeam() : null, viewerId);
   }
 
@@ -1026,7 +1007,7 @@ class ModerationService {
         ...(startAtActionId ? { startAtActionId, startAtActionIdIncluded: false } : {}),
         limit: TEAM_ACTIONS_PAGE,
       });
-      for (const entry of page.actions) actions.push(toTeamAction(entry, status, seated?.seats ?? null, (type) => this.contract.settledDeletionFor(type)));
+      for (const entry of page.actions) actions.push(toTeamAction(entry, status, seated?.seats ?? null, (type) => this.settledRule(type)));
       startAtActionId = page.nextStartAtActionId;
       if (!startAtActionId) return { actions, truncated: false };
       if (actions.length >= max) return { actions, truncated: true };
@@ -1228,7 +1209,7 @@ class ModerationService {
       dropSnapshot(kind, documentId);
       snapshotSaved = false;
     }
-    if (result.errorCode === 'DELETE_WINDOW_ELAPSED' && this.contract.settledDeletionFor(kind)) {
+    if (result.errorCode === 'DELETE_WINDOW_ELAPSED' && this.settledRule(kind)) {
       return { ...result, error: `${result.error}. Only the seated moderation team can remove it now, together.`, snapshotSaved };
     }
     if (result.errorCode === 'MAYBE_APPLIED') {
@@ -1287,7 +1268,7 @@ class ModerationService {
     documentId: string,
     reason: ModerationReasonInput
   ): Promise<ModerationResult & { actionId?: string; status?: ContractTeamActionStatus }> {
-    if (!this.canRemove(kind) || !this.contract.settledDeletionFor(kind)) {
+    if (!this.canRemove(kind) || !this.settledRule(kind)) {
       return { success: false, error: MODERATION_ERROR_MESSAGES.NOT_SETTLED_DELETABLE, errorCode: 'NOT_SETTLED_DELETABLE' };
     }
     if (!reason.reasonDocumentId) {
@@ -1369,7 +1350,9 @@ class ModerationService {
   async getProtectedIdentities(): Promise<Set<string>> {
     const team = await this.getTeam();
     if (!team) return new Set();
-    return protectedIdentities(team, this.contract.elected()?.ownerProtected === true);
+    // The registered declaration's protection (D41 registers it off; /staging's set keeps it on).
+    const ownerProtected = registeredOr(registeredOwnerProtected(this.contract.contractId), () => this.contract.elected()?.ownerProtected === true);
+    return protectedIdentities(team, ownerProtected);
   }
 
   /**

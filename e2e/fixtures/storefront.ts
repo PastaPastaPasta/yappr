@@ -1,7 +1,7 @@
 /**
  * Storefront v7 chain fixtures for the write specs: the seller's store and a
  * variant listing, created in Node with the action fees the app agrees to
- * (`store` 1,000M, `storeItem` 50M), so a spec signs in the browser only what
+ * (the file's `store` and `storeItem` fees), so a spec signs in the browser only what
  * it asserts. Nothing here logs key material.
  */
 import { readFileSync } from 'node:fs'

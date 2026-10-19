@@ -96,7 +96,7 @@ vi.stubGlobal('localStorage', {
 
 import {
   SETTLE_MARGIN_MS, countedSigners, deletionPhase, missingDocumentState, moderationService, neededApprovals, protectedIdentities, teamActionTargetState,
-  moderatedTypeOpenFor, postedOnLabel, registeredDeleteWindowsOf, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
+  moderatedTypeOpenFor, postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
 } from './moderation-service'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
@@ -761,15 +761,6 @@ describe('settled documents (v11 deleteWithin + deleteSettled)', () => {
     await expect(moderationService.getSeatedTeam()).resolves.toEqual({ leaderId: LEADER, members: [MEMBER], electedMembers: [MEMBER], seats: 12 })
   })
 
-  it('reads each type\'s registered window off the fetched schemas (bigints), leaving out what they lack', () => {
-    const schemas = {
-      post: { moderatorAbilities: { delete: true, deleteWithin: BigInt(86400) } },
-      reply: { moderatorAbilities: { delete: true } },
-    }
-    expect(registeredDeleteWindowsOf(schemas, ['post', 'reply', 'report'])).toEqual(new Map([['post', 86400], ['reply', null]]))
-    expect(registeredDeleteWindowsOf(undefined, ['post'])).toBeNull()
-  })
-
   it('judges the phase by the REGISTERED window, not the committed template, in either direction', async () => {
     topology.v11 = true
     const DAY_MS = 86_400_000
@@ -809,6 +800,37 @@ describe('settled documents (v11 deleteWithin + deleteSettled)', () => {
       await moderationService.getTeam()
     }
     expect(moderationService.deleteWindowSeconds('post')).toBe(604800)
+  })
+
+  it('takes the settled rule and owner protection from the REGISTERED contract (D41 files: two approvals, owner unprotected)', async () => {
+    topology.v11 = true
+    const DAY_MS = 86_400_000
+    const registered = (approvals: bigint | null, ownerProtected: boolean) => ({
+      ownerId: { toBase58: () => OWNER },
+      config: { moderation: { moderators: { ...elected({ $type: 'contractOwner' }), maxAddedModerators: 10, ownerProtected } } },
+      ...(approvals === null ? {} : {
+        schemas: Object.fromEntries(['post', 'reply'].map((type) => [type, { moderatorAbilities: { delete: true, deleteWithin: BigInt(604800), deleteSettled: { leader: true, approvals } } }])),
+      }),
+    })
+    sdk.moderationCharters.team.mockResolvedValue({
+      leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }, { toBase58: () => APPOINTED }], electedMembers: [{ toBase58: () => MEMBER }, { toBase58: () => APPOINTED }], seats: () => 3, free: vi.fn(),
+    })
+    try {
+      // The template (the mocked topology) asks three approvals and protects the owner.
+      sdk.contracts.fetch.mockResolvedValue(registered(BigInt(2), false))
+      expect(await moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 10 * DAY_MS)).toMatchObject({ route: 'team', needed: 2, leaderRequired: true })
+      expect(moderationService.settledRule('reply')).toEqual({ windowSeconds: 604800, leaderRequired: true, approvals: 2 })
+      expect(await moderationService.getProtectedIdentities()).toEqual(new Set([LEADER, MEMBER, APPOINTED]))
+      // /staging's set: three approvals, the owner protected.
+      sdk.contracts.fetch.mockResolvedValue(registered(BigInt(3), true))
+      moderationService.invalidateTeam()
+      expect(await moderationService.getProtectedIdentities()).toEqual(new Set([LEADER, MEMBER, APPOINTED, OWNER]))
+      expect(moderationService.settledRule('post')?.approvals).toBe(3)
+    } finally {
+      sdk.contracts.fetch.mockResolvedValue(registered(null, true))
+      moderationService.invalidateTeam()
+      await moderationService.getTeam()
+    }
   })
 
   it('counts only the signers still on the team', () => {

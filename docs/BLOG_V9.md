@@ -43,7 +43,7 @@ needed by `postOwnerAndTime`'s derived `$ownerId`.
 Both types mirror social v17's post/reply rule:
 
 ```json
-{"delete": true, "deleteWithin": 86400, "deleteSettled": {"leader": true, "approvals": 3}}
+{"delete": true, "deleteWithin": 86400, "deleteSettled": {"leader": true, "approvals": 2}}
 ```
 
 Recorded removals stay enabled (the same default as social).
@@ -52,7 +52,7 @@ Recorded removals stay enabled (the same default as social).
 and index fields to this contract. Content is not retained in those records.
 For a day after its last change (D39; 604,800 s before 2026-10-19) content can be
 removed by one moderator; settled content requires
-three approvals including the elected leader. The interim cannot delete
+two approvals including the elected leader (D41; three before 2026-10-19). The interim cannot delete
 settled content. Author comment deletion and post tombstones stay as before.
 
 The per-contract moderation descriptor reads the window and team rule from

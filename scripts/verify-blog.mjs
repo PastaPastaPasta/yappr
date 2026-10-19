@@ -569,17 +569,17 @@ function selfTestV7() {
     ['amended v9 keeps the exact hasBody refusal for a missing blog', missingBlogProbe(blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost')))?.expect.test('A document of type "blogPost" breaks its propertyConstraints rule "hasBody": it does not hold') && !missingBlogProbe(blogConstraintProbes(refusedCreates(CONTRACT_FILE, 'blogPost')))?.expect.test('JsonSchemaError: "blogId" is a required property | code=10101')],
     ['author management and cleanup have independent owner indexes', JSON.stringify(index('blogPost', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"live":"asc"},{"$createdAt":"asc"}]' && JSON.stringify(index('blogComment', 'ownerAndTime')?.properties) === '[{"$ownerId":"asc"},{"$createdAt":"asc"}]'],
     ['only tombstones may omit blogId after parent deletion', !SCHEMAS.blogPost.required.includes('blogId') && SCHEMAS.blogPost.propertyConstraints.hasBody.anyOf[1].allOf.some((rule) => rule.present === 'blogId')],
-    ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
+    ['moderation is elected, seats contestable, the owner unprotected (D41), interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === false && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (comments cost no YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
-    ['blog and blogPost creates declare an 80M moderators fee', fee('blog') === 80_000_000n && fee('blogPost') === 80_000_000n],
-    ['blogComment creates declare a 16M moderators fee', fee('blogComment') === 16_000_000n],
+    ['blog and blogPost creates declare 500M and 20M moderators fees (D41)', fee('blog') === 500_000_000n && fee('blogPost') === 20_000_000n],
+    ['blogComment creates declare a 10M moderators fee (D41)', fee('blogComment') === 10_000_000n],
     ['blog owners may delete their blog; every reference to it admits deletion',
       SCHEMAS.blog.canBeDeleted === true && [SCHEMAS.blogPost.properties.blogId, SCHEMAS.blogFollow.properties.blogId, SCHEMAS.report.properties.blogId].every((p) => p.refersTo.type === 'deletableDocument')],
-    ['posts and comments mirror social settled deletion: 1 day (D39), leader and three approvals, recorded removals',
+    ['posts and comments mirror social settled deletion: 1 day (D39), two approvals with the leader (D41), recorded removals',
       ['blogPost', 'blogComment'].every((name) => {
         const a = SCHEMAS[name].moderatorAbilities;
         return a.delete === true && a.deleteWithin === 86400 && a.deleteKeepsRecord !== false
-          && a.deleteSettled.leader === true && a.deleteSettled.approvals === 3;
+          && a.deleteSettled.leader === true && a.deleteSettled.approvals === 2;
       })],
     ['removal records keep the parent and creation time',
       JSON.stringify(SCHEMAS.blogPost.moderatorAbilities.deleteKeepsFields) === '["blogId","$createdAt"]'
@@ -592,9 +592,9 @@ function selfTestV7() {
     ['blogPost requires publishedAt (a draft stays on the device) and carries live: const true, frozen unless tombstoned (v9)',
       SCHEMAS.blogPost.required.includes('publishedAt') && SCHEMAS.blogPost.properties.live?.const === true && !SCHEMAS.blogPost.required.includes('live')
       && SCHEMAS.blogPost.immutable.some((entry) => entry.property === 'live' && JSON.stringify(entry.when) === '{"absent":"deleted"}')],
-    ['report is a moderated type: one target, a note for "something else", withdrawn only while pending, resolved through status/resolution, a 50M moderators action fee (v9)',
+    ['report is a moderated type: one target, a note for "something else", withdrawn only while pending, resolved through status/resolution, a 20M moderators action fee (v9, D41)',
       Object.keys(SCHEMAS.report?.propertyConstraints ?? {}).sort().join() === DECLARED_RULES[CONTRACT_FILE].report.slice().sort().join()
-      && JSON.stringify(SCHEMAS.report.deleteConstraints) === '{"pending":{"absent":"status"}}' && SCHEMAS.report.ttl === 7_776_000 && fee('report') === 50_000_000n
+      && JSON.stringify(SCHEMAS.report.deleteConstraints) === '{"pending":{"absent":"status"}}' && SCHEMAS.report.ttl === 7_776_000 && fee('report') === 20_000_000n
       && JSON.stringify(SCHEMAS.report.moderatorAbilities?.changeFields) === '["status","resolution"]'
       && JSON.stringify(moderators.moderatedDocumentTypes?.report) === '["deleteDocuments","changeDocumentFields"]'],
     ['the unused following/count-only indexes stay gone',

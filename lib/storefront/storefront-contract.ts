@@ -11,8 +11,9 @@
  * every check here is a no-op on them.
  */
 import storefrontContract from '@/contracts/yappr-storefront-contract.json'
-import { STOREFRONT_TOPOLOGY, storefrontIsV6, storefrontVariantsAreTyped } from '@/lib/constants'
+import { STOREFRONT_TOPOLOGY, YAPPR_STOREFRONT_CONTRACT_ID, storefrontIsV6, storefrontVariantsAreTyped } from '@/lib/constants'
 import { actionFeeOf, type ActionFeeDeclaration, type DocumentAction } from '@/lib/contract-topology'
+import { registeredActionFee, registeredOr } from '@/lib/registered-contracts'
 import type { OrderPayload } from '@/lib/types'
 
 interface PropertySchema {
@@ -92,7 +93,9 @@ export function itemImageLimit(): number {
  * action but a `store`, `storeItem`, `storeReview` or `itemReview` create).
  */
 export function storefrontActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
-  return storefrontIsV6() ? actionFeeOf(schemas[docType]?.actionFees, action) : null
+  if (!storefrontIsV6()) return null
+  // The registered contract's fee once recorded: /staging's and sakura's storefront predate D41's fees.
+  return registeredOr(registeredActionFee(YAPPR_STOREFRONT_CONTRACT_ID, docType, action), () => actionFeeOf(schemas[docType]?.actionFees, action))
 }
 
 /** The credits a v6 create of `docType` pays into the fee pots at a 1.0x multiplier, or null when it is free. */

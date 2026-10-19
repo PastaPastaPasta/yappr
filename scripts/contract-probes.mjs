@@ -1408,7 +1408,7 @@ const PROBES = [
       && d.blogPost.canBeDeleted === false && d.blogComment.properties.blogPostId.refersTo.type === 'moderatedDocument'
       && ['blogPost', 'blogComment'].every((name) => d[name].moderatorAbilities.deleteWithin === 86400
         && d[name].moderatorAbilities.deleteKeepsRecord !== false
-        && JSON.stringify(d[name].moderatorAbilities.deleteSettled) === '{"leader":true,"approvals":3}');
+        && JSON.stringify(d[name].moderatorAbilities.deleteSettled) === '{"leader":true,"approvals":2}');
   } },
   { label: 'blog v9: moderatedDocument cannot target an author-deletable blog', file: BLOG, expect: 'audit', node: '40143', mutate: (s) => { types(s).blogPost.properties.blogId.refersTo.type = 'moderatedDocument'; } },
   { label: 'blog v9: the live marker required on blogPost (the listings\' skipIfAbsent could never skip a tombstone)', file: BLOG, expect: 'wasm', why: /none of its properties is optional/i, mutate: (s) => { types(s).blogPost.required.push('live'); } },

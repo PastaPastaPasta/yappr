@@ -125,9 +125,9 @@ class ReportService {
   }
 
   /**
-   * File a report. On v13 a report pays the contract's moderators action fee
-   * (50M credits), which the create agrees to from the contract JSON
-   * (`declaredActionFee('report', 'create')`).
+   * File a report. From v13 a report pays the contract's moderators action fee
+   * (50M credits; 20M on v17, D41), which the create agrees to from the
+   * registered contract, else the contract JSON (`declaredActionFee('report', 'create')`).
    */
   async fileReport(reporterId: string, input: ReportInput): Promise<StateTransitionResult> {
     if (!contractTakesReports()) return { success: false, error: 'This contract takes no reports' };

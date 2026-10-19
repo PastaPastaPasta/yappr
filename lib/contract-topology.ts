@@ -37,6 +37,7 @@ import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { storedTags } from './post-helpers'
+import { registeredActionFee, registeredOr, settledRuleOf } from './registered-contracts'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -1889,11 +1890,11 @@ export interface SettledDeletionRule {
 }
 
 /**
- * The settled-deletion rule of `docType` (post and reply: a week on v11–v16,
- * a day on v17 (D39), then the leader plus two members) as the committed
- * file declares it; a registered contract may differ, so the moderation
- * service reads the window it judges by from the chain. Null when
- * moderators may delete it at any
+ * The settled-deletion rule of `docType` as the committed file declares it
+ * (post and reply: a week, then the leader plus two members on v11–v16; a
+ * day (D39), then the leader plus one (D41) on v17). A registered contract
+ * may differ, so the moderation service reads the rule it judges by from the
+ * chain. Null when moderators may delete it at any
  * age (no `deleteWithin`) or nobody may delete it once settled (no
  * `deleteSettled`). Past the window a single moderator's delete is refused
  * (41116); the team proposes (`moderatorDeleteSettledDocument`, the proposal
@@ -1902,13 +1903,7 @@ export interface SettledDeletionRule {
  * deletion can never be restored (41209).
  */
 export function settledDeletionFor(docType: string): SettledDeletionRule | null {
-  const abilities = moderatorAbilitiesFor(docType)
-  if (!abilities?.delete || abilities.deleteWithin === undefined || !abilities.deleteSettled) return null
-  return {
-    windowSeconds: abilities.deleteWithin,
-    leaderRequired: abilities.deleteSettled.leader === true,
-    approvals: abilities.deleteSettled.approvals ?? 1,
-  }
+  return settledRuleOf(moderatorAbilitiesFor(docType))
 }
 
 /**
@@ -1943,10 +1938,15 @@ export function tokenCostFor(docType: string): TokenCostDeclaration | null {
  * builds `$actionFeeAgreement` from exactly these numbers: a different owner
  * or moderators amount, or the other pricing, is a 40133 rejection, and no
  * agreement at all is 40132.
+ *
+ * The REGISTERED contract's fee wins once the SDK has recorded it
+ * (lib/registered-contracts.ts): /staging and sakura (/devnet) registered
+ * before D41 lowered the fees, and agreeing to the file's amount there would
+ * be refused (40133).
  */
 export function declaredActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
   if (!isDevnetCut()) return null
-  return actionFeeOf(devnetSchemas()[docType]?.actionFees, action)
+  return registeredOr(registeredActionFee(YAPPR_CONTRACT_ID, docType, action), () => actionFeeOf(devnetSchemas()[docType]?.actionFees, action))
 }
 
 /** A doctype's declared `actionFees` (any contract's JSON) for `action`, or null when it charges nothing. */

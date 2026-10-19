@@ -1216,16 +1216,18 @@ async function selfTest() {
   // ---- What a create CARRIES: the action fee agreement and YAPP vs credits ----
   const postFee = actionFeeFor('post');
   const replyFee = actionFeeFor('reply');
-  check('the action fees come off the committed contract JSON (80M post / 16M reply, moderators only)',
-    postFee?.moderators === 80_000_000n && postFee.owner === 0n && postFee.pricing === 'feeMultiplier' &&
-      replyFee?.moderators === 16_000_000n && replyFee.owner === 0n,
+  // v17 (D41) lowers the moderators' fees to 20M / 10M; the cuts before it declare 80M / 16M.
+  const [postModerators, replyModerators] = SOCIAL_SHAPES.cut.privateFeeds ? [20_000_000n, 10_000_000n] : [80_000_000n, 16_000_000n];
+  check(`the action fees come off the committed contract JSON (${postModerators / 1_000_000n}M post / ${replyModerators / 1_000_000n}M reply, moderators only)`,
+    postFee?.moderators === postModerators && postFee.owner === 0n && postFee.pricing === 'feeMultiplier' &&
+      replyFee?.moderators === replyModerators && replyFee.owner === 0n,
     `post=${postFee?.moderators} reply=${replyFee?.moderators}`);
   check('nothing but post and reply charges an action fee',
     ['like', 'likeReply', 'follow', 'bookmark', 'yapprProfile'].every((docType) => actionFeeFor(docType) === null));
 
   const agreed = actionFeeAgreementOptions(postFee, 1000n);
   check('the agreement names the exact declared amounts, each pot on its own, plus the known multiplier',
-    agreed.owner === 0n && agreed.moderators === 80_000_000n &&
+    agreed.owner === 0n && agreed.moderators === postModerators &&
       agreed.feeMultiplier.knownPermille === 1000n && agreed.feeMultiplier.increaseTolerancePercent === 20,
     JSON.stringify(agreed, (_k, v) => (typeof v === 'bigint' ? String(v) : v)));
   check('a fixed-priced fee names NO multiplier (naming one is the same 40133)',
@@ -1241,7 +1243,7 @@ async function selfTest() {
   // live post create is refused 40132.
   const builtAgreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions(postFee, 1000n));
   check('the constructed DocumentActionFeeAgreement carries the amounts, pricing and tolerance it was given',
-    builtAgreement.moderators === 80_000_000n && builtAgreement.owner === 0n &&
+    builtAgreement.moderators === postModerators && builtAgreement.owner === 0n &&
       builtAgreement.pricing === 'feeMultiplier' && builtAgreement.knownFeeMultiplierPermille === 1000n &&
       builtAgreement.feeMultiplierIncreaseTolerancePercent === 20,
     `${builtAgreement.pricing} ${builtAgreement.moderators} @${builtAgreement.knownFeeMultiplierPermille}permille`);
