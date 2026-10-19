@@ -5,6 +5,8 @@ import { storeService } from '@/lib/services/store-service'
 import type { ItemVariants, Store, StoreItem, StoreReview, ItemReview, StoreStatus, StoreItemStatus } from '@/types/store'
 import { requireViewer } from '../dto/hydrate'
 
+export type { ItemVariants, Store, StoreItem, StoreReview, ItemReview, StoreStatus, StoreItemStatus } from '@/types/store'
+
 /** Storefront DTOs deliberately mirror lib's parsed models; dates and typed arrays cross the RPC codec safely. */
 export interface StoreQuery { sort?: 'newest' | 'topRated' | 'mostOrdered'; limit?: number }
 export interface StoreItemQuery { storeId: string; cursor?: string; activeOnly?: boolean; limit?: number }

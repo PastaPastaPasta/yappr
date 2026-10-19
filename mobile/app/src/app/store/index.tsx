@@ -8,7 +8,6 @@ import { queryKeys } from '~/data/keys'
 import { Screen } from '~/ui/Screen'
 import { Text } from '~/ui/Text'
 import { Card } from '~/ui/Card'
-import { tw } from '~/ui/tokens'
 
 export default function StoreDirectory() {
   const [refreshing, setRefreshing] = useState(false)
