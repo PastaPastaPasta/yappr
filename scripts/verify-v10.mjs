@@ -385,7 +385,7 @@ import { cleanTestContent } from './test-content-cleanup.mjs';
 import { envValue } from './sdk-env.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
 import { withInterim } from './register-lib.mjs';
-import { parseElectionDelay, parseElectionWindows, withElectionDelay, withElectionWindows } from './registration-policy.mjs';
+import { parseChallengeCoolDown, parseElectionDelay, parseElectionWindows, withChallengeCoolDown, withElectionDelay, withElectionWindows } from './registration-policy.mjs';
 
 const CONTRACT_FILE = takeFlag('--contract-file', 'contracts/yappr-social-contract-v10.json');
 const V10 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
@@ -393,11 +393,14 @@ const electionWindowsFlag = takeFlag('--election-windows', null);
 const electionWindows = electionWindowsFlag === null ? null : parseElectionWindows(electionWindowsFlag);
 if (electionWindowsFlag !== null && !electionWindows) throw new Error('--election-windows needs <joinSeconds>,<voteSeconds>');
 const electionDelayFlag = takeFlag('--election-delay', null);
+const challengeCoolDownFlag = takeFlag('--challenge-cool-down', null);
+const challengeCoolDown = challengeCoolDownFlag === null ? null : parseChallengeCoolDown(challengeCoolDownFlag);
+if (challengeCoolDownFlag !== null && challengeCoolDown === null) throw new Error('--challenge-cool-down must be between 1209600 and 94608000 seconds');
 const electionDelay = electionDelayFlag === null ? null : parseElectionDelay(electionDelayFlag);
 if (electionDelayFlag !== null && electionDelay === null) throw new Error('--election-delay needs nonnegative seconds');
-const expectedModerators = withElectionDelay(withElectionWindows(withInterim(V10.config, {
+const expectedModerators = withChallengeCoolDown(withElectionDelay(withElectionWindows(withInterim(V10.config, {
   interim: takeFlag('--interim', undefined),
-}), electionWindows), electionDelay).moderation.moderators;
+}), electionWindows), electionDelay), challengeCoolDown).moderation.moderators;
 const CONTRACT_NAME = CONTRACT_FILE.replace(/^.*\//, '');
 /** Every document this battery writes, built for the cut the file declares (v13: live, rootOwnerId, media arrays…). */
 const SOCIAL = socialShapes(V10);

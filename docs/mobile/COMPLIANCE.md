@@ -74,7 +74,7 @@ moderation or legal/entity/governing-law gates for the testnet release.
     (16,000,000 for reply), paid into a moderators pot. On v10 the contract
     owner is the interim claimant, which on iOS would be a crypto payment to
     the developer to unlock posting.
-  - **Settled (D5): the testnet and mainnet cuts use `interim: {"$type": "notYetUsable"}`** (bonsia keeps the owner as interim, for development only). The testnet release confirms this ([TESTNET_RELEASE.md](../TESTNET_RELEASE.md), D1): testnet uses 3600 s join and vote windows (mainnet needs at least 86400 s each), and the charters are filed after the registration block plus the D40 delay, so posting opens about two hours later.
+  - **Settled (D5): the testnet and mainnet cuts use `interim: {"$type": "notYetUsable"}`** (bonsia keeps the owner as interim, for development only). The testnet release confirms this ([TESTNET_RELEASE.md](../TESTNET_RELEASE.md), D1): testnet uses 3600 s join and vote windows (mainnet needs at least 86400 s each), and the charters are filed after the registration block plus the D41 delay, so posting opens about two days later.
     Until an elected charter is seated, every transition on a moderated type
     (post, reply, report, `yapprProfile`) is refused with 41200, and nobody can
     claim the pot (`ContractFeeClaimNotAllowedError`); it accumulates for the

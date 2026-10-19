@@ -114,7 +114,7 @@ Prerequisites:
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --maker <makerId> --start-nonce <N>
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --start-nonce <N>   # devnet maker from .env.devnet
 NETWORK=testnet node scripts/register-app-connect-contracts.mjs --plan --maker <makerId> --start-nonce <N> \
-  --interim notYetUsable --election-windows 3600,3600 --election-delay 3600              # testnet (D1 + D40)
+  --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600              # testnet (D41)
 
 # 2. Read-only against the network: the maker's nonce (N defaults to chain nonce + 1), and that no
 #    contract of the set and not the group exists yet
@@ -129,7 +129,7 @@ NETWORK=devnet node scripts/register-app-connect-contracts.mjs --signed-dry-run
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal <ops-dir>/appconnect-<network>.json
 #    On testnet, every setting explicit:
 NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --journal <0700 ops-dir>/appconnect-testnet.json \
-  --maker <makerId> --maker-key-file <0600 key file> --maker-key-id <n> --interim notYetUsable --election-windows 3600,3600 --election-delay 3600
+  --maker <makerId> --maker-key-file <0600 key file> --maker-key-id <n> --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600
 
 # 5. Prove it
 NETWORK=devnet node scripts/verify-appconnect.mjs --contract <APP_ID> --group <GROUP_ID> --owner <maker> --members <ids>

@@ -13,7 +13,7 @@ import { MODERATION_CHARTERS_CONTRACT_ID, contestEndFromPolls, contestVotePoll, 
 const target = bs58.encode(new Uint8Array(32).fill(9));
 const leader = bs58.encode(new Uint8Array(32).fill(1));
 const reasonA = bs58.encode(new Uint8Array(32).fill(2));
-const registered = { moderators: { $type: 'elected', joinWindow: 3600, voteWindow: 3600,
+const registered = { moderators: { $type: 'elected', joinWindow: 86400, voteWindow: 86400,
   interim: { $type: 'notYetUsable' }, seatContestable: true, challengeCoolDown: 7200,
   moderatedDocumentTypes: { post: ['delete'] }, maxAddedModerators: 5, ownerProtected: true } };
 
@@ -183,8 +183,8 @@ describe('getStatus reports failed reads instead of passing them off as empty', 
       vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v16');
       await moderationElectionService.getStatus(target);
       const query = sdk.voting.votePollsByEndDate.mock.calls[0][0];
-      // Registered 1h/1h windows, regardless of the committed 7d/3d template.
-      expect(query).toMatchObject({ endTimeMs: now + 7_200_000 + 600_000, endTimeIncluded: true, orderAscending: true });
+      // Registered 1d/1d windows, regardless of the committed 7d/3d template.
+      expect(query).toMatchObject({ endTimeMs: now + 172_800_000 + 600_000, endTimeIncluded: true, orderAscending: true });
       expect(query).not.toHaveProperty('startTimeMs');
     } finally {
       clock.mockRestore();
@@ -199,7 +199,7 @@ describe('registered election declarations', () => {
     sdk.contracts.fetch.mockResolvedValue({ config: { moderation: registered }, free: vi.fn() });
     const status = await moderationElectionService.getStatus(contractId);
     expect(sdk.contracts.fetch).toHaveBeenCalledWith(contractId);
-    expect(status?.declaration).toMatchObject({ joinWindowSeconds: 3600, voteWindowSeconds: 3600,
+    expect(status?.declaration).toMatchObject({ joinWindowSeconds: 86400, voteWindowSeconds: 86400,
       interim: 'notYetUsable', challengeCoolDownSeconds: 7200, maxAddedModerators: 5 });
   });
 
@@ -222,7 +222,7 @@ describe('registered election declarations', () => {
 });
 
 describe('electionView', () => {
-  const base = { declaration: {} as never, targetContractId: target, proposals: [], contest: null, seated: null, seatedReasons: [], failures: [] as never[] };
+  const base = { declaration: {} as never, targetContractId: target, proposals: [], contest: null, seated: null, seatedReasons: [], failures: [] as never[], electionOpensAtMs: null, chainTimeMs: null };
   it('states "No election yet" only when every read succeeded', async () => {
     const { electionView } = await import('./moderation-election-service');
     expect(electionView({ ...base }, false)).toEqual({ phase: 'No election yet', error: null, emptyStateKnown: true });

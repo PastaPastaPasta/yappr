@@ -32,8 +32,8 @@ All decisions are the owner's, made on 2026-10-16. Where an item says "taken as 
 Once a contract is registered, the shape of its existing document types cannot change. Updates are owner-only and additive.
 
 - **D1, moderation interim and election windows.** Social, blog and storefront register with the interim set to `notYetUsable`, the same mechanics as mainnet. Nobody can post or claim the moderation pot until an elected team is seated.
-  - Testnet uses its own election windows: join 3600 s and vote 3600 s. The first charter also waits **3600 s after the contract creation block** (`electionDelay`), so posting opens about two hours after registration for an uncontested team, or about three hours if contested.
-  - Mainnet provisionally uses `electionDelay: 604800` (one week), marked TBD: the owner must confirm the final value before release. The registration plan prints this warning and requires the explicit flag.
+  - Testnet uses its own election windows: join 86400 s and vote 86400 s. The first charter also waits **86400 s after the contract creation block** (`electionDelay`), so posting opens about two days after registration for an uncontested team, or about three days if contested.
+  - Mainnet uses `electionDelay: 259200` (three days) with one-week join and vote windows.
 - **D3, YAPP authorities.** Manual mint, manual burn, freeze, unfreeze and destroy-frozen-funds are all set to `noOne`. YAPP supply comes only from the 100-YAPP once-per-identity claim. YAPP is non-transferable and bans already stop spending, so the owner needs none of these powers. The "Mainnet TODO" line at `lib/constants.ts:24` is removed if it concerns this.
 - **D4, sponsorship.** Unchanged: post, reply, like and like-reply cost 10, 3, 1 and 1 YAPP with gas paid by the contract owner, and no size changes are made for this purpose. Storage refunds going to the document owner is by design in rc.3. Exposure is bounded at roughly 74 to 132¢ per identity because the 100-YAPP grant cannot be topped up. The maker balance is monitored.
 - **D5, settled deletion.** Post and reply keep `leader: true, approvals: 3`. The owner extended the same seven-day window and settled rule to blog posts and comments on 2026-10-17; storefront stays unchanged. Yappr's charters always elect the leader plus at least two members, so three approvals is reachable.
@@ -168,7 +168,7 @@ Example manifest (`social-charter.json`; repeat with the other target names and 
   "targetContractId": "<predicted-social-contract-id>",
   "expected": {
     "ownerId": "<registration-maker-id>",
-    "joinWindow": 3600, "voteWindow": 3600, "challengeCoolDown": 2592000,
+    "joinWindow": 86400, "voteWindow": 86400, "challengeCoolDown": 2592000,
     "interim": "notYetUsable",
     "documentTypes": ["post", "reply", "report", "yapprProfile"]
   },
@@ -399,7 +399,7 @@ See [SAKURA_RELEASE_REHEARSAL.md](SAKURA_RELEASE_REHEARSAL.md) for the exact dev
 - The election opens with the **earliest** eligible application, including a rival's. Derive deadlines from proved election state rather than the intended team's local submission clock. Three competing release elections each use 3600 s join + 3600 s vote; a single-contender rehearsal would not exercise the full contested path.
 - Preserve private charter-bound keys for reused identities. A pre-existing join/decryption key requires its retained private half, checked against the proved public key. When identity-update readback lags, resume the same journal to adopt its exact saved key; do not clear uncertain transitions or generate replacement nonces.
 - Keep the CI mnemonic/id pool separate from the deployment battery pool. The key/id preflight must run before broadcasts. Keep the CI fixture with no messaging key intact.
-- Run the social battery with the same `--interim notYetUsable --election-windows 3600,3600 --election-delay 3600` overrides used for registration. Interim-owner moderation cases skip under that policy and after seating. Run r2 with a seated `--team-member persona:<n>` and a listed `--reason-doc`; blog/storefront batteries also need the listed reason id and must wait for seating (their moderation cases do not skip under `notYetUsable`).
+- Run the social battery with the same `--interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600` overrides used for registration. Interim-owner moderation cases skip under that policy and after seating. Run r2 with a seated `--team-member persona:<n>` and a listed `--reason-doc`; blog/storefront batteries also need the listed reason id and must wait for seating (their moderation cases do not skip under `notYetUsable`).
 - For snapshot pruning, explicitly include the App Connect anchor and verify the resulting eight release members plus DashPay. Verify every `id:version` pin, including the passkey vault, and source-check the env file to catch malformed comments.
 - Pollr v8 preserves v7's ballot fields and indexes while removing both poll listing indexes. The seeder accepts both and fetches polls by id. Use the reusable throwaway-contract pattern for batteries, because ballots cannot be deleted and polls with any ballot cannot be removed.
 - The accelerated settled-team proof uses a separate v17-derived contract with a 90-second delete window. It does not change or prove the passage of the actual seven-day release window; actual release r2 and elected moderation checks remain separate gates.

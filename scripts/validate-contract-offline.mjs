@@ -53,7 +53,7 @@ import { readFileSync } from 'node:fs';
 import { DataContract, DataContractCreateTransition, Document, PlatformVersion, documentCreateCost, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as NodeRulesPlatformVersion } from '@dashevo/wasm-dpp2';
 import { contractSource, registrationJson, renderModeration, withInterim } from './register-lib.mjs';
-import { parseElectionDelay, withElectionDelay } from './registration-policy.mjs';
+import { parseChallengeCoolDown, parseElectionDelay, withChallengeCoolDown, withElectionDelay } from './registration-policy.mjs';
 import { CREATE_TRANSITION_BUDGET, STATE_TRANSITION_CAP, auditNodeRules, createTransitionSize, metaSchemaProblems, runContractProbes } from './contract-probes.mjs';
 import { runConstraintCases } from './property-constraint-cases.mjs';
 
@@ -91,10 +91,15 @@ function parseArgs(argv) {
   const rawDelay = delayEquals ? delayEquals.slice('--election-delay='.length) : delayIndex === -1 ? undefined : argv[delayIndex + 1];
   const electionDelay = rawDelay === undefined ? undefined : parseElectionDelay(rawDelay);
   if (delayEquals || delayIndex !== -1) if (electionDelay === null) throw new Error('--election-delay takes nonnegative seconds');
-  const valueIndexes = new Set([flagIndex, networkIndex, interimIndex, delayIndex].filter((index) => index !== -1).map((index) => index + 1));
+  const coolIndex = argv.indexOf('--challenge-cool-down');
+  const coolEquals = argv.find((arg) => arg.startsWith('--challenge-cool-down='));
+  const rawCool = coolEquals ? coolEquals.slice('--challenge-cool-down='.length) : coolIndex === -1 ? undefined : argv[coolIndex + 1];
+  const challengeCoolDown = rawCool === undefined ? undefined : parseChallengeCoolDown(rawCool);
+  if (coolEquals || coolIndex !== -1) if (challengeCoolDown === null) throw new Error('--challenge-cool-down must be between 1209600 and 94608000 seconds');
+  const valueIndexes = new Set([flagIndex, networkIndex, interimIndex, delayIndex, coolIndex] .filter((index) => index !== -1).map((index) => index + 1));
   const file = argv.find((arg, index) => !arg.startsWith('--') && !valueIndexes.has(index));
   if (!file && !probes && !constraints) throw new Error('usage: node scripts/validate-contract-offline.mjs <contract.json> [--network n] [--interim kind] [--immutable a,b] [--cost] | --probes | --constraints');
-  return { file, immutable, probes, constraints, cost, strictSize, network, interim, electionDelay };
+  return { file, immutable, probes, constraints, cost, strictSize, network, interim, electionDelay, challengeCoolDown };
 }
 
 /**
@@ -102,9 +107,9 @@ function parseArgs(argv) {
  * schemas, config (file or default, with the network's elected interim, see
  * `withInterim`), tokens.
  */
-function loadContractSource(file, { network, interim, electionDelay } = {}) {
+function loadContractSource(file, { network, interim, electionDelay, challengeCoolDown } = {}) {
   const source = contractSource(readFileSync(file, 'utf8').replaceAll(`"${SOCIAL_PLACEHOLDER}"`, JSON.stringify(SOCIAL_STAND_IN)));
-  return { ...source, config: withElectionDelay(withInterim(source.config, { network, interim }), electionDelay) };
+  return { ...source, config: withChallengeCoolDown(withElectionDelay(withInterim(source.config, { network, interim }), electionDelay), challengeCoolDown) };
 }
 
 /** The JSON the registration scripts publish, under placeholder ids. */
@@ -139,8 +144,8 @@ const describeReference = (reference) => {
   return `${reference.type} ${reference.documentType}${foreign}${findBy}${where}`;
 };
 
-function validateFile(file, { immutable, strictSize, network, interim, electionDelay }) {
-  const declared = loadContractSource(file, { network, interim, electionDelay });
+function validateFile(file, { immutable, strictSize, network, interim, electionDelay, challengeCoolDown }) {
+  const declared = loadContractSource(file, { network, interim, electionDelay, challengeCoolDown });
   const source = { ...declared, config: withElectionDelay(withInterim(declared.config, { network, interim }), electionDelay) };
   const platformVersion = PlatformVersion.latest();
   const contract = parseContract(source, platformVersion);
@@ -319,9 +324,9 @@ function printWriteCosts(contract, source, platformVersion) {
 async function main() {
   // The wasm modules back every class below; nothing works before they load.
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
-  const { file, immutable, probes, constraints, cost, strictSize, network, interim, electionDelay } = parseArgs(process.argv.slice(2));
+  const { file, immutable, probes, constraints, cost, strictSize, network, interim, electionDelay, challengeCoolDown } = parseArgs(process.argv.slice(2));
   if (file) {
-    const { contract, source } = validateFile(file, { immutable, strictSize, network, interim, electionDelay });
+    const { contract, source } = validateFile(file, { immutable, strictSize, network, interim, electionDelay, challengeCoolDown });
     if (cost) printCosts(contract, source);
   }
   if (probes) {

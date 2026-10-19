@@ -4,7 +4,7 @@ This is the D36 rehearsal on Dash **testnet**, chain `dash-testnet-51`, using Pl
 
 ## Registered set
 
-Maker: `At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF`. Group: `ePtSmVdSqxJESyegxxRGcS7CwznyWSAn2FULYow8Dks`. Every member is version 1. The proved initial maker nonce was 0; registration consumed nonces 1–8. Plan, unsigned dry run and signed dry run preceded the journaled live registration with `--interim notYetUsable --election-windows 3600,3600 --election-delay 3600`. Lesson: the first charter cannot be filed until the registration block plus the one-hour D40 delay; read the chain block time before filing.
+Maker: `At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF`. Group: `ePtSmVdSqxJESyegxxRGcS7CwznyWSAn2FULYow8Dks`. Every member is version 1. The proved initial maker nonce was 0; registration consumed nonces 1–8. Plan, unsigned dry run and signed dry run preceded the journaled live registration with `--interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600`. Lesson: the first charter cannot be filed until the registration block plus the one-day D41 delay; read the chain block time before filing.
 
 | Member | ID | Nonce | Inclusion H | Credits | Reference ¢ |
 |---|---|---:|---:|---:|---:|
@@ -39,7 +39,7 @@ All three sole contenders seated without masternode votes. Readback proved each 
 
 Exact-hash RPC matches for all24 charter document transactions give **1,142,402,420 credits (68.54¢)** in fees, excluding bound-key identity updates. Three applications committed **150,000,000,000 credits (9,000¢; 1.5tDASH)** as contest principal, separate from those fees. All32 registration/charter lookups matched successful transactions.
 
-The registered join/vote windows remain 3600/3600 seconds. A sole contender finishes at join close, then seats in a following block; the second hour is needed when another contender enters. Testnet's sparse block production delayed the latter two seats until the next block. An earlier short-window throwaway proof also seated with zero votes at block 632604 (18:13:44.428). No masternode keys were used.
+The registered join/vote windows are 86400/86400 seconds. A sole contender finishes at join close, then seats in a following block; an additional day is needed when another contender enters. Testnet's sparse block production delayed the latter two seats until the next block. An earlier short-window throwaway proof also seated with zero votes at block 632604 (18:13:44.428). No masternode keys were used.
 
 | Battery | PASS | FAIL | SKIP | Result |
 |---|---:|---:|---:|---|
