@@ -782,12 +782,12 @@ async function prepareEncryptionKey(
   const current = (await ports.contractKeys(persona.identityId, bs58.encode(binding.contractId), binding.purpose))
     .filter((key) => key.disabledAt === undefined)
 
-  for (const candidate of current.length > 0 ? held : []) {
-    const candidatePublicKey = getYapprPublicKey(candidate)
-    const mine = current.find((key) => bytesEqual(key.data, candidatePublicKey))
-    if (mine) return { slot: { role, bindingIndex: index, privateKey: candidate, keyId: mine.id } }
-  }
   if (current.length > 0) {
+    for (const candidate of held) {
+      const candidatePublicKey = getYapprPublicKey(candidate)
+      const mine = current.find((key) => bytesEqual(key.data, candidatePublicKey))
+      if (mine) return { slot: { role, bindingIndex: index, privateKey: candidate, keyId: mine.id } }
+    }
     ports.log(`persona ${persona.personaIdx}: the ${role} key for app ${plan.appId} was made by another wallet; slot omitted`)
     return undefined
   }

@@ -12,7 +12,6 @@ import { normalizeRecoveryPhrase } from '@/lib/crypto/dip13'
 import {
   INVALID_PHRASE,
   openRecoveryPhrase,
-  PhraseSignInCancelled,
   PhraseSignInError,
   preparePhraseSession,
   type OpenedPhrase,
@@ -97,13 +96,10 @@ export function RecoveryPhraseForm({ onComplete }: { onComplete: () => void }) {
     if (!wallet) return
     setPhase({ kind: 'signing-in' })
     try {
-      const cancelled = () => !alive.current
-      const session = await preparePhraseSession(wallet, account, cancelled).catch((failure: unknown) => {
-        if (failure instanceof PhraseSignInCancelled) return null
-        throw failure
-      })
-      if (!session || cancelled()) {
-        session?.messagingKey?.privateKey.fill(0)
+      // A dialog closed mid-sign-in makes preparePhraseSession throw PhraseSignInCancelled, which `fail` ignores once not alive.
+      const session = await preparePhraseSession(wallet, account, () => !alive.current)
+      if (!alive.current) {
+        session.messagingKey?.privateKey.fill(0)
         return
       }
       await loginWithRecoveryPhrase(session, since.current)

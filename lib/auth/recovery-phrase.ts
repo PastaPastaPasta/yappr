@@ -6,8 +6,8 @@
  * phrase typed here and the same phrase in a wallet treat an account alike.
  */
 import { bytesEqual, normalizeBytes } from '@/lib/bytes'
-import { hash160 } from '@/lib/crypto/hash'
 import { findAnchorEncryptionKey, type EncryptionKeyCandidate } from '@/lib/crypto/encryption-key-lookup'
+import { hash160 } from '@/lib/crypto/hash'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { toKeyInfo, type IdentityKeyLike } from '@/lib/crypto/keys'
 import type { Dip13Key } from '@/lib/crypto/dip13'
@@ -82,16 +82,13 @@ export function phraseMessagingState(
   identityKeys: readonly EncryptionKeyCandidate[],
   anchorId: string,
 ): PhraseMessagingState {
+  const isPhraseKey = (candidate: EncryptionKeyCandidate): boolean => {
+    const data = normalizeBytes(candidate.data)
+    return data !== null && bytesEqual(data, derivedPublicKey)
+  }
   if (current) return bytesEqual(current, derivedPublicKey) ? 'current' : 'another-wallet'
   // The current-key read can lag the identity: its newest live anchor key decides then, as in #1210.
   const newest = findAnchorEncryptionKey([...identityKeys], anchorId)
-  if (newest) {
-    const data = normalizeBytes(newest.data)
-    return data !== null && bytesEqual(data, derivedPublicKey) ? 'current' : 'another-wallet'
-  }
-  const onIdentity = identityKeys.some((key) => {
-    const data = normalizeBytes(key.data)
-    return data !== null && bytesEqual(data, derivedPublicKey)
-  })
-  return onIdentity ? 'another-wallet' : 'absent'
+  if (newest) return isPhraseKey(newest) ? 'current' : 'another-wallet'
+  return identityKeys.some(isPhraseKey) ? 'another-wallet' : 'absent'
 }

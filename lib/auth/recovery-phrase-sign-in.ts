@@ -17,6 +17,7 @@
 import bs58 from 'bs58'
 import { messagingAnchorId } from '@/lib/app-connect/config'
 import { keyNetwork } from '@/lib/constants'
+import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { hash160 } from '@/lib/crypto/hash'
 import {
   appEncryptionKeyPath,
@@ -39,7 +40,6 @@ import {
   type AnchorKeyState,
   type MessagingKeyDraft,
 } from '@/lib/services/messaging-key-service'
-import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { masterKey, phraseKeys, phraseMessagingState, sessionKey, type PhraseKey } from './recovery-phrase'
 
 /** Identity indexes probed at most, whatever the gaps (a bound on the lookups one phrase can cause). */
@@ -71,7 +71,7 @@ export class PhraseSignInError extends Error {
 }
 
 /** The sign-in was abandoned (its dialog closed) before anything was written. */
-export class PhraseSignInCancelled extends Error {}
+class PhraseSignInCancelled extends Error {}
 
 /**
  * Opens `phrase` (normalized) and finds its identities on this network.
