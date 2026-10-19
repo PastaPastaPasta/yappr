@@ -4,6 +4,7 @@ import { defineConfig } from 'vite'
 const fromHere = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 const mocks = fromHere('./private-feed-mocks.ts')
 const blogEditorMocks = fromHere('./blog-editor-mocks.ts')
+const passkeyMocks = fromHere('./passkey-mocks.ts')
 
 export default defineConfig({
   root: fromHere('./'),
@@ -24,6 +25,7 @@ export default defineConfig({
       { find: /^@\/hooks\/use-image-upload$/, replacement: blogEditorMocks },
       { find: /^@\/components\/ui\/profile-image-upload$/, replacement: fromHere('./blog-management-mocks.tsx') },
       { find: /^@\/components\/moderation\/barred-writer-notice$/, replacement: fromHere('./blog-management-mocks.tsx') },
+      { find: /^@\/lib\/auth\/passkey-vault$/, replacement: passkeyMocks },
       { find: '@', replacement: fromHere('../../') },
     ],
     dedupe: ['react', 'react-dom'],

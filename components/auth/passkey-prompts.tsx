@@ -140,6 +140,49 @@ type EnrolStep =
 
 const ENROL_BUTTON: Partial<Record<EnrolStep['kind'], string>> = { creating: 'Waiting for your passkey…', saving: 'Saving…' }
 
+type ProgressState = 'todo' | 'active' | 'done'
+
+/** Where each of the two passkey prompts stands; only the steps before anything is sent show it. */
+const ENROL_PROGRESS: Partial<Record<EnrolStep['kind'], [ProgressState, ProgressState]>> = {
+  intro: ['todo', 'todo'],
+  creating: ['active', 'todo'],
+  confirm: ['done', 'todo'],
+  saving: ['done', 'active'],
+}
+
+function ProgressRow({ state, number, label, doneLabel, current }: { state: ProgressState; number: number; label: string; doneLabel: string; current: boolean }) {
+  return (
+    <li
+      className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm ${current ? 'bg-yappr-500/10 ring-1 ring-yappr-500/40 text-gray-900 dark:text-white font-medium' : 'text-gray-600 dark:text-gray-400'}`}
+      aria-current={current ? 'step' : undefined}
+    >
+      {state === 'done' ? (
+        <CheckCircleIcon className="h-5 w-5 shrink-0 text-green-500" aria-hidden="true" />
+      ) : state === 'active' ? (
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center"><Spinner size="sm" /></span>
+      ) : (
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full ring-1 ring-current text-xs" aria-hidden="true">{number}</span>
+      )}
+      <span className={state === 'done' ? 'text-green-700 dark:text-green-400' : undefined}>{state === 'done' ? doneLabel : label}</span>
+    </li>
+  )
+}
+
+/**
+ * The two prompts a passkey takes: the first makes it, the second lets it
+ * encrypt the sign-in. Shown from the start so the second prompt is expected,
+ * and ticked off as each one finishes so the dialog visibly moves on.
+ */
+function EnrolProgress({ states }: { states: [ProgressState, ProgressState] }) {
+  const [create, save] = states
+  return (
+    <ol className="space-y-2 mb-5" aria-live="polite" data-testid="passkey-progress">
+      <ProgressRow state={create} number={1} label="Create your passkey" doneLabel="Passkey created" current={create !== 'done'} />
+      <ProgressRow state={save} number={2} label="Confirm it to save your sign-in" doneLabel="Sign-in saved" current={create === 'done'} />
+    </ol>
+  )
+}
+
 function EnrolDialog({ identityId, username, offer, onClose }: { identityId: string; username?: string; offer: boolean; onClose: () => void }) {
   const changed = usePasskeyPrompts((state) => state.changed)
   const [step, setStep] = useState<EnrolStep>(() => {
@@ -148,6 +191,7 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
     return pending ? { kind: 'pending', pending, checking: false } : { kind: 'intro' }
   })
   const busy = step.kind === 'creating' || step.kind === 'saving' || (step.kind === 'pending' && step.checking)
+  const progress = ENROL_PROGRESS[step.kind]
 
   // A passkey made but never saved when the dialog goes (closed, or the session ended) has its PRF output
   // wiped and is dropped from the provider; ownership is kept as each step resolves, not from what rendered.
@@ -252,10 +296,15 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">
               {step.needsConfirm ? 'To finish saving your passkey, confirm it once more.' : enrolErrorCopy(new PasskeyVaultError('pending'))}
             </p>
-          ) : step.kind === 'confirm' ? (
-            <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">Almost done. Confirm your passkey once more.</p>
           ) : (
-            <p className="text-sm text-gray-500 mb-5">Saving it costs less than 3¢ from your balance.</p>
+            <>
+              {progress && <EnrolProgress states={progress} />}
+              {step.kind === 'confirm' || step.kind === 'saving' ? (
+                <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">Your device asks once more so your passkey can encrypt your sign-in.</p>
+              ) : (
+                <p className="text-sm text-gray-500 mb-5">Your device will ask twice. Saving it costs less than 3¢ from your balance.</p>
+              )}
+            </>
           )}
           {step.kind === 'error' && <InlineError>{step.message}</InlineError>}
           {step.kind === 'pending' && step.message && <InlineError>{step.message}</InlineError>}
@@ -266,7 +315,7 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
                 {step.needsConfirm ? 'Confirm' : 'Check again'}
               </Button>
             ) : step.kind === 'confirm' ? (
-              <Button className="w-full" onClick={() => confirm(step.pending)} data-testid="passkey-confirm">Confirm</Button>
+              <Button className="w-full" onClick={() => confirm(step.pending)} data-testid="passkey-confirm">Confirm passkey</Button>
             ) : (
               <Button className="w-full gap-2" onClick={create} disabled={busy} data-testid="passkey-add">
                 {busy && <Spinner size="sm" />}
