@@ -40,6 +40,8 @@ interface ThreadPostEditorProps {
   mentionHint?: string | null
   /** Shown under the body, as an error, when it names more tags than a post holds (v16, `tagLimitProblem`); the composer refuses to post it. */
   tagProblem?: string | null
+  /** The first post's placeholder: a reply or a quote asks for something different. */
+  placeholder?: string
 }
 
 export function ThreadPostEditor({
@@ -60,6 +62,7 @@ export function ThreadPostEditor({
   pollAttached = false,
   locked = false,
   mentionHint = null,
+  placeholder = "What's on your mind?",
   tagProblem = null,
 }: ThreadPostEditorProps) {
   const onContentChange = (text: string) => {
@@ -354,11 +357,7 @@ export function ThreadPostEditor({
                     handleInsertFormat('*')
                   }
                 }}
-                placeholder={
-                  index === 0
-                    ? "What's on your mind?"
-                    : 'Continue your thread...'
-                }
+                placeholder={index === 0 ? placeholder : 'Add another post'}
                 className={`w-full text-base text-gray-900 dark:text-gray-100 resize-none outline-none bg-transparent placeholder:text-gray-400 dark:placeholder:text-gray-600 ${isActive ? 'min-h-[80px]' : ''}`}
               />
               <MentionAutocomplete
@@ -401,19 +400,12 @@ export function ThreadPostEditor({
             <p className="mt-2 text-xs text-red-500">{tagProblem}</p>
           )}
 
-          {/* Keep attachment cost and the count visible in edit, preview and locked states. */}
+          {/* Keep the count (attachment included) visible in edit, preview and locked states. */}
           {isActive && !isPosted && (
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mt-3 text-xs text-gray-500 dark:text-gray-400">
-              {extraCharacters > 0 ? (
-                <span className="min-w-0 break-words">Image URL +{extraCharacters} chars</span>
-              ) : !locked && !showPreview ? (
-                <span>Markdown supported</span>
-              ) : null}
-              <div className="ml-auto shrink-0">
-                <CharacterCounter current={effectiveLength} limit={CHARACTER_LIMIT}
-                  sizeLimitReached={BYTE_LIMIT !== null && bytesUsed >= BYTE_LIMIT}
-                  tooLong={BYTE_LIMIT !== null && bytesUsed > BYTE_LIMIT} />
-              </div>
+            <div className="flex justify-end mt-3 text-xs">
+              <CharacterCounter current={effectiveLength} limit={CHARACTER_LIMIT}
+                sizeLimitReached={BYTE_LIMIT !== null && bytesUsed >= BYTE_LIMIT}
+                tooLong={BYTE_LIMIT !== null && bytesUsed > BYTE_LIMIT} />
             </div>
           )}
         </div>

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, FlagIcon, LockClosedIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, EyeSlashIcon, FlagIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
@@ -46,7 +46,7 @@ import { EmbeddedBlogPostCard, isEmbeddedBlogPostLike } from '@/components/blog/
 import { PollCard } from '@/components/poll/poll-card'
 import { LikesModal } from './likes-modal'
 import { PostContent } from './post-content'
-import { PrivatePostContent, isPrivatePost } from './private-post-content'
+import { PrivatePostContent, isPrivatePost, knownPrivateReadability, type PrivateReadability } from './private-post-content'
 import { SensitiveContentGate } from './sensitive-content-gate'
 import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from './embedded-post-card'
 import { AuthorDeletedStub, RemovedPostStub } from '@/components/moderation/removed-post-stub'
@@ -94,6 +94,11 @@ interface PostCardProps {
    * removed (40120, paid). Set by a thread page whose root is gone.
    */
   replyBlockedReason?: string
+  /**
+   * Show this card even when it is a private post the viewer cannot read and
+   * they chose to hide those: post detail and threads never grow holes.
+   */
+  keepIfUnreadable?: boolean
 }
 
 /**
@@ -258,6 +263,7 @@ function PostCardView({
   onDelete,
   bookmarkAction,
   replyBlockedReason,
+  keepIfUnreadable = false,
 }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
@@ -287,6 +293,16 @@ function PostCardView({
   // region for the same reason. 'hide' filtering is a list's job; here it blurs.
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const gateSensitive = !isTombstoned && shouldGateSensitive(post, sensitiveContentMode)
+
+  // Someone else's private post the viewer can't read, when they hide those:
+  // the card stays mounted but out of sight while its decryption decides, so a
+  // readable one appears and an unreadable one never flashes.
+  const hideUnreadablePrivate = useSettingsStore((s) => s.hideUnreadablePrivatePosts)
+  const setHideUnreadablePrivate = useSettingsStore((s) => s.setHideUnreadablePrivatePosts)
+  const privatePost = isPrivatePost(post)
+  const [privateReadability, setPrivateReadability] = useState<PrivateReadability>(() => knownPrivateReadability(post.id, viewerId))
+  const unreadablePrivate = privatePost && !isOwnPost && privateReadability === 'unreadable'
+  const hiddenAsUnreadable = hideUnreadablePrivate && privatePost && !isOwnPost && !keepIfUnreadable && !isTombstoned && privateReadability !== 'readable'
 
   const legacyEnrichment = post._enrichment
   const displayName = progressiveEnrichment?.displayName ?? post.author.displayName
@@ -454,6 +470,24 @@ function PostCardView({
     setReplyingTo(enrichedPost)
     setComposeOpen(true)
   }
+  const handleHideUnreadablePrivate = () => {
+    setHideUnreadablePrivate(true)
+    toast((t) => (
+      <span className="flex items-center gap-3 text-sm">
+        Private posts you can&apos;t see are hidden
+        <button
+          type="button"
+          onClick={() => {
+            setHideUnreadablePrivate(false)
+            toast.dismiss(t.id)
+          }}
+          className="font-semibold text-yappr-600 hover:underline"
+        >
+          Undo
+        </button>
+      </span>
+    ), { id: 'hide-unreadable-private' })
+  }
   const handleShare = () => copy(`${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH || ''}/post/?id=${post.id}`, 'Link copied to clipboard')
   const handleTip = () => {
     if (isTombstoned || !requireAuth()) return
@@ -539,7 +573,7 @@ function PostCardView({
     <article
       data-testid={`post-card-${post.id}`}
       onClick={handleCardClick}
-      className="border-b border-gray-200 dark:border-gray-800 px-4 pt-3 pb-1 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer"
+      className={cn('border-b border-gray-200 dark:border-gray-800 px-4 pt-3 pb-1 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer', hiddenAsUnreadable && 'hidden')}
     >
       {post.repostedBy && (
         <Link href={`/user?id=${post.repostedBy.id}`} onClick={stopPropagation} className="flex items-center gap-2 text-sm text-gray-500 mb-2 ml-9 hover:underline">
@@ -576,11 +610,6 @@ function PostCardView({
             </div>
 
             <div className="flex items-center gap-1 flex-shrink-0">
-              {isPrivatePost(post) && (
-                <span className="flex items-center gap-0.5 text-gray-500 mr-1">
-                  <LockClosedIcon className="h-3.5 w-3.5" />
-                </span>
-              )}
               <DropdownMenu.Root>
                 <Tooltip.Provider>
                   <Tooltip.Root>
@@ -600,6 +629,16 @@ function PostCardView({
                 </Tooltip.Provider>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content className="min-w-[200px] max-w-[min(24rem,calc(100vw-2rem))] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
+                    {unreadablePrivate && !hideUnreadablePrivate && (
+                      <DropdownMenu.Item
+                        data-testid={`hide-unreadable-private-${post.id}`}
+                        onClick={(e) => stopAndRun(e, handleHideUnreadablePrivate)}
+                        className={cn(CARD_MENU_ITEM, 'flex items-center gap-2')}
+                      >
+                        <EyeSlashIcon className="h-4 w-4" />
+                        Hide private posts I can&apos;t see
+                      </DropdownMenu.Item>
+                    )}
                     {!isOwnPost && (
                       <DropdownMenu.Item onClick={(e) => stopAndRun(e, toggleFollow)} disabled={followLoading} className={cn(CARD_MENU_ITEM, 'disabled:opacity-50')}>
                         {isFollowing ? 'Unfollow' : 'Follow'} {authorLabel}
@@ -680,6 +719,7 @@ function PostCardView({
                 post={post}
                 rootPostOwnerId={rootPostOwnerId}
                 className="mt-1"
+                onReadabilityChange={setPrivateReadability}
                 hashtagValidations={hashtagValidations}
                 onFailedHashtagClick={(hashtag) => openRecoveryModal('hashtag', post, hashtag)}
                 mentionValidations={mentionValidations}

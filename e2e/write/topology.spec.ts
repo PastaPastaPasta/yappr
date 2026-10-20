@@ -428,7 +428,7 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     // v10 allows one quote OR repost per author per target (ownerAndQuotedReply
     // is unique), so offering Quote here would offer a write consensus refuses.
     await page.getByTestId(`repost-menu-btn-${firstReplyId}`).click()
-    await expect(page.getByRole('menuitem', { name: 'Undo Repost' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Undo repost' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'Quote' }), 'a repost holds the one quote-or-repost slot').toHaveCount(0)
     await expect(page.getByRole('menuitem', { name: /Quote|View your/ })).toHaveCount(0)
 
@@ -436,7 +436,7 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     // The control stays disabled until the tombstone is broadcast, and a navigation before then
     // drops the write: the read-back below used to reload mid-write and wait on a repost that
     // was never undone. A refused undo rolls the name back to "1 repost, reposted".
-    await page.getByRole('menuitem', { name: 'Undo Repost' }).click()
+    await page.getByRole('menuitem', { name: 'Undo repost' }).click()
     const undone = page.getByTestId(`repost-menu-btn-${firstReplyId}`)
     await expect(undone).toHaveAccessibleName('Repost or quote, 0 reposts')
     await expect(undone).toBeEnabled({ timeout: COMPOSE_TIMEOUT })

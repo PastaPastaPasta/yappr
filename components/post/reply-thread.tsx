@@ -63,6 +63,7 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment, re
           enrichment={getPostEnrichment?.(postLike)}
           rootPostOwnerId={rootPostOwnerId}
           replyBlockedReason={replyBlockedReason}
+          keepIfUnreadable
         />
       )}
 
@@ -109,6 +110,7 @@ function NestedReply({ thread, rootPostOwnerId, getPostEnrichment, replyBlockedR
         enrichment={enrichment}
         rootPostOwnerId={rootPostOwnerId}
         replyBlockedReason={replyBlockedReason}
+        keepIfUnreadable
       />
 
       {/* Continuation affordance: refocuses the page on this reply, showing its

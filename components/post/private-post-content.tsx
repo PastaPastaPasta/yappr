@@ -38,6 +38,33 @@ interface PrivatePostContentProps {
   onRequestAccess?: () => void
   /** Follow-gate for external media/previews in teaser and decrypted content */
   mediaGate?: MediaGate
+  /** Told whether the viewer can read this post each time decryption settles (never `pending`). */
+  onReadabilityChange?: (readability: PrivateReadability) => void
+}
+
+/**
+ * Whether the viewer can read a private post: `pending` until decryption
+ * settles; `unreadable` for someone else's post they have no way into right
+ * now (no access, pending, revoked, renewing, or from before they joined).
+ * A failed read and an approved follower who only needs to recover keys stay
+ * `readable`: both have a way in from the card itself.
+ */
+export type PrivateReadability = 'pending' | 'readable' | 'unreadable'
+
+// The last answer per viewer and post, so a remounted card (scrolling back,
+// returning to a feed) starts from it instead of flashing while it re-decides.
+const lastReadability = new Map<string, PrivateReadability>()
+const readabilityKey = (postId: string, viewerId: string | undefined) => `${viewerId ?? ''}:${postId}`
+
+/** What this tab last decided about the viewer reading `postId`. */
+export function knownPrivateReadability(postId: string, viewerId: string | undefined): PrivateReadability {
+  return lastReadability.get(readabilityKey(postId, viewerId)) ?? 'pending'
+}
+
+function readabilityOf(state: DecryptionState, isOwner: boolean): PrivateReadability {
+  if (state.status === 'idle' || state.status === 'loading') return 'pending'
+  if (state.status !== 'locked' || isOwner || state.reason === 'approved-no-keys') return 'readable'
+  return 'unreadable'
 }
 
 type DecryptionState =
@@ -47,7 +74,10 @@ type DecryptionState =
   | { status: 'locked'; reason: 'no-keys' | 'no-auth' | 'revoked' | 'approved-no-keys' | 'pending' | 'renewing' | 'history' }
   | { status: 'error'; message: string }
 
-type PrivateContentCardStatus = 'loading' | 'decrypted' | 'locked' | 'error'
+type PrivateContentCardStatus = 'decrypted' | 'error'
+
+/** The one-line locked row, and the loading row shaped like it. */
+const LOCKED_ROW = 'rounded-lg border flex items-center justify-between gap-2 px-3 py-2 min-h-[2.5rem]'
 
 interface PrivateContentCardProps {
   children: React.ReactNode
@@ -62,13 +92,6 @@ interface PrivateContentCardProps {
  */
 function PrivateContentCard({ children, status, statusText, footer }: PrivateContentCardProps) {
   const config = {
-    loading: {
-      headerBg: 'bg-gray-100 dark:bg-gray-800',
-      headerText: 'text-gray-600 dark:text-gray-400',
-      border: 'border-gray-200 dark:border-gray-700',
-      icon: <LockOpenIcon className="h-4 w-4 animate-pulse" />,
-      defaultText: 'Decrypting...',
-    },
     decrypted: {
       headerBg: 'bg-gray-50 dark:bg-gray-800/50',
       headerText: 'text-gray-500 dark:text-gray-400',
@@ -76,19 +99,12 @@ function PrivateContentCard({ children, status, statusText, footer }: PrivateCon
       icon: <LockOpenIcon className="h-4 w-4 text-green-500 dark:text-green-400" />,
       defaultText: 'Private Content',
     },
-    locked: {
-      headerBg: 'bg-gray-100 dark:bg-gray-800',
-      headerText: 'text-gray-600 dark:text-gray-400',
-      border: 'border-gray-200 dark:border-gray-700',
-      icon: <LockClosedIconSolid className="h-4 w-4" />,
-      defaultText: 'Private Content',
-    },
     error: {
       headerBg: 'bg-red-100 dark:bg-red-900/40',
       headerText: 'text-red-600 dark:text-red-400',
       border: 'border-red-200 dark:border-red-700',
       icon: <ExclamationTriangleIcon className="h-4 w-4" />,
-      defaultText: 'Decryption Failed',
+      defaultText: 'Couldn’t load',
     },
   }
 
@@ -162,6 +178,7 @@ export function PrivatePostContent({
   mentionValidations,
   onFailedMentionClick,
   mediaGate,
+  onReadabilityChange,
 }: PrivatePostContentProps) {
   // Whose feed encrypted this: a post's author; for a reply in a private thread
   // the root's author (replies inherit its encryption), and for a private reply
@@ -264,7 +281,7 @@ export function PrivatePostContent({
           settle({ status: 'locked', reason: 'history' })
           return
         case 'failed':
-          settle({ status: 'error', message: 'Unable to decrypt this post.' })
+          settle({ status: 'error', message: 'Couldn’t open this private post.' })
           return
       }
       if (isOwner) {
@@ -287,7 +304,7 @@ export function PrivatePostContent({
       }
     } catch (error) {
       logger.error('Error decrypting private post:', error)
-      settle({ status: 'error', message: 'Unable to decrypt this post.' })
+      settle({ status: 'error', message: 'Couldn’t open this private post.' })
     }
   }, [post, user, rootPostOwnerId])
 
@@ -310,6 +327,14 @@ export function PrivatePostContent({
     }
   }, [state.status, attemptDecryption])
 
+  const readability = readabilityOf(state, isOwner)
+  const viewerId = user?.identityId
+  useEffect(() => {
+    if (readability === 'pending') return
+    lastReadability.set(readabilityKey(post.id, viewerId), readability)
+    onReadabilityChange?.(readability)
+  }, [readability, post.id, viewerId, onReadabilityChange])
+
   // A post waiting on key recovery unlocks as soon as keys arrive, whether they
   // were recovered from another post on this page or in another tab.
   const awaitingKeys = state.status === 'locked' && state.reason === 'approved-no-keys'
@@ -323,17 +348,18 @@ export function PrivatePostContent({
     setState({ status: 'idle' })
   }, [])
 
-  // Loading state
+  // Loading: the same row the locked state settles into, which is what most
+  // viewers get, so the card does not jump when the answer arrives.
   if (state.status === 'idle' || state.status === 'loading') {
     return (
-      <div className={cn('space-y-2', className)}>
+      <div data-testid="private-content-loading" className={cn('space-y-2', className)}>
         {hasTeaser && <Teaser {...teaserProps} />}
-        <PrivateContentCard status="loading">
-          <div className="space-y-2">
-            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-full" />
-            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-3/4" />
+        <div className={cn(LOCKED_ROW, 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50')}>
+          <div className="flex items-center gap-2 text-gray-400 dark:text-gray-500">
+            <LockClosedIconSolid className="h-4 w-4 animate-pulse" />
+            <span className="h-3 w-24 rounded bg-gray-200 dark:bg-gray-700 animate-pulse" />
           </div>
-        </PrivateContentCard>
+        </div>
       </div>
     )
   }
@@ -382,10 +408,10 @@ export function PrivatePostContent({
         statusText = 'Access revoked'
         break
       case 'no-auth':
-        statusText = 'Log in to view'
+        statusText = 'Sign in to view'
         break
       case 'approved-no-keys':
-        statusText = 'Key recovery required'
+        statusText = 'Unlock to see this post'
         break
       case 'renewing':
         statusText = 'Your access is being renewed'
@@ -465,7 +491,7 @@ export function PrivatePostContent({
           }}
           className="px-3 py-1 bg-yappr-500 hover:bg-yappr-600 text-white rounded-full text-xs font-medium transition-colors"
         >
-          Request Access
+          Request access
         </button>
       )
     }
@@ -476,7 +502,7 @@ export function PrivatePostContent({
           {hasTeaser && <Teaser {...teaserProps} />}
           {/* Compact locked content card */}
           <div className={cn(
-            'rounded-lg border flex items-center justify-between px-3 py-2',
+            LOCKED_ROW,
             isApprovedNoKeys
               ? 'border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20'
               : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50'
@@ -504,7 +530,7 @@ export function PrivatePostContent({
                 }}
                 className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded-full text-xs font-medium transition-colors"
               >
-                Recover
+                Unlock
               </button>
             )}
             {/* Enter Key button for owner with no encryption key stored locally */}

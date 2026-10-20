@@ -58,7 +58,7 @@ describe('planPayment', () => {
   })
 
   it('pays YAPP exactly as before on v14, whose YAPP starts unpaused', async () => {
-    const { planPayment, paymentIsChoosable, paymentHintCopy } = await load('v14')
+    const { planPayment, paymentIsChoosable } = await load('v14')
     expect(paymentIsChoosable('post')).toBe(true)
     expect(planPayment('post', 'create', 100n, 'yapp')).toEqual({
       payWith: 'yapp', yapp: 10n, gasFeesPaidBy: 2, gasMayBeSponsored: true,
@@ -68,7 +68,7 @@ describe('planPayment', () => {
       expect(planPayment(docType, 'create', 100n, 'yapp')).toMatchObject({ payWith: 'yapp', gasMayBeSponsored: true, fallbackReason: null })
     }
     expect(planPayment('post', 'create', 9n, 'yapp')).toMatchObject({ payWith: 'credits', fallbackReason: 'insufficient-yapp' })
-    expect(paymentHintCopy(planPayment('post', 'create', 100n, 'credits'), 100n, 100_000_000_000).toggle).toBe('Use YAPP instead')
+    expect(planPayment('post', 'create', 100n, 'credits')).toMatchObject({ payWith: 'credits', fallbackReason: null })
   })
 
   it('keeps paying YAPP where it is not locked (v9)', async () => {
@@ -81,46 +81,5 @@ describe('planPayment', () => {
   it('only the create action is token-priced; other actions still carry their fee', async () => {
     const { planPayment } = await load('v9')
     expect(planPayment('post', 'replace', 100n, 'yapp')).toMatchObject({ payWith: 'credits', yapp: 0n, actionFee: null })
-  })
-})
-
-describe('paymentHintCopy', () => {
-  const CREDITS_PER_DASH = 100_000_000_000
-
-  it('does not charge the moderation fee to a sponsored YAPP write (QA D-33)', async () => {
-    const { planPayment, paymentHintCopy } = await load('v9')
-    expect(paymentHintCopy(planPayment('post', 'create', 100n, 'yapp'), 100n, CREDITS_PER_DASH)).toEqual({
-      text: 'Pays 10 YAPP, network and moderation fees covered by Yappr', toggle: 'Use credits instead',
-    })
-    expect(paymentHintCopy(planPayment('reply', 'create', 100n, 'yapp'), 100n, CREDITS_PER_DASH).text).toBe('Pays 3 YAPP, network and moderation fees covered by Yappr')
-  })
-
-  it('shows the fee when paying in credits', async () => {
-    const { planPayment, paymentHintCopy } = await load('v9')
-    expect(paymentHintCopy(planPayment('post', 'create', 100n, 'credits'), 100n, CREDITS_PER_DASH)).toEqual({
-      text: 'Pays in credits + 0.0008 DASH moderation fee', toggle: 'Use YAPP instead',
-    })
-  })
-
-  it('says credits with no YAPP switch and no "covered by Yappr" while YAPP is locked', async () => {
-    const { planPayment, paymentHintCopy } = await load('v13')
-    for (const balance of [1_000_000n, null]) {
-      expect(paymentHintCopy(planPayment('post', 'create', balance, 'yapp'), balance, CREDITS_PER_DASH)).toEqual({
-        text: 'Pays in credits + 0.0008 DASH moderation fee', toggle: null,
-      })
-      expect(paymentHintCopy(planPayment('post', 'create', balance, 'credits'), balance, CREDITS_PER_DASH)).toEqual({
-        text: 'Pays in credits + 0.0008 DASH moderation fee', toggle: null,
-      })
-    }
-  })
-
-  it('offers no "use credits" switch when YAPP already fell back to credits (QA D-47)', async () => {
-    const { planPayment, paymentHintCopy } = await load('v9')
-    expect(paymentHintCopy(planPayment('post', 'create', null, 'yapp'), null, CREDITS_PER_DASH)).toEqual({
-      text: 'Pays in credits (YAPP balance unavailable) + 0.0008 DASH moderation fee', toggle: null,
-    })
-    expect(paymentHintCopy(planPayment('post', 'create', 9n, 'yapp'), 9n, CREDITS_PER_DASH)).toEqual({
-      text: 'Pays in credits (not enough YAPP) + 0.0008 DASH moderation fee', toggle: null,
-    })
   })
 })
