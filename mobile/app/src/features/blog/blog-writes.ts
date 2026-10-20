@@ -225,13 +225,17 @@ function showComment(vars: CommentVars): () => void {
   const key = queryKeys.blog.comments(vars.postId);
   const comment = pendingComment(vars);
   const shown = queryClient.getQueryData<BlogCommentDTO[]>(key);
-  if (!shown?.some((c) => c.id === comment.id)) queryClient.setQueryData<BlogCommentDTO[]>(key, [...(shown ?? []), comment]);
+  // Not again over a read that already has it, nor next to the real one once that is read.
+  const listed = shown?.some(
+    (c) => c.id === comment.id || (!isLocalComment(c) && c.ownerId === comment.ownerId && c.content === comment.content),
+  );
+  if (!listed) queryClient.setQueryData<BlogCommentDTO[]>(key, [...(shown ?? []), comment]);
   return () => queryClient.setQueryData<BlogCommentDTO[]>(key, (current) => current?.filter((c) => c.id !== comment.id));
 }
 
 export const commentWrite: WriteSpec<CommentVars> = {
-  // One new comment per post at a time (the screen sends one at a time too); the key lets `reapply` run.
-  key: ({ postId }) => `blogComment:new:${postId}`,
+  // Its own key, so `reapply` runs; per comment, so comments never queue behind (or replace) one another.
+  key: ({ postId, localId }) => `blogComment:new:${postId}:${localId}`,
   submit: (api, { postId, postOwnerId, content }) => api.blogs.comment(postId, postOwnerId, content),
   // Shown at once, so the tap visibly did something.
   optimistic: showComment,

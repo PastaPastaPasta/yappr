@@ -93,6 +93,11 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
     ticket !== null &&
     ((send.status === 'failed' && ticket.error?.outcome !== 'unknown') || (send.status === 'unconfirmed' && ticket.retryable));
   const text = typed || (lost ? sent : '');
+  // A failure that may still have landed undoes nothing and says nothing more: read the comments again later.
+  const failedUnknown = send.status === 'failed' && ticket?.error?.outcome === 'unknown' ? ticket.id : null;
+  useEffect(() => {
+    if (failedUnknown) rereadCommentsLater(post.id);
+  }, [failedUnknown, post.id]);
   const setText = (value: string) => {
     setTyped(value);
     setSent(null);
