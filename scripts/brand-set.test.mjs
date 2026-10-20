@@ -24,10 +24,9 @@ describe('brand set', () => {
     expect(ratio).toEqual({
       wordmark: ratioOf(read('wordmark.svg')),
       lockup: ratioOf(read('lockup.svg')),
-      poweredBy: ratioOf(read('powered-by.svg')),
     })
     const svgs = fs.readFileSync(path.join(ROOT, 'mobile/app/src/ui/brand/svgs.ts'), 'utf8')
-    for (const file of ['mark.svg', 'mark-dark.svg', 'lockup.svg', 'lockup-dark.svg', 'powered-by.svg', 'powered-by-dark.svg']) {
+    for (const file of ['mark.svg', 'mark-dark.svg', 'lockup.svg', 'lockup-dark.svg']) {
       expect(svgs).toContain(JSON.stringify(read(file).trim()))
     }
   })

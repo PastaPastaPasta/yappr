@@ -1,5 +1,6 @@
 import { SvgXml } from 'react-native-svg';
 
+import { Text } from '~/ui/Text';
 import { useIsDark } from '~/ui/tokens';
 
 import { brandRatio, brandSvgs } from './svgs';
@@ -57,16 +58,18 @@ export function Lockup({ height = 32, header = false }: { height?: number; heade
   );
 }
 
-/** The "Powered by Dash" credit. */
-export function PoweredByDash({ height = 24 }: { height?: number }) {
+/**
+ * The "Powered by Dash" credit, as text in the app's font. "Dash" is semibold Dash blue
+ * (#008DE4 is 5.1:1 on the dark page but 3.5:1 on white, so light mode uses #0072BC, 5.1:1).
+ */
+export function PoweredByDash() {
+  const dash = useIsDark() ? '#008DE4' : '#0072BC';
   return (
-    <BrandSvg
-      light={brandSvgs.poweredBy}
-      dark={brandSvgs.poweredByDark}
-      width={Math.round(height * brandRatio.poweredBy)}
-      height={height}
-      label="Powered by Dash"
-      role="image"
-    />
+    <Text variant="subhead" tone="secondary" accessibilityLabel="Powered by Dash">
+      Powered by{' '}
+      <Text variant="subheadStrong" style={{ color: dash }}>
+        Dash
+      </Text>
+    </Text>
   );
 }

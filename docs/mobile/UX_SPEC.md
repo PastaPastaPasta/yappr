@@ -702,7 +702,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │  data, your identity, and your  │
 │  voice.                         │
 │                                 │
-│   [ Powered by Dash Platform ]  │  pbde image (light/dark asset)
+│   [ Powered by Dash Platform ]  │  "Powered by" text, "Dash" in Dash blue
 │                                 │
 │                                 │
 │  ┌───────────────────────────┐  │
