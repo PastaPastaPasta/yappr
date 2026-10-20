@@ -242,6 +242,14 @@ import { socialShapes } from './social-shapes.mjs';
 const SOCIAL_V10 = join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json');
 /** v11 stand-ins for week-long values, so settling and expiry happen within one run (see the header). */
 const PROOF_DELETE_WITHIN = 90;
+/**
+ * The settled rule the team proof exercises. tm-1–tm-22 walk a three-approval
+ * team (two members approve after the proposer), so the proof contract pins it
+ * whatever the source cut declares: v17 asks two since D41, and that count is
+ * pinned offline (verify-v10 --self-test, the contract probes); the proof
+ * exercises the team machinery, as it does with its 90 s window.
+ */
+const PROOF_DELETE_SETTLED = { leader: true, approvals: 3 };
 const PROOF_ELECTION_WINDOW = 60;
 /** The trend grids at the real contract's ratios: posts 3 windows of 3 steps (72h/24h), tags 4 (24h/6h). */
 const PROOF_TREND_GRIDS = { byTrendPost: { range: 360, step: 120 }, byTrendHashtagPost: { range: 240, step: 60 } };
@@ -268,7 +276,10 @@ function proofContractSource(file) {
   for (const type of ['post', 'reply', 'follow', 'followRequest', 'like', 'likeReply']) {
     const schema = structuredClone(social.documentSchemas[type]);
     for (const key of ['actionFees', 'tokenCost']) delete schema[key];
-    if (v11 && schema.moderatorAbilities?.deleteWithin) schema.moderatorAbilities.deleteWithin = PROOF_DELETE_WITHIN;
+    if (v11 && schema.moderatorAbilities?.deleteWithin) {
+      schema.moderatorAbilities.deleteWithin = PROOF_DELETE_WITHIN;
+      if (schema.moderatorAbilities.deleteSettled) schema.moderatorAbilities.deleteSettled = { ...schema.moderatorAbilities.deleteSettled, ...PROOF_DELETE_SETTLED };
+    }
     else if (!v11) delete schema.moderatorAbilities;
     if (type === 'like' && v11) {
       for (const index of schema.indices) {
@@ -585,6 +596,12 @@ async function main() {
   if (parsed) console.log(`throwaway contract parses (wasm-sdk + wasm-dpp2): ${JSON.stringify(indexes)}`);
   console.log(`phases: ${v11 ? 'ol (timeless likes), M (design M), kf/tm-0' : 'dc (like design C)'}${counters ? `, cn (v12 counters${replyCounters ? '' : ', post counters only'})` : ''}${retracts ? ', rw (v12 retractedWhen)' : ''}${shapes.cut.liveMarker ? ', lv (v13 live marker)' : ''}${derivedReplyOwners ? ', n1 on the derived reply windows (v14)' : ''}${tagLists ? ', tg (v16 tag lists)' : ''}`);
   if (args.dryRun) {
+    if (v11) {
+      // tm-1–tm-22 assume three approvals with the leader: the proof contract pins it whatever the cut declares.
+      const settled = ['post', 'reply'].map((type) => JSON.stringify(source.documentSchemas[type].moderatorAbilities?.deleteSettled));
+      if (settled.some((rule) => rule !== JSON.stringify({ leader: true, approvals: 3 }))) throw new Error(`the proof contract's settled rule is ${settled.join(', ')}, not the leader plus 3 approvals the team proof walks`);
+      console.log(`team proof rule: ${settled[0]} on post and reply (pinned; ${JSON.parse(readFileSync(args.contractFile, 'utf8')).documentSchemas.post.moderatorAbilities?.deleteSettled?.approvals ?? 'no'} in the source cut)`);
+    }
     const [x, y, z] = [randomIdBytes(), randomIdBytes(), randomIdBytes()];
     // Every fixture shape, v12-written and fitted to the cut: it must build, serialize, and pass the cut's rules.
     // Tags go through `shapes.tags`: `hashtag` up to v15, a `tags` list on v16 (tg-* adds a two-tag post and its like).
