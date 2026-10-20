@@ -241,6 +241,10 @@ holds the plan, ordering, cost estimate and resumable cursor.
   Range API. If the declared range is under 18 and the rating is 18+, Apple
   blocks the app, so nothing is needed in the app. With a 16+ rating we must
   handle parental consent, which pushes toward 18+. **Decision at phase 3.**
+- **In-app copy:** none. The consent gate no longer says "You must be 18
+  or older" (2026-10-20 launch polish); the age requirement stays in the Terms
+  of Use. The rating itself is set by the owner in App Store Connect and Play
+  Console, and needs no line in the app.
 - **Utah's equivalent** is delayed to 2027-05-06. Track it.
 - **Play:** IARC questionnaire, the target-audience declaration (not designed
   for children), and the Families policy does not apply.

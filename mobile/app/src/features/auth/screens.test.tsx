@@ -234,7 +234,8 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
     fireEvent.press(screen.getByTestId('sign-in-open-wallet'));
     expect(router.push).toHaveBeenCalledWith('/sign-in/wallet');
     // Without an identity: the Dash wallet makes one.
-    expect(screen.getByText("Don't have a Dash identity yet?")).toBeTruthy();
+    expect(screen.getByText('New to Dash?')).toBeTruthy();
+    expect(screen.getByTestId('sign-in-new-to-dash')).toHaveTextContent('Get Dash Wallet');
     fireEvent.press(screen.getByTestId('sign-in-new-to-dash'));
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://www.dash.org/download/');
     expect(screen.queryByTestId('sign-in-private-key')).toBeNull();

@@ -39,7 +39,7 @@ export const links = {
   /** This network's copies (devnet: under `/devnet`), so the notice on them names the network the app is on (D-013). */
   terms: `${config.webBaseUrl}/terms`,
   privacy: `${config.webBaseUrl}/privacy`,
-  /** Web's DASH_WALLET_DOWNLOAD_URL. */
+  /** Where to get the Dash wallet (the page web's sign-in links to as well). */
   getWallet: 'https://www.dash.org/download/',
 };
 

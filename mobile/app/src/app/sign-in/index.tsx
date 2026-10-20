@@ -184,7 +184,7 @@ export default function SignInScreen() {
               {copy.signin.newToDash}
             </Text>
             <Button
-              label={copy.signin.getWallet}
+              label={copy.signin.getDashWallet}
               variant="link"
               size="sm"
               className="px-1"

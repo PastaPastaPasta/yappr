@@ -22,7 +22,9 @@ export const copy = {
     otherDevice: 'Use a wallet on another device',
     other: 'Advanced',
     privateKey: 'Sign in with a private key',
-    newToDash: "Don't have a Dash identity yet?",
+    newToDash: 'New to Dash?',
+    /** Web's sign-in footer link, word for word. */
+    getDashWallet: 'Get Dash Wallet',
     noWallet: "You'll need the Dash wallet to sign in.",
     getWallet: 'Get a Dash wallet',
     nothingOpened:

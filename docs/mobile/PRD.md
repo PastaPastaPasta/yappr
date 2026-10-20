@@ -226,9 +226,9 @@ As Sam, whose wallet is on another phone, I want to scan a QR code, so that I ca
 
 #### AUTH-05 · No wallet installed · P0 · all
 As Dana, if I have no Dash wallet on this phone, I want to be told what to do, so that I'm not stuck.
-- When no app handles `dash-key:` (iOS `canOpenURL` with the scheme declared in `LSApplicationQueriesSchemes`; Android `queryIntentActivities`), "Open wallet" is replaced by the explanation "Yappr uses a Dash wallet for your identity. No wallet on this phone handles Dash sign-in links." with "Get a Dash wallet" (store link) and "Use a wallet on another device" (AUTH-04).
+- When no app handles `dash-key:` (iOS `canOpenURL` with the scheme declared in `LSApplicationQueriesSchemes`; Android `queryIntentActivities`), "Open wallet" is replaced by the line "You'll need the Dash wallet to sign in." with "Get a Dash wallet" (store link) and "Use a wallet on another device" (AUTH-04).
 - If the open attempt fails anyway, the same explanation appears, with the web copy "Nothing opened? No wallet app on this device handles Dash links. Scan the QR code with a wallet on another device, or copy the link into your wallet."
-- A "New to Dash?" link opens the identity bridge (testnet, devnet) in the in-app browser.
+- Beside "Open wallet", a "New to Dash? Get Dash Wallet" link opens the Dash wallet download page (https://www.dash.org/download/) in the in-app browser, as on web. Without a wallet it is left out: "Get a Dash wallet" is already the primary button.
 
 #### AUTH-06 · First-time key registration · P0 · all
 As a user whose identity has never used Yappr, I want the app to add its keys in one more wallet step, so that I can sign in.
@@ -247,7 +247,7 @@ As any user, I want a clear message when sign-in fails, so that I know what to f
 
 #### AUTH-08 · Sign in with a private key · P0 · all
 As Quinn, I want to paste a private key, so that I can sign in pool identities without a wallet.
-- Under "Other ways to sign in", "Sign in with a private key" opens a screen with one secure field, placeholder "WIF or hex private key", a show/hide toggle ("Show key" / "Hide key"), and the note "Your key stays on this device. Every signature happens locally."
+- Under "Advanced", "Sign in with a private key" opens a screen with one secure field, placeholder "WIF or hex private key", a show/hide toggle ("Show key" / "Hide key"), and the note "Your key stays on this device. Every signature happens locally."
 - On input, the app finds the identity by `identities.byPublicKeyHash` and shows "Identity found" with its name or truncated ID, or an error: "Invalid private key", "This key is for a different network", "No identity uses this key".
 - The key must match an AUTHENTICATION key of security level HIGH or CRITICAL on that identity; otherwise "Private key does not match this identity".
 - "Sign in" stores the key in the Keychain / Keystore under that identity and network, then continues to the EULA (AUTH-09).
