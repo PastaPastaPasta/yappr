@@ -8,7 +8,7 @@
  *
  * Public routes also enforce an 8 MiB raw eager-JavaScript budget
  * (override with --max-eager-bytes) to catch SDK/editor hydration regressions.
- * Data entry routes must retain their parser-time WASM download in the head,
+ * Routes that read Platform data must retain their parser-time WASM download in the head,
  * even when a client rendering gate suppresses the route body during SSR.
  * Always prints the largest files so a creeping chunk is visible before it
  * crosses the limit. Exit code 1 when any file is over, 2 when the export
@@ -81,7 +81,7 @@ for (const route of ['/', '/feed', '/post', '/user', '/terms', '/blog/compose'])
   const htmlFile = path.join(dir, route, 'index.html')
   let html
   try { html = readFileSync(htmlFile, 'utf8') } catch { continue }
-  if (['/feed', '/post', '/user'].includes(route)) {
+  if (route !== '/terms') {
     const head = html.slice(0, html.indexOf('</head>'))
     const bootstrap = [...head.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)]
       .map(match => match[1]).find(script => script.includes('window.__yapprSdkWasm'))
