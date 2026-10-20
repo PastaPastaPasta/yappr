@@ -39,6 +39,7 @@ const copy = {
   registerContested: 'Register and join the vote',
   registering: 'Registering…',
   registered: (name: string) => `@${name} is yours`,
+  joinedVote: (name: string) => `You've joined the vote for @${name}. It's yours if the vote picks you.`,
   failed: "Couldn't register that username. Try again.",
   wallet: 'Pick your username in your Dash wallet. Once it’s registered, come back here.',
   walletAnother: 'Register another username in your Dash wallet. Your existing usernames keep working.',
@@ -55,6 +56,8 @@ const copy = {
 interface RegisterVars {
   viewerId: string;
   label: string;
+  /** It goes to a masternode vote: registering joins it rather than taking the name. */
+  contested: boolean;
 }
 
 /** Refusals the engine words itself (taken, invalid, a contest the balance can't pay). */
@@ -65,8 +68,9 @@ const registerWrite: WriteSpec<RegisterVars> = {
   submit: (api, { label }) => api.dpns.register(label),
   failureMessage: copy.failed,
   failureText: (ticket) => (ownSentence(ticket.error?.code) ? (ticket.error?.userMessage ?? null) : null),
-  onConfirmed: (_ticket, { viewerId, label }) => {
-    toast.success(copy.registered(label));
+  // A contested name only joins its vote (web's complete step): it is not theirs yet.
+  onConfirmed: (_ticket, { viewerId, label, contested }) => {
+    toast.success(contested ? copy.joinedVote(label) : copy.registered(label));
     queryClient.invalidateQueries({ queryKey: queryKeys.profile.detail(viewerId) }).catch(() => undefined);
   },
 };
@@ -95,13 +99,20 @@ function NativeRegistration({ viewerId }: { viewerId: string }) {
   };
   const register = () => {
     if (!result?.available || registering) return;
-    write.run({ viewerId, label: result.label }).catch(() => undefined);
+    write.run({ viewerId, label: result.label, contested: result.contestFundCredits !== null }).catch(() => undefined);
   };
-  // Confirmed: back to where the user came from (the toast says it is theirs).
+  // Confirmed: back to where the user came from (the toast says what happened). Refused (taken
+  // meanwhile, a contest the balance can't pay): the old verdict no longer holds, so check again.
   const confirmed = write.status === 'confirmed';
   useEffect(() => {
     if (confirmed && router.canGoBack()) router.back();
   }, [confirmed]);
+  const failedTicket = write.status === 'failed' ? (write.ticket?.id ?? null) : null;
+  const [clearedFor, setClearedFor] = useState<string | null>(null);
+  if (failedTicket !== null && failedTicket !== clearedFor) {
+    setClearedFor(failedTicket);
+    setCheck(null);
+  }
 
   let verdict = null;
   if (check === 'failed') {

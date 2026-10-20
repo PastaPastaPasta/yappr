@@ -9,7 +9,7 @@ import { identityService } from '@/lib/services/identity-service'
 import { readFailure, requireViewer } from '../dto/hydrate'
 import { RpcError } from '../protocol/envelope'
 import { relationProbe, signer } from '../writes/handler-kit'
-import type { TicketStore } from '../writes/tickets'
+import { NotSentError, type TicketStore } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import type { DpnsAvailabilityDTO } from './dto'
 
@@ -68,24 +68,32 @@ export function createDpnsModule(tickets: TicketStore, controller: { refreshUser
     }
   }
 
+  /** Why `label` can't be registered by this account now (an engine-coded refusal), or null. Rejects when a read fails. */
+  async function preflight(identityId: string, label: string): Promise<RpcError | null> {
+    if (await registration(identityId) !== 'native') return new RpcError('Register usernames in your Dash wallet.', 'NOT_SUPPORTED')
+    const check = await availability(label)
+    if (check.invalid) return new RpcError(check.invalid, 'BAD_REQUEST')
+    if (!check.available) return new RpcError(`${label} is already taken.`, 'BAD_REQUEST')
+    if (check.contestFundCredits === null) return null
+    const identity = await identityService.getIdentity(identityId, { fresh: true })
+    if (!identity) throw new Error('The identity could not be read')
+    return BigInt(identity.balance) < check.contestFundCredits
+      ? new RpcError('Your balance is too low for a contested name. Pick a name of 20 or more characters, or one with a digit from 2 to 9.', 'BAD_REQUEST')
+      : null
+  }
+
   tickets.register<RegisterArgs>('dpns.register', {
     persistArgs: true,
     async run({ label }, ctx) {
       const identityId = signer(ctx)
-      // Refusals before anything is sent carry an engine code, so the host shows them.
+      // Refusals before anything is sent carry an engine code, so the host shows them; a read that
+      // failed then sent nothing (failed, not "may have landed").
+      const refusal = await preflight(identityId, label).catch((error: unknown) => {
+        throw new NotSentError(readFailure(error))
+      })
+      if (refusal) return { state: 'failed', error: refusal }
       const privateKey = getPrivateKey(identityId)
-      if (!privateKey || await registration(identityId) !== 'native') {
-        return { state: 'failed', error: new RpcError('Register usernames in your Dash wallet.', 'NOT_SUPPORTED') }
-      }
-      const check = await availability(label)
-      if (check.invalid) return { state: 'failed', error: new RpcError(check.invalid, 'BAD_REQUEST') }
-      if (!check.available) return { state: 'failed', error: new RpcError(`${label} is already taken.`, 'BAD_REQUEST') }
-      if (check.contestFundCredits !== null) {
-        const balance = BigInt((await identityService.getIdentity(identityId, { fresh: true }))?.balance ?? 0)
-        if (balance < check.contestFundCredits) {
-          return { state: 'failed', error: new RpcError('Your balance is too low for a contested name. Pick a name of 20 or more characters, or one with a digit from 2 to 9.', 'BAD_REQUEST') }
-        }
-      }
+      if (!privateKey) return { state: 'failed', error: new RpcError('Register usernames in your Dash wallet.', 'NOT_SUPPORTED') }
       try {
         await dpnsService.registerUsername(label, identityId, privateKey)
       } catch (error) {
@@ -94,11 +102,21 @@ export function createDpnsModule(tickets: TicketStore, controller: { refreshUser
       await controller.refreshUsername().catch(() => undefined)
       return { state: 'confirmed' }
     },
-    probe: relationProbe<RegisterArgs>(async ({ viewer, args }) => {
-      if (!args) throw new Error('The username is not known')
-      dpnsService.clearCache(args.label)
-      return (await dpnsService.findIdentityByName(args.label)) === viewer
-    }, true),
+    probe: async (ticket, args, kit) => {
+      if (!args) return { state: 'unknown', error: new Error('The username is not known') }
+      try {
+        dpnsService.clearCache(args.label)
+        if ((await dpnsService.findIdentityByName(args.label)) === ticket.identityId) return { state: 'applied' }
+        // A contested name joins a vote and has no domain until it is awarded: its absence proves
+        // nothing, and a retry would pay a second preorder. Never offer one.
+        if (await (await getEvoSdk()).dpns.isContestedUsername(args.label)) {
+          return { state: 'unknown', error: new Error('A contested name is decided by its vote') }
+        }
+      } catch (error) {
+        return { state: 'unknown', error }
+      }
+      return relationProbe<RegisterArgs>(async ({ viewer }) => (await dpnsService.findIdentityByName(args.label)) === viewer, true)(ticket, args, kit)
+    },
   })
 
   return {

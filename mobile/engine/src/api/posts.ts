@@ -9,7 +9,7 @@ import { provenAbsent } from '@/lib/feed/prove-absent'
 import { isBareRepost, quotedTargetIdOf, splitRepostsAndQuotes } from '@/lib/feed/quote-reposts'
 import { likeService } from '@/lib/services/like-service'
 import { pollrPollService, type Poll } from '@/lib/services/pollr-poll-service'
-import { pollIsClosed, pollrVoteService, type PollTally } from '@/lib/services/pollr-vote-service'
+import { pollIsClosed, pollrVoteService, type PollTally, type SetVoteResult } from '@/lib/services/pollr-vote-service'
 import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
 import { base58ToBytes } from '@/lib/services/sdk-helpers'
@@ -28,7 +28,7 @@ import { assertId, assertTarget, badRequest, relationProbe, signer, socialDoc, t
 import { pollVoting } from '../dto/capabilities'
 import { documentExists, fromDeleteBoolean } from '../writes/lib-results'
 import { createPublishHandler, validateDraft, type DraftDTO, type FindOwnDocuments, type OwnDocument } from '../writes/publish'
-import type { TicketStore, WriteResult } from '../writes/tickets'
+import { NotSentError, type TicketStore, type WriteResult } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
 import {
   toPostDTO,
@@ -290,9 +290,34 @@ interface PollVoteArgs { pollId: string; choices: number[] }
 /** A ballot refused before anything was sent: an engine code, so the host shows the sentence. */
 const refusedVote = (message: string): WriteResult => ({ state: 'failed', error: new RpcError(message, 'BAD_REQUEST') })
 const POLL_GONE = 'This poll is no longer available.'
+const NOT_SAVED = "Your vote wasn't saved. Try again."
 
-const sameChoices = (a: readonly number[], b: readonly number[]) =>
-  a.length === b.length && [...a].sort((x, y) => x - y).every((choice, i) => choice === [...b].sort((x, y) => x - y)[i])
+const sorted = (choices: readonly number[]) => [...choices].sort((x, y) => x - y)
+const sameChoices = (a: readonly number[], b: readonly number[]) => sorted(a).join(',') === sorted(b).join(',')
+
+/** The poll, or null only when Platform says it does not exist; a failed read sent nothing. */
+async function readPoll(pollId: string): Promise<Poll | null> {
+  try {
+    return await pollrPollService.fetchPoll(pollId)
+  } catch (error) {
+    throw new NotSentError(readFailure(error))
+  }
+}
+
+/** A v7 ballot `setVote` did not record. `choices` is undefined only when nothing was written. */
+function refusedSet(result: SetVoteResult): WriteResult {
+  if (result.unconfirmed) return { state: 'unconfirmed' }
+  if (result.gone) return refusedVote(POLL_GONE)
+  if (result.closed) return refusedVote('This poll has closed.')
+  if (result.heldBack) return refusedVote('Your last vote is still being confirmed. Try again in a moment.')
+  if (result.stale) return refusedVote('Your vote changed on another device. Pull to refresh and try again.')
+  // Its ballot read failed: nothing was planned, so nothing was sent.
+  if (result.choices === undefined && result.error?.startsWith("Couldn't read your ballot")) {
+    throw new NotSentError(readFailure(new Error(result.error)))
+  }
+  // Refused before writing, or refused and proved unable to land (lib re-read the ballot).
+  return refusedVote(NOT_SAVED)
+}
 
 /**
  * Poll ballots (web's `components/poll/poll-card.tsx`). Pollr v7/v8 set the
@@ -304,32 +329,25 @@ export function createPollWrites(tickets: TicketStore) {
     persistArgs: true,
     async run({ pollId, choices }, ctx) {
       const ownerId = signer(ctx)
-      const poll = await pollrPollService.getPoll(pollId)
+      const poll = await readPoll(pollId)
       if (!poll) return refusedVote(POLL_GONE)
       if (pollIsClosed(poll)) return refusedVote('This poll has closed.')
+      if (choices.some(choice => choice >= poll.options.length)) return refusedVote('That is not an option of this poll.')
       if (!poll.multiChoice && choices.length > 1) return refusedVote('This poll takes one choice.')
       if (pollVoting() === 'editable') {
         const result = await pollrVoteService.setVote(poll, choices, ownerId)
-        if (result.success) return { state: 'confirmed' }
-        if (result.unconfirmed) return { state: 'unconfirmed' }
-        if (result.gone) return refusedVote(POLL_GONE)
-        if (result.closed) return refusedVote('This poll has closed.')
-        if (result.heldBack) return refusedVote('Your last vote is still being confirmed. Try again in a moment.')
-        if (result.stale) return refusedVote('Your vote changed on another device. Pull to refresh and try again.')
-        // `choices` is undefined only when nothing was written.
-        return result.choices === undefined
-          ? refusedVote(result.error ?? 'Your vote could not be saved.')
-          : { state: 'failed', error: new Error(result.error ?? 'Your vote could not be saved') }
+        return result.success ? { state: 'confirmed' } : refusedSet(result)
       }
       const result = await pollrVoteService.castVote(poll, choices, ownerId)
       // A ballot already cast (on another device): v3 ballots never change.
       const other = result.unresolvedDuplicate || result.alreadyVoted.some(choice => !choices.includes(choice))
       if (other) return refusedVote('You already voted in this poll.')
+      // A choice that failed may still have landed; its unique index makes a retry safe.
       return result.success ? { state: 'confirmed' } : { state: 'failed', error: new Error(result.error ?? 'Your vote could not be saved') }
     },
     probe: relationProbe<PollVoteArgs>(async ({ viewer, args }) => {
       if (!args) throw new Error('The ballot is not known')
-      const poll = await pollrPollService.getPoll(args.pollId)
+      const poll = await pollrPollService.fetchPoll(args.pollId)
       if (!poll) throw new Error(POLL_GONE)
       return sameChoices(await pollrVoteService.getMyVotes(poll, viewer), args.choices)
     }, true),

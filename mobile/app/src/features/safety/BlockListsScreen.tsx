@@ -24,6 +24,8 @@ import { monoFont, tw, useColors, useLargeText } from '~/ui/tokens';
 
 import { copy } from './copy';
 
+const BLOCK_LISTS_KEY = 'block-lists';
+
 interface BlockListVars {
   userId: string;
   follow: boolean;
@@ -44,8 +46,9 @@ function setListFollowed(userId: string, follow: boolean): () => void {
  * changes back if the write fails.
  */
 const blockListWrite: WriteSpec<BlockListVars> = {
-  key: ({ userId }) => `block-list:${userId}`,
-  intent: ({ follow }) => follow,
+  // One key for every row: each change rewrites the viewer's one block-list document, so two at once would collide.
+  key: () => BLOCK_LISTS_KEY,
+  intent: ({ userId, follow }) => `${userId}:${follow}`,
   submit: (api, { userId, follow }) => api.safety.setBlockListFollowed(userId, follow),
   // Its change is the query cache's alone, which the chain read repairs.
   reconcile: null,
@@ -63,8 +66,10 @@ const BlockListRow = memo(function BlockListRow({ user }: { user: BlockListChoic
   const largeText = useLargeText();
   const handle = handleOf(user);
   // A change still on its way: the button says so, and waits for it.
-  const landing = useLandingIntent(`block-list:${user.id}`);
+  const landing = useLandingIntent(BLOCK_LISTS_KEY);
   const busy = landing !== undefined;
+  // This row's change is the one on its way; the others wait for it.
+  const saving = typeof landing === 'string' && landing.startsWith(`${user.id}:`);
   const toggle = () => {
     if (busy) return;
     const follow = !user.listFollowed;
@@ -72,7 +77,7 @@ const BlockListRow = memo(function BlockListRow({ user }: { user: BlockListChoic
   };
   const button = (
     <Button
-      label={busy ? copy.blockLists.saving : user.listFollowed ? copy.blockLists.following : copy.blockLists.follow}
+      label={saving ? copy.blockLists.saving : user.listFollowed ? copy.blockLists.following : copy.blockLists.follow}
       variant={user.listFollowed ? 'outline' : 'primary'}
       size="sm"
       accessibilityLabel={user.listFollowed ? copy.blockLists.unfollowA11y(handle) : copy.blockLists.followA11y(handle)}

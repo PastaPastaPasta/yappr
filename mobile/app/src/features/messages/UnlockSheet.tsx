@@ -8,6 +8,7 @@ import { useSessionStore } from '~/data/session';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { addAccount } from '~/features/auth/accounts';
 import { confirmSignOut } from '~/features/auth/AccountSwitcher';
 import { copy as authCopy } from '~/features/auth/copy';
 import { cn } from '~/lib-allowlist';
@@ -68,8 +69,13 @@ function signOutForWallet(): void {
   if (!session) return;
   confirmSignOut(session)
     .then(() => {
-      // Signed out with nobody else on the device: straight to the wallet sign-in.
-      if (!useSessionStore.getState().session) router.push('/sign-in');
+      const now = useSessionStore.getState().session;
+      // Kept signed in (cancelled): nothing to do.
+      if (now?.identityId === session.identityId) return undefined;
+      // Signed out: the wallet sign-in, beside the account that took over if there is one.
+      if (now) return addAccount();
+      router.push('/sign-in');
+      return undefined;
     })
     .catch((e: unknown) => appendLog('warn', 'host', `Sign-out for wallet messaging failed: ${errorMessage(e)}`));
 }

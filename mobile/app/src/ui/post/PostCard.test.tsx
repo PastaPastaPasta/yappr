@@ -340,6 +340,16 @@ describe('PostCard embeds', () => {
     expect(screen.queryByTestId('poll-vote')).toBeNull();
   });
 
+  it("forgets another poll's unsent picks when its card is reused (FlashList)", () => {
+    const fresh = { ...SAMPLE_POLL, voting: 'editable' as const, myVotes: [] };
+    const { rerender } = render(<PostCard post={POSTS.poll} poll={{ ...fresh, id: 'a' }} actions={{ onVotePress: jest.fn() }} />);
+    fireEvent.press(screen.getByTestId('poll-option-1'));
+    expect(screen.getByTestId('poll-vote')).not.toBeDisabled();
+    rerender(<PostCard post={POSTS.poll} poll={{ ...fresh, id: 'b' }} actions={{ onVotePress: jest.fn() }} />);
+    expect(screen.getByTestId('poll-option-1')).toHaveProp('accessibilityState', expect.objectContaining({ checked: false }));
+    expect(screen.getByTestId('poll-vote')).toBeDisabled();
+  });
+
   it('waits while a ballot is on its way', () => {
     render(<PostCard post={POSTS.poll} poll={{ ...SAMPLE_POLL, voting: 'editable', myVotes: [0], saving: true }} actions={{ onVotePress: jest.fn() }} />);
     expect(screen.getByTestId('poll-vote')).toBeDisabled();

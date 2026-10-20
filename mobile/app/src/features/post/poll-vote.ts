@@ -38,7 +38,9 @@ function applyBallot({ pollId, choices }: PollVoteVars): () => void {
  * A poll ballot (web's poll-card.tsx Vote / Change vote / Withdraw). The card
  * shows it at once and waits while it lands; a refusal puts the old ballot
  * back with the engine's sentence (closed, already voted), anything else the
- * generic one. Once it lands the poll is read again for the real tally.
+ * generic one. A confirmed ballot keeps the change rather than reading the poll
+ * at once, which a lagging node could answer with the old ballot; the next read
+ * (a refresh) brings the chain's tally.
  */
 export const pollVoteWrite: WriteSpec<PollVoteVars> = {
   key: ({ pollId }) => pollVoteKey(pollId),
@@ -52,7 +54,4 @@ export const pollVoteWrite: WriteSpec<PollVoteVars> = {
   },
   failureMessage: ({ choices }) => (choices.length > 0 ? "Couldn't save your vote. Try again." : "Couldn't withdraw your vote. Try again."),
   failureText: (ticket) => (ticket.error?.code === 'BAD_REQUEST' ? ticket.error.userMessage : null),
-  onConfirmed: (_ticket, { pollId }) => {
-    queryClient.invalidateQueries({ queryKey: queryKeys.post.poll(pollId) }).catch(() => undefined);
-  },
 };

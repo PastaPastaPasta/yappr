@@ -136,6 +136,7 @@ function usePoll(post: PostDTO): Loadable<CardPoll> | undefined {
     if (!data) return 'loading';
     const options = data.options.map((o) => ({ label: o.text, votes: o.votes }));
     return {
+      id: data.id,
       question: data.question,
       options,
       totalVotes: data.totalVotes ?? options.reduce((sum, o) => sum + o.votes, 0),

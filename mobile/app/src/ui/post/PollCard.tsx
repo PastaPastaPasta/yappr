@@ -64,10 +64,11 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
   const now = useNow(ready?.endsAt ?? null);
   const cast = ballotKey(ready?.myVotes);
   const [selected, setSelected] = useState<number[]>(() => ready?.myVotes ?? []);
-  // A ballot read (or saved) since: the selection follows it.
-  const [seen, setSeen] = useState(cast);
-  if (seen !== cast) {
-    setSeen(cast);
+  // Another poll (a feed reuses its rows), or a ballot read (or saved) since: the selection follows it.
+  const shown = `${ready?.id ?? ''}|${cast}`;
+  const [seen, setSeen] = useState(shown);
+  if (seen !== shown) {
+    setSeen(shown);
     setSelected(ready?.myVotes ?? []);
   }
 

@@ -942,6 +942,37 @@ describe('Choose a username (AUTH-15)', () => {
     await act(async () => fireEvent.press(byId('username-check')));
     expect(byId('username-contested')).toHaveTextContent(/at least 0\.1 DASH/);
     expect(byId('username-register')).toHaveTextContent('Register and join the vote');
+
+    // Landing only joins the vote: the name is not theirs yet.
+    const pending = ticket({ op: 'dpns.register', target: { identityId: ALICE } });
+    fakeEngine.method('dpns.register').mockResolvedValue(pending);
+    await act(async () => fireEvent.press(byId('username-register')));
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed', stage: null })));
+    await settle();
+    expect(toastMessage()).toBe("You've joined the vote for @bob. It's yours if the vote picks you.");
+  });
+
+  it('drops the verdict when the registration is refused, so the name is checked again', async () => {
+    fakeEngine.method('dpns.registration').mockResolvedValue('native');
+    fakeEngine.method('dpns.check').mockResolvedValue(free('newname'));
+    const pending = ticket({ op: 'dpns.register', target: { identityId: ALICE } });
+    fakeEngine.method('dpns.register').mockResolvedValue(pending);
+    renderScreen(<UsernameScreen />);
+    await settle();
+    fireEvent.changeText(byId('username-input'), 'newname');
+    await act(async () => fireEvent.press(byId('username-check')));
+    await act(async () => fireEvent.press(byId('username-register')));
+    const userMessage = 'newname is already taken.';
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(pending, { state: 'failed', stage: null, error: { code: 'BAD_REQUEST', consensusCode: null, outcome: 'local', retryable: false, userMessage } }),
+      ),
+    );
+    await settle();
+    expect(toastMessage()).toBe(userMessage);
+    expect(screen.queryByTestId('username-register')).toBeNull();
+    expect(byId('username-check')).toBeTruthy();
   });
 
   it('a wallet sign-in registers in the wallet, and reads its names again', async () => {

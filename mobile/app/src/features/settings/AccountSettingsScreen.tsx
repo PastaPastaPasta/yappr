@@ -193,8 +193,6 @@ export function AccountSettingsScreen() {
         <SettingsRow
           label={usernames.length > 0 ? copy.account.registerAnother : copy.account.register}
           link
-          chevron={false}
-          accessibilityRole="link"
           onPress={() => router.push('/settings/username')}
           testID="account-register"
         />

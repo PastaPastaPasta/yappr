@@ -1519,6 +1519,9 @@ describe('BlockListsScreen', () => {
     expect(fakeEngine.method('safety.setBlockListFollowed')).toHaveBeenCalledWith(AUTHORS.carol.id, true);
     // On its way: the row waits, already showing the change once it lands.
     expect(screen.getByTestId(`block-list-${AUTHORS.carol.id}`)).toHaveTextContent('Saving…');
+    // One change at a time: they all rewrite the viewer's one block-list document.
+    expect(screen.getByTestId(`block-list-${BOB.id}`)).toBeDisabled();
+    expect(screen.getByTestId(`block-list-${BOB.id}`)).toHaveTextContent('Using list');
     act(() => fakeEngine.emit('write.status', advance(use, { state: 'confirmed', stage: null })));
     await settle();
     // Kept as changed: no re-read that a lagging node could answer with the old list.

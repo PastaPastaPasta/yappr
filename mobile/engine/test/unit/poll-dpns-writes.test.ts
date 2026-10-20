@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const m = vi.hoisted(() => ({
   viewer: 'V' as string | null,
   mode: 'editable' as 'editable' | 'once' | null,
-  pollService: { getPoll: vi.fn() },
+  pollService: { fetchPoll: vi.fn() },
   voteService: { setVote: vi.fn(), castVote: vi.fn(), getMyVotes: vi.fn() },
   dpns: {
     getUsernameValidationError: vi.fn((label: string): string | null => (label.length < 3 ? 'Username must be at least 3 characters long' : null)),
@@ -53,7 +53,9 @@ const poll = (extra: Record<string, unknown> = {}) => ({
 
 function engine() {
   const items = new Map<string, string>()
+  let elapsed = 0
   const tickets = createTicketStore({
+    now: () => Date.now() + elapsed,
     storage: { getItem: (key: string) => items.get(key) ?? null, setItem: (key: string, value: string) => { items.set(key, value) } },
     emit: () => undefined,
     currentIdentity: () => m.viewer,
@@ -69,6 +71,8 @@ function engine() {
   return {
     tickets,
     outcome,
+    /** Moves the store's clock on (past `ABSENCE_AFTER_MS`, so a check may call a write absent). */
+    elapse: (ms: number) => { elapsed += ms },
     polls: createPollWrites(tickets),
     dpns: createDpnsModule(tickets, { refreshUsername: m.refreshUsername }),
   }
@@ -80,7 +84,7 @@ beforeEach(() => {
   m.mode = 'editable'
   m.privateKey = 'WIF'
   m.appConnect = false
-  m.pollService.getPoll.mockResolvedValue(poll())
+  m.pollService.fetchPoll.mockResolvedValue(poll())
   m.identity.getIdentity.mockResolvedValue({ id: VIEWER, balance: 10 ** 12, publicKeys: [] })
   m.match.mockReturnValue({ ok: true, key: { id: 1 }, match: { keyId: 1, securityLevel: 2 } })
   m.sdk.dpns.isNameAvailable.mockResolvedValue(true)
@@ -102,10 +106,27 @@ describe('posts.vote', () => {
     m.voteService.setVote.mockResolvedValue({ success: false, unconfirmed: true, closed: false, stale: false, error: 'timeout' })
     expect(await outcome(polls.vote(POLL, [0]))).toMatchObject({ state: 'unconfirmed' })
 
-    m.pollService.getPoll.mockResolvedValue(poll({ endsAt: Date.now() - 1000 }))
+    m.pollService.fetchPoll.mockResolvedValue(poll({ endsAt: Date.now() - 1000 }))
     expect(await outcome(polls.vote(POLL, [0]))).toMatchObject({ state: 'failed', error: { code: 'BAD_REQUEST', userMessage: 'This poll has closed.' } })
-    m.pollService.getPoll.mockResolvedValue(null)
+    m.pollService.fetchPoll.mockResolvedValue(null)
     expect(await outcome(polls.vote(POLL, [0]))).toMatchObject({ state: 'failed', error: { code: 'BAD_REQUEST', userMessage: 'This poll is no longer available.' } })
+    m.pollService.fetchPoll.mockResolvedValue(poll())
+    expect(await outcome(polls.vote(POLL, [3]))).toMatchObject({ state: 'failed', error: { userMessage: 'That is not an option of this poll.' } })
+
+    // lib's own sentences never reach the user; a refusal it proved final is worded here.
+    m.voteService.setVote.mockResolvedValue({ success: false, choices: [0], closed: false, stale: false, error: 'wasm: revision 3 != 4' })
+    expect(await outcome(polls.vote(POLL, [1]))).toMatchObject({ state: 'failed', error: { code: 'BAD_REQUEST', userMessage: "Your vote wasn't saved. Try again." } })
+  })
+
+  it('fails a vote whose poll or ballot read failed as not sent and retryable, never "poll gone"', async () => {
+    const { polls, outcome } = engine()
+    m.pollService.fetchPoll.mockRejectedValue(new Error('no available addresses to retry'))
+    expect(await outcome(polls.vote(POLL, [0]))).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK' } })
+    expect(m.voteService.setVote).not.toHaveBeenCalled()
+
+    m.pollService.fetchPoll.mockResolvedValue(poll())
+    m.voteService.setVote.mockResolvedValue({ success: false, closed: false, stale: false, error: "Couldn't read your ballot: no available addresses to retry" })
+    expect(await outcome(polls.vote(POLL, [0]))).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK' } })
   })
 
   it('casts one final ballot where ballots are immutable (v3), and says when one was already cast', async () => {
@@ -134,7 +155,7 @@ describe('posts.vote', () => {
 
   it('checks a ballot whose outcome is unknown by reading the voter back', async () => {
     const { polls, outcome, tickets } = engine()
-    m.pollService.getPoll.mockResolvedValue(poll({ multiChoice: true }))
+    m.pollService.fetchPoll.mockResolvedValue(poll({ multiChoice: true }))
     m.voteService.setVote.mockResolvedValue({ success: false, unconfirmed: true, closed: false, stale: false, error: 'timeout' })
     const ticket = await outcome(polls.vote(POLL, [2, 0]))
     expect(ticket.state).toBe('unconfirmed')
@@ -202,5 +223,23 @@ describe('dpns', () => {
     m.dpns.findIdentityByName.mockResolvedValue(VIEWER)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
     expect(m.dpns.findIdentityByName).toHaveBeenCalledWith('newname')
+  })
+
+  it('never offers a retry for a contested name it cannot prove, which would pay a second preorder', async () => {
+    const { dpns, outcome, tickets, elapse } = engine()
+    m.sdk.dpns.isContestedUsername.mockResolvedValue(true)
+    m.dpns.registerUsername.mockRejectedValue(new Error('Request timeout'))
+    const ticket = await outcome(dpns.register('bob'))
+    expect(ticket.state).toBe('unconfirmed')
+    m.dpns.findIdentityByName.mockResolvedValue(null)
+    elapse(10 * 60_000)
+    expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+  })
+
+  it('fails a registration whose checks could not be read as not sent and retryable', async () => {
+    const { dpns, outcome } = engine()
+    m.sdk.dpns.isNameAvailable.mockRejectedValueOnce(new Error('no available addresses to retry'))
+    expect(await outcome(dpns.register('newname'))).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK' } })
+    expect(m.dpns.registerUsername).not.toHaveBeenCalled()
   })
 })

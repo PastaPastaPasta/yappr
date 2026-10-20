@@ -27,6 +27,8 @@ export interface CardLinkPreview {
 
 /** A poll (UX_SPEC §2.4.8): its results, and the viewer's ballot where they can vote. */
 export interface CardPoll {
+  /** The poll's id: a reused card forgets the last poll's unsent picks. */
+  id?: string;
   question: string;
   options: { label: string; votes: number }[];
   totalVotes: number;
