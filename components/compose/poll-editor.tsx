@@ -26,7 +26,7 @@ export interface PollDraft {
 }
 
 const LIMITS = pollLimits(POLLR_TOPOLOGY)
-const LOCKED_NOTE = 'This poll is already on Platform and can no longer be edited — retrying the post re-uses it.'
+const LOCKED_NOTE = 'This poll is already posted and can’t be edited. Posting again reuses it.'
 const VOTING_NOTE = pollrHasEditableBallots()
   ? 'You can delete your poll until someone votes. Voters can change their vote until the poll closes; after that the results are final.'
   : 'Votes are permanent and cannot be changed.'

@@ -1,14 +1,10 @@
 'use client'
 
-import { motion } from 'framer-motion'
-import {
-  SparklesIcon,
-  ArrowPathIcon
-} from '@heroicons/react/24/outline'
+import Link from 'next/link'
+import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PostCard } from '@/components/post/post-card'
 import { Button } from '@/components/ui/button'
 import { Post } from '@/lib/types'
-import { useLoginModal } from '@/hooks/use-login-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
@@ -20,91 +16,65 @@ interface FeaturedPostsProps {
   onRetry?: () => void
 }
 
+/** Sized like a one-line-name, two-line-text post card so the list does not jump when posts land. */
 function PostSkeleton() {
   return (
-    <div className="bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6">
-      <div className="flex items-start gap-3">
-        <div className="w-10 h-10 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
-        <div className="flex-1 space-y-3">
-          <div className="h-4 w-24 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          <div className="space-y-2">
-            <div className="h-4 w-full bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
-            <div className="h-4 w-3/4 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
-          </div>
-          <div className="flex gap-6 pt-2">
-            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-4 w-10 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          </div>
+    <div className="border-b border-gray-200 px-4 pb-3 pt-3 dark:border-gray-800" aria-hidden="true">
+      <div className="flex gap-3">
+        <div className="h-12 w-12 shrink-0 animate-pulse rounded-full bg-gray-200 dark:bg-gray-800" />
+        <div className="flex-1 space-y-2 pt-2">
+          <div className="h-4 w-48 max-w-full animate-pulse rounded bg-gray-200 dark:bg-gray-800" />
+          <div className="h-4 w-full animate-pulse rounded bg-gray-100 dark:bg-gray-900" />
+          <div className="h-4 w-3/4 animate-pulse rounded bg-gray-100 dark:bg-gray-900" />
+          <div className="h-9" />
         </div>
       </div>
     </div>
   )
 }
 
-export function FeaturedPosts({
-  posts,
-  loading,
-  error,
-  onRetry
-}: FeaturedPostsProps) {
-  const openLoginModal = useLoginModal((s) => s.open)
+/** The most liked posts, topped up with the newest; readable without an account. */
+export function FeaturedPosts({ posts, loading, error, onRetry }: FeaturedPostsProps) {
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const { user } = useAuth()
+  const visible = filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId)
 
   return (
-    <section className="py-12">
-      <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-        <SparklesIcon className="h-6 w-6 text-yappr-500" />
-        Popular Posts
-      </h2>
+    <section aria-labelledby="popular-posts-heading" className="min-w-0">
+      <h2 id="popular-posts-heading" className="mb-4 text-xl font-bold">Popular posts</h2>
 
       {error ? (
-        <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
+        <div className="rounded-2xl border border-gray-200 py-10 text-center dark:border-gray-800">
+          <p className="mb-4 text-gray-500 dark:text-gray-400">Couldn&apos;t load posts.</p>
           {onRetry && (
             <Button variant="outline" size="sm" onClick={onRetry}>
-              <ArrowPathIcon className="h-4 w-4 mr-2" />
-              Retry
+              <ArrowPathIcon className="mr-2 h-4 w-4" />
+              Try again
             </Button>
           )}
         </div>
-      ) : loading ? (
-        <div className="max-w-2xl mx-auto space-y-4">
-          {[...Array(3)].map((_, i) => (
-            <PostSkeleton key={i} />
-          ))}
-        </div>
-      ) : posts.length === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">
-            No posts yet. Be the first to share something!
-          </p>
-          <Button onClick={openLoginModal}>
-            Get Started
-          </Button>
-        </div>
+      ) : !loading && visible.length === 0 ? (
+        <p className="rounded-2xl border border-gray-200 py-10 text-center text-gray-500 dark:border-gray-800 dark:text-gray-400">
+          No posts yet.
+        </p>
       ) : (
-        <div className="max-w-2xl mx-auto space-y-4">
-          {filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId).map((post, index) => (
-            <motion.div
-              key={post.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className="bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden"
-            >
-              <PostCard post={post} />
-            </motion.div>
-          ))}
-
-          <div className="text-center pt-8">
-            <Button variant="outline" onClick={openLoginModal}>
-              Sign in to see more
-            </Button>
+        <>
+          {/* Full-bleed on phones, like a timeline; framed from `sm` up. The inner -mb-px tucks the last card's bottom border under the frame's. */}
+          <div className="-mx-4 overflow-hidden border-y border-gray-200 dark:border-gray-800 sm:mx-0 sm:rounded-2xl sm:border">
+            <div className="-mb-px">
+              {loading
+                ? [...Array(4)].map((_, i) => <PostSkeleton key={i} />)
+                : visible.map((post) => <PostCard key={post.id} post={post} />)}
+            </div>
           </div>
-        </div>
+          {!loading && (
+            <div className="mt-6 text-center">
+              <Button variant="outline" asChild>
+                <Link href="/feed">See more posts</Link>
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </section>
   )

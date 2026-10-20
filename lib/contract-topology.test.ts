@@ -553,11 +553,11 @@ describe('contract topology', () => {
       expect(V10.likeReply.indices?.some((index) => (index as { timeRange?: unknown }).timeRange)).toBe(false)
 
       const v10 = await topologyModule('v10')
-      expect(v10.windowedRankingFor('posts')).toEqual({ docType: 'like', index: 'byTrendPost', grid: { range: 259_200, step: 86_400 }, selector: 'oldest', label: '3 days' })
-      expect(v10.windowedRankingFor('hashtags')).toEqual({ docType: 'like', index: 'byTrendHashtagPost', grid: { range: 86_400, step: 21_600 }, selector: 'oldest', label: '24h' })
+      expect(v10.windowedRankingFor('posts')).toEqual({ docType: 'like', index: 'byTrendPost', grid: { range: 259_200, step: 86_400 }, selector: 'oldest' })
+      expect(v10.windowedRankingFor('hashtags')).toEqual({ docType: 'like', index: 'byTrendHashtagPost', grid: { range: 86_400, step: 21_600 }, selector: 'oldest' })
       expect(v10.windowedRankingFor('creators')).toBeNull()
       const v9 = await topologyModule('v9')
-      const day = { grid: { range: 86_400, step: 86_400 }, selector: 'newest', label: 'Today' }
+      const day = { grid: { range: 86_400, step: 86_400 }, selector: 'newest' }
       expect(v9.windowedRankingFor('posts')).toEqual({ docType: 'like', index: 'byDayPost', ...day })
       expect(v9.windowedRankingFor('hashtags')).toEqual({ docType: 'beat', index: 'byDayHashtagPost', ...day })
       expect(v9.windowedRankingFor('creators')).toEqual({ docType: 'like', index: 'byDayAuthorPost', ...day })

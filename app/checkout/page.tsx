@@ -35,6 +35,8 @@ import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingLine, StorePolicy, SavedAddress } from '@/lib/types'
 import { normalizeBytes } from '@/lib/bytes'
 
+const CHECKOUT_STEP_LABELS = { details: 'Details', policies: 'Policies', payment: 'Payment' } as const
+
 const FULFILLMENT_CHANGED_MESSAGE = 'The seller changed how one of these products is delivered (shipped or digital). Review your order and shipping again before continuing.'
 
 /**
@@ -394,9 +396,16 @@ function CheckoutPage() {
   // Digital lines are delivered on chain, so an all-digital cart has nothing to ship.
   const digitalCount = cartItems.filter(isDigitalLine).length
   const digitalOnly = digitalCount > 0 && digitalCount === cartItems.length
+  // A cart with anything to ship starts with shipping on, as in any shop; the buyer can still turn it off.
+  const hasShippedLines = cartItems.length > 0 && !digitalOnly
+  const shippingDefaulted = useRef(false)
   useEffect(() => {
     if (digitalOnly) setIncludeShipping(false)
-  }, [digitalOnly])
+    else if (hasShippedLines && !shippingDefaulted.current) {
+      shippingDefaulted.current = true
+      setIncludeShipping(true)
+    }
+  }, [digitalOnly, hasShippedLines])
 
   // Calculate shipping when address changes (only when shipping is included)
   useEffect(() => {
@@ -937,9 +946,13 @@ function CheckoutPage() {
                   <div key={s} className="flex items-center flex-1 last:flex-none">
                     <div
                       className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 ${stepClass}`}
+                      aria-current={isCurrent ? 'step' : undefined}
                     >
                       {i + 1}
                     </div>
+                    <span className={`ml-2 text-sm ${isCurrent ? 'font-medium' : 'hidden sm:inline text-gray-500'}`}>
+                      {CHECKOUT_STEP_LABELS[s]}
+                    </span>
                     {i < 2 && (
                       <div
                         className={`flex-1 h-0.5 mx-2 ${
@@ -1001,7 +1014,7 @@ function CheckoutPage() {
                   {digitalOnly
                     ? 'Everything in this order is digital, so no shipping address is needed. '
                     : `${digitalCount} digital item${digitalCount === 1 ? ' is' : 's are'} delivered online; only the rest ships. `}
-                  The seller delivers your files and keys encrypted to you; find them under My Orders → Library.
+                  Find them in My Orders → Library once the seller delivers them.
                 </span>
               </div>
             </div>

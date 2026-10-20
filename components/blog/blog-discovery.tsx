@@ -170,15 +170,16 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
       {blogIsV2() && <PillTabs options={sorts} value={sort} onChange={setSort} label="Sort blogs" />}
 
       {loading ? (
-        <div className="space-y-3">
+        // Sized like a BlogCard (name, handle, two description lines) so the list does not jump when it loads.
+        <div className="space-y-2" aria-hidden="true">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="animate-pulse rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-gray-200 dark:bg-gray-800" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-4 w-1/3 rounded bg-gray-200 dark:bg-gray-800" />
-                  <div className="h-3 w-2/3 rounded bg-gray-200 dark:bg-gray-800" />
-                </div>
+            <div key={i} className="flex animate-pulse items-start gap-3 rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+              <div className="h-10 w-10 flex-shrink-0 rounded-full bg-gray-200 dark:bg-gray-800" />
+              <div className="flex-1">
+                <div className="flex h-6 items-center"><div className="h-4 w-1/3 rounded bg-gray-200 dark:bg-gray-800" /></div>
+                <div className="flex h-4 items-center"><div className="h-3 w-1/4 rounded bg-gray-200 dark:bg-gray-800" /></div>
+                <div className="mt-1 flex h-5 items-center"><div className="h-3.5 w-full rounded bg-gray-200 dark:bg-gray-800" /></div>
+                <div className="flex h-5 items-center"><div className="h-3.5 w-2/3 rounded bg-gray-200 dark:bg-gray-800" /></div>
               </div>
             </div>
           ))}
@@ -247,7 +248,7 @@ function BlogCard({ blog, currentUserId }: { blog: BlogWithUsername; currentUser
             {blog.name}
           </h3>
           {blog.username && (
-            <p className="text-xs text-yappr-400">@{blog.username}</p>
+            <p className="text-xs text-gray-500">@{blog.username}</p>
           )}
           {blog.description && (
             <p className="mt-1 line-clamp-2 text-sm text-gray-500 dark:text-gray-400">
@@ -262,7 +263,7 @@ function BlogCard({ blog, currentUserId }: { blog: BlogWithUsername; currentUser
             disabled={followLoading}
             className={`flex-shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition ${
               isFollowing
-                ? 'border border-gray-600 text-gray-300 hover:border-red-500 hover:text-red-400'
+                ? 'border border-gray-300 text-gray-700 hover:border-red-500 hover:text-red-500 dark:border-gray-600 dark:text-gray-300 dark:hover:text-red-400'
                 : 'bg-yappr-500 text-white hover:bg-yappr-600'
             }`}
           >

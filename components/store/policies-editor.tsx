@@ -68,9 +68,7 @@ export function PoliciesEditor({
 
   return (
     <div className="space-y-4">
-      {policies.length === 0 ? (
-        <p className="text-sm text-gray-500">No policies defined. Click &quot;Add Policy&quot; to create one.</p>
-      ) : (
+      {policies.length > 0 && (
         <div className="space-y-4">
           {policies.map((policy, index) => (
             <div
@@ -157,13 +155,13 @@ export function PoliciesEditor({
         className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-yappr-600 hover:text-yappr-700 hover:bg-yappr-50 dark:hover:bg-yappr-900/20 rounded-lg transition-colors"
       >
         <PlusIcon className="h-4 w-4" />
-        Add Policy
+        Add policy
       </button>
 
-      {/* Character Counter */}
-      {policies.length > 0 && (
+      {/* Character Counter, only near the limit */}
+      {currentLength >= maxLength * 0.8 && (
         <div className={`text-sm ${isOverLimit ? 'text-red-500' : 'text-gray-500'}`}>
-          Character count: {currentLength.toLocaleString()} / {maxLength.toLocaleString()}
+          {currentLength.toLocaleString()}/{maxLength.toLocaleString()} characters
           {isOverLimit && (
             <span className="ml-2 font-medium">
               (Over limit by {(currentLength - maxLength).toLocaleString()} characters)

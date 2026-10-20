@@ -81,7 +81,7 @@ export function BlogEditor({ initialBlocks, onChange, onBytesChange }: BlogEdito
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Image upload failed'
       if (msg.toLowerCase().includes('provider')) {
-        toast.error('No storage provider connected. Set one up in Settings to upload images.')
+        toast.error('To upload images, connect storage in Settings → Storage.')
       } else {
         toast.error(msg)
       }

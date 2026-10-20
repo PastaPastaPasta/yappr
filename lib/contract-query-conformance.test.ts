@@ -26,7 +26,7 @@
  *
  * Readers driven (the list in `readers()` below):
  *   post-service      getTimeline (+cursor), getUserPosts (+forDisplay), getPostById,
- *                     getPostsByIds, getPostsByIdsForDisplay, countUserPosts, countAllPosts,
+ *                     getPostsByIds, getPostsByIdsForDisplay, countUserPosts, countAllPosts, countPostsSince,
  *                     getPostsByHashtag, countPostsByHashtag, getQuotePosts (post/reply),
  *                     countQuotes, countQuotesForPosts, getOwnQuotes, getAuthorPostCounts,
  *                     getTopPostsByLikes, getFollowingFeed, getBatchPostStats,
@@ -338,6 +338,7 @@ async function readers(): Promise<Reader[]> {
     { name: 'postService.getPostsByIdsForDisplay', run: () => postService.getPostsByIdsForDisplay([POST, POST2]) },
     { name: 'postService.countUserPosts', run: () => postService.countUserPosts(OTHER) },
     { name: 'postService.countAllPosts', run: () => postService.countAllPosts() },
+    { name: 'postService.countPostsSince', run: () => postService.countPostsSince(SINCE) },
     { name: 'postService.getPostsByHashtag', run: () => postService.getPostsByHashtag('dash', { limit: 20 }) },
     { name: 'postService.countPostsByHashtag', run: () => postService.countPostsByHashtag('dash') },
     { name: 'postService.getQuotePosts (post)', run: () => postService.getQuotePosts(POST, 'post', { limit: 20 }) },

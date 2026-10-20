@@ -210,9 +210,9 @@ test('connection names and handles expose valid link and popup semantics', async
   await expect(page).toHaveURL(/\/user\?id=offline-person/)
 })
 
-test('blog comments show one character counter and enforce the text limit', async ({ page }) => {
+test('blog comments show one character counter, only near the limit, and enforce the text limit', async ({ page }) => {
   await page.goto('/?scenario=comments')
-  await expect(page.getByText('0/500 characters', { exact: true })).toHaveCount(1)
+  await expect(page.getByText(/\/500 characters/)).toHaveCount(0)
   await expect(page.locator('main')).not.toContainText('bytes')
   const comment = page.getByPlaceholder(/comment/i)
   await comment.fill('a'.repeat(501))

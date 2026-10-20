@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { useAppStore } from '@/lib/store';
-import { useLoginModal } from '@/hooks/use-login-modal';
 import { UserAvatar } from '@/components/ui/avatar-image';
 import { Button } from '@/components/ui/button';
 
@@ -11,15 +10,16 @@ export function FeedComposeBox() {
   const [isHydrated, setIsHydrated] = useState(false);
   const { user } = useAuth();
   const setComposeOpen = useAppStore((state) => state.setComposeOpen);
-  const openLoginPrompt = useLoginModal((s) => s.open);
 
   useEffect(() => {
     setIsHydrated(true);
   }, []);
 
+  // Signed out there is nothing to compose, and the sidebar already offers Sign in.
+  if (!user) return null;
+
   return (
     <div className="border-b border-gray-200 dark:border-gray-800 px-4 py-2 md:p-4">
-      {user ? (
         <div className="flex gap-3">
           <div className="h-10 w-10 md:h-12 md:w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
             {isHydrated ? (
@@ -38,19 +38,6 @@ export function FeedComposeBox() {
             What&apos;s happening?
           </Button>
         </div>
-      ) : (
-        <div className="flex items-center justify-center">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => openLoginPrompt()}
-            className="h-auto px-0 text-yappr-500 hover:text-yappr-600 font-medium py-1"
-          >
-            Login to share your thoughts
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

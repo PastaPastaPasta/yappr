@@ -218,7 +218,7 @@ export default function TermsPage() {
           Writing to Dash Platform costs credits, paid from your identity&apos;s balance.
           {declaredActionFee('post', 'create') && ' Some actions also carry a small moderation fee that goes to the elected moderators.'}
           {yappCostCopy()}
-          {network && ` On ${network}, credits are free: you can get them through the identity bridge linked from the sign-in screen.`}
+          {network && ` On ${network}, credits are free.`}
         </Prose>
       </InfoSection>
 

@@ -1,8 +1,8 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import * as Popover from '@radix-ui/react-popover'
 import { dpnsService, unifiedProfileService } from '@/lib/services'
 import { getPrimaryUsername } from '@/lib/utils/username'
 import { detectActiveMention } from '@/lib/compose/mention-query'
@@ -37,9 +37,23 @@ export function MentionAutocomplete({
     start: number
     end: number
   } | null>(null)
+  // Where the list hangs, relative to the textarea: just under the @.
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 })
   const searchIdRef = useRef(0)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  // The list is portaled and positioned against the caret, so the composer's
+  // scroll area and rounded edges can't clip it; it flips above when there is
+  // no room below.
+  // A new anchor per position, so the popover re-measures when the @ moves.
+  const caretAnchor = useMemo(() => ({
+    current: {
+      // Lets the popover follow the textarea's scroll containers, not just the window.
+      contextElement: textareaRef.current ?? undefined,
+      getBoundingClientRect: () => {
+        const rect = textareaRef.current?.getBoundingClientRect()
+        return DOMRect.fromRect({ x: (rect?.left ?? 0) + dropdownPosition.left, y: (rect?.top ?? 0) + dropdownPosition.top, width: 0, height: 0 })
+      },
+    },
+  }), [textareaRef, dropdownPosition])
 
   // Calculate dropdown position based on cursor
   const updateDropdownPosition = useCallback(() => {
@@ -90,10 +104,7 @@ export function MentionAutocomplete({
       const scrollTop = textarea.scrollTop
 
       // Position dropdown below the @ symbol
-      setDropdownPosition({
-        top: relativeTop - scrollTop,
-        left: Math.min(relativeLeft, textarea.clientWidth - 250) // Prevent overflow
-      })
+      setDropdownPosition({ top: relativeTop - scrollTop, left: relativeLeft })
     } finally {
       document.body.removeChild(mirror)
     }
@@ -274,19 +285,19 @@ export function MentionAutocomplete({
   }
 
   return (
-    <AnimatePresence>
-      <motion.div
-        ref={dropdownRef}
-        initial={{ opacity: 0, y: -5 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -5 }}
-        transition={{ duration: 0.15 }}
-        className="absolute z-50 w-64 bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
-        style={{
-          top: dropdownPosition.top,
-          left: dropdownPosition.left,
-        }}
-      >
+    <Popover.Root open>
+      <Popover.Anchor virtualRef={caretAnchor} />
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          align="start"
+          sideOffset={4}
+          collisionPadding={8}
+          // Focus stays in the textarea: typing and the arrow keys keep working.
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="z-[60] w-64 bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
+        >
         {isLoading ? (
           <div className="p-3 flex items-center justify-center gap-2 text-gray-500">
             <Spinner size="sm" className="h-4 w-4 border-gray-500" />
@@ -330,7 +341,8 @@ export function MentionAutocomplete({
             ))}
           </div>
         )}
-      </motion.div>
-    </AnimatePresence>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   )
 }

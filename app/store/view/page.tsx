@@ -8,6 +8,7 @@ import {
   ArrowLeftIcon,
   BuildingStorefrontIcon,
   ChatBubbleLeftIcon,
+  ClipboardDocumentListIcon,
   ExclamationTriangleIcon,
   MagnifyingGlassIcon,
   MapPinIcon,
@@ -384,8 +385,8 @@ function StoreDetailContent() {
     <PageShell>
           {/* Header */}
           <PageHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <div className="flex min-w-0 basis-full items-center gap-4 sm:basis-auto sm:flex-1">
+            <div className="flex items-center justify-between gap-3 p-4">
+              <div className="flex min-w-0 flex-1 items-center gap-4">
                 <button
                   aria-label="Back"
                   onClick={() => router.back()}
@@ -410,18 +411,21 @@ function StoreDetailContent() {
                     <Button
                       variant="outline"
                       size="sm"
+                      aria-label="Message"
                       onClick={() => router.push(`/messages?startConversation=${store.ownerId}`)}
                     >
-                      <ChatBubbleLeftIcon className="h-4 w-4 mr-1.5" />
-                      Message
+                      <ChatBubbleLeftIcon className="h-4 w-4 sm:mr-1.5" aria-hidden="true" />
+                      <span className="hidden sm:inline">Message</span>
                     </Button>
                     {user && (
                       <Button
                         variant="outline"
                         size="sm"
+                        aria-label="My Orders"
                         onClick={() => router.push('/orders')}
                       >
-                        My Orders
+                        <ClipboardDocumentListIcon className="h-4 w-4 sm:mr-1.5" aria-hidden="true" />
+                        <span className="hidden sm:inline">My Orders</span>
                       </Button>
                     )}
                   </>
@@ -587,12 +591,13 @@ function StoreDetailContent() {
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search products..."
+                      placeholder="Search products"
                       className="w-full pl-9 pr-9 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     />
                     {searchQuery && (
                       <button
                         onClick={() => setSearchQuery('')}
+                        aria-label="Clear search"
                         className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"
                       >
                         <XMarkIcon className="h-4 w-4 text-gray-400" />
@@ -608,7 +613,7 @@ function StoreDetailContent() {
                         onChange={(e) => setCategoryFilter(e.target.value)}
                         className="flex-1 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm border-none focus:outline-none focus:ring-2 focus:ring-yappr-500"
                       >
-                        <option value="all">All Categories</option>
+                        <option value="all">All categories</option>
                         {availableCategories.map(cat => (
                           <option key={cat} value={cat}>{cat}</option>
                         ))}

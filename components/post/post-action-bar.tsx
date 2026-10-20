@@ -41,7 +41,7 @@ interface PostActionBarProps {
   reply: { count: number; enabled: boolean; reason?: string | null; onClick: () => void }
   /**
    * `allowed` false hides the Repost item; the control still shows the count and Quote.
-   * `undoLabel` names the undo when it is not a plain "Undo Repost" (v10: the
+   * `undoLabel` names the undo when it is not a plain "Undo repost" (v10: the
    * viewer's slot holds a quote with text, and undoing deletes it).
    */
   repost: { count: number; active: boolean; loading: boolean; allowed: boolean; undoLabel?: string; onClick: () => void }
@@ -123,7 +123,7 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
               {showRepostItem && (
                 <DropdownMenu.Item onClick={(e) => stopAndRun(e, repost.onClick)} className={MENU_ITEM}>
                   <ArrowPathIcon className={cn('h-5 w-5', repost.active && 'text-green-500')} />
-                  {repost.active ? repost.undoLabel ?? 'Undo Repost' : 'Repost'}
+                  {repost.active ? repost.undoLabel ?? 'Undo repost' : 'Repost'}
                 </DropdownMenu.Item>
               )}
               {!deleted && quoteLabel !== null && (
@@ -136,7 +136,7 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
 
-        <ActionTooltip label={likeRefused ? "Can't like your own post" : 'Like'}>
+        <ActionTooltip label={likeRefused ? "Can't like your own post" : like.active ? 'Unlike' : 'Like'}>
           <button
             data-testid={`like-btn-${postId}`}
             aria-label={`Like, ${like.count} like${like.count === 1 ? '' : 's'}`}
@@ -145,7 +145,6 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
             disabled={likeDisabled}
             className={cn(
               'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-red-50 dark:hover:bg-red-950',
-              like.loading && 'opacity-50 cursor-wait',
               ((deleted && !like.active) || likeRefused) && 'opacity-50 cursor-not-allowed',
               like.active && 'text-red-500'
             )}
@@ -172,22 +171,22 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
 
         <div className="flex items-center gap-1">
           {bookmark && (
-            <ActionTooltip label="Bookmark">
+            <ActionTooltip label={bookmark.active ? 'Remove bookmark' : 'Bookmark'}>
               <button
                 data-testid={`bookmark-btn-${postId}`}
                 aria-label="Bookmark"
                 aria-pressed={bookmark.active}
                 onClick={(e) => stopAndRun(e, bookmark.onClick)}
                 disabled={bookmark.loading}
-                className={cn('p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors', bookmark.loading && 'opacity-50 cursor-wait')}
+                className="group p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors"
               >
-                {bookmark.active ? <BookmarkIconSolid className="h-5 w-5 text-yappr-500" /> : <BookmarkIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />}
+                {bookmark.active ? <BookmarkIconSolid className="h-5 w-5 text-yappr-500" /> : <BookmarkIcon className="h-5 w-5 text-gray-500 group-hover:text-yappr-500 transition-colors" />}
               </button>
             </ActionTooltip>
           )}
           <ActionTooltip label="Share">
-            <button aria-label="Share" onClick={(e) => stopAndRun(e, onShare)} className="p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors">
-              <ArrowUpTrayIcon className="h-5 w-5 text-gray-500 hover:text-yappr-500 transition-colors" />
+            <button aria-label="Share" onClick={(e) => stopAndRun(e, onShare)} className="group p-2 rounded-full hover:bg-yappr-50 dark:hover:bg-yappr-950 transition-colors">
+              <ArrowUpTrayIcon className="h-5 w-5 text-gray-500 group-hover:text-yappr-500 transition-colors" />
             </button>
           </ActionTooltip>
         </div>

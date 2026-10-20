@@ -95,11 +95,10 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       headerImage={blog.headerImage}
       labels={blog.labels}
       meta={(
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {blog.avatar && (
             <IpfsImage src={blog.avatar} alt={`${blog.name} avatar`} className="h-9 w-9 rounded-full object-cover" />
           )}
-          <span>{formatLabels(blog.labels) || 'Publishing on Yappr'}</span>
           {!isOwnBlog && (
             <button
               type="button"
@@ -115,7 +114,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
             </button>
           )}
           {followerCount > 0 && (
-            <span className="text-xs text-[var(--blog-text)]/60">
+            <span className="whitespace-nowrap text-xs text-[var(--blog-text)]/60">
               {followerCount} {followerCount === 1 ? 'follower' : 'followers'}
             </span>
           )}

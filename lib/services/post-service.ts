@@ -8,7 +8,7 @@ import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, postListingWherePrefix, privateFeedClientSupported, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, postListingWherePrefix, postListingsCarryLiveMarker, privateFeedClientSupported, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { extractMentions, indexedTags } from '@/lib/post-helpers';
 import { tagLimitProblem } from '@/lib/compose/limits';
@@ -737,6 +737,28 @@ class PostService extends BaseDocumentService<Post> {
         return 0;
       }
     });
+  }
+
+  /**
+   * Live posts created after `sinceMs`: a range count on v17's rangeCountable
+   * `timeline [live, $createdAt]`, one O(log n) read. Null where the cut keeps
+   * no such tree (before v17) or the read fails, so callers hide the figure
+   * rather than show a wrong one.
+   */
+  async countPostsSince(sinceMs: number): Promise<number | null> {
+    if (!postListingsCarryLiveMarker()) return null;
+    try {
+      const { getEvoSdk } = await import('./evo-sdk-service');
+      const sdk = await getEvoSdk();
+      return await documentCount(sdk, {
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
+        where: [...postListingWherePrefix(), ['$createdAt', '>', sinceMs]],
+      });
+    } catch (error) {
+      logger.error('Error counting recent posts:', error);
+      return null;
+    }
   }
 
   /**

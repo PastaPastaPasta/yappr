@@ -83,7 +83,7 @@ export function BlockedUsersSettings() {
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <NoSymbolIcon className="h-5 w-5" />
-          <h3 className="font-semibold">Blocked Users</h3>
+          <h3 className="font-semibold">Blocked accounts</h3>
         </div>
         <div className="space-y-3">
           {[1, 2].map(i => (
@@ -107,7 +107,7 @@ export function BlockedUsersSettings() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <NoSymbolIcon className="h-5 w-5" />
-        <h3 className="font-semibold">Blocked Users</h3>
+        <h3 className="font-semibold">Blocked accounts</h3>
       </div>
 
       {blockedUsers.length === 0 ? (
