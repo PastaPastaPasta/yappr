@@ -319,6 +319,19 @@ function PostCardView({
     quotes: progressiveEnrichment?.stats?.quotes ?? post.quotes,
     views: progressiveEnrichment?.stats?.views ?? post.views,
   }
+  // A reply the viewer just sent counts at once. Each count read after it
+  // already includes it, so a changed base drops the local bump.
+  const [sentReplies, setSentReplies] = useState({ base: stats.replies, count: 0 })
+  useEffect(() => {
+    const onReplyCreated = (event: Event) => {
+      if ((event as CustomEvent<{ reply?: { parentId?: string } }>).detail?.reply?.parentId !== post.id) return
+      setSentReplies((sent) => ({ base: stats.replies, count: (sent.base === stats.replies ? sent.count : 0) + 1 }))
+    }
+    window.addEventListener('reply-created', onReplyCreated)
+    return () => window.removeEventListener('reply-created', onReplyCreated)
+  }, [post.id, stats.replies])
+  const replyCount = stats.replies + (sentReplies.base === stats.replies ? sentReplies.count : 0)
+
   // On v10 a repost IS a quote post, so the quote count is the whole repost
   // count and there is no separate repost count to add to it.
   const repostsAreQuotePosts = repostsAreQuotes()
@@ -777,7 +790,7 @@ function PostCardView({
             isOwnPost={isOwnPost}
             deleted={isTombstoned}
             reply={{
-              count: stats.replies,
+              count: replyCount,
               enabled: canReplyToPrivate && !isTombstoned && !replyBlockedReason,
               reason: isTombstoned ? `This ${isReply ? 'reply' : 'post'} was deleted` : replyBlockedReason ?? cantReplyReason,
               onClick: handleReply,

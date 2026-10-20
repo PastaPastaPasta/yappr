@@ -183,11 +183,11 @@ function BookmarksPage() {
             <div>
               <h1 className="text-xl font-bold">Bookmarks</h1>
               <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-gray-500">
-                <span>{bookmarkCount} saved {bookmarkCount === 1 ? 'post' : 'posts'}</span>
-                <span aria-hidden="true">·</span>
-                <span className="inline-flex items-center gap-1" data-testid="bookmarks-public-note">
+                <span className="whitespace-nowrap">{bookmarkCount} saved {bookmarkCount === 1 ? 'post' : 'posts'}</span>
+                <span className="inline-flex items-center gap-1 whitespace-nowrap" data-testid="bookmarks-public-note">
+                  <span aria-hidden="true">·</span>
                   <GlobeAltIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                  Anyone can see your bookmarks
+                  Visible to everyone
                 </span>
               </p>
             </div>

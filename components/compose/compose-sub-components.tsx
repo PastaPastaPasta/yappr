@@ -178,7 +178,7 @@ export function getPostButtonState(
   isReply: boolean,
   threadPostCount: number
 ): PostButtonState {
-  if (isPosting && postingProgress) {
+  if (isPosting && postingProgress && postingProgress.total > 1) {
     return { type: 'posting-progress', progress: postingProgress }
   }
   if (isPosting) {
