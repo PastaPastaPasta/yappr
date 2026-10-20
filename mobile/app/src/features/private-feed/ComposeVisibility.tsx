@@ -52,7 +52,9 @@ export function VisibilityChip({
       actions: VISIBILITIES.map((option) => ({
         label: copy.compose.visibility[option],
         onPress: () => {
-          if (option === 'public' || hasFeed) {
+          // Only a feed known to be missing offers set-up: one not read yet (or a failed read) is no answer,
+          // and the engine refuses a private post with no feed before anything is sent.
+          if (option === 'public' || hasFeed !== false) {
             onChange(option);
             return;
           }

@@ -572,3 +572,22 @@ it("edits a failed post on a slot of its own, leaving the context's draft alone"
   expect(loadDraft(VIEWER_ID, { ...POST, pendingId: 'pending-a' })).toBeNull();
   jest.useRealTimers();
 });
+
+it('offers to set up a private feed only when there is none, never on a failed read', async () => {
+  fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, privateFeeds: true } } });
+  queryClient.setQueryDefaults(queryKeys.privateFeed.access(VIEWER_ID), { retry: false });
+  fakeEngine.method('privateFeed.access').mockRejectedValue(Object.assign(new Error('read failed'), { code: 'NETWORK' }));
+  await renderCompose();
+  fireEvent.press(byId('compose-visibility'));
+  act(() => sheet?.choose('Private followers'));
+  expect(byId('compose-visibility')).toHaveProp('accessibilityLabel', 'Who can see this: Private followers');
+
+  screen.unmount();
+  queryClient.clear();
+  fakeEngine.method('privateFeed.access').mockResolvedValue({ hasFeed: false, status: 'self', messagingKey: 'ready' });
+  await renderCompose();
+  fireEvent.press(byId('compose-visibility'));
+  act(() => sheet?.choose('Private followers'));
+  expect(sheet?.options).toEqual(['Set up private feed', 'Cancel']);
+  expect(byId('compose-visibility')).toHaveProp('accessibilityLabel', 'Who can see this: Everyone');
+});
