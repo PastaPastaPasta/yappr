@@ -71,15 +71,26 @@ export function markRegisteredVerified(contractIds: readonly string[]): void {
  */
 export async function ensureRegisteredContract(contractId: string, fetch: () => Promise<{ schemas?: unknown; config?: unknown } | null | undefined>): Promise<void> {
   if (verified.has(contractId)) return
-  let timer: ReturnType<typeof setTimeout> | undefined
-  await Promise.race([refreshing, new Promise<void>((resolve) => { timer = setTimeout(resolve, REFRESH_WAIT_MS) })])
-  clearTimeout(timer)
-  if (verified.has(contractId)) return
-  const contract = await fetch()
-  if (!contract) throw new Error('The contract could not be read to confirm its fee')
-  rememberRegisteredContract(contractId, contract)
-  if (!verified.has(contractId)) throw new Error('The contract\'s declarations could not be read to confirm its fee')
+  // Only a bundled seed can be proved by the revalidation; a missing record is read at once.
+  if (known.has(contractId)) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([refreshing, new Promise<void>((resolve) => { timer = setTimeout(resolve, REFRESH_WAIT_MS) })])
+    clearTimeout(timer)
+    if (verified.has(contractId)) return
+  }
+  let contract: { schemas?: unknown; config?: unknown } | null | undefined
+  try {
+    contract = await fetch()
+  } catch {
+    contract = null
+  }
+  if (contract) rememberRegisteredContract(contractId, contract)
+  // Nothing was signed or sent: worded so it is never mistaken for a write whose outcome is unknown.
+  if (!verified.has(contractId)) throw new Error(FEE_CHECK_FAILED)
 }
+
+/** What a priced write reports when it could not confirm the fee with the network; nothing was sent. */
+export const FEE_CHECK_FAILED = 'Couldn\'t check the fee with the network. Nothing was sent, so try again.'
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 /** A wasm schema carries integers as bigints; JSON as numbers. */
@@ -137,6 +148,8 @@ export function rememberRegisteredContract(contractId: string, contract: { schem
     return
   }
   if (record) {
+    // A chain read this session is at least as new as a build-time snapshot: a re-seed (an SDK rebuild) never replaces it.
+    if (seed && verified.has(contractId)) return
     known.set(contractId, record)
     // A bundled seed is unproved until revalidation; a chain read is proved.
     if (seed) verified.delete(contractId)

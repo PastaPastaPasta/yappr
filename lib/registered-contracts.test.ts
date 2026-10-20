@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  ensureRegisteredContract, markRegisteredVerified, registeredActionFee, registeredContractOf, registeredDeleteWindow, registeredOr, registeredOwnerProtected,
+  FEE_CHECK_FAILED, ensureRegisteredContract, markRegisteredVerified, registeredActionFee, registeredContractOf, registeredDeleteWindow, registeredOr, registeredOwnerProtected,
   registeredSettledRule, rememberRegisteredContract, trackRegisteredRefresh,
 } from './registered-contracts'
 
@@ -102,8 +102,29 @@ describe('making a record proved before a priced write', () => {
     }
   })
 
-  it('fails before signing when the contract cannot be read', async () => {
-    await expect(ensureRegisteredContract('unreadable', async () => null)).rejects.toThrow('could not be read')
-    await expect(ensureRegisteredContract('declares-nothing', async () => ({}))).rejects.toThrow('could not be read')
+  it('fails before signing, saying nothing was sent, when the contract cannot be read', async () => {
+    await expect(ensureRegisteredContract('unreadable', async () => null)).rejects.toThrow(FEE_CHECK_FAILED)
+    await expect(ensureRegisteredContract('declares-nothing', async () => ({}))).rejects.toThrow(FEE_CHECK_FAILED)
+    await expect(ensureRegisteredContract('offline', async () => { throw new Error('request timed out') })).rejects.toThrow(FEE_CHECK_FAILED)
+  })
+
+  it('keeps a chain-read record when an SDK rebuild seeds the bundle again', async () => {
+    rememberRegisteredContract('reseeded', declaring(50_000_000))
+    rememberRegisteredContract('reseeded', declaring(9), { seed: true })
+    expect(registeredActionFee('reseeded', 'post', 'create')?.moderators).toBe(50_000_000n)
+    const fetch = vi.fn()
+    await ensureRegisteredContract('reseeded', fetch)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('reads a missing record at once, without waiting for a revalidation in flight', async () => {
+    trackRegisteredRefresh(new Promise(() => undefined))
+    try {
+      const fetch = vi.fn(async () => declaring(3))
+      await ensureRegisteredContract('never-seeded', fetch)
+      expect(fetch).toHaveBeenCalledTimes(1)
+    } finally {
+      trackRegisteredRefresh(Promise.resolve())
+    }
   })
 })
