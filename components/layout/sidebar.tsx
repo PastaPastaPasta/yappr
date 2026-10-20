@@ -3,8 +3,9 @@
 import { logger } from '@/lib/logger';
 import Link from 'next/link'
 import { BrandMark, Lockup } from '@/components/brand/brand'
+import { useSearchParams } from 'next/navigation'
 import { useRoutePath } from '@/hooks/use-route-path'
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import {
   HomeIcon,
   EnvelopeIcon,
@@ -107,6 +108,39 @@ const NAV_ROW = cn(
 )
 /** A label that collapses with the rail but stays the control's accessible name. */
 const NAV_LABEL = 'sr-only xl:not-sr-only'
+
+type NavItem = ReturnType<typeof getNavigation>[number]
+
+function NavRow({ item, isActive, badgeCount }: { item: NavItem; isActive: boolean; badgeCount: number }) {
+  const Icon = isActive ? item.activeIcon : item.icon
+  return (
+    <Link
+      href={item.href}
+      aria-current={isActive ? 'page' : undefined}
+      className={cn(NAV_ROW, isActive && 'font-bold')}
+    >
+      <div className="relative">
+        <Icon className="h-7 w-7" />
+        {badgeCount > 0 && (
+          <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-yappr-500 text-[10px] font-bold text-white">
+            {badgeCount > 99 ? '99+' : badgeCount}
+          </span>
+        )}
+      </div>
+      <span className={NAV_LABEL}>{item.name}</span>
+      {'beta' in item && item.beta && <BetaPill product={item.beta} className="hidden xl:inline-flex" />}
+    </Link>
+  )
+}
+
+/**
+ * The Profile row, active on your own `/user?id=…`. It reads the query, so it
+ * sits in a Suspense boundary (the static export prerenders the fallback).
+ */
+function OwnProfileNavRow({ item, identityId, isUserPage }: { item: NavItem; identityId: string; isUserPage: boolean }) {
+  const viewedId = useSearchParams()?.get('id')
+  return <NavRow item={item} isActive={isUserPage && viewedId === identityId} badgeCount={0} />
+}
 
 /**
  * The brand at the top of the rail: the app icon on the narrow rail, the
@@ -284,8 +318,6 @@ export function Sidebar() {
 
         <nav className="space-y-1">
           {navigation.map((item) => {
-            const isActive = pathname === item.href || ('alsoActiveOn' in item && pathname === item.alsoActiveOn)
-            const Icon = isActive ? item.activeIcon : item.icon
             // Badges render only after hydration: both counts are client-only,
             // so drawing them during SSR would mismatch.
             const badgeCount = !isHydrated ? 0
@@ -293,25 +325,17 @@ export function Sidebar() {
               : item.name === 'Messages' ? unreadMessageCount
               : 0
 
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                aria-current={isActive ? 'page' : undefined}
-                className={cn(NAV_ROW, isActive && 'font-bold')}
-              >
-                <div className="relative">
-                  <Icon className="h-7 w-7" />
-                  {badgeCount > 0 && (
-                    <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-yappr-500 text-[10px] font-bold text-white">
-                      {badgeCount > 99 ? '99+' : badgeCount}
-                    </span>
-                  )}
-                </div>
-                <span className={NAV_LABEL}>{item.name}</span>
-                {item.beta && <BetaPill product={item.beta} className="hidden xl:inline-flex" />}
-              </Link>
-            )
+            // Profile's route is `/user?id=…`: only the query tells your profile from someone else's.
+            if (item.name === 'Profile' && user) {
+              return (
+                <Suspense key={item.name} fallback={<NavRow item={item} isActive={false} badgeCount={0} />}>
+                  <OwnProfileNavRow item={item} identityId={user.identityId} isUserPage={pathname === '/user'} />
+                </Suspense>
+              )
+            }
+
+            const isActive = pathname === item.href || ('alsoActiveOn' in item && pathname === item.alsoActiveOn)
+            return <NavRow key={item.name} item={item} isActive={isActive} badgeCount={badgeCount} />
           })}
           
           {user && isHydrated && (
