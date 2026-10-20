@@ -20,7 +20,7 @@ interface SocialLinksInputProps {
 }
 
 // Supported social platforms
-const SOCIAL_PLATFORMS = [
+export const SOCIAL_PLATFORMS = [
   { id: 'email', label: 'Email', placeholder: 'email@example.com' },
   { id: 'signal', label: 'Signal', placeholder: 'phone or username' },
   { id: 'twitter', label: 'Twitter/X', placeholder: '@username' },
@@ -38,12 +38,12 @@ const SOCIAL_PLATFORMS = [
 
 type SocialPlatform = typeof SOCIAL_PLATFORMS[number]['id']
 
-function getPlatformLabel(platformId: string): string {
+export function getPlatformLabel(platformId: string): string {
   const platform = SOCIAL_PLATFORMS.find(p => p.id === platformId)
   return platform?.label || platformId
 }
 
-function getPlatformPlaceholder(platformId: string): string {
+export function getPlatformPlaceholder(platformId: string): string {
   const platform = SOCIAL_PLATFORMS.find(p => p.id === platformId)
   return platform?.placeholder || 'handle'
 }

@@ -31,14 +31,12 @@ import { Button } from '@/components/ui/button'
 import { UserAvatar, invalidateAvatarImageCache } from '@/components/ui/avatar-image'
 import { BannerImage, invalidateBannerCache } from '@/components/ui/banner-image'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
-import { AvatarCustomization } from '@/components/settings/avatar-customization'
-import { BannerCustomization } from '@/components/settings/banner-customization'
 import { UsernameModal } from '@/components/dpns/username-modal'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { ProfileHeader, type ProfileData } from '@/components/profile/profile-header'
 import { ProfileTabs, type ProfileBlog } from '@/components/profile/profile-tabs'
-import { ImageCustomizationModal } from '@/components/profile/image-customization-modal'
-import { EMPTY_DRAFT, type ProfileDraft } from '@/components/profile/profile-edit-form'
+import { EditProfileModal } from '@/components/profile/edit-profile-modal'
+import type { ProfileDraft } from '@/components/profile/profile-edit-form'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { isPublishedBlogPost } from '@/lib/blog/content-utils'
 import { profileTextLimits } from '@/lib/profile/v10-profile'
@@ -107,12 +105,10 @@ function UserProfileContent() {
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [lastPostId, setLastPostId] = useState<string | null>(null)
 
-  // Editing (own profile only)
-  const [isEditing, setIsEditing] = useState(false)
-  const [draft, setDraft] = useState<ProfileDraft>(EMPTY_DRAFT)
+  // Editing (own profile only): the profile the dialog opened with, or null when closed.
+  const [editInitial, setEditInitial] = useState<ProfileDraft | null>(null)
+  const isEditing = editInitial !== null
   const [isSaving, setIsSaving] = useState(false)
-  const [isEditingAvatar, setIsEditingAvatar] = useState(false)
-  const [isEditingBanner, setIsEditingBanner] = useState(false)
   const [avatarKey, setAvatarKey] = useState(0)
   const [bannerKey, setBannerKey] = useState(0)
 
@@ -157,7 +153,44 @@ function UserProfileContent() {
           loadUserStats(userId),
           postService.getUserPosts(userId, { limit: PAGE_SIZE, forDisplay: true }).catch(() => ({ documents: [] as Post[], preloaded: undefined })),
         ])
-        const profileResult = await unifiedProfileService.getProfile(userId).catch(() => null)
+
+        // The posts read seeds the profile cache, so the profile follows it. The
+        // header waits for the profile, names, follow state and the posts tab;
+        // the badges and the blogs tab fill in after it shows.
+        const loadPosts = async (): Promise<Post[]> => {
+          const merged: Post[] = (postsResult.documents || []).map((post) =>
+            withAuthor(post, { username: '', displayName: '', avatar: '', hasDpns: undefined })
+          )
+          // v10 has no repost documents: the user's reposts are bare quote
+          // posts, already in their posts above.
+          if (!repostsAreQuotes()) {
+            try {
+              const { repostService } = await import('@/lib/services/repost-service')
+              const reposts = await repostService.getUserReposts(userId)
+              const profileDisplayName = (await unifiedProfileService.getProfile(userId).catch(() => null))?.displayName || `User ${userId.slice(-6)}`
+              merged.push(...(await resolveUserReposts(userId, reposts, profileDisplayName)))
+              merged.sort(byNewestActivity)
+            } catch (repostError) {
+              logger.error('Failed to fetch user reposts:', repostError)
+            }
+          }
+          await attachQuotedPosts(merged)
+          return merged
+        }
+        const loadUsernames = async (): Promise<string[]> => {
+          try {
+            const { dpnsService } = await import('@/lib/services/dpns-service')
+            return await dpnsService.getAllUsernamesSorted(userId)
+          } catch {
+            return []
+          }
+        }
+        const [profileResult, sortedUsernames, merged, viewerFollows] = await Promise.all([
+          unifiedProfileService.getProfile(userId).catch(() => null),
+          loadUsernames(),
+          loadPosts(),
+          viewerId && viewerId !== userId ? followService.isFollowing(userId, viewerId).catch(() => false) : Promise.resolve(false),
+        ])
         setPostCount(statsResult.posts)
         // Also null when the read failed; startEdit asks strictly before an owner edits from it.
         setProfileDocumentMissing(!profileResult)
@@ -182,97 +215,77 @@ function UserProfileContent() {
               }
             : { displayName: profileDisplayName, followersCount, followingCount }
         )
+        setIsFollowing(viewerFollows)
+        setAllUsernames(sortedUsernames)
+        setUsername(sortedUsernames[0] ?? null)
 
-        if (viewerId && viewerId !== userId) {
-          setIsFollowing(await followService.isFollowing(userId, viewerId))
-        }
-
-        // The private-feed, store and blog lookups decorate the header; none may fail the page.
-        try {
-          const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
-          const hasPF = await privateFeedService.hasPrivateFeed(userId)
-          setHasPrivateFeed(hasPF)
-          if (hasPF && viewerId && viewerId !== userId) {
-            try {
-              const access = await privateFeedFollowerService.getAccessStatus(userId, viewerId)
-              setIsPrivateFollower(access === 'approved' || access === 'approved-no-keys')
-            } catch (accessErr) {
-              logger.error('Failed to check private feed access status:', accessErr)
-              setIsPrivateFollower(false)
-            }
-          } else {
-            setIsPrivateFollower(false)
-          }
-        } catch (e) {
-          logger.error('Failed to check private feed status:', e)
-          setHasPrivateFeed(false)
-          setIsPrivateFollower(false)
-        }
-
-        try {
-          const { storeService } = await import('@/lib/services/store-service')
-          setUserStore(await storeService.getByOwner(userId))
-        } catch (e) {
-          logger.error('Failed to check store status:', e)
-          setUserStore(null)
-        }
-
-        setBlogsLoading(true)
-        try {
-          const { blogService, blogPostService } = await import('@/lib/services')
-          const ownerBlogs = await blogService.getBlogsByOwner(userId)
-          // Preserve the existing 100-post display cap for each blog.
-          const pages = await blogPostService.getPostsByBlogs(ownerBlogs.map(blog => blog.id), 100)
-          setBlogs(ownerBlogs.map(blog => ({
-            id: blog.id, name: blog.name, description: blog.description,
-            // Drafts are not public; the owner's dashboard counts them.
-            postCount: pages.get(blog.id)?.filter(isPublishedBlogPost).length ?? 0,
-          })))
-        } catch (blogError) {
-          logger.error('Failed to load blogs for profile:', blogError)
-          setBlogs([])
-        } finally {
-          setBlogsLoading(false)
-        }
-
-        const merged: Post[] = (postsResult.documents || []).map((post) =>
-          withAuthor(post, { username: '', displayName: '', avatar: '', hasDpns: undefined })
-        )
-        // v10 has no repost documents: the user's reposts are bare quote
-        // posts, already in their posts above.
-        if (!repostsAreQuotes()) {
-          try {
-            const { repostService } = await import('@/lib/services/repost-service')
-            const reposts = await repostService.getUserReposts(userId)
-            merged.push(...(await resolveUserReposts(userId, reposts, profileDisplayName)))
-            merged.sort(byNewestActivity)
-          } catch (repostError) {
-            logger.error('Failed to fetch user reposts:', repostError)
-          }
-        }
-
-        await attachQuotedPosts(merged)
         if (merged.length > 0) {
-          setPosts(merged)
-          enrichProgressively(merged, postsResult.preloaded)
+          const named = sortedUsernames.length > 0
+            ? merged.map((post) => withAuthor(post, { username: sortedUsernames[0], hasDpns: true }))
+            : merged
+          setPosts(named)
+          enrichProgressively(named, postsResult.preloaded)
         }
-
         const originals = postsResult.documents || []
         if (originals.length > 0) setLastPostId(originals[originals.length - 1].id)
         setHasMore(originals.length >= PAGE_SIZE)
+        setIsLoading(false)
 
-        try {
-          const { dpnsService } = await import('@/lib/services/dpns-service')
-          const sorted = await dpnsService.getAllUsernamesSorted(userId)
-          setAllUsernames(sorted)
-          setUsername(sorted[0] ?? null)
-          if (sorted.length > 0) {
-            setPosts((current) => current.map((post) => withAuthor(post, { username: sorted[0], hasDpns: true })))
+        // The private-feed, store and blog lookups decorate the header; none may fail the page.
+        const loadPrivateFeed = async () => {
+          try {
+            const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
+            const hasPF = await privateFeedService.hasPrivateFeed(userId)
+            setHasPrivateFeed(hasPF)
+            if (hasPF && viewerId && viewerId !== userId) {
+              try {
+                const access = await privateFeedFollowerService.getAccessStatus(userId, viewerId)
+                setIsPrivateFollower(access === 'approved' || access === 'approved-no-keys')
+              } catch (accessErr) {
+                logger.error('Failed to check private feed access status:', accessErr)
+                setIsPrivateFollower(false)
+              }
+            } else {
+              setIsPrivateFollower(false)
+            }
+          } catch (e) {
+            logger.error('Failed to check private feed status:', e)
+            setHasPrivateFeed(false)
+            setIsPrivateFollower(false)
           }
-        } catch {
-          setAllUsernames([])
-          setUsername(null)
         }
+
+        const loadStore = async () => {
+          try {
+            const { storeService } = await import('@/lib/services/store-service')
+            setUserStore(await storeService.getByOwner(userId))
+          } catch (e) {
+            logger.error('Failed to check store status:', e)
+            setUserStore(null)
+          }
+        }
+
+        const loadBlogs = async () => {
+          setBlogsLoading(true)
+          try {
+            const { blogService, blogPostService } = await import('@/lib/services')
+            const ownerBlogs = await blogService.getBlogsByOwner(userId)
+            // Preserve the existing 100-post display cap for each blog.
+            const pages = await blogPostService.getPostsByBlogs(ownerBlogs.map(blog => blog.id), 100)
+            setBlogs(ownerBlogs.map(blog => ({
+              id: blog.id, name: blog.name, description: blog.description,
+              // Drafts are not public; the owner's dashboard counts them.
+              postCount: pages.get(blog.id)?.filter(isPublishedBlogPost).length ?? 0,
+            })))
+          } catch (blogError) {
+            logger.error('Failed to load blogs for profile:', blogError)
+            setBlogs([])
+          } finally {
+            setBlogsLoading(false)
+          }
+        }
+
+        await Promise.all([loadPrivateFeed(), loadStore(), loadBlogs()])
       } catch (error) {
         logger.error('Failed to load profile:', error)
       } finally {
@@ -314,7 +327,7 @@ function UserProfileContent() {
         return
       }
     }
-    setDraft({
+    setEditInitial({
       // Without a profile the name shown is a stand-in; start from the DPNS label.
       displayName: (profileDocumentMissing ? dpnsLabel?.slice(0, profileTextLimits().displayName) : profile?.displayName) || '',
       bio: profile?.bio || '',
@@ -325,13 +338,9 @@ function UserProfileContent() {
       paymentUris: profile?.paymentUris?.map((p) => p.uri) || [],
       socialLinks: profile?.socialLinks || [],
     })
-    setIsEditing(true)
   }, [profile, profileDocumentMissing, viewerId, dpnsLabel])
 
-  const cancelEdit = () => {
-    setIsEditing(false)
-    setDraft(EMPTY_DRAFT)
-  }
+  const cancelEdit = () => setEditInitial(null)
 
   // `?edit=true` deep-links into edit mode once, then drops the parameter.
   useEffect(() => {
@@ -429,7 +438,7 @@ function UserProfileContent() {
     }
   }, [userId])
 
-  const handleSaveProfile = async () => {
+  const handleSaveProfile = async (draft: ProfileDraft) => {
     if (!viewerId) return
     // Mainnet v13 (`notYetUsable`): the profile extension waits for the first seated team.
     if (!profileWritable) {
@@ -452,7 +461,7 @@ function UserProfileContent() {
           : null
       )
       setProfileDocumentMissing(false)
-      setIsEditing(false)
+      setEditInitial(null)
       toast.success('Profile updated!')
     } catch (error) {
       logger.error('Failed to update profile:', error)
@@ -497,22 +506,7 @@ function UserProfileContent() {
         </PageHeader>
 
         {isLoading ? (
-          <div>
-            <div className="h-48 overflow-hidden blur-sm opacity-60">
-              <BannerImage userId={userId} className="w-full h-full" fallbackGradient />
-            </div>
-            <div className="px-4 pb-4">
-              <div className="relative -mt-16 mb-4">
-                <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
-                  <div className="h-full w-full rounded-full overflow-hidden blur-sm opacity-60">
-                    <UserAvatar userId={userId} alt="Loading..." size="full" />
-                  </div>
-                </div>
-              </div>
-              <div className="h-6 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-2" />
-              <div className="h-4 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            </div>
-          </div>
+          <ProfileSkeleton userId={userId} />
         ) : showNsfwInterstitial ? (
           <div data-testid="nsfw-interstitial" className="flex flex-col items-center justify-center gap-4 px-8 py-24 text-center">
             <EyeSlashIcon className="h-12 w-12 text-gray-400" />
@@ -555,18 +549,8 @@ function UserProfileContent() {
                 setSelectedQrPayment(payment)
                 replaceQueryParam('tip', payment.uri)
               }}
-              edit={{
-                active: isEditing,
-                draft,
-                onChange: setDraft,
-                isSaving,
-                onStart: () => {
-                  startEdit().catch((err) => logger.error('Failed to start editing:', err))
-                },
-                onCancel: cancelEdit,
-                onSave: handleSaveProfile,
-                onEditAvatar: () => setIsEditingAvatar(true),
-                onEditBanner: () => setIsEditingBanner(true),
+              onEditProfile={() => {
+                startEdit().catch((err) => logger.error('Failed to start editing:', err))
               }}
             />
 
@@ -628,28 +612,28 @@ function UserProfileContent() {
         )}
       </PageShell>
 
-      <ImageCustomizationModal open={isEditingAvatar} title="Customize Avatar" onClose={() => setIsEditingAvatar(false)}>
-        <AvatarCustomization
-          compact
-          onSave={() => {
-            setIsEditingAvatar(false)
-            invalidateAvatarImageCache(userId)
-            setAvatarKey((k) => k + 1)
-          }}
-        />
-      </ImageCustomizationModal>
-
-      <ImageCustomizationModal open={isEditingBanner} title="Customize Banner" onClose={() => setIsEditingBanner(false)}>
-        <BannerCustomization
-          initialBannerUrl={profile?.bannerUri}
-          onSave={(newBannerUrl) => {
-            setIsEditingBanner(false)
-            invalidateBannerCache(userId)
-            setBannerKey((k) => k + 1)
-            setProfile((prev) => (prev ? { ...prev, bannerUri: newBannerUrl || undefined } : null))
-          }}
-        />
-      </ImageCustomizationModal>
+      <EditProfileModal
+        initial={isOwnProfile ? editInitial : null}
+        userId={userId}
+        bannerUri={profile?.bannerUri}
+        avatarKey={avatarKey}
+        bannerKey={bannerKey}
+        isSaving={isSaving}
+        createsProfile={profileDocumentMissing}
+        onCancel={cancelEdit}
+        onSave={(draft) => {
+          handleSaveProfile(draft).catch((err) => logger.error('Failed to save profile:', err))
+        }}
+        onAvatarSaved={() => {
+          invalidateAvatarImageCache(userId)
+          setAvatarKey((k) => k + 1)
+        }}
+        onBannerSaved={(newBannerUrl) => {
+          invalidateBannerCache(userId)
+          setBannerKey((k) => k + 1)
+          setProfile((prev) => (prev ? { ...prev, bannerUri: newBannerUrl || undefined } : null))
+        }}
+      />
 
       <PaymentQRCodeDialog
         isOpen={!!selectedQrPayment}
@@ -672,21 +656,46 @@ function UserProfileContent() {
   )
 }
 
+const BAR = 'bg-gray-200 dark:bg-gray-800 rounded animate-pulse'
+
+/** The header's shape while it loads: banner, avatar, action button, name, handle, meta and counts. */
+function ProfileSkeleton({ userId }: { userId?: string }) {
+  return (
+    <div aria-busy="true" aria-label="Loading profile">
+      <div className="h-32 sm:h-48 overflow-hidden">
+        {userId ? (
+          <div className="h-full w-full blur-sm opacity-60">
+            <BannerImage userId={userId} className="w-full h-full" fallbackGradient />
+          </div>
+        ) : (
+          <div className="h-full w-full bg-gradient-yappr opacity-50" />
+        )}
+      </div>
+      <div className="px-4 pb-4">
+        <div className="flex justify-between items-start -mt-16 mb-4">
+          <div className="h-24 w-24 sm:h-32 sm:w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
+            <div className="h-full w-full rounded-full overflow-hidden blur-sm opacity-60">
+              {userId ? <UserAvatar userId={userId} alt="" size="full" /> : <div className={`h-full w-full ${BAR}`} />}
+            </div>
+          </div>
+          <div className={`mt-14 sm:mt-20 h-10 w-28 !rounded-full ${BAR}`} />
+        </div>
+        <div className="mb-3">
+          <div className={`h-7 w-48 mb-1 ${BAR}`} />
+          <div className={`h-5 w-32 my-1 ${BAR}`} />
+        </div>
+        <div className={`h-5 w-3/4 mb-3 ${BAR}`} />
+        <div className={`h-5 w-40 mb-3 ${BAR}`} />
+        <div className={`h-5 w-44 ${BAR}`} />
+      </div>
+    </div>
+  )
+}
+
 function LoadingFallback() {
   return (
     <PageShell>
-      <div>
-        <div className="h-48 bg-gradient-yappr opacity-50" />
-        <div className="px-4 pb-4">
-          <div className="relative -mt-16 mb-4">
-            <div className="h-32 w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
-              <div className="h-full w-full rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse" />
-            </div>
-          </div>
-          <div className="h-6 w-48 bg-gray-200 dark:bg-gray-800 rounded animate-pulse mb-2" />
-          <div className="h-4 w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-        </div>
-      </div>
+      <ProfileSkeleton />
     </PageShell>
   )
 }
