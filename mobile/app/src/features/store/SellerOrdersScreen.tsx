@@ -52,7 +52,7 @@ export function SellerOrdersScreen() {
         ListHeaderComponent={
           <View className="px-4 pb-3">
             {locked ? (
-              <Notice tone="warning" text="Order details are encrypted to your store's encryption key. Unlock it on this device to read them.">
+              <Notice tone="warning" text="Unlock your account on this device to see order details.">
                 <Button size="sm" label="Unlock" onPress={() => setUnlockOpen(true)} />
               </Notice>
             ) : null}

@@ -80,7 +80,7 @@ export function DeliverScreen() {
     <Screen>
       <Stack.Screen options={{ title: data.previousDeliveries > 0 ? 'Send again' : 'Deliver' }} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID="deliver">
-        <Text tone="secondary">Encrypted so only this buyer can read it. It appears in their orders and library.</Text>
+        <Text tone="secondary">Only this buyer can see it. It shows up in their orders.</Text>
         {data.lines.map((line) => {
           const on = chosen.includes(line.index);
           const lineExtras = extras[line.itemId] ?? [];

@@ -69,7 +69,7 @@ export function StoreReportScreen() {
       <Stack.Screen options={{ title: `Report ${noun}` }} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
         <Text tone="secondary">
-          Your report goes to on-chain moderators, elected by the community through masternode votes. These teams are independent of Yappr. Reports are public: anyone can see who reported it, the reason and the details. Reports expire after 90 days.
+          Reports go to the community&apos;s moderators and are public.
         </Text>
         {own.isPending ? <Loading /> : own.isError ? (
           <ErrorState message="Couldn't check your reports." onRetry={() => own.refetch()} retrying={own.isRetrying} />

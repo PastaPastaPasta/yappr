@@ -33,7 +33,7 @@ export function OrderRow({ order, title }: { order: OrderDTO; title: string }) {
           {order.digital ? ' · Digital' : ''}
         </Text>
         {order.payload ? <Text tone="secondary" numberOfLines={1}>{order.payload.items.map((line) => `${line.quantity} × ${line.itemTitle}`).join(', ')}</Text> : null}
-        {!order.payload ? <Text tone="warning">{order.locked ? 'Unlock your encryption key to read this order.' : "This order's details couldn't be read."}</Text> : null}
+        {!order.payload ? <Text tone="warning">{order.locked ? 'Unlock to see this order.' : "This order's details couldn't be read."}</Text> : null}
       </Card>
     </Pressable>
   );
@@ -59,7 +59,7 @@ export function OrdersScreen() {
         ListHeaderComponent={
           <View className="gap-3 p-4">
             <SegmentedControl options={[{ value: 'orders', label: 'Orders' }, { value: 'library', label: 'Library' }]} value={tab} onChange={setTab} testID="orders-tabs" />
-            {locked ? <Notice tone="warning" text="Your orders are encrypted. Unlock your encryption key in Messages to read them." /> : null}
+            {locked ? <Notice tone="warning" text="Unlock your account on this device to see your order details." /> : null}
           </View>
         }
         renderItem={({ item }) =>

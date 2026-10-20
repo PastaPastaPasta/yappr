@@ -260,7 +260,7 @@ export function DeliveryList({ orderId, deliveries, testID }: { orderId: string;
           <Text variant="caption" tone={delivery.unconfirmed ? 'warning' : 'secondary'}>
             {delivery.unconfirmed ? 'Sent, awaiting confirmation' : `Delivered ${delivery.createdAt.toLocaleDateString()}`}
           </Text>
-          {!delivery.readable ? <Text tone="secondary">This delivery can&apos;t be read on this device. Unlock your encryption key to read it.</Text> : null}
+          {!delivery.readable ? <Text tone="secondary">Unlock your account on this device to see this delivery.</Text> : null}
           {delivery.message ? <Text className="italic">{delivery.message}</Text> : null}
           {delivery.items.map((item, index) => (
             <View key={`${delivery.id}-${index}`} className="gap-2">

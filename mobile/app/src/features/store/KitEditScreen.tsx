@@ -38,7 +38,7 @@ export function KitEditScreen() {
       <Screen>
         <Stack.Screen options={{ title: 'Delivery content' }} />
         <View className="p-4">
-          <Notice tone="warning" text="Delivery content is encrypted to your encryption key. Unlock it on this device to edit it.">
+          <Notice tone="warning" text="Unlock your account on this device to edit delivery content.">
             <Button size="sm" label="Unlock" onPress={() => setUnlockOpen(true)} />
           </Notice>
         </View>
@@ -75,7 +75,7 @@ function KitForm({ itemId, initial, revision }: { itemId: string; initial: KitDT
     <Screen>
       <Stack.Screen options={{ title: 'Delivery content' }} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID="kit-edit">
-        <Text tone="secondary">What every buyer of this product receives. It is encrypted so only you can read it here; each delivery is encrypted to its buyer.</Text>
+        <Text tone="secondary">What every buyer of this product receives. Only you and your buyers can see it.</Text>
         <Section title="When to deliver">
           <RadioGroup
             accessibilityLabel="When orders can be delivered in bulk"

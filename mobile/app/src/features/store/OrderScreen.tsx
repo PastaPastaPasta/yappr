@@ -44,7 +44,7 @@ export function OrderScreen() {
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID={`order-detail-${data.role}`}>
           {data.order.locked ? (
-            <Notice tone="warning" text="Order details are encrypted to your encryption key. Unlock it on this device to read them.">
+            <Notice tone="warning" text="Unlock your account on this device to see the order details.">
               <Button size="sm" label="Unlock" onPress={() => setUnlockOpen(true)} />
             </Notice>
           ) : null}

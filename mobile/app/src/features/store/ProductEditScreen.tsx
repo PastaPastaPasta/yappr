@@ -106,7 +106,7 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
 
         <Section title="Delivery">
           {supportsDigital ? (
-            <SwitchRow label="Digital product" description="Files, links or codes delivered encrypted to the buyer. Nothing ships." value={digital} onValueChange={setDigital} testID="product-digital" />
+            <SwitchRow label="Digital product" description="Links, codes or files delivered to the buyer. Nothing ships." value={digital} onValueChange={setDigital} testID="product-digital" />
           ) : null}
           {digital && item ? (
             <Button variant="outline" size="block" testID="product-kit" label="Delivery content" onPress={() => router.push({ pathname: '/store/kit', params: { itemId: item.id } })} />

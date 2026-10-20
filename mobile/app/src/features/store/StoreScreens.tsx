@@ -34,7 +34,7 @@ export function StoreDirectoryScreen() {
   const refreshControl = useRefreshControl(() => stores.refetch());
   return (
     <Screen>
-      <Stack.Screen options={{ title: 'Stores', headerLargeTitle: true }} />
+      <Stack.Screen options={{ title: 'Stores' }} />
       <FlashList
         data={stores.data?.stores ?? []}
         keyExtractor={(store: Store) => store.id}

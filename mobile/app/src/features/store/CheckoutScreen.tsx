@@ -136,7 +136,7 @@ export function CheckoutScreen() {
         {step === 'details' ? (
           <View>
             {q.digitalCount > 0 ? (
-              <Notice text={`${q.digitalOnly ? 'Everything in this order is digital, so no shipping address is needed.' : `${q.digitalCount} digital item${q.digitalCount === 1 ? ' is' : 's are'} delivered online; only the rest ships.`} The seller delivers your files and keys encrypted to you; find them under My Orders.`} />
+              <Notice text={`${q.digitalOnly ? 'Everything in this order is digital, so no shipping address is needed.' : `${q.digitalCount} digital item${q.digitalCount === 1 ? ' is' : 's are'} delivered online; only the rest ships.`} You'll find your downloads and codes in My orders.`} />
             ) : null}
             {!q.digitalOnly ? (
               <View className="mt-4">
@@ -183,7 +183,11 @@ export function CheckoutScreen() {
               disabled={(q.store.policies.length > 0 && !agreed) || !shippingReady || q.unavailable.length > 0 || Boolean(q.orderSizeError) || (q.blocker !== null && q.blocker !== 'missing-buyer-key')}
               onPress={continuePolicies}
             />
-            {q.blocker === 'missing-buyer-key' ? <Notice tone="warning" text="Your order is encrypted with your encryption key. Unlock it on this device to continue." /> : null}
+            {q.blocker === 'missing-buyer-key' ? (
+              <Notice tone="warning" text="Unlock your account on this device to check out.">
+                <Button size="sm" label="Unlock" testID="checkout-unlock" onPress={() => setUnlockOpen(true)} />
+              </Notice>
+            ) : null}
           </View>
         ) : null}
 
@@ -279,7 +283,7 @@ function Payment(props: PaymentProps) {
         <TextField label="Order notes (optional)" value={props.notes} onChangeText={props.onNotes} multiline maxLength={limits?.notes} testID="checkout-notes" />
       </Section>
       <Button className="mt-6" size="block" label={props.placing ? 'Placing order…' : 'Place order'} testID="checkout-place" loading={props.placing} disabled={!paymentUri} onPress={props.onPlace} />
-      <Text variant="caption" tone="secondary" className="mt-2 text-center">Your order details are encrypted and sent securely to the seller.</Text>
+      <Text variant="caption" tone="secondary" className="mt-2 text-center">Only you and the seller can see your order details.</Text>
     </View>
   );
 }

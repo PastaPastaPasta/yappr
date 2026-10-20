@@ -205,7 +205,7 @@ describe('placing an order', () => {
     m.buyerKey = null
     const e = engine()
     const ticket = await settled(e.tickets, await e.store.placeOrder({ storeId: STORE, shipTo: address, paymentUri: 'dash:yXdashAddress', reviewed: reviewed() }))
-    expect(ticket.error).toMatchObject({ code: 'BAD_REQUEST', userMessage: expect.stringMatching(/Unlock your encryption key/) })
+    expect(ticket.error).toMatchObject({ code: 'BAD_REQUEST', userMessage: expect.stringMatching(/Unlock your account/) })
     expect(m.order.createOrder).not.toHaveBeenCalled()
   })
 

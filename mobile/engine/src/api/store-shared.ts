@@ -19,7 +19,7 @@ const CHECKOUT_MESSAGES: Record<CheckoutBlocker, string> = {
   'store-unavailable': 'This store is not accepting orders right now.',
   'store-check-failed': 'Could not confirm this store is open. Please try again.',
   'no-payment-methods': 'This store has not configured any payment methods.',
-  'missing-buyer-key': 'Unlock your encryption key to continue to payment.',
+  'missing-buyer-key': 'Unlock your account on this device to check out.',
   'missing-seller-key': "This store's owner hasn't set up messaging yet, so this store can't take orders.",
   'invalid-seller-key': "This store's encryption key is invalid. Contact the store owner.",
   'service-error': 'Could not verify store encryption key. Please try again later.',

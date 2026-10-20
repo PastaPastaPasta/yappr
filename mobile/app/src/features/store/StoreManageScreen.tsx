@@ -31,7 +31,7 @@ export function StoreManageScreen() {
       ) : !data.store ? (
         <EmptyState
           title="Open your store"
-          description="Sell physical or digital products. Orders are encrypted to you, and buyers pay you directly."
+          description="Sell physical or digital products. Buyers pay you directly."
           action={{ label: 'Create store', onPress: () => router.push('/store/edit') }}
           testID="store-manage-empty"
         />
@@ -39,9 +39,9 @@ export function StoreManageScreen() {
         <ScrollView refreshControl={refreshControl} contentContainerStyle={{ padding: 16, paddingBottom: 48 }} testID="store-manage">
           <Text variant="title">{data.store.name}</Text>
           <Text tone="secondary">{STATUS_LABEL[data.store.status]}{data.store.category ? ` · ${data.store.category}` : ''}</Text>
-          {!data.canTakeOrders ? <Notice tone="warning" text="Buyers encrypt orders to your encryption key, and this account has none yet. Set up messaging to take orders." /> : null}
+          {!data.canTakeOrders ? <Notice tone="warning" text="Set up messaging to start taking orders." /> : null}
           {!data.keyOnDevice ? (
-            <Notice tone="warning" text="Unlock your encryption key on this device to read orders and deliver digital products.">
+            <Notice tone="warning" text="Unlock your account on this device to see orders and deliver digital products.">
               <Button size="sm" label="Unlock" onPress={() => setUnlockOpen(true)} />
             </Notice>
           ) : null}

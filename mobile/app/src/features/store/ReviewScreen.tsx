@@ -54,7 +54,7 @@ export function ReviewScreen() {
       <Stack.Screen options={{ title: 'Leave a review' }} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }} keyboardShouldPersistTaps="handled" testID="review">
         <Text variant="title">{buyerOrder.storeName ?? 'This store'}</Text>
-        {open.data === false ? <Notice tone="warning" text="Reviews open once the storefront's first moderation team is seated by the network." /> : null}
+        {open.data === false ? <Notice tone="warning" text="Reviews aren't open yet. Check back soon." /> : null}
         <Section title="Your rating">
           <StarInput value={rating} onChange={setRating} label="Store rating" testID="review-stars" />
           <Text tone="secondary">{RATING_LABELS[rating]}</Text>
@@ -73,7 +73,7 @@ export function ReviewScreen() {
             ))}
           </Section>
         ) : null}
-        <Text variant="caption" tone="secondary" className="mt-4">Reviews are public and permanent. Each review is its own document and pays its network fee.</Text>
+        <Text variant="caption" tone="secondary" className="mt-4">Reviews are public.</Text>
         <Button className="mt-4" size="block" label="Post review" testID="review-submit" disabled={rating < 1 || open.data === false} loading={write.status === 'pending'} onPress={submit} />
       </ScrollView>
     </Screen>
