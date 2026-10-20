@@ -15,7 +15,7 @@ import { ListLimitError } from '@/lib/typed-array-codecs'
 import { serializeStorePolicies, isPoliciesWithinLimit } from '@/lib/utils/policies'
 import { parsePaymentUri } from '@/lib/utils/payment-uri'
 import type {
-  ItemFulfillment, ItemVariants, ParsedPaymentUri, ShippingPricingConfig, ShippingRateType, ShippingTier, StoreItemStatus, StorePolicy, StoreStatus,
+  ItemFulfillment, ItemVariants, ParsedPaymentUri, ShippingPricingConfig, ShippingRateType, ShippingTier, Store, StoreItemStatus, StorePolicy, StoreStatus,
 } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
 import { badRequest, readFailure, requireViewer } from '../dto/hydrate'
@@ -288,6 +288,23 @@ function created(type: string, document: { id: string } | null, ctx: { documents
 
 interface UpdateArgs { id?: string; revision?: number }
 
+/**
+ * Stores this engine created and saw confirmed, by owner. The owner's-store
+ * query can lag the chain for a while after a create, and reading "no store"
+ * then would offer to create a second one: until the query shows it, this one
+ * stands in for it.
+ */
+const createdStores = new Map<string, Store>()
+
+/** The owner's store as read (`read`), or the one this engine just created while the read lags. */
+export function ownStoreOf(owner: string, read: Store | null): Store | null {
+  if (read) {
+    createdStores.delete(owner)
+    return read
+  }
+  return createdStores.get(owner) ?? null
+}
+
 export function createStoreWrites(tickets: TicketStore) {
   tickets.register<StoreSaveInput & UpdateArgs>('store.save', {
     persistArgs: true,
@@ -295,8 +312,10 @@ export function createStoreWrites(tickets: TicketStore) {
       const owner = signer(ctx)
       const data = checkedBeforeSending(() => storeData(input.fields))
       if (!input.storeId) {
-        if (await storeService.getByOwner(owner).catch(() => null)) throw new NotSentError(badRequest('You already have a store'))
-        return created(STOREFRONT_DOCUMENT_TYPES.STORE, await storeService.createStore(owner, data).catch(beforeSigning), ctx)
+        if (ownStoreOf(owner, await storeService.getByOwner(owner).catch(() => null))) throw new NotSentError(badRequest('You already have a store'))
+        const store = await storeService.createStore(owner, data).catch(beforeSigning)
+        if (wasConfirmed(store)) createdStores.set(owner, store)
+        return created(STOREFRONT_DOCUMENT_TYPES.STORE, store, ctx)
       }
       await assertDraftRevision(STOREFRONT_DOCUMENT_TYPES.STORE, input.storeId, input.revision)
       await storeService.updateStore(input.storeId, owner, data).catch(beforeSigning)

@@ -5,7 +5,7 @@ import { ScrollView, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
-import { useWrite } from '~/data/writes';
+import { useLandingIntent, useWrite } from '~/data/writes';
 import { Button } from '~/ui/Button';
 import { Card } from '~/ui/Card';
 import { RadioGroup } from '~/ui/RadioGroup';
@@ -14,7 +14,7 @@ import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
 import { ManageUnavailable, Notice, patchAt, Section } from './parts';
-import { saveStoreWrite } from './store-writes';
+import { saveStoreWrite, STORE_CREATE_KEY } from './store-writes';
 
 const STATUSES: { value: StoreStatus; title: string; description: string }[] = [
   { value: 'active', title: 'Open', description: 'Buyers can browse and order.' },
@@ -34,6 +34,8 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
   const store = edit ? manage.store : null;
   const editing = store !== null;
   const save = useWrite(saveStoreWrite);
+  // A create that may still land (this form's or an earlier one): a second tap would make a second store.
+  const creating = useLandingIntent(STORE_CREATE_KEY) !== undefined;
   // The revision this draft was read at, frozen with it: the save is refused if the store moved since.
   const [revision] = useState(store?.$revision);
   const [name, setName] = useState(store?.name ?? '');
@@ -107,7 +109,7 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
           ))}
         </Section>
         {save.status === 'unconfirmed' ? <Notice tone="warning" text="Saved, awaiting network confirmation." /> : null}
-        <Button className="mt-6" size="block" testID="store-save" label={editing ? 'Save store' : 'Create store'} loading={save.status === 'pending'} disabled={!name.trim()} onPress={submit} />
+        <Button className="mt-6" size="block" testID="store-save" label={editing ? 'Save store' : 'Create store'} loading={save.status === 'pending'} disabled={!name.trim() || (!editing && creating)} onPress={submit} />
       </ScrollView>
     </Screen>
   );

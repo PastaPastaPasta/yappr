@@ -17,7 +17,7 @@ import { RpcError } from '../protocol/envelope'
 import { badRequest, readFailure, requireViewer, viewerId } from '../dto/hydrate'
 import type { TicketStore } from '../writes/tickets'
 import { createOrderModule } from './store-orders'
-import { createStoreWrites } from './store-writes'
+import { createStoreWrites, ownStoreOf } from './store-writes'
 import { checkoutBlockerMessage, checkoutReadiness, cleanAddress, cleanContact, sellerEncryptionKey, type CheckoutBlocker } from './store-shared'
 
 export type { CheckoutBlocker } from './store-shared'
@@ -307,7 +307,7 @@ export function createStoreModule(tickets: TicketStore) {
       /** The seller's store with every listing (paused and sold out too) and its zones. */
       async manage(): Promise<StoreManageDTO> {
         const viewer = requireViewer('Managing a store')
-        const store = await storeService.getByOwner(viewer)
+        const store = ownStoreOf(viewer, await storeService.getByOwner(viewer))
         const [items, zones, sellerKey] = await Promise.all([
           store ? storeItemService.getAllByStore(store.id) : Promise.resolve([]),
           store ? shippingZoneService.getByStore(store.id) : Promise.resolve([]),

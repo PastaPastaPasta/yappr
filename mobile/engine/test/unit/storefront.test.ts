@@ -32,7 +32,7 @@ const m = vi.hoisted(() => ({
   sellerKey: null as Uint8Array | null,
   deliveries: { loadDecrypted: vi.fn() },
   kits: { loadKits: vi.fn(), saveKit: vi.fn() },
-  items: { getManyFresh: vi.fn(), getById: vi.fn(), createItem: vi.fn(), updateItem: vi.fn() },
+  items: { getManyFresh: vi.fn(), getById: vi.fn(), createItem: vi.fn(), updateItem: vi.fn(), getAllByStore: vi.fn(async () => []) },
   reviews: { getOrderReviews: vi.fn(), createReview: vi.fn() },
   itemReviews: { query: vi.fn(), createItemReview: vi.fn() },
   fulfillOrder: vi.fn(),
@@ -465,6 +465,20 @@ describe('seller forms', () => {
     const e = engine()
     await settled(e.tickets, await e.store.saveZone({ storeId: STORE, fields: { name: 'North America', rateType: 'flat', flatRate: 700, countryPattern: 'us, ca|mx' } }))
     expect(m.zones.createZone.mock.calls[0][2]).toMatchObject({ countryPattern: 'US|CA|MX' })
+  })
+
+  it('shows a confirmed new store while the owner query still reads none, and refuses a second create', async () => {
+    m.store.getByOwner.mockResolvedValue(null)
+    m.store.createStore.mockResolvedValue(store({ ownerId: SELLER, __createConfirmed: true } as Partial<Store>))
+    const e = engine()
+    expect((await settled(e.tickets, await e.store.saveStore({ fields: { name: 'Shop', category: 'books' } }))).state).toBe('confirmed')
+    expect((await e.store.manage()).store).toMatchObject({ id: STORE, name: 'Shop' })
+    const again = await settled(e.tickets, await e.store.saveStore({ fields: { name: 'Shop', category: 'books' } }))
+    expect(again.error?.userMessage).toMatch(/already have a store/)
+    expect(m.store.createStore).toHaveBeenCalledTimes(1)
+    // Once the query shows the store, it is what My store reads.
+    m.store.getByOwner.mockResolvedValue(store({ name: 'Shop (read)' }))
+    expect((await e.store.manage()).store?.name).toBe('Shop (read)')
   })
 
   it('creates the store once', async () => {

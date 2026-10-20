@@ -1,6 +1,8 @@
 import type {
-  ItemSaveInput, PlaceOrderInput, ReviewInput, StatusUpdateInput, StoreReportTarget, StoreSaveInput, WriteTicket, ZoneSaveInput,
+  ItemSaveInput, PlaceOrderInput, ReviewInput, StatusUpdateInput, StoreManageDTO, StoreReportTarget, StoreSaveInput, WriteTicket, ZoneSaveInput,
 } from '@engine/api';
+
+import { create } from 'zustand';
 
 import { queryKeys } from '~/data/keys';
 import { errorCode, type WriteSpec } from '~/data/writes';
@@ -33,11 +35,49 @@ const targetIdentity = (ticket: WriteTicket) => (ticket.target && 'identityId' i
 /** What every storefront write shares: the engine's own sentence for a refusal. */
 const refusals = { failureText: engineSentence, onRejected: sayRefusal };
 
+/** A store create, while it may still land: "Create store" waits for it (one store per owner). */
+export const STORE_CREATE_KEY = 'store:create';
+
+/** After a create confirms, how long My store keeps reading until the owner's store shows (the read can lag the chain). */
+export const STORE_SHOWS_RETRY_MS: readonly number[] = [1_000, 2_000, 4_000, 8_000];
+
+const pause = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+
+/** Owners whose new store confirmed but whose My store read doesn't show it yet: it still reads as being created. */
+export const useConfirmingStores = create<{ owners: ReadonlySet<string> }>()(() => ({ owners: new Set<string>() }));
+
+const setConfirming = (owner: string | null, confirming: boolean) =>
+  owner !== null && useConfirmingStores.setState(({ owners }) => {
+    const next = new Set(owners);
+    if (confirming) next.add(owner);
+    else next.delete(owner);
+    return { owners: next };
+  });
+
+/** Read My store again until it shows the new store, so a lagging read never offers "Create store" again. */
+async function refetchUntilStoreShows(owner: string | null): Promise<void> {
+  setConfirming(owner, true);
+  try {
+    for (const delay of [0, ...STORE_SHOWS_RETRY_MS]) {
+      if (delay > 0) await pause(delay);
+      await queryClient.refetchQueries({ queryKey: queryKeys.store.manage() });
+      const manage = queryClient.getQueryData<StoreManageDTO>(queryKeys.store.manage());
+      // No My store read to update (the screen is gone), or it shows the store: done.
+      if (!manage || manage.store) return;
+    }
+  } finally {
+    setConfirming(owner, false);
+  }
+}
+
 export const saveStoreWrite: WriteSpec<StoreSaveInput> = {
-  key: () => 'store:save',
+  key: ({ storeId }) => (storeId ? 'store:save' : STORE_CREATE_KEY),
   submit: (api, vars) => api.store.saveStore(vars),
   ...refusals,
-  onConfirmed: () => refetch(queryKeys.store.all),
+  onConfirmed: (ticket, { storeId }) => {
+    if (storeId) refetch(queryKeys.store.all);
+    else refetchUntilStoreShows(ticket.identityId).then(() => refetch(queryKeys.store.all)).catch(() => undefined);
+  },
   failureMessage: ({ storeId }) => (storeId ? "Couldn't save your store. Try again." : "Couldn't create your store. Try again."),
 };
 
