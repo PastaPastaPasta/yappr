@@ -14,6 +14,7 @@ import { createMobileAuthController, createSessionModule, foregroundBalanceRefre
 import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
+import { createStoreModule } from './store'
 import { blogReads, createBlogWrites } from './blog'
 
 /**
@@ -25,6 +26,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
   const emit = runtime.emit ?? (() => undefined)
   setNoticeSink(notice => emit('engine.notice', notice))
   const tickets = createEngineTicketStore(emit)
+  const storefront = createStoreModule(tickets)
   /** Shared by the session module, its controller and messages (`SessionModuleOptions.unhydrated`). */
   const unhydrated = new Set<string>()
   const dm = createDmModule({ emit, tickets, secureDurable: runtime.secureDurable, unhydrated })
@@ -74,6 +76,8 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     explore,
     safety: createSafetyModule(tickets),
     notifications: notifications.api,
+    store: storefront.store,
+    cart: storefront.cart,
     privateFeed: { ...privateFeedReads, ...createPrivateFeedWrites(tickets) },
     dpns: createDpnsModule(tickets, controller),
     blogs: { ...blogReads, ...createBlogWrites(tickets) },
@@ -96,5 +100,8 @@ export type * from './session'
 export type * from './settings'
 export type * from './writes'
 export type { EngineNotice } from '../shims/toast'
+export type * from './store'
+export type * from './store-orders'
+export type * from './store-writes'
 export type { PlatformInfoDTO } from '../dto/capabilities'
 export type * from './blog'

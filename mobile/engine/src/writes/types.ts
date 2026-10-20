@@ -61,6 +61,8 @@ export type WriteOp =
   | 'post.publish' | 'post.delete' | 'like' | 'unlike' | 'repost' | 'unrepost' | 'bookmark' | 'unbookmark'
   | 'follow' | 'unfollow' | 'block' | 'unblock' | 'report' | 'report.withdraw' | 'profile.update'
   | 'dm.send' | 'dm.group' | 'poll.vote' | 'block-list.follow' | 'block-list.unfollow' | 'dpns.register'
+  // storefront (native store)
+  | 'store.save' | 'store.item' | 'store.zone' | 'store.order' | 'store.order.status' | 'store.review' | 'store.report' | 'store.report.withdraw'
   | 'privateFeed.enable' | 'privateFeed.request' | 'privateFeed.leave' | 'privateFeed.approve' | 'privateFeed.revoke'
   | 'privateFeed.renew' | 'privateFeed.move'
   // blogs (`api/blog.ts`)

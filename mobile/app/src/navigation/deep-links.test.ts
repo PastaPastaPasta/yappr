@@ -174,9 +174,6 @@ describe('resolveLink: what a link does beyond its route (SR-13, PRD NET-11)', (
   const signedIn: LinkOptions = { ...release, viewerId: X };
 
   it.each([
-    ['yappr://store', 'https://yap.pr/store'],
-    ['https://yap.pr/store/view?id=1', 'https://yap.pr/store/view?id=1'],
-    ['yappr://store/hello-world', 'https://yap.pr/store/hello-world'],
     ['yappr://terms', 'https://yap.pr/terms'],
     ['yappr://about/team', 'https://yap.pr/about/team'],
     ['yappr://embed?post=1', 'https://yap.pr/embed?post=1'],
@@ -185,7 +182,7 @@ describe('resolveLink: what a link does beyond its route (SR-13, PRD NET-11)', (
   });
 
   it("opens web-only pages on this build's own deployment", () => {
-    expect(resolveLink('yappr-dev://store', devnet)).toEqual({ kind: 'browser', url: 'https://yap.pr/devnet/store' });
+    expect(resolveLink('yappr-dev://terms', devnet)).toEqual({ kind: 'browser', url: 'https://yap.pr/devnet/terms' });
   });
 
   it('opens blogs natively, from the web addresses `getBlogUrl` and `getBlogPostUrl` write', () => {

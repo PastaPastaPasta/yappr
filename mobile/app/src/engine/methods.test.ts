@@ -34,6 +34,31 @@ describe('engine method kinds', () => {
     },
   );
 
+  it.each(['store.discover', 'store.item', 'store.checkout', 'store.myOrders', 'store.sellerOrders', 'store.order', 'store.deliveryPlan', 'store.kit', 'cart.get'])(
+    '%s is a storefront read',
+    (path) => {
+      expect(methodKind(path)).toBe('read');
+    },
+  );
+
+  it.each(['store.placeOrder', 'store.saveStore', 'store.saveItem', 'store.saveZone', 'store.updateOrderStatus', 'store.review', 'store.report', 'cart.add', 'cart.setQuantity', 'cart.remove'])(
+    '%s is a storefront write: never replayed (an order or a cart line twice)',
+    (path) => {
+      expect(methodKind(path)).toBe('write');
+      expect(methodTimeoutMs(path)).toBe(15_000);
+    },
+  );
+
+  it('gives digital delivery and kit saves the time they take', () => {
+    expect(methodKind('store.deliver')).toBe('write');
+    expect(methodTimeoutMs('store.deliver')).toBe(180_000);
+    expect(methodTimeoutMs('store.deliverReady')).toBe(600_000);
+    expect(methodTimeoutMs('store.saveKit')).toBe(120_000);
+    // Downloads a whole file: never replayed after a crash it may have caused.
+    expect(methodKind('store.deliveredFile')).toBe('write');
+    expect(methodTimeoutMs('store.deliveredFile')).toBe(180_000);
+  });
+
   it('treats an unknown path as a write, and keeps the session and control kinds', () => {
     expect(methodKind('posts.somethingNew')).toBe('write');
     expect(methodKind('session.signInWithKey')).toBe('session');

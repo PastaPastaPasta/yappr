@@ -30,6 +30,31 @@ const sorted = <Q extends { sort?: Sort; window?: RankingWindow }>(q: Q) => ({
 export const queryKeys = {
   /** Every engine query on this network. */
   all: root,
+  store: {
+    all: [...root, 'store'] as const,
+    discover: (sort: 'newest' | 'topRated' | 'mostOrdered' = 'newest') => [...root, 'store', 'discover', sort] as const,
+    detail: (id: string) => [...root, 'store', id] as const,
+    items: (id: string) => [...root, 'store', id, 'items'] as const,
+    item: (id: string) => [...root, 'store', 'item', id] as const,
+    reviews: (id: string) => [...root, 'store', id, 'reviews'] as const,
+    /** The store with its rating (`store.detail`). */
+    page: (id: string) => [...root, 'store', id, 'page'] as const,
+    zones: (id: string) => [...root, 'store', id, 'zones'] as const,
+    itemReviews: (id: string) => [...root, 'store', 'item', id, 'reviews'] as const,
+    /** The device's cart. Never persisted: the engine keeps it. */
+    cart: () => [...root, 'store', 'cart'] as const,
+    /** A store's checkout quote, by what it was asked for (never persisted: it holds the address). */
+    checkout: (storeId: string, ask: unknown) => [...root, 'store', 'checkout', storeId, ask] as const,
+    /** Decrypted orders: never persisted (MMKV is not encrypted). */
+    orders: () => [...root, 'store', 'orders'] as const,
+    sellerOrders: () => [...root, 'store', 'orders', 'seller'] as const,
+    order: (id: string) => [...root, 'store', 'orders', 'one', id] as const,
+    deliveryPlan: (orderId: string) => [...root, 'store', 'orders', 'one', orderId, 'plan'] as const,
+    manage: () => [...root, 'store', 'manage'] as const,
+    kit: (itemId: string) => [...root, 'store', 'manage', 'kit', itemId] as const,
+    ownReport: (targetId: string) => [...root, 'store', 'report', targetId] as const,
+    reviewsOpen: () => [...root, 'store', 'reviews-open'] as const,
+  },
 
   feed: {
     all: [...root, 'feed'] as const,

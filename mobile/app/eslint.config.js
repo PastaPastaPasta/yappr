@@ -19,6 +19,8 @@ const LIB_ALLOWLIST = [
   'lib/post-helpers',
   // Media URL safety, IPFS routing and image proxying. No imports.
   'lib/media/remote-media',
+  // Storefront prices, order ids and dates. No imports at all.
+  'lib/utils/format',
 ];
 /** Allowed for `import type` / `export type` only (erased at build time). */
 const LIB_TYPE_ALLOWLIST = ['lib/types'];

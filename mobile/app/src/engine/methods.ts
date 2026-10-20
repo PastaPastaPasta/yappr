@@ -83,10 +83,25 @@ const READS = new Set([
   'blogs.publishOutcome',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
+/**
+ * The storefront's reads. Its writes (tickets, the cart, delivering and
+ * saving delivery content) are never replayed.
+ */
+const STORE_READS = new Set([
+  'store.discover', 'store.get', 'store.detail', 'store.items', 'store.item', 'store.reviews', 'store.itemReviews',
+  'store.zones', 'store.mine', 'store.manage', 'store.checkout', 'store.myOrders', 'store.sellerOrders', 'store.order',
+  'store.deliveryPlan', 'store.kit', 'store.reviewsOpen', 'store.ownReport', 'cart.get',
+]);
+/**
+ * Calls that run for minutes, never replayed: digital delivery reserves codes,
+ * publishes and confirms; a kit save reconciles; a delivered file downloads
+ * and decrypts (a replay after it crashed the engine would only crash it again).
+ */
+const LONG_CALLS: Record<string, number> = { 'store.deliver': 180_000, 'store.deliverReady': 600_000, 'store.saveKit': 120_000, 'store.deliveredFile': 180_000 };
 
 export function methodKind(path: string): MethodKind {
   const module = path.slice(0, path.indexOf('.'));
-  if (READS.has(path) || READ_MODULES.has(module)) return 'read';
+  if (READS.has(path) || STORE_READS.has(path) || READ_MODULES.has(module)) return 'read';
   if (module === 'engine') return 'control';
   if (module === 'session') return 'session';
   return 'write';
@@ -96,6 +111,7 @@ export function methodKind(path: string): MethodKind {
 export function methodTimeoutMs(path: string): number {
   if (path === 'session.awaitKeyExchange') return 130_000;
   if (path === 'session.awaitKeyRegistration') return 310_000;
+  if (LONG_CALLS[path]) return LONG_CALLS[path];
   switch (methodKind(path)) {
     case 'read':
     case 'session':
