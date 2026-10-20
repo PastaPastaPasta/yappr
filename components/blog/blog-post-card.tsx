@@ -1,4 +1,3 @@
-import { motion } from 'framer-motion'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { blogPostDate, estimateReadingTime, getPostExcerpt } from '@/lib/blog/content-utils'
 import type { BlogPostWithAuthor } from '@/lib/types'
@@ -6,20 +5,36 @@ import type { BlogPostWithAuthor } from '@/lib/types'
 interface BlogPostCardProps {
   post: BlogPostWithAuthor
   onClick: (post: BlogPostWithAuthor) => void
-  index?: number
   className?: string
 }
 
-export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogPostCardProps) {
+/** Loading rows shaped like {@link BlogPostCard} (cover, meta line, title, two-line excerpt). */
+export function BlogPostCardSkeleton({ count = 4 }: { count?: number }) {
+  const bar = 'rounded bg-gray-200 dark:bg-gray-800 animate-pulse'
+  return (
+    <div className="divide-y divide-gray-200 dark:divide-gray-800" aria-busy="true" aria-label="Loading posts">
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="flex gap-3 p-4">
+          <div className={`h-20 w-20 shrink-0 rounded-lg ${bar}`} />
+          <div className="min-w-0 flex-1">
+            <div className="mb-1 flex h-4 items-center"><div className={`h-3 w-2/5 ${bar}`} /></div>
+            <div className="flex h-5 items-center"><div className={`h-3.5 w-3/5 ${bar}`} /></div>
+            <div className="mt-0.5 flex h-5 items-center"><div className={`h-3 w-full ${bar}`} /></div>
+            <div className="flex h-5 items-center"><div className={`h-3 w-4/5 ${bar}`} /></div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function BlogPostCard({ post, onClick, className = '' }: BlogPostCardProps) {
   const isDisabled = !post.authorUsername || !post.slug
   const excerpt = getPostExcerpt(post, 150)
 
   return (
-    <motion.button
+    <button
       type="button"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={index >= 0 ? { delay: index * 0.05 } : undefined}
       onClick={() => {
         if (isDisabled) return
         onClick(post)
@@ -73,6 +88,6 @@ export function BlogPostCard({ post, onClick, index = 0, className = '' }: BlogP
           )}
         </div>
       </div>
-    </motion.button>
+    </button>
   )
 }

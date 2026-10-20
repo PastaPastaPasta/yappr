@@ -18,6 +18,12 @@ interface CursorListOptions {
   loadError: string
   /** Toasted when a later page fails; the list read so far stays. */
   moreError: string
+  /**
+   * Names the list `loadPage` reads (its sort, say). Switching back to a key
+   * already read shows its first page at once and refreshes it quietly,
+   * instead of blanking to the loading state.
+   */
+  cacheKey?: string
 }
 
 /**
@@ -29,7 +35,7 @@ interface CursorListOptions {
  */
 export function useCursorList<T extends { id: string }>(
   loadPage: (cursor?: string) => Promise<CursorPage<T>>,
-  { enabled, loadError, moreError }: CursorListOptions
+  { enabled, loadError, moreError, cacheKey }: CursorListOptions
 ) {
   const [items, setItems] = useState<T[]>([])
   const [cursor, setCursor] = useState<string | undefined>()
@@ -38,28 +44,47 @@ export function useCursorList<T extends { id: string }>(
   const [error, setError] = useState<string | null>(null)
   const [incomplete, setIncomplete] = useState(false)
   const currentLoad = useRef(loadPage)
+  const firstPages = useRef(new Map<string, CursorPage<T>>())
+  // A kept list refreshing in the background: a next page waits for it, so
+  // the refreshed first page cannot overwrite pages appended meanwhile.
+  const refreshing = useRef(false)
 
   useEffect(() => {
     currentLoad.current = loadPage
     if (!enabled) return
     let cancelled = false
+    const kept = cacheKey === undefined ? undefined : firstPages.current.get(cacheKey)
 
     const load = async () => {
-      setLoading(true)
       setError(null)
-      setItems([])
-      setCursor(undefined)
-      setIncomplete(false)
+      if (kept) {
+        // Show the list read before at once; the read below refreshes it.
+        refreshing.current = true
+        setItems(kept.items)
+        setCursor(kept.nextCursor)
+        setIncomplete(kept.incomplete === true)
+        setLoading(false)
+      } else {
+        setLoading(true)
+        setItems([])
+        setCursor(undefined)
+        setIncomplete(false)
+      }
       try {
         const page = await loadPage()
         if (cancelled) return
+        if (cacheKey !== undefined) firstPages.current.set(cacheKey, page)
         setItems(page.items)
         setCursor(page.nextCursor)
         setIncomplete(page.incomplete === true)
       } catch {
-        if (!cancelled) setError(loadError)
+        // A failed refresh keeps the kept list; only a first read shows the error.
+        if (!cancelled && !kept) setError(loadError)
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          refreshing.current = false
+          setLoading(false)
+        }
       }
     }
 
@@ -71,11 +96,12 @@ export function useCursorList<T extends { id: string }>(
     })
     return () => {
       cancelled = true
+      refreshing.current = false
     }
-  }, [enabled, loadPage, loadError])
+  }, [enabled, loadPage, loadError, cacheKey])
 
   const loadMore = useCallback(async () => {
-    if (!cursor || loadingMore) return
+    if (!cursor || loadingMore || refreshing.current) return
     const source = loadPage
     setLoadingMore(true)
     try {

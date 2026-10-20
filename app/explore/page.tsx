@@ -1,14 +1,14 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { motion } from 'framer-motion'
 import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, DocumentTextIcon, TrophyIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
 import { PostListSkeleton } from '@/components/post/post-card-skeleton'
-import { BlogPostCard } from '@/components/blog/blog-post-card'
+import { BlogPostCard, BlogPostCardSkeleton } from '@/components/blog/blog-post-card'
 import { useRouter } from 'next/navigation'
 import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
 import { useAuth } from '@/contexts/auth-context'
@@ -17,6 +17,7 @@ import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/explore/trending-hashtag-row'
 import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
+import { KeptPanel } from '@/components/ui/kept-panel'
 import { likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
@@ -38,14 +39,14 @@ export default function ExplorePage() {
   const [searchResults, setSearchResults] = useState<Post[]>([])
   const [blogSearchResults, setBlogSearchResults] = useState<BlogPostWithAuthor[]>([])
   const [isSearching, setIsSearching] = useState(false)
-  const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([])
-  const [isLoadingTrends, setIsLoadingTrends] = useState(true)
+  // Each ranked list is kept per window, so switching back to a window (or a
+  // tab) shows the last result at once; a skeleton only covers a first load.
+  const [trendingByWindow, setTrendingByWindow] = useState<Partial<Record<RankingWindow, TrendingHashtag[]>>>({})
   const [recentBlogPosts, setRecentBlogPosts] = useState<BlogPostWithAuthor[]>([])
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(true)
   // v7: the bounded timeline read stopped with more posts after it (see boundedPostListState).
   const [moreBlogPostsAfter, setMoreBlogPostsAfter] = useState<string | undefined>()
-  const [topPosts, setTopPosts] = useState<Post[]>([])
-  const [isLoadingTop, setIsLoadingTop] = useState(false)
+  const [topByWindow, setTopByWindow] = useState<Partial<Record<RankingWindow, Post[]>>>({})
   // Each ranked tab keeps its own window: the axes' windows differ (v10: 24h
   // tags, 3-day posts, all-time creators), so one choice must not leak across.
   const [trendingWindow, setTrendingWindow] = useState<RankingWindow>('all')
@@ -53,18 +54,46 @@ export default function ExplorePage() {
   const [creatorsWindow, setCreatorsWindow] = useState<RankingWindow>('all')
   const blogsLoadedRef = useRef(false)
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
+  const trendingHashtags = trendingByWindow[trendingWindow]
+  const topPosts = topByWindow[topWindow]
 
-  // Load the global most-liked posts when the Top tab is activated (v9 only —
-  // the ranking is one proved `documents.ranked()` page on `like.byPost`).
-  // Re-activations are cheap: hydration is session-cached for a minute.
+  const selectTab = useCallback((tab: ExploreTab) => {
+    setActiveTab(tab)
+    // Keep the URL in step without a navigation (so nothing remounts).
+    const url = new URL(window.location.href)
+    if (tab === 'hashtags') url.searchParams.delete('tab')
+    else url.searchParams.set('tab', tab)
+    window.history.replaceState(window.history.state, '', url)
+  }, [])
+
+  // Open the tab the URL names (?tab=top|creators|blogs), once on mount.
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab')
+    const available: ExploreTab[] = [
+      ...(likesAreIndexOnly() ? (['top'] as const) : []),
+      ...(prefixRankingsAvailable() ? (['creators'] as const) : []),
+      'blogs',
+    ]
+    const match = available.find((tab) => tab === requested)
+    if (match) selectTab(match)
+  }, [selectTab])
+
+  // The Top lists are filtered by the viewer's blocks: drop them on sign-in/out.
+  useEffect(() => {
+    setTopByWindow({})
+  }, [user?.identityId])
+
+  // Load the global most-liked posts while the Top tab is open (v9 on — the
+  // ranking is one proved `documents.ranked()` page). A revisit shows the kept
+  // list and refreshes it quietly; hydration is session-cached for a minute.
   useEffect(() => {
     if (activeTab !== 'top' || !likesAreIndexOnly()) return
+    const win = topWindow
 
     const loadTopPosts = async () => {
-      setIsLoadingTop(true)
       try {
         const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
-        let posts = await topLikedPostsHydrated({ limit: 20, window: topWindow })
+        let posts = await topLikedPostsHydrated({ limit: 20, window: win })
 
         // Filter out posts from blocked users, same as the search results above.
         if (user?.identityId && posts.length > 0) {
@@ -73,34 +102,32 @@ export default function ExplorePage() {
           posts = posts.filter(post => !blockedMap.get(post.author.id))
         }
 
-        setTopPosts(posts)
+        setTopByWindow((prev) => ({ ...prev, [win]: posts }))
       } catch (error) {
         logger.error('Failed to load top posts:', error)
-        setTopPosts([])
-      } finally {
-        setIsLoadingTop(false)
+        // Keep a list already on screen; only a first load falls back to empty.
+        setTopByWindow((prev) => (prev[win] ? prev : { ...prev, [win]: [] }))
       }
     }
 
     loadTopPosts().catch(err => logger.error('Failed to load top posts:', err))
   }, [activeTab, user?.identityId, topWindow])
 
-  // Load trending hashtags
+  // Load trending hashtags (the hashtag service caches each window for 5 minutes).
   useEffect(() => {
+    const win = trendingWindow
     const loadTrendingHashtags = async () => {
       try {
-        setIsLoadingTrends(true)
         const trending = await hashtagService.getTrendingHashtags({
           timeWindowHours: 168, // 1 week
           minPosts: 1,
           limit: 12,
-          window: trendingWindow,
+          window: win,
         })
-        setTrendingHashtags(trending)
+        setTrendingByWindow((prev) => ({ ...prev, [win]: trending }))
       } catch (error) {
         logger.error('Failed to load trending hashtags:', error)
-      } finally {
-        setIsLoadingTrends(false)
+        setTrendingByWindow((prev) => (prev[win] ? prev : { ...prev, [win]: [] }))
       }
     }
 
@@ -267,7 +294,7 @@ export default function ExplorePage() {
                 ariaLabel="Explore"
                 panelId="explore-panel"
                 active={activeTab}
-                onSelect={setActiveTab}
+                onSelect={selectTab}
                 tabs={[
                   { key: 'hashtags' as const, label: 'Trending' },
                   // Server-ranked global Top posts need the v9 ranked like axes.
@@ -281,13 +308,10 @@ export default function ExplorePage() {
             )}
           </PageHeader>
 
-          <AnimatePresence mode="wait">
-            {searchQuery ? (
+          {searchQuery && (
               <motion.div
-                key="search-results"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
               >
                 {isSearching ? (
                   <div className="p-8 text-center">
@@ -337,132 +361,97 @@ export default function ExplorePage() {
                   </div>
                 )}
               </motion.div>
-            ) : (
-              <motion.div
-                key="explore-content"
-                id="explore-panel"
-                role="tabpanel"
-                aria-labelledby={scrollTabId('explore-panel', activeTab)}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-              >
-                <AnimatePresence mode="wait">
-                  {activeTab === 'hashtags' ? (
-                    <motion.div
-                      key="tab-hashtags"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.15 }}
-                    >
-                      {/* Trending Hashtags */}
-                      <RankingWindowToggle axis="hashtags" value={trendingWindow} onChange={setTrendingWindow} testIdPrefix="explore-trending" />
-                      <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                        {isLoadingTrends ? (
-                          <TrendingHashtagRowSkeleton count={8} testId="explore-trending-loading" />
-                        ) : trendingHashtags.length === 0 ? (
-                          <div className="p-8 text-center">
-                            <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                            <p className="text-gray-500">No trending tags yet</p>
-                            <p className="text-sm text-gray-400 mt-1">Post with #hashtags or $cashtags to see them here!</p>
-                          </div>
-                        ) : (
-                          trendingHashtags.map((trend, index) => <TrendingHashtagRow key={trend.hashtag} trend={trend} index={index} />)
-                        )}
-                      </div>
-                    </motion.div>
-                  ) : activeTab === 'top' ? (
-                    <motion.div
-                      key="tab-top"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.15 }}
-                    >
-                      {/* Global most-liked posts (proved ranking, top 20) */}
-                      <RankingWindowToggle axis="posts" value={topWindow} onChange={setTopWindow} testIdPrefix="explore-top" />
-                      <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                        {isLoadingTop ? (
-                          <PostListSkeleton label="Loading top posts" testId="explore-top-loading" />
-                        ) : topPosts.length === 0 ? (
-                          <div className="p-8 text-center" data-testid="explore-top-empty">
-                            <TrophyIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                            <p className="text-gray-500">No liked posts yet</p>
-                            <p className="text-sm text-gray-400 mt-1">The most-liked posts will appear here</p>
-                          </div>
-                        ) : (
-                          filterHiddenSensitive(topPosts, sensitiveContentMode, user?.identityId).map((post) => (
-                            <PostCard key={post.id} post={post} />
-                          ))
-                        )}
-                      </div>
-                    </motion.div>
-                  ) : activeTab === 'creators' ? (
-                    <motion.div
-                      key="tab-creators"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.15 }}
-                    >
-                      {/* v9 creator leaderboard (proved prefix rankings). */}
-                      <RankingWindowToggle axis="creators" value={creatorsWindow} onChange={setCreatorsWindow} testIdPrefix="explore-creators" />
-                      <TopCreators window={creatorsWindow} />
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      key="tab-blogs"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.15 }}
-                    >
-                      {/* Blog Posts */}
-                      {isLoadingBlogs ? (
-                        <div className="p-8 text-center">
-                          <Spinner size="md" className="mx-auto mb-4" />
-                          <p className="text-gray-500">Loading blog posts...</p>
-                        </div>
-                      ) : boundedPostListState(recentBlogPosts.length, moreBlogPostsAfter) === 'filtered' ? (
-                        <div className="p-8 text-center">
-                          <DocumentTextIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                          <p className="text-gray-500">No published posts among the newest ones read</p>
-                          <Link href={BLOG_POSTS_DISCOVERY_URL} className="mt-2 inline-block text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400">
-                            Browse all posts
-                          </Link>
-                        </div>
-                      ) : recentBlogPosts.length === 0 ? (
-                        <div className="p-8 text-center">
-                          <DocumentTextIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                          <p className="text-gray-500">No blog posts yet</p>
-                          <p className="text-sm text-gray-400 mt-1">Be the first to publish an article!</p>
-                        </div>
-                      ) : (
-                        <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                          {recentBlogPosts.map((post, index) => (
-                            <BlogPostCard
-                              key={post.id}
-                              post={post}
-                              onClick={handleBlogPostClick}
-                              index={index}
-                            />
-                          ))}
-                          {moreBlogPostsAfter && (
-                            <div className="p-4 text-center">
-                              <Link href={BLOG_POSTS_DISCOVERY_URL} className="text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400">
-                                Browse all posts
-                              </Link>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.div>
             )}
-          </AnimatePresence>
+
+          {/* Every visited tab stays mounted and is only hidden, so a revisit
+              shows its content instantly: no fade, no skeleton, no refetch
+              flash. Background refreshes swap rows in place. */}
+          <div
+            id="explore-panel"
+            role="tabpanel"
+            aria-labelledby={scrollTabId('explore-panel', activeTab)}
+            hidden={!!searchQuery}
+          >
+            <KeptPanel active={activeTab === 'hashtags'}>
+                <RankingWindowToggle axis="hashtags" value={trendingWindow} onChange={setTrendingWindow} testIdPrefix="explore-trending" />
+                <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                  {!trendingHashtags ? (
+                    <TrendingHashtagRowSkeleton count={12} testId="explore-trending-loading" />
+                  ) : trendingHashtags.length === 0 ? (
+                    <div className="p-8 text-center">
+                      <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                      <p className="text-gray-500">No trending tags yet</p>
+                      <p className="text-sm text-gray-400 mt-1">Post with #hashtags or $cashtags to see them here!</p>
+                    </div>
+                  ) : (
+                    trendingHashtags.map((trend, index) => <TrendingHashtagRow key={trend.hashtag} trend={trend} index={index} />)
+                  )}
+                </div>
+            </KeptPanel>
+
+            <KeptPanel active={activeTab === 'top'}>
+                {/* Global most-liked posts (proved ranking, top 20) */}
+                <RankingWindowToggle axis="posts" value={topWindow} onChange={setTopWindow} testIdPrefix="explore-top" />
+                <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                  {!topPosts ? (
+                    <PostListSkeleton count={8} label="Loading top posts" testId="explore-top-loading" />
+                  ) : topPosts.length === 0 ? (
+                    <div className="p-8 text-center" data-testid="explore-top-empty">
+                      <TrophyIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                      <p className="text-gray-500">No liked posts yet</p>
+                      <p className="text-sm text-gray-400 mt-1">The most-liked posts will appear here</p>
+                    </div>
+                  ) : (
+                    filterHiddenSensitive(topPosts, sensitiveContentMode, user?.identityId).map((post) => (
+                      <PostCard key={post.id} post={post} />
+                    ))
+                  )}
+                </div>
+            </KeptPanel>
+
+            <KeptPanel active={activeTab === 'creators'}>
+                {/* v9 creator leaderboard (proved prefix rankings). */}
+                <RankingWindowToggle axis="creators" value={creatorsWindow} onChange={setCreatorsWindow} testIdPrefix="explore-creators" />
+                <TopCreators window={creatorsWindow} />
+            </KeptPanel>
+
+            <KeptPanel active={activeTab === 'blogs'}>
+                {isLoadingBlogs ? (
+                  <BlogPostCardSkeleton count={10} />
+                ) : boundedPostListState(recentBlogPosts.length, moreBlogPostsAfter) === 'filtered' ? (
+                  <div className="p-8 text-center">
+                    <DocumentTextIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                    <p className="text-gray-500">No published posts among the newest ones read</p>
+                    <Link href={BLOG_POSTS_DISCOVERY_URL} className="mt-2 inline-block text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400">
+                      Browse all posts
+                    </Link>
+                  </div>
+                ) : recentBlogPosts.length === 0 ? (
+                  <div className="p-8 text-center">
+                    <DocumentTextIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                    <p className="text-gray-500">No blog posts yet</p>
+                    <p className="text-sm text-gray-400 mt-1">Be the first to publish an article!</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                    {recentBlogPosts.map((post) => (
+                      <BlogPostCard
+                        key={post.id}
+                        post={post}
+                        onClick={handleBlogPostClick}
+                      />
+                    ))}
+                    {moreBlogPostsAfter && (
+                      <div className="p-4 text-center">
+                        <Link href={BLOG_POSTS_DISCOVERY_URL} className="text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400">
+                          Browse all posts
+                        </Link>
+                      </div>
+                    )}
+                  </div>
+                )}
+            </KeptPanel>
+          </div>
     </PageShell>
   )
 }

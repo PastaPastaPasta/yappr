@@ -375,8 +375,8 @@ function SearchPageContent() {
                 </div>
                 {blogPosts.length > 0 ? (
                   <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                    {blogPosts.map((post, index) => (
-                      <BlogPostCard key={post.id} post={post} onClick={handleBlogPostClick} index={index} />
+                    {blogPosts.map((post) => (
+                      <BlogPostCard key={post.id} post={post} onClick={handleBlogPostClick} />
                     ))}
                   </div>
                 ) : (

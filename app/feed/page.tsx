@@ -14,6 +14,7 @@ import { FeedLoginPrompt } from '@/components/feed/feed-login-prompt';
 import { FeedPostList } from '@/components/feed/feed-post-list';
 import { FeedSortToggle, type FeedSortMode } from '@/components/feed/feed-sort-toggle';
 import { FeedTopList } from '@/components/feed/feed-top-list';
+import { KeptPanel } from '@/components/ui/kept-panel';
 import { useFeedData, type FeedTab } from '@/hooks/use-feed-data';
 import { useTopFeed } from '@/hooks/use-top-feed';
 
@@ -93,18 +94,23 @@ function FeedPage() {
 
           {activeTab === 'following' && !user ? (
             <FeedLoginPrompt />
-          ) : showTop ? (
-            <FeedTopList
-              posts={topFeed.posts}
-              isLoading={topFeed.isLoading}
-              activeTab={activeTab}
-              rankingWindow={rankingWindow}
-              onPostDelete={topFeed.handlePostDelete}
-              hasMore={topFeed.hasMore}
-              isLoadingMore={topFeed.isLoadingMore}
-              onLoadMore={topFeed.loadMore}
-            />
           ) : (
+            <>
+            {/* Both lists stay mounted once shown and are only hidden, so
+                Latest <-> Top swaps instantly without re-rendering every card. */}
+            <KeptPanel active={showTop} testId="feed-top-panel">
+                <FeedTopList
+                  posts={topFeed.posts}
+                  isLoading={topFeed.isLoading}
+                  activeTab={activeTab}
+                  rankingWindow={rankingWindow}
+                  onPostDelete={topFeed.handlePostDelete}
+                  hasMore={topFeed.hasMore}
+                  isLoadingMore={topFeed.isLoadingMore}
+                  onLoadMore={topFeed.loadMore}
+                />
+            </KeptPanel>
+            <KeptPanel active={!showTop}>
             <FeedPostList
               posts={filteredPosts}
               isLoading={isLoading}
@@ -121,6 +127,8 @@ function FeedPage() {
               onPostDelete={handlePostDelete}
               getPostEnrichment={getPostEnrichment}
             />
+            </KeptPanel>
+            </>
           )}
     </PageShell>
   );

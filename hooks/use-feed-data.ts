@@ -85,6 +85,11 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     setLoading,
     setError,
   } = postsState;
+  // The tab and loader whose list is on screen, so pausing the feed (Top) and
+  // resuming it keeps that list instead of reloading it.
+  const postsRef = useRef(posts);
+  postsRef.current = posts;
+  const shownFeedRef = useRef<{ tab: FeedTab; loadPosts: unknown } | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [lastPostId, setLastPostId] = useState<string | null>(null);
@@ -562,6 +567,21 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
   }, [enabled, insertCreatedPost]);
 
   useEffect(() => {
+    // Switching to Top and back pauses this feed rather than tearing it down:
+    // the list already shown for this tab stays (no skeleton, no card
+    // re-hydration) and polling picks up anything new once it resumes.
+    if (!enabled) {
+      // A first page or a next page cut off here is dropped; neither may leave its flag set.
+      setLoading(false);
+      setIsLoadingMore(false);
+      return invalidateFeedLoads;
+    }
+    const shown = shownFeedRef.current;
+    if (shown && shown.tab === activeTab && shown.loadPosts === loadPosts && postsRef.current) {
+      createdWhileHiddenRef.current.splice(0).forEach((detail) => insertCreatedPostRef.current(detail));
+      return invalidateFeedLoads;
+    }
+    shownFeedRef.current = { tab: activeTab, loadPosts };
     resetEnrichment();
     setData(null);
     setLastPostId(null);
@@ -571,14 +591,9 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     setPendingNewPosts([]);
     setNewestPostTimestamp(null);
 
-    if (enabled) {
-      loadPosts()
-        .then(() => createdWhileHiddenRef.current.splice(0).forEach((detail) => insertCreatedPostRef.current(detail)))
-        .catch((error) => logger.error('Failed to load posts:', error));
-    } else {
-      // A load superseded by disabling the feed leaves its loading flag to us.
-      setLoading(false);
-    }
+    loadPosts()
+      .then(() => createdWhileHiddenRef.current.splice(0).forEach((detail) => insertCreatedPostRef.current(detail)))
+      .catch((error) => logger.error('Failed to load posts:', error));
     return invalidateFeedLoads;
   }, [enabled, activeTab, invalidateFeedLoads, loadPosts, resetEnrichment, setData, setLoading]);
 

@@ -68,6 +68,10 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
   // derived from it rather than accumulated, so two overlapping load-more
   // calls cannot skip a page.
   const rankedCountRef = useRef(0);
+  // The first page last loaded for each ranking (tab, window, viewer), so going
+  // back to one (or back to Top from Latest) shows it at once while it reloads.
+  const firstPagesRef = useRef(new Map<string, Post[]>());
+  const viewKey = `${activeTab}:${window}:${userId ?? ''}`;
 
   const load = useCallback(
     async ({ force = false, append = false }: LoadOptions = {}) => {
@@ -104,6 +108,7 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         const visible = await filterBlockedAuthors(userId, ranked);
         if (!isCurrent()) return;
         rankedCountRef.current = ranked.length;
+        if (!append) firstPagesRef.current.set(viewKey, visible);
         setPosts((current) => {
           if (!append || !current) return visible;
           const known = new Set(current.map((post) => post.id));
@@ -116,10 +121,12 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         logger.error('Feed: Failed to load top posts:', error);
         if (!isCurrent()) return;
         // A failed widening keeps what is already on screen and rejects so the
-        // caller can offer a retry; a failed first page shows empty.
+        // caller can offer a retry; a failed refresh keeps the page on screen,
+        // and only a failed first load shows empty.
         if (append) throw error;
-        setPosts([]);
-        setHasMore(false);
+        setPosts((current) => current ?? []);
+        // A kept page on screen keeps its paging; only an empty first load ends it.
+        if (!firstPagesRef.current.has(viewKey)) setHasMore(false);
       } finally {
         if (isCurrent()) {
           setIsLoading(false);
@@ -127,15 +134,15 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         }
       }
     },
-    [activeTab, userId, window]
+    [activeTab, userId, window, viewKey]
   );
 
   // A different ranking (tab, window, or viewer) starts from the first page.
   useEffect(() => {
     if (!enabled) return;
-    setPosts(null);
+    setPosts(firstPagesRef.current.get(viewKey) ?? null);
     load().catch((error) => logger.error('Feed: top posts load failed:', error));
-  }, [enabled, load]);
+  }, [enabled, load, viewKey]);
 
   const refresh = useCallback(() => load({ force: true }), [load]);
 

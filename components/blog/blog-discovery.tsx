@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { BlogPostDiscovery } from './blog-post-discovery'
 import { PillTabs } from './pill-tabs'
 import { DISCOVERY_SCAN_LIMIT } from '@/lib/services/pagination-utils'
+import { KeptPanel } from '@/components/ui/kept-panel'
 
 interface BlogWithUsername extends Blog {
   username: string | null
@@ -121,7 +122,13 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false, initialView
         </div>
       )}
 
-      {postsView ? <BlogPostDiscovery sdkReady={sdkReady} /> : <BlogList sdkReady={sdkReady} />}
+      {/* Both views stay mounted once opened and are only hidden, so switching back is instant. */}
+      <KeptPanel active={postsView}>
+        <BlogPostDiscovery sdkReady={sdkReady} />
+      </KeptPanel>
+      <KeptPanel active={!postsView}>
+        <BlogList sdkReady={sdkReady} />
+      </KeptPanel>
     </div>
   )
 }
@@ -140,7 +147,7 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
   }, [sort, viewerId])
   // `incomplete`: before v7, `newest` sorted only the first DISCOVERY_SCAN_LIMIT blogs read.
   const { items: blogs, cursor, loading, loadingMore, error, incomplete, loadMore } = useCursorList(loadPage, {
-    enabled: sdkReady, loadError: 'Blogs are unavailable right now. Please try again.', moreError: 'Failed to load more blogs',
+    enabled: sdkReady, loadError: 'Blogs are unavailable right now. Please try again.', moreError: 'Failed to load more blogs', cacheKey: `${sort}:${viewerId ?? ''}`,
   })
 
   const filtered = useMemo(() => {

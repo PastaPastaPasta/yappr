@@ -3,7 +3,6 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { motion } from 'framer-motion'
 import { ArrowLeftIcon, HashtagIcon, CurrencyDollarIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
@@ -48,9 +47,8 @@ function HashtagPageContent() {
   const [sortMode, setSortMode] = useState<'latest' | 'top'>('latest')
   /** Top can show the tag's recent window (v9 today, v10 the rolling 24h) or all-time. */
   const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
-  const [topPosts, setTopPosts] = useState<Post[]>([])
-  const [topLoading, setTopLoading] = useState(false)
-  const [topLoaded, setTopLoaded] = useState(false)
+  const [topByWindow, setTopByWindow] = useState<Partial<Record<RankingWindow, Post[]>>>({})
+  const topPosts = topByWindow[rankingWindow]
 
   // Determine if this is a cashtag and get display values
   const isCashtag = isCashtagStorage(tag)
@@ -201,32 +199,28 @@ function HashtagPageContent() {
   // Reset the sort state when the tag changes.
   useEffect(() => {
     setSortMode('latest')
-    setTopPosts([])
-    setTopLoaded(false)
+    setTopByWindow({})
   }, [tag])
 
-  // A window change reads a different index: drop the loaded Top list.
-  useEffect(() => {
-    setTopLoaded(false)
-  }, [rankingWindow])
-
   // The block filter depends on the viewer, so a Top list loaded under one
-  // identity is stale after login/logout — force a refetch.
+  // identity is stale after login/logout — drop it and refetch.
   useEffect(() => {
-    setTopLoaded(false)
+    setTopByWindow({})
   }, [user?.identityId])
 
-  // Lazy-load the tag's top-liked posts the first time Top is selected.
+  // Load the tag's top-liked posts while Top is selected. Each window's list is
+  // kept, so switching back shows it at once while it refreshes quietly.
   useEffect(() => {
     // `tag` is never '' here (the page early-returns without one), so the
     // untagged '' group is never queried.
-    if (sortMode !== 'top' || topLoaded || !tag || !likesAreIndexOnly()) return
+    if (sortMode !== 'top' || !tag || !likesAreIndexOnly()) return
+    const win = rankingWindow
+    let cancelled = false
 
     const loadTopPosts = async () => {
-      setTopLoading(true)
       try {
         const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
-        let fetched = await topLikedPostsHydrated({ hashtag: tag, limit: 20, window: rankingWindow })
+        let fetched = await topLikedPostsHydrated({ hashtag: tag, limit: 20, window: win })
 
         // Filter out posts from blocked users, matching the Latest path.
         if (user?.identityId && fetched.length > 0) {
@@ -235,18 +229,18 @@ function HashtagPageContent() {
           fetched = fetched.filter(post => !blockedMap.get(post.author.id))
         }
 
-        setTopPosts(fetched)
+        if (!cancelled) setTopByWindow((prev) => ({ ...prev, [win]: fetched }))
       } catch (error) {
         logger.error('Failed to load top posts for hashtag:', error)
-        setTopPosts([])
-      } finally {
-        setTopLoading(false)
-        setTopLoaded(true)
+        if (!cancelled) setTopByWindow((prev) => (prev[win] ? prev : { ...prev, [win]: [] }))
       }
     }
 
     loadTopPosts().catch(err => logger.error('Failed to load top posts for hashtag:', err))
-  }, [sortMode, topLoaded, tag, user?.identityId, rankingWindow])
+    return () => {
+      cancelled = true
+    }
+  }, [sortMode, tag, user?.identityId, rankingWindow])
 
   if (!tag) {
     return (
@@ -319,12 +313,12 @@ function HashtagPageContent() {
 
           {/* Content */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
-            {(sortMode === 'top' ? topLoading || !topLoaded : isLoading) ? (
+            {(sortMode === 'top' ? !topPosts : isLoading) ? (
               <PostListSkeleton
                 label={sortMode === 'top' ? `Loading top posts with ${tagSymbol}${displayTag}` : `Loading posts with ${tagSymbol}${displayTag}`}
                 testId="hashtag-loading"
               />
-            ) : sortMode === 'top' && topPosts.length === 0 ? (
+            ) : sortMode === 'top' && topPosts?.length === 0 ? (
               <div className="p-12 text-center" data-testid="hashtag-top-empty">
                 <TagIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
                 <h2 className="text-xl font-semibold mb-2">No liked posts yet</h2>
@@ -341,15 +335,8 @@ function HashtagPageContent() {
                 </p>
               </div>
             ) : (
-              filterHiddenSensitive(sortMode === 'top' ? topPosts : posts, sensitiveContentMode, user?.identityId).map((post, index) => (
-                <motion.div
-                  key={post.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: Math.min(index, 9) * 0.05 }}
-                >
-                  <PostCard post={post} />
-                </motion.div>
+              filterHiddenSensitive(sortMode === 'top' ? topPosts ?? [] : posts, sensitiveContentMode, user?.identityId).map((post) => (
+                <PostCard key={post.id} post={post} />
               ))
             )}
           </div>
