@@ -38,34 +38,47 @@ type RawActionFees = { pricing?: unknown } & Partial<Record<DocumentAction, { ow
 
 const known = new Map<string, RegisteredContract>()
 
-/** The refresh of recorded contracts in flight (the SDK's bundle revalidation), settled or not. */
-let refreshing: Promise<boolean> = Promise.resolve(true)
+/**
+ * The contracts whose record came from the chain, or from a bundled snapshot
+ * the chain has since been proved to match. A bundled seed is recorded at once
+ * but stays unverified until the SDK's revalidation proves it current.
+ */
+const verified = new Set<string>()
 
-/** How long a write waits for a refresh in flight before it reads the records as they stand. */
+/** The refresh of recorded contracts in flight (the SDK's bundle revalidation). */
+let refreshing: Promise<unknown> = Promise.resolve()
+
+/** How long a priced write waits for a refresh in flight before it reads its contract itself. */
 const REFRESH_WAIT_MS = 10_000
 
-/**
- * Registers a refresh in flight: the SDK seeds the bundled snapshot at once
- * and checks it against the chain afterwards, refetching what is stale. It
- * resolves true once the records are proved current, false when the check
- * failed or could not be made.
- */
-export function trackRegisteredRefresh(refresh: Promise<boolean>): void {
-  refreshing = refresh.catch(() => false)
+/** Registers a refresh in flight: the SDK seeds the bundled snapshot at once and checks it against the chain afterwards. */
+export function trackRegisteredRefresh(refresh: Promise<unknown>): void {
+  refreshing = refresh.catch(() => undefined)
+}
+
+/** Marks recorded contracts as proved current (a bundled seed whose version the chain confirmed). */
+export function markRegisteredVerified(contractIds: readonly string[]): void {
+  for (const id of contractIds) if (known.has(id)) verified.add(id)
 }
 
 /**
- * Whether the recorded contracts were proved current: waits for the refresh
- * in flight, at most {@link REFRESH_WAIT_MS}. A priced write awaits it before
- * reading the fee it agrees to; on false (the check failed, could not be made
- * or is still running) it reads its contract from the chain first, so an
- * unverified snapshot is never agreed to (40133). Reads never wait.
+ * Makes sure `contractId`'s record is proved against the chain before a
+ * priced write agrees to its fee: an unverified record (a bundled seed not yet
+ * or never confirmed) or a missing one (a failed preload) first waits, at most
+ * {@link REFRESH_WAIT_MS}, for the refresh in flight, then is read with
+ * `fetch` and recorded. Throws when the contract cannot be read, so the write
+ * fails before signing rather than agreeing to an unproved fee (40133).
  */
-export async function registeredContractsSettled(): Promise<boolean> {
+export async function ensureRegisteredContract(contractId: string, fetch: () => Promise<{ schemas?: unknown; config?: unknown } | null | undefined>): Promise<void> {
+  if (verified.has(contractId)) return
   let timer: ReturnType<typeof setTimeout> | undefined
-  const verified = await Promise.race([refreshing, new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), REFRESH_WAIT_MS) })])
+  await Promise.race([refreshing, new Promise<void>((resolve) => { timer = setTimeout(resolve, REFRESH_WAIT_MS) })])
   clearTimeout(timer)
-  return verified
+  if (verified.has(contractId)) return
+  const contract = await fetch()
+  if (!contract) throw new Error('The contract could not be read to confirm its fee')
+  rememberRegisteredContract(contractId, contract)
+  if (!verified.has(contractId)) throw new Error('The contract\'s declarations could not be read to confirm its fee')
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
@@ -116,15 +129,22 @@ export function registeredContractOf(contract: { schemas?: unknown; config?: unk
  * so the template answers for it. Never throws: a getter that fails keeps the
  * earlier record, if any, and costs the caller's read nothing.
  */
-export function rememberRegisteredContract(contractId: string, contract: { schemas?: unknown; config?: unknown }): void {
+export function rememberRegisteredContract(contractId: string, contract: { schemas?: unknown; config?: unknown }, { seed = false }: { seed?: boolean } = {}): void {
   let record: RegisteredContract | null
   try {
     record = registeredContractOf(contract)
   } catch {
     return
   }
-  if (record) known.set(contractId, record)
-  else known.delete(contractId)
+  if (record) {
+    known.set(contractId, record)
+    // A bundled seed is unproved until revalidation; a chain read is proved.
+    if (seed) verified.delete(contractId)
+    else verified.add(contractId)
+  } else {
+    known.delete(contractId)
+    verified.delete(contractId)
+  }
 }
 
 function registeredTypeOf(contractId: string, docType: string): RegisteredType | undefined {

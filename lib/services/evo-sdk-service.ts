@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
-import { rememberRegisteredContract, trackRegisteredRefresh } from '@/lib/registered-contracts';
+import { markRegisteredVerified, rememberRegisteredContract, trackRegisteredRefresh } from '@/lib/registered-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
 import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
 import { profileBaseSource, profileExtensionSource } from '../profile/v10-profile';
@@ -342,7 +342,7 @@ class EvoSdkService {
         // accepted under older ones (a deployed contract can fail a rule added
         // since), and the fetch path skips it too; the snapshot is trusted.
         const contract = DataContract.fromBase64(entry.bytes, false, platformVersion);
-        rememberRegisteredContract(id, contract);
+        rememberRegisteredContract(id, contract, { seed: true });
         if (await sdk.contracts.addKnown(contract)) seeded.add(id);
       } catch (error) {
         logger.warn(`EvoSdkService: bundled contract ${id} did not load, fetching it instead:`, error);
@@ -372,22 +372,21 @@ class EvoSdkService {
     trackRegisteredRefresh((async () => {
       try {
         const bundle = await this._bundle();
-        // Nothing seeded from a bundle: what was recorded came from the network.
-        if (!bundle) return true;
+        if (!bundle) return;
         // Versions only: from protocol version 14 the proof covers the
         // contracts' version items, a few hundred bytes per contract.
         const latest = await getLatestVersions({ contractIds: [...ids] });
         const stale = staleContractIds(bundle.contracts, latest, ids);
         if (stale.length === 0) {
           logger.debug(`EvoSdkService: ${ids.length} bundled contract(s) are current`);
-          return true;
+          markRegisteredVerified(ids);
+          return;
         }
         logger.info(`EvoSdkService: ${stale.length} bundled contract(s) are stale, refetching:`, stale);
         // The fetch replaces the seeded entries in the SDK's cache.
-        const fetched = await getMany(stale);
-        rememberFetched(fetched);
-        // Proved current only if every stale contract came back; a missing one keeps its unverified seed.
-        return stale.every((id) => Boolean(fetched.get(id)));
+        // A refetched contract is recorded as proved; a stale one that does not come back stays unverified.
+        markRegisteredVerified(ids.filter((id) => !stale.includes(id)));
+        rememberFetched(await getMany(stale));
       } catch (error) {
         // Nodes below the query's protocol version answer UNIMPLEMENTED; the
         // seeded contracts stay in use and the SDK's own staleness guard applies.
@@ -397,7 +396,6 @@ class EvoSdkService {
           logger.warn('EvoSdkService: bundled contract revalidation failed:', error);
         }
         // Unverified: a priced write reads its contract from the chain before agreeing to a fee.
-        return false;
       }
     })());
   }

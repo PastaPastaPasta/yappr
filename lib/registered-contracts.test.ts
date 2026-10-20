@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  registeredActionFee, registeredContractOf, registeredContractsSettled, registeredDeleteWindow, registeredOr, registeredOwnerProtected, registeredSettledRule,
-  rememberRegisteredContract, trackRegisteredRefresh,
+  ensureRegisteredContract, markRegisteredVerified, registeredActionFee, registeredContractOf, registeredDeleteWindow, registeredOr, registeredOwnerProtected,
+  registeredSettledRule, rememberRegisteredContract, trackRegisteredRefresh,
 } from './registered-contracts'
 
 /** /staging's social v17 as registered (before D39/D41), the way the wasm `DataContract` exposes it: integers as bigints. */
@@ -51,29 +51,59 @@ describe('registered contract declarations', () => {
   })
 })
 
-describe('a refresh in flight', () => {
-  it('holds a write until the snapshot check settles, then reports the records proved current', async () => {
-    let finish: () => void = () => undefined
-    trackRegisteredRefresh(new Promise<boolean>((resolve) => { finish = () => { rememberRegisteredContract('refreshed', { schemas: { post: { actionFees: { create: { moderators: BigInt(7) } } } } }); resolve(true) } }))
-    const settled = registeredContractsSettled().then((verified) => [verified, registeredActionFee('refreshed', 'post', 'create')?.moderators])
-    finish()
-    await expect(settled).resolves.toEqual([true, 7n])
+describe('making a record proved before a priced write', () => {
+  const declaring = (moderators: number) => ({ schemas: { post: { actionFees: { create: { moderators: BigInt(moderators) } } } } })
+
+  it('reads nothing for a contract already read from the chain', async () => {
+    rememberRegisteredContract('chain-read', declaring(5))
+    const fetch = vi.fn()
+    await ensureRegisteredContract('chain-read', fetch)
+    expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('reports the records unverified when the check fails, could not be made, or does not answer in time', async () => {
+  it('reads a contract the preload missed, and records it proved', async () => {
+    const fetch = vi.fn(async () => declaring(50_000_000))
+    await ensureRegisteredContract('missed-by-preload', fetch)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(registeredActionFee('missed-by-preload', 'post', 'create')?.moderators).toBe(50_000_000n)
+    await ensureRegisteredContract('missed-by-preload', fetch)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for the revalidation of a bundled seed and reads nothing once it is confirmed', async () => {
+    rememberRegisteredContract('seeded', declaring(9), { seed: true })
+    let confirm: () => void = () => undefined
+    trackRegisteredRefresh(new Promise<void>((resolve) => { confirm = () => { markRegisteredVerified(['seeded']); resolve() } }))
+    const fetch = vi.fn()
+    const ensured = ensureRegisteredContract('seeded', fetch)
+    confirm()
+    await ensured
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('reads a bundled seed whose revalidation failed or does not answer in time', async () => {
+    rememberRegisteredContract('unconfirmed', declaring(9), { seed: true })
     trackRegisteredRefresh(Promise.reject(new Error('offline')))
-    await expect(registeredContractsSettled()).resolves.toBe(false)
-    trackRegisteredRefresh(Promise.resolve(false))
-    await expect(registeredContractsSettled()).resolves.toBe(false)
+    const fetch = vi.fn(async () => declaring(80_000_000))
+    await ensureRegisteredContract('unconfirmed', fetch)
+    expect(registeredActionFee('unconfirmed', 'post', 'create')?.moderators).toBe(80_000_000n)
+    rememberRegisteredContract('slow', declaring(9), { seed: true })
     vi.useFakeTimers()
     try {
-      trackRegisteredRefresh(new Promise<boolean>(() => undefined))
-      const waiting = registeredContractsSettled()
+      trackRegisteredRefresh(new Promise(() => undefined))
+      const slowFetch = vi.fn(async () => declaring(7))
+      const ensured = ensureRegisteredContract('slow', slowFetch)
       await vi.advanceTimersByTimeAsync(10_000)
-      await expect(waiting).resolves.toBe(false)
+      await ensured
+      expect(slowFetch).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
-      trackRegisteredRefresh(Promise.resolve(true))
+      trackRegisteredRefresh(Promise.resolve())
     }
+  })
+
+  it('fails before signing when the contract cannot be read', async () => {
+    await expect(ensureRegisteredContract('unreadable', async () => null)).rejects.toThrow('could not be read')
+    await expect(ensureRegisteredContract('declares-nothing', async () => ({}))).rejects.toThrow('could not be read')
   })
 })

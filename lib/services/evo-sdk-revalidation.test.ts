@@ -27,7 +27,7 @@ vi.mock('@dashevo/evo-sdk', () => ({
     contractGroups = {}; moderationCharters = {}; encryptedFor = {};
     constructor(public options: unknown) { mocks.instances.push(this); }
   },
-  DataContract: { fromBase64: (bytes: string) => ({ bytes }) },
+  DataContract: { fromBase64: (bytes: string) => ({ bytes, schemas: {} }) },
   PlatformVersion: { latest: () => ({}) },
 }));
 vi.mock('@/lib/contracts/bundled-contracts', () => ({
@@ -125,33 +125,41 @@ describe('background contract revalidation', () => {
 });
 
 describe('what the revalidation proves for priced writes', () => {
-  const settledAfterInit = async () => {
+  /** Whether a priced write on `id` would read its contract itself after initialization. */
+  const writeReads = async (id: string) => {
     const { evoSdkService } = await import('./evo-sdk-service');
-    const { registeredContractsSettled } = await import('@/lib/registered-contracts');
+    const { ensureRegisteredContract } = await import('@/lib/registered-contracts');
     await evoSdkService.initialize(config);
-    return registeredContractsSettled();
+    const fetch = vi.fn(async () => ({ schemas: {} }));
+    await ensureRegisteredContract(id, fetch);
+    return fetch.mock.calls.length > 0;
   };
 
-  it('reports the seeded contracts proved current when the versions match', async () => {
+  it('proves the seeded contracts when the versions match', async () => {
     mocks.getLatestVersions.mockReset().mockResolvedValue(new Map());
-    await expect(settledAfterInit()).resolves.toBe(true);
+    await expect(writeReads('contract')).resolves.toBe(false);
   });
 
-  it('reports them proved when every stale contract is refetched', async () => {
+  it('proves a stale contract that is refetched', async () => {
     mocks.getLatestVersions.mockReset().mockResolvedValue(new Map());
     mocks.stale.mockReturnValue(['contract']);
     mocks.getMany.mockResolvedValue(new Map([['contract', { schemas: {} }]]));
-    await expect(settledAfterInit()).resolves.toBe(true);
+    await expect(writeReads('contract')).resolves.toBe(false);
   });
 
-  it('reports them unverified when a stale contract does not come back', async () => {
+  it('leaves a stale contract unproved when it does not come back', async () => {
     mocks.getLatestVersions.mockReset().mockResolvedValue(new Map());
     mocks.stale.mockReturnValue(['contract', 'profile']);
-    mocks.getMany.mockResolvedValue(new Map([['contract', { schemas: {} }]]));
-    await expect(settledAfterInit()).resolves.toBe(false);
+    mocks.getMany.mockResolvedValue(new Map([['profile', { schemas: {} }]]));
+    await expect(writeReads('contract')).resolves.toBe(true);
   });
 
-  it('reports them unverified when the check fails', async () => {
-    await expect(settledAfterInit()).resolves.toBe(false);
+  it('leaves the seeds unproved when the check fails', async () => {
+    await expect(writeReads('contract')).resolves.toBe(true);
+  });
+
+  it('has a priced write read a contract the preload could not fetch', async () => {
+    mocks.getLatestVersions.mockReset().mockResolvedValue(new Map());
+    await expect(writeReads('not-bundled')).resolves.toBe(true);
   });
 });
