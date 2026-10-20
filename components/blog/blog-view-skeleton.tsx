@@ -6,6 +6,16 @@
 
 const BAR = 'rounded bg-[var(--blog-border,#e5e7eb)] dark:bg-[var(--blog-border,#1f2937)]'
 
+/**
+ * The blog owner's handle, or a text-height placeholder while their username
+ * is still being looked up; `fallback` only once the lookup found no name.
+ */
+export function OwnerHandle({ username, pending, fallback }: { username?: string; pending?: boolean; fallback: string }) {
+  if (username) return <>@{username}</>
+  if (pending) return <span className={`inline-block h-[0.8em] w-24 align-middle ${BAR} animate-pulse`} role="status" aria-label="Loading username" />
+  return <>{fallback}</>
+}
+
 /** One post card in a blog's list (cover, title, excerpt, meta). */
 export function BlogPostCardSkeleton() {
   return (

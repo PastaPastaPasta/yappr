@@ -64,6 +64,8 @@ function BlogPageContent() {
   const [viewBlog, setViewBlog] = useState<Blog | null>(null)
   const [viewPost, setViewPost] = useState<BlogPost | null>(null)
   const [viewUsername, setViewUsername] = useState<string | null>(null)
+  // Until the owner's username lookup settles, handles show a placeholder rather than a fallback.
+  const [usernamePending, setUsernamePending] = useState(true)
   const [loading, setLoading] = useState(Boolean(blogIdParam))
   // The post (on a post's page) loads beside the blog, not after it.
   const [postLoading, setPostLoading] = useState(Boolean(postSlugParam))
@@ -105,9 +107,11 @@ function BlogPageContent() {
         }
         setViewBlog(blog)
         setLoading(false)
+        setUsernamePending(true)
         dpnsService.resolveUsername(blog.ownerId)
           .then((resolved) => { if (!cancelled) setViewUsername(resolved ? normalizeDpnsUsername(resolved) : null) })
           .catch(() => undefined)
+          .finally(() => { if (!cancelled) setUsernamePending(false) })
 
         if (!postSlugParam) return
         const post = await postRead
@@ -231,10 +235,10 @@ function BlogPageContent() {
       if (postSlugParam && (postLoading || !viewPost)) return <BlogPostSkeleton />
       if (viewPost) {
         if (isBlogPostTombstone(viewPost)) return <DeletedBlogPost blog={viewBlog} />
-        return <BlogPostView blog={viewBlog} post={viewPost} username={viewUsername || ''} />
+        return <BlogPostView blog={viewBlog} post={viewPost} username={viewUsername || ''} usernamePending={usernamePending} />
       }
 
-      return <BlogHome blog={viewBlog} username={viewUsername || ''} />
+      return <BlogHome blog={viewBlog} username={viewUsername || ''} usernamePending={usernamePending} />
     }
 
     if (!selectedBlog) {

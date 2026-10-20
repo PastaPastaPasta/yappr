@@ -21,9 +21,11 @@ import { BlogPostListSkeleton } from './blog-view-skeleton'
 interface BlogHomeProps {
   blog: Blog
   username: string
+  /** The owner's username is still being looked up. */
+  usernamePending?: boolean
 }
 
-export function BlogHome({ blog, username }: BlogHomeProps) {
+export function BlogHome({ blog, username, usernamePending }: BlogHomeProps) {
   const router = useRouter()
   const [posts, setPosts] = useState<BlogPost[]>([])
   // null until read, so a post never shows 0 comments it may not have.
@@ -95,6 +97,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       blogName={blog.name}
       blogDescription={blog.description}
       username={username}
+      usernamePending={usernamePending}
       headerImage={blog.headerImage}
       labels={blog.labels}
       meta={(

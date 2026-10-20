@@ -12,6 +12,7 @@ import {
   type BlogThemeConfig,
 } from '@/lib/blog/theme-types'
 import { formatLabels } from '@/lib/blog/content-utils'
+import { OwnerHandle } from './blog-view-skeleton'
 
 // Module-level ref counts for shared Google Font <link> elements.
 // Multiple BlogThemeProvider instances may share the same font — only remove from
@@ -23,6 +24,8 @@ interface BlogThemeProviderProps {
   blogName: string
   blogDescription?: string
   username?: string
+  /** The owner's username is still being looked up: the header shows a placeholder, not "Blog". */
+  usernamePending?: boolean
   headerImage?: string
   labels?: string[]
   title?: string
@@ -64,6 +67,7 @@ function ThemeHeader({
   blogName,
   blogDescription,
   username,
+  usernamePending,
   headerImage,
   title,
   subtitle,
@@ -74,6 +78,7 @@ function ThemeHeader({
   blogName: string
   blogDescription?: string
   username?: string
+  usernamePending?: boolean
   headerImage?: string
   title?: string
   subtitle?: string
@@ -88,7 +93,7 @@ function ThemeHeader({
       <header className="relative mb-4 overflow-hidden rounded-xl border border-[var(--blog-border)] bg-[var(--blog-surface)] p-4">
         <div className="absolute inset-0" style={{ background: gradientCSS, opacity: 0.15 }} />
         <div className="relative">
-          <p className="text-xs uppercase tracking-wider text-[var(--blog-accent)]">{username ? `@${username}` : 'Blog'}</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--blog-accent)]"><OwnerHandle username={username} pending={usernamePending} fallback="Blog" /></p>
           <h1 className="mt-1 text-3xl font-semibold leading-tight text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
             {headline}
           </h1>
@@ -103,7 +108,7 @@ function ThemeHeader({
     return (
       <header className="mb-4 overflow-hidden rounded-xl border border-[var(--blog-border)]">
         <div className="relative p-4" style={{ background: gradientCSS }}>
-          <p className="text-xs uppercase tracking-wider text-[var(--blog-heading)]/85">{username ? `@${username}` : 'Blog'}</p>
+          <p className="text-xs uppercase tracking-wider text-[var(--blog-heading)]/85"><OwnerHandle username={username} pending={usernamePending} fallback="Blog" /></p>
           <h1 className="mt-1 text-2xl font-semibold text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
             {headline}
           </h1>
@@ -122,7 +127,7 @@ function ThemeHeader({
         <div className="h-56 w-full" style={{ background: gradientCSS }} />
       )}
       <div className="bg-[var(--blog-surface)] p-5">
-        <p className="text-xs uppercase tracking-wider text-[var(--blog-accent)]">{username ? `@${username}` : 'Blog'}</p>
+        <p className="text-xs uppercase tracking-wider text-[var(--blog-accent)]"><OwnerHandle username={username} pending={usernamePending} fallback="Blog" /></p>
         <h1 className="mt-1 text-3xl font-semibold text-[var(--blog-heading)]" style={{ fontFamily: 'var(--blog-heading-font)' }}>
           {headline}
         </h1>
@@ -138,6 +143,7 @@ export function BlogThemeProvider({
   blogName,
   blogDescription,
   username,
+  usernamePending,
   headerImage,
   labels,
   title,
@@ -207,6 +213,7 @@ export function BlogThemeProvider({
             blogName={blogName}
             blogDescription={blogDescription}
             username={username}
+            usernamePending={usernamePending}
             headerImage={headerImage}
             title={title}
             subtitle={subtitle}
