@@ -129,7 +129,7 @@ export function buildPipelinedExecutor({ handle, contractId, actors, ledger, pro
     for (let attempt = 1; attempt <= BROADCAST_ATTEMPTS; attempt++) {
       // Per attempt, not once: the multiplier is cached, so this is free until
       // a 40134 drops the cache and the rebuild is the whole point.
-      const agreement = await feeAgreementFor(handle.sdk, docType);
+      const agreement = await feeAgreementFor(handle.sdk, docType, undefined, { contractId });
       const nonce = await track.take();
       const { st, id } = buildSignedCreate({ contractId, actor, docType, data, nonce, payment, agreement, privateKey: keyFor(actor) });
       const accepted = acceptedProbe(existenceKeyPlan, actor, id);

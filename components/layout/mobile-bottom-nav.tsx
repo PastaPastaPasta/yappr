@@ -226,7 +226,7 @@ export function MobileBottomNav() {
                   className="flex items-center gap-3 w-full p-3 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
                 >
                   <ArrowRightOnRectangleIcon className="h-5 w-5" />
-                  <span className="text-sm font-medium">Log out</span>
+                  <span className="text-sm font-medium">Sign out</span>
                 </button>
               </div>
             </>

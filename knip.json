@@ -6,6 +6,7 @@
     "scripts/**/*.test.mjs",
     "scripts/bench-dm-scan-core.mjs",
     "scripts/bench-dm-scan-worker.mjs",
+    "scripts/brand-assets.mjs",
     "scripts/build-asset-lock.mjs",
     "scripts/build-release.mjs",
     "scripts/check-export-sizes.mjs",

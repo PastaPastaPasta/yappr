@@ -1568,8 +1568,8 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | stub.blockedReply | Reply from an account you blocked |
 | stub.blockedPost | Post from an account you blocked |
 | private.title | Private post |
-| private.body | Only approved followers can see this. (with "Open on yap.pr") |
-| private.open | Open on yap.pr |
+| private.body | Only approved followers can see this. (with "Request access", "Pending · Cancel request", or why it is locked; decrypted in place for the owner and approved followers) |
+| private.request | Request access / Ask again |
 | poll.votes | {N} votes |
 | poll.endsIn / ended / noEnd | Ends in {time} / Ended / No end date |
 | poll.vote | Vote on yap.pr |
@@ -1980,7 +1980,7 @@ Read errors (G-11) show these. Write failures don't: they use §5.4.1, and this 
 | --- | --- |
 | Unavailable | Dash Platform is temporarily unavailable. Please try again in a few moments. |
 | Network | Network error. Please check your connection and try again. |
-| Session | Your session has expired. Please log in again. (mobile replaces "log in" with "sign in") |
+| Session | Your session has expired. Please sign in again. |
 | Too long (bytes) | This is too long for the network once emoji and special characters are counted. Shorten it and try again. |
 | Not supported (`NOT_SUPPORTED`, a view these contracts lack) | This isn't available yet. (mobile; never names the contract or network) |
 | Nonce clash | Another write from your account went out at the same moment, so this one was not saved. Try again. |

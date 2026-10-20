@@ -49,6 +49,8 @@ export const copy = {
       `Couldn't ${block ? 'block' : 'unblock'} ${handle ?? 'this account'}. Try again.`,
     unblockFailed: (handle: string) => `Couldn't unblock ${handle}. Try again.`,
     reportSent: 'Report sent',
+    reportUnsealedNoModerators: (noun: ReportNoun) => `Moderators can't read private posts yet, so they won't see this ${noun}'s text.`,
+    reportUnsealedNoKey: (noun: ReportNoun) => `Moderators may not be able to read this ${noun}.`,
     reportFailed: "Couldn't send your report. Try again.",
     reportCopied: 'Report address copied. Send it from any email app.',
     reportWithdrawn: 'Report withdrawn',

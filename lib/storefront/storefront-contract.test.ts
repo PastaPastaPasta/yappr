@@ -48,10 +48,10 @@ describe('store category slugs (v6 store.category)', () => {
 describe('action fees (storefront v6)', () => {
   it('reads the declared create fees off the committed contract on v6', async () => {
     const { storefrontActionFee, storefrontCreateFeeCredits } = await load('v6')
-    expect(storefrontActionFee('store', 'create')).toEqual({ owner: 0n, moderators: 1_000_000_000n, pricing: 'feeMultiplier' })
-    expect(storefrontCreateFeeCredits('storeItem')).toBe(50_000_000n)
-    expect(storefrontCreateFeeCredits('storeReview')).toBe(16_000_000n)
-    expect(storefrontCreateFeeCredits('itemReview')).toBe(8_000_000n)
+    expect(storefrontActionFee('store', 'create')).toEqual({ owner: 0n, moderators: 500_000_000n, pricing: 'feeMultiplier' })
+    expect(storefrontCreateFeeCredits('storeItem')).toBe(20_000_000n)
+    expect(storefrontCreateFeeCredits('storeReview')).toBe(10_000_000n)
+    expect(storefrontCreateFeeCredits('itemReview')).toBe(5_000_000n)
   })
 
   it('charges nothing for orders, status updates, deliveries or edits', async () => {
@@ -73,7 +73,7 @@ describe('action fees (storefront v6)', () => {
     vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v6')
     vi.stubEnv('NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', 'storefront-id')
     const { declaredActionFeeFor } = await import('../transition-agreements')
-    expect(declaredActionFeeFor('storefront-id', 'storeReview', 'create')?.moderators).toBe(16_000_000n)
+    expect(declaredActionFeeFor('storefront-id', 'storeReview', 'create')?.moderators).toBe(10_000_000n)
     expect(declaredActionFeeFor('some-other-contract', 'storeReview', 'create')).toBeNull()
   })
 })
@@ -156,6 +156,16 @@ describe('size guards (item transition budget, legacy variants JSON caps)', () =
     expect(isOwnStore({ ownerId: 'them' }, 'me')).toBe(false)
     expect(isOwnStore(null, 'me')).toBe(false)
     expect(isOwnStore({ ownerId: 'me' }, undefined)).toBe(false)
+  })
+
+  it('takes payment only when a loaded store lists a payment address', async () => {
+    const { storeTakesPayment } = await load('v6')
+    expect(storeTakesPayment({ paymentUris: [{ scheme: 'dash', uri: 'dash:yXYZ' }] })).toBe(true)
+    expect(storeTakesPayment({ paymentUris: [] })).toBe(false)
+    expect(storeTakesPayment({})).toBe(false)
+    // Unknown yet: never block on a store that hasn't loaded.
+    expect(storeTakesPayment(null)).toBe(true)
+    expect(storeTakesPayment(undefined)).toBe(true)
   })
 
   it('caps both digital payloads at the contract value', async () => {

@@ -95,7 +95,7 @@ NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.d
 
 The storefront v7 spec (`e2e/write/storefront-variants.spec.ts`) is local-only
 too. Its seller creates a store (once per identity) and a variant listing from
-Node, with the action fees the app agrees to (1,000M and 50M credits). Its
+Node, with the action fees the app agrees to (the file's store and item fees). Its
 buyer then picks a combination, checks out, and the seller reads the order
 with its SKU. It uses pool slots 7 and 8. `E2E_STOREFRONT_SLOTS=<seller>,<buyer>`
 picks others in a smaller pool:

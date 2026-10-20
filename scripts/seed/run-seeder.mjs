@@ -125,6 +125,7 @@ import {
   paymentInfo,
   paysInCredits,
   feeAgreementFor,
+  registeredSchemasOf,
   randomEntropy,
   readback,
   refRecordOf,
@@ -501,7 +502,7 @@ function writeShapeFor({ handle }) {
     /** Resolves to something `createdId` can read an id off, or `{ id }` from the manual path. */
     async create({ contractId, actor, document, entropy, docType, data, tokenCost }) {
       const payment = paymentFor(actor, docType, tokenCost);
-      const agreement = await feeAgreementFor(handle.sdk, docType);
+      const agreement = await feeAgreementFor(handle.sdk, docType, undefined, { contractId });
       return createDocument(handle.sdk, { contractId, actor, docType, document, data, entropy, agreement, payment });
     },
   };
@@ -1216,16 +1217,18 @@ async function selfTest() {
   // ---- What a create CARRIES: the action fee agreement and YAPP vs credits ----
   const postFee = actionFeeFor('post');
   const replyFee = actionFeeFor('reply');
-  check('the action fees come off the committed contract JSON (80M post / 16M reply, moderators only)',
-    postFee?.moderators === 80_000_000n && postFee.owner === 0n && postFee.pricing === 'feeMultiplier' &&
-      replyFee?.moderators === 16_000_000n && replyFee.owner === 0n,
+  // v17 (D41) lowers the moderators' fees to 20M / 10M; the cuts before it declare 80M / 16M.
+  const [postModerators, replyModerators] = SOCIAL_SHAPES.cut.privateFeeds ? [20_000_000n, 10_000_000n] : [80_000_000n, 16_000_000n];
+  check(`the action fees come off the committed contract JSON (${postModerators / 1_000_000n}M post / ${replyModerators / 1_000_000n}M reply, moderators only)`,
+    postFee?.moderators === postModerators && postFee.owner === 0n && postFee.pricing === 'feeMultiplier' &&
+      replyFee?.moderators === replyModerators && replyFee.owner === 0n,
     `post=${postFee?.moderators} reply=${replyFee?.moderators}`);
   check('nothing but post and reply charges an action fee',
     ['like', 'likeReply', 'follow', 'bookmark', 'yapprProfile'].every((docType) => actionFeeFor(docType) === null));
 
   const agreed = actionFeeAgreementOptions(postFee, 1000n);
   check('the agreement names the exact declared amounts, each pot on its own, plus the known multiplier',
-    agreed.owner === 0n && agreed.moderators === 80_000_000n &&
+    agreed.owner === 0n && agreed.moderators === postModerators &&
       agreed.feeMultiplier.knownPermille === 1000n && agreed.feeMultiplier.increaseTolerancePercent === 20,
     JSON.stringify(agreed, (_k, v) => (typeof v === 'bigint' ? String(v) : v)));
   check('a fixed-priced fee names NO multiplier (naming one is the same 40133)',
@@ -1235,13 +1238,30 @@ async function selfTest() {
 
   // The payment bags are wasm objects, unlike everything above them.
   await ensureInitialized();
+  // A live write agrees to the fee its contract was REGISTERED with (sakura's v17 set predates D41's).
+  // Any amount other than the file's, so the check holds on every cut (v10–v16 also declare 80M).
+  const registeredFee = postFee.moderators + 1n;
+  const registeredSdk = {
+    contracts: { fetch: async () => ({ schemas: { post: { actionFees: { pricing: 'feeMultiplier', create: { moderators: registeredFee } } } } }) },
+    epoch: { current: async () => ({ feeMultiplierPermille: 1000 }) },
+  };
+  const registeredAgreement = await feeAgreementFor(registeredSdk, 'post', undefined, { contractId: 'self-test-registered' });
+  check('a live create agrees to the registered fee, not the committed file\'s',
+    registeredAgreement?.moderators === registeredFee,
+    `${registeredAgreement?.moderators} vs file ${postFee.moderators}`);
+  check('the registered schemas are read once per contract',
+    (await registeredSchemasOf({ contracts: { fetch: async () => { throw new Error('read twice'); } } }, 'self-test-registered')).post !== undefined);
+  let unreadable = null;
+  try { await feeAgreementFor({ contracts: { fetch: async () => null } }, 'post', undefined, { contractId: 'self-test-unreadable' }); } catch (error) { unreadable = error; }
+  check('a contract that cannot be read fails before an agreement is built', unreadable !== null, String(unreadable));
+
   // Build the REAL wasm object, not just the options bag: the constructor
   // deserializes through serde, so a field it stopped accepting (or a bigint it
   // started rejecting) would leave every assertion above passing while every
   // live post create is refused 40132.
   const builtAgreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions(postFee, 1000n));
   check('the constructed DocumentActionFeeAgreement carries the amounts, pricing and tolerance it was given',
-    builtAgreement.moderators === 80_000_000n && builtAgreement.owner === 0n &&
+    builtAgreement.moderators === postModerators && builtAgreement.owner === 0n &&
       builtAgreement.pricing === 'feeMultiplier' && builtAgreement.knownFeeMultiplierPermille === 1000n &&
       builtAgreement.feeMultiplierIncreaseTolerancePercent === 20,
     `${builtAgreement.pricing} ${builtAgreement.moderators} @${builtAgreement.knownFeeMultiplierPermille}permille`);

@@ -319,7 +319,7 @@ function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; 
     const trimmed = note.trim();
     setSending(true);
     write
-      .send({ target, reason, note: trimmed || undefined, noun })
+      .send({ target, reason, note: trimmed || undefined, noun, ...(post.encrypted ? { encrypted: true } : {}) })
       .then((result) => {
         if (result.status !== 'submitted') return;
         rememberReportTicket(post.id, result.ticket.id);

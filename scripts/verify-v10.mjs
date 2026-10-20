@@ -56,7 +56,7 @@
  *   - a reply like is `{ replyId }`: o2a (a forged `replyAuthor`) skips and
  *     n2 reads the reply's likers on byReply with no author counter;
  *   - x2 proves the media arrays (the `media` rule, four items land);
- *   - reports pay the 50M moderators action fee on create, and r1z files a
+ *   - reports pay the moderators action fee on create (50M; 20M on v17), and r1z files a
  *     profile report (`about: 1`, one per reporter, 40105 again);
  *   - block, blockFilter and blockFollow live in the blocks contract
  *     (`--blocks-contract <id>` or NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID; d1b
@@ -1667,15 +1667,21 @@ async function caseR2SeatedResolution(ctx) {
   if (ownerReport.ok) {
     const onOwner = await changeReport(ctx, member, ownerReport.id, { status: 1 }, { text: 'v10 battery r2', reasonDocumentId: REASON_DOCUMENT_ID });
     check('r2d the team resolves the protected owner\'s report too (a change, not a deletion)', onOwner === null, (onOwner ?? '').slice(0, 200));
-    // …but a DELETION of it is refused: the ownerProtected owner's documents are out of the team's reach.
+    // A DELETION follows the registered declaration: an ownerProtected owner's documents are out
+    // of the team's reach (41102); v17 registers ownerProtected false (D41), so the team deletes it.
+    const ownerProtected = ctx.contract?.config?.moderation?.moderators?.ownerProtected === true;
     const deleted = await errorOf(() => sdk.contracts.moderatorDeleteDocument({
       identity: member.identity, contractId, documentTypeName: 'report', documentId: ownerReport.id,
       reason: { text: 'v10 battery r2', reasonDocumentId: REASON_DOCUMENT_ID }, signer: member.signer,
     }));
-    expectRejected('r2e the team cannot delete the protected owner\'s report (41102)', asOutcome(deleted), TARGET_NOT_ALLOWED);
-    // v14: a resolved report can no longer be withdrawn (40147 "pending"); it is on a fresh post,
-    // so it blocks nothing, and its ttl expires it.
-    if (!PENDING_WITHDRAWAL) await deleteOwn(ctx, ctx.moderator, 'report', ownerReport.id);
+    if (ownerProtected) {
+      expectRejected('r2e the team cannot delete the protected owner\'s report (41102)', asOutcome(deleted), TARGET_NOT_ALLOWED);
+      // v14: a resolved report can no longer be withdrawn (40147 "pending"); it is on a fresh post,
+      // so it blocks nothing, and its ttl expires it.
+      if (!PENDING_WITHDRAWAL) await deleteOwn(ctx, ctx.moderator, 'report', ownerReport.id);
+    } else {
+      check('r2e the team deletes the unprotected owner\'s report (ownerProtected false, D41)', deleted === null, (deleted ?? '').slice(0, 200));
+    }
   }
 }
 
@@ -2780,9 +2786,11 @@ function selfTestTimeless(schemas, { expect, index, shape, names }) {
   expect('like / likeReply byPost / byReply [target] terminal $ownerId: the heart state (n2c, n2f)',
     shape('like', 'byPost') === 'postId' && index('like', 'byPost').terminal === '$ownerId' && shape('likeReply', 'byReply') === 'replyId' && index('likeReply', 'byReply').terminal === '$ownerId');
   // v16 keeps the post's whole tag list (`tags`) where v11–v15 kept its `hashtag`.
+  // v17 shortens the single-moderator window to a day (D39) and asks two approvals with the leader (D41); v11–v16 keep a week and three.
+  const [windowSeconds, windowText, approvals] = PRIVATE_FEEDS ? [86_400, 'a day', 2] : [604_800, 'a week', 3];
   for (const [type, kept] of [['post', [SOCIAL.tagField, '$createdAt']], ['reply', ['rootPostId', '$createdAt']]]) {
-    expect(`${type}: one moderator deletes for a week, then the leader plus two members (deleteWithin 604800, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
-      JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: 604_800, deleteSettled: { leader: true, approvals: 3 } }));
+    expect(`${type}: one moderator deletes for ${windowText}, then ${approvals} approvals with the leader (deleteWithin ${windowSeconds}, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
+      JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: windowSeconds, deleteSettled: { leader: true, approvals } }));
   }
 }
 
@@ -2914,7 +2922,9 @@ function selfTest() {
   expect('the private feed counts key generations (p1)', schemas.privateFeedRekey.properties.keyGeneration && schemas.privateFeedGrant.properties.keyGeneration && schemas[FEED_TYPE].properties.maxKeyGeneration && !schemas.post.properties.epoch);
   const blockers = schemaOf('blockFollow').properties.followedBlockers;
   expect('followedBlockers is a typed identity array with distinct, owner-excluded items (b1)', blockers.items?.refersTo?.type === 'identity' && blockers.items?.distinctFrom === '$ownerId' && blockers.uniqueItems === true);
-  expect('the post action fee is 80M credits to the moderators (fixtures)', POST_ACTION_FEE?.moderators === 80_000_000n);
+  // v17 lowers the moderators' fees (D41): post 20M, report 20M; earlier cuts declare 80M and 50M.
+  const [postFeeM, reportFeeM] = PRIVATE_FEEDS ? [20n, 20n] : [80n, 50n];
+  expect(`the post action fee is ${postFeeM}M credits to the moderators (fixtures)`, POST_ACTION_FEE?.moderators === postFeeM * 1_000_000n);
   if (TAG_ARRAY) {
     expect('v16: like.postId agrees the whole tag list and postAuthor with the post, and nothing else (o1, o1h–o1k)', JSON.stringify(where('like', 'postId')) === JSON.stringify({ tags: 'tags', $ownerId: 'postAuthor' }));
   } else {
@@ -2945,7 +2955,7 @@ function selfTest() {
     expect(`${SOCIAL.cut.rootOwner ? 'v13' : 'v14'}: a post is live unless tombstoned (\`live\` const true, optional, the live rule) and ownerAndTime skips a post without it (q2h, q2i, q2n, x1t)`,
       schemas.post.properties.live?.const === true && !schemas.post.required.includes('live') && schemas.post.indices.find((i) => i.name === 'ownerAndTime')?.skipIfAbsent === true
         && [{ ifThenElse: [{ present: 'deleted' }, { absent: 'live' }, { present: 'live' }] }, { equal: [{ countPresent: ['deleted', 'live'] }, 1] }].some((rule) => JSON.stringify(rule) === liveRule));
-    expect(`${SOCIAL.cut.rootOwner ? 'v13' : 'v14'}: a report charges the moderators 50M credits on create, priced by the fee multiplier (r1, r1z2)`, REPORT_ACTION_FEE?.moderators === 50_000_000n && REPORT_ACTION_FEE.owner === 0n && REPORT_ACTION_FEE.pricing === 'feeMultiplier');
+    expect(`${SOCIAL.cut.rootOwner ? 'v13' : 'v14'}: a report charges the moderators ${reportFeeM}M credits on create, priced by the fee multiplier (r1, r1z2)`, REPORT_ACTION_FEE?.moderators === reportFeeM * 1_000_000n && REPORT_ACTION_FEE.owner === 0n && REPORT_ACTION_FEE.pricing === 'feeMultiplier');
   }
   // v14: the rules an owner's delete is judged by (40147); none before.
   const deleteRules = DECLARED_DELETE_RULES[CONTRACT_NAME] ?? {};

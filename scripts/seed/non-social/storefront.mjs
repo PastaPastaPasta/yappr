@@ -646,7 +646,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
   // v6 prices store, item and review creates with an action fee; each create agrees to the declared amount.
   const writer = createDocWriter({
     handle, contractId, entropyFor: entropySource('yappr/storefront-seed/v1'), paymentInfo: battery.paymentInfo,
-    ...(isV6() ? { agreementFor: (docType) => feeAgreementFor(handle.sdk, docType, SCHEMAS) } : {}),
+    ...(isV6() ? { agreementFor: (docType) => feeAgreementFor(handle.sdk, docType, SCHEMAS, { contractId }) } : {}),
   });
   const tokenId = isV6() ? null : await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
   const ledger = loadLedger();
@@ -683,6 +683,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
   if (!args.verifyOnly) {
     await phase('stores', STORES, byStore, async (store) => {
       const actor = actors.get(store.persona);
+      // `dash:` on every network, as the wallets and the store's payment form write it.
       const uris = [{ scheme: 'dash:', uri: `dash:${payoutAddress(store.persona)}`, label: `${store.name} (Dash)` }];
       const data = storeData(store, uris);
       // `store` is unique per $ownerId and the registration battery leaves a

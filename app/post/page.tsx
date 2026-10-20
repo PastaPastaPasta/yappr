@@ -248,7 +248,7 @@ function PostDetailContent() {
             ) : (
               <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
                 <p className="text-gray-500 text-sm">
-                  <button onClick={openLoginModal} className="text-purple-600 hover:underline">Log in</button> to reply
+                  <button onClick={openLoginModal} className="text-yappr-600 hover:underline">Sign in</button> to reply
                 </p>
               </div>
             )}

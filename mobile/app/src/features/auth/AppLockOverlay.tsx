@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Image } from 'expo-image';
 import { useRootNavigationState } from 'expo-router';
 import { AppState, Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { cn } from '~/lib-allowlist';
+import { BrandMark } from '~/ui/brand/Brand';
 import { errorFeedback } from '~/ui/haptics';
 import { Button } from '~/ui/Button';
 import { useAppSwitcherProtection, useBlockScreenCapture } from '~/ui/screen-capture';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
-import icon from '@assets/images/icon.png';
 
 import { appStateChanged, unlock, useAppLockSettings, useLockState } from './app-lock';
 import { copy } from './copy';
@@ -85,7 +84,7 @@ export function AppLockOverlay() {
         testID="app-lock"
         accessibilityViewIsModal
       >
-        <Image source={icon} style={{ width: 72, height: 72, borderRadius: 16 }} accessibilityIgnoresInvertColors />
+        <BrandMark size={72} decorative />
         <Text variant="headline" tone="emphasis" accessibilityRole="header">
           {copy.lock.title}
         </Text>

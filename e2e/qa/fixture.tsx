@@ -30,7 +30,7 @@ const scenario = new URLSearchParams(location.search).get('scenario')
 const router = { back() {}, forward() {}, refresh() {}, push(href: string) { location.assign(href) }, replace(href: string) { location.replace(href) }, prefetch: async () => undefined }
 function ReaderFixture() {
   const { resolvedTheme, setTheme } = useTheme()
-  return <><button onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}>Toggle reader theme</button><BlogViewer blocks={[{ type: 'paragraph', content: [{ type: 'text', text: 'Published prose remains a document.', styles: {} }] }]} /></>
+  return <><button onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}>Toggle reader theme</button><BlogViewer blocks={[{ type: 'paragraph', content: [{ type: 'text', text: 'Published prose remains a document.', styles: {} }] }]} theme={resolvedTheme === 'dark' ? 'dark' : 'light'} /></>
 }
 function Fixture() {
   const [revision, setRevision] = useState(0)

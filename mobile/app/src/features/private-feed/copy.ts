@@ -1,0 +1,137 @@
+import type { PrivateLockReason } from '@engine/api';
+
+/**
+ * Private feeds' copy (web's `components/post/private-post-content.tsx`,
+ * `components/profile/private-feed-access-button.tsx` and
+ * `components/settings/private-feed-*.tsx`, in the app's voice: outcome
+ * first, no key or protocol words).
+ */
+export const copy = {
+  post: {
+    open: 'Private',
+    /** The viewer's own private post or reply while it posts: its text is not kept with the card. */
+    posting: 'Only followers you approve will see this.',
+    /** The viewer's own private reply while it posts: it goes to the thread's audience, not their own. */
+    postingReply: 'Only people who can see this thread will see this.',
+    followers: (n: number) => `Visible to ${n} private follower${n === 1 ? '' : 's'}`,
+    reasons: {
+      'signed-out': 'Sign in to see this private post.',
+      'needs-key': 'You can see this, but this phone needs your messaging key first.',
+      'key-changed': 'Your messaging key changed since you were approved. Ask again to see private posts.',
+      none: 'Only approved followers can see this.',
+      pending: 'Your request is waiting for approval.',
+      revoked: 'Your access to this private feed was removed.',
+      renewing: 'Your access is being renewed. Check back soon.',
+      history: 'This was posted before you could see this private feed.',
+      failed: "Couldn't open this private post.",
+      unsupported: 'Only approved followers can see this.',
+    } satisfies Record<PrivateLockReason, string>,
+    /** The owner's own post from before a renewal without its history. */
+    ownHistory: 'This was posted before your private feed was renewed.',
+    retry: 'Try again',
+  },
+  access: {
+    request: 'Request access',
+    requestAgain: 'Ask again',
+    pending: 'Pending',
+    cancel: 'Cancel request',
+    cancelTitle: 'Cancel your request?',
+    cancelBody: "They won't see your request any more. You can ask again later.",
+    approved: 'Private follower',
+    renewing: 'Renewing',
+    revoked: 'Removed',
+    leave: 'Leave private feed',
+    leaveTitle: 'Leave this private feed?',
+    leaveBody: "You won't see their new private posts. You can ask again later.",
+    keep: 'Keep',
+    requested: 'Access requested',
+    cancelled: 'Request cancelled',
+    left: 'You left this private feed',
+  },
+  messagingKey: {
+    allowInWallet: 'Private posts use your messaging key, which your Dash wallet gives Yappr. Renew in your wallet and allow messaging when it asks.',
+    unavailable: 'Private posts use the messaging key from your Dash wallet. Sign in with your wallet to use them on this phone.',
+    renew: 'Renew in your wallet',
+    needed: 'This needs your messaging key. Allow messaging in your Dash wallet, then try again.',
+  },
+  settings: {
+    title: 'Private feed',
+    intro: 'Share posts with only the followers you approve.',
+    howItWorksTitle: 'How it works',
+    howItWorks: [
+      'Only followers you approve can read your private posts',
+      "People you remove can't see what you post after that",
+      'Moderators can read a private post if someone reports it',
+    ],
+    enable: 'Turn on private feed',
+    enabling: 'Turning on…',
+    enabled: 'Turned on',
+    enabledTitle: 'Your private feed is on',
+    followerCount: (n: number) => `${n.toLocaleString()} private follower${n === 1 ? '' : 's'}`,
+    requestsTitle: 'Requests',
+    requestsEmpty: 'No one is waiting for access.',
+    renewalRequest: 'Asking again',
+    approve: 'Approve',
+    approved: (name: string) => `Approved ${name}`,
+    ignore: 'Not now',
+    followersTitle: 'Private followers',
+    followersEmpty: "Followers you approve show here. They'll see your private posts.",
+    remove: 'Remove',
+    removeTitle: (name: string) => `Remove ${name}?`,
+    removeBody: "They won't see anything you post privately from now on. They can still read what they already saw.",
+    removed: (name: string) => `Removed ${name}`,
+    loadFailed: "Couldn't load your private feed.",
+    tryAgain: 'Try again',
+    renewTitle: 'Renew',
+    renewBody: 'Renew if you think someone else can see your private posts. Your private followers move over automatically.',
+    renew: 'Renew private feed',
+    renewing: 'Renewing…',
+    nearlyFullTitle: 'Your private feed is nearly full',
+    nearlyFullBody: 'Renew it to make room. Your private followers move over automatically.',
+    keyChangedTitle: 'Your messaging key changed',
+    keyChangedBody: 'Renew your private feed to keep posting privately. Your private followers move over automatically.',
+    moveTitle: (done: number, total: number) => `Moving followers: ${done.toLocaleString()} of ${total.toLocaleString()}`,
+    moveBody: 'Private posting pauses until everyone has been moved.',
+    continueMove: 'Continue',
+  },
+  renew: {
+    title: 'Renew your private feed',
+    intro: {
+      choice: 'Renewing starts your private feed afresh. Your private followers move over automatically.',
+      'key-changed': 'Your messaging key changed, so your private feed needs renewing. Your private followers move over automatically.',
+      full: 'Your private feed is nearly full. Renewing makes room, and your private followers move over automatically.',
+    },
+    historyQuestion: 'Bring your older private posts along?',
+    historyYes: 'Yes',
+    historyYesBody: 'Your followers, and anyone you approve later, can read your older private posts.',
+    historyNo: 'No, start fresh',
+    historyNoBody: 'Only people who already follow you keep seeing your older private posts.',
+    historyBreak: 'Posts from before this change stay visible only to people who already follow you.',
+    cost: (followers: number, usd: string) =>
+      followers > 0
+        ? `Moving your ${followers.toLocaleString()} follower${followers === 1 ? '' : 's'} costs about ${usd}.`
+        : `You have no private followers to move. Renewing costs about ${usd}.`,
+    pause: 'Private posting pauses until everyone has been moved. You can leave this screen; the move picks up where it left off.',
+    loadFailed: "We couldn't work out what renewing costs right now.",
+    confirm: 'Renew',
+    cancel: 'Cancel',
+    renewed: 'Private feed renewed',
+  },
+  compose: {
+    visibility: { public: 'Everyone', private: 'Private followers', 'private-with-teaser': 'Private, with a public teaser' },
+    /** The chip's short form: it shares the header with NSFW and Post on the narrowest phones. */
+    chip: { public: 'Everyone', private: 'Private', 'private-with-teaser': 'Private + teaser' },
+    label: 'Who can see this',
+    teaserPlaceholder: 'Teaser everyone can see',
+    teaserLabel: 'Public teaser',
+    setUpTitle: 'Turn on your private feed first',
+    setUpBody: 'Posting privately needs a private feed. You can turn it on in Settings.',
+    setUp: 'Set up private feed',
+    replyPrivate: 'Only people who can see this post can read your reply.',
+    imageWarning: 'Anyone with the link to an image can see it.',
+    noDrafts: "Private posts aren't saved as drafts.",
+    /** A reply whose post has not loaded: it may be a private post's, so nothing is saved. */
+    noDraftsYet: "This reply can't be saved as a draft until its post loads.",
+    discard: 'Discard',
+  },
+} as const;

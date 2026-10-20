@@ -20,6 +20,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { lastIdentity, useCapabilities, useSession } from '~/data/session';
+import {
+  PrivateNote,
+  ReplyTargetCard,
+  TEASER_LIMIT,
+  TeaserField,
+  useOwnPrivateFeed,
+  VisibilityChip,
+  type Visibility,
+} from '~/features/private-feed/ComposeVisibility';
+import { copy as privateCopy } from '~/features/private-feed/copy';
+import { useReplySource } from '~/features/private-feed/private-feed-data';
 import { cn } from '~/lib-allowlist';
 import { showActionSheet } from '~/ui/action-sheet';
 import { Button } from '~/ui/Button';
@@ -29,7 +40,6 @@ import { IconButton } from '~/ui/IconButton';
 import { LinkText } from '~/ui/LinkText';
 import { useMediaUrls } from '~/ui/media-url';
 import { useNativeText } from '~/ui/native-text';
-import { PostCard } from '~/ui/post/PostCard';
 import { PostStub } from '~/ui/post/PostStub';
 import { QuoteEmbed, QuoteSkeleton } from '~/ui/post/QuoteEmbed';
 import { Text } from '~/ui/Text';
@@ -235,6 +245,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const [sensitive, setSensitive] = useState(initial?.sensitive ?? false);
   const [mediaUrl, setMediaUrl] = useState(initial?.mediaUrl ?? '');
   const [mediaOpen, setMediaOpen] = useState((initial?.mediaUrl ?? '') !== '');
+  const [visibility, setVisibility] = useState<Visibility>(initial?.visibility ?? 'public');
+  const [teaser, setTeaser] = useState(initial?.teaser ?? '');
   const firstOpen = Math.max(0, parts.findIndex((p) => !p.postedId));
   const [active, setActive] = useState(firstOpen);
   const [caret, setCaret] = useState(() => parts[firstOpen]?.text.length ?? 0);
@@ -261,6 +273,23 @@ function Composer({ identityId, username, context }: ComposerProps) {
   });
   const author = viewerAuthor(identityId, username, profile.data);
 
+  // Private posting (web's visibility selector): a reply in a private thread is private whatever is chosen.
+  // A reply to a private post is private when its thread is (web `useInheritedEncryption`); under a public
+  // root the replier chooses. Until that is known nothing is posted, and a failed read never guesses.
+  const privateFeeds = capabilities?.privateFeeds === true;
+  const replyToPrivate = context.mode === 'reply' && targetPost?.encrypted === true;
+  const replySource = useReplySource(targetId, privateFeeds && replyToPrivate);
+  const replyPrivate = replyToPrivate && replySource.data?.private === true;
+  const replySourceKnown = !replyToPrivate || !privateFeeds || replySource.data !== undefined;
+  const ownFeed = useOwnPrivateFeed(identityId, privateFeeds && !replyPrivate);
+  const privateVisibility = privateFeeds && !replyPrivate && visibility !== 'public';
+  /** Private text is never saved to the device: no draft is kept for it (a reply to a private post included). */
+  const privateDraft = privateVisibility || replyToPrivate;
+  /** A reply whose post has not loaded may be to a private one: nothing is saved (nor deleted) until it has. */
+  const targetPending = context.mode === 'reply' && targetPost === null;
+  const teaserProblem =
+    privateVisibility && visibility === 'private-with-teaser' && (!teaser.trim() || Array.from(teaser.trim()).length > TEASER_LIMIT);
+
   // What there is to post: open parts with visible text.
   const open = parts.filter((p) => !p.postedId);
   const contentful = parts.filter((p) => p.postedId || hasVisibleContent(p.text));
@@ -273,24 +302,48 @@ function Composer({ identityId, username, context }: ComposerProps) {
   // `plannedRootPost`): the first open part with visible text, unless this replies or the thread's
   // first part already posted (the rest are then replies).
   const rootIndex = context.mode === 'reply' || parts[0]?.postedId ? -1 : parts.findIndex((p) => !p.postedId && hasVisibleContent(p.text));
-  const tagProblem = rootIndex >= 0 ? tagLimitProblem(parts[rootIndex].text, tagMax, capabilities?.tagsPerPost ?? null) : null;
+  // A private post's body is encrypted, so only its teaser's tags are indexed (and checked, engine `validateDraft`).
+  const tagsPerPost = capabilities?.tagsPerPost ?? null;
+  const teaserTagProblem =
+    privateVisibility && visibility === 'private-with-teaser' ? tagLimitProblem(teaser, tagMax, tagsPerPost) : null;
+  const tagProblem = privateVisibility
+    ? teaserTagProblem
+    : rootIndex >= 0
+      ? tagLimitProblem(parts[rootIndex].text, tagMax, tagsPerPost)
+      : null;
+  // A private post is one part (web posts only the first of an encrypted thread).
+  const privateThread = privateVisibility && parts.filter((p) => p.postedId || hasVisibleContent(p.text)).length > 1;
   const canPost =
-    open.some((p) => hasVisibleContent(p.text)) && !overLimit && tagProblem === null && !offline && mediaValid && targetReady;
+    open.some((p) => hasVisibleContent(p.text)) &&
+    !overLimit &&
+    tagProblem === null &&
+    !offline &&
+    mediaValid &&
+    targetReady &&
+    !teaserProblem &&
+    !privateThread &&
+    replySourceKnown;
   const postLabel = context.mode === 'reply' ? 'Reply' : contentful.length > 1 ? `Post all (${contentful.length})` : 'Post';
-  const canAddPart = context.mode === 'post' && parts.length < MAX_PARTS;
+  const canAddPart = context.mode === 'post' && parts.length < MAX_PARTS && !privateVisibility;
 
   // While open, this composer owns its draft slot: a failed post's text goes elsewhere.
   useEffect(() => holdDraftSlot(identityId, context), [identityId, context]);
 
   // Drafts: saved 500 ms after a change and when the app goes to the background (PRD COMP-09).
   const posted = useRef(false);
-  const latest = useRef({ parts, sensitive, mediaUrl, hasContent });
+  const latest = useRef({ parts, sensitive, mediaUrl, hasContent, privateDraft, targetPending });
   useEffect(() => {
-    latest.current = { parts, sensitive, mediaUrl, hasContent };
-  }, [parts, sensitive, mediaUrl, hasContent]);
+    latest.current = { parts, sensitive, mediaUrl, hasContent, privateDraft, targetPending };
+  }, [parts, sensitive, mediaUrl, hasContent, privateDraft, targetPending]);
   const persist = useCallback(() => {
     if (posted.current) return;
     const now = latest.current;
+    if (now.privateDraft) {
+      // Private text is never saved to the device; a draft from before it turned private goes too.
+      if (!now.parts.some((p) => p.postedId)) deleteOwnDraft(identityId, context, initial?.fromPending);
+      return;
+    }
+    if (now.targetPending) return;
     if (now.hasContent) {
       const draft = {
         context,
@@ -316,7 +369,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
   useEffect(() => {
     const timer = setTimeout(persist, SAVE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [parts, sensitive, mediaUrl, persist]);
+  }, [parts, sensitive, mediaUrl, privateDraft, targetPending, persist]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
@@ -338,6 +391,25 @@ function Composer({ identityId, username, context }: ComposerProps) {
         return;
       }
       Keyboard.dismiss();
+      const discard = () => {
+        posted.current = true;
+        deleteDraft(identityId, context);
+        // Deleting the text of a post that did not go through drops its card too.
+        if (context.pendingId) discardPending(context.pendingId);
+        leaving.current = true;
+        leave();
+      };
+      if (latest.current.privateDraft || latest.current.targetPending) {
+        // Private text is never saved as a draft, nor a reply to a post not loaded yet (it may be private).
+        showActionSheet({
+          title: latest.current.privateDraft ? privateCopy.compose.noDrafts : privateCopy.compose.noDraftsYet,
+          actions: [
+            { label: privateCopy.compose.discard, destructive: true, onPress: discard },
+            ...(Platform.OS === 'android' ? [{ label: 'Cancel', onPress: () => undefined }] : []),
+          ],
+        });
+        return;
+      }
       showActionSheet({
         actions: [
           {
@@ -348,18 +420,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
               leave();
             },
           },
-          {
-            label: 'Delete draft',
-            destructive: true,
-            onPress: () => {
-              posted.current = true;
-              deleteDraft(identityId, context);
-              // Deleting the text of a post that did not go through drops its card too.
-              if (context.pendingId) discardPending(context.pendingId);
-              leaving.current = true;
-              leave();
-            },
-          },
+          { label: 'Delete draft', destructive: true, onPress: discard },
           ...(Platform.OS === 'android' ? [{ label: 'Cancel', onPress: () => undefined }] : []),
         ],
       });
@@ -393,6 +454,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
         mediaUrl: mediaUrl.trim() || null,
         target: targetPost,
         author,
+        ...(privateVisibility ? { visibility, teaser } : {}),
+        ...(replyPrivate ? { expectInherited: true } : {}),
       },
       hasVisibleContent,
     );
@@ -456,6 +519,9 @@ function Composer({ identityId, username, context }: ComposerProps) {
       <View className={cn('min-h-14 flex-row items-center gap-2 px-2 py-1', tw.border)} testID="compose-header">
         <CloseButton onPress={close} />
         <View className="flex-1" />
+        {privateFeeds && !targetPending && replySourceKnown && !replyPrivate ? (
+          <VisibilityChip value={visibility} onChange={setVisibility} hasFeed={ownFeed} />
+        ) : null}
         <NsfwToggle on={sensitive} onToggle={() => setSensitive(!sensitive)} />
         <Button
           label={postLabel}
@@ -482,7 +548,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
             <View className="mb-2" testID="compose-reply-context">
               {targetPost && !targetGone ? (
                 <>
-                  <PostCard post={targetPost} variant="compact" />
+                  <ReplyTargetCard post={targetPost} />
                   <Text variant="subhead" tone="secondary" className="px-4 pb-2 pl-[60px]">
                     Replying to{' '}
                     <Text variant="subhead" tone="link">
@@ -526,7 +592,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
               limits={limits}
               tagMax={tagMax}
               inlineHints={inlineHints}
-              tagProblem={index === rootIndex ? tagProblem : null}
+              tagProblem={index === rootIndex && !privateVisibility ? tagProblem : null}
               joined={index < parts.length - 1}
               removable={parts.length > 1 && !part.postedId}
               autoFocus={index === firstOpen}
@@ -537,6 +603,14 @@ function Composer({ identityId, username, context }: ComposerProps) {
               onLayout={reveal.onPartLayout}
             />
           ))}
+          {privateVisibility && visibility === 'private-with-teaser' ? <TeaserField value={teaser} onChangeText={setTeaser} tagProblem={teaserTagProblem} /> : null}
+          {replyPrivate ? <PrivateNote testID="compose-reply-private">{privateCopy.compose.replyPrivate}</PrivateNote> : null}
+          {replyToPrivate && replySource.isError ? (
+            <View className="mb-3 pl-[60px] pr-4">
+              <TargetUnread onRetry={() => replySource.refetch()} inset={false} />
+            </View>
+          ) : null}
+          {privateDraft && mediaOpen ? <PrivateNote testID="compose-private-image">{privateCopy.compose.imageWarning}</PrivateNote> : null}
           {mediaOpen ? (
             <View className="mb-3 pl-[60px] pr-4" testID="compose-media">
               <MediaLinkField value={mediaUrl} onChangeText={setMediaUrl} valid={mediaValid} />

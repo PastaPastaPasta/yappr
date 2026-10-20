@@ -1,7 +1,7 @@
 /**
  * Storefront v7 chain fixtures for the write specs: the seller's store and a
  * variant listing, created in Node with the action fees the app agrees to
- * (`store` 1,000M, `storeItem` 50M), so a spec signs in the browser only what
+ * (the registered `store` and `storeItem` fees), so a spec signs in the browser only what
  * it asserts. Nothing here logs key material.
  */
 import { readFileSync } from 'node:fs'
@@ -26,7 +26,7 @@ export const NOT_VARIANTS_REASON = 'E2E_ENV_FILE does not select a storefront v7
 type SeedLib = {
   buildDocument: (options: Record<string, unknown>) => { document: unknown }
   createWithAgreement: (sdk: unknown, options: Record<string, unknown>) => Promise<unknown>
-  feeAgreementFor: (sdk: unknown, docType: string, schemas: unknown) => Promise<unknown>
+  feeAgreementFor: (sdk: unknown, docType: string, schemas: unknown, options?: { contractId?: string }) => Promise<unknown>
   randomEntropy: () => Uint8Array
 }
 const seedLib = async () => (await import('../../scripts/seed/seed-lib.mjs')) as unknown as SeedLib
@@ -36,7 +36,8 @@ async function createPriced(bot: DmBot, docType: string, data: Record<string, un
   const sdk = await nodeSdk()
   const who = await signingFor(bot)
   const { createWithAgreement, feeAgreementFor, randomEntropy } = await seedLib()
-  const agreement = await feeAgreementFor(sdk, docType, storefrontContract.documentSchemas)
+  // The registered contract's fee: a deployment registered from an earlier cut declares its own (40133 otherwise).
+  const agreement = await feeAgreementFor(sdk, docType, storefrontContract.documentSchemas, { contractId: STOREFRONT_CONTRACT_ID })
   let derived: string | null = null
   try {
     await createWithAgreement(sdk, {

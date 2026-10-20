@@ -7,7 +7,8 @@ Storefront v10 (client topology `v10`) is `contracts/yappr-storefront-contract.j
 | 1 | **No plaintext tracking or seller notes** (R-M3) | `orderStatusUpdate` drops `trackingNumber`, `trackingCarrier` and `message`. The type is permanent, unmoderated and readable by anyone through the buyer (`buyerFeed [orderId.$ownerId, $createdAt]`, kept for buyer notifications, D16), so a parcel number or a seller's note in clear was public and undeletable. They travel in an optional sealed note instead: `encryptedPayload` (1–2,560 B) and `nonce` (24 B), together or not at all (rule `sealed`). A status with no tracking and no note carries neither. |
 | 2 | **A store's items by status** (D18) | `storeItem.storeStatusAndTime [storeId, status, $createdAt]`, beside `storeAndTime`. The store page reads its active items straight off it instead of filtering every status client-side. No cross-store discovery index (a later doctype can add one). |
 | 3 | **https or ipfs images** (D14) | `storeItem.imageUrls` items: `^(https|ipfs)://.+$` (v9 also took `http://`). Store logos and banners already were. |
-| 4 | **Reports** (owner decision) | A `report` type mirroring social's: exactly one of `storeId`, `itemId` (both `moderatedDocument`), `storeReviewId`, `itemReviewId` (`deletableDocument`: a review is owner-deletable), a `targetOwnerId` the reference checks (40127) and never the reporter (10419), `reason` 0–31 (8 needs a `note`), `note` ≤ 500 characters / 1,500 B, moderator-only `status`/`resolution` (`changeDocumentFields`), withdrawable only while unresolved (40147), a 90-day `ttl` and a 50M moderators action fee. One report per reporter and target (`byStore`, `byItem`, `byStoreReview`, `byItemReview`, unique); `byStatus` and `byModerator` serve the queue. `report` joins `moderatedDocumentTypes` with `deleteDocuments` and `changeDocumentFields`. |
+| 4 | **Reports** (owner decision) | A `report` type mirroring social's: exactly one of `storeId`, `itemId` (both `moderatedDocument`), `storeReviewId`, `itemReviewId` (`deletableDocument`: a review is owner-deletable), a `targetOwnerId` the reference checks (40127) and never the reporter (10419), `reason` 0–31 (8 needs a `note`), `note` ≤ 500 characters / 1,500 B, moderator-only `status`/`resolution` (`changeDocumentFields`), withdrawable only while unresolved (40147), a 90-day `ttl` and a moderators action fee (20M since D41, row 5; 50M before). One report per reporter and target (`byStore`, `byItem`, `byStoreReview`, `byItemReview`, unique); `byStatus` and `byModerator` serve the queue. `report` joins `moderatedDocumentTypes` with `deleteDocuments` and `changeDocumentFields`. |
+| 5 | **Moderation parameters** (D41) | `ownerProtected` is false in the elected declaration. `actionFees.create.moderators` (pricing `feeMultiplier`): store 500,000,000, storeItem 20,000,000, storeReview 10,000,000, itemReview 5,000,000, report 20,000,000 credits (before: 1,000M, 50M, 16M, 8M, 50M). Storefront keeps single-moderator removal (no settled rule). The signed size is unchanged. The Sakura measurements below predate it and include the earlier fees. |
 
 ## The sealed note
 
@@ -27,7 +28,7 @@ Keyed like `orderDelivery` ([DIGITAL_PRODUCTS.md](DIGITAL_PRODUCTS.md)): both si
 
 | | Storefront v10 |
 | --- | --- |
-| sha256 | `581122bbf27b76ed014c2695e6c84d4dc14a9712c9c6fb97f9f3614a4455bdca` |
+| sha256 | `69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc` |
 | Signed create | ~18,704 B (v9 ~16,522 B), testnet and mainnet renderings, `--strict-size` |
 | Registration fee | 60.00e9 by the fee table (11 types, 28 indexes); **60.72e9 measured on sakura** (3,643¢) |
 

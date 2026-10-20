@@ -162,8 +162,11 @@ const WEB_ROUTES: Record<string, (q: Query, viewerId: string | null) => string |
   },
   '/bookmarks': () => '/bookmarks',
   '/dpns/register': () => '/settings/username',
-  '/settings': (q) =>
-    q.section && SETTINGS_SECTIONS.has(q.section) ? `/settings/${q.section}` : '/settings',
+  '/settings': (q) => {
+    // Web's private feed section (`settings?section=privateFeed`) is the native Private feed screen.
+    if (q.section === 'privateFeed') return '/settings/private-feed';
+    return q.section && SETTINGS_SECTIONS.has(q.section) ? `/settings/${q.section}` : '/settings';
+  },
   '/search': (q) => withQuery('/explore/search', { q: q.q }),
   '/post': (q) => {
     const post = id(q.id);

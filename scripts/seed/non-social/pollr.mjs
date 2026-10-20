@@ -215,7 +215,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
     contractId,
     entropyFor: entropySource(`yappr/pollr-seed/${args.seed}/${contractId}`),
     paymentInfo: (tokenCost) => paymentInfo(tokenCost, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }),
-    agreementFor: (docType, contract) => (contract === socialId ? feeAgreementFor(handle.sdk, docType) : undefined),
+    agreementFor: (docType, contract) => (contract === socialId ? feeAgreementFor(handle.sdk, docType, undefined, { contractId: socialId }) : undefined),
   });
   const actors = await actorsFor(battery, PERSONAS);
   console.log(`actors: ${[...actors.values()].map((a) => a.label).join(', ')}`);

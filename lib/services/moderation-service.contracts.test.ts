@@ -61,7 +61,8 @@ vi.stubGlobal('localStorage', {
   length: 0,
 })
 
-import { electedDeclarationOf, listsKeptOf, moderatedContract, settledRuleOf } from '@/lib/moderated-contracts'
+import { electedDeclarationOf, listsKeptOf, moderatedContract } from '@/lib/moderated-contracts'
+import { settledRuleOf } from '@/lib/registered-contracts'
 import { moderationService, moderationServiceFor } from './moderation-service'
 
 const MODERATOR = 'Mod111111111111111111111111111111111111111'
@@ -141,8 +142,8 @@ describe('pure declaration readers', () => {
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9')
     const blog = moderatedContract('blog')
     for (const type of ['blogPost', 'blogComment']) {
-      expect(blog.settledDeletionFor(type)).toEqual({ windowSeconds: 604800, leaderRequired: true, approvals: 3 })
-      expect(blog.deleteWindowSeconds(type)).toBe(604800)
+      expect(blog.settledDeletionFor(type)).toEqual({ windowSeconds: 86400, leaderRequired: true, approvals: 2 })
+      expect(blog.deleteWindowSeconds(type)).toBe(86400)
       expect(blog.keepsRecord(type)).toBe(true)
     }
     expect(blog.authorsDelete('blog')).toBe(true)

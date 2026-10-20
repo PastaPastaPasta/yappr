@@ -17,7 +17,7 @@ const content = {
   displayName: 'Ava', bio: 'Original bio', location: 'Chicago',
   website: 'https://example.com', bannerUri: 'ipfs://banner', pronouns: 'she/her',
   avatar: '{ "style": "thumbs", "seed": "original-seed" }',
-  paymentUris: '[ "dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ" ]',
+  paymentUris: '[ "dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw" ]',
   socialLinks: '[ { "platform": "github", "handle": "example" } ]',
   nsfw: true,
 };
@@ -53,7 +53,7 @@ describe('profile replacements', () => {
     expect(result).toMatchObject({
       id: ownerId, documentId, bio: 'New bio', $revision: 8,
       joinedAt: new Date(raw.$createdAt),
-      paymentUris: [{ scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' }],
+      paymentUris: [{ scheme: 'dash:', uri: 'dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw', label: 'Dash' }],
     });
   });
 
@@ -257,9 +257,9 @@ describe('profile v2 typed arrays (docs/archive/SOCIAL_V9.md)', () => {
   });
 
   it('reads a v2 document stored as lists', async () => {
-    get.mockResolvedValueOnce({ ...raw, paymentUris: ['dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ'], socialLinks: ['mastodon:@a@host.social'] });
+    get.mockResolvedValueOnce({ ...raw, paymentUris: ['dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw'], socialLinks: ['mastodon:@a@host.social'] });
     const user = await unifiedProfileService.get(documentId);
-    expect(user?.paymentUris).toEqual([{ scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' }]);
+    expect(user?.paymentUris).toEqual([{ scheme: 'dash:', uri: 'dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw', label: 'Dash' }]);
     expect(user?.socialLinks).toEqual([{ platform: 'mastodon', handle: '@a@host.social' }]);
   });
 });
@@ -287,7 +287,7 @@ describe('stored avatar settings', () => {
 describe('getPaymentUris', () => {
   it('returns the profile addresses, and none for an identity without a profile', async () => {
     await expect(unifiedProfileService.getPaymentUris(ownerId)).resolves.toEqual([
-      { scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' },
+      { scheme: 'dash:', uri: 'dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw', label: 'Dash' },
     ]);
     unifiedProfileService.clearCache();
     cacheManager.invalidateByTag(`user:${ownerId}`);

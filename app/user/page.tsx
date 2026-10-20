@@ -71,7 +71,7 @@ function UserProfileContent() {
   const searchParams = useSearchParams()
   const requestedUserId = searchParams.get('id')
   const userId = profileIdentityId(requestedUserId)
-  const { user: currentUser, logout } = useAuth()
+  const { user: currentUser, logout, isAuthRestoring } = useAuth()
   const viewerId = currentUser?.identityId
   const { requireAuth } = useRequireAuth()
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
@@ -141,29 +141,97 @@ function UserProfileContent() {
   }, [userId])
 
   useEffect(() => {
-    if (!userId) return
+    // Wait for the stored session: starting before it resolves read everything
+    // twice, once anonymously and again once the viewer was known.
+    if (!userId || isAuthRestoring) return
     // A load still out when the page moves to another profile must not write
     // that profile's fields into this one (an owner edit would then save them).
     let cancelled = false
+
+    // The private-feed, store and blog lookups decorate the header; none may fail the page.
+    const loadPrivateFeed = async () => {
+      try {
+        const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
+        const hasPF = await privateFeedService.hasPrivateFeed(userId)
+        if (cancelled) return
+        setHasPrivateFeed(hasPF)
+        if (hasPF && viewerId && viewerId !== userId) {
+          try {
+            const access = await privateFeedFollowerService.getAccessStatus(userId, viewerId)
+            if (cancelled) return
+            setIsPrivateFollower(access === 'approved' || access === 'approved-no-keys')
+          } catch (accessErr) {
+            logger.error('Failed to check private feed access status:', accessErr)
+            if (!cancelled) setIsPrivateFollower(false)
+          }
+        } else {
+          setIsPrivateFollower(false)
+        }
+      } catch (e) {
+        logger.error('Failed to check private feed status:', e)
+        if (cancelled) return
+        setHasPrivateFeed(false)
+        setIsPrivateFollower(false)
+      }
+    }
+
+    const loadStore = async () => {
+      try {
+        const { storeService } = await import('@/lib/services/store-service')
+        const store = await storeService.getByOwner(userId)
+        if (!cancelled) setUserStore(store)
+      } catch (e) {
+        logger.error('Failed to check store status:', e)
+        if (!cancelled) setUserStore(null)
+      }
+    }
+
+    const loadBlogs = async () => {
+      setBlogsLoading(true)
+      try {
+        const { blogService, blogPostService } = await import('@/lib/services')
+        const ownerBlogs = await blogService.getBlogsByOwner(userId)
+        // Preserve the existing 100-post display cap for each blog.
+        const pages = await blogPostService.getPostsByBlogs(ownerBlogs.map(blog => blog.id), 100)
+        if (cancelled) return
+        setBlogs(ownerBlogs.map(blog => ({
+          id: blog.id, name: blog.name, description: blog.description,
+          // Drafts are not public; the owner's dashboard counts them.
+          postCount: pages.get(blog.id)?.filter(isPublishedBlogPost).length ?? 0,
+        })))
+      } catch (blogError) {
+        logger.error('Failed to load blogs for profile:', blogError)
+        if (!cancelled) setBlogs([])
+      } finally {
+        if (!cancelled) setBlogsLoading(false)
+      }
+    }
 
     const loadProfileData = async () => {
       try {
         setIsLoading(true)
         setProfileDocumentMissing(false)
+        // The badges and the blogs tab need nothing the header reads, so they
+        // start with it and fill in whenever they land. They never reject.
+        const decorations = Promise.all([loadPrivateFeed(), loadStore(), loadBlogs()])
+
         const { unifiedProfileService, postService, followService } = await import('@/lib/services')
         const { loadUserStats } = await import('@/lib/services/social-stats-service')
 
-        const [statsResult, postsResult] = await Promise.all([
-          loadUserStats(userId),
-          postService.getUserPosts(userId, { limit: PAGE_SIZE, forDisplay: true }).catch(() => ({ documents: [] as Post[], preloaded: undefined })),
-        ])
-        if (cancelled) return
-        const profileRead = unifiedProfileService.getProfile(userId).catch(() => null)
+        const statsRead = loadUserStats(userId)
+        const postsRead = postService.getUserPosts(userId, { limit: PAGE_SIZE, forDisplay: true })
+          .catch(() => ({ documents: [] as Post[], preloaded: undefined }))
+        // The stats read seeds the base profile and the posts read its
+        // extension, so the profile follows both (the header waits for both
+        // anyway) and is then usually answered from cache. A failed stats read
+        // still lets the profile be read; a failed profile read is null, which
+        // startEdit re-checks strictly before an owner edits from it.
+        const profileRead = Promise.all([statsRead.catch(() => undefined), postsRead])
+          .then(() => unifiedProfileService.getProfile(userId))
+          .catch(() => null)
 
-        // The posts read seeds the profile cache, so the profile follows it. The
-        // header waits for the profile, names, follow state and the posts tab;
-        // the badges and the blogs tab fill in after it shows.
         const loadPosts = async (): Promise<Post[]> => {
+          const postsResult = await postsRead
           const merged: Post[] = (postsResult.documents || []).map((post) =>
             withAuthor(post, { username: '', displayName: '', avatar: '', hasDpns: undefined })
           )
@@ -191,7 +259,11 @@ function UserProfileContent() {
             return []
           }
         }
-        const [profileResult, sortedUsernames, merged, viewerFollows] = await Promise.all([
+
+        // The header waits for the stats, profile, names, follow state and the posts tab.
+        const [statsResult, postsResult, profileResult, sortedUsernames, merged, viewerFollows] = await Promise.all([
+          statsRead,
+          postsRead,
           profileRead,
           loadUsernames(),
           loadPosts(),
@@ -238,66 +310,7 @@ function UserProfileContent() {
         setHasMore(originals.length >= PAGE_SIZE)
         setIsLoading(false)
 
-        // The private-feed, store and blog lookups decorate the header; none may fail the page.
-        const loadPrivateFeed = async () => {
-          try {
-            const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
-            const hasPF = await privateFeedService.hasPrivateFeed(userId)
-            if (cancelled) return
-            setHasPrivateFeed(hasPF)
-            if (hasPF && viewerId && viewerId !== userId) {
-              try {
-                const access = await privateFeedFollowerService.getAccessStatus(userId, viewerId)
-                if (cancelled) return
-                setIsPrivateFollower(access === 'approved' || access === 'approved-no-keys')
-              } catch (accessErr) {
-                logger.error('Failed to check private feed access status:', accessErr)
-                if (!cancelled) setIsPrivateFollower(false)
-              }
-            } else {
-              setIsPrivateFollower(false)
-            }
-          } catch (e) {
-            logger.error('Failed to check private feed status:', e)
-            if (cancelled) return
-            setHasPrivateFeed(false)
-            setIsPrivateFollower(false)
-          }
-        }
-
-        const loadStore = async () => {
-          try {
-            const { storeService } = await import('@/lib/services/store-service')
-            const store = await storeService.getByOwner(userId)
-            if (!cancelled) setUserStore(store)
-          } catch (e) {
-            logger.error('Failed to check store status:', e)
-            if (!cancelled) setUserStore(null)
-          }
-        }
-
-        const loadBlogs = async () => {
-          setBlogsLoading(true)
-          try {
-            const { blogService, blogPostService } = await import('@/lib/services')
-            const ownerBlogs = await blogService.getBlogsByOwner(userId)
-            // Preserve the existing 100-post display cap for each blog.
-            const pages = await blogPostService.getPostsByBlogs(ownerBlogs.map(blog => blog.id), 100)
-            if (cancelled) return
-            setBlogs(ownerBlogs.map(blog => ({
-              id: blog.id, name: blog.name, description: blog.description,
-              // Drafts are not public; the owner's dashboard counts them.
-              postCount: pages.get(blog.id)?.filter(isPublishedBlogPost).length ?? 0,
-            })))
-          } catch (blogError) {
-            logger.error('Failed to load blogs for profile:', blogError)
-            if (!cancelled) setBlogs([])
-          } finally {
-            if (!cancelled) setBlogsLoading(false)
-          }
-        }
-
-        await Promise.all([loadPrivateFeed(), loadStore(), loadBlogs()])
+        await decorations
       } catch (error) {
         logger.error('Failed to load profile:', error)
       } finally {
@@ -307,9 +320,10 @@ function UserProfileContent() {
 
     loadProfileData().catch((err) => logger.error('Failed to load profile:', err))
     return () => { cancelled = true }
-    // Reload on a profile change only; the viewer changing mid-visit is not worth a refetch.
+    // Reload on a profile change, or once the stored session has been checked;
+    // the viewer changing mid-visit (sign-in here) reloads through enrichProgressively.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, enrichProgressively])
+  }, [userId, isAuthRestoring, enrichProgressively])
 
   // A profile is optional, so an owner without one simply edits theirs into
   // existence; only a missing identity means the session is stale.
@@ -319,7 +333,7 @@ function UserProfileContent() {
       try {
         const { identityService } = await import('@/lib/services/identity-service')
         if (!(await identityService.getIdentity(viewerId))) {
-          toast.error('Your identity was not found on the network. Please log in again.')
+          toast.error('Your identity was not found on the network. Please sign in again.')
           await logout()
         }
       } catch (error) {

@@ -11,8 +11,9 @@
  * blog-stats-service; nothing here applies to them.
  */
 import blogContract from '@/contracts/yappr-blog-contract.json'
-import { blogIsV7 } from '@/lib/constants'
+import { YAPPR_BLOG_CONTRACT_ID, blogIsV7 } from '@/lib/constants'
 import { actionFeeOf, timeRangeOf, type ActionFeeDeclaration, type DocumentAction, type WindowedRanking } from '@/lib/contract-topology'
+import { registeredActionFee, registeredOr } from '@/lib/registered-contracts'
 
 type BlogSchemas = Record<string, { actionFees?: Parameters<typeof actionFeeOf>[0] }>
 const schemas = blogContract.documentSchemas as unknown as BlogSchemas
@@ -23,7 +24,9 @@ const schemas = blogContract.documentSchemas as unknown as BlogSchemas
  * deletes on v7).
  */
 export function blogActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
-  return blogIsV7() ? actionFeeOf(schemas[docType]?.actionFees, action) : null
+  if (!blogIsV7()) return null
+  // The registered contract's fee once recorded: /staging's and sakura's blog predate D41's fees.
+  return registeredOr(registeredActionFee(YAPPR_BLOG_CONTRACT_ID, docType, action), () => actionFeeOf(schemas[docType]?.actionFees, action))
 }
 
 /**

@@ -546,7 +546,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
   const plan = buildPlan({ seed: args.seed, only: args.only, publishAnchor: state.publishAnchor });
   const writer = createDocWriter({
     handle, contractId, entropyFor: entropySource(`yappr/blog-seed/${contractId}`), paymentInfo: battery.paymentInfo,
-    ...(blogIsV7() ? { agreementFor: (docType) => feeAgreementFor(handle.sdk, docType, SCHEMAS) } : {}),
+    ...(blogIsV7() ? { agreementFor: (docType) => feeAgreementFor(handle.sdk, docType, SCHEMAS, { contractId }) } : {}),
   });
   const commentsCostYapp = !blogIsV7();
   const tokenId = commentsCostYapp ? await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION)) : null;

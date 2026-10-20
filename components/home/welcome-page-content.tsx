@@ -1,11 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Image from 'next/image'
-import { publicAsset } from '@/lib/public-asset'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowRightIcon } from '@heroicons/react/24/outline'
+import { PoweredByDash, Wordmark } from '@/components/brand/brand'
 import { Sidebar } from '@/components/layout/sidebar'
 import { LegalLinks } from '@/components/layout/legal-links'
 import { Button } from '@/components/ui/button'
@@ -48,23 +47,10 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
         <div className="mx-auto max-w-[1040px]">
           <section className="pb-8 pt-10 text-center md:pb-10 md:pt-14">
             <h1 className="mb-4 text-3xl font-bold md:text-5xl">
-              Welcome to <span className="text-gradient">Yappr</span>
+              Welcome to <Wordmark />
             </h1>
             <div className="mb-4 flex justify-center">
-              <Image
-                src={publicAsset('/pbde-light.png')}
-                alt="Powered by Dash Evolution"
-                width={240}
-                height={80}
-                className="dark:hidden"
-              />
-              <Image
-                src={publicAsset('/pbde-dark.png')}
-                alt="Powered by Dash Evolution"
-                width={240}
-                height={80}
-                className="hidden dark:block"
-              />
+              <PoweredByDash />
             </div>
             <p className="mx-auto mb-6 max-w-xl px-2 text-base text-gray-600 dark:text-gray-400 md:mb-8 md:text-xl">
               Social media you own. Your name and your posts belong to you.

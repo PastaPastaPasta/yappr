@@ -11,17 +11,14 @@ import { ModerationKeyNotice } from '@/components/moderation/moderation-key-noti
 import { useAuth } from '@/contexts/auth-context'
 import { useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { logger } from '@/lib/logger'
-import { moderatedContract } from '@/lib/moderated-contracts'
 import { forgetModeratedReads } from '@/lib/moderation-refresh'
+import { formatDuration } from '@/lib/utils/format'
 import { countedSigners, moderationServiceFor, type RemovalRoute, type TeamAction } from '@/lib/services/moderation-service'
 import { CharterReasonPicker, useSeatedReasons } from './charter-reason-picker'
 
-/** "7 days" for a window of 604800 seconds; hours below a day. */
+/** "1-day window" for the registered window of 86400 seconds, "7-day window" for 604800. */
 function windowLabel(seconds: number | null): string {
-  if (seconds === null) return 'deletion window'
-  const days = Math.round(seconds / 86_400)
-  if (days >= 1) return `${days}-day window`
-  return `${Math.max(1, Math.round(seconds / 3600))}-hour window`
+  return seconds === null ? 'deletion window' : `${formatDuration(seconds, { adjective: true })} window`
 }
 
 /**
@@ -31,9 +28,10 @@ function windowLabel(seconds: number | null): string {
  * everywhere, every reference at it dangles, and a removal record with the
  * reason stays under its contract for anyone to read.
  *
- * On v11 a post or reply settles a week after it was written: past that no
- * moderator removes it alone (41116). A member of the seated team proposes a
- * team removal instead, which runs once the leader and enough members
+ * From v11 a post or reply settles once its window has passed (a day on
+ * v17, a week on v11–v16): past that no moderator removes it alone (41116).
+ * A member of the seated team proposes a team removal instead, which runs
+ * once the leader and enough members
  * approve, and which can never be undone (41209). Before a team is seated
  * nobody removes a settled post (41205).
  */
@@ -69,8 +67,12 @@ export function ModeratorRemoveModal() {
   const viewerId = user?.identityId
   const postId = target?.documentId
   const createdAtMs = target?.createdAt ?? Number.NaN
-  /** No deletion window (social v2-v10, storefront, blog before v9): always the single removal, known without reading anything. */
-  const windowSeconds = moderatedContract(contract).deleteWindowSeconds(kind)
+  /**
+   * No deletion window (social v2-v10, storefront, blog before v9): always the
+   * single removal, known without reading anything. Otherwise the registered
+   * contract's window once the route read has seen it.
+   */
+  const windowSeconds = service.deleteWindowSeconds(kind)
   const windowless = windowSeconds === null
 
   /**

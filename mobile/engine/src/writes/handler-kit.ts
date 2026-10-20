@@ -2,7 +2,7 @@ import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { RpcError } from '../protocol/envelope'
 import { badRequest, isIdentityId } from '../dto/hydrate'
-import type { WriteHandler, WriteRunContext } from './tickets'
+import { NotSentError, type WriteHandler, type WriteRunContext } from './tickets'
 import type { TargetRef, TicketDocument, WriteTicket } from './types'
 
 /**
@@ -32,6 +32,11 @@ const HOSTED_URL = /^(https|ipfs):\/\/\S+$/
 /** An image already hosted somewhere (posts' `mediaUrl`, avatars, banners): https:// or ipfs://. */
 export function assertMediaUrl(value: unknown, what: string): asserts value is string {
   if (typeof value !== 'string' || !HOSTED_URL.test(value)) throw badRequest(`${what} must be an https:// or ipfs:// URL`)
+}
+
+/** For `.catch`: a failure of a read or local step before any write call, which sent nothing (`NotSentError`). */
+export const notSent = (error: unknown): never => {
+  throw new NotSentError(error)
 }
 
 /** Code points, as a contract's `maxLength` counts them. */

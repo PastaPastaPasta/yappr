@@ -783,9 +783,9 @@ function selfTestV6() {
   const list = (name) => variants.properties?.[name];
   const zoneIds = CONTRACT.documentSchemas.storeItem.properties.shippingZoneIds;
   return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v10)`, [
-    ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
+    ['moderation is elected, seats contestable, the owner unprotected (D41), interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === false && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (nothing costs YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
-    ['store, storeItem, storeReview and itemReview creates declare 1000M / 50M / 16M / 8M moderators fees (s5e, s12)', fee('store') === 1_000_000_000n && fee('storeItem') === 50_000_000n && fee('storeReview') === 16_000_000n && fee('itemReview') === 8_000_000n],
+    ['store, storeItem, storeReview and itemReview creates declare 500M / 20M / 10M / 5M moderators fees (D41; s5e, s12)', fee('store') === 500_000_000n && fee('storeItem') === 20_000_000n && fee('storeReview') === 10_000_000n && fee('itemReview') === 5_000_000n],
     ['orders, status updates, deliveries, kits, zones and addresses are unpriced (s12d)', ['storeOrder', 'orderStatusUpdate', 'orderDelivery', 'itemDeliverable', 'shippingZone', 'savedAddress'].every((docType) => actionFeeFor(docType, SCHEMAS) === null)],
     ['store requires a lowercase-slug category of at most 20 characters (s23d)', SCHEMAS.store.required.includes('category') && SCHEMAS.store.properties.category.pattern === '^[a-z0-9]+(-[a-z0-9]+)*$' && SCHEMAS.store.properties.category.maxLength === 20],
     ['store byStatus [status, $createdAt] and byCategory [status, category, $createdAt] (rangeCountable, ranked at category; s23)', indexProps('store', 'byStatus') === '[{"status":"asc"},{"$createdAt":"asc"}]'
@@ -818,9 +818,9 @@ function selfTestV6() {
       && SCHEMAS.orderStatusUpdate.properties.nonce?.minItems === 24 && SCHEMAS.orderStatusUpdate.properties.nonce?.maxItems === 24 && !SCHEMAS.orderStatusUpdate.required.includes('encryptedPayload') && !SCHEMAS.orderStatusUpdate.required.includes('nonce')],
     ['v10 storeItem lists a store\'s items by status on storeStatusAndTime [storeId, status, $createdAt], and its images are https or ipfs links',
       indexProps('storeItem', 'storeStatusAndTime') === '[{"storeId":"asc"},{"status":"asc"},{"$createdAt":"asc"}]' && SCHEMAS.storeItem.properties.imageUrls.items.pattern === '^(https|ipfs)://.+$'],
-    ['v10 report is a moderated type: one target of four, a note for "something else", withdrawn only while pending, resolved through status/resolution, a 50M moderators action fee',
+    ['v10 report is a moderated type: one target of four, a note for "something else", withdrawn only while pending, resolved through status/resolution, a 20M moderators action fee (D41)',
       Object.keys(SCHEMAS.report?.propertyConstraints ?? {}).sort().join() === DECLARED_RULES[CONTRACT_FILE].report.slice().sort().join()
-      && JSON.stringify(SCHEMAS.report.deleteConstraints) === '{"pending":{"absent":"status"}}' && SCHEMAS.report.ttl === 7_776_000 && fee('report') === 50_000_000n
+      && JSON.stringify(SCHEMAS.report.deleteConstraints) === '{"pending":{"absent":"status"}}' && SCHEMAS.report.ttl === 7_776_000 && fee('report') === 20_000_000n
       && JSON.stringify(SCHEMAS.report.moderatorAbilities?.changeFields) === '["status","resolution"]'
       && JSON.stringify(moderators.moderatedDocumentTypes?.report) === '["deleteDocuments","changeDocumentFields"]'],
     ['item ratings ride storeItemRating [storeId, itemId] (s7e, s10c)', indexProps('itemReview', 'storeItemRating') === '[{"storeId":"asc"},{"itemId":"asc"}]' && index('itemReview', 'storeItemRating')?.rangeCountable === true],

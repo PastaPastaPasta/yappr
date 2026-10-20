@@ -1,16 +1,15 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { BrandMark } from '@/components/brand/brand'
 import { PageShell } from '@/components/layout/page-shell'
 
 export const metadata: Metadata = { title: 'Page not found' }
-
-const basePath = process.env.BASE_PATH || ''
 
 export default function NotFound() {
   return (
     <PageShell mainClassName="flex items-center justify-center">
       <div className="px-6 py-24 text-center">
-        <img src={`${basePath}/icon-192.png`} alt="" width={96} height={96} className="mx-auto mb-6 rounded-3xl shadow-yappr" />
+        <div className="mb-6 flex justify-center"><BrandMark size={96} alt="" /></div>
         <p className="text-sm font-semibold uppercase tracking-wider text-yappr-700 dark:text-yappr-400">404</p>
         <h1 className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">This page doesn&apos;t exist</h1>
         <p className="mx-auto mt-3 max-w-sm text-gray-600 dark:text-gray-400">

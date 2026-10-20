@@ -18,14 +18,16 @@ The same cut re-cuts three feature contracts in place: blog v9 and pollr v8 ([NO
 | 8 | **Room for report reasons** | `report.reason` maximum 9 → 31. The client offers 0–9; storefront and blog reports share the list, and a later reason needs no contract change. |
 | 9 | **YAPP has no authority** (D3) | `manualMintingRules`, `manualBurningRules`, `freezeRules`, `unfreezeRules` and `destroyFrozenFundsRules`: `authorizedToMakeChange` and `adminActionTakers` both `noOne`. Every other rule already was, `mainControlGroup` is null and a contract update cannot touch a token, so nothing can re-grant them. Supply comes only from the 100-YAPP `oncePerIdentity` claim, and the token costs still burn. |
 | 10 | **Several write-once private feeds per identity** (R-M5, PF1–PF9) | `privateFeed` replaces `privateFeedState`; grants and rekeys name their feed; caps are stored per feed and checked on chain. See [Private feeds](#private-feeds). |
-| 11 | **Unchanged by decision** | Sponsorship (D4: post/reply/like/likeReply at 10/3/1/1 YAPP, `gasFeesPaidBy: 2`), settled deletion (D5: a week, then the leader plus 2 more approvals), follows (D17), bookmarks (D13), the tag pattern (D7), every other index, rule and fee, and the moderation declaration: the file keeps mainnet-legal election windows (join 604,800 s, vote 259,200 s) and interim `contractOwner`, and the registration renders testnet's (below). |
+| 11 | **One moderator for a day** (D39) | `post` and `reply` `moderatorAbilities.deleteWithin` is 86,400 s (v16: 604,800 s): one moderator removes a post or reply alone for a day after its last change, then it settles and only the seated team removes it (the leader and one more member since D41, row 12). The signed size and registration fee are unchanged (both values encode at the same width). |
+| 12 | **Moderation parameters** (D41) | `post` and `reply` `deleteSettled` is `{leader: true, approvals: 2}` (v16: 3): once settled, the leader and one more member remove it. The elected declaration's `ownerProtected` is false, so the seated team can moderate the contract owner too. `actionFees.create.moderators` (pricing `feeMultiplier`): post 20,000,000, reply 10,000,000, report 20,000,000 credits (v16: 80M, 16M, 50M). `maxAddedModerators` stays 10 and `challengeCoolDown` 30 days. The signed size is unchanged. |
+| 13 | **Unchanged by decision** | Sponsorship (D4: post/reply/like/likeReply at 10/3/1/1 YAPP, `gasFeesPaidBy: 2`), follows (D17), bookmarks (D13), the tag pattern (D7), every other index, rule and fee, and the moderation declaration: the file keeps mainnet-legal election windows (join 604,800 s, vote 259,200 s) and interim `contractOwner`, and the registration renders testnet's (below). |
 
 ## The file
 
 | | Social v17 |
 | --- | --- |
 | File | `contracts/yappr-social-contract-v17.json` |
-| sha256 | `b21d61f7cbfe37d5b784bae52884c9ac0db42b87a97152d2a1519c7c2f605bcf` |
+| sha256 | `3c7e167f31f8aadd7b1ce779e62be1c2dcad89a2c1519e85c4fea2dfa8f25aa6` |
 | Signed create | **~18,019 B** by `validate-contract-offline.mjs` on the 5.0.0-rc.3 wasm-sdk, testnet and mainnet renderings alike (v16: ~16,498 B): 1,981 B under the 20,000 B budget, 2,461 B under the 20,480 B cap |
 | Document types | 12: `privateFeed` replaces `privateFeedState` |
 | Registration fee | 91.00e9 credits by the protocol-14 fee table (`registrationFee` in `scripts/registration-policy.mjs`), the same as v16; **91.76e9 measured on sakura** (5,506¢) |
@@ -109,6 +111,8 @@ Throwaway copies of the four files, plus two stripped contracts that differ only
 | pollr v8 | `7XxAZfo5k2uWEigXdQymzhNPQVmqgJR9wMUveoUfJ3y1` | corpus:79 | 17.14e9 (1,028¢) |
 | tags `[live, tags, $createdAt]` | `B6VW372eQC8HKbagiGVMQuosPHt3wYzqAonLBK95oMzo` | corpus:79 | 13.06e9 |
 | tags `[tags, live, $createdAt]` | `CEUv2bWKQ4VsRA3XqHj6amJKGcv2pHcvartMwt99uQ31` | corpus:79 | 13.06e9 |
+
+These copies predate D39 and D41: their post, reply, blog post and blog comment carry `deleteWithin: 604800` and three settled approvals, the owner is protected, and the fees are the earlier ones (post 80M, reply 16M, report 50M). The measurements below include those fees.
 
 Social v17, as expected in every case:
 

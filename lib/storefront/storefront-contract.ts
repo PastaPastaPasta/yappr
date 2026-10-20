@@ -11,8 +11,9 @@
  * every check here is a no-op on them.
  */
 import storefrontContract from '@/contracts/yappr-storefront-contract.json'
-import { STOREFRONT_TOPOLOGY, storefrontIsV6, storefrontVariantsAreTyped } from '@/lib/constants'
+import { STOREFRONT_TOPOLOGY, YAPPR_STOREFRONT_CONTRACT_ID, storefrontIsV6, storefrontVariantsAreTyped } from '@/lib/constants'
 import { actionFeeOf, type ActionFeeDeclaration, type DocumentAction } from '@/lib/contract-topology'
+import { registeredActionFee, registeredOr } from '@/lib/registered-contracts'
 import type { OrderPayload } from '@/lib/types'
 
 interface PropertySchema {
@@ -92,7 +93,9 @@ export function itemImageLimit(): number {
  * action but a `store`, `storeItem`, `storeReview` or `itemReview` create).
  */
 export function storefrontActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
-  return storefrontIsV6() ? actionFeeOf(schemas[docType]?.actionFees, action) : null
+  if (!storefrontIsV6()) return null
+  // The registered contract's fee once recorded: /staging's and sakura's storefront predate D41's fees.
+  return registeredOr(registeredActionFee(YAPPR_STOREFRONT_CONTRACT_ID, docType, action), () => actionFeeOf(schemas[docType]?.actionFees, action))
 }
 
 /** The credits a v6 create of `docType` pays into the fee pots at a 1.0x multiplier, or null when it is free. */
@@ -216,6 +219,17 @@ export function itemSizeError(fields: Record<string, unknown>): string | null {
  * (`storeOrder.sellerId` distinctFrom `$ownerId`); the client refuses it on every cut.
  */
 export const OWN_STORE_ORDER_MESSAGE = 'This is your own store. You cannot place an order with yourself.'
+
+/** What a buyer sees on a store with no payment address yet: checkout would have nothing to pay to. */
+export const NOT_FOR_SALE_YET_MESSAGE = 'Not available for purchase yet'
+
+/** What the seller sees on their own store in that state. */
+export const ADD_PAYMENT_METHOD_HINT = 'Buyers can’t check out until you add a payment address in Manage.'
+
+/** Whether a loaded store lists somewhere to pay (false for a store that has none; true while it is unknown). */
+export function storeTakesPayment(store: { paymentUris?: readonly unknown[] } | null | undefined): boolean {
+  return !store || (store.paymentUris?.length ?? 0) > 0
+}
 
 /** Whether `viewerId` owns `store` (false while either is unknown, so a missing store never reads as "yours"). */
 export function isOwnStore(store: { ownerId: string } | null | undefined, viewerId: string | undefined): boolean {

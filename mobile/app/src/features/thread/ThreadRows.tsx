@@ -115,11 +115,11 @@ function RepliesLoading() {
   );
 }
 
-function RepliesEmpty() {
+function RepliesEmpty({ invite }: { invite: boolean }) {
   return (
     <View className="items-center p-8" testID="replies-empty">
       <Text variant="body" tone="secondary" className="text-center">
-        No replies yet. Be the first to reply!
+        {invite ? 'No replies yet. Be the first to reply!' : 'No replies yet.'}
       </Text>
     </View>
   );
@@ -193,7 +193,7 @@ export const ThreadRowView = memo(function ThreadRowView({
     case 'repliesLoading':
       return <RepliesLoading />;
     case 'repliesEmpty':
-      return <RepliesEmpty />;
+      return <RepliesEmpty invite={row.invite} />;
     case 'repliesError':
       return <ErrorState message={row.message} onRetry={onRetryReplies} testID="replies-error" />;
   }
