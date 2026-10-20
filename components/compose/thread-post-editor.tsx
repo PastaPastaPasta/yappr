@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import { TrashIcon, PhotoIcon, ChartBarIcon } from '@heroicons/react/24/outline'
 import type { ThreadPost } from '@/lib/store'
 import { PostContent } from '@/components/post/post-content'
-import { FormatButton, CharacterCounter } from './compose-sub-components'
+import { FormatButton, CharacterCounter, showsCharacterCounter } from './compose-sub-components'
 import { MentionAutocomplete } from './mention-autocomplete'
 import { EmojiPicker } from './emoji-picker'
 
@@ -198,6 +198,12 @@ export function ThreadPostEditor({
   const isPosted = !!post.postedPostId
   const effectiveLength = characterCount(post.content) + extraCharacters
   const bytesUsed = BYTE_LIMIT === null ? 0 : utf8ByteCount(post.content) + extraCharacters
+  const counter = {
+    current: effectiveLength,
+    limit: CHARACTER_LIMIT,
+    sizeLimitReached: BYTE_LIMIT !== null && bytesUsed >= BYTE_LIMIT,
+    tooLong: BYTE_LIMIT !== null && bytesUsed > BYTE_LIMIT,
+  }
 
   return (
     <motion.div
@@ -400,12 +406,10 @@ export function ThreadPostEditor({
             <p className="mt-2 text-xs text-red-500">{tagProblem}</p>
           )}
 
-          {/* Keep the count (attachment included) visible in edit, preview and locked states. */}
-          {isActive && !isPosted && (
+          {/* Near the limit, the count (attachment included) shows in edit, preview and locked states. */}
+          {isActive && !isPosted && showsCharacterCounter(counter) && (
             <div className="flex justify-end mt-3 text-xs">
-              <CharacterCounter current={effectiveLength} limit={CHARACTER_LIMIT}
-                sizeLimitReached={BYTE_LIMIT !== null && bytesUsed >= BYTE_LIMIT}
-                tooLong={BYTE_LIMIT !== null && bytesUsed > BYTE_LIMIT} />
+              <CharacterCounter {...counter} />
             </div>
           )}
         </div>
