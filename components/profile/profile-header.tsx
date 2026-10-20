@@ -109,7 +109,10 @@ export function ProfileHeader({
   const hasDpns = allUsernames.length > 0
   const isOwnProfile = viewerId === userId
   const copyProfileLink = () => copy(`${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH || ''}/user/?id=${userId}`, 'Profile link copied!')
-  const subject = profile?.displayName || username || 'user'
+  // Actions name the person by handle, as on X. Without a profile the shown
+  // name is a stand-in ("User 3f9a2c"), so it never stands for them here.
+  const handle = username ? `@${username}` : null
+  const subject = handle ?? (profileMissing ? null : profile?.displayName || null)
   const { open: openReport } = useReportPostModal()
   const profilesReportable = profilesAreReportable()
 
@@ -162,11 +165,11 @@ export function ProfileHeader({
                       {/* v13: a profile can be reported to the moderators (`about: 1`). */}
                       {profilesReportable && (
                         <DropdownMenu.Item
-                          onSelect={() => (viewerId ? openReport({ kind: 'profile', identityId: userId, name: subject }) : onRequireAuth())}
+                          onSelect={() => (viewerId ? openReport({ kind: 'profile', identityId: userId, name: subject ?? '' }) : onRequireAuth())}
                           className={`${MENU_ITEM} text-red-600 dark:text-red-400`}
                         >
                           <FlagIcon className="h-5 w-5" />
-                          Report {subject}
+                          {handle ? `Report ${handle}` : 'Report'}
                         </DropdownMenu.Item>
                       )}
                     </DropdownMenu.Content>
@@ -174,13 +177,13 @@ export function ProfileHeader({
                 </DropdownMenu.Root>
                 <TooltipButton
                   label="Send a tip"
-                  aria-label={`Tip ${subject}`}
+                  aria-label={subject ? `Tip ${subject}` : 'Send a tip'}
                   onClick={onTip}
                   className="hover:bg-amber-50 dark:hover:bg-amber-950 hover:border-amber-300 dark:hover:border-amber-700 group"
                 >
                   <CurrencyDollarIcon className="h-4 w-4 group-hover:text-amber-500" />
                 </TooltipButton>
-                <TooltipButton label="Message" aria-label={`Message ${subject}`} onClick={() => router.push(`/messages?startConversation=${userId}`)}>
+                <TooltipButton label="Message" aria-label={subject ? `Message ${subject}` : 'Message'} onClick={() => router.push(`/messages?startConversation=${userId}`)}>
                   <EnvelopeIcon className="h-4 w-4" />
                 </TooltipButton>
                 <Button variant={isFollowing ? 'outline' : 'default'} onClick={onFollow} disabled={followLoading} className="font-bold px-5">
