@@ -72,6 +72,8 @@ vi.mock('@/lib/contract-topology', async (load) => {
     canBookmark: (kind: string) => m.topology[`bookmark:${kind}`] !== false,
     privateFeedClientSupported: () => m.topology.privateFeeds === true,
     electedModeration: () => m.elected,
+    // Reports carry a moderators' box (v13+) unless a test says otherwise.
+    reportShape: () => ({ ...(actual.reportShape as () => object)(), boxMaxBytes: m.topology.noReportBox === true ? null : 4096 }),
   }
 })
 vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>(), getCurrentUserId: () => m.viewer }))
@@ -511,19 +513,39 @@ describe('graph and safety writes', () => {
     await expect(safety.report(TARGET, 0)).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
   })
 
-  it("reports a private post with the moderators' box, and sends nothing when the team can't be read", async () => {
+  it("reports a private post with the moderators' box, and never boxless because a read failed", async () => {
     const { outcome, safety } = engine()
-    m.postService.getPostById.mockResolvedValue(post(TARGET.id, { encryptedContent: new Uint8Array(4), nonce: new Uint8Array(24), keyGeneration: 1, feed: 1 }))
+    const privateTarget = post(TARGET.id, { encryptedContent: new Uint8Array(4), nonce: new Uint8Array(24), keyGeneration: 1, feed: 1 })
+    m.postService.getPostById.mockResolvedValue(privateTarget)
     const box = new Uint8Array([7, 7, 7])
     m.buildReportBox.mockResolvedValueOnce({ kind: 'sealed', box })
     m.reportService.fileReport.mockResolvedValue({ success: true, transactionHash: id('Report'), confirmed: true })
-    await outcome(safety.report(TARGET, 0))
+    await outcome(safety.report(TARGET, 0, undefined, { encrypted: true }))
     expect(m.reportService.fileReport).toHaveBeenLastCalledWith(VIEWER, expect.objectContaining({ targetId: TARGET.id, box }))
 
+    // The team can't be read, or the post itself can't: nothing is filed (never without its box).
     m.reportService.fileReport.mockClear()
     m.buildReportBox.mockRejectedValueOnce(new Error('fetch failed'))
-    expect(await outcome(safety.report(TARGET, 0))).toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
+    expect(await outcome(safety.report(TARGET, 0, undefined, { encrypted: true }))).toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
+    m.postService.getPostById.mockRejectedValueOnce(new Error('fetch failed'))
+    expect(await outcome(safety.report({ ...TARGET, id: id('Unread') }, 0, undefined, { encrypted: true })))
+      .toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
     expect(m.reportService.fileReport).not.toHaveBeenCalled()
+
+    // No key, or no moderator to read it: filed without, and the ticket says so (web's toast).
+    m.postService.getPostById.mockResolvedValue(privateTarget)
+    m.buildReportBox.mockResolvedValueOnce({ kind: 'no-recipients' })
+    expect(await outcome(safety.report(TARGET, 0, undefined, { encrypted: true }))).toMatchObject({ state: 'confirmed', notice: 'unsealed-no-moderators' })
+    expect(m.reportService.fileReport).toHaveBeenLastCalledWith(VIEWER, expect.not.objectContaining({ box: expect.anything() }))
+
+    // A public target is not read at all, nor where reports carry no box.
+    m.postService.getPostById.mockClear()
+    await outcome(safety.report(TARGET, 0))
+    m.topology.noReportBox = true
+    await outcome(safety.report(TARGET, 0, undefined, { encrypted: true }))
+    expect(m.postService.getPostById).not.toHaveBeenCalled()
+    m.postService.getPostById.mockReset()
+    m.replyService.getReplyById.mockReset()
   })
 
   it('withdraws the viewer\'s report by deleting it, says when it is already gone, and checks it by its absence', async () => {

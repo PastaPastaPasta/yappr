@@ -8,6 +8,7 @@ import type {
   WriteStage,
   WriteTarget,
   WriteTicket,
+  WriteNotice,
 } from './types'
 
 /**
@@ -57,7 +58,7 @@ export const AUTO_RETRY_DELAYS_MS: readonly number[] = [2_000, 5_000, 15_000]
 
 /** What a write's lib call came to. Thrown errors are classified instead. */
 export type WriteResult =
-  | { state: 'confirmed' | 'unconfirmed'; documents?: TicketDocument[] }
+  | { state: 'confirmed' | 'unconfirmed'; documents?: TicketDocument[]; notice?: WriteNotice }
   | { state: 'failed'; error: unknown; documents?: TicketDocument[] }
 
 /**
@@ -582,6 +583,7 @@ export function createTicketStore(options: TicketStoreOptions) {
           error: null,
           retryable: false,
           documents: result.state === 'confirmed' ? allConfirmed(documents) : documents,
+          ...(result.notice ? { notice: result.notice } : {}),
         })
       }, error => {
         if (finish()) fail(id, error)

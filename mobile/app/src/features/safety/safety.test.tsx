@@ -882,7 +882,7 @@ describe('ReportScreen', () => {
     fireEvent.changeText(screen.getByTestId('report-note'), 'Phishing link');
     await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
 
-    expect(fakeEngine.method('safety.report')).toHaveBeenCalledWith(target, 8, 'Phishing link');
+    expect(fakeEngine.method('safety.report')).toHaveBeenCalledWith(target, 8, 'Phishing link', { encrypted: false });
     expect(screen.getByText('Reporting…')).toBeTruthy();
 
     act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));

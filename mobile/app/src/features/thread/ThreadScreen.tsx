@@ -91,8 +91,15 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const repliesError = query.isError && !query.isFetchNextPageError ? readErrorMessage(query.error) : null;
   // The last read lost a focus already shown: keep its replies, but never offer it as live.
   const focusUnavailable = thread?.focus != null && query.error instanceof FocusUnavailableError;
-  // Replying is blocked on a private focus the viewer can't open (the docked bar says why): no invitation.
-  const replyBlocked = focus?.encrypted === true && privateFocus.data?.state !== 'open';
+  // Replying is blocked (a private focus the viewer can't open, a deleted or unavailable one): the docked
+  // bar says why, and the empty replies invite nothing.
+  const block = replyBlockOf(
+    focus ?? undefined,
+    focusRemoved,
+    (thread !== undefined && !thread.focus) || focusUnavailable,
+    privateFocus.data?.state === 'open',
+  );
+  const replyBlocked = block !== null;
   const rows = useMemo(
     () =>
       buildThreadRows({
@@ -223,12 +230,6 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
     );
   }
 
-  const block = replyBlockOf(
-    focus ?? undefined,
-    focusRemoved,
-    (thread !== undefined && !thread.focus) || focusUnavailable,
-    privateFocus.data?.state === 'open',
-  );
   const connecting = !thread && !seed && engineState !== 'ready';
 
   return (

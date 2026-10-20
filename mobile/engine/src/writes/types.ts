@@ -107,4 +107,13 @@ export interface WriteTicket {
   createdAt: Date
   updatedAt: Date
   lastCheckedAt: Date | null
+  /**
+   * What the viewer should know about a write that went through (a report
+   * filed without the moderators' box: `unsealed-no-key`, this device could
+   * not confirm a key to the post; `unsealed-no-moderators`, no moderator can
+   * read private posts yet). Absent for most writes.
+   */
+  notice?: WriteNotice
 }
+
+export type WriteNotice = 'unsealed-no-key' | 'unsealed-no-moderators'
