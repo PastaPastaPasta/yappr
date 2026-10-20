@@ -115,11 +115,21 @@ it('reads a list that failed during the switch again once the switch settles (AU
   queryClient.clear();
 });
 
-it('reports a switch whose account did not come back', async () => {
+it('marks an account the engine came back without "Sign in again", and says so (D-973)', async () => {
+  // Its key was kept for its session only (a CRITICAL key on App Connect builds): gone after a relaunch.
   fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
   bootsAs(null);
 
   await expect(switchAccount({ identityId: 'bob', username: 'bob' })).resolves.toBe(false);
+  expect(isSessionExpired('bob')).toBe(true);
+  expect(useToastStore.getState().current?.message).toBe('Sign in again to use @bob.');
+});
+
+it('keeps a switch the engine refused, or cut short, a plain failure to try again (D-973)', async () => {
+  fakeEngine.method('session.switchAccount').mockRejectedValue(Object.assign(new Error('timed out'), { code: 'ENGINE_TIMEOUT' }));
+
+  await expect(switchAccount({ identityId: 'bob', username: 'bob' })).resolves.toBe(false);
+  expect(isSessionExpired('bob')).toBe(false);
   expect(useToastStore.getState().current?.message).toBe("Couldn't switch accounts. Please try again.");
 });
 

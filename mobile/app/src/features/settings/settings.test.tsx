@@ -741,6 +741,26 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
       expect(toastMessage()).toBeUndefined();
     });
 
+    it('marks a parked account found without its key and opens its sign-in, instead of failing every time (D-973)', async () => {
+      // Signed in with a key kept for that session only (CRITICAL, App Connect builds), then the app relaunched.
+      useSessionStore.setState({ accounts });
+      fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+      fakeEngine.method('session.current').mockResolvedValue(null);
+      jest.mocked(engineSupervisor.restart).mockImplementation(() => {
+        fakeEngine.setStatus({ state: 'ready', epoch: 2 });
+        useSessionStore.setState({ status: 'signed-out', session: null });
+      });
+      renderScreen(<AccountList accounts={accounts} manage />);
+      await settle();
+
+      await act(async () => fireEvent.press(byId(`account-${BOB}`)));
+      await settle();
+      expect(useExpiredSessions.getState().ids).toContain(BOB);
+      expect(toastMessage()).toBe('Sign in again to use @bob.');
+      expect(router.push).toHaveBeenCalledWith('/sign-in');
+      expect(useAccounts.getState()).toMatchObject({ reauth: BOB, returnTo: ALICE, transition: null });
+    });
+
     it('opens the sign-in of a marked account the engine would not switch to', async () => {
       useExpiredSessions.setState({ ids: [BOB] });
       useSessionStore.setState({ accounts });

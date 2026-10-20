@@ -82,10 +82,11 @@ export function AccountList({
               const marked = isSessionExpired(identityId);
               const from = useSessionStore.getState().session?.identityId ?? null;
               // A marked account whose key is gone cannot restore: its sign-in instead, and back to
-              // `from` if that is abandoned (the failed switch left nobody signed in).
+              // `from` if that is abandoned (the failed switch left nobody signed in). So does one the
+              // switch has just found without its key (D-973: it is marked now).
               switchAccount(account, { quiet: marked })
                 .then(async (switched) => {
-                  if (!switched && marked) await reauthenticate(identityId, { returnTo: from });
+                  if (!switched && isSessionExpired(identityId)) await reauthenticate(identityId, { returnTo: from });
                 })
                 .catch(() => undefined);
             } else if (isSessionExpired(identityId)) {

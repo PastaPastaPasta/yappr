@@ -4,7 +4,7 @@ import { create } from 'zustand';
 
 import { onEngineEvent } from '~/data/events';
 import { accountCacheSettled, useSessionStore } from '~/data/session';
-import { clearSessionExpired, useSessionExpired } from '~/data/session-expiry';
+import { clearSessionExpired, markSessionExpired, useSessionExpired } from '~/data/session-expiry';
 import { engine, engineNetworkKey, engineStorage, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { refetchFailedReads } from '~/state/query-client';
@@ -185,10 +185,22 @@ export function finishWalletSwitch(identityId: string): Promise<SessionDTO | nul
   return runSwitch(account ?? { identityId, username: null }, async () => undefined);
 }
 
+/** The engine restarted, but not as the account switched to: its stored key is gone (D-973). */
+class AccountDidNotRestore extends Error {
+  constructor() {
+    super('The account did not restore');
+  }
+}
+
 /**
  * `prepare` has the engine park the current account; then restart into
  * `account`, behind the switch progress. `quiet`: no toast on failure (the
  * caller says what happens next).
+ *
+ * An account the engine restarts without (a key kept for its session only,
+ * a CRITICAL key on App Connect builds, is gone after a relaunch; a wallet
+ * that revoked it) is marked "Sign in again" (AUTH-14), so it is never
+ * offered as a switch that fails the same way again (D-973).
  */
 function runSwitch(
   account: { identityId: string; username: string | null },
@@ -200,12 +212,14 @@ function runSwitch(
     try {
       await prepare();
       const restored = await restartEngine('Switching accounts');
-      if (restored?.identityId !== account.identityId) throw new Error('The account did not restore');
+      if (restored?.identityId !== account.identityId) throw new AccountDidNotRestore();
       toast.success(copy.accounts.switched(name));
       return restored;
     } catch (error) {
       appendLog('warn', 'host', `Switching accounts failed: ${errorMessage(error)}`);
-      if (!quiet) toast.error(copy.accounts.switchFailed);
+      const keyGone = error instanceof AccountDidNotRestore;
+      if (keyGone) markSessionExpired(account.identityId);
+      if (!quiet) toast.error(keyGone ? copy.accounts.keyGone(name) : copy.accounts.switchFailed);
       return null;
     }
   });

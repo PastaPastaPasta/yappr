@@ -114,8 +114,15 @@ export default function KeySignInScreen() {
     try {
       if (existing) {
         // Already on this device (parked by "Add account"): switch instead of signing in again.
-        if (await switchAccount(existing)) done();
-        return;
+        if (await switchAccount(existing, { quiet: true })) {
+          done();
+          return;
+        }
+        // Its stored key is gone (D-973: the switch marked it "Sign in again"): sign in with the key typed here.
+        if (!isSessionExpired(found.identityId)) {
+          setCheck({ state: 'error', message: copy.accounts.switchFailed, transient: true, otherAccount: false });
+          return;
+        }
       }
       // Read before signing in, which clears the mark.
       const again = isSessionExpired(found.identityId);
