@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   addKnown: vi.fn(),
   getMany: vi.fn(),
   getLatestVersions: vi.fn(),
+  stale: vi.fn((): string[] => []),
   instances: [] as { options: unknown }[],
 }));
 vi.mock('@dashevo/evo-sdk', () => ({
@@ -37,7 +38,7 @@ vi.mock('@/lib/contracts/bundled-contracts', () => ({
       profile: { bytes: 'profile-bytes', version: 1 },
     },
   }),
-  staleContractIds: () => [],
+  staleContractIds: () => mocks.stale(),
 }));
 vi.mock('@/lib/query-inspector/capture', () => ({ instrumentSdk: vi.fn() }));
 vi.mock('@/lib/logger', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
@@ -68,6 +69,7 @@ beforeEach(() => {
   mocks.connect.mockReset().mockResolvedValue(undefined);
   mocks.addKnown.mockReset().mockResolvedValue(true);
   mocks.getMany.mockReset().mockResolvedValue(new Map());
+  mocks.stale.mockReset().mockReturnValue([]);
   mocks.fetch.mockReset().mockResolvedValue({ id: 'identity' });
   // Every instance's background revalidation fails the same way, so a single
   // rebuild would be enough to start an endless rebuild loop.
@@ -119,5 +121,37 @@ describe('background contract revalidation', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('what the revalidation proves for priced writes', () => {
+  const settledAfterInit = async () => {
+    const { evoSdkService } = await import('./evo-sdk-service');
+    const { registeredContractsSettled } = await import('@/lib/registered-contracts');
+    await evoSdkService.initialize(config);
+    return registeredContractsSettled();
+  };
+
+  it('reports the seeded contracts proved current when the versions match', async () => {
+    mocks.getLatestVersions.mockReset().mockResolvedValue(new Map());
+    await expect(settledAfterInit()).resolves.toBe(true);
+  });
+
+  it('reports them proved when every stale contract is refetched', async () => {
+    mocks.getLatestVersions.mockReset().mockResolvedValue(new Map());
+    mocks.stale.mockReturnValue(['contract']);
+    mocks.getMany.mockResolvedValue(new Map([['contract', { schemas: {} }]]));
+    await expect(settledAfterInit()).resolves.toBe(true);
+  });
+
+  it('reports them unverified when a stale contract does not come back', async () => {
+    mocks.getLatestVersions.mockReset().mockResolvedValue(new Map());
+    mocks.stale.mockReturnValue(['contract', 'profile']);
+    mocks.getMany.mockResolvedValue(new Map([['contract', { schemas: {} }]]));
+    await expect(settledAfterInit()).resolves.toBe(false);
+  });
+
+  it('reports them unverified when the check fails', async () => {
+    await expect(settledAfterInit()).resolves.toBe(false);
   });
 });

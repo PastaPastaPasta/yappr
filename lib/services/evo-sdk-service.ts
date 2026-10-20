@@ -384,8 +384,10 @@ class EvoSdkService {
         }
         logger.info(`EvoSdkService: ${stale.length} bundled contract(s) are stale, refetching:`, stale);
         // The fetch replaces the seeded entries in the SDK's cache.
-        rememberFetched(await getMany(stale));
-        return true;
+        const fetched = await getMany(stale);
+        rememberFetched(fetched);
+        // Proved current only if every stale contract came back; a missing one keeps its unverified seed.
+        return stale.every((id) => Boolean(fetched.get(id)));
       } catch (error) {
         // Nodes below the query's protocol version answer UNIMPLEMENTED; the
         // seeded contracts stay in use and the SDK's own staleness guard applies.
