@@ -4,12 +4,15 @@ import { useCallback, useEffect, useState } from 'react'
 import { KeyIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
+import { useSdk } from '@/contexts/sdk-context'
 import type { PasskeyRenewal } from '@/lib/auth/passkey-vault'
 import { usePasskeysOffered } from '@/hooks/use-passkey-prompts'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
 import { RENEW_COPY, signInErrorCopy } from './passkey-copy'
+
+const SLOW_AFTER_MS = 3_000
 
 /**
  * "Sign in with a passkey" in the sign-in dialog. One tap opens the browser's
@@ -36,6 +39,16 @@ export function PasskeySignIn({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [renewal, setRenewal] = useState<PasskeyRenewal | null>(null)
+  /** A sign-in still going after a few seconds says what it is waiting on. */
+  const [slow, setSlow] = useState(false)
+  const { isReady: connected } = useSdk()
+
+  useEffect(() => {
+    setSlow(false)
+    if (!busy) return
+    const timer = setTimeout(() => setSlow(true), SLOW_AFTER_MS)
+    return () => clearTimeout(timer)
+  }, [busy])
 
   useEffect(() => onRenewalChange?.(renewal !== null), [onRenewalChange, renewal])
 
@@ -72,14 +85,23 @@ export function PasskeySignIn({
         type="button"
         onClick={signIn}
         disabled={busy}
+        aria-busy={busy}
         variant={secondary ? 'outline' : 'default'}
         size={secondary ? 'lg' : 'default'}
-        className="w-full gap-2"
+        // Busy is shown by the spinner and label, not by fading the button out.
+        className="w-full gap-2 disabled:opacity-100"
         data-testid="passkey-sign-in"
       >
-        {busy ? <Spinner size="sm" /> : <KeyIcon aria-hidden="true" className="h-5 w-5" />}
-        Sign in with a passkey
+        {busy
+          ? <Spinner size="xs" className={secondary ? '' : 'border-white'} />
+          : <KeyIcon aria-hidden="true" className="h-5 w-5" />}
+        {busy ? 'Signing in…' : 'Sign in with a passkey'}
       </Button>
+      {busy && slow && (
+        <p aria-live="polite" className="text-xs text-center text-gray-500 dark:text-gray-400" data-testid="passkey-sign-in-status">
+          {connected ? 'Opening your account…' : 'Connecting…'}
+        </p>
+      )}
       {error && <p role="alert" className="text-sm text-center text-red-600 dark:text-red-400">{error}</p>}
       {!secondary && (
         <div className="flex items-center gap-3 my-2" aria-hidden="true">
