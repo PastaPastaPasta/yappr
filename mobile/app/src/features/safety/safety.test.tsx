@@ -1,5 +1,6 @@
 import type {
   BlockedUserDTO,
+  BlockListChoiceDTO,
   CapabilitiesDTO,
   DmStatusDTO,
   EngineErrorCode,
@@ -29,6 +30,7 @@ import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
 import { BlockedAccountsScreen } from './BlockedAccountsScreen';
+import { BlockListsScreen } from './BlockListsScreen';
 import { blockWrite, resetBlockDecisions } from './block-state';
 import { BlockScreen } from './BlockScreen';
 import { copy } from './copy';
@@ -1477,7 +1479,8 @@ describe('BlockedAccountsScreen', () => {
     withProviders(<BlockedAccountsScreen />);
     await settle();
     expect(screen.getByText(note)).toBeTruthy();
-    expect(screen.getByText('Manage block lists')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('blocked-lists-link'));
+    expect(router.push).toHaveBeenCalledWith('/settings/blocked-lists');
   });
 
   it('says nothing about block lists to someone who follows none', async () => {
@@ -1494,5 +1497,67 @@ describe('BlockedAccountsScreen', () => {
     withProviders(<BlockedAccountsScreen />);
     await settle();
     expect(screen.getByText("You haven't blocked anyone")).toBeTruthy();
+  });
+});
+
+describe('BlockListsScreen', () => {
+  const choices: BlockListChoiceDTO[] = [
+    { ...BOB, listFollowed: true },
+    { ...AUTHORS.carol, listFollowed: false },
+  ];
+
+  it('lists the people followed, and uses or stops using their block lists at once', async () => {
+    fakeEngine.method('safety.blockListChoices').mockResolvedValue(choices);
+    const use = ticket({ op: 'block-list.follow', target: { identityId: AUTHORS.carol.id } });
+    fakeEngine.method('safety.setBlockListFollowed').mockResolvedValue(use);
+    withProviders(<BlockListsScreen />);
+    await settle();
+
+    expect(screen.getByTestId(`block-list-${BOB.id}`)).toHaveTextContent('Using list');
+    expect(screen.getByTestId(`block-list-${AUTHORS.carol.id}`)).toHaveTextContent('Use list');
+    await act(async () => fireEvent.press(screen.getByTestId(`block-list-${AUTHORS.carol.id}`)));
+    expect(fakeEngine.method('safety.setBlockListFollowed')).toHaveBeenCalledWith(AUTHORS.carol.id, true);
+    // On its way: the row waits, already showing the change once it lands.
+    expect(screen.getByTestId(`block-list-${AUTHORS.carol.id}`)).toHaveTextContent('Saving…');
+    act(() => fakeEngine.emit('write.status', advance(use, { state: 'confirmed', stage: null })));
+    await settle();
+    expect(screen.getByTestId(`block-list-${AUTHORS.carol.id}`)).toHaveTextContent('Using list');
+  });
+
+  it('puts the list back with a toast when the change fails', async () => {
+    fakeEngine.method('safety.blockListChoices').mockResolvedValue(choices);
+    const stop = ticket({ op: 'block-list.unfollow', target: { identityId: BOB.id } });
+    fakeEngine.method('safety.setBlockListFollowed').mockResolvedValue(stop);
+    withProviders(<BlockListsScreen />);
+    await settle();
+    await act(async () => fireEvent.press(screen.getByTestId(`block-list-${BOB.id}`)));
+    expect(fakeEngine.method('safety.setBlockListFollowed')).toHaveBeenCalledWith(BOB.id, false);
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(stop, {
+          state: 'failed',
+          stage: null,
+          error: { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: false, userMessage: 'x' },
+        }),
+      ),
+    );
+    await settle();
+    expect(screen.getByTestId(`block-list-${BOB.id}`)).toHaveTextContent('Using list');
+    expect(toastMessage()).toBe(copy.blockLists.unfollowFailed);
+  });
+
+  it('says when nobody is followed, and offers a retry for an unreadable list', async () => {
+    fakeEngine.method('safety.blockListChoices').mockResolvedValueOnce([]);
+    const { unmount } = withProviders(<BlockListsScreen />);
+    await settle();
+    expect(screen.getByText(copy.blockLists.empty)).toBeTruthy();
+    unmount();
+    queryClient.clear();
+
+    fakeEngine.method('safety.blockListChoices').mockRejectedValue(new Error('Network down'));
+    withProviders(<BlockListsScreen />);
+    await settle();
+    expect(screen.getByTestId('block-lists-error')).toBeTruthy();
   });
 });

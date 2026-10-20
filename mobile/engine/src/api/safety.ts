@@ -3,6 +3,7 @@ import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
 import { isReportGoneError, isReportResolvedError, reportCanBeWithdrawn, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService, type BlockWriteResult } from '@/lib/services/block-service'
+import { followService } from '@/lib/services/follow-service'
 import { moderationService } from '@/lib/services/moderation-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
@@ -14,7 +15,7 @@ import { ownBlockExists } from '../writes/strict-reads'
 import { ownBlocks, type OwnBlock } from './own-blocks'
 import { NotSentError, type TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
-import type { BlockSourceDTO, Page, UserSummaryDTO } from './dto'
+import type { BlockListChoiceDTO, BlockSourceDTO, Page, UserSummaryDTO } from './dto'
 
 /** `block.message` (`blockService.blockUser` keeps the first 280). */
 const BLOCK_MESSAGE_MAX = 280
@@ -52,6 +53,8 @@ interface BlockArgs {
   message?: string
 }
 interface BlockListFollowArgs { targetId: string }
+/** `blockService.followUserBlocks`' refusal at its cap (`MAX_BLOCK_FOLLOWS`). */
+const BLOCK_LIST_CAP = /^Maximum \d+ block follows reached$/
 
 interface ReportArgs {
   target: TargetRef
@@ -129,20 +132,24 @@ export function createSafetyModule(tickets: TicketStore) {
     },
     probe: ownBlock(false),
   })
-  tickets.register<BlockListFollowArgs>('block-list.follow', {
-    persistArgs: true,
-    async run({ targetId }, ctx) {
-      const result = await blockService.followUserBlocks(signer(ctx), targetId)
-      return result.success ? { state: 'confirmed' } : { state: 'failed', error: new Error(result.error ?? 'Could not follow this block list') }
-    },
-  })
-  tickets.register<BlockListFollowArgs>('block-list.unfollow', {
-    persistArgs: true,
-    async run({ targetId }, ctx) {
-      const result = await blockService.unfollowUserBlocks(signer(ctx), targetId)
-      return result.success ? { state: 'confirmed' } : { state: 'failed', error: new Error(result.error ?? 'Could not unfollow this block list') }
-    },
-  })
+  for (const follow of [true, false]) {
+    tickets.register<BlockListFollowArgs>(follow ? 'block-list.follow' : 'block-list.unfollow', {
+      persistArgs: true,
+      async run({ targetId }, ctx) {
+        const viewer = signer(ctx)
+        const result = follow ? await blockService.followUserBlocks(viewer, targetId) : await blockService.unfollowUserBlocks(viewer, targetId)
+        // lib's one refusal before it sends anything that the user can act on: the list cap.
+        if (!result.success && result.error && BLOCK_LIST_CAP.test(result.error)) {
+          return { state: 'failed', error: new RpcError('You can use up to 100 block lists. Stop using one first.', 'BAD_REQUEST') }
+        }
+        return fromTransitionResult(result)
+      },
+      probe: relationProbe<BlockListFollowArgs>(
+        async ({ viewer, ticket }) => (await blockService.getBlockFollow(viewer))?.followedUserIds.includes(ticketIdentity(ticket)) ?? false,
+        follow,
+      ),
+    })
+  }
   tickets.register<ReportArgs>('report', {
     persistArgs: true,
     async run({ target, reason, note }, ctx) {
@@ -302,22 +309,42 @@ export function createSafetyModule(tickets: TicketStore) {
       }
     },
 
-    /** The identities whose block lists this account follows. */
-    async followedBlockListIds(): Promise<string[]> {
-      return blockService.getBlockFollows(requireViewer('Block lists'))
+    /**
+     * Web's Settings → Block lists: everyone the viewer follows, and anyone
+     * whose list they still follow after unfollowing them, each with whether
+     * its block list is followed. Rejects when either list can't be read
+     * (never "following none").
+     */
+    async blockListChoices(): Promise<BlockListChoiceDTO[]> {
+      const viewer = requireViewer('Block lists')
+      let following: string[]
+      let listed: Set<string>
+      try {
+        const [follows, blockFollow] = await Promise.all([
+          followService.getFollowing(viewer, { throwOnError: true }),
+          blockService.getBlockFollow(viewer),
+        ])
+        following = follows.map(follow => follow.followingId)
+        listed = new Set(blockFollow?.followedUserIds ?? [])
+      } catch (error) {
+        throw readFailure(error)
+      }
+      const ids = [...new Set([...listed, ...following])].filter(id => id && id !== viewer)
+      const users = await loadUserSummaries(ids, { viewerFollows: false })
+      return ids.flatMap(id => {
+        const user = users.get(id)
+        return user ? [{ ...user, listFollowed: listed.has(id) }] : []
+      })
     },
 
-    async followBlockList(targetId: string): Promise<WriteTicket> {
+    /** Follow (or stop following) `targetId`'s block list: whoever they block is hidden from the viewer too. */
+    async setBlockListFollowed(targetId: string, follow: boolean): Promise<WriteTicket> {
       assertId(targetId, 'targetId')
-      const viewer = requireViewer('Following a block list')
-      if (viewer === targetId) throw badRequest('You cannot follow your own blocks')
-      return tickets.submit<BlockListFollowArgs>({ op: 'block-list.follow', args: { targetId }, target: { identityId: targetId } })
-    },
-
-    async unfollowBlockList(targetId: string): Promise<WriteTicket> {
-      assertId(targetId, 'targetId')
-      requireViewer('Unfollowing a block list')
-      return tickets.submit<BlockListFollowArgs>({ op: 'block-list.unfollow', args: { targetId }, target: { identityId: targetId } })
+      const viewer = requireViewer('Block lists')
+      if (follow && viewer === targetId) throw badRequest('You cannot follow your own blocks')
+      return tickets.submit<BlockListFollowArgs>({
+        op: follow ? 'block-list.follow' : 'block-list.unfollow', args: { targetId }, target: { identityId: targetId },
+      })
     },
 
     /**

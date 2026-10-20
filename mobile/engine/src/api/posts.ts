@@ -9,7 +9,7 @@ import { provenAbsent } from '@/lib/feed/prove-absent'
 import { isBareRepost, quotedTargetIdOf, splitRepostsAndQuotes } from '@/lib/feed/quote-reposts'
 import { likeService } from '@/lib/services/like-service'
 import { pollrPollService, type Poll } from '@/lib/services/pollr-poll-service'
-import { pollrVoteService, type PollTally } from '@/lib/services/pollr-vote-service'
+import { pollIsClosed, pollrVoteService, type PollTally } from '@/lib/services/pollr-vote-service'
 import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
 import { base58ToBytes } from '@/lib/services/sdk-helpers'
@@ -24,7 +24,8 @@ import {
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
 import { assembleFlatThread, assembleV2Thread, flattenThreads, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
-import { assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
+import { assertId, assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
+import { pollVoting } from '../dto/capabilities'
 import { documentExists, fromDeleteBoolean } from '../writes/lib-results'
 import { createPublishHandler, validateDraft, type DraftDTO, type FindOwnDocuments, type OwnDocument } from '../writes/publish'
 import type { TicketStore, WriteResult } from '../writes/tickets'
@@ -284,30 +285,69 @@ function toPollDTO(poll: Poll, tally: PollTally | null, myVotes?: number[] | nul
   }
 }
 
-export interface PollVoteArgs { pollId: string; choices: number[] }
+interface PollVoteArgs { pollId: string; choices: number[] }
 
-/** Native Pollr writes. The service owns v3/v7 ballot semantics and topology gates. */
+/** A ballot refused before anything was sent: an engine code, so the host shows the sentence. */
+const refusedVote = (message: string): WriteResult => ({ state: 'failed', error: new RpcError(message, 'BAD_REQUEST') })
+const POLL_GONE = 'This poll is no longer available.'
+
+const sameChoices = (a: readonly number[], b: readonly number[]) =>
+  a.length === b.length && [...a].sort((x, y) => x - y).every((choice, i) => choice === [...b].sort((x, y) => x - y)[i])
+
+/**
+ * Poll ballots (web's `components/poll/poll-card.tsx`). Pollr v7/v8 set the
+ * voter's one ballot to exactly `choices` (none withdraws it) until the
+ * close; v3 casts one immutable ballot. `pollVoting` says which.
+ */
 export function createPollWrites(tickets: TicketStore) {
   tickets.register<PollVoteArgs>('poll.vote', {
     persistArgs: true,
-    async run({ pollId, choices }, ctx): Promise<WriteResult> {
-      const poll = await pollrPollService.getPoll(pollId)
-      if (!poll) return { state: 'failed', error: new RpcError('This poll is no longer available', 'TARGET_GONE') }
+    async run({ pollId, choices }, ctx) {
       const ownerId = signer(ctx)
-      const editable = await pollrVoteService.setVote(poll, choices, ownerId)
-      if (editable.success) return { state: 'confirmed' }
-      if (editable.error !== 'setVote is the v7 ballot path') {
-        return { state: editable.unconfirmed ? 'unconfirmed' : 'failed', error: new Error(editable.error ?? 'Could not save your vote') }
+      const poll = await pollrPollService.getPoll(pollId)
+      if (!poll) return refusedVote(POLL_GONE)
+      if (pollIsClosed(poll)) return refusedVote('This poll has closed.')
+      if (!poll.multiChoice && choices.length > 1) return refusedVote('This poll takes one choice.')
+      if (pollVoting() === 'editable') {
+        const result = await pollrVoteService.setVote(poll, choices, ownerId)
+        if (result.success) return { state: 'confirmed' }
+        if (result.unconfirmed) return { state: 'unconfirmed' }
+        if (result.gone) return refusedVote(POLL_GONE)
+        if (result.closed) return refusedVote('This poll has closed.')
+        if (result.heldBack) return refusedVote('Your last vote is still being confirmed. Try again in a moment.')
+        if (result.stale) return refusedVote('Your vote changed on another device. Pull to refresh and try again.')
+        // `choices` is undefined only when nothing was written.
+        return result.choices === undefined
+          ? refusedVote(result.error ?? 'Your vote could not be saved.')
+          : { state: 'failed', error: new Error(result.error ?? 'Your vote could not be saved') }
       }
-      const legacy = await pollrVoteService.castVote(poll, choices, ownerId)
-      return legacy.success
-        ? { state: 'confirmed' }
-        : { state: 'failed', error: new Error(legacy.error ?? 'Could not save your vote') }
+      const result = await pollrVoteService.castVote(poll, choices, ownerId)
+      // A ballot already cast (on another device): v3 ballots never change.
+      const other = result.unresolvedDuplicate || result.alreadyVoted.some(choice => !choices.includes(choice))
+      if (other) return refusedVote('You already voted in this poll.')
+      return result.success ? { state: 'confirmed' } : { state: 'failed', error: new Error(result.error ?? 'Your vote could not be saved') }
     },
+    probe: relationProbe<PollVoteArgs>(async ({ viewer, args }) => {
+      if (!args) throw new Error('The ballot is not known')
+      const poll = await pollrPollService.getPoll(args.pollId)
+      if (!poll) throw new Error(POLL_GONE)
+      return sameChoices(await pollrVoteService.getMyVotes(poll, viewer), args.choices)
+    }, true),
   })
   return {
+    /**
+     * Set the viewer's ballot on a poll to `choices` (option indexes). An
+     * empty list withdraws it, where ballots are editable (`pollVoting`).
+     */
     async vote(pollId: string, choices: number[]): Promise<WriteTicket> {
-      if (!pollId || !Array.isArray(choices)) throw new RpcError('Choose an option', 'BAD_REQUEST')
+      requireViewer('Voting')
+      assertId(pollId, 'pollId')
+      const mode = pollVoting()
+      if (!mode) throw notSupported('Voting on polls')
+      if (!Array.isArray(choices) || choices.some(choice => !Number.isInteger(choice) || choice < 0) || new Set(choices).size !== choices.length) {
+        throw badRequest('choices must be distinct option indexes')
+      }
+      if (mode === 'once' && choices.length === 0) throw badRequest('Choose an option')
       return tickets.submit<PollVoteArgs>({ op: 'poll.vote', args: { pollId, choices: [...choices] }, target: null })
     },
   }

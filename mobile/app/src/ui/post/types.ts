@@ -25,7 +25,7 @@ export interface CardLinkPreview {
   youtubeVideoId?: string;
 }
 
-/** A read-only poll (UX_SPEC §2.4.8). */
+/** A poll (UX_SPEC §2.4.8): its results, and the viewer's ballot where they can vote. */
 export interface CardPoll {
   question: string;
   options: { label: string; votes: number }[];
@@ -33,7 +33,15 @@ export interface CardPoll {
   /** null: no end date. */
   endsAt: Date | null;
   multiChoice?: boolean;
+  /**
+   * How ballots work (`capabilities.pollVoting`): `editable` until the
+   * close, `once` and final; absent or null shows results only.
+   */
+  voting?: 'editable' | 'once' | null;
+  /** The viewer's choices: [] for none yet; null when they could not be read (no ballot shown); absent signed out. */
   myVotes?: number[] | null;
+  /** A ballot of the viewer's is on its way: the controls wait. */
+  saving?: boolean;
 }
 
 /** Async slots: the data, still loading, or failed. */

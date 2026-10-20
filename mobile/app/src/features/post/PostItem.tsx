@@ -3,13 +3,12 @@ import { router } from 'expo-router';
 import { memo, useMemo } from 'react';
 
 import { queryKeys } from '~/data/keys';
-import { engine } from '~/engine';
 import { usePostRemoved } from '~/data/optimistic';
 import { useEngineQuery } from '~/data/queries';
 import { NO_READ_RETRY } from '~/data/read-retry';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useProvisionalViewerId, useViewerId } from '~/data/session';
-import { sendWrite } from '~/data/writes';
+import { sendWrite, useLandingIntent } from '~/data/writes';
 import { usePendingWriteStatus } from '~/features/compose/pending-posts';
 import { tagMaxLength } from '~/features/compose/text';
 import { usePostSafety } from '~/features/safety/use-post-safety';
@@ -27,7 +26,6 @@ import {
 } from '~/ui/post/PostCard';
 import type { CardPoll, Loadable } from '~/ui/post/types';
 import { toast } from '~/ui/toast';
-import { queryClient } from '~/state/query-client';
 
 import {
   copyText,
@@ -38,6 +36,7 @@ import {
   postWebUrl,
   sharePost,
 } from './post-navigation';
+import { pollVoteKey, pollVoteWrite } from './poll-vote';
 import { readEngageStats } from './post-stats';
 import { useRepostQuoteCounts } from './repost-quote-counts';
 import { bookmarkWrite, deleteWrite, followWrite, likeWrite, repostWrite, targetOf } from './post-writes';
@@ -119,7 +118,7 @@ function useShownPost(post: PostDTO): {
   };
 }
 
-/** The read-only poll a post shows (`posts.poll`), as the card renders it. */
+/** The poll a post shows (`posts.poll`), as the card renders it, with how the viewer can vote on it. */
 function usePoll(post: PostDTO): Loadable<CardPoll> | undefined {
   const poll = post.poll;
   const pollId = poll?.id ?? '';
@@ -129,6 +128,8 @@ function usePoll(post: PostDTO): Loadable<CardPoll> | undefined {
     (api) => api.posts.poll({ contractId, id: pollId }),
     { enabled: poll !== undefined, meta: NO_READ_RETRY },
   );
+  const voting = useCapabilities()?.pollVoting ?? null;
+  const saving = useLandingIntent(poll ? pollVoteKey(poll.id) : undefined) !== undefined;
   return useMemo(() => {
     if (!poll) return undefined;
     if (isError || data === null) return 'error';
@@ -140,9 +141,11 @@ function usePoll(post: PostDTO): Loadable<CardPoll> | undefined {
       totalVotes: data.totalVotes ?? options.reduce((sum, o) => sum + o.votes, 0),
       endsAt: data.endsAt,
       multiChoice: data.multiChoice,
+      voting,
       myVotes: data.myVotes,
+      saving,
     };
-  }, [poll, data, isError]);
+  }, [poll, data, isError, voting, saving]);
 }
 
 /** The repost button's sheet (PRD ENG-02), by the viewer's slot. */
@@ -388,11 +391,8 @@ export const PostItem = memo(function PostItem({
       onHashtagPress: openHashtag,
       onCashtagPress: openHashtag,
       onVotePress: (choices) => {
-        if (!post.poll) return;
-        engine.api.posts.vote(post.poll.id, choices).then(() => {
-          queryClient.invalidateQueries({ queryKey: queryKeys.post.poll(post.poll!.id) }).catch(() => undefined);
-          toast.success(choices.length ? 'Vote saved' : 'Vote withdrawn');
-        }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : 'Could not save your vote'));
+        const pollId = post.poll?.id;
+        if (pollId) requireAuth(() => sendWrite(pollVoteWrite, { pollId, choices }));
       },
       onOpenPrivate: openOnWeb,
     };

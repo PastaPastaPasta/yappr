@@ -4,9 +4,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { router } from 'expo-router';
 import { Keyboard, View } from 'react-native';
 
+import { useSessionStore } from '~/data/session';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { confirmSignOut } from '~/features/auth/AccountSwitcher';
 import { copy as authCopy } from '~/features/auth/copy';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
@@ -50,6 +52,26 @@ function unlocked(close: () => void): void {
   toast.success('Messages unlocked');
   refreshDm();
   close();
+}
+
+/**
+ * No messaging key this sign-in can unlock or set up (D38): messages come
+ * from a wallet sign-in, which brings the account's messaging key. The
+ * account is already signed in here, so it signs out first (asked), then
+ * signs back in with its wallet.
+ */
+const NO_KEY_BODY = 'Messages are set up with your Dash wallet. To use them on this phone, sign out, then sign back in with your wallet.';
+const NO_KEY_ACTION = 'Sign out and use my wallet';
+
+function signOutForWallet(): void {
+  const session = useSessionStore.getState().session;
+  if (!session) return;
+  confirmSignOut(session)
+    .then(() => {
+      // Signed out with nobody else on the device: straight to the wallet sign-in.
+      if (!useSessionStore.getState().session) router.push('/sign-in');
+    })
+    .catch((e: unknown) => appendLog('warn', 'host', `Sign-out for wallet messaging failed: ${errorMessage(e)}`));
 }
 
 /** WIF (51 or 52 base58 characters) or 64 hex: the formats an encryption key comes in (engine `dm.unlock`). */
@@ -183,19 +205,19 @@ function UnlockBody({
         </View>
       ) : null}
       {phase === 'no-key' ? (
-        <View className="gap-4 pb-2">
+        <View className="gap-4 pb-2" testID="dm-unlock-no-key">
           <Text variant="body" tone="secondary">
-            Messaging is unlocked by your DashPay wallet sign-in. Sign in again to provide this account&apos;s secure messaging key.
+            {NO_KEY_BODY}
           </Text>
           <Button
-            label="Sign in with DashPay"
+            label={NO_KEY_ACTION}
             variant="outline"
             size="block"
             onPress={() => {
               onClose();
-              router.push('/sign-in/wallet');
+              signOutForWallet();
             }}
-            accessibilityLabel="Sign in with DashPay to unlock messaging"
+            testID="dm-unlock-wallet-sign-in"
           />
         </View>
       ) : null}

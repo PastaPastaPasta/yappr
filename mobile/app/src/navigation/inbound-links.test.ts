@@ -94,11 +94,11 @@ describe('unsupported and web-only links (SR-13, NET-11)', () => {
   });
 
   it('opens a web-only page in the in-app browser, once the navigator is up', () => {
-    expect(routeInboundLink('yappr-dev://dpns/register', true)).toBe('/');
+    expect(routeInboundLink('yappr-dev://store', true)).toBe('/');
     const { rerender } = renderHook(({ ready }: { ready: boolean }) => useInboundLinkEffects(ready), { initialProps: { ready: false } });
     expect(openBrowser).not.toHaveBeenCalled();
     rerender({ ready: true });
-    expect(openBrowser).toHaveBeenCalledWith('https://yap.pr/devnet/dpns/register');
+    expect(openBrowser).toHaveBeenCalledWith('https://yap.pr/devnet/store');
   });
 
   it('ignores /login while signed in, as before the engine restores (the last account)', () => {

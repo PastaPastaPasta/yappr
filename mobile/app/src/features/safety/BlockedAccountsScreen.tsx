@@ -16,6 +16,7 @@ import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { handleOf } from '~/ui/handle';
+import { LinkText } from '~/ui/LinkText';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
@@ -23,8 +24,6 @@ import { monoFont, tw, useColors, useLargeText } from '~/ui/tokens';
 
 import { blockWrite, useBlockBusy, useBlockedList } from './block-state';
 import { copy } from './copy';
-
-/** Where web manages block lists (Settings → Privacy & Security). */
 
 /** One blocked account: avatar, name, handle, the public note, and "Unblock" (UX_SPEC §4.29). */
 const BlockedRow = memo(function BlockedRow({ user, viewerId }: { user: BlockedUserDTO; viewerId: string }) {
@@ -83,19 +82,20 @@ const BlockedRow = memo(function BlockedRow({ user, viewerId }: { user: BlockedU
 });
 
 /**
- * "Also hidden by 2 block lists you follow · Manage on yap.pr" (PRD SAFE-03),
- * only for someone who follows a block list (set up on web): nobody else
- * needs to hear about them. Nothing while the count is unknown.
+ * "Also hidden by 2 block lists you follow · Manage block lists" (PRD
+ * SAFE-03), only for someone who follows a block list: nobody else needs to
+ * hear about them here (Privacy & Safety always has Block lists). Nothing
+ * while the count is unknown.
  */
 function ListsNote({ enabled }: { enabled: boolean }) {
-  const count = useEngineQuery(queryKeys.blockLists, (api) => api.safety.followedBlockLists(), { enabled });
-  if (!enabled || !count.data) return null;
+  const lists = useEngineQuery(queryKeys.blockLists, (api) => api.safety.followedBlockLists(), { enabled });
+  if (!enabled || !lists.data) return null;
   return (
-    <View className="gap-2 px-4 py-5" testID="blocked-lists-note">
+    <View className="flex-row flex-wrap items-center gap-x-1 px-4 py-5" testID="blocked-lists-note">
       <Text variant="subhead" tone="secondary">
-        {`${copy.blocked.listsNote(count.data)} ·`}
+        {`${copy.blocked.listsNote(lists.data)} ·`}
       </Text>
-      <Button label="Manage block lists" variant="outline" size="sm" accessibilityLabel="Manage block lists" onPress={() => router.push('/settings/blocked-lists')} />
+      <LinkText label={copy.blocked.listsLink} onPress={() => router.push('/settings/blocked-lists')} testID="blocked-lists-link" />
     </View>
   );
 }

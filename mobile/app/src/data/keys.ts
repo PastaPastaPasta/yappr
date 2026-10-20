@@ -99,6 +99,10 @@ export const queryKeys = {
   blockStatusAll: [...root, 'blockStatus'] as const,
   /** `safety.followedBlockLists`: how many block lists the viewer follows. */
   blockLists: [...root, 'blockLists'] as const,
+  /** `safety.blockListChoices`: followed accounts and whether their block lists are followed. */
+  blockListChoices: [...root, 'blockListChoices'] as const,
+  /** `dpns.registration`: whether usernames are registered here or in the wallet. */
+  dpnsRegistration: [...root, 'dpnsRegistration'] as const,
   /** `safety.reportsOpen`: whether a report can be filed now, or goes by email. */
   reportsOpen: [...root, 'reportsOpen'] as const,
 

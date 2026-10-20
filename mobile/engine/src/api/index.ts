@@ -3,6 +3,7 @@ import { createEngageWrites, engage } from './engage'
 import { explore } from './explore'
 import { feed } from './feed'
 import { createDmModule } from './dm'
+import { createDpnsModule } from './dpns'
 import { createGraphWrites, graph } from './graph'
 import { createNotificationsModule } from './notifications'
 import { createPollWrites, createPostWrites, posts } from './posts'
@@ -12,7 +13,6 @@ import { createMobileAuthController, createSessionModule, foregroundBalanceRefre
 import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
-import { createDpnsModule } from './dpns'
 
 /**
  * The engine API. The RN host imports `type EngineApi` only and calls it
@@ -23,7 +23,6 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
   const emit = runtime.emit ?? (() => undefined)
   setNoticeSink(notice => emit('engine.notice', notice))
   const tickets = createEngineTicketStore(emit)
-  const dpns = createDpnsModule(tickets)
   /** Shared by the session module, its controller and messages (`SessionModuleOptions.unhydrated`). */
   const unhydrated = new Set<string>()
   const dm = createDmModule({ emit, tickets, secureDurable: runtime.secureDurable, unhydrated })
@@ -73,7 +72,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     explore,
     safety: createSafetyModule(tickets),
     notifications: notifications.api,
-    dpns,
+    dpns: createDpnsModule(tickets, controller),
   }
 }
 
@@ -84,6 +83,7 @@ export type { DapiEndpointDTO, DapiStatusDTO } from '../dapi-monitor'
 export type * from './dto'
 export type * from './dm'
 export type { ContentCreatedEvent, DraftDTO } from './posts'
+export type { DpnsRegistrationDTO } from './dpns'
 export type { ProfilePatchDTO } from './profiles'
 export type * from './safety'
 export type * from './notifications'

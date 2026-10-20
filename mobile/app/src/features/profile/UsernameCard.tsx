@@ -1,15 +1,14 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
 import { XMarkIcon } from 'react-native-heroicons/outline';
 
-import { router } from 'expo-router';
 import { cn } from '~/lib-allowlist';
 import { syncStorage } from '~/state/storage';
 import { Button } from '~/ui/Button';
 import { IconButton } from '~/ui/IconButton';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
-
 
 const dismissedKey = (identityId: string) => `yappr.usernameCard.dismissed.${identityId}`;
 
@@ -20,7 +19,8 @@ export function usernameCardDismissed(identityId: string): boolean {
 
 /**
  * "Get a username" (PRD AUTH-15, copy `username.card*`): for an account with
- * no DPNS name. Registration stays in the native app and uses the engine's DPNS service.
+ * no DPNS name. "Choose a username" opens the username screen. Closing it is
+ * remembered for the account.
  */
 export function UsernameCard({ identityId, className }: { identityId: string; className?: string }) {
   const [dismissed, setDismissed] = useState(() => usernameCardDismissed(identityId));

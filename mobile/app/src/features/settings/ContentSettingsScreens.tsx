@@ -126,6 +126,11 @@ export function PrivacySettingsScreen() {
             onPress={() => router.push('/settings/blocked')}
             testID="privacy-blocked"
           />
+          <SettingsRow
+            label={copy.privacy.blockLists}
+            onPress={() => router.push('/settings/blocked-lists')}
+            testID="privacy-block-lists"
+          />
         </SettingsGroup>
       ) : null}
 
