@@ -509,44 +509,57 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     );
   }, [canPoll]);
 
-  useEffect(() => {
-    if (!enabled) return;
-    const handlePostCreated = (event: Event) => {
-      const customEvent = event as CustomEvent<PostCreatedEventDetail>;
-      const detail = customEvent.detail || {};
-      const createdPost = normalizeCreatedPost(detail.post, detail.postId, detail.confirmed !== false);
+  // Your own new post goes straight into Latest. Posted while Latest is hidden
+  // (the feed is on Top), it waits here and is put in place once Latest loads.
+  const createdWhileHiddenRef = useRef<PostCreatedEventDetail[]>([]);
+  const insertCreatedPost = useCallback((detail: PostCreatedEventDetail) => {
+    const createdPost = normalizeCreatedPost(detail.post, detail.postId, detail.confirmed !== false);
 
-      if (!createdPost) {
-        refresh().catch((error) => logger.error('Failed to load posts:', error));
+    if (!createdPost) {
+      refresh().catch((error) => logger.error('Failed to load posts:', error));
+      return;
+    }
+
+    cacheManager.clear('feed');
+
+    setData((currentItems) => {
+      const existing = currentItems || [];
+      const existingIds = new Set(existing.map((item) => item.id));
+      const merged = existingIds.has(createdPost.id)
+        ? existing.map((item) => (item.id === createdPost.id ? ({ ...item, ...createdPost } as FeedPost) : item))
+        : ([createdPost, ...existing] as FeedPost[]);
+
+      return sortFeedByTimestamp(merged);
+    });
+
+    enrichProgressively([createdPost]);
+    applyRepostAndQuoteEnrichment([createdPost]);
+    setNewestPostTimestamp((prev) => Math.max(prev || 0, getFeedItemTimestamp(createdPost)));
+
+    reconcileCreatedPost(createdPost.id).catch((error) =>
+      logger.error('Failed to reconcile created post:', error)
+    );
+  }, [applyRepostAndQuoteEnrichment, enrichProgressively, normalizeCreatedPost, reconcileCreatedPost, refresh, setData]);
+  // Read through a ref by the load effect, which must not re-run when enrichment callbacks change.
+  const insertCreatedPostRef = useRef(insertCreatedPost);
+  insertCreatedPostRef.current = insertCreatedPost;
+
+  useEffect(() => {
+    const handlePostCreated = (event: Event) => {
+      const detail = (event as CustomEvent<PostCreatedEventDetail>).detail || {};
+      if (enabled) {
+        insertCreatedPost(detail);
         return;
       }
-
       cacheManager.clear('feed');
-
-      setData((currentItems) => {
-        const existing = currentItems || [];
-        const existingIds = new Set(existing.map((item) => item.id));
-        const merged = existingIds.has(createdPost.id)
-          ? existing.map((item) => (item.id === createdPost.id ? ({ ...item, ...createdPost } as FeedPost) : item))
-          : ([createdPost, ...existing] as FeedPost[]);
-
-        return sortFeedByTimestamp(merged);
-      });
-
-      enrichProgressively([createdPost]);
-      applyRepostAndQuoteEnrichment([createdPost]);
-      setNewestPostTimestamp((prev) => Math.max(prev || 0, getFeedItemTimestamp(createdPost)));
-
-      reconcileCreatedPost(createdPost.id).catch((error) =>
-        logger.error('Failed to reconcile created post:', error)
-      );
+      createdWhileHiddenRef.current.push(detail);
     };
 
     window.addEventListener('post-created', handlePostCreated as EventListener);
     return () => {
       window.removeEventListener('post-created', handlePostCreated as EventListener);
     };
-  }, [enabled, applyRepostAndQuoteEnrichment, enrichProgressively, normalizeCreatedPost, reconcileCreatedPost, refresh, setData]);
+  }, [enabled, insertCreatedPost]);
 
   useEffect(() => {
     resetEnrichment();
@@ -559,7 +572,9 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     setNewestPostTimestamp(null);
 
     if (enabled) {
-      loadPosts().catch((error) => logger.error('Failed to load posts:', error));
+      loadPosts()
+        .then(() => createdWhileHiddenRef.current.splice(0).forEach((detail) => insertCreatedPostRef.current(detail)))
+        .catch((error) => logger.error('Failed to load posts:', error));
     } else {
       // A load superseded by disabling the feed leaves its loading flag to us.
       setLoading(false);
