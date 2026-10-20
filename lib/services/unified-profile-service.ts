@@ -1,4 +1,4 @@
-import { filterPaymentUris } from '../utils/payment-uri';
+import { filterPaymentUris, keepStoredOtherNetworkUris } from '../utils/payment-uri';
 import { logger } from '@/lib/logger';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { BaseDocumentService, withCreationTime } from './document-service';
@@ -971,10 +971,12 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         documentData.avatar = avatar;
       }
 
-      // PaymentUris: encode if updating, preserve raw if existing
+      // PaymentUris: encode if updating (keeping the entries this build hides
+      // for being another network's), preserve raw if existing
       if (updates.paymentUris !== undefined) {
-        if (updates.paymentUris.length > 0) {
-          documentData.paymentUris = this.encodePaymentUris(updates.paymentUris);
+        const paymentUris = keepStoredOtherNetworkUris(updates.paymentUris, rawProfile.paymentUris);
+        if (paymentUris.length > 0) {
+          documentData.paymentUris = this.encodePaymentUris(paymentUris);
         }
       } else if (rawProfile.paymentUris) {
         documentData.paymentUris = rawProfile.paymentUris;

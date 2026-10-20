@@ -112,6 +112,38 @@ describe('store edits can clear optional fields (QA D-10)', () => {
   });
 });
 
+describe('saves keep payment addresses this build hides for being another network\'s (M1)', () => {
+  // A testnet build (the test default) hides a mainnet `dash:` address; it is still the seller's.
+  const mainnet = { scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' };
+  const added = { scheme: 'dash:', uri: 'dash:yVUvQLRm6SYfjT46KoozgAA5y3AaxHxSj8', label: 'Dash' };
+  const sent = () => JSON.parse(updateDocument.mock.calls[0][4].paymentUris as string);
+  beforeEach(() => { get.mockResolvedValue({ ...raw, paymentUris: JSON.stringify([...paymentUris, mainnet]) }); });
+
+  it('hides it from the store as read', async () => {
+    expect((await storeService.getById('store'))?.paymentUris).toEqual(paymentUris);
+  });
+
+  it('an edit that does not name payment methods sends it back', async () => {
+    await storeService.updateStore('store', 'owner', { description: 'Coffee and tea' });
+    expect(sent()).toEqual([...paymentUris, mainnet]);
+  });
+
+  it('adding a payment method keeps it', async () => {
+    await storeService.updateStore('store', 'owner', { paymentUris: [...paymentUris, added] });
+    expect(sent()).toEqual([...paymentUris, added, mainnet]);
+  });
+
+  it('removing every visible method keeps only it', async () => {
+    await storeService.updateStore('store', 'owner', { paymentUris: [] });
+    expect(sent()).toEqual([mainnet]);
+  });
+
+  it('importing from the profile (a patch) keeps it', async () => {
+    await storeService.patchStore('store', 'owner', { paymentUris: [...paymentUris, added] });
+    expect(sent()).toEqual([...paymentUris, added, mainnet]);
+  });
+});
+
 describe('checkout reads the live store status past the cache (QA D-25)', () => {
   it('sees a store closed after checkout first loaded it', async () => {
     expect((await storeService.getById('store'))?.status).toBe('active');

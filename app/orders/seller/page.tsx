@@ -31,6 +31,7 @@ import { storeOrderService } from '@/lib/services/store-order-service'
 import { orderStatusService, openStatusNotesAsSeller, StatusNoteError } from '@/lib/services/order-status-service'
 import { getPaymentVerificationUrl } from '@/lib/services/insight-api-service'
 import { dpnsService } from '@/lib/services'
+import { storeService } from '@/lib/services/store-service'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import toast from 'react-hot-toast'
@@ -187,6 +188,17 @@ function SellerOrdersPage() {
   const [buyerUsernames, setBuyerUsernames] = useState<Map<string, string>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null)
+  // The seller's own payment addresses: a buyer's payment link is checked against them.
+  const [storePaymentUris, setStorePaymentUris] = useState<readonly { uri: string }[]>([])
+
+  useEffect(() => {
+    if (!sdkReady || !user?.identityId) return
+    let cancelled = false
+    storeService.getByOwner(user.identityId)
+      .then((store) => { if (!cancelled) setStorePaymentUris(store?.paymentUris ?? []) })
+      .catch((error: unknown) => logger.error('Failed to load the store for payment links:', error))
+    return () => { cancelled = true }
+  }, [sdkReady, user?.identityId])
 
   // Status update form
   const [updateOrderId, setUpdateOrderId] = useState<string | null>(null)
@@ -594,7 +606,7 @@ function SellerOrdersPage() {
                 const status = orderStatuses.get(order.id)
                 const payload = orderPayloads.get(order.id)
                 const paymentVerificationUrl = payload?.txid
-                  ? getPaymentVerificationUrl(payload.txid, payload.paymentUri)
+                  ? getPaymentVerificationUrl(payload.txid, payload.paymentUri, storePaymentUris)
                   : null
                 const isExpanded = expandedOrder === order.id
                 const isUpdating = updateOrderId === order.id

@@ -7,11 +7,22 @@ let releasePage: (() => void) | undefined
 export function releaseManagementPage() { releasePage?.() }
 let blogDeleted = false
 let postDeleted = false
+let firstReadFailed = false
 export const blogService = {
   async deleteBlog() { blogDeleted = true; return true },
 }
 export const blogPostService = {
   async getOwnerPostsPage(_ownerId: string, options?: { startAfter?: string }) {
+    if (scenario === 'capped') {
+      // Six pages of live-blog posts, more than one read covers, before the retained post.
+      const page = options?.startAfter ? Number(options.startAfter.slice('live-'.length)) + 1 : 0
+      if (page < 6) return { posts: [{ ...post, id: `live-${page}`, blogId: 'live', title: `Live article ${page}` }], nextCursor: `live-${page}` }
+      return { posts: [post] }
+    }
+    if (scenario === 'first-read-fails' && !firstReadFailed) {
+      firstReadFailed = true
+      throw new Error('DAPI timeout')
+    }
     if (scenario === 'live-first' || scenario === 'all-live') {
       // The first page holds only posts from a live blog; the next one (if any) a retained post.
       if (!options?.startAfter) return { posts: [{ ...post, id: 'live', blogId: 'live', title: 'Live article' }], nextCursor: 'live' }
@@ -33,7 +44,7 @@ export const blogPostService = {
     return true
   },
 }
-export const liveBlogIds = scenario === 'live-first' || scenario === 'all-live' ? new Set(['live']) : undefined
+export const liveBlogIds = scenario === 'live-first' || scenario === 'all-live' || scenario === 'capped' ? new Set(['live']) : undefined
 export function managementSnapshot() { return { blogDeleted, postDeleted } }
 export function ProfileImageUpload() { return null }
 export function reportModerationRefusal() { return false }

@@ -6,7 +6,7 @@ import { logger } from '@/lib/logger';
 
 import { INSIGHT_API_URLS, INSIGHT_API_CONFIG, getConfiguredNetwork } from '@/lib/constants'
 import type { AppNetwork } from '@/lib/constants'
-import { isValidDashAddress } from '@/lib/utils/payment-uri'
+import { isValidDashAddress, parsePaymentUri } from '@/lib/utils/payment-uri'
 
 export interface Utxo {
   txid: string
@@ -150,13 +150,18 @@ export function dashTestNetwork(): AppNetwork {
   return configured === 'mainnet' ? 'testnet' : configured
 }
 
-/** Link a Dash payment to the explorer for the chain that received it. */
-export function getPaymentVerificationUrl(txid: string, paymentUri: unknown): string | null {
-  if (typeof paymentUri !== 'string') return null
-  const scheme = paymentUri.slice(0, paymentUri.indexOf(':') + 1)
-  if (!isDashScheme(scheme)) return null
+/**
+ * Link a Dash payment to the explorer for the chain that received it. The URI
+ * comes from the buyer's order, so it is trusted only when it parses for this
+ * build and pays one of the store's own payment addresses; otherwise no link.
+ */
+export function getPaymentVerificationUrl(txid: string, paymentUri: unknown, storePaymentUris: readonly { uri: string }[]): string | null {
+  const parsed = parsePaymentUri(paymentUri)
+  if (!parsed || !isDashScheme(parsed.scheme)) return null
+  const destination = (uri: string) => uri.split('?', 1)[0]
+  if (!storePaymentUris.some((own) => destination(own.uri) === destination(parsed.uri))) return null
 
-  const network = getDashPaymentNetwork(scheme, paymentUri.slice(scheme.length))
+  const network = getDashPaymentNetwork(parsed.scheme, parsed.uri.slice(parsed.scheme.length))
   const baseUrl = network === 'devnet'
     // Enter through the root hash route: direct deep links on Moutai return 404.
     ? `${new URL(INSIGHT_API_URLS.devnet).origin}/#!/tx/`

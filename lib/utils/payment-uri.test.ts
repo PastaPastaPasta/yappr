@@ -1,6 +1,6 @@
 import bs58check from 'bs58check'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { isValidDashAddress, isValidPaymentAddress, parsePaymentUri, filterPaymentUris } from './payment-uri'
+import { isValidDashAddress, isValidPaymentAddress, parsePaymentUri, filterPaymentUris, keepOtherNetworkPaymentEntries, keepStoredOtherNetworkUris, otherNetworkPaymentEntries } from './payment-uri'
 
 const mainnetAddress = 'XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ'
 const testnetAddress = 'yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw'
@@ -39,6 +39,34 @@ describe('isValidDashAddress', () => {
 })
 
 afterEach(() => vi.unstubAllEnvs())
+
+describe('entries hidden for being another network\'s survive a save (M1)', () => {
+  const mainnetUri = `dash:${mainnetAddress}`
+  const testnetUri = `dash:${testnetAddress}`
+
+  it.each([
+    ['testnet', [testnetUri, mainnetUri], [mainnetUri]],
+    ['mainnet', [testnetUri, mainnetUri], [testnetUri]],
+    ['devnet', [testnetUri, mainnetUri], [mainnetUri]],
+  ] as const)('on a %s build picks out only the other network\'s entries', (network, stored, hidden) => {
+    vi.stubEnv('NEXT_PUBLIC_NETWORK', network)
+    expect(otherNetworkPaymentEntries(JSON.stringify(stored))).toEqual(hidden)
+  })
+
+  it('never keeps malformed or unsupported entries', () => {
+    vi.stubEnv('NEXT_PUBLIC_NETWORK', 'testnet')
+    expect(otherNetworkPaymentEntries(['javascript:alert(1)', 'dash:nope', 42, null, { uri: 'bitcoin:x' }])).toEqual([])
+    expect(otherNetworkPaymentEntries('not json')).toEqual([])
+  })
+
+  it('adds hidden entries after the saved list, once, for both record and string lists', () => {
+    vi.stubEnv('NEXT_PUBLIC_NETWORK', 'testnet')
+    const record = { scheme: 'dash:', uri: mainnetUri, label: 'Dash' }
+    expect(keepOtherNetworkPaymentEntries([], JSON.stringify([record]))).toEqual([record])
+    expect(keepOtherNetworkPaymentEntries([record], JSON.stringify([record]))).toEqual([record])
+    expect(keepStoredOtherNetworkUris([testnetUri], [testnetUri, mainnetUri, mainnetUri])).toEqual([testnetUri, mainnetUri])
+  })
+})
 
 describe('dash: takes an address of the build\'s network, as Dash wallets write it', () => {
   it.each([
