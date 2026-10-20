@@ -619,7 +619,7 @@ export const PostCard = memo(function PostCard({
   const onMore = variant === 'compact' ? undefined : actions.onMore;
   // Long press and the screen-reader action: the "⋯" menu's items as an action sheet.
   const openMenu = cardMenu ? () => openPostMenu(cardMenu) : undefined;
-  if (post.encrypted && privateAction) a11yActions.push({ name: 'private', label: privateAction.label, run: privateAction.run });
+  if (post.encrypted && !post.deleted && privateAction) a11yActions.push({ name: 'private', label: privateAction.label, run: privateAction.run });
   a11yActions.push(
     { name: 'profile', label: 'Open profile', run: actions.onAuthorPress },
     { name: 'more', label: 'More', run: openMenu ?? onMore },

@@ -5,6 +5,7 @@ import { View } from 'react-native';
 import { LockOpenIcon } from 'react-native-heroicons/outline';
 import { LockClosedIcon } from 'react-native-heroicons/solid';
 
+import { useViewerId } from '~/data/session';
 import { useLandingIntent } from '~/data/writes';
 import { Button } from '~/ui/Button';
 import { MediaGrid } from '~/ui/post/MediaGrid';
@@ -129,6 +130,7 @@ export function usePrivateBody(
   unreadable?: boolean;
 } {
   const read = usePrivatePost(post, options.enabled);
+  const viewerId = useViewerId();
   if (!post.encrypted) return {};
   const state = read.data;
   const retry = () => {
@@ -136,7 +138,10 @@ export function usePrivateBody(
   };
   return {
     privateAction: privateActionOf(state, read.isError, retry),
-    unreadable: state?.state === 'locked' && !state.own,
+    // Only what the viewer can't read for want of access: never their own post or reply, a failed read,
+    // nor a feed they're approved for but read elsewhere (no messaging key here).
+    unreadable:
+      state?.state === 'locked' && !state.own && post.author.id !== viewerId && HIDEABLE.has(state.reason),
     privateBody: (
       <PrivatePostBody
         post={post}
@@ -171,12 +176,20 @@ export function PendingPrivateBody({ post }: { post: Pick<PostDTO, 'content'> })
   );
 }
 
+/** Locked for want of access, so a list may leave it out ("Hide private posts I can't see"). */
+const HIDEABLE: ReadonlySet<PrivateLockReason> = new Set(['none', 'pending', 'revoked', 'history', 'key-changed']);
+
 /** The locked panel's button as a screen-reader action of its card (see `LockedBody`); none when it opens. */
 function privateActionOf(state: PrivatePostDTO | undefined, failed: boolean, retry: () => void): { label: string; run: () => void } | undefined {
   if (failed) return { label: copy.post.retry, run: retry };
   if (state?.state !== 'locked') return undefined;
   const { reason, feedOwnerId, own } = state;
   if (reason === 'signed-out') return { label: 'Sign in', run: () => router.push('/sign-in') };
+  if (reason === 'needs-key') {
+    return state.messagingKey === 'allow-in-wallet'
+      ? { label: copy.messagingKey.renew, run: () => router.push('/sign-in/renew') }
+      : undefined;
+  }
   if (reason === 'failed') return { label: copy.post.retry, run: retry };
   if (own) return undefined;
   if (reason === 'pending') return { label: copy.access.cancel, run: () => confirmLeave(feedOwnerId, false).catch(() => undefined) };

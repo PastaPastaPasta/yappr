@@ -123,6 +123,19 @@ describe('a private post in a feed', () => {
     expect(screen.queryByTestId(`post-card-${post.id}`)).toBeNull();
   });
 
+  it("never leaves out the viewer's own reply, nor a post they're approved for but can't open here", async () => {
+    const mine = fixturePost({ id: 'my-private-reply', encrypted: true, content: '', author: { ...AUTHORS.alice, id: VIEWER_ID } });
+    fakeEngine.method('privateFeed.read').mockResolvedValue({ state: 'locked', reason: 'none', feedOwnerId: OWNER, own: false, messagingKey: 'ready' });
+    renderIn(<PostItem post={mine} hideUnreadablePrivate />);
+    expect(await screen.findByTestId('private-request-access')).toBeTruthy();
+    screen.unmount();
+    queryClient.clear();
+    fakeEngine.method('privateFeed.read').mockResolvedValue({ state: 'locked', reason: 'needs-key', feedOwnerId: OWNER, own: false, messagingKey: 'allow-in-wallet' });
+    renderIn(<PostItem post={post} hideUnreadablePrivate />);
+    expect(await screen.findByTestId('private-renew-wallet')).toBeTruthy();
+    expect(screen.getByTestId(`post-card-${post.id}`).props.accessibilityActions).toContainEqual({ name: 'private', label: 'Renew in your wallet' });
+  });
+
   it("offers the locked card's button to a screen reader, as an action of the card", async () => {
     fakeEngine.method('privateFeed.read').mockResolvedValue({ state: 'locked', reason: 'none', feedOwnerId: OWNER, own: false, messagingKey: 'ready' });
     const sent = ticket({ op: 'privateFeed.request', target: { identityId: OWNER } });
