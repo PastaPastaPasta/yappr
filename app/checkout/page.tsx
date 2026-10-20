@@ -24,7 +24,7 @@ import { storeService } from '@/lib/services/store-service'
 import { SHIPPING_CHECK_FAILED_MESSAGE, SHIPPING_UNAVAILABLE_MESSAGE, checkShipping, finalShippingCheck, shippingZoneService, type ShippingCheck } from '@/lib/services/shipping-zone-service'
 import { formatPrice } from '@/lib/utils/format'
 import { storeOrderService } from '@/lib/services/store-order-service'
-import { ORDER_PAYMENT_FIELD_LIMITS, OWN_STORE_ORDER_MESSAGE, isOwnStore, orderPaymentBudgetError } from '@/lib/storefront/storefront-contract'
+import { NOT_FOR_SALE_YET_MESSAGE, ORDER_PAYMENT_FIELD_LIMITS, OWN_STORE_ORDER_MESSAGE, isOwnStore, orderPaymentBudgetError } from '@/lib/storefront/storefront-contract'
 import { storefrontIsV6 } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
@@ -78,7 +78,7 @@ function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null, o
     'own-store': OWN_STORE_ORDER_MESSAGE,
     'store-unavailable': 'This store is not accepting orders right now.',
     'store-check-failed': 'Could not confirm this store is open. Please try again.',
-    'no-payment-methods': 'This store has not configured any payment methods.',
+    'no-payment-methods': `${NOT_FOR_SALE_YET_MESSAGE}.`,
     'missing-buyer-key': 'Add your encryption key to continue to payment.',
     'missing-seller-key': `${ownerUsername ? `@${ownerUsername}` : "This store's owner"} hasn't set up messaging yet, so this store can't take orders.`,
     'invalid-seller-key': "This store's encryption key is invalid. Contact the store owner.",

@@ -2,6 +2,7 @@
 module.exports = {
   // Same specificity as 'class' (the :where adds none), but a `theme-light`
   // wrapper switches dark styles off inside it: a light blog post in a dark app.
+  // One-way: a `.dark` island inside a `theme-light` wrapper stays light.
   darkMode: ['variant', '&:is(.dark *):where(:not(.theme-light *))'],
   content: [
     './components/**/*.{js,ts,jsx,tsx,mdx}',

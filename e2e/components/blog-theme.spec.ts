@@ -40,6 +40,8 @@ test('a light post in a dark app reads light, and the app stays dark', async ({ 
   // The light colour variables come back inside the post too.
   const insideVar = await page.getByTestId('post-surface').evaluate((element) => getComputedStyle(element).getPropertyValue('--background').trim())
   expect(insideVar).toBe('0 0% 100%')
+  // Native controls (scrollbars, checkboxes, autofill) follow the post too.
+  expect(await page.getByTestId('post-surface').evaluate((element) => getComputedStyle(element).colorScheme)).toBe('light')
   expect(await appTheme(page)).toEqual({ stored: 'dark', htmlDark: true })
 
   await page.getByRole('button', { name: 'Back' }).click()

@@ -38,12 +38,13 @@ import type { Store, StoreItem, ItemRatingSummary, ItemVariants } from '@/lib/ty
  * store that is not open.
  */
 function unavailableReasonFor(item: StoreItem, store: Store | null, viewerId: string | undefined): string | null {
-  if (!storeTakesPayment(store)) return isOwnStore(store, viewerId) ? ADD_PAYMENT_METHOD_HINT : NOT_FOR_SALE_YET_MESSAGE
-  if (isOwnStore(store, viewerId)) return OWN_STORE_ORDER_MESSAGE
+  // The seller learns what to fix on their own store; buyers hear about the item and store first.
+  if (isOwnStore(store, viewerId)) return storeTakesPayment(store) ? OWN_STORE_ORDER_MESSAGE : ADD_PAYMENT_METHOD_HINT
   if (item.status === 'sold_out') return 'This item is sold out'
   if (item.status !== 'active') return 'This item is no longer available'
   if (item.unreadableVariants !== undefined) return "This item can't be bought right now"
   if (store && store.status !== 'active') return `This store is ${store.status === 'closed' ? 'closed' : 'paused'} and is not accepting orders`
+  if (!storeTakesPayment(store)) return NOT_FOR_SALE_YET_MESSAGE
   return null
 }
 
