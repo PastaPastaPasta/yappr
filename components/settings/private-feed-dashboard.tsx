@@ -5,9 +5,6 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  UserGroupIcon,
-  ClockIcon,
-  DocumentTextIcon,
   LockClosedIcon,
   CheckCircleIcon,
   XCircleIcon,
@@ -17,12 +14,6 @@ import Link from 'next/link'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { withoutRevokedGrants } from '@/lib/utils/revoked-grants'
 import { resolveUserDetailsBatch } from '@/lib/utils/resolve-user-details'
-
-function getKeyGenerationProgressColor(isWarning: boolean, percent: number): string {
-  if (isWarning) return 'bg-gradient-to-r from-red-500 to-red-600'
-  if (percent > 50) return 'bg-gradient-to-r from-amber-400 to-amber-500'
-  return 'bg-gradient-to-r from-green-400 to-green-500'
-}
 
 interface ActivityItem {
   id: string
@@ -36,7 +27,9 @@ interface ActivityItem {
 /**
  * PrivateFeedDashboard Component
  *
- * Dashboard showing private feed stats, key generation usage, and recent activity.
+ * Dashboard showing the private feed's followers, waiting requests and recent
+ * activity. Capacity numbers stay hidden; only a warning shows when the feed is
+ * nearly full.
  * Implements PRD §4.10 - Private Feed Owner Dashboard
  */
 export function PrivateFeedDashboard() {
@@ -45,7 +38,6 @@ export function PrivateFeedDashboard() {
   const [isEnabled, setIsEnabled] = useState(false)
   const [followerCount, setFollowerCount] = useState(0)
   const [pendingRequestCount, setPendingRequestCount] = useState(0)
-  const [privatePostCount, setPrivatePostCount] = useState(0)
   const [currentKeyGeneration, setCurrentKeyGeneration] = useState(1)
   const [caps, setCaps] = useState({ treeCapacity: 0, maxKeyGeneration: 2 })
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
@@ -61,7 +53,6 @@ export function PrivateFeedDashboard() {
       setIsEnabled(false)
       setFollowerCount(0)
       setPendingRequestCount(0)
-      setPrivatePostCount(0)
       setRecentActivity([])
       return
     }
@@ -79,7 +70,6 @@ export function PrivateFeedDashboard() {
         setIsLoading(false)
         return
       }
-      const { postService } = await import('@/lib/services/post-service')
       const { fetchRekeys } = await import('@/lib/services/private-feed-reads')
 
       // The current feed's followers, without any revoked in this session
@@ -100,24 +90,6 @@ export function PrivateFeedDashboard() {
       if (currentRequestId !== requestIdRef.current) return
 
       setPendingRequestCount(requests.length)
-
-      // Count private posts by querying user's posts and filtering for those with encryptedContent
-      // We'll do this by checking recent posts from the user
-      try {
-        const userPostsResult = await postService.getUserPosts(user.identityId, { limit: 100 })
-        const privatePosts = userPostsResult.documents.filter(
-          post => post.encryptedContent || post.keyGeneration !== undefined
-        )
-
-        // Bail out if a newer request has started
-        if (currentRequestId !== requestIdRef.current) return
-
-        setPrivatePostCount(privatePosts.length)
-      } catch (err) {
-        logger.error('Failed to count private posts:', err)
-        if (currentRequestId !== requestIdRef.current) return
-        setPrivatePostCount(0)
-      }
 
       // Build recent activity from grants (approvals) and rekey documents (revocations)
       const activity: ActivityItem[] = []
@@ -182,6 +154,7 @@ export function PrivateFeedDashboard() {
   const rawKeyGenerationPercent = caps.maxKeyGeneration > 1 ? ((currentKeyGeneration - 1) / (caps.maxKeyGeneration - 1)) * 100 : 0
   const keyGenerationUsagePercent = Math.max(0, Math.min(100, rawKeyGenerationPercent))
   const isKeyGenerationWarning = keyGenerationUsagePercent > 90
+  const isFollowerWarning = caps.treeCapacity > 0 && followerCount >= caps.treeCapacity * 0.9
 
   // Don't render anything if private feed is not enabled
   if (!isLoading && !isEnabled) {
@@ -223,58 +196,17 @@ export function PrivateFeedDashboard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Stats Grid */}
-        <div className="grid grid-cols-3 gap-4">
-          {/* Followers */}
-          <div data-testid="follower-count-stat" className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/50 dark:to-blue-900/30 p-4 rounded-xl text-center">
-            <UserGroupIcon className="h-6 w-6 mx-auto mb-2 text-blue-600 dark:text-blue-400" />
-            <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{followerCount}</p>
-            <p className="text-xs text-blue-600/70 dark:text-blue-400/70">/{caps.treeCapacity.toLocaleString()}</p>
-            <p className="text-xs font-medium text-blue-600 dark:text-blue-400 mt-1">Followers</p>
-          </div>
-
-          {/* Pending Requests */}
-          <div data-testid="pending-requests-stat" className="bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-950/50 dark:to-amber-900/30 p-4 rounded-xl text-center">
-            <ClockIcon className="h-6 w-6 mx-auto mb-2 text-amber-600 dark:text-amber-400" />
-            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{pendingRequestCount}</p>
-            <p className="text-xs text-amber-600/70 dark:text-amber-400/70">&nbsp;</p>
-            <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mt-1">Pending</p>
-          </div>
-
-          {/* Private Posts (recent sample) */}
-          <div data-testid="private-posts-stat" className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/50 dark:to-purple-900/30 p-4 rounded-xl text-center">
-            <DocumentTextIcon className="h-6 w-6 mx-auto mb-2 text-purple-600 dark:text-purple-400" />
-            <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">{privatePostCount}</p>
-            <p className="text-xs text-purple-600/70 dark:text-purple-400/70">(recent)</p>
-            <p className="text-xs font-medium text-purple-600 dark:text-purple-400 mt-1">Private Posts</p>
-          </div>
-        </div>
-
-        {/* Key generation usage */}
-        <div data-testid="key-generation-progress" className="space-y-2">
-          <div className="flex justify-between items-center text-sm">
-            <span className="font-medium">Removals</span>
-            <span className={`text-sm ${isKeyGenerationWarning ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-500'}`}>
-              {currentKeyGeneration - 1}/{(caps.maxKeyGeneration - 1).toLocaleString()} removals
-            </span>
-          </div>
-          <div className="h-2.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${getKeyGenerationProgressColor(isKeyGenerationWarning, keyGenerationUsagePercent)}`}
-              style={{ width: `${Math.max(keyGenerationUsagePercent, 1)}%` }}
-            />
-          </div>
-          {isKeyGenerationWarning && (
-            <p className="text-xs text-red-600 dark:text-red-400">
-              Your private feed is nearly out of removals. Renew it above to keep removing followers.
-            </p>
-          )}
-          {!isKeyGenerationWarning && keyGenerationUsagePercent > 50 && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              {Math.round(100 - keyGenerationUsagePercent)}% of removals left
-            </p>
-          )}
-        </div>
+        <p data-testid="private-feed-summary" className="text-sm text-gray-600 dark:text-gray-400">
+          {followerCount} {followerCount === 1 ? 'follower' : 'followers'}
+          {pendingRequestCount > 0 && ` · ${pendingRequestCount} waiting for approval`}
+        </p>
+        {(isKeyGenerationWarning || isFollowerWarning) && (
+          <p data-testid="private-feed-nearly-full" role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+            {isFollowerWarning
+              ? 'Your private feed is almost full. Renew it above to approve more followers.'
+              : 'Your private feed is almost full. Renew it above to keep removing followers.'}
+          </p>
+        )}
 
         {/* Recent Activity */}
         {recentActivity.length > 0 && (
