@@ -49,6 +49,23 @@ describe('checkLinkRows', () => {
   })
 })
 
+describe('saved rows', () => {
+  it('keeps a saved link unchanged even if it breaks the handle rules, but not an edited one', () => {
+    const saved = [{ platform: 'email', handle: 'old style' }]
+    expect(checkLinkRows([{ platform: 'email', handle: 'old style' }], label, saved).errors).toEqual([null])
+    expect(checkLinkRows([{ platform: 'email', handle: 'old styles' }], label, saved).errors).toEqual(['Invalid email address'])
+    expect(checkLinkRows([{ platform: 'email', handle: 'old style' }, { platform: 'email', handle: 'old style' }], label, saved).errors)
+      .toEqual([null, 'This link is already added'])
+  })
+
+  it('keeps a saved payment URI unchanged even if it no longer parses', () => {
+    const saved = ['bitcoin:legacy']
+    const result = checkTipRows([tipRowFromUri('bitcoin:legacy', 'tdash:')], label, saved)
+    expect(result).toEqual({ values: ['bitcoin:legacy'], errors: [null] })
+    expect(checkTipRows([{ scheme: 'bitcoin:', address: 'legacy2' }], label, saved).errors).toEqual(["That doesn't look like a bitcoin address"])
+  })
+})
+
 describe('normalizeWebsite', () => {
   it('adds https:// to a bare domain and keeps explicit schemes', () => {
     expect(normalizeWebsite(' example.com ')).toBe('https://example.com')

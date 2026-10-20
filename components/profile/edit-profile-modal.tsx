@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useEffect, useId, useRef, useState, type MutableRefObject } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ArrowLeftIcon, CameraIcon } from '@heroicons/react/24/outline'
 import { Modal } from '@/components/ui/modal'
@@ -40,6 +40,9 @@ interface EditProfileModalProps {
 export function EditProfileModal({ initial, ...props }: EditProfileModalProps) {
   // Escape and the overlay go through the dialog, which may ask to discard first.
   const requestClose = useRef<() => void>(() => {})
+  // The panel animates out after `initial` clears; it keeps the last profile meanwhile.
+  const [shown, setShown] = useState(initial)
+  if (initial && initial !== shown) setShown(initial)
   return (
     <Modal
       open={initial !== null}
@@ -48,7 +51,7 @@ export function EditProfileModal({ initial, ...props }: EditProfileModalProps) {
       overlayClassName="items-stretch px-0 sm:items-center sm:px-4"
       className="flex h-[100dvh] max-w-[600px] flex-col rounded-none sm:h-auto sm:max-h-[90vh] sm:rounded-2xl"
     >
-      {initial && <EditProfileDialog initial={initial} requestCloseRef={requestClose} {...props} />}
+      {shown && <EditProfileDialog initial={shown} requestCloseRef={requestClose} {...props} />}
     </Modal>
   )
 }
@@ -82,8 +85,8 @@ function EditProfileDialog({
   const websiteMax = fieldLimits('social', 'yapprProfile', 'website').maxLength
   const [initialKey] = useState(() => draftKey({ ...initial, website: normalizeWebsite(initial.website, websiteMax) }))
 
-  const linkCheck = checkLinkRows(links, getPlatformLabel)
-  const tipCheck = checkTipRows(tips, tipSchemeLabel)
+  const linkCheck = checkLinkRows(links, getPlatformLabel, initial.socialLinks)
+  const tipCheck = checkTipRows(tips, tipSchemeLabel, initial.paymentUris)
   const hasErrors = [...linkCheck.errors, ...tipCheck.errors].some(Boolean)
   const next: ProfileDraft = {
     ...fields,
@@ -104,6 +107,13 @@ function EditProfileDialog({
     requestCloseRef.current = requestClose
   })
 
+  // While the discard prompt is up, the form behind it takes no focus or clicks.
+  const formRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (formRef.current) formRef.current.inert = confirmDiscard
+  }, [confirmDiscard])
+  const discardTitleId = useId()
+
   const save = () => {
     if (hasErrors) {
       setShowAllErrors(true)
@@ -117,81 +127,83 @@ function EditProfileDialog({
   const subview = SUBVIEW_TITLES[view]
 
   return (
-    <>
-      <div className="flex shrink-0 items-center gap-2 border-b border-gray-200 px-2 py-2 dark:border-gray-800 sm:px-3">
-        {subview ? (
-          <button type="button" aria-label="Back" onClick={() => setView('form')} className="rounded-full p-2 hover:bg-gray-100 dark:hover:bg-gray-800">
-            <ArrowLeftIcon className="h-5 w-5" />
-          </button>
-        ) : (
-          <Button variant="ghost" size="sm" onClick={requestClose} disabled={isSaving} className="text-sm">
-            Cancel
-          </Button>
-        )}
-        <Dialog.Title className="flex-1 truncate text-center text-base font-bold">{subview ?? 'Edit profile'}</Dialog.Title>
-        <Dialog.Description className="sr-only">Change your name, bio, pictures and links.</Dialog.Description>
-        {subview ? (
-          <span className="w-9" aria-hidden="true" />
-        ) : (
-          <Button size="sm" onClick={save} disabled={isSaving} className="min-w-[4.5rem] text-sm font-bold">
-            {isSaving ? 'Saving…' : 'Save'}
-          </Button>
-        )}
-      </div>
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={formRef} className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center gap-2 border-b border-gray-200 px-2 py-2 dark:border-gray-800 sm:px-3">
+          {subview ? (
+            <button type="button" aria-label="Back" onClick={() => setView('form')} className="rounded-full p-2 hover:bg-gray-100 dark:hover:bg-gray-800">
+              <ArrowLeftIcon className="h-5 w-5" />
+            </button>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={requestClose} disabled={isSaving} className="text-sm">
+              Cancel
+            </Button>
+          )}
+          <Dialog.Title className="flex-1 truncate text-center text-base font-bold">{subview ?? 'Edit profile'}</Dialog.Title>
+          <Dialog.Description className="sr-only">Change your name, bio, pictures and links.</Dialog.Description>
+          {subview ? (
+            <span className="w-9" aria-hidden="true" />
+          ) : (
+            <Button size="sm" onClick={save} disabled={isSaving} className="min-w-[4.5rem] text-sm font-bold">
+              {isSaving ? 'Saving…' : 'Save'}
+            </Button>
+          )}
+        </div>
 
-      <div data-testid="edit-profile-body" className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {view === 'avatar' && (
-          <div className="p-4">
-            <AvatarCustomization compact onSave={() => { onAvatarSaved(); setView('form') }} />
-          </div>
-        )}
-        {view === 'banner' && (
-          <div className="p-4">
-            <BannerCustomization initialBannerUrl={bannerUri} onSave={(url) => { onBannerSaved(url); setView('form') }} />
-          </div>
-        )}
-        {view === 'form' && (
-          <>
-            <div className="relative">
-              <div className="relative h-32 sm:h-40">
-                <BannerImage key={bannerKey} userId={userId} preloadedUrl={bannerUri} className="h-full w-full" fallbackGradient />
-                <div className="absolute inset-0 flex items-center justify-center bg-black/25">
-                  <ImageButton label="Change banner" onClick={() => setView('banner')} disabled={isSaving} />
+        <div data-testid="edit-profile-body" className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          {view === 'avatar' && (
+            <div className="p-4">
+              <AvatarCustomization compact onSave={() => { onAvatarSaved(); setView('form') }} />
+            </div>
+          )}
+          {view === 'banner' && (
+            <div className="p-4">
+              <BannerCustomization initialBannerUrl={bannerUri} onSave={(url) => { onBannerSaved(url); setView('form') }} />
+            </div>
+          )}
+          {view === 'form' && (
+            <>
+              <div className="relative">
+                <div className="relative h-32 sm:h-40">
+                  <BannerImage key={bannerKey} userId={userId} preloadedUrl={bannerUri} className="h-full w-full" fallbackGradient />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+                    <ImageButton label="Change banner" onClick={() => setView('banner')} disabled={isSaving} />
+                  </div>
                 </div>
-              </div>
-              <div className="absolute -bottom-10 left-4 h-20 w-20 rounded-full bg-white p-1 dark:bg-neutral-900">
-                <div className="relative h-full w-full overflow-hidden rounded-full">
-                  <UserAvatar key={avatarKey} userId={userId} alt="Your avatar" size="full" />
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                    <ImageButton label="Change avatar" onClick={() => setView('avatar')} disabled={isSaving} />
+                <div className="absolute -bottom-10 left-4 h-20 w-20 rounded-full bg-white p-1 dark:bg-neutral-900">
+                  <div className="relative h-full w-full overflow-hidden rounded-full">
+                    <UserAvatar key={avatarKey} userId={userId} alt="Your avatar" size="full" />
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                      <ImageButton label="Change avatar" onClick={() => setView('avatar')} disabled={isSaving} />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-            <div className="px-4 pb-6 pt-14">
-              <ProfileEditForm
-                fields={fields}
-                onFieldsChange={setFields}
-                links={links}
-                onLinksChange={setLinks}
-                linkErrors={linkCheck.errors}
-                tips={tips}
-                onTipsChange={setTips}
-                tipErrors={tipCheck.errors}
-                showAllErrors={showAllErrors}
-                extrasOpen={extrasOpen}
-                onExtrasOpenChange={setExtrasOpen}
-                disabled={isSaving}
-              />
-            </div>
-          </>
-        )}
+              <div className="px-4 pb-6 pt-14">
+                <ProfileEditForm
+                  fields={fields}
+                  onFieldsChange={setFields}
+                  links={links}
+                  onLinksChange={setLinks}
+                  linkErrors={linkCheck.errors}
+                  tips={tips}
+                  onTipsChange={setTips}
+                  tipErrors={tipCheck.errors}
+                  showAllErrors={showAllErrors}
+                  extrasOpen={extrasOpen}
+                  onExtrasOpenChange={setExtrasOpen}
+                  disabled={isSaving}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {confirmDiscard && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-6">
-          <div role="alertdialog" aria-labelledby="discard-title" className="w-full max-w-xs rounded-2xl bg-white p-5 shadow-xl dark:bg-neutral-900">
-            <h3 id="discard-title" className="mb-4 text-center text-lg font-bold">Discard changes?</h3>
+          <div role="alertdialog" aria-modal="true" aria-labelledby={discardTitleId} className="w-full max-w-xs rounded-2xl bg-white p-5 shadow-xl dark:bg-neutral-900">
+            <h3 id={discardTitleId} className="mb-4 text-center text-lg font-bold">Discard changes?</h3>
             <div className="space-y-2">
               <Button variant="destructive" className="w-full rounded-full" onClick={onCancel}>Discard</Button>
               <Button variant="outline" className="w-full rounded-full" onClick={() => setConfirmDiscard(false)} autoFocus>Keep editing</Button>
@@ -199,7 +211,7 @@ function EditProfileDialog({
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }
 

@@ -120,7 +120,7 @@ export function ProfileHeader({
       </div>
 
       <div className="px-4 pb-4">
-        <div className="relative flex justify-between items-start -mt-16 mb-4">
+        <div className="relative flex justify-between items-start -mt-12 sm:-mt-16 mb-4">
           <div className="relative">
             <div className="h-24 w-24 sm:h-32 sm:w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
               <UserAvatar key={avatarKey} userId={userId} alt={displayName} size="full" />

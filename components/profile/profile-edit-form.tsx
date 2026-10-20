@@ -165,6 +165,7 @@ export function ProfileEditForm({
                   >
                     <select aria-label="Link type" value={row.platform} onChange={(e) => updateLink(row.key, { platform: e.target.value })} disabled={disabled} className={SELECT}>
                       {SOCIAL_PLATFORMS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                      {!SOCIAL_PLATFORMS.some((p) => p.id === row.platform) && <option value={row.platform}>{getPlatformLabel(row.platform)}</option>}
                     </select>
                     <LimitedInput
                       limits={afterPrefix(linkLimits, `${row.platform}:`, 256)}

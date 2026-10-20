@@ -192,6 +192,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
 
   // The header names whoever's list this is.
   useEffect(() => {
+    setTargetUserName(null)
     if (!userIdToLoad) return
     let cancelled = false
     const fallback = `User ${userIdToLoad.slice(-6)}`

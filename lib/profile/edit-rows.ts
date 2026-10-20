@@ -43,31 +43,51 @@ export function splitPaymentUri(value: string): TipRow | null {
   return { scheme, address: trimmed.slice(colon + 1) }
 }
 
-export function checkLinkRows(rows: readonly SocialLink[], platformLabel: (platform: string) => string): RowCheck<SocialLink> {
+/**
+ * `saved` are the links the profile already stores: one left as it was skips
+ * the handle rules (they may have changed since it was saved), so opening the
+ * form never flags what the profile already shows. Size and repeats still count.
+ */
+export function checkLinkRows(
+  rows: readonly SocialLink[],
+  platformLabel: (platform: string) => string,
+  saved: readonly SocialLink[] = [],
+): RowCheck<SocialLink> {
   const values: SocialLink[] = []
   const errors = rows.map((row) => {
     const handle = row.handle.trim()
     if (!handle) return null
     const link = { platform: row.platform, handle }
-    const problem = validateSocialHandle(row.platform, handle) ?? socialLinkAddProblem(values, link, platformLabel(row.platform))
+    const unchanged = saved.some((s) => s.platform === row.platform && s.handle.trim() === handle)
+    const problem = (unchanged ? null : validateSocialHandle(row.platform, handle)) ?? socialLinkAddProblem(values, link, platformLabel(row.platform))
     if (!problem) values.push(link)
     return problem
   })
   return { values, errors }
 }
 
-export function checkTipRows(rows: readonly TipRow[], schemeLabel: (scheme: string) => string): RowCheck<string> {
+/** As checkLinkRows: a `saved` payment URI left as it was is kept without re-checking its address. */
+export function checkTipRows(
+  rows: readonly TipRow[],
+  schemeLabel: (scheme: string) => string,
+  saved: readonly string[] = [],
+): RowCheck<string> {
   const values: string[] = []
   const errors = rows.map((row) => {
     const address = row.address.trim()
     if (!address) return null
-    const parsed = parsePaymentUri(row.scheme + address)
-    if (!parsed) return `That doesn't look like a ${schemeLabel(row.scheme)} address`
-    if (values.some((uri) => uri.toLowerCase() === parsed.uri.toLowerCase())) return 'Already added'
-    values.push(parsed.uri)
+    const savedUri = saved.find((uri) => tipRowsMatch(tipRowFromUri(uri, row.scheme), row.scheme, address))
+    const uri = savedUri ?? parsePaymentUri(row.scheme + address)?.uri
+    if (!uri) return `That doesn't look like a ${schemeLabel(row.scheme)} address`
+    if (values.some((other) => other.toLowerCase() === uri.toLowerCase())) return 'Already added'
+    values.push(uri)
     return null
   })
   return { values, errors }
+}
+
+function tipRowsMatch(row: TipRow, scheme: string, address: string): boolean {
+  return row.scheme === scheme && row.address.trim() === address
 }
 
 /** A website typed without a scheme gets `https://` when it still fits, so the profile can link it. */

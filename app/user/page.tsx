@@ -137,10 +137,14 @@ function UserProfileContent() {
     setUserStore(null)
     setBlogs([])
     setBlogsLoading(false)
+    setEditInitial(null)
   }, [userId])
 
   useEffect(() => {
     if (!userId) return
+    // A load still out when the page moves to another profile must not write
+    // that profile's fields into this one (an owner edit would then save them).
+    let cancelled = false
 
     const loadProfileData = async () => {
       try {
@@ -153,6 +157,8 @@ function UserProfileContent() {
           loadUserStats(userId),
           postService.getUserPosts(userId, { limit: PAGE_SIZE, forDisplay: true }).catch(() => ({ documents: [] as Post[], preloaded: undefined })),
         ])
+        if (cancelled) return
+        const profileRead = unifiedProfileService.getProfile(userId).catch(() => null)
 
         // The posts read seeds the profile cache, so the profile follows it. The
         // header waits for the profile, names, follow state and the posts tab;
@@ -167,7 +173,7 @@ function UserProfileContent() {
             try {
               const { repostService } = await import('@/lib/services/repost-service')
               const reposts = await repostService.getUserReposts(userId)
-              const profileDisplayName = (await unifiedProfileService.getProfile(userId).catch(() => null))?.displayName || `User ${userId.slice(-6)}`
+              const profileDisplayName = (await profileRead)?.displayName || `User ${userId.slice(-6)}`
               merged.push(...(await resolveUserReposts(userId, reposts, profileDisplayName)))
               merged.sort(byNewestActivity)
             } catch (repostError) {
@@ -186,11 +192,12 @@ function UserProfileContent() {
           }
         }
         const [profileResult, sortedUsernames, merged, viewerFollows] = await Promise.all([
-          unifiedProfileService.getProfile(userId).catch(() => null),
+          profileRead,
           loadUsernames(),
           loadPosts(),
           viewerId && viewerId !== userId ? followService.isFollowing(userId, viewerId).catch(() => false) : Promise.resolve(false),
         ])
+        if (cancelled) return
         setPostCount(statsResult.posts)
         // Also null when the read failed; startEdit asks strictly before an owner edits from it.
         setProfileDocumentMissing(!profileResult)
@@ -236,20 +243,23 @@ function UserProfileContent() {
           try {
             const { privateFeedService, privateFeedFollowerService } = await import('@/lib/services')
             const hasPF = await privateFeedService.hasPrivateFeed(userId)
+            if (cancelled) return
             setHasPrivateFeed(hasPF)
             if (hasPF && viewerId && viewerId !== userId) {
               try {
                 const access = await privateFeedFollowerService.getAccessStatus(userId, viewerId)
+                if (cancelled) return
                 setIsPrivateFollower(access === 'approved' || access === 'approved-no-keys')
               } catch (accessErr) {
                 logger.error('Failed to check private feed access status:', accessErr)
-                setIsPrivateFollower(false)
+                if (!cancelled) setIsPrivateFollower(false)
               }
             } else {
               setIsPrivateFollower(false)
             }
           } catch (e) {
             logger.error('Failed to check private feed status:', e)
+            if (cancelled) return
             setHasPrivateFeed(false)
             setIsPrivateFollower(false)
           }
@@ -258,10 +268,11 @@ function UserProfileContent() {
         const loadStore = async () => {
           try {
             const { storeService } = await import('@/lib/services/store-service')
-            setUserStore(await storeService.getByOwner(userId))
+            const store = await storeService.getByOwner(userId)
+            if (!cancelled) setUserStore(store)
           } catch (e) {
             logger.error('Failed to check store status:', e)
-            setUserStore(null)
+            if (!cancelled) setUserStore(null)
           }
         }
 
@@ -272,6 +283,7 @@ function UserProfileContent() {
             const ownerBlogs = await blogService.getBlogsByOwner(userId)
             // Preserve the existing 100-post display cap for each blog.
             const pages = await blogPostService.getPostsByBlogs(ownerBlogs.map(blog => blog.id), 100)
+            if (cancelled) return
             setBlogs(ownerBlogs.map(blog => ({
               id: blog.id, name: blog.name, description: blog.description,
               // Drafts are not public; the owner's dashboard counts them.
@@ -279,9 +291,9 @@ function UserProfileContent() {
             })))
           } catch (blogError) {
             logger.error('Failed to load blogs for profile:', blogError)
-            setBlogs([])
+            if (!cancelled) setBlogs([])
           } finally {
-            setBlogsLoading(false)
+            if (!cancelled) setBlogsLoading(false)
           }
         }
 
@@ -289,11 +301,12 @@ function UserProfileContent() {
       } catch (error) {
         logger.error('Failed to load profile:', error)
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
     }
 
     loadProfileData().catch((err) => logger.error('Failed to load profile:', err))
+    return () => { cancelled = true }
     // Reload on a profile change only; the viewer changing mid-visit is not worth a refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, enrichProgressively])
@@ -341,6 +354,14 @@ function UserProfileContent() {
   }, [profile, profileDocumentMissing, viewerId, dpnsLabel])
 
   const cancelEdit = () => setEditInitial(null)
+
+  // An avatar or banner save is a profile's first write when there was none; it
+  // names the profile after the DPNS label, as the service does.
+  const markProfileWritten = () => {
+    if (!profileDocumentMissing) return
+    setProfileDocumentMissing(false)
+    setProfile((prev) => (prev ? { ...prev, displayName } : prev))
+  }
 
   // `?edit=true` deep-links into edit mode once, then drops the parameter.
   useEffect(() => {
@@ -627,8 +648,10 @@ function UserProfileContent() {
         onAvatarSaved={() => {
           invalidateAvatarImageCache(userId)
           setAvatarKey((k) => k + 1)
+          markProfileWritten()
         }}
         onBannerSaved={(newBannerUrl) => {
+          markProfileWritten()
           invalidateBannerCache(userId)
           setBannerKey((k) => k + 1)
           setProfile((prev) => (prev ? { ...prev, bannerUri: newBannerUrl || undefined } : null))
@@ -672,7 +695,7 @@ function ProfileSkeleton({ userId }: { userId?: string }) {
         )}
       </div>
       <div className="px-4 pb-4">
-        <div className="flex justify-between items-start -mt-16 mb-4">
+        <div className="flex justify-between items-start -mt-12 sm:-mt-16 mb-4">
           <div className="h-24 w-24 sm:h-32 sm:w-32 rounded-full bg-white dark:bg-neutral-900 p-1">
             <div className="h-full w-full rounded-full overflow-hidden blur-sm opacity-60">
               {userId ? <UserAvatar userId={userId} alt="" size="full" /> : <div className={`h-full w-full ${BAR}`} />}

@@ -31,11 +31,13 @@ const params = new URLSearchParams(window.location.search)
 const fixture = params.get('fixture')
 function EditProfileFixture() {
   const creates = params.get('creates') === '1'
+  // Links saved before today's handle rules, one on a platform the picker no longer lists.
+  const legacyLinks = params.get('legacy') === '1' ? [{ platform: 'email', handle: 'old style' }, { platform: 'myspace', handle: 'tom' }] : []
   const [open, setOpen] = useState(true)
   const [saved, setSaved] = useState('')
   const initial = creates
     ? { ...EMPTY_DRAFT, displayName: 'owner' }
-    : { ...EMPTY_DRAFT, displayName: 'Owner', bio: 'Hello', socialLinks: [{ platform: 'github', handle: 'octocat' }] }
+    : { ...EMPTY_DRAFT, displayName: 'Owner', bio: 'Hello', socialLinks: [{ platform: 'github', handle: 'octocat' }, ...legacyLinks] }
   return <>
     <p data-testid="edit-state">{open ? 'open' : 'closed'}</p>
     <pre data-testid="saved">{saved}</pre>
