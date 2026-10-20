@@ -67,7 +67,7 @@ export function PoweredByDash() {
       rel="noopener noreferrer"
       className="group inline-flex items-baseline gap-1 text-sm leading-5 text-gray-500 transition-colors hover:text-gray-900 dark:hover:text-gray-100"
     >
-      Powered by
+      Powered by{' '}
       <span className="font-semibold text-[#0072BC] group-hover:underline dark:text-[#008DE4]">Dash</span>
     </a>
   )
