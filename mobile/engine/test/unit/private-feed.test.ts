@@ -214,6 +214,13 @@ async function privatePost(author: string, text: string): Promise<string> {
   return id
 }
 
+/** O's private feed, turned on if no test before has (so a test can run on its own). */
+async function ownerFeedOn(): Promise<void> {
+  as(O)
+  chain.wallet.add(O)
+  if (!(await api.privateFeedReads.overview()).enabled) expect((await settle(writes.enable())).state).toBe('confirmed')
+}
+
 describe('privateFeed: owner enables, follower requests, owner approves, posts, revokes', () => {
   let before: string
 
@@ -379,6 +386,7 @@ describe('privateFeed: locked states and refusals', () => {
   })
 
   it('leaves a request and an approval that landed unconfirmed to their checks, which find them', async () => {
+    await ownerFeedOn()
     chain.unconfirmedTypes = new Set(['followRequest', 'privateFeedGrant'])
     // Real times: the request's check compares its $createdAt with the ticket's.
     chain.clock = Math.max(chain.clock, Date.now())
@@ -398,6 +406,7 @@ describe('privateFeed: locked states and refusals', () => {
   })
 
   it('never confirms Ask again by the request it was replacing', async () => {
+    await ownerFeedOn()
     // Real times: the request's check compares its $createdAt with the ticket's.
     chain.clock = Math.max(chain.clock, Date.now())
     as(G)

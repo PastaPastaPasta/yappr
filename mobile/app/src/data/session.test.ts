@@ -95,6 +95,23 @@ describe('session sync', () => {
     await flush();
     expect(queryClient.getQueryState(queryKeys.post.detail('p'))?.isInvalidated).toBe(true);
   });
+
+  it("reads private feeds again after a wallet renewal (the messaging key may be here now), and nothing else", async () => {
+    fakeEngine.method('session.current').mockResolvedValue(session('alice'));
+    stop = startSessionSync();
+    fakeEngine.setStatus({ state: 'ready', epoch: 1 });
+    await flush();
+    queryClient.setQueryData(queryKeys.privateFeed.post('p'), { state: 'locked', reason: 'needs-key' });
+    queryClient.setQueryData(queryKeys.privateFeed.overview, { enabled: true });
+    queryClient.setQueryData(queryKeys.post.detail('p'), { id: 'p' });
+
+    act(() => fakeEngine.emit('session.changed', { session: session('alice'), reason: 'renewed' }));
+    await flush();
+    expect(queryClient.getQueryState(queryKeys.privateFeed.post('p'))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(queryKeys.privateFeed.overview)?.isInvalidated).toBe(true);
+    // Same account: the rest of the cache stands.
+    expect(queryClient.getQueryState(queryKeys.post.detail('p'))?.isInvalidated).toBe(false);
+  });
 });
 
 describe('useCapabilities', () => {
