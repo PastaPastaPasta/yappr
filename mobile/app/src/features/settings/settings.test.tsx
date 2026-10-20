@@ -951,7 +951,7 @@ describe('Choose a username (AUTH-15)', () => {
     renderScreen(<UsernameScreen />);
     await settle();
     await typeName('bob');
-    expect(byId('username-contested')).toHaveTextContent('Short names like this go to a community vote and cost 0.1 DASH.');
+    expect(byId('username-contested')).toHaveTextContent('Short names like this go to a community vote and cost at least 0.1 DASH.');
 
     // Landing only joins the vote: the name is not theirs yet.
     const pending = ticket({ op: 'dpns.register', target: { identityId: ALICE } });

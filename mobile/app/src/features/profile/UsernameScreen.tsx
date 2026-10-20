@@ -35,7 +35,7 @@ const copy = {
   checkFailed: "Couldn't check this name.",
   retry: 'Try again',
   // Only where a name costs real money: short names go to a vote with a fee.
-  contested: (fund: string) => `Short names like this go to a community vote and cost ${fund}.`,
+  contested: (fund: string) => `Short names like this go to a community vote and cost at least ${fund}.`,
   claim: (name: string) => (name ? `Claim @${name}` : 'Claim username'),
   registering: 'Claiming…',
   registered: (name: string) => `@${name} is yours`,
