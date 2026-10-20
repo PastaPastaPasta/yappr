@@ -72,13 +72,26 @@ export interface PaymentAmountDTO {
   amount: number
   /** "0.12345678 DASH". */
   display: string
-  /** The payment URI with `amount=` (BIP-21), for the QR code and "Open in wallet". */
+  /**
+   * The URI for the QR code and "Open in wallet": with `amount=` for a
+   * BIP-21 scheme, else the store's URI unchanged.
+   */
   uri: string
 }
 
-/** BIP-21 `amount=`, eight decimals (web `buildUriWithAmount`). */
-function uriWithAmount(uri: string, amount: number): string {
-  return `${uri}${uri.includes('?') ? '&' : '?'}amount=${amount.toFixed(8)}`
+/** Schemes whose URIs ask for an amount with BIP-21 `amount=` in coin units. Others (EIP-681, Monero, BOLT11) encode it otherwise. */
+const BIP21_SCHEMES = new Set(['dash:', 'tdash:', 'bitcoin:', 'litecoin:', 'dogecoin:', 'bitcoincash:', 'zcash:'])
+
+/**
+ * `uri` asking for `amount` (eight decimals, as web): an amount it already
+ * carries is replaced, its other parameters kept. A scheme that is not BIP-21
+ * keeps its URI as it is.
+ */
+export function uriWithAmount(uri: string, scheme: string, amount: number): string {
+  if (!BIP21_SCHEMES.has(scheme.toLowerCase())) return uri
+  const [base, query = ''] = uri.split('?', 2)
+  const params = query.split('&').filter(param => param && param.split('=')[0].toLowerCase() !== 'amount')
+  return `${base}?${[`amount=${amount.toFixed(8)}`, ...params].join('&')}`
 }
 
 /**
@@ -96,7 +109,7 @@ async function paymentAmount(input: { paymentUri: string; total: number; currenc
     ? total
     : (await cryptoPriceService.convertToCrypto(total, input.currency, parsed.scheme).catch(() => null))?.cryptoAmount
   if (!amount || !Number.isFinite(amount) || amount <= 0) return null
-  return { amount, display: `${formatCryptoAmount(amount, parsed.scheme)} ${symbol}`, uri: uriWithAmount(parsed.uri, amount) }
+  return { amount, display: `${formatCryptoAmount(amount, parsed.scheme)} ${symbol}`, uri: uriWithAmount(parsed.uri, parsed.scheme, amount) }
 }
 
 export interface CheckoutQuoteDTO {

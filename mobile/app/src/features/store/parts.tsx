@@ -4,8 +4,8 @@ import { router, useNavigation } from 'expo-router';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as WebBrowser from 'expo-web-browser';
-import { useState, type ReactNode, useEffect } from 'react';
-import { Linking, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
+import { Linking, Pressable, RefreshControl, ScrollView, View, type RefreshControlProps } from 'react-native';
 
 import { formatPrice } from '~/lib-allowlist';
 import { engine } from '~/engine';
@@ -363,10 +363,11 @@ export function ManageUnavailable({ failed, retrying, onRetry }: { failed: boole
  * keyboard (iOS insets; Android pads, edge to edge), and a tap on another
  * field or button while the keyboard is up lands on it.
  */
-export function FormScroll({ children, testID }: { children: ReactNode; testID?: string }) {
+export function FormScroll({ children, testID, refreshControl }: { children: ReactNode; testID?: string; refreshControl?: ReactElement<RefreshControlProps> }) {
   return (
     <KeyboardAvoider>
       <ScrollView
+        refreshControl={refreshControl}
         contentContainerStyle={{ padding: 16, paddingBottom: 64 }}
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets

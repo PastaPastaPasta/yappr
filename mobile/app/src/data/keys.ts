@@ -46,7 +46,8 @@ export const queryKeys = {
     /** A store's checkout quote, by what it was asked for (never persisted: it holds the address). */
     checkout: (storeId: string, ask: unknown) => [...root, 'store', 'checkout', storeId, ask] as const,
     /** The coin amount for an order total with one payment method (a live price). */
-    paymentAmount: (paymentUri: string, total: number, currency: string) => [...root, 'store', 'paymentAmount', paymentUri, total, currency] as const,
+    // The private inputs sit in an object: diagnostic labels name a key's scalars, never its objects.
+    paymentAmount: (paymentUri: string, total: number, currency: string) => [...root, 'store', 'paymentAmount', { paymentUri, total, currency }] as const,
     /** Decrypted orders: never persisted (MMKV is not encrypted). */
     orders: () => [...root, 'store', 'orders'] as const,
     sellerOrders: () => [...root, 'store', 'orders', 'seller'] as const,

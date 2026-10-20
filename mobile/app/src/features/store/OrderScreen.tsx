@@ -1,7 +1,7 @@
 import type { BuyerOrderDTO, OrderStatus, SellerOrderDTO } from '@engine/api';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -16,7 +16,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { AddressBlock, CopyRow, DeliveryList, Loading, Notice, openLink, OrderLines, Section, StatusDetail, useRefreshControl } from './parts';
+import { AddressBlock, CopyRow, DeliveryList, FormScroll, Loading, Notice, openLink, OrderLines, Section, StatusDetail, useRefreshControl } from './parts';
 import { orderStatusWrite } from './store-writes';
 
 const STATUS_OPTIONS: { value: OrderStatus; title: string }[] = [
@@ -43,14 +43,14 @@ export function OrderScreen() {
       {order.isPending ? <Loading /> : !data ? (
         <ErrorState message={order.error?.message ?? "This order couldn't be loaded."} onRetry={() => order.refetch()} retrying={order.isRetrying} />
       ) : (
-        <ScrollView refreshControl={refreshControl} contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID={`order-detail-${data.role}`}>
+        <FormScroll refreshControl={refreshControl} testID={`order-detail-${data.role}`}>
           {data.order.locked ? (
             <Notice tone="warning" text="Unlock your account on this device to see the order details.">
               <Button size="sm" label="Unlock" onPress={() => setUnlockOpen(true)} />
             </Notice>
           ) : null}
           {data.role === 'seller' ? <SellerOrder order={data.order} /> : <BuyerOrder order={data.order} />}
-        </ScrollView>
+        </FormScroll>
       )}
       <UnlockSheet open={unlockOpen} onClose={() => { setUnlockOpen(false); order.refetch().catch(() => undefined); }} />
     </Screen>

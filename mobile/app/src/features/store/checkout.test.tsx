@@ -7,7 +7,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { resetWriteTracking } from '~/data/writes';
-import { queryClient } from '~/state/query-client';
+import { queryKeys } from '~/data/keys';
+import { describeQueryKey, queryClient } from '~/state/query-client';
 
 import { CheckoutScreen } from './CheckoutScreen';
 import { FormScroll } from './parts';
@@ -121,6 +122,15 @@ describe('checkout', () => {
     });
     expect(screen.queryByTestId('checkout-coin-amount')).toBeNull();
     expect(screen.getByTestId('qr-value').props.children).toBe(PAY);
+  });
+});
+
+describe('payment amount reads', () => {
+  it('never name the payment address or the total in diagnostic labels', () => {
+    const label = describeQueryKey(queryKeys.store.paymentAmount(PAY, 1900, 'USD'));
+    expect(label).not.toContain('dash:');
+    expect(label).not.toContain('1900');
+    expect(label).toContain('paymentAmount');
   });
 });
 

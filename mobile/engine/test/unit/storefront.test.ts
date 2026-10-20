@@ -543,6 +543,13 @@ describe('payment amount (D-952)', () => {
     expect(m.convertToCrypto).toHaveBeenCalledWith(19, 'USD', 'dash:')
   })
 
+  it('replaces an amount the stored URI carries, keeps its other parameters, and leaves non-BIP-21 links alone', async () => {
+    const { uriWithAmount } = await import('../../src/api/store')
+    expect(uriWithAmount(`${uri}?amount=0.25&message=Thanks`, 'dash:', 0.6333)).toBe(`${uri}?amount=0.63330000&message=Thanks`)
+    expect(uriWithAmount('ethereum:0xabc', 'ethereum:', 1.5)).toBe('ethereum:0xabc')
+    expect(uriWithAmount('lightning:lnbc1xyz', 'lightning:', 0.001)).toBe('lightning:lnbc1xyz')
+  })
+
   it('needs no price for a store priced in the coin itself', async () => {
     await expect(engine().store.paymentAmount({ paymentUri: uri, total: 150_000_000, currency: 'DASH' })).resolves.toMatchObject({ amount: 1.5, uri: `${uri}?amount=1.50000000` })
     expect(m.convertToCrypto).not.toHaveBeenCalled()
