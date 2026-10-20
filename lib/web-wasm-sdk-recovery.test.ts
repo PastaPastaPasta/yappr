@@ -1,10 +1,21 @@
-import { gzipSync } from 'node:zlib'
+import { brotliCompressSync, gzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { rawInit } = vi.hoisted(() => ({ rawInit: vi.fn() }))
 vi.mock('@dashevo/wasm-sdk/raw/wasm_sdk.no_url.js', () => ({ default: rawInit }))
 
 const wasm = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])
+
+/** A browser whose DecompressionStream reads gzip but not brotli (Chromium). */
+function withoutBrotli() {
+  const Native = globalThis.DecompressionStream
+  vi.stubGlobal('DecompressionStream', class extends Native {
+    constructor(format: CompressionFormat) {
+      if (String(format) === 'brotli') throw new TypeError('Unsupported compression format')
+      super(format)
+    }
+  })
+}
 
 beforeEach(() => {
   vi.resetModules()
@@ -24,6 +35,7 @@ afterEach(() => {
 
 describe('web WASM recovery', () => {
   it('evicts damaged bytes and recovers with one fresh download', async () => {
+    withoutBrotli()
     vi.stubGlobal('window', { __yapprSdkWasm: Promise.resolve(new Response('damaged')) })
     const remove = vi.fn().mockResolvedValue(true)
     const put = vi.fn().mockResolvedValue(undefined)
@@ -80,5 +92,65 @@ describe('web WASM recovery', () => {
     await expect(first).rejects.toThrow('Couldn’t load Yappr')
     expect(init()).toBe(first)
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('downloads and decodes the brotli file where the browser can decompress brotli', async () => {
+    const remove = vi.fn().mockResolvedValue(true)
+    const put = vi.fn().mockResolvedValue(undefined)
+    const cache = { delete: remove, put, match: vi.fn().mockResolvedValue(undefined), keys: vi.fn().mockResolvedValue([]) }
+    vi.stubGlobal('caches', { open: vi.fn().mockResolvedValue(cache) })
+    const fetch = vi.fn().mockResolvedValue(new Response(brotliCompressSync(wasm)))
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('window', {})
+    const { default: init } = await import('./web-wasm-sdk')
+    await expect(init()).resolves.toBe('initialized')
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/devnet/_next/static/wasm/sdk-test.wasm.br', { cache: 'force-cache' })
+    expect(remove).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    expect(put.mock.calls[0][0]).toBe('/devnet/_next/static/wasm/sdk-test.wasm.br')
+  })
+
+  it('falls back to the gzip file when the brotli file cannot be loaded', async () => {
+    const cache = { delete: vi.fn().mockResolvedValue(true), put: vi.fn().mockResolvedValue(undefined), match: vi.fn().mockResolvedValue(undefined), keys: vi.fn().mockResolvedValue([]) }
+    vi.stubGlobal('caches', { open: vi.fn().mockResolvedValue(cache) })
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response('missing', { status: 404 }))
+      .mockResolvedValueOnce(new Response(gzipSync(wasm)))
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('window', {})
+    const storage = new Map<string, string>()
+    vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) })
+    const { default: init } = await import('./web-wasm-sdk')
+    await expect(init()).resolves.toBe('initialized')
+    expect(fetch.mock.calls).toEqual([
+      ['/devnet/_next/static/wasm/sdk-test.wasm.br', { cache: 'force-cache' }],
+      ['/devnet/_next/static/wasm/sdk-test.wasm.gz', { cache: 'force-cache' }],
+    ])
+    // Later visits go straight to the gzip file.
+    expect(storage.get('yappr-sdk-wasm-skip-brotli')).toBe('/devnet/_next/static/wasm/sdk-test.wasm.br')
+    const { sdkWasmUrl } = await import('./web-wasm-preload')
+    expect(sdkWasmUrl('/devnet/_next/static/wasm/sdk-test.wasm.gz')).toBe('/devnet/_next/static/wasm/sdk-test.wasm.gz')
+  })
+
+  it('falls back to the gzip file when the brotli file arrives damaged', async () => {
+    const cache = { delete: vi.fn().mockResolvedValue(true), put: vi.fn().mockResolvedValue(undefined), match: vi.fn().mockResolvedValue(undefined), keys: vi.fn().mockResolvedValue([]) }
+    vi.stubGlobal('caches', { open: vi.fn().mockResolvedValue(cache) })
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(new Uint8Array([0x8b, 1, 2, 3, 4, 5])))
+      .mockResolvedValueOnce(new Response(gzipSync(wasm)))
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('window', {})
+    const { default: init } = await import('./web-wasm-sdk')
+    await expect(init()).resolves.toBe('initialized')
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(cache.delete).toHaveBeenCalledWith('/devnet/_next/static/wasm/sdk-test.wasm.br')
+  })
+
+  it('asks for the gzip file where the browser cannot decompress brotli', async () => {
+    withoutBrotli()
+    const { sdkWasmUrl } = await import('./web-wasm-preload')
+    expect(sdkWasmUrl('/x/sdk-a.wasm.gz')).toBe('/x/sdk-a.wasm.gz')
+    vi.unstubAllGlobals()
+    expect(sdkWasmUrl('/x/sdk-a.wasm.gz')).toBe('/x/sdk-a.wasm.br')
   })
 })

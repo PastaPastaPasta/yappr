@@ -89,7 +89,10 @@ const nextConfig = {
           compiler.hooks.thisCompilation.tap('SdkWasmAsset', compilation => {
             compilation.hooks.processAssets.tap(
               { name: 'SdkWasmAsset', stage: webpack.Compilation.PROCESS_ASSETS_STAGE_ADDITIONAL },
-              () => compilation.emitAsset(wasmAsset.name, new webpack.sources.RawSource(wasmAsset.bytes))
+              () => {
+                compilation.emitAsset(wasmAsset.name, new webpack.sources.RawSource(wasmAsset.bytes))
+                compilation.emitAsset(wasmAsset.brotliName, new webpack.sources.RawSource(wasmAsset.brotliBytes))
+              }
             )
           })
         }
