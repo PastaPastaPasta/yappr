@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
-  registeredActionFee, registeredContractOf, registeredDeleteWindow, registeredOr, registeredOwnerProtected, registeredSettledRule, rememberRegisteredContract,
+  registeredActionFee, registeredContractOf, registeredContractsSettled, registeredDeleteWindow, registeredOr, registeredOwnerProtected, registeredSettledRule,
+  rememberRegisteredContract, trackRegisteredRefresh,
 } from './registered-contracts'
 
 /** /staging's social v17 as registered (before D39/D41), the way the wasm `DataContract` exposes it: integers as bigints. */
@@ -47,5 +48,30 @@ describe('registered contract declarations', () => {
     rememberRegisteredContract('flaky', {})
     expect(registeredOwnerProtected('flaky')).toBeUndefined()
     expect(registeredActionFee('flaky', 'post', 'create')).toBeUndefined()
+  })
+})
+
+describe('a refresh in flight', () => {
+  it('holds a write until the snapshot check settles, so the refetched fee is the one agreed to', async () => {
+    let finish: () => void = () => undefined
+    trackRegisteredRefresh(new Promise<void>((resolve) => { finish = () => { rememberRegisteredContract('refreshed', { schemas: { post: { actionFees: { create: { moderators: BigInt(7) } } } } }); resolve() } }))
+    const settled = registeredContractsSettled().then(() => registeredActionFee('refreshed', 'post', 'create')?.moderators)
+    finish()
+    await expect(settled).resolves.toBe(7n)
+  })
+
+  it('does not hold a write on a check that fails or never answers', async () => {
+    trackRegisteredRefresh(Promise.reject(new Error('offline')))
+    await expect(registeredContractsSettled()).resolves.toBeUndefined()
+    vi.useFakeTimers()
+    try {
+      trackRegisteredRefresh(new Promise(() => undefined))
+      const waiting = registeredContractsSettled()
+      await vi.advanceTimersByTimeAsync(10_000)
+      await expect(waiting).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+      trackRegisteredRefresh(Promise.resolve())
+    }
   })
 })

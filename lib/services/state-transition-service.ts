@@ -18,6 +18,7 @@ import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 import { documentIdForCreate, identityContractNonceConsumed } from '@/lib/document-id';
 import { buildSignedCreateTransition } from '@/lib/manual-batch';
+import { registeredContractsSettled } from '@/lib/registered-contracts';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce';
 import {
@@ -630,6 +631,8 @@ class StateTransitionService {
     try {
       const sdk = await getEvoSdk();
       const wasm = sdk.wasm;
+      // The fee is the registered contract's: wait for the bundled snapshot's check against the chain.
+      await registeredContractsSettled();
 
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {

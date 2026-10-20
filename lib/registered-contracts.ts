@@ -38,6 +38,32 @@ type RawActionFees = { pricing?: unknown } & Partial<Record<DocumentAction, { ow
 
 const known = new Map<string, RegisteredContract>()
 
+/** The refresh of recorded contracts in flight (the SDK's bundle revalidation), settled or not. */
+let refreshing: Promise<unknown> = Promise.resolve()
+
+/** How long a write waits for a refresh in flight before it reads the records as they stand. */
+const REFRESH_WAIT_MS = 10_000
+
+/**
+ * Registers a refresh in flight: the SDK seeds the bundled snapshot at once
+ * and checks it against the chain afterwards, refetching what is stale.
+ */
+export function trackRegisteredRefresh(refresh: Promise<unknown>): void {
+  refreshing = refresh.catch(() => undefined)
+}
+
+/**
+ * Resolves once the refresh in flight has settled, or after
+ * {@link REFRESH_WAIT_MS}: a priced write awaits it before reading the fee it
+ * agrees to, so a snapshot older than the chain cannot be agreed to (40133).
+ * Reads never wait: by the time a user writes, the check has long settled.
+ */
+export async function registeredContractsSettled(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([refreshing, new Promise<void>((resolve) => { timer = setTimeout(resolve, REFRESH_WAIT_MS) })])
+  clearTimeout(timer)
+}
+
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 /** A wasm schema carries integers as bigints; JSON as numbers. */
 const integer = (value: unknown): number | null => (typeof value === 'bigint' || typeof value === 'number' ? Number(value) : null)

@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import type { EvoSDK } from '@dashevo/evo-sdk';
 import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
-import { rememberRegisteredContract } from '@/lib/registered-contracts';
+import { rememberRegisteredContract, trackRegisteredRefresh } from '@/lib/registered-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
 import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
 import { profileBaseSource, profileExtensionSource } from '../profile/v10-profile';
@@ -368,7 +368,8 @@ class EvoSdkService {
     // writes stay observed and still drive recovery.
     const getLatestVersions = sdk.contracts.getLatestVersions.bind(sdk.contracts);
     const getMany = sdk.contracts.getMany.bind(sdk.contracts);
-    void (async () => {
+    // Writes wait for this check before agreeing to a fee (lib/registered-contracts.ts).
+    trackRegisteredRefresh((async () => {
       try {
         const bundle = await this._bundle();
         if (!bundle) return;
@@ -392,7 +393,7 @@ class EvoSdkService {
           logger.warn('EvoSdkService: bundled contract revalidation failed:', error);
         }
       }
-    })();
+    })());
   }
 
   /**
