@@ -5,8 +5,21 @@ import { createEngineStorage } from './engine-storage';
 import { decodeSecureKey, encodeSecureKey, identityInKey, SECURE_CHUNK_CHARS, secureItemName } from './secure-keys';
 
 const keychain = (SecureStore as unknown as { __items: Map<string, string> }).__items;
-/** The jest.setup.js MMKV: a new process, or an uninstall (the files go, Keychain items stay). */
+/** The jest.setup.js MMKV: a new process, or an uninstall (its files go, Keychain items stay). */
 const device = mmkv as unknown as { __relaunch: () => void; __uninstall: () => void };
+/** A new process: this module loaded afresh (its own instances), on the same Keychain and MMKV files. */
+function relaunched(): typeof import('./engine-storage') {
+  device.__relaunch();
+  let fresh: typeof import('./engine-storage') | undefined;
+  jest.isolateModules(() => {
+    fresh = jest.requireActual<typeof import('./engine-storage')>('./engine-storage');
+  });
+  return fresh!;
+}
+/** Wipes Keychain services as iOS would. */
+const wipeKeychain = (services: string[]) => {
+  for (const key of [...keychain.keys()]) if (services.some((s) => key.startsWith(`${s}:`))) keychain.delete(key);
+};
 const ALICE = '5DbLwAxGBzUzo81VewMUwn4b5P4bpv9FNFybi25XB5Bk';
 const BOB = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
 const SERVICE = 'pr.yap.app.secrets.testnet';
@@ -145,16 +158,14 @@ describe('engine storage', () => {
     const oldMmkvKey = keychain.get('pr.yap.app.engine-keys:yappr.mmkv-key.testnet');
     // Relaunch: nothing is wiped.
     const wipe = jest.fn();
-    await createEngineStorage('testnet', { wipeServices: wipe }).open();
+    await relaunched().createEngineStorage('testnet', { wipeServices: wipe }).open();
     expect(wipe).not.toHaveBeenCalled();
     expect(secretItems()).toHaveLength(1);
 
     // Uninstall deletes app data (the MMKV files) but not Keychain items; then reinstall.
     device.__uninstall();
-    const wipeServices = jest.fn((services: string[]) => {
-      for (const key of [...keychain.keys()]) if (services.some((s) => key.startsWith(`${s}:`))) keychain.delete(key);
-    });
-    const fresh = createEngineStorage('testnet', { wipeServices });
+    const wipeServices = jest.fn(wipeKeychain);
+    const fresh = relaunched().createEngineStorage('testnet', { wipeServices });
     await fresh.open();
     expect(wipeServices).toHaveBeenCalledWith([SERVICE]);
     expect(secretItems()).toHaveLength(0);
@@ -162,19 +173,40 @@ describe('engine storage', () => {
     expect(await fresh.snapshot(ALICE)).toEqual({ local: {}, secure: {} });
   });
 
-  it('never deletes a store this process opened: the native store would go from under it (D-902)', async () => {
-    // Reinstalled: the Keychain still has the old copy's MMKV key, so the index is opened to look.
+  it('keeps what the reinstalled copy saves: its store is re-keyed to the key it saved, so later launches read it', async () => {
     device.__uninstall();
-    const fresh = createEngineStorage('testnet', { wipeServices: jest.fn() });
+    // The first launch after the reinstall opens the index with the old copy's key, then starts over.
+    const first = relaunched().createEngineStorage('testnet', { wipeServices: jest.fn(wipeKeychain) });
+    await first.open();
+    first.apply({ area: 'local', seq: 1, ops: [['set', 'yappr_session', session(ALICE)]] });
+    await first.apply({ area: 'secure', seq: 2, ops: [['set', `yappr_secure_pk_${ALICE}`, 'new-key']] });
+
+    for (let launch = 0; launch < 2; launch += 1) {
+      const wipeServices = jest.fn(wipeKeychain);
+      const next = relaunched().createEngineStorage('testnet', { wipeServices });
+      await next.open();
+      expect(wipeServices).not.toHaveBeenCalled();
+      expect(await next.snapshot(ALICE)).toEqual({
+        local: { yappr_session: session(ALICE) },
+        secure: { [`yappr_secure_pk_${ALICE}`]: 'new-key' },
+      });
+    }
+  });
+
+  it('never deletes a store this process opened: the native store would go from under it (D-902)', async () => {
+    // Reinstalled: the Keychain still has the old copy's MMKV key, so the index is opened to look,
+    // then emptied and re-keyed in place (deleting it under that instance crashed the app).
+    device.__uninstall();
+    const fresh = relaunched().createEngineStorage('testnet', { wipeServices: jest.fn(wipeKeychain) });
     await expect(fresh.open()).resolves.toBeUndefined();
     await fresh.apply({ area: 'secure', seq: 1, ops: [['set', `yappr_secure_pk_${ALICE}`, 'k']] });
     // Diagnostics' "Reset engine data", then the engine boots again in the same process.
     await expect(fresh.reset()).resolves.toBeUndefined();
     await expect(fresh.open()).resolves.toBeUndefined();
     expect(await fresh.snapshot(ALICE)).toEqual({ local: {}, secure: {} });
-    // A relaunch after the reset finds the store empty and its key gone: it starts clean again.
-    device.__relaunch();
-    const next = createEngineStorage('testnet', { wipeServices: jest.fn() });
+    // Reset again, then a relaunch: no key, and stores this process never opened, deleted and made anew.
+    await fresh.reset();
+    const next = relaunched().createEngineStorage('testnet', { wipeServices: jest.fn(wipeKeychain) });
     await expect(next.open()).resolves.toBeUndefined();
     expect(await next.snapshot(ALICE)).toEqual({ local: {}, secure: {} });
   });
