@@ -139,6 +139,8 @@ export const copy = {
     replyPrivate: 'Your reply is private: only people who can see this post can read it.',
     imageWarning: "Attached images aren't encrypted: anyone with the image's link can see it.",
     noDrafts: "Private posts aren't saved as drafts.",
+    /** A reply whose post has not loaded: it may be a private post's, so nothing is saved. */
+    noDraftsYet: "This reply can't be saved as a draft until its post loads.",
     discard: 'Discard',
   },
 } as const;

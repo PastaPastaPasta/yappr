@@ -72,7 +72,8 @@ export interface PrivateFeedResult {
   errorCode?: PrivateFeedErrorCode
 }
 
-const MESSAGES: Record<PrivateFeedErrorCode, string> = {
+/** The sentence for each refusal (the mobile engine passes these through as they are). */
+export const MESSAGES: Record<PrivateFeedErrorCode, string> = {
   SYNC_REQUIRED: 'SYNC_REQUIRED:Enter your encryption key to manage your private feed on this device.',
   FEED_CHANGED: 'Your private feed changed on another device. Try again.',
   REQUEST_WITHDRAWN: 'This person withdrew their request, so there is nothing to approve.',

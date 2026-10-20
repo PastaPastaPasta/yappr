@@ -399,10 +399,10 @@ function Composer({ identityId, username, context }: ComposerProps) {
         leaving.current = true;
         leave();
       };
-      if (latest.current.privateDraft) {
-        // Private text is never saved as a draft: leaving discards it.
+      if (latest.current.privateDraft || latest.current.targetPending) {
+        // Private text is never saved as a draft, nor a reply to a post not loaded yet (it may be private).
         showActionSheet({
-          title: privateCopy.compose.noDrafts,
+          title: latest.current.privateDraft ? privateCopy.compose.noDrafts : privateCopy.compose.noDraftsYet,
           actions: [
             { label: privateCopy.compose.discard, destructive: true, onPress: discard },
             ...(Platform.OS === 'android' ? [{ label: 'Cancel', onPress: () => undefined }] : []),

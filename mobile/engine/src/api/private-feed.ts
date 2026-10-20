@@ -10,14 +10,14 @@ import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { followService } from '@/lib/services/follow-service'
 import { identityService } from '@/lib/services/identity-service'
 import { privateFeedFollowerService, type AccessStatus } from '@/lib/services/private-feed-follower-service'
-import { canBringHistory, estimateRenewal, renewPrivateFeed, runMove, adoptUnfinishedMove } from '@/lib/services/private-feed-move'
+import { canBringHistory, estimateRenewal, renewPrivateFeed, runMove, adoptUnfinishedMove, RENEWED_ELSEWHERE } from '@/lib/services/private-feed-move'
 import { loadMove, moveProgress } from '@/lib/services/private-feed-move-job'
 import { decryptPostOrReply, privateContentOf } from '@/lib/services/private-feed-reader'
 import {
   answeredThrough, fetchCurrentFeed, fetchFeeds, fetchFollowRequest, fetchGrant, fetchGrantsTo, mainFeeds, type FollowRequestDocument,
 } from '@/lib/services/private-feed-reads'
 import { getEncryptionSource } from '@/lib/services/reply-service'
-import { privateFeedService, type PrivateFeedResult } from '@/lib/services/private-feed-service'
+import { MESSAGES, privateFeedService, type PrivateFeedResult } from '@/lib/services/private-feed-service'
 import { loadUserSummaries, readFailure, requireViewer, viewerId } from '../dto/hydrate'
 import { privatePostOf, rememberPrivatePost, type PrivatePostRecord } from '../dto/private-content'
 import { RpcError } from '../protocol/envelope'
@@ -418,11 +418,13 @@ async function holdsGrantInForce(ownerId: string, followerId: string): Promise<b
 }
 
 /**
- * lib's own sentences for a paused follower move (`moveFollowers` in
- * lib/services/private-feed-move.ts); any other pause (a thrown read's
- * message) shows as {@link MOVE_PAUSED}.
+ * lib's own sentences for a stopped follower move (`moveFollowers` in
+ * lib/services/private-feed-move.ts, and the feed refusals it passes on);
+ * any other pause (a thrown read's message) shows as {@link MOVE_PAUSED}.
  */
 const MOVE_PAUSES = new Set([
+  ...Object.values(MESSAGES).filter((message) => !message.startsWith('SYNC_REQUIRED:')),
+  RENEWED_ELSEWHERE,
   'Enter your encryption key to finish moving your followers.',
   'Your renewed private feed is full.',
   "Waiting for the network to confirm a follower's access. Continue in a moment.",
