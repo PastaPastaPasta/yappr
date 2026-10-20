@@ -17,7 +17,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 
-import { errorText, Loading, price, ReviewsSection, Section, Stars } from './parts';
+import { errorText, Loading, price, reviewCount, ReviewsSection, Section, Stars } from './parts';
 import { ReportLink } from './StoreReportScreen';
 
 /** The combination with exactly these options, one per axis (`variantIdOf`: ids sorted, joined with "."). */
@@ -82,7 +82,7 @@ export function ItemScreen() {
         <Pressable accessibilityRole="link" onPress={() => router.push(`/store/${value.storeId}`)} style={{ minHeight: 32, justifyContent: 'center' }}>
           <Text tone="link">Visit store</Text>
         </Pressable>
-        {average !== null ? <View className="flex-row items-center gap-2"><Stars rating={average} /><Text tone="secondary">{reviews.data?.reviews.length} reviews</Text></View> : null}
+        {average !== null ? <View className="flex-row items-center gap-2"><Stars rating={average} /><Text tone="secondary">{reviewCount(reviews.data?.reviews.length ?? 0)}</Text></View> : null}
         <Text variant="headline" className="mt-3" tabular>
           {unitPrice !== undefined ? price(unitPrice, value.currency) : 'Choose options for the price'}
         </Text>

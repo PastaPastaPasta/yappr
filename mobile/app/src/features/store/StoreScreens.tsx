@@ -12,7 +12,7 @@ import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 
-import { Loading, price, ReviewsSection, Stars, useRefreshControl } from './parts';
+import { Loading, price, reviewCount, ReviewsSection, Stars, useRefreshControl } from './parts';
 import { ReportLink } from './StoreReportScreen';
 
 /** Cart, orders and the seller's own store, from the directory's header. */
@@ -96,7 +96,7 @@ export function StoreScreen() {
     <View className="gap-2 p-4">
       <Text variant="title">{value?.name ?? (detail.isPending ? 'Loading…' : 'Store')}</Text>
       {detail.data?.rating ? (
-        <View className="flex-row items-center gap-2"><Stars rating={detail.data.rating.average} /><Text tone="secondary">{detail.data.rating.count} reviews</Text></View>
+        <View className="flex-row items-center gap-2"><Stars rating={detail.data.rating.average} /><Text tone="secondary">{reviewCount(detail.data.rating.count)}</Text></View>
       ) : null}
       {value?.description ? <Text tone="secondary">{value.description}</Text> : null}
       {value?.location ? <Text tone="secondary">{value.location}</Text> : null}

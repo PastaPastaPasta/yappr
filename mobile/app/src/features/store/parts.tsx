@@ -37,6 +37,8 @@ interface ReviewLike {
 }
 
 /** A store's or a product's reviews. */
+export const reviewCount = (count: number) => `${count} review${count === 1 ? '' : 's'}`;
+
 export function ReviewsSection({ reviews, failed = false, onRetry }: { reviews: readonly ReviewLike[] | undefined; failed?: boolean; onRetry?: () => void }) {
   return (
     <Section title="Reviews">

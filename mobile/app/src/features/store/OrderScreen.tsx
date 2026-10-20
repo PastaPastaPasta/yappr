@@ -16,7 +16,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { AddressBlock, CopyRow, DeliveryList, Loading, Notice, openLink, OrderLines, Section, StatusDetail } from './parts';
+import { AddressBlock, CopyRow, DeliveryList, Loading, Notice, openLink, OrderLines, Section, StatusDetail, useRefreshControl } from './parts';
 import { orderStatusWrite } from './store-writes';
 
 const STATUS_OPTIONS: { value: OrderStatus; title: string }[] = [
@@ -35,6 +35,7 @@ export function OrderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const order = useEngineQuery(queryKeys.store.order(id), (api) => api.store.order(id));
   const [unlockOpen, setUnlockOpen] = useState(false);
+  const refreshControl = useRefreshControl(() => order.refetch());
   const data = order.data;
   return (
     <Screen>
@@ -42,7 +43,7 @@ export function OrderScreen() {
       {order.isPending ? <Loading /> : !data ? (
         <ErrorState message={order.error?.message ?? "This order couldn't be loaded."} onRetry={() => order.refetch()} retrying={order.isRetrying} />
       ) : (
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID={`order-detail-${data.role}`}>
+        <ScrollView refreshControl={refreshControl} contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID={`order-detail-${data.role}`}>
           {data.order.locked ? (
             <Notice tone="warning" text="Unlock your account on this device to see the order details.">
               <Button size="sm" label="Unlock" onPress={() => setUnlockOpen(true)} />

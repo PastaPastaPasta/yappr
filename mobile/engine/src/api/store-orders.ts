@@ -375,7 +375,8 @@ async function sellerOrders(seller: string, orders: StoreOrder[]): Promise<Selle
     const uncertain = digital && (deliveriesFailed || statusesFailed)
     return {
       ...base,
-      buyerName: names.get(order.buyerId) ?? null,
+      // DPNS answers the full name (`alice.dash`): shown as a handle, like everywhere else.
+      buyerName: names.get(order.buyerId)?.replace(/\.dash$/i, '') ?? null,
       paymentUrl: payload?.txid ? getPaymentVerificationUrl(payload.txid, payload.paymentUri) : null,
       uncertain,
       missingKits: digital && payload ? planDelivery(payload, kitPayloads, listings).missingKits : [],
