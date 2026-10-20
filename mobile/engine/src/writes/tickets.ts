@@ -583,7 +583,8 @@ export function createTicketStore(options: TicketStoreOptions) {
           error: null,
           retryable: false,
           documents: result.state === 'confirmed' ? allConfirmed(documents) : documents,
-          ...(result.notice ? { notice: result.notice } : {}),
+          // Always written: a retry that sealed the box clears an earlier attempt's notice.
+          notice: result.notice,
         })
       }, error => {
         if (finish()) fail(id, error)
