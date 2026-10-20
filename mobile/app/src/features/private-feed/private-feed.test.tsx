@@ -266,6 +266,30 @@ describe('Settings → Private feed', () => {
     await waitFor(() => expect(fakeEngine.method('privateFeed.revoke')).toHaveBeenCalledWith(dave.id));
   });
 
+  it('reads the follower list once more after an approval, for a node that had not caught up', async () => {
+    const frank = person('FrankFrankFrankFrankFrankFrankFrankFrankFran1', 'frank');
+    fakeEngine.method('privateFeed.overview').mockResolvedValue(ON);
+    fakeEngine.method('privateFeed.requests').mockResolvedValue([{ user: frank, requestedAt: new Date(), renewal: false }]);
+    fakeEngine.method('privateFeed.followers').mockResolvedValue([]);
+    const sent = ticket({ op: 'privateFeed.approve', target: { identityId: frank.id } });
+    fakeEngine.method('privateFeed.approve').mockResolvedValue(sent);
+    renderIn(<PrivateFeedScreen />);
+    fireEvent.press(await screen.findByTestId(`private-approve-${frank.id}`));
+    await waitFor(() => expect(fakeEngine.method('privateFeed.approve')).toHaveBeenCalled());
+    jest.useFakeTimers();
+    // Confirmed, but the first read after it still misses the new follower.
+    fakeEngine.method('privateFeed.requests').mockResolvedValue([]);
+    act(() => fakeEngine.emit('write.status', advance(sent, { state: 'confirmed' })));
+    await act(async () => {});
+    expect(screen.queryByTestId(`private-remove-${frank.id}`)).toBeNull();
+    fakeEngine.method('privateFeed.followers').mockResolvedValue([{ user: frank, grantedAt: new Date() }]);
+    await act(async () => {
+      jest.advanceTimersByTime(4_000);
+    });
+    jest.useRealTimers();
+    expect(await screen.findByTestId(`private-remove-${frank.id}`)).toBeTruthy();
+  });
+
   it('shows a paused follower move with Continue', async () => {
     fakeEngine.method('privateFeed.overview').mockResolvedValue({ ...ON, move: { done: 1, total: 3, error: 'The move paused.' } });
     fakeEngine.method('privateFeed.requests').mockResolvedValue([]);

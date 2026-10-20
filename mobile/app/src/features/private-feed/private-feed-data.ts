@@ -78,12 +78,23 @@ function refreshFeedOf(ownerId: string): void {
   refresh(queryKeys.privateFeed.posts);
 }
 
-/** After a write to the viewer's own feed: its settings, lists and private posts read again. */
+/**
+ * A confirmed write can still be missing from the node a read right after it
+ * reaches (seen on testnet: an approval's request gone, its follower not yet
+ * listed), so the owner's feed is read once more after this.
+ */
+const READ_AGAIN_MS = 4_000;
+
+/** After a write to the viewer's own feed: its settings, lists and private posts read again, and once more shortly. */
 function refreshOwnFeed(): void {
-  refresh(queryKeys.privateFeed.owner);
-  refresh(queryKeys.privateFeed.posts);
-  // Compose reads the viewer's own feed through `access` (whether there is one to post into).
-  refresh(queryKeys.privateFeed.accessAll);
+  const readOwnFeed = () => {
+    refresh(queryKeys.privateFeed.owner);
+    refresh(queryKeys.privateFeed.posts);
+    // Compose reads the viewer's own feed through `access` (whether there is one to post into).
+    refresh(queryKeys.privateFeed.accessAll);
+  };
+  readOwnFeed();
+  setTimeout(readOwnFeed, READ_AGAIN_MS);
 }
 
 /**
