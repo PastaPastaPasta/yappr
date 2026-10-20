@@ -91,6 +91,21 @@ describe('DPNS composite cache seeds', () => {
     expect(query).toHaveBeenCalledTimes(2);
   });
 
+  it('does not let a read overtaken by a clear put back the old primary name', async () => {
+    let answer: (docs: unknown[]) => void = () => undefined;
+    query.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    const before = dpnsService.resolveUsername('111111111');
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
+    dpnsService.clearCache(undefined, '111111111');
+    query.mockResolvedValueOnce([{ $ownerId: '111111111', records: { identity: '111111111' }, label: 'renamed' }]);
+    expect(await dpnsService.resolveUsername('111111111')).toBe('renamed.dash');
+    // The old read lands with the old name: its own caller sees it, the cache does not.
+    answer([{ $ownerId: '111111111', records: { identity: '111111111' }, label: 'oldname' }]);
+    expect(await before).toBe('oldname.dash');
+    expect(await dpnsService.resolveUsername('111111111')).toBe('renamed.dash');
+    expect(await dpnsService.findIdentityByName('oldname')).not.toBe('111111111');
+  });
+
   // The auth session adapter relies on this to tell a failed lookup from "no name".
   it('caches a proven absence but not a failed reverse lookup', async () => {
     query.mockRejectedValueOnce(new Error('offline'));

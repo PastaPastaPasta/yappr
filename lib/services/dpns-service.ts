@@ -313,16 +313,11 @@ class DpnsService {
       if (cached !== undefined) return cached;
       if (this.reverseMissCache.has(identityId)) return null;
 
-      // Get all usernames for this identity and pick the primary one
+      // Get all usernames for this identity and pick the primary one. The alias
+      // read already cached it, unless the cache was cleared while it was out:
+      // caching here too would put back a name that clear invalidated.
       const allUsernames = await this.getAllUsernames(identityId);
-      const bestUsername = getPrimaryUsername(allUsernames);
-
-      if (!bestUsername) {
-        return null;
-      }
-
-      this._cacheEntry(bestUsername, identityId);
-      return bestUsername;
+      return getPrimaryUsername(allUsernames);
     } catch (error) {
       logger.error('DPNS: Error resolving username:', error);
       return null;
