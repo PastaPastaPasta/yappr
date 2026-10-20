@@ -71,6 +71,48 @@ describe('strict document hydration', () => {
     expect(sdk.query).toHaveBeenCalledTimes(3);
   });
 
+  it('reads by-id lookups asked for together as one $id-in query, keeping proven absence', async () => {
+    const service = new DocumentService();
+    sdk.query.mockResolvedValue(new Map([['a', { $id: 'a' }], ['b', { $id: 'b' }]]));
+    const reads = await Promise.all([service.getOrThrow('a'), service.getOrThrow('b'), service.getOrThrow('a'), service.getOrThrow('gone')]);
+    expect(reads).toEqual([{ id: 'a' }, { id: 'b' }, { id: 'a' }, null]);
+    expect(sdk.query).toHaveBeenCalledTimes(1);
+    expect(sdk.query.mock.calls[0][0]).toMatchObject({ where: [['$id', 'in', ['a', 'b', 'gone']]], limit: 3 });
+    expect(sdk.get).not.toHaveBeenCalled();
+    // Found documents are cached like single reads.
+    await expect(service.getOrThrow('b')).resolves.toEqual({ id: 'b' });
+    expect(sdk.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to by-id reads when a coalesced read fails, so each caller gets its own answer', async () => {
+    const service = new DocumentService();
+    sdk.query.mockRejectedValue(new Error('batch offline'));
+    sdk.get.mockImplementation(async (_contract, _type, id) => {
+      if (id === 'offline') throw new Error('individual offline');
+      return id === 'missing' ? null : { $id: id };
+    });
+    const [found, missing, offline] = await Promise.allSettled([service.getOrThrow('found'), service.getOrThrow('missing'), service.getOrThrow('offline')]);
+    expect(found).toEqual({ status: 'fulfilled', value: { id: 'found' } });
+    expect(missing).toEqual({ status: 'fulfilled', value: null });
+    expect(offline).toMatchObject({ status: 'rejected', reason: new Error('individual offline') });
+    expect(sdk.get).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not cache a coalesced read its document was invalidated during', async () => {
+    const service = new DocumentService();
+    let finish: (docs: Map<string, Record<string, unknown>>) => void = () => undefined;
+    sdk.query.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const reads = Promise.all([service.getOrThrow('a'), service.getOrThrow('b')]);
+    await vi.waitFor(() => expect(sdk.query).toHaveBeenCalledTimes(1));
+    service.clearCache('a');
+    finish(new Map([['a', { $id: 'a' }], ['b', { $id: 'b' }]]));
+    expect(await reads).toEqual([{ id: 'a' }, { id: 'b' }]);
+    sdk.get.mockResolvedValueOnce(null);
+    await expect(service.getOrThrow('a')).resolves.toBeNull();
+    await expect(service.getOrThrow('b')).resolves.toEqual({ id: 'b' });
+    expect(sdk.get).toHaveBeenCalledTimes(1);
+  });
+
   it('does not turn a successful missing-document response into a failure', async () => {
     sdk.query.mockResolvedValue(new Map());
     expect(await new DocumentService().getMany(['missing'], { throwOnError: true })).toEqual([]);
