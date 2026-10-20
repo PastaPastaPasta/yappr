@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBlogFollow } from '@/hooks/use-blog-follow'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
+import { BlogPostListSkeleton } from './blog-view-skeleton'
 
 interface BlogHomeProps {
   blog: Blog
@@ -25,7 +26,8 @@ interface BlogHomeProps {
 export function BlogHome({ blog, username }: BlogHomeProps) {
   const router = useRouter()
   const [posts, setPosts] = useState<BlogPost[]>([])
-  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
+  // null until read, so a post never shows 0 comments it may not have.
+  const [commentCounts, setCommentCounts] = useState<Record<string, number> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
@@ -41,17 +43,18 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
     const load = async () => {
       setLoading(true)
       setError(null)
+      setCommentCounts(null)
       try {
         // Public listing: drafts are the owner's business (they see them in the dashboard).
         const result = publishedPostsNewestFirst(await blogPostService.getPostsByBlog(blog.id, { limit: 100 }))
         if (cancelled) return
 
+        // The posts show now; their comment counts fill in when they arrive.
         setPosts(result)
-
-        const countMap = await blogCommentService.countCommentsByPostBatch(result.map(p => p.id))
-        if (cancelled) return
-
-        setCommentCounts(Object.fromEntries(countMap))
+        setLoading(false)
+        blogCommentService.countCommentsByPostBatch(result.map(p => p.id))
+          .then((countMap) => { if (!cancelled) setCommentCounts(Object.fromEntries(countMap)) })
+          .catch(() => undefined)
       } catch {
         if (!cancelled) setError('Failed to load posts')
       } finally {
@@ -161,7 +164,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
       </div>
 
       {loading ? (
-        <p className="text-sm text-[var(--blog-text)]/70">Loading posts...</p>
+        <BlogPostListSkeleton />
       ) : error ? (
         <p className="text-sm text-red-500">{error}</p>
       ) : pagedPosts.length === 0 ? (
@@ -175,7 +178,13 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
             return (
               <Link key={post.id} href={href} className="block rounded-xl border border-[var(--blog-border)] bg-[var(--blog-surface)] p-4 transition hover:brightness-110">
                 {post.coverImage && (
-                  <IpfsImage src={post.coverImage} alt={post.title} className="mb-3 h-44 w-full rounded-lg object-cover" />
+                  <IpfsImage
+                    src={post.coverImage}
+                    alt={post.title}
+                    className="mb-3 h-44 w-full rounded-lg object-cover"
+                    // The cover's box is held while it loads, so the list does not jump.
+                    loadingFallback={<div className="mb-3 h-44 w-full rounded-lg bg-[var(--blog-border)] opacity-40" aria-hidden="true" />}
+                  />
                 )}
                 <h3 className="text-lg font-semibold" style={{ color: 'var(--blog-heading)', fontFamily: 'var(--blog-heading-font)' }}>
                   {post.title}
@@ -189,7 +198,7 @@ export function BlogHome({ blog, username }: BlogHomeProps) {
                   {commentsAreEnabled(post) && (
                     <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-[var(--blog-border)] px-2 py-0.5 text-[11px] text-[var(--blog-text)]/75">
                       <ChatBubbleLeftIcon className="h-3 w-3" />
-                      {commentCounts[post.id] || 0}
+                      {commentCounts ? commentCounts[post.id] || 0 : '–'}
                     </span>
                   )}
                 </div>

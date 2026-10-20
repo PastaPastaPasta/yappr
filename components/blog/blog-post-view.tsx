@@ -308,7 +308,13 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
           {/* Cover image */}
           {post.coverImage && (
             <div className="mt-6">
-              <IpfsImage src={post.coverImage} alt={post.title} className="w-full rounded-2xl" />
+              <IpfsImage
+                src={post.coverImage}
+                alt={post.title}
+                className="w-full rounded-2xl"
+                // Holds a typical cover's room while it loads, so the article below it does not jump.
+                loadingFallback={<div className="aspect-[16/9] w-full rounded-2xl bg-[var(--blog-border)] opacity-40" aria-hidden="true" />}
+              />
             </div>
           )}
 
