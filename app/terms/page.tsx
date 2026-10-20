@@ -55,9 +55,10 @@ function yappCostCopy(): string {
 /**
  * When a removal needs the team, from the settled-deletion rule the build's
  * contracts declare (a day on the release set, D39); empty where moderators
- * remove at any age. The /staging rehearsal set was registered before D39 and
- * D41, so its contracts declare other values than the files it is built from:
- * there the sentence names no window or count (#822).
+ * remove at any age. The /staging rehearsal set and sakura's /devnet set were
+ * registered before D39 and D41, so their contracts declare other values than
+ * the files they are built from: there the sentence names no window or count
+ * (#822).
  */
 function settledRemovalCopy(): string {
   const rule = settledDeletionFor('post')
@@ -65,14 +66,14 @@ function settledRemovalCopy(): string {
   const blogRule = moderatedContract('blog').settledDeletionFor('blogPost')
   const blogToo = blogRule?.windowSeconds === rule.windowSeconds && blogRule.approvals === rule.approvals && blogRule.leaderRequired === rule.leaderRequired
   const what = blogToo ? 'a post, reply, blog post or blog comment' : 'a post or reply'
-  if (process.env.NEXT_PUBLIC_BASE_PATH === STAGING_REHEARSAL_BASE_PATH) {
+  if (EARLIER_REGISTERED_BASE_PATHS.includes(process.env.NEXT_PUBLIC_BASE_PATH ?? '')) {
     return ` Once ${what} is past the time in which one moderator may remove it alone, removing it needs the team’s leader and other moderators to agree.`
   }
   return ` Removing ${what} that is more than ${formatDuration(rule.windowSeconds)} old needs ${approversCopy(rule)} to agree.`
 }
 
-/** The testnet rehearsal deployment, whose registered contracts predate the files' moderation values. */
-const STAGING_REHEARSAL_BASE_PATH = '/staging'
+/** Deployments whose registered contracts predate the files' moderation values (the testnet rehearsal, sakura). */
+const EARLIER_REGISTERED_BASE_PATHS = ['/staging', '/devnet']
 
 const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
 

@@ -646,7 +646,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
   // v6 prices store, item and review creates with an action fee; each create agrees to the declared amount.
   const writer = createDocWriter({
     handle, contractId, entropyFor: entropySource('yappr/storefront-seed/v1'), paymentInfo: battery.paymentInfo,
-    ...(isV6() ? { agreementFor: (docType) => feeAgreementFor(handle.sdk, docType, SCHEMAS) } : {}),
+    ...(isV6() ? { agreementFor: (docType) => feeAgreementFor(handle.sdk, docType, SCHEMAS, { contractId }) } : {}),
   });
   const tokenId = isV6() ? null : await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
   const ledger = loadLedger();

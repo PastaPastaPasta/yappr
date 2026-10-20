@@ -501,7 +501,7 @@ function writeShapeFor({ handle }) {
     /** Resolves to something `createdId` can read an id off, or `{ id }` from the manual path. */
     async create({ contractId, actor, document, entropy, docType, data, tokenCost }) {
       const payment = paymentFor(actor, docType, tokenCost);
-      const agreement = await feeAgreementFor(handle.sdk, docType);
+      const agreement = await feeAgreementFor(handle.sdk, docType, undefined, { contractId });
       return createDocument(handle.sdk, { contractId, actor, docType, document, data, entropy, agreement, payment });
     },
   };
