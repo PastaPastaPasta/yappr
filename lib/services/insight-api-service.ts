@@ -137,24 +137,17 @@ export function isDashScheme(scheme: string): boolean {
  * `tdash:` is always the test network.
  */
 export function getDashPaymentNetwork(scheme: string, address: string): AppNetwork {
-  const configured = getConfiguredNetwork()
-  const testNetwork: AppNetwork = configured === 'mainnet' ? 'testnet' : configured
-  if (scheme.toLowerCase() === 'tdash:') return testNetwork
-  return isValidDashAddress(address.split('?', 1)[0], 'testnet') ? testNetwork : 'mainnet'
+  if (scheme.toLowerCase() === 'tdash:') return dashTestNetwork()
+  return isValidDashAddress(address.split('?', 1)[0], 'testnet') ? dashTestNetwork() : 'mainnet'
 }
 
 /**
- * Get the network for a Dash payment scheme
+ * The network a testnet-prefixed Dash address belongs to here. Devnets reuse
+ * testnet's prefixes, so a /devnet build polls its own Insight host.
  */
-export function getNetworkFromScheme(scheme: string): AppNetwork {
-  // `tdash:` covers both testnet and devnet (devnets reuse testnet address
-  // prefixes), so it resolves to the deployment's configured network — a
-  // /devnet build must poll its own Insight host, not testnet's.
-  if (scheme.toLowerCase() === 'tdash:') {
-    const configured = getConfiguredNetwork()
-    return configured === 'mainnet' ? 'testnet' : configured
-  }
-  return 'mainnet'
+export function dashTestNetwork(): AppNetwork {
+  const configured = getConfiguredNetwork()
+  return configured === 'mainnet' ? 'testnet' : configured
 }
 
 /** Link a Dash payment to the explorer for the chain that received it. */

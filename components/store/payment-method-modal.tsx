@@ -12,9 +12,12 @@ import { keyNetwork } from '@/lib/constants'
 // Supported payment schemes with their details
 const PAYMENT_SCHEMES = [
   // dash: is the wallets' scheme on every network; the address must be this build's network's.
-  keyNetwork() === 'mainnet'
-    ? { scheme: 'dash:', label: PAYMENT_SCHEME_LABELS['dash:'], placeholder: 'XxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: 'Your Dash wallet address' }
-    : { scheme: 'dash:', label: PAYMENT_SCHEME_LABELS['tdash:'], placeholder: 'yxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: `Your ${TDASH_NETWORK_LABEL.toLowerCase()} Dash wallet address` },
+  {
+    scheme: 'dash:',
+    ...(keyNetwork() === 'mainnet'
+      ? { label: PAYMENT_SCHEME_LABELS['dash:'], placeholder: 'XxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: 'Your Dash wallet address' }
+      : { label: PAYMENT_SCHEME_LABELS['tdash:'], placeholder: 'yxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: `Your ${TDASH_NETWORK_LABEL.toLowerCase()} Dash wallet address` }),
+  },
   { scheme: 'bitcoin:', label: 'Bitcoin', placeholder: 'bc1qxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Bitcoin wallet address' },
   { scheme: 'ethereum:', label: 'Ethereum', placeholder: '0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Ethereum wallet address' },
   { scheme: 'litecoin:', label: 'Litecoin', placeholder: 'ltc1qxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Litecoin wallet address' },
