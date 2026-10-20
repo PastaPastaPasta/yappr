@@ -28,15 +28,17 @@ import { storeStatsService } from '@/lib/services/store-stats-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { shipsToLabel } from '@/lib/storefront/item-zones'
 import { storefrontIsV2 } from '@/lib/constants'
-import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront-contract'
+import { ADD_PAYMENT_METHOD_HINT, NOT_FOR_SALE_YET_MESSAGE, OWN_STORE_ORDER_MESSAGE, isOwnStore, storeTakesPayment } from '@/lib/storefront/storefront-contract'
 import { combinationForSelection, combinationImageUrl, isInStock, selectableOptionIds } from '@/lib/storefront/variant-codec'
 import type { Store, StoreItem, ItemRatingSummary, ItemVariants } from '@/lib/types'
 
 /**
  * Why `item` cannot be bought, or null when it can: the viewer's own store, a
- * sold-out, paused or deleted listing, or a store that is not open.
+ * store with nowhere to pay yet, a sold-out, paused or deleted listing, or a
+ * store that is not open.
  */
 function unavailableReasonFor(item: StoreItem, store: Store | null, viewerId: string | undefined): string | null {
+  if (!storeTakesPayment(store)) return isOwnStore(store, viewerId) ? ADD_PAYMENT_METHOD_HINT : NOT_FOR_SALE_YET_MESSAGE
   if (isOwnStore(store, viewerId)) return OWN_STORE_ORDER_MESSAGE
   if (item.status === 'sold_out') return 'This item is sold out'
   if (item.status !== 'active') return 'This item is no longer available'

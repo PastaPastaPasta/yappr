@@ -36,6 +36,7 @@ import { storefrontIsV2 } from '@/lib/constants'
 import { cartService } from '@/lib/services/cart-service'
 import { parseStorePolicies } from '@/lib/utils/policies'
 import { saveStoreViewCache, loadStoreViewCache } from '@/lib/caches/store-view-cache'
+import { ADD_PAYMENT_METHOD_HINT, storeTakesPayment } from '@/lib/storefront/storefront-contract'
 import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy, ItemRatingSummary } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 
@@ -445,6 +446,12 @@ function StoreDetailContent() {
               </div>
             </div>
           </PageHeader>
+
+          {isOwner && !storeTakesPayment(store) && (
+            <p role="status" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+              {ADD_PAYMENT_METHOD_HINT}
+            </p>
+          )}
 
           {/* Store Banner & Info */}
           <div>
