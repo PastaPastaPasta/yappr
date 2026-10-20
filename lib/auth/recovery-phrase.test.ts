@@ -3,7 +3,7 @@ import { hash160 } from '@/lib/crypto/hash'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { getPublicKey } from '@/lib/crypto/keys'
 import type { Dip13Key } from '@/lib/crypto/dip13'
-import { masterKey, phraseKeys, phraseMessagingState, sessionKey } from './recovery-phrase'
+import { masterKey, phraseKeys, phraseMessagingState, recoveryPhraseOffered, sessionKey } from './recovery-phrase'
 
 const ANCHOR = 'AwjuEqZtXwBq5jU9tg8UnRMmXrwb3nozSgGx59ghD1c1'
 const OTHER_CONTRACT = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec'
@@ -18,6 +18,14 @@ const foreign = keyAt(200)
 
 const identityKey = (id: number, purpose: number, securityLevel: number, data: Uint8Array, extra: Record<string, unknown> = {}) =>
   ({ id, type: KeyType.ECDSA_SECP256K1, purpose, securityLevel, data, ...extra })
+
+describe('recoveryPhraseOffered', () => {
+  it('is offered on testnet and devnets, not yet on mainnet', () => {
+    expect(recoveryPhraseOffered('testnet')).toBe(true)
+    expect(recoveryPhraseOffered('devnet')).toBe(true)
+    expect(recoveryPhraseOffered('mainnet')).toBe(false)
+  })
+})
 
 describe('phraseKeys', () => {
   const keys = [

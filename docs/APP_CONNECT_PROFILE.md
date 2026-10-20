@@ -274,6 +274,9 @@ wallet (dashwallet-ios #1210, rs-platform-wallet, key-wallet), in
   disabled: leave it alone, and say messaging was set up with another wallet.
 - **The phrase** is never stored, logged or sent. Its field is cleared once
   used.
+- **Not on mainnet yet:** the app's CSP still allows inline scripts, so an
+  injected script could read a phrase that controls real funds. Mainnet builds
+  offer wallet sign-in only until the CSP is tightened (`recoveryPhraseOffered`).
 
 A typed-in private key still signs in. On App Connect builds, a messaging key
 derived from it (HKDF info `yappr/app-connect/encryption-key/v1:<anchor>`) is a

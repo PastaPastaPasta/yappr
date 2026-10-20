@@ -12,6 +12,16 @@ import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { toKeyInfo, type IdentityKeyLike } from '@/lib/crypto/keys'
 import type { Dip13Key } from '@/lib/crypto/dip13'
 
+/**
+ * Whether recovery-phrase sign-in is offered on `network`. Not on mainnet
+ * yet: a phrase there controls real funds, and the app's CSP still allows
+ * inline scripts (app/layout.tsx), so an injected script could read it as it
+ * is typed. Wallet sign-in stays the way in there until that is tightened.
+ */
+export function recoveryPhraseOffered(network: string): boolean {
+  return network !== 'mainnet'
+}
+
 /** An enabled identity key whose private half the phrase derives (at key index = key id, as wallets register them). */
 export interface PhraseKey {
   id: number

@@ -18,6 +18,7 @@ import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { KeyLoginForm } from './key-login-form'
 import { PasskeySignIn } from './passkey-sign-in'
 import { RecoveryPhraseForm } from './recovery-phrase-form'
+import { recoveryPhraseOffered } from '@/lib/auth/recovery-phrase'
 
 /** Where newcomers go: the wallet on mainnet, the identity bridge elsewhere. */
 const DASH_WALLET_DOWNLOAD_URL = 'https://www.dash.org/download/'
@@ -118,6 +119,7 @@ export function LoginModal() {
 
   const newUser = newUserLink()
   const walletAvailable = walletSignInAvailable()
+  const phraseAvailable = walletAvailable && recoveryPhraseOffered(getConfiguredNetwork())
   const [open, setOpen] = useState<Section | null>(null)
   const toggle = (section: Section) => setOpen((current) => (current === section ? null : section))
 
@@ -210,15 +212,17 @@ export function LoginModal() {
                     </p>
                     <AppConnectLoginPanel onGrant={signInWithGrant} onComplete={close} />
                   </Disclosure>
-                  <Disclosure
-                    id={`${sectionId}-phrase`}
-                    open={open === 'phrase'}
-                    onToggle={() => toggle('phrase')}
-                    icon={<ScrollText aria-hidden="true" className="w-4 h-4" />}
-                    label="Sign in with your recovery phrase"
-                  >
-                    <RecoveryPhraseForm onComplete={close} />
-                  </Disclosure>
+                  {phraseAvailable && (
+                    <Disclosure
+                      id={`${sectionId}-phrase`}
+                      open={open === 'phrase'}
+                      onToggle={() => toggle('phrase')}
+                      icon={<ScrollText aria-hidden="true" className="w-4 h-4" />}
+                      label="Sign in with your recovery phrase"
+                    >
+                      <RecoveryPhraseForm onComplete={close} />
+                    </Disclosure>
+                  )}
                   <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
                     <Disclosure
                       id={`${sectionId}-key`}

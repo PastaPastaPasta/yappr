@@ -7,11 +7,13 @@ import { ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import type { MessagingSetupContext } from './set-up-messaging'
+import { recoveryPhraseOffered } from '@/lib/auth/recovery-phrase'
+import { getConfiguredNetwork } from '@/lib/constants'
 
 const INTRO: Record<MessagingSetupContext, string> = {
-  generic: 'Messages, store orders and private feeds are end-to-end encrypted. To use them, sign in with your Dash wallet or your recovery phrase.',
-  store: 'Buyers send their shipping details privately. To receive orders, sign in with your Dash wallet or your recovery phrase.',
-  'private-feed': 'Private feeds are encrypted. To use them, sign in with your Dash wallet or your recovery phrase.',
+  generic: 'Messages, store orders and private feeds are end-to-end encrypted. To use them, sign in with your Dash wallet',
+  store: 'Buyers send their shipping details privately. To receive orders, sign in with your Dash wallet',
+  'private-feed': 'Private feeds are encrypted. To use them, sign in with your Dash wallet',
 }
 
 /**
@@ -40,6 +42,7 @@ export function MessagingSignInPrompt({
   onCancel: () => void
 }) {
   const advancedId = useId()
+  const phrase = recoveryPhraseOffered(getConfiguredNetwork())
   const [advanced, setAdvanced] = useState(false)
   return (
     <>
@@ -47,14 +50,14 @@ export function MessagingSignInPrompt({
         <ChatBubbleLeftRightIcon className="h-6 w-6 text-yappr-500" />
         {hasKey ? 'Unlock messaging' : 'Set up messaging'}
       </ModalTitle>
-      <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">{INTRO[context]}</Dialog.Description>
+      <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">{INTRO[context]}{phrase ? ' or your recovery phrase.' : '.'}</Dialog.Description>
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
         Your messaging key comes from your wallet, so you can read your messages on any device you sign in on.
       </p>
       <div className="flex flex-col gap-3">
         <Button onClick={onSignIn} className="w-full" disabled={busy}>
           <WalletIcon className="h-4 w-4 mr-2" />
-          Sign in with wallet or recovery phrase
+          {phrase ? 'Sign in with wallet or recovery phrase' : 'Sign in with your Dash wallet'}
         </Button>
         <Button onClick={onCancel} variant="ghost" className="w-full" disabled={busy}>Not now</Button>
       </div>
