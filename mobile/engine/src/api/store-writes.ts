@@ -43,7 +43,7 @@ export interface StoreFields {
 export interface StoreSaveInput {
   /** Absent: create the viewer's store. */
   storeId?: string
-  /** The revision the edit was made from: "check again" proves an update by the revision moving past it. */
+  /** The revision the draft was made from: the update is refused unsent if the store moved since. */
   revision?: number
   fields: StoreFields
 }
@@ -80,7 +80,7 @@ export interface ItemSaveInput {
 
 export interface ZoneFields {
   name: string
-  /** ISO country codes, comma separated, or `*` / empty for everywhere (web's zone editor). */
+  /** ISO country codes (`US.IL` for a state), separated by `|`, commas or spaces; `*` / empty for everywhere. */
   countryPattern?: string
   postalPatterns?: string[]
   rateType: ShippingRateType
@@ -93,6 +93,7 @@ export interface ZoneFields {
 export interface ZoneSaveInput {
   storeId: string
   zoneId?: string
+  /** The revision the draft was made from: the update is refused unsent if the zone moved since. */
   revision?: number
   delete?: boolean
   fields?: ZoneFields
@@ -179,7 +180,8 @@ function itemData(fields: ItemFields) {
 function zoneData(fields: ZoneFields) {
   if (!fields?.name?.trim()) throw badRequest('Give the zone a name')
   if (!['flat', 'weight_tiered', 'price_tiered'].includes(fields.rateType)) throw badRequest('Choose how the zone is priced')
-  const country = fields.countryPattern?.trim().toUpperCase()
+  // The shipping matcher reads alternatives as `US|CA`: a list typed with commas or spaces is joined that way.
+  const country = fields.countryPattern?.toUpperCase().split(/[\s,|]+/).filter(Boolean).join('|')
   return {
     name: fields.name.trim(),
     countryPattern: country && country !== '*' ? country : undefined,
@@ -200,26 +202,58 @@ function beforeSigning(error: unknown): never {
   throw error
 }
 
+/** A storefront document's revision as stored now (0 when it is gone). */
+async function storedRevision(type: string, id: string): Promise<number> {
+  const sdk = await getEvoSdk()
+  const document = await sdk.documents.get(YAPPR_STOREFRONT_CONTRACT_ID, type, id) as { revision?: unknown; $revision?: unknown } | null
+  return Number(document?.revision ?? document?.$revision ?? 0)
+}
+
 /**
- * "Check again" for an update: the document's revision moved past the one the
- * edit was made from. A disagreement counts only when a second read agrees.
+ * A draft is written only over the revision it was made from: lib's store and
+ * zone updates write over whatever is stored, so an edit made elsewhere since
+ * would be silently undone. Checked before signing; nothing is sent when it moved.
  */
+async function assertDraftRevision(type: string, id: string, revision: number | undefined): Promise<void> {
+  if (revision === undefined) return
+  const stored = await storedRevision(type, id).catch((error: unknown) => { throw new NotSentError(readFailure(error)) })
+  if (stored !== revision) beforeSigning(new StaleRevisionError())
+}
+
+/** Empty as a document field: absent, null, '' or an empty list (lib clears a field given any of them). */
+const isEmpty = (value: unknown) => value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
+
+/** `value` with empty fields dropped and keys sorted, so a stored and a written copy compare as JSON. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical)
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>
+    return Object.fromEntries(Object.keys(record).sort().filter(key => !isEmpty(record[key])).map(key => [key, canonical(record[key])]))
+  }
+  return value
+}
+
+/** Every field this edit wrote reads back as written, intentional clears included. */
+function showsWritten(stored: object | null | undefined, written: Record<string, unknown>): boolean {
+  if (!stored) return false
+  const read = stored as Record<string, unknown>
+  return Object.entries(written).every(([key, value]) => (isEmpty(value)
+    ? isEmpty(read[key])
+    : JSON.stringify(canonical(read[key])) === JSON.stringify(canonical(value))))
+}
+
 /**
  * "Check again" for an update. A revision past the one the edit was made
  * from proves only that SOME update landed (another device may have won):
- * it is this edit only when the stored document also shows what this edit
- * wrote (`shows`). A newer revision showing something else stays unknown.
+ * it is this edit only when the stored document shows every field this edit
+ * wrote (`shows`). A newer revision showing anything else stays unknown.
  * No newer revision, twice, is not applied.
  */
 function revisionProbe<A extends UpdateArgs>(type: string, shows: (args: A) => Promise<boolean>) {
   return async (ticket: WriteTicket, args: A | undefined, kit: ProbeKit): Promise<ProbeResult> => {
     if (!args?.id || args.revision === undefined) return kit.proveDocuments(ticket.documents)
     const { id, revision: editedFrom } = args
-    const moved = async () => {
-      const sdk = await getEvoSdk()
-      const document = await sdk.documents.get(YAPPR_STOREFRONT_CONTRACT_ID, type, id) as { revision?: unknown; $revision?: unknown } | null
-      return Number(document?.revision ?? document?.$revision ?? 0) > editedFrom
-    }
+    const moved = async () => (await storedRevision(type, id)) > editedFrom
     try {
       if (!(await moved())) {
         await kit.recheckDelay()
@@ -232,12 +266,8 @@ function revisionProbe<A extends UpdateArgs>(type: string, shows: (args: A) => P
   }
 }
 
-const sameText = (stored: string | undefined, sent: string | undefined) => (stored ?? '').trim() === (sent ?? '').trim()
-
-const zoneUpdateProbe = revisionProbe<ZoneSaveInput & UpdateArgs>(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE, async ({ id, storeId, fields }) => {
-  const stored = (await shippingZoneService.getByStore(storeId)).find(zone => zone.id === id)
-  return Boolean(stored) && sameText(stored?.name, fields?.name) && stored?.flatRate === fields?.flatRate && sameText(stored?.countryPattern, fields?.countryPattern)
-})
+const zoneUpdateProbe = revisionProbe<ZoneSaveInput & UpdateArgs>(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE, async ({ id, storeId, fields }) =>
+  showsWritten((await shippingZoneService.getByStore(storeId)).find(zone => zone.id === id), zoneData(fields as ZoneFields)))
 
 /** Input checks run before anything is signed: a refusal there is a failed ticket that sent nothing. */
 function checkedBeforeSending<T>(check: () => T): T {
@@ -268,13 +298,12 @@ export function createStoreWrites(tickets: TicketStore) {
         if (await storeService.getByOwner(owner).catch(() => null)) throw new NotSentError(badRequest('You already have a store'))
         return created(STOREFRONT_DOCUMENT_TYPES.STORE, await storeService.createStore(owner, data).catch(beforeSigning), ctx)
       }
+      await assertDraftRevision(STOREFRONT_DOCUMENT_TYPES.STORE, input.storeId, input.revision)
       await storeService.updateStore(input.storeId, owner, data).catch(beforeSigning)
       return { state: 'confirmed' }
     },
-    probe: revisionProbe<StoreSaveInput & UpdateArgs>(STOREFRONT_DOCUMENT_TYPES.STORE, async ({ id, fields }) => {
-      const stored = await storeService.getCurrent(id as string)
-      return Boolean(stored) && sameText(stored?.name, fields.name) && stored?.status === (fields.status ?? 'active') && sameText(stored?.description, fields.description)
-    }),
+    probe: revisionProbe<StoreSaveInput & UpdateArgs>(STOREFRONT_DOCUMENT_TYPES.STORE, async ({ id, fields }) =>
+      showsWritten(await storeService.getCurrent(id as string), storeData(fields))),
   })
 
   tickets.register<ItemSaveInput & UpdateArgs>('store.item', {
@@ -299,8 +328,7 @@ export function createStoreWrites(tickets: TicketStore) {
     probe: revisionProbe<ItemSaveInput & UpdateArgs>(STOREFRONT_DOCUMENT_TYPES.STORE_ITEM, async ({ id, archive, fields }) => {
       const [stored] = await storeItemService.getManyFresh([id as string])
       if (!stored) return false
-      if (archive) return stored.status === 'deleted'
-      return sameText(stored.title, fields?.title) && stored.status === (fields?.status ?? 'active') && stored.basePrice === fields?.basePrice && stored.stockQuantity === fields?.stockQuantity
+      return archive ? stored.status === 'deleted' : showsWritten(stored, itemData(fields as ItemFields))
     }),
   })
 
@@ -319,6 +347,7 @@ export function createStoreWrites(tickets: TicketStore) {
       }
       const data = checkedBeforeSending(() => zoneData(input.fields as ZoneFields))
       if (!input.zoneId) return created(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE, await shippingZoneService.createZone(owner, input.storeId, data).catch(beforeSigning), ctx)
+      await assertDraftRevision(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE, input.zoneId, input.revision)
       await shippingZoneService.updateZone(input.zoneId, owner, input.storeId, data).catch(beforeSigning)
       return { state: 'confirmed' }
     },

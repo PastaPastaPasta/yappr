@@ -37,7 +37,10 @@ export function ZoneEditScreen() {
 
 const UNITS: readonly string[] = ['g', 'oz', 'lb', 'kg'];
 
-function ZoneForm({ store, zone }: { store: Store; zone: ShippingZone | null }) {
+function ZoneForm({ store, zone: loaded }: { store: Store; zone: ShippingZone | null }) {
+  // The zone as this draft was read, frozen with it: its revision (the save is refused if the zone
+  // moved since) and the tier table kept as stored never come from a later refetch.
+  const [zone] = useState(loaded);
   const save = useWrite(saveZoneWrite);
   const remove = useWrite(saveZoneWrite);
   const initialCurrency = zone?.currency ?? store.defaultCurrency ?? 'USD';
@@ -99,7 +102,7 @@ function ZoneForm({ store, zone }: { store: Store; zone: ShippingZone | null }) 
         <View className="gap-3">
           <TextField label="Zone name" value={name} onChangeText={setName} maxLength={100} placeholder="Domestic" testID="zone-name" />
           <SwitchRow label="Worldwide" value={worldwide} onValueChange={setWorldwide} testID="zone-worldwide" />
-          {!worldwide ? <TextField label="Countries" value={countries} onChangeText={setCountries} autoCapitalize="characters" autoCorrect={false} placeholder="US, CA or US.IL for a state" testID="zone-countries" /> : null}
+          {!worldwide ? <TextField label="Countries" value={countries} onChangeText={setCountries} autoCapitalize="characters" autoCorrect={false} placeholder="US|CA, or US.IL for a state" testID="zone-countries" /> : null}
           <AmountField label="Priority (lower matches first)" whole amount={priority} onAmount={setPriority} testID="zone-priority" />
           <TextField label="Currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" autoCorrect={false} maxLength={5} testID="zone-currency" />
         </View>

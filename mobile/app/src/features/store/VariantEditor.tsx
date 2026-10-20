@@ -8,17 +8,26 @@ import { Card } from '~/ui/Card';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
+/*
+ * These edits follow lib/storefront/variant-codec.ts (addOption, removeOption,
+ * renameOption, addAxis), which the app cannot import: it reads lib/constants
+ * through storefront-contract (src/lib-allowlist.ts). The engine re-checks
+ * every table it saves with lib's `variantProblems`.
+ */
+
 /** The contract's option ids run 1–254 and are never reused (`ItemVariants.nextOptionId`). */
 const MAX_OPTION_ID = 254;
+/** Storefront v7+ `prices` maxItems: a grid past it is refused before it is built. */
+const MAX_COMBINATIONS = 256;
 
 const combinationId = (optionIds: readonly number[]) => [...optionIds].sort((a, b) => a - b).join('.');
 
 export const emptyVariants = (): ItemVariants => ({ axes: [], combinations: [], nextOptionId: 1 });
 
-/** Every combination of the axes' options that names at least one of `fresh`, priced at `price`. */
-function combinationsWith(axes: ItemVariants['axes'], fresh: ReadonlySet<number>, price: number): VariantCombination[] {
-  const grid = axes.reduce<number[][]>((rows, axis) => rows.flatMap((row) => axis.options.map((option) => [...row, option.id])), [[]]);
-  return grid.filter((optionIds) => optionIds.some((id) => fresh.has(id))).map((optionIds) => ({ id: combinationId(optionIds), optionIds, price }));
+/** Every way to pick one id from each list (lib's `product`), refused past the combination cap. */
+function grid(lists: number[][]): number[][] {
+  if (lists.reduce((size, list) => size * list.length, 1) > MAX_COMBINATIONS) throw new Error(`A product can offer at most ${MAX_COMBINATIONS} combinations.`);
+  return lists.reduce<number[][]>((rows, list) => rows.flatMap((row) => list.map((value) => [...row, value])), [[]]);
 }
 
 /** Rename one option, by its id: every combination, cart line and kit target naming it keeps naming it. */
@@ -26,21 +35,52 @@ export function renameOption(variants: ItemVariants, optionId: number, name: str
   return { ...variants, axes: variants.axes.map((axis) => ({ ...axis, options: axis.options.map((option) => (option.id === optionId ? { ...option, name } : option)) })) };
 }
 
-/** Add a choice to an axis with a fresh id; its combinations with every other axis's choices are added. */
+/**
+ * Add a choice to an axis with a fresh id. It is offered with every pattern of
+ * the other axes the table already offers, so combinations the seller removed
+ * stay removed; with none offered, it comes with every pattern.
+ */
 export function addOption(variants: ItemVariants, axisIndex: number, name: string, price: number): ItemVariants {
   const id = variants.nextOptionId;
   if (id > MAX_OPTION_ID) throw new Error('This product has used up its option ids. Create a new product for more options.');
   const axes = variants.axes.map((axis, index) => (index === axisIndex ? { ...axis, options: [...axis.options, { id, name }] } : axis));
-  return { axes, combinations: [...variants.combinations, ...combinationsWith(axes, new Set([id]), price)], nextOptionId: id + 1 };
+  const patterns = new Map<string, number[]>();
+  for (const combination of variants.combinations) {
+    const optionIds = combination.optionIds.map((optionId, index) => (index === axisIndex ? id : optionId));
+    patterns.set(combinationId(optionIds), optionIds);
+  }
+  if (patterns.size === 0) {
+    for (const optionIds of grid(axes.map((axis, index) => (index === axisIndex ? [id] : axis.options.map((option) => option.id))))) patterns.set(combinationId(optionIds), optionIds);
+  }
+  const added = [...patterns.values()].map((optionIds) => ({ id: combinationId(optionIds), optionIds, price }));
+  if (variants.combinations.length + added.length > MAX_COMBINATIONS) throw new Error(`A product can offer at most ${MAX_COMBINATIONS} combinations.`);
+  return { axes, combinations: [...variants.combinations, ...added], nextOptionId: id + 1 };
 }
 
-/** Remove a choice and its combinations. Only for choices not yet saved: saved ids may be named by carts and orders. */
+/**
+ * Remove a choice and its combinations. Only for choices not yet saved: saved
+ * ids may be named by carts and orders. An axis's last choice takes the axis
+ * with it: combinations that differed only there merge into the first.
+ */
 export function removeOption(variants: ItemVariants, optionId: number): ItemVariants {
-  return {
-    ...variants,
-    axes: variants.axes.map((axis) => ({ ...axis, options: axis.options.filter((option) => option.id !== optionId) })).filter((axis) => axis.options.length > 0),
-    combinations: variants.combinations.filter((combination) => !combination.optionIds.includes(optionId)),
-  };
+  const axisIndex = variants.axes.findIndex((axis) => axis.options.some((option) => option.id === optionId));
+  if (axisIndex < 0) return variants;
+  if (variants.axes[axisIndex].options.length > 1) {
+    return {
+      ...variants,
+      axes: variants.axes.map((axis) => ({ ...axis, options: axis.options.filter((option) => option.id !== optionId) })),
+      combinations: variants.combinations.filter((combination) => !combination.optionIds.includes(optionId)),
+    };
+  }
+  const axes = variants.axes.filter((_, index) => index !== axisIndex);
+  if (axes.length === 0) return { ...emptyVariants(), nextOptionId: variants.nextOptionId };
+  const merged = new Map<string, VariantCombination>();
+  for (const combination of variants.combinations) {
+    const optionIds = combination.optionIds.filter((_, index) => index !== axisIndex);
+    const id = combinationId(optionIds);
+    if (!merged.has(id)) merged.set(id, { ...combination, id, optionIds });
+  }
+  return { ...variants, axes, combinations: [...merged.values()] };
 }
 
 /** Add an axis with one choice (only on a table not saved yet: every saved combination would change). */

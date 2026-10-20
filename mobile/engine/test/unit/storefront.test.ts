@@ -23,7 +23,9 @@ const m = vi.hoisted(() => ({
   shippingLines: vi.fn(),
   removeStoreItems: vi.fn(),
   store: { getById: vi.fn(), getCurrent: vi.fn(), getByOwner: vi.fn(), getMany: vi.fn(async () => []), createStore: vi.fn(), updateStore: vi.fn() },
-  zones: { getByStore: vi.fn() },
+  zones: { getByStore: vi.fn(), createZone: vi.fn(), updateZone: vi.fn() },
+  /** The raw document `sdk.documents.get` answers (its revision). */
+  sdkDocument: vi.fn(),
   order: { encryptOrderPayload: vi.fn(), createOrder: vi.fn(), get: vi.fn(), decryptOrderPayload: vi.fn(), getBuyerOrders: vi.fn() },
   status: { createStatusUpdate: vi.fn() },
   buyerKey: null as Uint8Array | null,
@@ -56,9 +58,11 @@ vi.mock('@/lib/services/cart-service', async (load) => {
   }
 })
 vi.mock('@/lib/services/store-service', () => ({ storeService: m.store }))
+vi.mock('@/lib/services/dpns-service', () => ({ dpnsService: { resolveUsernamesBatch: async () => new Map() } }))
+vi.mock('@/lib/services/evo-sdk-service', async (load) => ({ ...await load<object>(), getEvoSdk: async () => ({ documents: { get: m.sdkDocument } }) }))
 vi.mock('@/lib/services/shipping-zone-service', async (load) => {
   const actual = await load<typeof import('@/lib/services/shipping-zone-service')>()
-  return { ...actual, shippingZoneService: { ...actual.shippingZoneService, getByStore: m.zones.getByStore, quoteShipping: actual.shippingZoneService.quoteShipping.bind(actual.shippingZoneService) } }
+  return { ...actual, shippingZoneService: { ...actual.shippingZoneService, getByStore: m.zones.getByStore, createZone: m.zones.createZone, updateZone: m.zones.updateZone, quoteShipping: actual.shippingZoneService.quoteShipping.bind(actual.shippingZoneService) } }
 })
 vi.mock('@/lib/services/store-order-service', async (load) => {
   const actual = await load<typeof import('@/lib/services/store-order-service')>()
@@ -76,6 +80,7 @@ const { createTicketStore } = await import('../../src/writes/tickets')
 const { createStoreModule } = await import('../../src/api/store')
 const { cartLineKey } = await import('@/lib/services/cart-service')
 const { identifierToBase58 } = await import('@/lib/services/sdk-helpers')
+const { parsePaymentUri } = await import('@/lib/utils/payment-uri')
 type WriteTicket = import('../../src/writes/types').WriteTicket
 
 /** A real base58 document id (32 bytes), distinct per tag. */
@@ -345,6 +350,15 @@ describe('digital delivery', () => {
     await expect(engine().store.deliveryPlan(ORDER)).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/could not be read/) })
   })
 
+  it('refuses a currency no price formatter takes, and drops line fields that are not text', async () => {
+    m.order.decryptOrderPayload.mockResolvedValue({ ...digitalPayload, currency: 'not-a-currency' })
+    await expect(engine().store.deliveryPlan(ORDER)).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/could not be read/) })
+    m.order.decryptOrderPayload.mockResolvedValue({ ...digitalPayload, items: [{ ...digitalPayload.items[0], variantLabel: { x: 1 }, sku: 7 }], extra: '<script>' })
+    const { order } = await engine().store.order(ORDER)
+    expect(order.payload?.items[0]).toEqual(expect.objectContaining({ itemTitle: 'Ebook', variantLabel: undefined, sku: undefined }))
+    expect(order.payload).not.toHaveProperty('extra')
+  })
+
   it('needs the key on this device', async () => {
     m.buyerKey = null
     await expect(engine().store.deliveryPlan(ORDER)).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/Unlock/) })
@@ -413,6 +427,41 @@ describe('seller forms', () => {
     const ticket = await settled(e.tickets, await e.store.saveItem({ storeId: STORE, itemId: ITEM, revision: 1, fields: { title: 'Mug', variants: { axes: [], combinations: [], nextOptionId: 2 } } }))
     expect(ticket.error).toMatchObject({ code: 'BAD_REQUEST', userMessage: expect.stringMatching(/options can't be removed/) })
     expect(m.items.updateItem).not.toHaveBeenCalled()
+  })
+
+  it('refuses a store or zone draft made from an older revision, sending nothing', async () => {
+    m.sdkDocument.mockResolvedValue({ revision: 3 })
+    const e = engine()
+    const saved = await settled(e.tickets, await e.store.saveStore({ storeId: STORE, revision: 2, fields: { name: 'Shop', category: 'books' } }))
+    expect(saved.error).toMatchObject({ code: 'BAD_REQUEST', userMessage: expect.stringMatching(/changed since you opened it/) })
+    expect(m.store.updateStore).not.toHaveBeenCalled()
+    const zoned = await settled(e.tickets, await e.store.saveZone({ storeId: STORE, zoneId: id('Zone'), revision: 2, fields: { name: 'US', rateType: 'flat', flatRate: 700 } }))
+    expect(zoned.error).toMatchObject({ code: 'BAD_REQUEST' })
+    expect(m.zones.updateZone).not.toHaveBeenCalled()
+  })
+
+  it('proves an unconfirmed store update only when every field it wrote reads back', async () => {
+    const uri = 'tdash:yLadnCajwhccmjsUS1Bm2icVv5ehdeFtxj'
+    const fields = { name: 'Shop', category: 'books', paymentUris: [uri] }
+    m.store.updateStore.mockRejectedValue(new Error('Gateway timeout'))
+    // Another device's edit moved the revision, but the payment address is still the old one.
+    m.sdkDocument.mockResolvedValueOnce({ revision: 1 }).mockResolvedValue({ revision: 2 })
+    m.store.getCurrent.mockResolvedValue(store({ category: 'books', policies: undefined }))
+    const e = engine()
+    const other = await settled(e.tickets, await e.store.saveStore({ storeId: STORE, revision: 1, fields }))
+    expect(other.state).toBe('unconfirmed')
+    expect((await e.tickets.check(other.id)).state).toBe('unconfirmed')
+    m.sdkDocument.mockResolvedValueOnce({ revision: 1 }).mockResolvedValue({ revision: 2 })
+    m.store.getCurrent.mockResolvedValue(store({ category: 'books', policies: undefined, paymentUris: [parsePaymentUri(uri)].flatMap(parsed => (parsed ? [parsed] : [])) }))
+    const mine = await settled(e.tickets, await e.store.saveStore({ storeId: STORE, revision: 1, fields }))
+    expect((await e.tickets.check(mine.id)).state).toBe('confirmed')
+  })
+
+  it('stores a country list the way the shipping matcher reads it', async () => {
+    m.zones.createZone.mockResolvedValue({ id: id('Zone'), __createConfirmed: true })
+    const e = engine()
+    await settled(e.tickets, await e.store.saveZone({ storeId: STORE, fields: { name: 'North America', rateType: 'flat', flatRate: 700, countryPattern: 'us, ca|mx' } }))
+    expect(m.zones.createZone.mock.calls[0][2]).toMatchObject({ countryPattern: 'US|CA|MX' })
   })
 
   it('creates the store once', async () => {

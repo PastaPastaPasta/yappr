@@ -34,6 +34,8 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
   const store = edit ? manage.store : null;
   const editing = store !== null;
   const save = useWrite(saveStoreWrite);
+  // The revision this draft was read at, frozen with it: the save is refused if the store moved since.
+  const [revision] = useState(store?.$revision);
   const [name, setName] = useState(store?.name ?? '');
   const [description, setDescription] = useState(store?.description ?? '');
   const [category, setCategory] = useState(store?.category ?? '');
@@ -49,7 +51,7 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
 
   const submit = () => {
     save.run({
-      ...(editing && store ? { storeId: store.id, revision: store.$revision } : {}),
+      ...(editing && store ? { storeId: store.id, revision } : {}),
       fields: {
         name, description, category, status, defaultCurrency: currency, location,
         paymentUris: payments.filter((uri) => uri.trim()),

@@ -40,27 +40,70 @@ const ORDERS_PAGE = 20
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const isText = (value: unknown): value is string => typeof value === 'string'
-const isAmount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+const isAmount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0
+/** An optional text field: kept when it is text, dropped otherwise (never handed on as another type). */
+const optionalText = (value: unknown) => (isText(value) && value ? value : undefined)
+
+/** A currency every price formatter takes: DASH, BTC or an ISO code `Intl` knows. */
+function isCurrency(value: unknown): value is string {
+  if (value === 'DASH' || value === 'BTC') return true
+  if (!isText(value) || !/^[A-Z]{3}$/.test(value)) return false
+  try {
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: value })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function orderLine(line: unknown): OrderItem | null {
+  if (!isRecord(line) || !isText(line.itemId) || !isText(line.itemTitle) || !isAmount(line.unitPrice)) return null
+  if (!(Number.isInteger(line.quantity) && (line.quantity as number) > 0)) return null
+  return {
+    itemId: line.itemId,
+    itemTitle: line.itemTitle,
+    quantity: line.quantity as number,
+    unitPrice: line.unitPrice,
+    variantId: optionalText(line.variantId),
+    variantLabel: optionalText(line.variantLabel),
+    sku: optionalText(line.sku),
+    imageUrl: optionalText(line.imageUrl),
+    fulfillment: line.fulfillment === 'digital' ? 'digital' : undefined,
+  }
+}
+
+function shippingAddressOf(value: unknown): ShippingAddress | null {
+  if (!isRecord(value) || !isText(value.name) || !isText(value.street) || !isText(value.city) || !isText(value.postalCode) || !isText(value.country)) return null
+  return { name: value.name, street: value.street, city: value.city, state: optionalText(value.state), postalCode: value.postalCode, country: value.country }
+}
 
 /**
  * The decrypted order as the screens may read it, or null. The payload is the
- * BUYER's JSON: decrypting it proves nothing about its shape, and one order
- * whose `items` is not a list would break the seller's whole list.
+ * BUYER's JSON: decrypting it proves nothing about its shape. It is rebuilt
+ * field by field (every field a screen reads checked, anything else dropped),
+ * since one order with a list where text belongs, or a currency no formatter
+ * takes, would break the seller's whole list.
  */
 function validPayload(value: unknown): OrderPayload | null {
-  if (!isRecord(value) || !Array.isArray(value.items)) return null
-  const items = value.items.filter((line): line is OrderPayload['items'][number] =>
-    isRecord(line) && isText(line.itemId) && isText(line.itemTitle) && isAmount(line.quantity) && isAmount(line.unitPrice))
-  if (items.length !== value.items.length || items.length === 0) return null
-  if (!isAmount(value.subtotal) || !isAmount(value.shippingCost) || !isAmount(value.total) || !isText(value.currency) || !isText(value.paymentUri)) return null
-  const address = value.shippingAddress
-  if (address !== undefined && !(isRecord(address) && ['name', 'street', 'city', 'postalCode', 'country'].every(field => isText(address[field])))) return null
-  for (const field of ['txid', 'notes', 'refundAddress'] as const) if (value[field] !== undefined && !isText(value[field])) return null
+  if (!isRecord(value) || !Array.isArray(value.items) || value.items.length === 0) return null
+  const items = value.items.map(orderLine)
+  if (items.some(line => line === null)) return null
+  if (!isAmount(value.subtotal) || !isAmount(value.shippingCost) || !isAmount(value.total) || !isCurrency(value.currency) || !isText(value.paymentUri)) return null
+  const shippingAddress = value.shippingAddress === undefined ? undefined : shippingAddressOf(value.shippingAddress)
+  if (shippingAddress === null) return null
   const contact = isRecord(value.buyerContact) ? value.buyerContact : {}
   return {
-    ...(value as unknown as OrderPayload),
-    items,
-    buyerContact: { ...(isText(contact.email) ? { email: contact.email } : {}), ...(isText(contact.phone) ? { phone: contact.phone } : {}) },
+    items: items as OrderItem[],
+    shippingAddress,
+    buyerContact: { email: optionalText(contact.email), phone: optionalText(contact.phone) },
+    subtotal: value.subtotal,
+    shippingCost: value.shippingCost,
+    total: value.total,
+    currency: value.currency,
+    paymentUri: value.paymentUri,
+    txid: optionalText(value.txid),
+    notes: optionalText(value.notes),
+    refundAddress: optionalText(value.refundAddress),
   }
 }
 

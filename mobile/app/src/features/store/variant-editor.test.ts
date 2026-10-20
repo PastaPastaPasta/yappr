@@ -33,7 +33,24 @@ describe('id-stable variant edits', () => {
     const trimmed = { ...two, combinations: two.combinations.filter((c) => c.id !== [2, 4].sort().join('.')) };
     const next = addOption(trimmed, 1, 'Blue', 100);
     expect(next.combinations.some((c) => c.id === '2.4')).toBe(false);
-    expect(next.combinations.filter((c) => c.optionIds.includes(5))).toHaveLength(3);
+    // Blue comes only with the sizes still offered: S and L, not the removed M.
+    expect(next.combinations.filter((c) => c.optionIds.includes(5)).map((c) => c.id)).toEqual(['1.5', '3.5']);
+  });
+
+  it('projects a new choice onto the patterns offered, not the whole grid', () => {
+    // Two axes of three choices, offered only on the diagonal (web can remove combinations).
+    const full = addOption(addOption(addAxis(addOption(addOption(addAxis(emptyVariants(), 'A', 'a1', 1), 0, 'a2', 1), 0, 'a3', 1), 'B', 'b1', 1), 1, 'b2', 1), 1, 'b3', 1);
+    const diagonal = { ...full, combinations: full.combinations.filter((c) => ['1.4', '2.5', '3.6'].includes(c.id)) };
+    const next = addOption(diagonal, 1, 'b4', 1);
+    expect(next.combinations.filter((c) => c.optionIds.includes(7)).map((c) => c.id)).toEqual(['1.7', '2.7', '3.7']);
+  });
+
+  it("removing an axis's last unsaved choice removes the axis and keeps the other choices offered", () => {
+    const sized = addOption(addAxis(emptyVariants(), 'Size', 'S', 100), 0, 'M', 100);
+    const withColor = addAxis(sized, 'Color', 'Red', 100);
+    const next = removeOption(withColor, 3);
+    expect(next.axes.map((axis) => axis.name)).toEqual(['Size']);
+    expect(next.combinations.map((c) => c.id)).toEqual(['1', '2']);
   });
 
   it('removing an unsaved choice never moves another choice onto its id', () => {
