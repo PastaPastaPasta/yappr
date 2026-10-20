@@ -1,5 +1,6 @@
 import type { BlockListChoiceDTO } from '@engine/api';
 import { FlashList } from '@shopify/flash-list';
+import { hashKey } from '@tanstack/react-query';
 import { Stack, router } from 'expo-router';
 import { memo, useState } from 'react';
 import { Pressable, RefreshControl, View } from 'react-native';
@@ -54,10 +55,17 @@ const blockListWrite: WriteSpec<BlockListVars> = {
   // Its change is the query cache's alone, which the chain read repairs.
   reconcile: null,
   optimistic: ({ userId, follow }) => setListFollowed(userId, follow),
+  // A read of the list that landed while the change was on its way predates it.
+  reapply: ({ userId, follow }, queries) => {
+    if (queries.has(hashKey(queryKeys.blockListChoices))) setListFollowed(userId, follow);
+  },
   failureMessage: ({ follow }) => (follow ? copy.blockLists.followFailed : copy.blockLists.unfollowFailed),
-  // The row keeps the change (a re-read this soon could still show the old list); who is hidden is read again.
-  // Who is hidden changed for every account the list blocks: feeds, threads and profiles read again.
-  onConfirmed: (ticket) => refetchAfterBlockListChange(ticket.identityId),
+  // Landed (by its call or a later check): the row shows it, whatever a read in between said (a re-read
+  // this soon could still show the old list). Who is hidden changed for every account the list blocks.
+  onConfirmed: (ticket, { userId, follow }) => {
+    setListFollowed(userId, follow);
+    refetchAfterBlockListChange(ticket.identityId);
+  },
   // The cap's own sentence (stop using a list first) rather than "Try again".
   failureText: (ticket) => (ticket.error?.code === 'BAD_REQUEST' ? ticket.error.userMessage : null),
   // A ticket the engine kept when a restart cut the call short.

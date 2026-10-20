@@ -151,6 +151,12 @@ describe('posts.vote', () => {
     m.voteService.getMyVotes.mockRejectedValueOnce(new Error('Request timeout'))
     expect(await outcome(polls.vote(POLL, [2]))).toMatchObject({ state: 'unconfirmed' })
 
+    // Multiple choice: another device added option 0 since this one read the ballot; option 1 still landed.
+    m.pollService.fetchPoll.mockResolvedValue(poll({ multiChoice: true }))
+    m.voteService.castVote.mockResolvedValue({ success: true, created: [1], alreadyVoted: [], unresolvedDuplicate: false, failed: [] })
+    m.voteService.getMyVotes.mockResolvedValueOnce([0, 1])
+    expect(await outcome(polls.vote(POLL, [1]))).toMatchObject({ state: 'confirmed' })
+
     m.voteService.castVote.mockResolvedValue({ success: true, created: [], alreadyVoted: [0], unresolvedDuplicate: false, failed: [] })
     expect(await outcome(polls.vote(POLL, [2]))).toMatchObject({ state: 'failed', error: { userMessage: 'You already voted in this poll.' } })
 
@@ -252,6 +258,14 @@ describe('dpns', () => {
     m.dpns.findIdentityByName.mockResolvedValue(null)
     elapse(10 * 60_000)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+  })
+
+  it('fails a registration lib refused before sending (its own reads) as not sent, even for a contested name', async () => {
+    const { DpnsNotSentError } = await import('@/lib/services/dpns-service')
+    const { dpns, outcome } = engine()
+    m.sdk.dpns.isContestedUsername.mockResolvedValue(true)
+    m.dpns.registerUsername.mockRejectedValue(new DpnsNotSentError(new Error('no available addresses to retry')))
+    expect(await outcome(dpns.register('bob'))).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK' } })
   })
 
   it('fails a registration whose checks could not be read as not sent and retryable', async () => {

@@ -1548,6 +1548,22 @@ describe('BlockListsScreen', () => {
     expect(fakeEngine.method('safety.blockListChoices')).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the change over a refresh that answers before it lands, and shows it once confirmed', async () => {
+    fakeEngine.method('safety.blockListChoices').mockResolvedValue(choices);
+    const use = ticket({ op: 'block-list.follow', target: { identityId: AUTHORS.carol.id } });
+    fakeEngine.method('safety.setBlockListFollowed').mockResolvedValue(use);
+    withProviders(<BlockListsScreen />);
+    await settle();
+    await act(async () => fireEvent.press(screen.getByTestId(`block-list-${AUTHORS.carol.id}`)));
+    // A pull to refresh while the change is on its way still reads carol's list as unused.
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.blockListChoices });
+    });
+    act(() => fakeEngine.emit('write.status', advance(use, { state: 'confirmed', stage: null })));
+    await settle();
+    expect(screen.getByTestId(`block-list-${AUTHORS.carol.id}`)).toHaveTextContent('Using list');
+  });
+
   it('puts the list back with a toast when the change fails', async () => {
     fakeEngine.method('safety.blockListChoices').mockResolvedValue(choices);
     const stop = ticket({ op: 'block-list.unfollow', target: { identityId: BOB.id } });

@@ -299,6 +299,14 @@ const sameChoices = (a: readonly number[], b: readonly number[]) => {
   return key(a) === key(b)
 }
 
+/**
+ * Whether the ballot read back records `wanted`: exactly, where a ballot is
+ * replaced (v7/v8); as additions on v3, whose immutable ballots another
+ * device may have added to since this one last read them.
+ */
+const recorded = (ballot: readonly number[], wanted: readonly number[]) =>
+  pollVoting() === 'once' ? wanted.every(choice => ballot.includes(choice)) : sameChoices(ballot, wanted)
+
 /** The poll, or null only when Platform says it does not exist; a failed read sent nothing. */
 async function readPoll(pollId: string): Promise<Poll | null> {
   try {
@@ -356,13 +364,13 @@ export function createPollWrites(tickets: TicketStore) {
       // castVote counts a broadcast whose confirmation wait timed out as cast: only a ballot read
       // back confirms it. Otherwise it stays unconfirmed for the probe (v3 ballots never change).
       const cast = await pollrVoteService.getMyVotes(poll, ownerId).catch(() => null)
-      return cast !== null && sameChoices(cast, choices) ? { state: 'confirmed' } : { state: 'unconfirmed' }
+      return cast !== null && recorded(cast, choices) ? { state: 'confirmed' } : { state: 'unconfirmed' }
     },
     probe: relationProbe<PollVoteArgs>(async ({ viewer, args }) => {
       if (!args) throw new Error('The ballot is not known')
       const poll = await pollrPollService.fetchPoll(args.pollId)
       if (!poll) throw new Error(POLL_GONE)
-      return sameChoices(await pollrVoteService.getMyVotes(poll, viewer), args.choices)
+      return recorded(await pollrVoteService.getMyVotes(poll, viewer), args.choices)
     }, true),
   })
   return {

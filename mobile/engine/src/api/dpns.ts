@@ -3,7 +3,7 @@ import { keyNetwork } from '@/lib/constants'
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { matchIdentityKey } from '@/lib/crypto/keys'
 import { getPrivateKey } from '@/lib/secure-storage'
-import { dpnsService, minimumContestFundCredits } from '@/lib/services/dpns-service'
+import { DpnsNotSentError, dpnsService, minimumContestFundCredits } from '@/lib/services/dpns-service'
 import { getEvoSdk } from '@/lib/services/evo-sdk-service'
 import { identityService } from '@/lib/services/identity-service'
 import { readFailure, requireViewer, viewerId } from '../dto/hydrate'
@@ -107,6 +107,8 @@ export function createDpnsModule(tickets: TicketStore, controller: { refreshUser
       try {
         await dpnsService.registerUsername(label, identityId, privateKey)
       } catch (error) {
+        // lib failed before it asked the SDK to register: nothing was sent or paid (failed, may retry).
+        if (error instanceof DpnsNotSentError) throw new NotSentError(error.cause)
         return { state: 'failed', error }
       }
       return { state: 'confirmed' }

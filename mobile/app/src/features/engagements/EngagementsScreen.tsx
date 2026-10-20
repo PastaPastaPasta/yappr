@@ -17,6 +17,7 @@ import { readErrorMessage } from '~/data/read-error';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
+import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
 import { openPost, openUser } from '~/features/post/post-navigation';
 import { followWrite } from '~/features/post/post-writes';
@@ -149,6 +150,8 @@ function EngagementList({
   const { refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = list;
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    // Quotes can carry polls, read as their own queries.
+    refetchPolls();
     onRefreshCounts();
     refetch()
       .catch(() => undefined)
