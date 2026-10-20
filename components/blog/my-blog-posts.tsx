@@ -98,7 +98,12 @@ export function MyBlogPosts({ ownerId, liveBlogIds }: { ownerId: string; liveBlo
   }
 
   const visiblePosts = liveBlogIds ? posts.filter((post) => !liveBlogIds.has(post.blogId)) : posts
-  if (visiblePosts.length === 0 && !refreshing) return null
+  // Hidden only when there is truly nothing to reach: no post to show, no more
+  // pages, no error to retry. Also while the very first read is out, so owners
+  // with no such posts do not see the heading flash on every visit.
+  const nothingToReach = visiblePosts.length === 0 && !cursor && !error && !loading && !refreshing
+  const firstReadPending = loading && posts.length === 0 && !cursor && !error && !refreshing
+  if (nothingToReach || firstReadPending) return null
 
   return (
     <section className="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-800">
@@ -109,6 +114,9 @@ export function MyBlogPosts({ ownerId, liveBlogIds }: { ownerId: string; liveBlo
           <Button variant="outline" size="sm" disabled={loading} onClick={() => setDeleting(post)}>Delete post</Button>
         </div>
       ))}
+      {visiblePosts.length === 0 && cursor && !loading && !error && (
+        <p className="text-sm text-gray-500">None among your most recent posts. Older ones may still be there.</p>
+      )}
       {loading && <p className="text-sm text-gray-500">Loading posts...</p>}
       {error && <p role="alert" className="text-sm text-red-500">Could not load your posts.</p>}
       {!loading && (cursor || error) && <Button variant="outline" onClick={loadMore}>{error ? 'Try again' : 'Load more posts'}</Button>}

@@ -80,3 +80,24 @@ test('deleting the last shown post keeps the section until the reload settles', 
   await page.evaluate(() => window.releaseManagementPage())
   await expect(page.getByText('Next article', { exact: true })).toBeVisible()
 })
+
+test('a read that runs out of pages before a retained post still offers Load more', async ({ page }) => {
+  await page.goto('/?fixture=blog-management&scenario=capped')
+  await page.getByRole('button', { name: 'Delete blog', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete blog', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Posts from deleted blogs' })).toBeVisible()
+  await expect(page.getByText('Retained article', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Load more posts' }).click()
+  await expect(page.getByText('Retained article', { exact: true })).toBeVisible()
+  await expect(page.getByText(/Live article/)).toHaveCount(0)
+})
+
+test('a failed first read shows the error and Try again', async ({ page }) => {
+  await page.goto('/?fixture=blog-management&scenario=first-read-fails')
+  await page.getByRole('button', { name: 'Delete blog', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete blog', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveText('Could not load your posts.')
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.getByText('Retained article', { exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
