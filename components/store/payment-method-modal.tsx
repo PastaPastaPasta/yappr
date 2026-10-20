@@ -7,11 +7,14 @@ import { XMarkIcon, WalletIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { PaymentSchemeIcon, PAYMENT_SCHEME_LABELS, TDASH_NETWORK_LABEL } from '@/components/ui/payment-icons'
 import { APPROVED_PAYMENT_SCHEMES, parsePaymentUri } from '@/lib/utils/payment-uri'
+import { keyNetwork } from '@/lib/constants'
 
 // Supported payment schemes with their details
 const PAYMENT_SCHEMES = [
-  { scheme: 'tdash:', label: PAYMENT_SCHEME_LABELS['tdash:'], placeholder: 'yxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: `Your ${TDASH_NETWORK_LABEL.toLowerCase()} Dash wallet address` },
-  { scheme: 'dash:', label: 'Dash', placeholder: 'XxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: 'Your Dash wallet address' },
+  // dash: is the wallets' scheme on every network; the address must be this build's network's.
+  keyNetwork() === 'mainnet'
+    ? { scheme: 'dash:', label: PAYMENT_SCHEME_LABELS['dash:'], placeholder: 'XxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: 'Your Dash wallet address' }
+    : { scheme: 'dash:', label: PAYMENT_SCHEME_LABELS['tdash:'], placeholder: 'yxxxxxxxxxxxxxxxxxxxxxxxxYYYYYY', hint: `Your ${TDASH_NETWORK_LABEL.toLowerCase()} Dash wallet address` },
   { scheme: 'bitcoin:', label: 'Bitcoin', placeholder: 'bc1qxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Bitcoin wallet address' },
   { scheme: 'ethereum:', label: 'Ethereum', placeholder: '0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Ethereum wallet address' },
   { scheme: 'litecoin:', label: 'Litecoin', placeholder: 'ltc1qxxxxxxxxxxxxxxxxxxxxxxxxx', hint: 'Your Litecoin wallet address' },
@@ -39,7 +42,7 @@ interface PaymentMethodModalProps {
 }
 
 export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodModalProps) {
-  const [scheme, setScheme] = useState('tdash:')
+  const [scheme, setScheme] = useState('dash:')
   const [address, setAddress] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const openerRef = useRef<HTMLElement | null>(null)
@@ -69,7 +72,7 @@ export function PaymentMethodModal({ isOpen, onClose, onSave }: PaymentMethodMod
         label: parsed.label
       })
       setAddress('')
-      setScheme('tdash:')
+      setScheme('dash:')
       setCustomUri('')
       setCustomError('')
       setAddressError('')

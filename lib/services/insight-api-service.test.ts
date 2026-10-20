@@ -12,6 +12,18 @@ describe('payment verification links', () => {
       .toBe(`https://insight.dash.org/insight/tx/${txid}`)
   })
 
+  it.each(['testnet', 'mainnet'])('links dash: with a testnet address to testnet in a %s deployment', (network) => {
+    vi.stubEnv('NEXT_PUBLIC_NETWORK', network)
+    expect(getPaymentVerificationUrl(txid, 'dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw'))
+      .toBe(`https://insight.testnet.networks.dash.org/insight/tx/${txid}`)
+  })
+
+  it('links dash: with a testnet address to the devnet a devnet deployment runs on', () => {
+    vi.stubEnv('NEXT_PUBLIC_NETWORK', 'devnet')
+    expect(getPaymentVerificationUrl(txid, 'dash:yVUvQLRm6SYfjT46KoozgAA5y3AaxHxSj8'))
+      .toBe(`https://insight.moutai.networks.dash.org/#!/tx/${txid}`)
+  })
+
   it.each(['mainnet', 'testnet'])('uses testnet for tdash payments in a %s deployment', (network) => {
     vi.stubEnv('NEXT_PUBLIC_NETWORK', network)
     expect(getPaymentVerificationUrl(txid, 'tdash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw'))

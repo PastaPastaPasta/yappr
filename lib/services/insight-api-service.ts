@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 
 import { INSIGHT_API_URLS, INSIGHT_API_CONFIG, getConfiguredNetwork } from '@/lib/constants'
 import type { AppNetwork } from '@/lib/constants'
+import { isValidDashAddress } from '@/lib/utils/payment-uri'
 
 export interface Utxo {
   txid: string
@@ -130,6 +131,19 @@ export function isDashScheme(scheme: string): boolean {
 }
 
 /**
+ * The chain a Dash payment address lives on. `dash:` is used on every network,
+ * so its address decides: a testnet-prefixed one is this deployment's test
+ * network (testnet, or the devnet it runs on), anything else mainnet.
+ * `tdash:` is always the test network.
+ */
+export function getDashPaymentNetwork(scheme: string, address: string): AppNetwork {
+  const configured = getConfiguredNetwork()
+  const testNetwork: AppNetwork = configured === 'mainnet' ? 'testnet' : configured
+  if (scheme.toLowerCase() === 'tdash:') return testNetwork
+  return isValidDashAddress(address.split('?', 1)[0], 'testnet') ? testNetwork : 'mainnet'
+}
+
+/**
  * Get the network for a Dash payment scheme
  */
 export function getNetworkFromScheme(scheme: string): AppNetwork {
@@ -149,7 +163,7 @@ export function getPaymentVerificationUrl(txid: string, paymentUri: unknown): st
   const scheme = paymentUri.slice(0, paymentUri.indexOf(':') + 1)
   if (!isDashScheme(scheme)) return null
 
-  const network = getNetworkFromScheme(scheme)
+  const network = getDashPaymentNetwork(scheme, paymentUri.slice(scheme.length))
   const baseUrl = network === 'devnet'
     // Enter through the root hash route: direct deep links on Moutai return 404.
     ? `${new URL(INSIGHT_API_URLS.devnet).origin}/#!/tx/`
