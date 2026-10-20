@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import type { ReactNode } from 'react'
+import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { COMMUNITY_RULES_HREF, SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/lib/legal'
 import { cn } from '@/lib/utils'
@@ -24,11 +24,28 @@ const ALL_LINKS = [TERMS, RULES, PRIVACY, COOKIES, ABOUT, CONTACT]
 const INLINE_LINKS = [TERMS, PRIVACY, RULES, ABOUT]
 const OVERFLOW_LINKS = [COOKIES, CONTACT]
 
-function LinkItem({ link, className, onNavigate }: { link: LegalLink; className?: string; onNavigate?: () => void }) {
-  return link.external
-    ? <a href={link.href} className={className}>{link.label}</a>
-    : <Link href={link.href} onClick={onNavigate} className={className}>{link.label}</Link>
-}
+type LinkItemProps = Omit<ComponentPropsWithoutRef<'a'>, 'href'> & { link: LegalLink; onNavigate?: () => void }
+
+/**
+ * One legal link. Forwards its ref and the rest of its props so a Radix menu
+ * item (`asChild`) can give it the menuitem role, focus and keyboard handling.
+ */
+const LinkItem = forwardRef<HTMLAnchorElement, LinkItemProps>(function LinkItem({ link, onNavigate, onClick, ...rest }, ref) {
+  if (link.external) return <a ref={ref} href={link.href} onClick={onClick} {...rest}>{link.label}</a>
+  return (
+    <Link
+      ref={ref}
+      href={link.href}
+      onClick={(event) => {
+        onClick?.(event)
+        onNavigate?.()
+      }}
+      {...rest}
+    >
+      {link.label}
+    </Link>
+  )
+})
 
 /**
  * The small row of legal and contact links: the mobile menu, Settings and the

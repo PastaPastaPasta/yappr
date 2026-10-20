@@ -17,9 +17,10 @@ test('home renders the app shell', async ({ page }) => {
   // check.
   await expect(page.getByText(network.toUpperCase()).first()).toBeVisible()
 
-  // Home gates its body behind a hydration flag, so this only appears once the
-  // client bundle has run.
+  // The hero renders in the static HTML; its sign-up button waits for the
+  // hydration flag, so it only appears once the client bundle has run.
   await expect(page.getByRole('heading', { name: /Welcome to Yappr/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Get Started/ })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Explore', exact: true })).toBeVisible()
 })
 

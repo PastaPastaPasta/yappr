@@ -143,6 +143,7 @@ export function MobileBottomNav() {
         key={item.name}
         href={item.href}
         aria-label={badgeCount > 0 ? `${item.name}, ${badgeCount} unread` : item.name}
+        aria-current={isActive ? 'page' : undefined}
         className="flex-1 flex items-center justify-center h-full"
       >
         <div className="relative">

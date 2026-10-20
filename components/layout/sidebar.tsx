@@ -82,6 +82,17 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
 
 const NOTIFICATION_POLL_INTERVAL = 30000 // 30 seconds
 
+/**
+ * The display name the account chip last showed. Every page mounts its own
+ * Sidebar, so without it the chip would show the @name and then swap to the
+ * display name on each navigation.
+ */
+let lastAccountName: { identityId: string; displayName: string | null } | null = null
+
+function cachedAccountName(identityId: string | undefined): string | null {
+  return identityId && lastAccountName?.identityId === identityId ? lastAccountName.displayName : null
+}
+
 /** A row of the rail: icon only below `xl`, icon and label from `xl` up. */
 const NAV_ROW = cn(
   'flex items-center justify-center gap-4 rounded-full p-3 text-xl transition-all duration-200 xl:justify-start',
@@ -117,7 +128,8 @@ export function Sidebar() {
 
   const [isHydrated, setIsHydrated] = useState(false)
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false)
-  const [displayName, setDisplayName] = useState<string | null>(null)
+  // The chip renders only after hydration, so seeding from the last page's name cannot mismatch.
+  const [displayName, setDisplayName] = useState<string | null>(() => cachedAccountName(user?.identityId))
 
   // Prevent hydration mismatches
   useEffect(() => {
@@ -127,8 +139,8 @@ export function Sidebar() {
   // The account chip shows the profile's display name over the @name.
   const identityId = user?.identityId
   useEffect(() => {
-    // Reset display name at start to avoid stale values
-    setDisplayName(null)
+    // Another account's name must never linger; this one's stays while it refreshes.
+    setDisplayName(cachedAccountName(identityId))
 
     if (!identityId) {
       return
@@ -140,8 +152,9 @@ export function Sidebar() {
       try {
         const { unifiedProfileService } = await import('@/lib/services/unified-profile-service')
         const profile = await unifiedProfileService.getProfile(identityId as string)
+        lastAccountName = { identityId: identityId as string, displayName: profile?.displayName ?? null }
         if (mounted) {
-          setDisplayName(profile?.displayName ?? null)
+          setDisplayName(lastAccountName.displayName)
         }
       } catch (error) {
         logger.error('Failed to fetch display name:', error)

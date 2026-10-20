@@ -150,7 +150,9 @@ async function loadHomepageRanked(): Promise<HomepageSnapshot> {
     postService.countPostsSince(Date.now() - DAY_MS),
   ]);
 
-  const featuredIds = ranked.slice(0, FEATURED_LIMIT).map((entry) => entry.postId);
+  // Every ranked id, headroom included: a removed post drops out of the page.
+  const featuredIds = ranked.map((entry) => entry.postId);
+  const rank = new Map(featuredIds.map((id, index) => [id, index]));
   const likesById = new Map(ranked.map((entry) => [entry.postId, entry.likes]));
 
   const sortedAuthors = topAuthors(authorCounts);
@@ -161,8 +163,12 @@ async function loadHomepageRanked(): Promise<HomepageSnapshot> {
     featuredIds.length > 0
       ? loadCompositeFeedPage({ language: 'en', limit: featuredIds.length, documentIds: featuredIds })
       : Promise.resolve(null),
+    // Optional filler: its failure must not throw the ranked page away.
     featuredIds.length < FEATURED_LIMIT
-      ? loadCompositeFeedPage({ language: 'en', limit: FEATURED_LIMIT })
+      ? loadCompositeFeedPage({ language: 'en', limit: FEATURED_LIMIT }).catch((error: unknown) => {
+        logger.warn('Homepage: newest-posts filler failed:', error);
+        return null;
+      })
       : Promise.resolve(null),
     contributorIds.length > 0
       ? loadContributorIdentities(contributorIds)
@@ -170,7 +176,9 @@ async function loadHomepageRanked(): Promise<HomepageSnapshot> {
   ]);
 
   // The most liked first, then the newest to fill the section.
-  const featuredPosts = postsWithAuthors(page, likesById);
+  const featuredPosts = postsWithAuthors(page, likesById)
+    .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+    .slice(0, FEATURED_LIMIT);
   const featured = new Set(featuredPosts.map((post) => post.id));
   for (const post of postsWithAuthors(newest, likesById)) {
     if (featuredPosts.length >= FEATURED_LIMIT) break;
