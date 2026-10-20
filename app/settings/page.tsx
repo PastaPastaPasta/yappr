@@ -121,6 +121,8 @@ function SettingsPage() {
   const canModerate = isAuthority || isContractModerator
   const baseSections = privateFeedClientSupported() ? settingsSections : settingsSections.filter((section) => section.id !== 'privateFeed')
   const visibleSections = canModerate ? [...baseSections, MODERATION_SECTION] : baseSections
+  // Developer tools are reachable from About (and by URL), not listed in everyone's menu.
+  const menuSections = visibleSections.filter((section) => section.id !== 'developer')
   const { theme, setTheme } = useTheme()
   const [encryptionKeyVersion, setEncryptionKeyVersion] = useState(0)
   const handleEncryptionKeyChanged = useCallback(() => {
@@ -228,7 +230,7 @@ function SettingsPage() {
 
   const renderMainSettings = () => (
     <div className="divide-y divide-gray-200 dark:divide-gray-800">
-      {visibleSections.map((section) => (
+      {menuSections.map((section) => (
         <button
           key={section.id}
           onClick={() => setActiveSection(section.id as SettingsSection)}
@@ -253,22 +255,18 @@ function SettingsPage() {
         <h3 className="font-semibold mb-4">Account</h3>
         <div className="space-y-4 bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
           <div>
-            <p className="text-sm text-gray-500">Identity ID</p>
-            <p className="font-mono text-sm">{user?.identityId}</p>
+            <p className="text-sm text-gray-500">Account ID</p>
+            <p className="font-mono text-xs break-all text-gray-700 dark:text-gray-300">{user?.identityId}</p>
           </div>
           <div>
             <p className="text-sm text-gray-500">Balance</p>
-            <p className="font-mono">
-              {(() => {
-                const balance = user?.balance || 0;
-                // Balance is in credits, convert to DASH (1 DASH = 100,000,000,000 credits)
-                const dashBalance = balance / 100000000000;
-                return `${dashBalance.toFixed(8)} DASH`;
-              })()}
+            <p>
+              {/* Credits to DASH (1 DASH = 100,000,000,000 credits), to four places like a wallet's summary. */}
+              {`${((user?.balance || 0) / 100000000000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} DASH`}
             </p>
           </div>
           <div>
-            <p className="text-sm text-gray-500">Account Created</p>
+            <p className="text-sm text-gray-500">Joined</p>
             <p className="text-sm">
               {accountCreatedAt
                 ? accountCreatedAt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -716,6 +714,11 @@ function SettingsPage() {
 
       <div className="pt-6 border-t border-gray-200 dark:border-gray-800 space-y-3">
         <LegalLinks />
+        <p className="text-center">
+          <Link href="/settings?section=developer" className="text-xs text-gray-500 hover:underline">
+            Developer tools
+          </Link>
+        </p>
         <p className="text-xs text-gray-500 text-center">
           Version <span className="font-mono">{version}</span>
         </p>

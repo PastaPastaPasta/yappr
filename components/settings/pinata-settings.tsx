@@ -263,7 +263,7 @@ export function PinataSettings({ disabled, onConnectionChange }: PinataSettingsP
                 disabled={disabled}
               >
                 <KeyIcon className="h-4 w-4 mr-2" />
-                Connect with JWT
+                Connect with API key
               </Button>
             </>
           ) : (
