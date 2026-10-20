@@ -1,0 +1,10 @@
+{
+  "style": "fox-badge",
+  "baseline": 46,
+  "iconBackground": "#0369a1",
+  "ratio": {
+    "wordmark": 2.891,
+    "lockup": 4.109,
+    "poweredBy": 5.625
+  }
+}

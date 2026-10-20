@@ -1,5 +1,4 @@
 import * as Clipboard from 'expo-clipboard';
-import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import { Platform, Pressable, View } from 'react-native';
@@ -14,13 +13,13 @@ import {
   ShieldCheckIcon,
 } from 'react-native-heroicons/outline';
 
-import icon from '@assets/images/icon.png';
 
 import { config } from '~/config';
 import { useEngineStatus } from '~/engine/hooks';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { COMMUNITY_RULES } from '~/features/auth/terms';
 import { cn } from '~/lib-allowlist';
+import { BrandMark } from '~/ui/brand/Brand';
 import { Sheet } from '~/ui/Sheet';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
@@ -126,7 +125,7 @@ export function AboutScreen() {
       <SettingsHeader title={copy.sections.about} />
 
       <View className="items-center gap-1 px-8 pt-8" accessible accessibilityLabel={`${copy.about.name}. ${copy.about.tagline}. ${copy.about.version} ${appVersion}`}>
-        <Image source={icon} style={{ width: 64, height: 64, borderRadius: 14 }} accessible={false} />
+        <BrandMark size={64} decorative />
         <Text variant="title" tone="emphasis" className="pt-2">
           {copy.about.name}
         </Text>

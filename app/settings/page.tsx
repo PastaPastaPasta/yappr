@@ -22,6 +22,7 @@ import {
   NoSymbolIcon,
   CommandLineIcon,
 } from '@heroicons/react/24/outline'
+import { Lockup } from '@/components/brand/brand'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { TooltipButton } from '@/components/ui/tooltip-button'
@@ -727,7 +728,7 @@ function SettingsPage() {
     return (
     <div className="p-6 space-y-6">
       <div className="text-center py-8">
-        <h1 className="text-4xl font-bold text-gradient mb-4">Yappr</h1>
+        <h1 className="mb-4 flex justify-center"><Lockup height={48} /></h1>
         <p className="text-gray-500 mb-4">Decentralized social media on Dash Platform</p>
 
         <Button variant="outline" asChild>

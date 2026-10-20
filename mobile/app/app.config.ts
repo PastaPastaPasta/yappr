@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
+import brand from '../../public/brand/brand.json';
 import pkg from './package.json';
 import { engineExtra } from './plugins/engine-assets';
 import { isVariant, VARIANTS, type Variant } from './src/variants.ts';
@@ -61,8 +62,9 @@ export function resolveCommit(env: Record<string, string | undefined> = process.
   }
 }
 
-// The fox icon's own background (#0f87cf), so the splash and adaptive icon blend with it.
-const ICON_BACKGROUND = '#0f87cf';
+// The app icon's own background (public/brand/, measured by scripts/brand-assets.mjs), so the
+// splash and adaptive icon blend with it.
+const ICON_BACKGROUND = brand.iconBackground;
 /** The app's dark page surface (`colors.neutral900` in src/ui/tokens.ts). */
 const DARK_BACKGROUND = '#171717';
 
@@ -119,7 +121,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const variant = resolveVariant(process.env.APP_VARIANT);
   const v = VARIANTS[variant];
   const buildNumber = resolveBuildNumber(process.env.YAPPR_BUILD_NUMBER);
-  // Per-variant icons from scripts/generate-icons.mjs: devnet and testnet carry a DEV / BETA badge.
+  // Per-variant icons from scripts/brand-assets.mjs at the repo root: devnet and testnet carry a DEV / BETA badge.
   const icons = `./assets/images/icons/${variant === 'staging-testnet' ? 'testnet' : variant}`;
 
   return {
