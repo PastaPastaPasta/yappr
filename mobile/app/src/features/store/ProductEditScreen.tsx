@@ -1,7 +1,7 @@
 import type { ItemVariants, Store, StoreItem, StoreItemStatus, StoreManageDTO } from '@engine/api';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Alert, Pressable, ScrollView, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -89,15 +89,15 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
         <View className="gap-3">
           <TextField label="Title" value={title} onChangeText={setTitle} maxLength={200} testID="product-title" />
           <TextField label="Description" value={description} onChangeText={setDescription} multiline maxLength={5000} testID="product-description" />
-          <TextField label="Image links, one per line (https:// or ipfs://)" value={images} onChangeText={setImages} multiline autoCapitalize="none" testID="product-images" />
-          <TextField label="Currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" maxLength={5} testID="product-currency" />
+          <TextField label="Image links, one per line (https:// or ipfs://)" value={images} onChangeText={setImages} multiline autoCapitalize="none" autoCorrect={false} testID="product-images" />
+          <TextField label="Currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" autoCorrect={false} maxLength={5} testID="product-currency" />
           {!withOptions ? (
             <>
               <AmountField label={`Price (${currency})`} amount={amount} onAmount={setAmount} testID="product-price" />
               <AmountField label="Stock (blank: not tracked)" whole amount={stock} onAmount={setStock} testID="product-stock" />
             </>
           ) : null}
-          <TextField label="SKU (optional)" value={sku} onChangeText={setSku} autoCapitalize="characters" testID="product-sku" />
+          <TextField label="SKU (optional)" value={sku} onChangeText={setSku} autoCapitalize="characters" autoCorrect={false} testID="product-sku" />
         </View>
 
         <Section title="Status">
@@ -136,7 +136,7 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
 
         {save.status === 'unconfirmed' ? <Notice tone="warning" text="Saved, awaiting network confirmation." /> : null}
         {save.status === 'confirmed' && item ? <Notice text="Saved." /> : null}
-        <Button className="mt-6" size="block" testID="product-save" label={item ? 'Save product' : 'Add product'} loading={save.status === 'pending'} disabled={!title.trim() || (zones !== null && zones.length === 0 && !digital)} onPress={submit} />
+        <Button className="mt-6" size="block" testID="product-save" label={item ? 'Save product' : 'Add product'} loading={save.status === 'pending'} disabled={!title.trim() || (zones !== null && zones.length === 0 && !digital) || (!item && save.status === 'unconfirmed')} onPress={submit} />
         {item ? (
           <Button
             className="mt-3"
@@ -144,7 +144,12 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
             variant="ghost"
             label="Remove product"
             loading={archive.status === 'pending'}
-            onPress={() => { archive.run({ storeId: store.id, itemId: item.id, archive: true }).catch(() => undefined); }}
+            onPress={() =>
+              Alert.alert('Remove this product?', 'Buyers can no longer see or order it. Its orders and reviews stay.', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Remove', style: 'destructive', onPress: () => { archive.run({ storeId: store.id, itemId: item.id, archive: true }).catch(() => undefined); } },
+              ])
+            }
           />
         ) : null}
       </ScrollView>

@@ -46,10 +46,11 @@ export function KitEditScreen() {
       </Screen>
     );
   }
-  return <KitForm itemId={itemId} initial={read.data?.kit ?? EMPTY} />;
+  const loaded = read.data && !read.data.locked ? read.data : null;
+  return <KitForm itemId={itemId} initial={loaded?.kit ?? EMPTY} revision={loaded?.revision ?? null} />;
 }
 
-function KitForm({ itemId, initial }: { itemId: string; initial: KitDTO }) {
+function KitForm({ itemId, initial, revision }: { itemId: string; initial: KitDTO; revision: number | null }) {
   const [kit, setKit] = useState<KitDTO>(initial);
   const [keysText, setKeysText] = useState((initial.licenseKeys ?? []).join('\n'));
   const [saving, setSaving] = useState(false);
@@ -59,9 +60,9 @@ function KitForm({ itemId, initial }: { itemId: string; initial: KitDTO }) {
     if (saving) return;
     setSaving(true);
     const toSave: KitDTO = { ...kit, licenseKeys: sellsCodes ? keysText.split('\n').map((line) => line.trim()).filter(Boolean) : null };
-    engine.api.store.saveKit(itemId, toSave)
+    engine.api.store.saveKit(itemId, toSave, revision)
       .then((saved) => {
-        queryClient.setQueryData(queryKeys.store.kit(itemId), { locked: false, kit: saved });
+        queryClient.invalidateQueries({ queryKey: queryKeys.store.kit(itemId) }).catch(() => undefined);
         queryClient.invalidateQueries({ queryKey: queryKeys.store.sellerOrders() }).catch(() => undefined);
         toast.success('Delivery content saved');
         router.back();
@@ -91,8 +92,8 @@ function KitForm({ itemId, initial }: { itemId: string; initial: KitDTO }) {
           {kit.links.map((link, index) => (
             <Card key={index} className="gap-2 p-3">
               <TextField label="Label" value={link.label} onChangeText={(label) => update({ links: kit.links.map((l, i) => (i === index ? { ...l, label } : l)) })} testID={`kit-link-label-${index}`} />
-              <TextField label="URL" value={link.url} onChangeText={(url) => update({ links: kit.links.map((l, i) => (i === index ? { ...l, url } : l)) })} autoCapitalize="none" keyboardType="url" testID={`kit-link-url-${index}`} />
-              <TextField label="Access code (optional)" value={link.code ?? ''} onChangeText={(code) => update({ links: kit.links.map((l, i) => (i === index ? { ...l, code } : l)) })} autoCapitalize="none" />
+              <TextField label="URL" value={link.url} onChangeText={(url) => update({ links: kit.links.map((l, i) => (i === index ? { ...l, url } : l)) })} autoCapitalize="none" autoCorrect={false} keyboardType="url" testID={`kit-link-url-${index}`} />
+              <TextField label="Access code (optional)" value={link.code ?? ''} onChangeText={(code) => update({ links: kit.links.map((l, i) => (i === index ? { ...l, code } : l)) })} autoCapitalize="none" autoCorrect={false} />
               <Button size="sm" variant="ghost" label="Remove link" onPress={() => update({ links: kit.links.filter((_, i) => i !== index) })} />
             </Card>
           ))}
@@ -102,14 +103,14 @@ function KitForm({ itemId, initial }: { itemId: string; initial: KitDTO }) {
           {kit.codes.map((code, index) => (
             <Card key={index} className="gap-2 p-3">
               <TextField label="Label" value={code.label} onChangeText={(label) => update({ codes: kit.codes.map((c, i) => (i === index ? { ...c, label } : c)) })} />
-              <TextField label="Code" value={code.code} onChangeText={(value) => update({ codes: kit.codes.map((c, i) => (i === index ? { ...c, code: value } : c)) })} autoCapitalize="none" />
+              <TextField label="Code" value={code.code} onChangeText={(value) => update({ codes: kit.codes.map((c, i) => (i === index ? { ...c, code: value } : c)) })} autoCapitalize="none" autoCorrect={false} />
               <Button size="sm" variant="ghost" label="Remove code" onPress={() => update({ codes: kit.codes.filter((_, i) => i !== index) })} />
             </Card>
           ))}
         </Section>
         <Section title="Unique codes">
           <SwitchRow label="Sell unique codes" description="License keys or single-use links: one per unit sold, taken from this list." value={sellsCodes} onValueChange={(on) => update({ licenseKeys: on ? [] : null })} testID="kit-unique" />
-          {sellsCodes ? <TextField label="One per line" value={keysText} onChangeText={setKeysText} multiline autoCapitalize="none" testID="kit-keys" /> : null}
+          {sellsCodes ? <TextField label="One per line" value={keysText} onChangeText={setKeysText} multiline autoCapitalize="none" autoCorrect={false} testID="kit-keys" /> : null}
           {sellsCodes ? <Text tone="secondary">{keysText.split('\n').filter((line) => line.trim()).length} left</Text> : null}
         </Section>
         <Section title="Instructions">

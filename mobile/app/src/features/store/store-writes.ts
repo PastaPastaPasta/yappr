@@ -60,6 +60,8 @@ export const saveZoneWrite: WriteSpec<ZoneSaveInput> = {
 
 export const placeOrderWrite: WriteSpec<PlaceOrderInput> = {
   key: ({ storeId }) => `store:order:${storeId}`,
+  // One order per store's cart at a time, never queued: a second tap while the first may still land would order twice.
+  serial: ({ storeId }) => `store:order:${storeId}`,
   submit: (api, vars) => api.store.placeOrder(vars),
   failureText: engineSentence,
   onRejected: sayRefusal,
@@ -68,7 +70,7 @@ export const placeOrderWrite: WriteSpec<PlaceOrderInput> = {
     refetch(queryKeys.store.orders());
   },
   matches: (ticket, { storeId }) => ticket.op === 'store.order' && targetIdentity(ticket) !== null && storeId.length > 0,
-  failureMessage: "Couldn't place your order. Nothing was charged. Try again.",
+  failureMessage: "Couldn't place your order. Try again.",
 };
 
 export const orderStatusWrite: WriteSpec<StatusUpdateInput> = {

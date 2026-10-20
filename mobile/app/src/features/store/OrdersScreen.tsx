@@ -70,7 +70,7 @@ export function OrdersScreen() {
               <Pressable accessibilityRole="link" onPress={() => router.push(`/orders/${item.id}`)}>
                 <Text variant="bodyStrong">{item.storeName ?? 'Order'} · #{formatOrderId(item.id)}</Text>
               </Pressable>
-              <DeliveryList deliveries={item.deliveries} />
+              <DeliveryList orderId={item.id} deliveries={item.deliveries} />
             </View>
           )
         }

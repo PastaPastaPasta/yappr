@@ -71,11 +71,12 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
             value={category}
             onChangeText={setCategory}
             autoCapitalize="none"
+            autoCorrect={false}
             maxLength={20}
             placeholder="e.g. art, books, clothing"
             testID="store-category"
           />
-          <TextField label="Default currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" maxLength={5} testID="store-currency" />
+          <TextField label="Default currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" autoCorrect={false} maxLength={5} testID="store-currency" />
           <TextField label="Location (optional)" value={location} onChangeText={setLocation} maxLength={100} testID="store-location" />
         </View>
         {editing ? (
@@ -84,11 +85,11 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
           </Section>
         ) : null}
         <Section title="Payment methods" right={<Button size="sm" variant="ghost" label="Add" onPress={() => setPayments((list) => [...list, ''])} />}>
-          <Text tone="secondary">Buyers pay you directly. Enter a payment address as a URI, like dash:yXp… or bitcoin:bc1….</Text>
+          <Text tone="secondary">Buyers pay you directly. Enter a payment address as a URI: dash:X… (tdash:y… on testnet) or bitcoin:bc1….</Text>
           {payments.map((uri, index) => (
             <View key={index} className="flex-row items-end gap-2">
               <View className="flex-1">
-                <TextField label={`Payment ${index + 1}`} value={uri} onChangeText={(text) => setPayments((list) => list.map((value, i) => (i === index ? text : value)))} autoCapitalize="none" testID={`store-payment-${index}`} />
+                <TextField label={`Payment ${index + 1}`} value={uri} onChangeText={(text) => setPayments((list) => list.map((value, i) => (i === index ? text : value)))} autoCapitalize="none" autoCorrect={false} testID={`store-payment-${index}`} />
               </View>
               {payments.length > 1 ? <Button size="sm" variant="ghost" label="Remove" onPress={() => setPayments((list) => list.filter((_, i) => i !== index))} /> : null}
             </View>

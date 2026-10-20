@@ -5,6 +5,7 @@ import { Alert, Pressable, ScrollView, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
+import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
@@ -45,16 +46,25 @@ export function DeliverScreen() {
     setBusy(true);
     engine.api.store.deliver({ orderId, lines: chosen, message: message.trim() || undefined, extras, acknowledged })
       .then((result) => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.store.orders() }).catch(() => undefined);
+        // Unique codes out of their pools are recorded nowhere else: the alert stays until dismissed.
+        if (result.recoveryText) Alert.alert('Check these unique codes', result.recoveryText);
+        if (result.error) {
+          Alert.alert('Not delivered', result.error);
+          plan.refetch().catch(() => undefined);
+          return;
+        }
         toast.success(result.pending ? 'Sent, awaiting confirmation' : 'Delivered');
         for (const warning of result.warnings) toast.error(warning);
-        if (result.recoveryText) Alert.alert('Check these unique codes', result.recoveryText);
-        queryClient.invalidateQueries({ queryKey: queryKeys.store.orders() }).catch(() => undefined);
         router.back();
       })
       .catch((error: unknown) => {
-        const text = error instanceof Error ? error.message : "Couldn't deliver this order.";
-        // A failure may name unique codes that are out of their pools: it stays until dismissed.
-        Alert.alert('Not delivered', text);
+        // A deadline or restart cut the call short; the engine may still be delivering.
+        const cutShort = ['ENGINE_TIMEOUT', 'ENGINE_RESTARTED'].includes(errorCode(error) ?? '');
+        Alert.alert(
+          cutShort ? 'Still delivering?' : 'Not delivered',
+          cutShort ? 'This is taking longer than expected. The delivery may still go out: check the order before sending again.' : error instanceof Error ? error.message : "Couldn't deliver this order.",
+        );
         plan.refetch().catch(() => undefined);
       })
       .finally(() => setBusy(false));
@@ -96,9 +106,9 @@ export function DeliverScreen() {
                     onChangeText={(label) => setExtra(line.itemId, extraIndex, { label })}
                   />
                   {extra.kind === 'link' ? (
-                    <TextField label="URL" value={extra.url} autoCapitalize="none" keyboardType="url" onChangeText={(url) => setExtra(line.itemId, extraIndex, { url })} />
+                    <TextField label="URL" value={extra.url} autoCapitalize="none" autoCorrect={false} keyboardType="url" onChangeText={(url) => setExtra(line.itemId, extraIndex, { url })} />
                   ) : (
-                    <TextField label="Code" value={extra.code} autoCapitalize="none" onChangeText={(code) => setExtra(line.itemId, extraIndex, { code })} />
+                    <TextField label="Code" value={extra.code} autoCapitalize="none" autoCorrect={false} onChangeText={(code) => setExtra(line.itemId, extraIndex, { code })} />
                   )}
                 </View>
               ))}

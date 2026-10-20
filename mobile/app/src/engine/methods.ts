@@ -64,8 +64,12 @@ const STORE_READS = new Set([
   'store.zones', 'store.mine', 'store.manage', 'store.checkout', 'store.myOrders', 'store.sellerOrders', 'store.order',
   'store.deliveryPlan', 'store.kit', 'store.reviewsOpen', 'store.ownReport', 'cart.get',
 ]);
-/** Calls that run for minutes: digital delivery reserves codes, publishes and confirms; a kit save reconciles. */
-const LONG_WRITES: Record<string, number> = { 'store.deliver': 180_000, 'store.deliverReady': 600_000, 'store.saveKit': 120_000 };
+/**
+ * Calls that run for minutes, never replayed: digital delivery reserves codes,
+ * publishes and confirms; a kit save reconciles; a delivered file downloads
+ * and decrypts (a replay after it crashed the engine would only crash it again).
+ */
+const LONG_CALLS: Record<string, number> = { 'store.deliver': 180_000, 'store.deliverReady': 600_000, 'store.saveKit': 120_000, 'store.deliveredFile': 180_000 };
 
 export function methodKind(path: string): MethodKind {
   const module = path.slice(0, path.indexOf('.'));
@@ -79,7 +83,7 @@ export function methodKind(path: string): MethodKind {
 export function methodTimeoutMs(path: string): number {
   if (path === 'session.awaitKeyExchange') return 130_000;
   if (path === 'session.awaitKeyRegistration') return 310_000;
-  if (LONG_WRITES[path]) return LONG_WRITES[path];
+  if (LONG_CALLS[path]) return LONG_CALLS[path];
   switch (methodKind(path)) {
     case 'read':
     case 'session':

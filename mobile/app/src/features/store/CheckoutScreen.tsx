@@ -1,4 +1,4 @@
-import type { BuyerContact, CheckoutQuoteDTO, ShippingAddress } from '@engine/api';
+import type { BuyerContact, CheckoutQuoteDTO, ShippingAddress, WriteTicket } from '@engine/api';
 import * as Clipboard from 'expo-clipboard';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
@@ -47,7 +47,18 @@ export function CheckoutScreen() {
   const [refundAddress, setRefundAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [unlockOpen, setUnlockOpen] = useState(false);
-  const place = useWrite(placeOrderWrite);
+  // The quote the buyer reviewed and pays: frozen at "Continue to payment", so a refetch there never changes the total they paid.
+  const [reviewed, setReviewed] = useState<CheckoutQuoteDTO | null>(null);
+  // The engine refused the order for a reason of its own (cart, shipping or store changed): back to details, with a fresh quote.
+  const spec = useMemo(() => ({
+    ...placeOrderWrite,
+    onFailed: (ticket: WriteTicket) => {
+      if (ticket.error?.code !== 'BAD_REQUEST') return;
+      setReviewed(null);
+      setStep('details');
+    },
+  }), []);
+  const place = useWrite(spec);
 
   const quote = useEngineQuery(
     queryKeys.store.checkout(storeId, asked),
@@ -85,12 +96,15 @@ export function CheckoutScreen() {
     quote.refetch().then(({ data }) => {
       if (!data) return;
       if (data.blocker === 'missing-buyer-key') setUnlockOpen(true);
-      else if (!data.blocker && !data.orderSizeError && data.unavailable.length === 0) setStep('payment');
+      else if (!data.blocker && !data.orderSizeError && data.unavailable.length === 0 && data.shipping.state !== 'problem') {
+        setReviewed(data);
+        setStep('payment');
+      }
     }).catch(() => undefined);
   };
 
   const submit = () => {
-    if (!chosenUri || placing) return;
+    if (!chosenUri || placing || !reviewed) return;
     place.run({
       storeId,
       shipTo: needsAddress ? asked : null,
@@ -99,7 +113,7 @@ export function CheckoutScreen() {
       txid: txid.trim() || undefined,
       refundAddress: refundAddress.trim() || undefined,
       notes: notes.trim() || undefined,
-      reviewed: { lines: q.lines.map((line) => ({ key: line.key, quantity: line.quantity, digital: line.digital })), shippingCost: q.shipping.cost },
+      reviewed: { lines: reviewed.lines.map((line) => ({ key: line.key, quantity: line.quantity, digital: line.digital })), shippingCost: reviewed.shipping.cost },
     }).catch(() => undefined);
   };
 
@@ -173,9 +187,9 @@ export function CheckoutScreen() {
           </View>
         ) : null}
 
-        {step === 'payment' ? (
+        {step === 'payment' && reviewed ? (
           <Payment
-            q={q}
+            q={reviewed}
             currency={currency}
             paymentUri={chosenUri}
             onPaymentUri={setPaymentUri}
@@ -186,13 +200,13 @@ export function CheckoutScreen() {
             notes={notes}
             onNotes={setNotes}
             placing={placing}
-            failed={place.status === 'failed'}
             onPlace={submit}
           />
         ) : null}
         {back ? <Button className="mt-3" variant="ghost" size="block" label="Back" disabled={placing} onPress={back} /> : null}
       </ScrollView>
-      <UnlockSheet open={unlockOpen} onClose={() => { setUnlockOpen(false); continuePolicies(); }} />
+      {/* Closing it says nothing about whether it unlocked: read again, and the buyer continues themselves. */}
+      <UnlockSheet open={unlockOpen} onClose={() => { setUnlockOpen(false); quote.refetch().catch(() => undefined); }} />
     </Screen>
   );
 }
@@ -222,7 +236,6 @@ interface PaymentProps {
   notes: string;
   onNotes: (value: string) => void;
   placing: boolean;
-  failed: boolean;
   onPlace: () => void;
 }
 
@@ -248,8 +261,8 @@ function Payment(props: PaymentProps) {
             </View>
           </View>
         ) : null}
-        <TextField label="Transaction ID (optional)" value={props.txid} onChangeText={props.onTxid} autoCapitalize="none" maxLength={limits?.txid} testID="checkout-txid" />
-        <TextField label="Refund address (optional)" value={props.refundAddress} onChangeText={props.onRefundAddress} autoCapitalize="none" maxLength={limits?.refundAddress} testID="checkout-refund" />
+        <TextField label="Transaction ID (optional)" value={props.txid} onChangeText={props.onTxid} autoCapitalize="none" autoCorrect={false} maxLength={limits?.txid} testID="checkout-txid" />
+        <TextField label="Refund address (optional)" value={props.refundAddress} onChangeText={props.onRefundAddress} autoCapitalize="none" autoCorrect={false} maxLength={limits?.refundAddress} testID="checkout-refund" />
       </Section>
       <Section title="Your order">
         <Card className="gap-2 p-4">

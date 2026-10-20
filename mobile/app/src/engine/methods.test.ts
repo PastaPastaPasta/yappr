@@ -51,6 +51,9 @@ describe('engine method kinds', () => {
     expect(methodTimeoutMs('store.deliver')).toBe(180_000);
     expect(methodTimeoutMs('store.deliverReady')).toBe(600_000);
     expect(methodTimeoutMs('store.saveKit')).toBe(120_000);
+    // Downloads a whole file: never replayed after a crash it may have caused.
+    expect(methodKind('store.deliveredFile')).toBe('write');
+    expect(methodTimeoutMs('store.deliveredFile')).toBe(180_000);
   });
 
   it('treats an unknown path as a write, and keeps the session and control kinds', () => {

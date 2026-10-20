@@ -3,11 +3,14 @@ import { STOREFRONT_DOCUMENT_TYPES, storefrontStatusIsSealed, storefrontSupports
 import { sellerOrderDeliveryKey } from '@/lib/crypto/digital-delivery'
 import { cartLineKey, cartService } from '@/lib/services/cart-service'
 import {
-  deliveredFor, deliveryCompletesOrder, digitalLines, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, kitDeliveryFitError,
-  lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, wholeOrderProblems, withHeldDeliveries, type ItemListing,
+  deliveredFor, deliveryCompletesOrder, digitalLines, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, isSafeDeliveryUrl, kitDeliveryFitError,
+  lineCoverage, lineProblems, MAX_CODE_LENGTH, MAX_DELIVERY_MESSAGE_LENGTH, normalizeLinkInput, planBlockers, planDelivery, wholeOrderProblems,
+  withHeldDeliveries, type ItemListing,
 } from '@/lib/services/digital-delivery-plan'
 import { fulfillOrder, FulfillmentError, KeyRecoveryError, kitsOf, newerKits, toKitPayloads } from '@/lib/services/digital-fulfillment'
+import { fetchDecryptedFile } from '@/lib/services/digital-file-service'
 import { getPaymentVerificationUrl } from '@/lib/services/insight-api-service'
+import { bytesToBase64 } from '@/lib/bytes'
 import { itemDeliverableService, KitWriteUncertainError, type SellerKit } from '@/lib/services/item-deliverable-service'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { openStatusNotesAsBuyer, openStatusNotesAsSeller, orderStatusService, StatusNoteError } from '@/lib/services/order-status-service'
@@ -27,7 +30,7 @@ import { RpcError } from '../protocol/envelope'
 import { badRequest, readFailure, requireViewer } from '../dto/hydrate'
 import { decodeCursor, encodeCursor } from '../dto/cursor'
 import type { Page } from './dto'
-import { NotSentError, type TicketStore } from '../writes/tickets'
+import { NotSentError, type ProbeKit, type ProbeResult, type TicketStore } from '../writes/tickets'
 import { signer } from '../writes/handler-kit'
 import { wasConfirmed } from '../writes/lib-results'
 import type { TicketDocument, WriteTicket } from '../writes/types'
@@ -171,6 +174,11 @@ export interface DeliverInput {
 }
 
 export interface DeliverResultDTO {
+  /**
+   * Null when it was delivered (or sent). Otherwise why not: returned, not
+   * thrown, so unique codes in `recoveryText` never reach the host's error log.
+   */
+  error: string | null
   /** Sent but not yet seen on chain: it shows in the buyer's library once it lands. */
   pending: boolean
   warnings: string[]
@@ -196,14 +204,30 @@ export interface KitDTO {
   instructions: string
   /** Files stay as uploaded on yap.pr; the app keeps them in the kit unchanged. */
   files: { name: string; size: number }[]
-  links: { label: string; url: string; code?: string }[]
-  codes: { label: string; code: string }[]
+  /** `optionIds`: the variants a link or code goes to (absent: every variant); kept as the web editor set them. */
+  links: { label: string; url: string; code?: string; optionIds?: number[] }[]
+  codes: { label: string; code: string; optionIds?: number[] }[]
   /** Null when the product sells no unique codes. */
   licenseKeys: string[] | null
   deliverWhen: 'payment_confirmed' | 'on_order'
 }
 
-export type KitReadDTO = { locked: true } | { locked: false; kit: KitDTO | null }
+/**
+ * `revision`: the kit document's revision when read (null: no kit yet). A
+ * save sends it back and is refused if the kit moved since, as web's editor
+ * saves against the copy it loaded: a delivery in between took codes, and
+ * writing the old pool would put sold codes back.
+ */
+export type KitReadDTO = { locked: true } | { locked: false; kit: KitDTO | null; revision: number | null }
+
+/** A delivered file, decrypted, for the host to save: the bridge carries it as base64. */
+export interface DeliveredFileDTO {
+  name: string
+  base64: string
+}
+
+/** The largest delivered file the app saves (the bridge carries it whole, as base64). */
+const MAX_SAVED_FILE_BYTES = 25 * 1024 * 1024
 
 /** Encryption keys of sellers, fetched once per engine. */
 const sellerKeys = new Map<string, Uint8Array>()
@@ -481,10 +505,26 @@ function kitContents(kit: ItemDeliverablePayload | undefined): string[] {
   ]
 }
 
+const LINK_PROBLEM = 'Links must start with https://, http://, magnet: or ipfs://. Send any other kind of address as a code.'
+const CODE_PROBLEM = `Codes are at most ${MAX_CODE_LENGTH} characters.`
+
+/** A seller-typed link, normalized as web's editor does (`drive.google.com/x` gets https://); BAD_REQUEST when it can't be opened safely. */
+function linkAsset(label: string | undefined, url: string, code: string | undefined, optionIds?: number[]): DigitalAsset {
+  const href = normalizeLinkInput(url)
+  if (!isSafeDeliveryUrl(href)) throw badRequest(LINK_PROBLEM)
+  const access = code?.trim()
+  if (access && access.length > MAX_CODE_LENGTH) throw badRequest(CODE_PROBLEM)
+  return { kind: 'link', label: label?.trim() || href, url: href, ...(access ? { code: access } : {}), ...(optionIds?.length ? { optionIds } : {}) }
+}
+
+function codeAsset(label: string | undefined, code: string, optionIds?: number[]): DigitalAsset {
+  const value = code.trim()
+  if (value.length > MAX_CODE_LENGTH) throw badRequest(CODE_PROBLEM)
+  return { kind: 'code', label: label?.trim() || 'Code', code: value, ...(optionIds?.length ? { optionIds } : {}) }
+}
+
 const toAsset = (extra: NonNullable<DeliverInput['extras']>[string][number]): DigitalAsset =>
-  extra.kind === 'link'
-    ? { kind: 'link', label: extra.label.trim(), url: extra.url.trim(), ...(extra.code?.trim() ? { code: extra.code.trim() } : {}) }
-    : { kind: 'code', label: extra.label.trim(), code: extra.code.trim() }
+  extra.kind === 'link' ? linkAsset(extra.label, extra.url, extra.code) : codeAsset(extra.label, extra.code)
 
 /**
  * Web `DeliverDigitalModal`'s allocation for `input` against `state`: the
@@ -503,7 +543,7 @@ function workOut(state: DeliveryState, input: Pick<DeliverInput, 'lines' | 'mess
   const effectiveKits = new Map<string, ItemDeliverablePayload>()
   for (const itemId of new Set(lines.filter((_, index) => selected.has(index)).map(line => line.itemId))) {
     const base = kits.get(itemId)?.kit
-    const extra = (extras[itemId] ?? []).map(toAsset)
+    const extra = (extras[itemId] ?? []).filter(entry => (entry.kind === 'link' ? entry.url : entry.code).trim()).map(toAsset)
     if (!base && extra.length === 0) continue
     effectiveKits.set(itemId, base ? { ...base, assets: [...base.assets, ...extra] } : { v: 1, assets: extra, deliverWhen: 'payment_confirmed' })
   }
@@ -554,8 +594,8 @@ function kitDTO(kit: ItemDeliverablePayload): KitDTO {
   return {
     instructions: kit.instructions ?? '',
     files: kit.assets.flatMap(asset => (asset.kind === 'file' ? [{ name: asset.name, size: asset.size }] : [])),
-    links: kit.assets.flatMap(asset => (asset.kind === 'link' ? [{ label: asset.label, url: asset.url, ...(asset.code ? { code: asset.code } : {}) }] : [])),
-    codes: kit.assets.flatMap(asset => (asset.kind === 'code' ? [{ label: asset.label, code: asset.code }] : [])),
+    links: kit.assets.flatMap(asset => (asset.kind === 'link' ? [{ label: asset.label, url: asset.url, ...(asset.code ? { code: asset.code } : {}), ...(asset.optionIds ? { optionIds: asset.optionIds } : {}) }] : [])),
+    codes: kit.assets.flatMap(asset => (asset.kind === 'code' ? [{ label: asset.label, code: asset.code, ...(asset.optionIds ? { optionIds: asset.optionIds } : {}) }] : [])),
     licenseKeys: kit.licenseKeys ?? null,
     deliverWhen: kit.deliverWhen,
   }
@@ -569,8 +609,8 @@ function kitFrom(input: KitDTO, stored: ItemDeliverablePayload | undefined): Ite
     v: 1,
     assets: [
       ...(stored?.assets.filter(asset => asset.kind === 'file') ?? []),
-      ...input.links.filter(link => trim(link.url)).map((link): DigitalAsset => ({ kind: 'link', label: trim(link.label) || 'Download', url: trim(link.url), ...(trim(link.code) ? { code: trim(link.code) } : {}) })),
-      ...input.codes.filter(code => trim(code.code)).map((code): DigitalAsset => ({ kind: 'code', label: trim(code.label) || 'Code', code: trim(code.code) })),
+      ...input.links.filter(link => trim(link.url)).map(link => linkAsset(link.label, link.url, link.code, link.optionIds)),
+      ...input.codes.filter(code => trim(code.code)).map(code => codeAsset(code.label, code.code, code.optionIds)),
     ],
     ...(trim(input.instructions) ? { instructions: trim(input.instructions) } : {}),
     ...(keys ? { licenseKeys: keys } : {}),
@@ -585,6 +625,28 @@ function kitFrom(input: KitDTO, stored: ItemDeliverablePayload | undefined): Ite
  * Every refusal before the write is BAD_REQUEST with web's copy.
  */
 async function placeOrder(buyer: string, input: PlaceOrderInput, ctx: { stage(): void; documents(docs: TicketDocument[]): void }) {
+  // Everything before the write sends nothing: any failure there (a read, the encryption) is not-sent and retryable.
+  const prepared = await prepareOrder(buyer, input).catch((error: unknown) => {
+    throw error instanceof NotSentError ? error : new NotSentError(readFailure(error))
+  })
+  ctx.stage()
+  let created: StoreOrder
+  try {
+    created = await storeOrderService.createOrder(buyer, prepared)
+  } catch (error) {
+    // createOrder's own refusals (own store, too large, store closed) come before signing.
+    const message = error instanceof Error ? error.message : ''
+    if (/own store|too large|isn't taking orders/.test(message)) throw new NotSentError(badRequest(message))
+    throw error
+  }
+  const confirmed = wasConfirmed(created)
+  ctx.documents([storefrontDoc(STOREFRONT_DOCUMENT_TYPES.STORE_ORDER, created.id, 'create', confirmed)])
+  cartService.removeStoreItems(prepared.storeId)
+  return confirmed
+}
+
+/** The order checked again and encrypted, ready to place; refusals are NotSentError with web's copy. */
+async function prepareOrder(buyer: string, input: PlaceOrderInput) {
   const notSent = (message: string) => new NotSentError(badRequest(message))
   const store = await storeService.getById(input.storeId).catch((error: unknown) => { throw new NotSentError(readFailure(error)) })
   if (!store) throw notSent('This store could not be found')
@@ -633,21 +695,87 @@ async function placeOrder(buyer: string, input: PlaceOrderInput, ctx: { stage():
   const nonce = new Uint8Array(24)
   crypto.getRandomValues(nonce)
   const encryptedPayload = await storeOrderService.encryptOrderPayload(payload, readiness.buyerKey, readiness.sellerKey, nonce, store.id)
+  return { storeId: store.id, sellerId: store.ownerId, encryptedPayload, nonce }
+}
 
-  ctx.stage()
-  let created: StoreOrder
+/**
+ * "Check again" for an order the write did not name (its call threw after
+ * signing): the buyer's newest orders, looking for one to this store placed
+ * since the ticket. Found, it landed; the cart's lines for the store go then,
+ * so the same cart is never ordered twice.
+ */
+async function orderProbe(ticket: WriteTicket, input: PlaceOrderInput | undefined, kit: ProbeKit): Promise<ProbeResult> {
+  if (ticket.documents.length > 0) return kit.proveDocuments(ticket.documents)
+  if (!ticket.identityId || !input?.storeId) return { state: 'unknown', error: new Error('Nothing to check: this order named no document') }
   try {
-    created = await storeOrderService.createOrder(buyer, { storeId: store.id, sellerId: store.ownerId, encryptedPayload, nonce })
+    const { orders } = await storeOrderService.getBuyerOrders(ticket.identityId, { limit: 10 })
+    const since = ticket.createdAt.getTime() - 60_000
+    const placed = orders.find(order => order.storeId === input.storeId && order.createdAt.getTime() >= since)
+    if (!placed) return { state: 'unknown', error: new Error('The order is not visible yet') }
+    cartService.removeStoreItems(input.storeId)
+    return { state: 'applied', documents: [storefrontDoc(STOREFRONT_DOCUMENT_TYPES.STORE_ORDER, placed.id, 'create', true)] }
   } catch (error) {
-    // createOrder's own refusals (own store, too large, store closed) come before signing.
-    const message = error instanceof Error ? error.message : ''
-    if (/own store|too large|isn't taking orders/.test(message)) throw notSent(message)
-    throw error
+    return { state: 'unknown', error }
   }
-  const confirmed = wasConfirmed(created)
-  ctx.documents([storefrontDoc(STOREFRONT_DOCUMENT_TYPES.STORE_ORDER, created.id, 'create', confirmed)])
-  cartService.removeStoreItems(store.id)
-  return confirmed
+}
+
+
+/** Orders a delivery is running for in this engine: a second one for any of them waits for nothing, it is refused. */
+const delivering = new Set<string>()
+const KIT_MOVED = "This product's delivery content changed since you opened it (a delivery took unique codes). Go back, reopen it and save again."
+
+/**
+ * Run `work` while no other delivery runs for any of `orderIds` (web disables
+ * Deliver while one is on its way). A second delivery would read the same
+ * receipts and send the order again.
+ */
+async function deliveringExclusively<T>(orderIds: string[], work: () => Promise<T>): Promise<T> {
+  if (orderIds.some(id => delivering.has(id))) throw badRequest('A delivery for this order is still on its way. Wait for it, then check the order before sending again.')
+  for (const id of orderIds) delivering.add(id)
+  try {
+    return await work()
+  } finally {
+    for (const id of orderIds) delivering.delete(id)
+  }
+}
+
+/** Web's "Deliver all" loop: each ready order re-checked as it stands now, one at a time, so each draws codes from the pool the previous left. */
+async function deliverAll(seller: string, key: Uint8Array, ready: SellerOrderDTO[]): Promise<BulkDeliveryDTO> {
+  const result: BulkDeliveryDTO = { delivered: 0, skipped: [], firstFailure: null, warnings: [], recoveryTexts: [] }
+  let kits = new Map<string, SellerKit>()
+  for (const dto of ready) {
+    try {
+      const state = await deliveryState(seller, dto.id, key)
+      kits = newerKits(kits, state.kits)
+      const current = kitsOf(state.lines.map(line => line.itemId), kits, state.kits)
+      const status = (await orderStatusService.getLatestStatuses([dto.id])).get(dto.id)
+      const stillReady = current && isReadyForBulkDelivery({
+        payload: state.payload, storeId: state.order.storeId, latestStatus: status?.status, alreadyDelivered: state.deliveries.length > 0,
+        kits: toKitPayloads(current), listings: state.listings,
+      })
+      const plan = stillReady ? planDelivery(state.payload, toKitPayloads(kits), state.listings) : null
+      if (!plan || !current) {
+        result.skipped.push(dto.id)
+        continue
+      }
+      const fulfilled = await fulfillOrder({
+        sellerId: seller, order: state.order, delivery: plan.delivery, consumedKeys: plan.consumedKeys, kits,
+        markDelivered: isDigitalOnly(state.payload.items), sellerPrivateKey: key,
+      })
+      kits = newerKits(kits, fulfilled.updatedKits)
+      holdDelivery(dto.id, fulfilled.delivery)
+      result.delivered++
+      result.warnings.push(...fulfilled.warnings)
+      if (fulfilled.pendingRecoveryText) result.recoveryTexts.push(fulfilled.pendingRecoveryText)
+    } catch (error) {
+      if (error instanceof FulfillmentError) kits = newerKits(kits, error.updatedKits)
+      result.skipped.push(dto.id)
+      result.firstFailure ??= error instanceof Error ? error.message : 'unknown error'
+      const recovery = recoveryOf(error)
+      if (recovery) result.recoveryTexts.push(recovery)
+    }
+  }
+  return result
 }
 
 export function createOrderModule(tickets: TicketStore) {
@@ -659,9 +787,18 @@ export function createOrderModule(tickets: TicketStore) {
       const buyer = signer(ctx)
       // Validation reads come first: none of them sends anything.
       ctx.stage('queued', true)
-      const confirmed = await placeOrder(buyer, input, { stage: () => ctx.stage('signing'), documents: docs => ctx.documents(docs) })
-      return { state: confirmed ? 'confirmed' : 'unconfirmed' }
+      try {
+        const confirmed = await placeOrder(buyer, input, { stage: () => ctx.stage('signing'), documents: docs => ctx.documents(docs) })
+        return { state: confirmed ? 'confirmed' : 'unconfirmed' }
+      } catch (error) {
+        if (error instanceof NotSentError) throw error
+        // Signed and maybe sent: look for it before calling it failed.
+        const proof = await ctx.probe()
+        if (proof.state === 'applied') return { state: 'confirmed', documents: proof.documents }
+        throw error
+      }
     },
+    probe: orderProbe,
   })
 
   tickets.register<StatusUpdateInput>('store.order.status', {
@@ -749,14 +886,47 @@ export function createOrderModule(tickets: TicketStore) {
       }
     },
 
+    /**
+     * One delivered file, decrypted (web's library download): the viewer
+     * must be the order's buyer or its seller, with the key on this device.
+     * `itemIndex` and `assetIndex` name it in the delivery as `DeliveryDTO` lists it.
+     */
+    async deliveredFile(input: { orderId: string; deliveryId: string; itemIndex: number; assetIndex: number }): Promise<DeliveredFileDTO> {
+      const viewer = requireViewer('Saving a file')
+      const order = await readOrder(input?.orderId)
+      const key = getEncryptionKeyBytes(viewer)
+      if (!key) throw badRequest(UNLOCK_MESSAGE)
+      let delivery: OrderDelivery | undefined
+      try {
+        if (order.sellerId === viewer) {
+          const read = await orderDeliveryService.loadDecrypted([order], (found, owner) => orderDeliveryService.decryptAsSeller(found, owner, key))
+          delivery = read.get(order.id)?.find(found => found.id === input.deliveryId)
+        } else if (order.buyerId === viewer) {
+          const sellerKey = await cachedSellerKey(order.sellerId)
+          const found = (await orderDeliveryService.getForBuyer(viewer)).get(order.id)?.find(candidate => candidate.id === input.deliveryId)
+          if (found && sellerKey) delivery = { ...found, payload: orderDeliveryService.decryptAsBuyer(found, order, key, sellerKey) }
+        } else {
+          throw badRequest('This order is not yours')
+        }
+      } catch (error) {
+        throw readFailure(error)
+      }
+      const asset = delivery?.payload?.items[input.itemIndex]?.assets[input.assetIndex]
+      if (!asset || asset.kind !== 'file') throw badRequest('This file could not be found in the delivery')
+      if (asset.size > MAX_SAVED_FILE_BYTES) throw badRequest('This file is too large to save on a phone. Save it from a computer instead.')
+      const blob = await fetchDecryptedFile(asset)
+      // The declared size is the seller's word: the bytes decide.
+      if (blob.size > MAX_SAVED_FILE_BYTES) throw badRequest('This file is too large to save on a phone. Save it from a computer instead.')
+      return { name: asset.name, base64: bytesToBase64(new Uint8Array(await blob.arrayBuffer())) }
+    },
+
     /** The seller's delivery content for a digital product; `locked` without the key on this device. */
     async kit(itemId: string): Promise<KitReadDTO> {
       const seller = requireViewer('Delivery content')
       const key = getEncryptionKeyBytes(seller)
       if (!key) return { locked: true }
-      const kits = await itemDeliverableService.loadKits([itemId], key).catch((error: unknown) => { throw readFailure(error) })
-      const kit = kits.get(itemId)?.kit
-      return { locked: false, kit: kit ? kitDTO(kit) : null }
+      const stored = (await itemDeliverableService.loadKits([itemId], key).catch((error: unknown) => { throw readFailure(error) })).get(itemId)
+      return { locked: false, kit: stored ? kitDTO(stored.kit) : null, revision: stored ? stored.deliverable.$revision ?? 0 : null }
     },
   }
 
@@ -784,21 +954,23 @@ export function createOrderModule(tickets: TicketStore) {
     async deliver(input: DeliverInput): Promise<DeliverResultDTO> {
       const seller = requireViewer('Delivering an order')
       const key = sellerKeyOrThrow(seller)
-      const state = await deliveryState(seller, input.orderId, key)
-      const worked = workOut(state, input)
-      if (worked.blockers.length > 0) throw badRequest(worked.blockers.join(' '))
-      if (worked.warnings.length > 0 && !input.acknowledged) throw badRequest(`Check these lines before delivering: ${worked.warnings.join(' ')}`)
-      try {
-        const result = await fulfillOrder({
-          sellerId: seller, order: state.order, delivery: worked.plan.delivery, consumedKeys: worked.plan.consumedKeys,
-          kits: state.kits, markDelivered: worked.marksDelivered, sellerPrivateKey: key,
-        })
-        holdDelivery(state.order.id, result.delivery)
-        return { pending: result.pending, warnings: result.warnings, recoveryText: result.pendingRecoveryText ?? null }
-      } catch (error) {
-        const recovery = recoveryOf(error)
-        throw new RpcError(recovery ? `${error instanceof Error ? error.message : 'Delivery failed.'} ${recovery}` : (error instanceof Error ? error.message : 'Delivery failed.'), 'BAD_REQUEST')
-      }
+      return deliveringExclusively([input?.orderId], async () => {
+        const state = await deliveryState(seller, input.orderId, key)
+        const worked = workOut(state, input)
+        if (worked.blockers.length > 0) throw badRequest(worked.blockers.join(' '))
+        if (worked.warnings.length > 0 && !input.acknowledged) throw badRequest(`Check these lines before delivering: ${worked.warnings.join(' ')}`)
+        try {
+          const result = await fulfillOrder({
+            sellerId: seller, order: state.order, delivery: worked.plan.delivery, consumedKeys: worked.plan.consumedKeys,
+            kits: state.kits, markDelivered: worked.marksDelivered, sellerPrivateKey: key,
+          })
+          holdDelivery(state.order.id, result.delivery)
+          return { error: null, pending: result.pending, warnings: result.warnings, recoveryText: result.pendingRecoveryText ?? null }
+        } catch (error) {
+          // KeyRecoveryError's own text names the codes: the message is its plain sentence, the codes go in recoveryText.
+          return { error: error instanceof Error ? error.message : 'Delivery failed.', pending: false, warnings: [], recoveryText: recoveryOf(error) }
+        }
+      })
     },
 
     /** Web's "Deliver all": every order on the first page that is ready, one at a time, each re-checked as it stands now. */
@@ -807,50 +979,17 @@ export function createOrderModule(tickets: TicketStore) {
       const key = sellerKeyOrThrow(seller)
       const { orders } = await storeOrderService.getSellerOrders(seller, { limit: 50 })
       const ready = (await sellerOrders(seller, orders)).filter(order => order.readyToDeliver)
-      const result: BulkDeliveryDTO = { delivered: 0, skipped: [], firstFailure: null, warnings: [], recoveryTexts: [] }
-      let kits = new Map<string, SellerKit>()
-      for (const dto of ready) {
-        try {
-          const state = await deliveryState(seller, dto.id, key)
-          kits = newerKits(kits, state.kits)
-          const current = kitsOf(state.lines.map(line => line.itemId), kits, state.kits)
-          const status = (await orderStatusService.getLatestStatuses([dto.id])).get(dto.id)
-          const stillReady = current && isReadyForBulkDelivery({
-            payload: state.payload, storeId: state.order.storeId, latestStatus: status?.status, alreadyDelivered: state.deliveries.length > 0,
-            kits: toKitPayloads(current), listings: state.listings,
-          })
-          const plan = stillReady ? planDelivery(state.payload, toKitPayloads(kits), state.listings) : null
-          if (!plan || !current) {
-            result.skipped.push(dto.id)
-            continue
-          }
-          const fulfilled = await fulfillOrder({
-            sellerId: seller, order: state.order, delivery: plan.delivery, consumedKeys: plan.consumedKeys, kits,
-            markDelivered: isDigitalOnly(state.payload.items), sellerPrivateKey: key,
-          })
-          kits = newerKits(kits, fulfilled.updatedKits)
-          holdDelivery(dto.id, fulfilled.delivery)
-          result.delivered++
-          result.warnings.push(...fulfilled.warnings)
-          if (fulfilled.pendingRecoveryText) result.recoveryTexts.push(fulfilled.pendingRecoveryText)
-        } catch (error) {
-          if (error instanceof FulfillmentError) kits = newerKits(kits, error.updatedKits)
-          result.skipped.push(dto.id)
-          result.firstFailure ??= error instanceof Error ? error.message : 'unknown error'
-          const recovery = recoveryOf(error)
-          if (recovery) result.recoveryTexts.push(recovery)
-        }
-      }
-      return result
+      return deliveringExclusively(ready.map(order => order.id), () => deliverAll(seller, key, ready))
     },
 
     /** Save a digital product's delivery content (web's kit editor). Long-running: it reconciles an unseen write. */
-    async saveKit(itemId: string, input: KitDTO): Promise<KitDTO> {
+    async saveKit(itemId: string, input: KitDTO, revision: number | null): Promise<KitDTO> {
       const seller = requireViewer('Saving delivery content')
       const key = sellerKeyOrThrow(seller)
       const item = await storeItemService.getById(itemId).catch((error: unknown) => { throw readFailure(error) })
       if (!item || item.ownerId !== seller) throw new RpcError('This product is not yours', 'NOT_OWNER')
       const stored = (await itemDeliverableService.loadKits([itemId], key).catch((error: unknown) => { throw readFailure(error) })).get(itemId)
+      if ((stored ? stored.deliverable.$revision ?? 0 : null) !== revision) throw badRequest(KIT_MOVED)
       const kit = kitFrom(input, stored?.kit)
       const fit = kitDeliveryFitError(kit)
       if (fit) throw badRequest(fit)

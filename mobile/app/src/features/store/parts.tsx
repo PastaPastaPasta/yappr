@@ -1,10 +1,14 @@
 import type { DeliveryDTO, OrderPayload, OrderStatus, OrderStatusDTO } from '@engine/api';
 import * as Clipboard from 'expo-clipboard';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import * as WebBrowser from 'expo-web-browser';
 import { useState, type ReactNode } from 'react';
 import { Pressable, RefreshControl, View } from 'react-native';
 
 import { formatPrice } from '~/lib-allowlist';
+import { engine } from '~/engine';
+import { Button } from '~/ui/Button';
 import { Card } from '~/ui/Card';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
@@ -182,8 +186,38 @@ export function StatusDetail({ status }: { status: OrderStatusDTO | null }) {
   );
 }
 
-/** What was delivered (web `DeliveryContents`): links open, codes and license keys copy. */
-export function DeliveryList({ deliveries, testID }: { deliveries: DeliveryDTO[]; testID?: string }) {
+/** A file name the cache directory takes: no path separators or control characters. */
+const safeFileName = (name: string) => name.replace(/[\\/:\u0000-\u001f]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'download';
+
+/** Decrypt a delivered file in the engine, write it to the cache, and hand it to the share sheet (save, open in…). */
+function SaveFile({ orderId, deliveryId, itemIndex, assetIndex, name, size }: { orderId: string; deliveryId: string; itemIndex: number; assetIndex: number; name: string; size: number }) {
+  const [busy, setBusy] = useState(false);
+  const save = () => {
+    setBusy(true);
+    engine.api.store.deliveredFile({ orderId, deliveryId, itemIndex, assetIndex })
+      .then(async (file) => {
+        const target = new File(Paths.cache, safeFileName(file.name));
+        if (target.exists) target.delete();
+        target.create();
+        target.write(file.base64, { encoding: 'base64' });
+        await Sharing.shareAsync(target.uri, { dialogTitle: file.name });
+      })
+      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Couldn't save this file."))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <View className="flex-row items-center justify-between gap-3 rounded-lg bg-gray-50 p-3 dark:bg-neutral-800">
+      <View className="flex-1">
+        <Text variant="subheadStrong" numberOfLines={1}>{name}</Text>
+        <Text variant="caption" tone="secondary">{size >= 1_048_576 ? `${(size / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(size / 1024))} KB`}</Text>
+      </View>
+      <Button size="sm" variant="outline" label="Save" loading={busy} onPress={save} accessibilityLabel={`Save ${name}`} />
+    </View>
+  );
+}
+
+/** What was delivered (web `DeliveryContents`): links open, codes and license keys copy, files save. */
+export function DeliveryList({ orderId, deliveries, testID }: { orderId: string; deliveries: DeliveryDTO[]; testID?: string }) {
   return (
     <View className="gap-3" testID={testID}>
       {deliveries.map((delivery) => (
@@ -209,7 +243,7 @@ export function DeliveryList({ deliveries, testID }: { deliveries: DeliveryDTO[]
                     </View>
                   );
                 }
-                return <Text key={key} tone="secondary">File: {asset.name}. Files are saved from your library on yap.pr.</Text>;
+                return <SaveFile key={key} orderId={orderId} deliveryId={delivery.id} itemIndex={index} assetIndex={assetIndex} name={asset.name} size={asset.size} />;
               })}
               {item.licenseKeys?.map((code, keyIndex) => (
                 <CopyRow key={`${key(delivery.id, index)}-${keyIndex}`} label={`Code ${keyIndex + 1}`} value={code} testID={`delivered-code-${keyIndex}`} />

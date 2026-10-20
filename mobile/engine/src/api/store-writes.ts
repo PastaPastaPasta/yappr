@@ -13,7 +13,7 @@ import { storeService } from '@/lib/services/store-service'
 import { isStoreImageUrl, normalizeStoreCategory } from '@/lib/storefront/storefront-contract'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { serializeStorePolicies, isPoliciesWithinLimit } from '@/lib/utils/policies'
-import { isValidPaymentAddress, parsePaymentUri } from '@/lib/utils/payment-uri'
+import { parsePaymentUri } from '@/lib/utils/payment-uri'
 import type {
   ItemFulfillment, ItemVariants, ParsedPaymentUri, ShippingPricingConfig, ShippingRateType, ShippingTier, StoreItemStatus, StorePolicy, StoreStatus,
 } from '@/lib/types'
@@ -117,15 +117,11 @@ export interface StoreReportDTO {
   resolution: string | null
 }
 
-const PAYMENT_SCHEME = /^([a-z][a-z0-9+.-]*):(.+)$/i
-
-/** Each typed payment URI parsed (`dash:` → `{scheme: 'dash:', uri}`); BAD_REQUEST names the first that is not one. */
+/** Each typed payment URI checked by lib's parser (scheme and address); BAD_REQUEST names the first that is not one. */
 function paymentUrisOf(values: string[]): ParsedPaymentUri[] {
   return values.map(value => value.trim()).filter(Boolean).map(value => {
-    const match = PAYMENT_SCHEME.exec(value)
-    const address = match?.[2].split('?')[0] ?? ''
-    const parsed = match ? parsePaymentUri({ scheme: `${match[1].toLowerCase()}:`, uri: value }) : null
-    if (!match || !parsed || !isValidPaymentAddress(`${match[1].toLowerCase()}:`, address)) throw badRequest(`"${value}" is not a payment address this store can take`)
+    const parsed = parsePaymentUri(value)
+    if (!parsed) throw badRequest(`"${value}" is not a payment address this store can take. Dash testnet addresses use tdash:, mainnet ones dash:.`)
     return parsed
   })
 }
@@ -157,7 +153,9 @@ function itemData(fields: ItemFields) {
   if (price !== undefined && !(Number.isInteger(price) && price >= 0)) throw badRequest('The price must be a whole amount in the smallest unit')
   const stock = fields.stockQuantity
   if (stock !== undefined && !(Number.isInteger(stock) && stock >= 0)) throw badRequest('Stock must be a whole number')
-  const imageUrls = fields.imageUrls?.map(url => url.trim()).filter(Boolean)
+  // None is no list at all: an empty one is stored as null, which the contract refuses (10101).
+  const images = fields.imageUrls?.map(url => url.trim()).filter(Boolean)
+  const imageUrls = images?.length ? images : undefined
   // A product with options is priced and stocked per combination (v7 refuses both beside the table).
   const withOptions = (fields.variants?.combinations.length ?? 0) > 0
   return {
@@ -298,11 +296,13 @@ export function createStoreWrites(tickets: TicketStore) {
       const rated = storefrontIsV2() ? (input.items ?? []).filter(item => item.rating >= 1 && item.rating <= 5) : []
       ctx.stage('signing')
       ctx.progress(0, 1 + rated.length)
-      const review = await storeReviewService.createReview(buyer, {
+      // A retry after an item review failed: the store review stands already (one per order), so only the items go.
+      const landed = (await storeReviewService.getOrderReviews([order.id]).catch(() => new Map<string, { id: string }>())).get(order.id)
+      const review = landed ?? await storeReviewService.createReview(buyer, {
         storeId: order.storeId, orderId: order.id, sellerId: order.sellerId, rating: input.rating,
         title: input.title?.trim() || undefined, content: input.content?.trim() || undefined,
       })
-      const documents = [storefrontDoc(STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, review.id, 'create', wasConfirmed(review))]
+      const documents = [storefrontDoc(STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, review.id, 'create', landed ? true : wasConfirmed(review))]
       ctx.documents(documents)
       // Item reviews are separate documents; one that fails leaves the store review standing (web's ReviewModal).
       for (const [index, item] of rated.entries()) {

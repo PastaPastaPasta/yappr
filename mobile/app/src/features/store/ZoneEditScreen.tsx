@@ -97,9 +97,9 @@ function ZoneForm({ store, zone }: { store: Store; zone: ShippingZone | null }) 
         <View className="gap-3">
           <TextField label="Zone name" value={name} onChangeText={setName} maxLength={100} placeholder="Domestic" testID="zone-name" />
           <SwitchRow label="Worldwide" value={worldwide} onValueChange={setWorldwide} testID="zone-worldwide" />
-          {!worldwide ? <TextField label="Countries" value={countries} onChangeText={setCountries} autoCapitalize="characters" placeholder="US, CA or US.IL for a state" testID="zone-countries" /> : null}
+          {!worldwide ? <TextField label="Countries" value={countries} onChangeText={setCountries} autoCapitalize="characters" autoCorrect={false} placeholder="US, CA or US.IL for a state" testID="zone-countries" /> : null}
           <AmountField label="Priority (lower matches first)" whole amount={priority} onAmount={setPriority} testID="zone-priority" />
-          <TextField label="Currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" maxLength={5} testID="zone-currency" />
+          <TextField label="Currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" autoCorrect={false} maxLength={5} testID="zone-currency" />
         </View>
         <Section title="Pricing">
           <AmountField label={`Base rate (${currency}, blank: free)`} amount={base} onAmount={setBase} testID="zone-base" />

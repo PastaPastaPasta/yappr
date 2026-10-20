@@ -91,7 +91,7 @@ function BuyerOrder({ order }: { order: BuyerOrderDTO }) {
       <Section title="Status"><StatusDetail status={order.status} /></Section>
       {order.digital || order.deliveries.length > 0 ? (
         <Section title="Digital delivery">
-          {order.deliveries.length === 0 ? <Text tone="secondary">The seller hasn&apos;t delivered yet. Your files and codes appear here once they do.</Text> : <DeliveryList deliveries={order.deliveries} testID="order-deliveries" />}
+          {order.deliveries.length === 0 ? <Text tone="secondary">The seller hasn&apos;t delivered yet. Your files and codes appear here once they do.</Text> : <DeliveryList orderId={order.id} deliveries={order.deliveries} testID="order-deliveries" />}
         </Section>
       ) : null}
       <Details order={order} />
@@ -145,7 +145,7 @@ function SellerOrder({ order }: { order: SellerOrderDTO }) {
               {order.missingKits.length > 0 ? ` No saved delivery content for ${order.missingKits.join(', ')}: add links or codes when you deliver.` : ''}
             </Text>
           )}
-          {order.deliveries.length > 0 ? <DeliveryList deliveries={order.deliveries} /> : null}
+          {order.deliveries.length > 0 ? <DeliveryList orderId={order.id} deliveries={order.deliveries} /> : null}
           <Button
             size="block"
             variant={lastDelivery ? 'outline' : 'primary'}
@@ -169,7 +169,7 @@ function SellerOrder({ order }: { order: SellerOrderDTO }) {
             <Button size="block" variant="ghost" label="Cancel" onPress={() => setEditing(false)} />
           </View>
         ) : (
-          <Button size="block" variant="outline" label="Update status" testID="order-status-edit" onPress={() => setEditing(true)} />
+          <Button size="block" variant="outline" label="Update status" testID="order-status-edit" onPress={() => { setStatus(order.status?.status ?? 'pending'); setEditing(true); }} />
         )}
         {update.status === 'unconfirmed' ? <Text tone="warning">Sent, awaiting confirmation.</Text> : null}
       </Section>

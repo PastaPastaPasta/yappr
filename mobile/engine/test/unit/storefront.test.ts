@@ -24,13 +24,13 @@ const m = vi.hoisted(() => ({
   removeStoreItems: vi.fn(),
   store: { getById: vi.fn(), getCurrent: vi.fn(), getByOwner: vi.fn(), getMany: vi.fn(async () => []), createStore: vi.fn(), updateStore: vi.fn() },
   zones: { getByStore: vi.fn() },
-  order: { encryptOrderPayload: vi.fn(), createOrder: vi.fn(), get: vi.fn(), decryptOrderPayload: vi.fn() },
+  order: { encryptOrderPayload: vi.fn(), createOrder: vi.fn(), get: vi.fn(), decryptOrderPayload: vi.fn(), getBuyerOrders: vi.fn() },
   status: { createStatusUpdate: vi.fn() },
   buyerKey: null as Uint8Array | null,
   sellerKey: null as Uint8Array | null,
   deliveries: { loadDecrypted: vi.fn() },
-  kits: { loadKits: vi.fn() },
-  items: { getManyFresh: vi.fn() },
+  kits: { loadKits: vi.fn(), saveKit: vi.fn() },
+  items: { getManyFresh: vi.fn(), getById: vi.fn(), createItem: vi.fn() },
   fulfillOrder: vi.fn(),
 }))
 
@@ -209,6 +209,24 @@ describe('placing an order', () => {
     expect(m.order.createOrder).not.toHaveBeenCalled()
   })
 
+  it('finds an order whose call threw after signing, and empties the cart then', async () => {
+    m.order.createOrder.mockRejectedValue(new Error('Gateway timeout'))
+    m.order.getBuyerOrders.mockResolvedValue({ orders: [{ id: ORDER, storeId: STORE, createdAt: new Date() }] })
+    const e = engine()
+    const ticket = await settled(e.tickets, await e.store.placeOrder({ storeId: STORE, shipTo: address, paymentUri: 'dash:yXdashAddress', reviewed: reviewed() }))
+    expect(ticket.state).toBe('confirmed')
+    expect(ticket.documents).toEqual([expect.objectContaining({ id: ORDER, type: 'storeOrder' })])
+    expect(m.removeStoreItems).toHaveBeenCalledWith(STORE)
+  })
+
+  it('sends nothing when the encryption fails before signing', async () => {
+    m.order.encryptOrderPayload.mockRejectedValue(new Error('bad key'))
+    const e = engine()
+    const ticket = await settled(e.tickets, await e.store.placeOrder({ storeId: STORE, shipTo: address, paymentUri: 'dash:yXdashAddress', reviewed: reviewed() }))
+    expect(ticket).toMatchObject({ state: 'failed', retryable: true })
+    expect(m.order.createOrder).not.toHaveBeenCalled()
+  })
+
   it('stays unconfirmed when the broadcast was not confirmed', async () => {
     m.order.createOrder.mockResolvedValue({ id: ORDER, __createConfirmed: false })
     const e = engine()
@@ -274,15 +292,74 @@ describe('digital delivery', () => {
     const plan = await e.store.deliveryPlan(ORDER)
     expect(plan).toMatchObject({ blockers: [], marksDelivered: true, lines: [expect.objectContaining({ itemId: ITEM, contents: ['Instructions'] })] })
     const result = await e.store.deliver({ orderId: ORDER, extras: { [ITEM]: [{ kind: 'link', label: 'Mirror', url: 'https://example.com/book' }] } })
-    expect(result).toEqual({ pending: false, warnings: [], recoveryText: null })
+    expect(result).toEqual({ error: null, pending: false, warnings: [], recoveryText: null })
     const input = m.fulfillOrder.mock.calls[0][0] as { delivery: { items: { assets: unknown[]; instructions?: string }[] }; markDelivered: boolean }
     expect(input.markDelivered).toBe(true)
     expect(input.delivery.items[0]).toMatchObject({ instructions: 'Enjoy', assets: [{ kind: 'link', label: 'Mirror', url: 'https://example.com/book' }] })
   })
 
+  it('normalizes a bare link like web, and refuses one that cannot be opened safely', async () => {
+    m.kits.loadKits.mockResolvedValue(new Map([[ITEM, { deliverable: { id: id('Kit') }, kit: { v: 1, assets: [], deliverWhen: 'on_order' } }]]))
+    m.fulfillOrder.mockResolvedValue({ delivery: { id: id('Delivery'), nonce: new Uint8Array(24) }, pending: false, updatedKits: new Map(), warnings: [] })
+    const e = engine()
+    await e.store.deliver({ orderId: ORDER, extras: { [ITEM]: [{ kind: 'link', label: '', url: 'drive.example.com/book' }] } })
+    expect((m.fulfillOrder.mock.calls[0][0] as { delivery: { items: { assets: unknown[] }[] } }).delivery.items[0].assets).toEqual([{ kind: 'link', label: 'https://drive.example.com/book', url: 'https://drive.example.com/book' }])
+    await expect(e.store.deliver({ orderId: ORDER, extras: { [ITEM]: [{ kind: 'link', label: 'x', url: 'javascript:alert(1)' }] } })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/Links must start/) })
+  })
+
+  it('refuses a second delivery for an order while one runs, and returns a failure with its codes as data', async () => {
+    m.kits.loadKits.mockResolvedValue(new Map([[ITEM, { deliverable: { id: id('Kit') }, kit: { v: 1, assets: [], instructions: 'Enjoy', deliverWhen: 'on_order' } }]]))
+    let finish: (value: unknown) => void = () => undefined
+    m.fulfillOrder.mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const e = engine()
+    const first = e.store.deliver({ orderId: ORDER })
+    await vi.waitFor(() => expect(m.fulfillOrder).toHaveBeenCalled())
+    await expect(e.store.deliver({ orderId: ORDER })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/still on its way/) })
+    finish({ delivery: { id: id('Delivery'), nonce: new Uint8Array(24) }, pending: false, updatedKits: new Map(), warnings: [] })
+    await first
+    const { KeyRecoveryError } = await import('@/lib/services/digital-fulfillment')
+    m.fulfillOrder.mockRejectedValue(new KeyRecoveryError('Nothing was delivered.', [{ itemTitle: 'Ebook', keys: ['KEY-1'] }], new Map()))
+    const failed = await e.store.deliver({ orderId: ORDER })
+    expect(failed.error).toBe('Nothing was delivered.')
+    expect(failed.recoveryText).toContain('KEY-1')
+  })
+
   it('needs the key on this device', async () => {
     m.buyerKey = null
     await expect(engine().store.deliveryPlan(ORDER)).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/Unlock/) })
+  })
+})
+
+describe('delivery content', () => {
+  beforeEach(() => {
+    m.viewer = SELLER
+    m.buyerKey = new Uint8Array(32).fill(5)
+    m.items.getById.mockResolvedValue({ id: ITEM, ownerId: SELLER })
+    m.kits.saveKit.mockResolvedValue({ id: id('Kit') })
+  })
+
+  const stored = (revision: number) => new Map([[ITEM, {
+    deliverable: { id: id('Kit'), $revision: revision },
+    kit: { v: 1, assets: [{ kind: 'code', label: 'Red only', code: 'R', optionIds: [3] }, { kind: 'file', name: 'a.pdf', size: 1, url: 'ipfs://x', key: 'k' }], licenseKeys: ['A', 'B'], deliverWhen: 'on_order' },
+  }]])
+
+  it('keeps variant targets and files through a round trip', async () => {
+    m.kits.loadKits.mockResolvedValue(stored(2))
+    const e = engine()
+    const read = await e.store.kit(ITEM)
+    if (read.locked || !read.kit) throw new Error('no kit read')
+    expect(read.revision).toBe(2)
+    await e.store.saveKit(ITEM, { ...read.kit, instructions: 'Hi' }, read.revision)
+    const saved = m.kits.saveKit.mock.calls[0][2] as { assets: { kind: string; optionIds?: number[] }[]; licenseKeys: string[] }
+    expect(saved.assets).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'code', optionIds: [3] }), expect.objectContaining({ kind: 'file' })]))
+    expect(saved.licenseKeys).toEqual(['A', 'B'])
+  })
+
+  it('refuses a save from a copy older than the stored kit (a delivery took codes)', async () => {
+    m.kits.loadKits.mockResolvedValue(stored(3))
+    await expect(engine().store.saveKit(ITEM, { instructions: '', files: [], links: [], codes: [], licenseKeys: ['A', 'B'], deliverWhen: 'on_order' }, 2))
+      .rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/changed since you opened it/) })
+    expect(m.kits.saveKit).not.toHaveBeenCalled()
   })
 })
 
@@ -293,6 +370,20 @@ describe('seller forms', () => {
     const e = engine()
     await expect(e.store.saveStore({ fields: { name: 'Shop' } })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/category/) })
     await expect(e.store.saveStore({ fields: { name: 'Shop', category: 'books', paymentUris: ['not a uri'] } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('sends no image list for a product without images (an empty one is refused on chain)', async () => {
+    m.items.createItem.mockResolvedValue({ id: ITEM, __createConfirmed: true })
+    const e = engine()
+    const ticket = await settled(e.tickets, await e.store.saveItem({ storeId: STORE, fields: { title: 'Ebook', imageUrls: [], basePrice: 250, fulfillment: 'digital' } }))
+    expect(ticket.state).toBe('confirmed')
+    expect(m.items.createItem.mock.calls[0][2]).toMatchObject({ imageUrls: undefined, fulfillment: 'digital', basePrice: 250 })
+  })
+
+  it('takes testnet Dash addresses as tdash: and refuses dash: for them, with the hint', async () => {
+    const e = engine()
+    await expect(e.store.saveStore({ fields: { name: 'Shop', category: 'books', paymentUris: ['dash:yLadnCajwhccmjsUS1Bm2icVv5ehdeFtxj'] } })).rejects.toMatchObject({ message: expect.stringMatching(/tdash:/) })
+    await expect(e.store.saveStore({ fields: { name: 'Shop', category: 'books', paymentUris: ['tdash:yLadnCajwhccmjsUS1Bm2icVv5ehdeFtxj'] } })).resolves.toMatchObject({ op: 'store.save' })
   })
 
   it('creates the store once', async () => {
