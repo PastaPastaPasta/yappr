@@ -50,6 +50,7 @@
     "@storacha/access": "^1.6.9",
     "@storacha/client": "^2.0.0",
     "@ucanto/principal": "^9.0.3",
+    "brotli-dec-wasm": "^2.3.2",
     "bs58": "^6.0.0",
     "bs58check": "^4.0.0",
     "class-variance-authority": "^0.7.1",
