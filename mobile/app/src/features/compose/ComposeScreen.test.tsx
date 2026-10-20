@@ -359,6 +359,16 @@ it("keeps no draft of a reply until its post has loaded (it may be a private pos
   jest.useRealTimers();
 });
 
+it('offers no visibility for a reply until its post has loaded (its thread may be private)', async () => {
+  fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, privateFeeds: true } } });
+  queryClient.setQueryDefaults(queryKeys.post.detail('target-7'), { retry: false });
+  fakeEngine.method('posts.get').mockRejectedValue(Object.assign(new Error('read failed'), { code: 'NETWORK' }));
+  fakeEngine.method('privateFeed.access').mockResolvedValue({ hasFeed: true, status: 'self', messagingKey: 'ready' });
+  jest.mocked(useLocalSearchParams).mockReturnValue({ replyTo: 'target-7' });
+  await renderCompose();
+  expect(screen.queryByTestId('compose-visibility')).toBeNull();
+});
+
 it('closes an empty composer at once', async () => {
   await renderCompose();
   fireEvent.press(byId('compose-close'));

@@ -519,7 +519,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
       <View className={cn('min-h-14 flex-row items-center gap-2 px-2 py-1', tw.border)} testID="compose-header">
         <CloseButton onPress={close} />
         <View className="flex-1" />
-        {privateFeeds && replySourceKnown && !replyPrivate ? (
+        {privateFeeds && !targetPending && replySourceKnown && !replyPrivate ? (
           <VisibilityChip value={visibility} onChange={setVisibility} hasFeed={ownFeed} />
         ) : null}
         <NsfwToggle on={sensitive} onToggle={() => setSensitive(!sensitive)} />
