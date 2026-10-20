@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  darkMode: 'class',
+  // Same specificity as 'class' (the :where adds none), but a `theme-light`
+  // wrapper switches dark styles off inside it: a light blog post in a dark app.
+  darkMode: ['variant', '&:is(.dark *):where(:not(.theme-light *))'],
   content: [
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './app/**/*.{js,ts,jsx,tsx,mdx}',

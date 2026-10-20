@@ -1,13 +1,12 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   ChatBubbleLeftIcon,
   EllipsisHorizontalIcon,
   LinkIcon,
 } from '@heroicons/react/24/outline'
-import { useTheme } from 'next-themes'
 import toast from 'react-hot-toast'
 import type { Blog, BlogPost } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
@@ -15,10 +14,11 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import dynamic from 'next/dynamic'
 
 import { BlogThemeProvider } from './theme-provider'
+import { BlogReadingScope } from './blog-reading-scope'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
 import { blogAuthorHandle, blogPostDate, commentsAreEnabled, decodeSummary, estimateReadingTime, formatLabels, getBlogPostUrl, getBlogUrl, isPublishedBlogPost } from '@/lib/blog/content-utils'
-import { getReaderOverrideStyle, getReaderFontSize, getAppThemeForReadingMode } from '@/lib/blog/reader-preferences'
+import { getReaderOverrideStyle, getReaderFontSize, getThemeForReadingMode } from '@/lib/blog/reader-preferences'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
 import { ReadingPreferencesPopover } from './reading-preferences'
 import { useAppStore, useReaderPreferencesStore } from '@/lib/store'
@@ -77,8 +77,6 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   const { readingMode, fontSize } = useReaderPreferencesStore()
   const readerOverrides = useMemo(() => getReaderOverrideStyle(readingMode), [readingMode])
   const contentFontSize = useMemo(() => getReaderFontSize(fontSize), [fontSize])
-  const { theme, setTheme } = useTheme()
-  const savedThemeRef = useRef<string | undefined>(undefined)
   const commentsRef = useRef<HTMLDivElement>(null)
   const authorBg = useMemo(
     () => normalizeBlogThemeConfig(blog.themeConfig).colors.bg,
@@ -90,22 +88,8 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   // Only the owner can open a draft; quotes and embeds of one would not render for anyone else.
   const isDraft = !isPublishedBlogPost(post)
 
-  // Capture the original app theme once before we override it (during render, not in an effect)
-  if (savedThemeRef.current === undefined && theme !== undefined) {
-    savedThemeRef.current = theme
-  }
-
-  // Sync reading mode → app theme so nav/comments/buttons match
-  useEffect(() => {
-    setTheme(getAppThemeForReadingMode(readingMode, authorBg))
-  }, [readingMode, authorBg, setTheme])
-
-  // Restore original theme on unmount
-  useEffect(() => {
-    return () => {
-      if (savedThemeRef.current) setTheme(savedThemeRef.current)
-    }
-  }, [setTheme])
+  // The post's own theme. It stays on the post: the reader's app theme is theirs.
+  const readingTheme = getThemeForReadingMode(readingMode, authorBg)
 
   const handleQuote = () => {
     if (!requireAuth()) return
@@ -175,6 +159,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
   }
 
   return (
+    <BlogReadingScope theme={readingTheme}>
     <BlogThemeProvider
       themeConfig={blog.themeConfig}
       blogName={blog.name}
@@ -329,7 +314,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
 
           {/* Article content */}
           <div className="mt-6">
-            <BlogViewer blocks={blocks} />
+            <BlogViewer blocks={blocks} theme={readingTheme} />
           </div>
 
           {/* Follow CTA */}
@@ -384,5 +369,6 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
         </aside>
       </div>
     </BlogThemeProvider>
+    </BlogReadingScope>
   )
 }
