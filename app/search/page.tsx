@@ -13,6 +13,7 @@ import { formatNumber } from '@/lib/utils'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { getPrimaryUsername } from '@/lib/utils/username'
 import { hashtagService } from '@/lib/services/hashtag-service'
+import { prefixRankingsAvailable } from '@/lib/contract-topology'
 import { unifiedProfileService } from '@/lib/services'
 import type { UnifiedProfileDocument } from '@/lib/services/unified-profile-service'
 import type { BlogPostWithAuthor } from '@/lib/types'
@@ -27,7 +28,9 @@ interface UserResult {
 
 interface HashtagResult {
   hashtag: string
+  /** Likes on tagged posts for a trending match on ranked cuts, else posts. */
   postCount: number
+  unit: 'like' | 'post'
 }
 
 function SearchPageContent() {
@@ -192,7 +195,9 @@ function SearchPageContent() {
         h.hashtag.includes(normalizedQuery)
       )
 
-      results.push(...matchingTrending)
+      // The ranked trending list counts likes on tagged posts (as the trending box says), not posts.
+      const trendingUnit = prefixRankingsAvailable() ? 'like' : 'post'
+      results.push(...matchingTrending.map((h) => ({ ...h, unit: trendingUnit } as const)))
 
       // Check if exact match exists but isn't in trending
       if (/^[a-z0-9_]{1,63}$/.test(normalizedQuery)) {
@@ -201,7 +206,7 @@ function SearchPageContent() {
           // Check if hashtag has any posts and get real count
           const postCount = await hashtagService.getPostCountByHashtag(normalizedQuery)
           if (postCount > 0) {
-            results.unshift({ hashtag: normalizedQuery, postCount })
+            results.unshift({ hashtag: normalizedQuery, postCount, unit: 'post' })
           }
         }
       }
@@ -348,7 +353,7 @@ function SearchPageContent() {
                       >
                         <p className="font-bold text-yappr-500">#{tag.hashtag}</p>
                         <p className="text-sm text-gray-500">
-                          {formatNumber(tag.postCount)} {tag.postCount === 1 ? 'post' : 'posts'}
+                          {formatNumber(tag.postCount)} {tag.unit}{tag.postCount === 1 ? '' : 's'}
                         </p>
                       </motion.div>
                     ))}

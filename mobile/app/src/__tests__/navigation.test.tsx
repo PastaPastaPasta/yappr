@@ -257,6 +257,8 @@ describe('app shell', () => {
     ['/settings/messages', null],
     ['/settings/privacy', null],
     ['/settings/blocked', null],
+    ['/settings/blocked-lists', null],
+    ['/settings/username', null],
     ['/settings/appearance', null],
     ['/settings/about', null],
     ['/settings/diagnostics', null],

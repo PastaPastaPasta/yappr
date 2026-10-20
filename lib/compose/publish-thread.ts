@@ -176,9 +176,10 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
     const isThisPostPrivate = i === 0 && isPrivate
     const isThisReplyInherited = i === 0 && inheritedEncryption !== null && !isPrivate
     const progress = (status: string) => onProgress({ current: i + 1, total: posts.length, status })
-    const kind = isThisReplyInherited ? 'reply' : 'post'
+    // A single post's own steps need no words: the button already says Posting.
+    const step = (status: string) => progress(posts.length > 1 ? status : '')
 
-    progress(isThisPostPrivate || isThisReplyInherited ? `Encrypting and creating private ${kind} ${i + 1}...` : `Creating post ${i + 1} of ${posts.length}...`)
+    step(`Posting ${i + 1} of ${posts.length}...`)
     logger.debug(`Creating post ${i + 1}/${posts.length}... (private: ${isThisPostPrivate}, inherited: ${isThisReplyInherited})`)
 
     let encryption: EncryptionOptions | undefined
@@ -287,7 +288,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
     if (!created.confirmed) markUnconfirmed(created.isReply ? 'reply' : 'post', created.postId)
     onCreated?.({ index: i, postId: created.postId, isReply: created.isReply })
 
-    progress(isThisPostPrivate ? 'Private post created!' : `Post ${i + 1} created, processing hashtags...`)
+    step(`Posted ${i + 1} of ${posts.length}`)
     // Encrypted content is never indexed; only a public teaser is.
     let indexable = content
     if (isThisPostPrivate) indexable = visibility === 'private-with-teaser' && teaser ? teaser : ''

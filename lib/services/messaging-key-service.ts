@@ -61,6 +61,13 @@ export class MessagingAlreadySetUpError extends Error {
   }
 }
 
+/** The caller backed out before the IdentityUpdate was broadcast: nothing was written. */
+export class MessagingSetupCancelledError extends Error {
+  constructor() {
+    super('Messaging setup was cancelled before anything was sent.')
+  }
+}
+
 /** The anchor's current key compared with the draft: this key, another key, or none. */
 export type AnchorKeyState = 'this-key' | 'other-key' | 'none'
 
@@ -74,13 +81,17 @@ export async function anchorKeyState(draft: MessagingKeyDraft): Promise<AnchorKe
   return bytesEqual(current, draft.publicKey) ? 'this-key' : 'other-key'
 }
 
-/** Add the draft key, signing the IdentityUpdate with a MASTER key the user holds (WIF or hex). */
-export async function addMessagingKeyWithMasterKey(draft: MessagingKeyDraft, masterKey: string): Promise<void> {
+/**
+ * Add the draft key, signing the IdentityUpdate with a MASTER key the user
+ * holds (WIF or hex). `cancelled` is asked right before the broadcast.
+ */
+export async function addMessagingKeyWithMasterKey(draft: MessagingKeyDraft, masterKey: string, cancelled?: () => boolean): Promise<void> {
   const parsed = parsePrivateKey(masterKey)
   // The identity service matches and signs WIF only.
   const masterKeyWif = parsed.format === 'hex' ? privateKeyToWif(parsed.privateKey, keyNetwork(), true) : masterKey
-  const result = await identityService.addEncryptionKey(draft.identityId, draft.privateKey, masterKeyWif)
+  const result = await identityService.addEncryptionKey(draft.identityId, draft.privateKey, masterKeyWif, undefined, { cancelled })
   if (result.success) return
+  if (result.cancelled) throw new MessagingSetupCancelledError()
   if (/already has an encryption key/i.test(result.error ?? '')) throw new MessagingAlreadySetUpError()
   throw new Error(result.error || 'Couldn\'t set up messaging.')
 }

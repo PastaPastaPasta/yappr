@@ -52,7 +52,10 @@ const READS = new Set([
   // A poll now (pull to refresh, "Try again"): a fresh engine polls on its own, so a replay changes nothing.
   'dm.refresh',
   'safety.followedBlockLists',
+  'safety.blockListChoices',
   'safety.reportsOpen',
+  'dpns.registration',
+  'dpns.check',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 /**

@@ -288,13 +288,73 @@ describe('PostCard embeds', () => {
     expect(screen.queryByTestId('link-preview')).toBeNull();
   });
 
-  it('shows the poll results and sends voting to the web', () => {
-    const onVotePress = jest.fn();
-    render(<PostCard post={POSTS.poll} poll={SAMPLE_POLL} actions={{ onVotePress }} />);
-    expect(screen.getByLabelText('Home, 62%')).toBeTruthy();
+  it('shows a read-only poll as results only', () => {
+    render(<PostCard post={POSTS.poll} poll={SAMPLE_POLL} actions={{ onVotePress: jest.fn() }} />);
+    expect(screen.getByLabelText('Home, 62 percent')).toBeTruthy();
     expect(screen.getByText('50 votes · Ends in 2d')).toBeTruthy();
-    fireEvent.press(screen.getByText('Vote on yap.pr'));
-    expect(onVotePress).toHaveBeenCalled();
+    expect(screen.queryByTestId('poll-vote')).toBeNull();
+  });
+
+  it('votes on a single-choice poll: one pick, sent with Vote', () => {
+    const onVotePress = jest.fn();
+    render(<PostCard post={POSTS.poll} poll={{ ...SAMPLE_POLL, voting: 'editable', myVotes: [] }} actions={{ onVotePress }} />);
+    expect(screen.getByTestId('poll-vote')).toBeDisabled();
+    fireEvent.press(screen.getByTestId('poll-option-0'));
+    fireEvent.press(screen.getByTestId('poll-option-2'));
+    expect(screen.getByTestId('poll-option-2')).toHaveProp('accessibilityState', expect.objectContaining({ checked: true }));
+    expect(screen.getByTestId('poll-option-0')).toHaveProp('accessibilityState', expect.objectContaining({ checked: false }));
+    fireEvent.press(screen.getByTestId('poll-vote'));
+    expect(onVotePress).toHaveBeenCalledWith([2]);
+    expect(screen.queryByTestId('poll-withdraw')).toBeNull();
+  });
+
+  it('changes or withdraws an editable ballot, and picks several on a multiple-choice poll', () => {
+    const onVotePress = jest.fn();
+    const poll = { ...SAMPLE_POLL, voting: 'editable' as const, multiChoice: true, myVotes: [1] };
+    render(<PostCard post={POSTS.poll} poll={poll} actions={{ onVotePress }} />);
+    expect(screen.getByText('Choose one or more')).toBeTruthy();
+    // The ballot as cast: nothing to change yet.
+    expect(screen.getByText('Change vote')).toBeTruthy();
+    expect(screen.getByTestId('poll-vote')).toBeDisabled();
+    fireEvent.press(screen.getByTestId('poll-option-0'));
+    fireEvent.press(screen.getByTestId('poll-vote'));
+    expect(onVotePress).toHaveBeenLastCalledWith([1, 0]);
+    fireEvent.press(screen.getByTestId('poll-withdraw'));
+    expect(onVotePress).toHaveBeenLastCalledWith([]);
+  });
+
+  it('keeps a final ballot, a closed poll and an unreadable ballot read-only, with the vote marked', () => {
+    const { rerender } = render(
+      <PostCard post={POSTS.poll} poll={{ ...SAMPLE_POLL, voting: 'once', myVotes: [0] }} actions={{ onVotePress: jest.fn() }} />,
+    );
+    expect(screen.getByLabelText('Home, 62 percent, your vote')).toBeTruthy();
+    expect(screen.getByText('50 votes · Ends in 2d · You voted')).toBeTruthy();
+    expect(screen.queryByTestId('poll-vote')).toBeNull();
+
+    const ended = new Date(Date.now() - 60_000);
+    rerender(<PostCard post={POSTS.poll} poll={{ ...SAMPLE_POLL, voting: 'editable', myVotes: [], endsAt: ended }} actions={{ onVotePress: jest.fn() }} />);
+    expect(screen.getByText('50 votes · Ended')).toBeTruthy();
+    expect(screen.queryByTestId('poll-vote')).toBeNull();
+
+    rerender(<PostCard post={POSTS.poll} poll={{ ...SAMPLE_POLL, voting: 'editable', myVotes: null }} actions={{ onVotePress: jest.fn() }} />);
+    expect(screen.queryByTestId('poll-vote')).toBeNull();
+  });
+
+  it("forgets another poll's unsent picks when its card is reused (FlashList)", () => {
+    const fresh = { ...SAMPLE_POLL, voting: 'editable' as const, myVotes: [] };
+    const { rerender } = render(<PostCard post={POSTS.poll} poll={{ ...fresh, id: 'a' }} actions={{ onVotePress: jest.fn() }} />);
+    fireEvent.press(screen.getByTestId('poll-option-1'));
+    expect(screen.getByTestId('poll-vote')).not.toBeDisabled();
+    rerender(<PostCard post={POSTS.poll} poll={{ ...fresh, id: 'b' }} actions={{ onVotePress: jest.fn() }} />);
+    expect(screen.getByTestId('poll-option-1')).toHaveProp('accessibilityState', expect.objectContaining({ checked: false }));
+    expect(screen.getByTestId('poll-vote')).toBeDisabled();
+  });
+
+  it('waits while a ballot is on its way', () => {
+    render(<PostCard post={POSTS.poll} poll={{ ...SAMPLE_POLL, voting: 'editable', myVotes: [0], saving: true }} actions={{ onVotePress: jest.fn() }} />);
+    expect(screen.getByTestId('poll-vote')).toBeDisabled();
+    expect(screen.getByTestId('poll-withdraw')).toBeDisabled();
+    expect(screen.getByTestId('poll-option-1')).toBeDisabled();
   });
 
   it('lays out the media grid for each count', () => {

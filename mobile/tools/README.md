@@ -29,7 +29,7 @@ run, then runs it. npm packages are left external and resolve from the root
 
 | Input | Source |
 | --- | --- |
-| Pool | `YAPPR_SAKURA_IDENTITIES`: path to the sakura ops `identities.json` (ENGINE.md §12.3). It is never copied into the repo, and no key material is ever printed. |
+| Pool | `YAPPR_SAKURA_IDENTITIES`: path to the sakura ops `identities.json` (ENGINE.md §12.3), or any pool in its shape. It is never copied into the repo, and no key material is ever printed. A pool may name a recovery phrase (`mnemonicFile`) for [seeded personas](#app-connect-derivation). |
 | Network | One variant env file: `--env-file <path>`, else `YAPPR_ENV_FILE`, else `<repo>/.env.devnet`. For devnet, set `NEXT_PUBLIC_NETWORK=devnet`, `NEXT_PUBLIC_DEVNET_NAME` and `NEXT_PUBLIC_DAPI_ADDRESSES`. For testnet, set `NEXT_PUBLIC_NETWORK=testnet` with no devnet or endpoint overrides; the SDK uses its trusted testnet configuration. `NEXT_PUBLIC_QUORUM_URL` is optional. Values missing from that file are errors; they never fall back to another file. |
 | Key-exchange contract | `NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID` in the same env file. It is needed for legacy `dash-key:` (`v=1`) only. |
 | App Connect state | `--state-file <path>`, else `YAPPR_APP_CONNECT_STATE`, else `~/.local/state/yappr-mobile-tools/app-connect-<devnet>.json` on devnet or `app-connect-network-testnet.json` in the same directory on testnet. See [Grant state](#grant-state). |
@@ -125,11 +125,12 @@ codec and the response crypto, so it cannot drift from the app side:
    90-day preset, so every auth key is V1.
 6. **Keys**: one fresh auth key per granted binding (see
    [Derivation](#app-connect-derivation)). The encryption key is re-sent when
-   `identities.contractKeys` already returns one this wallet derives, at any
-   rotation (`scripts/verify-appconnect.mjs --restore-anchor-key` registers a
-   later one when a test left the current key one nobody holds). It is
-   registered (rotation 0) when there is none, and left out when another
-   wallet made it. The responder itself never rotates it.
+   `identities.contractKeys` already returns one this wallet derives: rotation 0
+   for a seeded persona (#1210), or for a seedless one any rotation
+   (`scripts/verify-appconnect.mjs --restore-anchor-key` registers a later one
+   when a test left the current key one nobody holds). It is registered
+   (rotation 0) when there is none, and left out when another wallet made it or
+   this wallet's key was disabled. The responder itself never rotates it.
 7. **One IdentityUpdate**, signed by MASTER (keyId 0). It adds the new keys
    with `contractBounds`, `totalBudget` and `expiresAt`
    (`IdentityPublicKeyInCreation` V1, evo-sdk 5.0.0-beta.4), and disables the
@@ -209,11 +210,33 @@ reports; `test/app-connect.test.ts` checks it.
 
 ### App Connect derivation
 
-The profile's encryption leaf is a BIP32 path from the wallet seed; its auth-key
-path is only a non-normative example (the app finds granted keys on chain and
-never re-derives them). The pool holds no seed, so the responder keeps the same inputs and uses HKDF-SHA256 over the
-persona's AUTHENTICATION/CRITICAL key (keyId 1), like the legacy derivation
-below (`src/app-connect/derive.ts`):
+**Seeded personas** derive what the reference wallet derives (dashwallet-ios
+#1210 through swift-sdk `deriveConnectKey`, rs-platform-wallet `ConnectKey`
+and key-wallet), on the same wasm-sdk primitive as the web's recovery-phrase
+sign-in (`lib/crypto/dip13.ts`, whose Vitest spec pins the reference vectors).
+A pool is seeded when its `identities.json` names a recovery phrase,
+`"mnemonicFile": "<path relative to the pool file>"`, and a persona gives its
+DIP-13 `"identityIndex"`. The persona's keyId 0 must be the phrase's MASTER key
+at that index, or the persona is refused:
+
+```
+enc    = m/9'/coin'/5'/7'/0'/identityId'/appId'/purpose'                 (rotation 0 only, as #1210)
+auth_i = m/9'/coin'/5'/6'/0'/identityId'/hash256(appEphPub || u8(i))'      (#1210's leaf)
+```
+
+Do not add `identityIndex` to a persona whose anchor key the legacy scheme
+registered: the responder would no longer derive that key, and would leave the
+encryption slot out ("another wallet").
+
+`identityId'` and `appId'` are DIP-14 256-bit hardened children; coin is `5'`
+on mainnet, `1'` on testnet and devnets. The encryption key is normative, so a
+DashPay build that restores the phrase, and Yappr's recovery-phrase sign-in, find
+exactly the key the responder registered.
+
+**Seedless personas** (the sakura pool, and the testnet staging ledger, whose
+keys sit at a pre-DIP-13 path) keep the legacy scheme their on-chain keys were
+made with. It uses the same inputs, with HKDF-SHA256 over the persona's
+AUTHENTICATION/CRITICAL key (keyId 1), like the legacy derivation below:
 
 ```
 auth_i = HKDF-SHA256(ikm = keyId 1 private key, salt = identityId,
@@ -223,10 +246,10 @@ enc    = HKDF-SHA256(ikm = keyId 1 private key, salt = identityId,
          (an invalid scalar re-derives with a counter byte 1..255 appended to info)
 ```
 
-Auth keys are fresh per request: they follow `hash256(appEphPub)` and the
-binding's position in the request. The encryption key is the same for every
-login of the persona to the app. All keys are ECDSA_SECP256K1, so each signs
-its own registration.
+No real wallet derives those keys. Auth keys are fresh per request: they follow
+the request's ephemeral key and the binding's position in it. The encryption key
+is the same for every login of the persona to the app. All keys are
+ECDSA_SECP256K1, so each signs its own registration.
 
 ### Grant state
 

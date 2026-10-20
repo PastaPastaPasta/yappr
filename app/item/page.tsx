@@ -14,7 +14,6 @@ import {
 import { CheckIcon } from '@heroicons/react/24/solid'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
 import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
@@ -51,17 +50,28 @@ function initialSelection(variants: ItemVariants | undefined): Array<number | un
   return variants?.axes.map((axis) => (axis.options.length === 1 ? axis.options[0].id : undefined)) ?? []
 }
 
-function LoadingFallback() {
+/** The item page's shape (header, gallery, title, price, button) while it loads, so nothing jumps. */
+function ItemSkeleton() {
   return (
-    <PageShell mainClassName="flex items-center justify-center">
-          <Spinner size="md" />
+    <PageShell>
+      <div className="h-[72px] border-b border-gray-200 dark:border-gray-800" />
+      <div className="animate-pulse" aria-hidden="true">
+        <div className="aspect-square sm:aspect-[4/3] bg-gray-100 dark:bg-gray-800" />
+        <div className="p-4 space-y-4">
+          <div className="h-4 w-32 rounded bg-gray-200 dark:bg-gray-800" />
+          <div className="h-7 w-2/3 rounded bg-gray-200 dark:bg-gray-800" />
+          <div className="h-7 w-24 rounded bg-gray-200 dark:bg-gray-800" />
+          <div className="h-11 w-full rounded-full bg-gray-200 dark:bg-gray-800" />
+        </div>
+      </div>
+      <span className="sr-only" role="status">Loading</span>
     </PageShell>
   )
 }
 
 export default function ItemDetailPage() {
   return (
-    <Suspense fallback={<LoadingFallback />}>
+    <Suspense fallback={<ItemSkeleton />}>
       <ItemDetailContent />
     </Suspense>
   )
@@ -227,13 +237,7 @@ function ItemDetailContent() {
     addedToCartTimeoutRef.current = setTimeout(() => setAddedToCart(false), 2000)
   }
 
-  if (isLoading) {
-    return (
-      <PageShell mainClassName="flex items-center justify-center">
-            <Spinner size="md" />
-      </PageShell>
-    )
-  }
+  if (isLoading) return <ItemSkeleton />
 
   if (!item) {
     return (
@@ -339,7 +343,7 @@ function ItemDetailContent() {
               <div className="flex items-start gap-2 p-3 bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-lg text-sm text-sky-800 dark:text-sky-200">
                 <CloudArrowDownIcon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
                 <span>
-                  <span className="font-medium">Digital product.</span> Nothing ships: the seller delivers it encrypted to you on Dash Platform, and it appears under My Orders → Library.
+                  <span className="font-medium">Digital product.</span> Once the seller delivers it, it appears in My Orders → Library.
                 </span>
               </div>
             )}

@@ -103,9 +103,9 @@ function MentionsPageContent() {
       <PageShell>
             <div className="p-12 text-center">
               <AtSymbolIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold mb-2">No user specified</h2>
+              <h2 className="text-xl font-semibold mb-2">Mentions</h2>
               <p className="text-gray-500">
-                Log in to see posts that mention you
+                Sign in to see posts that mention you.
               </p>
             </div>
       </PageShell>

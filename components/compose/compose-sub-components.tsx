@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Post } from '@/lib/types'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
-import { getInitials, formatTime, truncateId } from '@/lib/utils'
+import { getInitials, formatTimeCompact, truncateId } from '@/lib/utils'
 import { privateContentOf } from '@/lib/services/private-feed-reader'
 import { decryptQuote, useRetryWhenKeysArrive, type QuoteDecryptionState } from '@/hooks/use-quote-decryption'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
@@ -44,22 +44,42 @@ interface CharacterCounterProps {
   tooLong?: boolean
 }
 
+/** Whether the counter shows: from 100 characters left, or once the size cap bites. */
+export function showsCharacterCounter({ current, limit, sizeLimitReached = false, tooLong = false }: CharacterCounterProps): boolean {
+  return limit - current <= 100 || sizeLimitReached || tooLong
+}
+const RING_RADIUS = 8
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
+
+/**
+ * Like X: nothing until the post nears its limit, then a ring that fills and
+ * the characters left, amber in the last 20 and red past the limit.
+ */
 export function CharacterCounter({ current, limit, sizeLimitReached = false, tooLong = false }: CharacterCounterProps) {
   const remaining = limit - current
   const sizeMessage = tooLong ? 'Too long' : sizeLimitReached && remaining > 0 ? 'Character limit reached' : null
-  const color = remaining < 0 || tooLong
+  const over = remaining < 0 || tooLong
+  const tone = over
     ? 'text-red-600 dark:text-red-400'
-    : remaining <= 50 || sizeLimitReached
-    ? 'text-amber-700 dark:text-amber-400'
-    : 'text-gray-500 dark:text-gray-400'
+    : remaining <= 20 || sizeLimitReached
+    ? 'text-amber-600 dark:text-amber-400'
+    : 'text-yappr-500'
+  const filled = over || sizeLimitReached ? 1 : Math.min(current / limit, 1)
 
   return (
     <output
       aria-live="off"
-      className={`whitespace-nowrap tabular-nums ${color}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap tabular-nums ${tone}`}
       aria-label={sizeMessage ?? `${current} of ${limit} characters${remaining < 0 ? `, ${-remaining} over limit` : ''}`}
     >
-      {sizeMessage ?? <>{current} <span aria-hidden="true" className="text-gray-300 dark:text-gray-600">/</span> {limit}</>}
+      <svg aria-hidden="true" viewBox="0 0 20 20" className="h-5 w-5 -rotate-90">
+        <circle cx="10" cy="10" r={RING_RADIUS} fill="none" strokeWidth="2" className="stroke-gray-200 dark:stroke-gray-700" />
+        <circle
+          cx="10" cy="10" r={RING_RADIUS} fill="none" strokeWidth="2" stroke="currentColor" strokeLinecap="round"
+          strokeDasharray={RING_CIRCUMFERENCE} strokeDashoffset={RING_CIRCUMFERENCE * (1 - filled)}
+        />
+      </svg>
+      {sizeMessage ?? remaining}
     </output>
   )
 }
@@ -83,24 +103,6 @@ function RetryIcon({ className }: { className?: string }) {
   )
 }
 
-function ReplyIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-      />
-    </svg>
-  )
-}
-
 function ThreadIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -114,24 +116,6 @@ function ThreadIcon({ className }: { className?: string }) {
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M4 6h16M4 12h16m-7 6h7"
-      />
-    </svg>
-  )
-}
-
-function SendIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
       />
     </svg>
   )
@@ -186,13 +170,9 @@ export function PostButtonContent({ state }: PostButtonContentProps) {
         </span>
       )
 
+    // Plain words, as on X and Bluesky: the send glyph read as a warning sign.
     case 'reply':
-      return (
-        <span className="flex items-center gap-1.5">
-          <ReplyIcon className="w-4 h-4" />
-          Reply
-        </span>
-      )
+      return <span>Reply</span>
 
     case 'thread':
       return (
@@ -203,12 +183,7 @@ export function PostButtonContent({ state }: PostButtonContentProps) {
       )
 
     case 'post':
-      return (
-        <span className="flex items-center gap-1.5">
-          <SendIcon className="w-4 h-4" />
-          Post
-        </span>
-      )
+      return <span>Post</span>
   }
 }
 
@@ -223,7 +198,7 @@ export function getPostButtonState(
   isReply: boolean,
   threadPostCount: number
 ): PostButtonState {
-  if (isPosting && postingProgress) {
+  if (isPosting && postingProgress && postingProgress.total > 1) {
     return { type: 'posting-progress', progress: postingProgress }
   }
   if (isPosting) {
@@ -296,18 +271,18 @@ function PostPreviewHeader({ author, createdAt, showLockIcon, authorDisplayOverr
       : (authorDisplayOverride || '')
 
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <Avatar className="h-5 w-5">
+    <div className="flex items-center gap-1.5 text-sm min-w-0">
+      <Avatar className="h-5 w-5 flex-shrink-0">
         <AvatarImage src={author.avatar} />
         <AvatarFallback>{getInitials(author.displayName)}</AvatarFallback>
       </Avatar>
-      <span className="font-semibold text-gray-900 dark:text-gray-100">
+      <span className="font-semibold text-gray-900 dark:text-gray-100 truncate">
         {author.displayName}
       </span>
-      {usernameDisplay && <span className="text-gray-500">{usernameDisplay}</span>}
-      <span className="text-gray-500">·</span>
-      <span className="text-gray-500">{formatTime(createdAt)}</span>
-      {showLockIcon && <LockClosedIcon className="h-3.5 w-3.5 text-gray-500" />}
+      {usernameDisplay && <span className="text-gray-500 truncate min-w-[4ch] shrink-[4]">{usernameDisplay}</span>}
+      <span className="text-gray-500 flex-shrink-0">·</span>
+      <span className="text-gray-500 flex-shrink-0 whitespace-nowrap">{formatTimeCompact(createdAt)}</span>
+      {showLockIcon && <LockClosedIcon className="h-3.5 w-3.5 text-gray-500 flex-shrink-0" />}
     </div>
   )
 }

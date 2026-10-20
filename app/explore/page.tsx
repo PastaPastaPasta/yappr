@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, FireIcon, DocumentTextIcon, TrophyIcon, UserGroupIcon } from '@heroicons/react/24/outline'
+import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, DocumentTextIcon, TrophyIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
@@ -14,7 +14,8 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
-import { TrendingHashtagRow } from '@/components/explore/trending-hashtag-row'
+import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/explore/trending-hashtag-row'
+import { ScrollTabs } from '@/components/ui/scroll-tabs'
 import { likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
@@ -232,7 +233,7 @@ export default function ExplorePage() {
 
   return (
     <PageShell>
-          <PageHeader>
+          <PageHeader borderless={!searchQuery}>
             <div className="flex items-center gap-4 p-4">
               {isSearchFocused && (
                 <button
@@ -260,95 +261,21 @@ export default function ExplorePage() {
               </div>
             </div>
 
-            {/* Tabs */}
             {!searchQuery && (
-              <div className="flex">
-                <button
-                  onClick={() => setActiveTab('hashtags')}
-                  className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
-                    activeTab === 'hashtags'
-                      ? 'text-foreground'
-                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
-                  }`}
-                >
-                  <span className="flex items-center justify-center gap-1.5">
-                    <FireIcon className="h-4 w-4" />
-                    Trending
-                  </span>
-                  {activeTab === 'hashtags' && (
-                    <motion.div
-                      layoutId="explore-tab-indicator"
-                      className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
-                    />
-                  )}
-                </button>
-                {/* Server-ranked global Top posts need the v9 ranked like axes. */}
-                {likesAreIndexOnly() && (
-                  <button
-                    onClick={() => setActiveTab('top')}
-                    data-testid="explore-top-tab"
-                    className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
-                      activeTab === 'top'
-                        ? 'text-foreground'
-                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
-                    }`}
-                  >
-                    <span className="flex items-center justify-center gap-1.5">
-                      <TrophyIcon className="h-4 w-4" />
-                      Top
-                    </span>
-                    {activeTab === 'top' && (
-                      <motion.div
-                        layoutId="explore-tab-indicator"
-                        className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
-                      />
-                    )}
-                  </button>
-                )}
-                {/* The creator leaderboard needs the v9 prefix ranked axes
-                    (byAuthorPost / v10 byAuthorPostTime at-form) — no earlier contract can serve it. */}
-                {prefixRankingsAvailable() && (
-                  <button
-                    onClick={() => setActiveTab('creators')}
-                    data-testid="explore-creators-tab"
-                    className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
-                      activeTab === 'creators'
-                        ? 'text-foreground'
-                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
-                    }`}
-                  >
-                    <span className="flex items-center justify-center gap-1.5">
-                      <UserGroupIcon className="h-4 w-4" />
-                      Creators
-                    </span>
-                    {activeTab === 'creators' && (
-                      <motion.div
-                        layoutId="explore-tab-indicator"
-                        className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
-                      />
-                    )}
-                  </button>
-                )}
-                <button
-                  onClick={() => setActiveTab('blogs')}
-                  className={`flex-1 py-3 text-sm font-semibold text-center transition-colors relative ${
-                    activeTab === 'blogs'
-                      ? 'text-foreground'
-                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-900/50'
-                  }`}
-                >
-                  <span className="flex items-center justify-center gap-1.5">
-                    <DocumentTextIcon className="h-4 w-4" />
-                    Blog Posts
-                  </span>
-                  {activeTab === 'blogs' && (
-                    <motion.div
-                      layoutId="explore-tab-indicator"
-                      className="absolute bottom-0 left-0 right-0 h-[3px] bg-yappr-500 rounded-full"
-                    />
-                  )}
-                </button>
-              </div>
+              <ScrollTabs
+                ariaLabel="Explore"
+                active={activeTab}
+                onSelect={setActiveTab}
+                tabs={[
+                  { key: 'hashtags' as const, label: 'Trending' },
+                  // Server-ranked global Top posts need the v9 ranked like axes.
+                  ...(likesAreIndexOnly() ? [{ key: 'top' as const, label: 'Top', testId: 'explore-top-tab' }] : []),
+                  // The creator leaderboard needs the v9 prefix ranked axes
+                  // (byAuthorPost / v10 byAuthorPostTime at-form) — no earlier contract can serve it.
+                  ...(prefixRankingsAvailable() ? [{ key: 'creators' as const, label: 'Creators', testId: 'explore-creators-tab' }] : []),
+                  { key: 'blogs' as const, label: 'Blogs' },
+                ]}
+              />
             )}
           </PageHeader>
 
@@ -428,10 +355,7 @@ export default function ExplorePage() {
                       <RankingWindowToggle axis="hashtags" value={trendingWindow} onChange={setTrendingWindow} testIdPrefix="explore-trending" />
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTrends ? (
-                          <div className="p-8 text-center">
-                            <Spinner size="md" className="mx-auto mb-4" />
-                            <p className="text-gray-500">Loading trending hashtags...</p>
-                          </div>
+                          <TrendingHashtagRowSkeleton count={8} testId="explore-trending-loading" />
                         ) : trendingHashtags.length === 0 ? (
                           <div className="p-8 text-center">
                             <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />

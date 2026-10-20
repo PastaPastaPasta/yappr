@@ -17,9 +17,10 @@ test('home renders the app shell', async ({ page }) => {
   // check.
   await expect(page.getByText(network.toUpperCase()).first()).toBeVisible()
 
-  // Home gates its body behind a hydration flag, so this only appears once the
-  // client bundle has run.
+  // The hero renders in the static HTML; its sign-up button waits for the
+  // hydration flag, so it only appears once the client bundle has run.
   await expect(page.getByRole('heading', { name: /Welcome to Yappr/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Get Started/ })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Explore', exact: true })).toBeVisible()
 })
 
@@ -39,7 +40,7 @@ test('explore page loads', async ({ page }) => {
   await expect(page.getByPlaceholder('Search posts and blog articles')).toBeVisible()
   // The trending panel starts in its loading state and resolves to either real
   // hashtags or the empty state — both mean the page came up.
-  await expect(page.getByRole('button', { name: /Trending/ })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Trending' })).toBeVisible()
 })
 
 for (const route of ['/store/view/', '/store/view/?id=']) {
@@ -58,25 +59,53 @@ for (const route of ['/store/view/', '/store/view/?id=']) {
 test('login page shows the login affordance', async ({ page }) => {
   await page.goto(appUrl('/login/'))
 
-  // /login auto-opens the global login modal after hydration. Private-key
-  // sign-in is the primary path, with the way to create an identity under it.
-  // Passkey sign-in is also offered on supported deployments and browsers.
+  // /login auto-opens the global login modal after hydration. Passkey sign-in
+  // is also offered on supported deployments and browsers.
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
   await expect(dialog).toBeVisible()
-  await expect(dialog.locator('#loginCredential')).toBeVisible()
-  await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
-  await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
-  await expect(dialog.getByRole('link', { name: /Create a Dash identity|Get the Dash wallet/ })).toBeVisible()
+  await expect(dialog.getByRole('link', { name: /^Get Dash Wallet/ })).toHaveAttribute('href', 'https://www.dash.org/download/')
   await expect(dialog.getByText(/password/i)).toHaveCount(0)
 
-  // Wallet sign-in is a collapsed secondary option, offered on App Connect builds only.
-  const walletToggle = dialog.getByRole('button', { name: 'Sign in with a Dash wallet app' })
+  const walletButton = dialog.getByRole('button', { name: 'Sign in with Dash Wallet' })
   if (!isAppConnectBuild()) {
-    await expect(walletToggle).toHaveCount(0)
+    // Other builds: private-key sign-in is the primary path, and there is no wallet option.
+    await expect(dialog.locator('#loginCredential')).toBeVisible()
+    await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
+    await expect(walletButton).toHaveCount(0)
     return
   }
+
+  // App Connect builds: the wallet first, then a passkey where offered; the
+  // recovery phrase (not yet on mainnet) and a private key sit under "Other ways to sign in".
+  await expect(walletButton).toBeVisible()
+  await expect(dialog.locator('#loginCredential')).toHaveCount(0)
+  const phraseOption = dialog.getByRole('button', { name: 'Sign in with your recovery phrase' })
+  const keyOption = dialog.getByRole('button', { name: 'Sign in with a private key' })
+  await expect(phraseOption).toHaveCount(0)
+  await expect(keyOption).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Other ways to sign in' }).click()
+  if (await expectedNetwork() === 'mainnet') {
+    await expect(phraseOption).toHaveCount(0)
+  } else {
+    await phraseOption.click()
+    const phrase = dialog.getByLabel('Recovery phrase', { exact: true })
+    // Masked, but not a password field (browsers would offer to save it), and in no form.
+    await expect(phrase).toHaveAttribute('type', 'text')
+    await expect(phrase).toHaveAttribute('autocomplete', 'off')
+    await expect(phrase).toHaveCSS('-webkit-text-security', 'disc')
+    await expect(dialog.locator('form').getByLabel('Recovery phrase', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByText('Your recovery phrase controls your Dash wallet. It stays on this device and is never saved. Only enter it on yap.pr.')).toBeVisible()
+  }
+  await keyOption.click()
+  await expect(dialog.getByLabel('Recovery phrase', { exact: true })).toHaveCount(0)
+  await expect(dialog.locator('#loginCredential')).toBeVisible()
+  await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
+
+  // The wallet request is made only once the wallet option is chosen.
   await expect(dialog.getByRole('link', { name: 'Open in wallet app' })).toHaveCount(0)
-  await walletToggle.click()
+  await walletButton.click()
+  await expect(dialog.locator('#loginCredential')).toHaveCount(0)
 
   // The deep link is offered on desktop too (Dash Evo Tool runs on the same
   // machine), with copy-the-link as the manual fallback.

@@ -2,7 +2,6 @@
 
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { useSettingsStore } from '@/lib/store'
 import { Sidebar } from './sidebar'
 import { RightSidebar } from './right-sidebar'
 
@@ -41,17 +40,16 @@ interface PageHeaderProps {
 }
 
 /**
- * The translucent sticky bar at the top of the centre column. The blur is
- * skipped in potato mode. Children supply the row layout.
+ * The sticky bar at the top of the centre column. Opaque, as on Bluesky:
+ * a translucent bar let scrolled text read through the tab labels wherever
+ * the backdrop blur didn't apply. Children supply the row layout.
  */
 export function PageHeader({ children, borderless = false, className }: PageHeaderProps) {
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   return (
     <header
       className={cn(
-        'sticky top-0 z-40 bg-white/80 dark:bg-neutral-900/80',
+        'sticky top-0 z-40 bg-white dark:bg-neutral-900',
         !borderless && 'border-b border-gray-200 dark:border-gray-800',
-        !potatoMode && 'backdrop-blur-xl',
         className
       )}
     >

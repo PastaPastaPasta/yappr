@@ -199,7 +199,8 @@ function idsIn(value: unknown, into: Set<string> = new Set()): Set<string> {
  */
 function shownBy(key: readonly unknown[], data: unknown): Set<string> | null {
   const family = key[2];
-  if (family === 'feed' || family === 'profile' || family === 'post') return idsIn(data);
+  // A poll read shows the poll (its id), which a ballot ticket names.
+  if (family === 'feed' || family === 'profile' || family === 'post' || family === 'poll') return idsIn(data);
   if (family === 'dm' && key[3] === 'messages' && typeof key[4] === 'string') return new Set([key[4]]);
   return null;
 }

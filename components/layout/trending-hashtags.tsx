@@ -3,6 +3,7 @@
 import { logger } from '@/lib/logger'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { FireIcon } from '@heroicons/react/24/outline'
 import { formatNumber } from '@/lib/utils'
 import { hashtagService, type TrendingHashtag } from '@/lib/services/hashtag-service'
@@ -25,16 +26,29 @@ const TRENDING_FETCH_LIMIT = 12
  * v2), all-time window, trimmed to a short list. Reads
  * are served from the hashtag service's 5-minute cache, so mounting this on
  * every page costs one ranked query per cache window.
+ *
+ * Explore already lists the full ranking in its main column, so the box hides
+ * there (as X's "What's happening" does) rather than repeat it with a
+ * "Show more" that leads back to the same page.
  */
 export function TrendingHashtags() {
+  const pathname = usePathname()
+  if (pathname === '/explore' || pathname.startsWith('/explore/')) return null
+  return <TrendingHashtagsBox />
+}
+
+function TrendingHashtagsBox() {
   const [trending, setTrending] = useState<TrendingHashtag[] | null>(null)
+  const [hasMore, setHasMore] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     hashtagService
       .getTrendingHashtags({ timeWindowHours: 168, minPosts: 1, limit: TRENDING_FETCH_LIMIT, window: 'all' })
       .then((tags) => {
-        if (!cancelled) setTrending(tags.slice(0, TRENDING_LIMIT))
+        if (cancelled) return
+        setTrending(tags.slice(0, TRENDING_LIMIT))
+        setHasMore(tags.length > TRENDING_LIMIT)
       })
       .catch((error) => {
         logger.error('Failed to load sidebar trending hashtags:', error)
@@ -51,22 +65,26 @@ export function TrendingHashtags() {
         <FireIcon className="h-5 w-5 text-yappr-500" />
         Trending
       </h2>
-      <TrendingBody trending={trending} />
+      <TrendingBody trending={trending} hasMore={hasMore} />
     </div>
   )
 }
 
-function TrendingBody({ trending }: { trending: TrendingHashtag[] | null }) {
+function TrendingBody({ trending, hasMore }: { trending: TrendingHashtag[] | null; hasMore: boolean }) {
   if (trending === null) {
+    // Same row box as a loaded entry (py-2.5, a 20px tag line, a 16px count line).
     return (
-      <div className="px-4 pb-3 space-y-3">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="space-y-1.5">
-            <div className="h-4 w-28 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-3 w-16 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-          </div>
+      <ul aria-busy="true" aria-label="Loading">
+        {[...Array(5)].map((_, i) => (
+          <li key={i} className="flex items-center gap-3 px-4 py-2.5">
+            <span className="w-4 shrink-0" />
+            <div>
+              <div className="flex h-5 items-center"><div className="h-3.5 w-28 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" /></div>
+              <div className="flex h-4 items-center"><div className="h-3 w-16 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" /></div>
+            </div>
+          </li>
         ))}
-      </div>
+      </ul>
     )
   }
 
@@ -95,14 +113,16 @@ function TrendingBody({ trending }: { trending: TrendingHashtag[] | null }) {
           </Link>
         </li>
       ))}
-      <li>
-        <Link
-          href="/explore"
-          className="block px-4 py-3 text-sm text-yappr-500 hover:text-yappr-600 dark:hover:text-yappr-600 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
-        >
-          Show more
-        </Link>
-      </li>
+      {hasMore && (
+        <li>
+          <Link
+            href="/explore"
+            className="block px-4 py-3 text-sm text-yappr-500 hover:text-yappr-600 dark:hover:text-yappr-600 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+          >
+            Show more
+          </Link>
+        </li>
+      )}
     </ul>
   )
 }

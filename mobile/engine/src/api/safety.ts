@@ -1,8 +1,10 @@
+import { invalidateBlockCache } from '@/lib/caches/block-cache'
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
 import { isReportGoneError, isReportResolvedError, reportCanBeWithdrawn, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService, type BlockWriteResult } from '@/lib/services/block-service'
+import { followService } from '@/lib/services/follow-service'
 import { moderationService } from '@/lib/services/moderation-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
@@ -14,7 +16,7 @@ import { ownBlockExists } from '../writes/strict-reads'
 import { ownBlocks, type OwnBlock } from './own-blocks'
 import { NotSentError, type TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
-import type { BlockSourceDTO, Page, UserSummaryDTO } from './dto'
+import type { BlockListChoiceDTO, BlockSourceDTO, Page, UserSummaryDTO } from './dto'
 
 /** `block.message` (`blockService.blockUser` keeps the first 280). */
 const BLOCK_MESSAGE_MAX = 280
@@ -51,6 +53,9 @@ interface BlockArgs {
   targetId: string
   message?: string
 }
+interface BlockListFollowArgs { targetId: string }
+/** `blockService.followUserBlocks`' refusal at its cap (`MAX_BLOCK_FOLLOWS`). */
+const BLOCK_LIST_CAP = /^Maximum \d+ block follows reached$/
 
 interface ReportArgs {
   target: TargetRef
@@ -102,6 +107,11 @@ export function createSafetyModule(tickets: TicketStore) {
     if ((ticket.op === 'block' || ticket.op === 'unblock') && ticket.identityId && ticket.state !== 'pending') {
       blockLists.delete(ticket.identityId)
     }
+    // A block-list change confirmed by its call or by a later check: lib drops its cache (followed
+    // lists, merged filter) only when its own call succeeded, so block status would answer from the old lists.
+    if ((ticket.op === 'block-list.follow' || ticket.op === 'block-list.unfollow') && ticket.identityId && ticket.state === 'confirmed') {
+      invalidateBlockCache(ticket.identityId)
+    }
   })
 
   tickets.register<BlockArgs>('block', {
@@ -128,6 +138,24 @@ export function createSafetyModule(tickets: TicketStore) {
     },
     probe: ownBlock(false),
   })
+  for (const follow of [true, false]) {
+    tickets.register<BlockListFollowArgs>(follow ? 'block-list.follow' : 'block-list.unfollow', {
+      persistArgs: true,
+      async run({ targetId }, ctx) {
+        const viewer = signer(ctx)
+        const result = follow ? await blockService.followUserBlocks(viewer, targetId) : await blockService.unfollowUserBlocks(viewer, targetId)
+        // lib's one refusal before it sends anything that the user can act on: the list cap.
+        if (!result.success && result.error && BLOCK_LIST_CAP.test(result.error)) {
+          return { state: 'failed', error: new RpcError('You can use up to 100 block lists. Stop using one first.', 'BAD_REQUEST') }
+        }
+        return fromTransitionResult(result)
+      },
+      probe: relationProbe<BlockListFollowArgs>(
+        async ({ viewer, ticket }) => (await blockService.getBlockFollow(viewer))?.followedUserIds.includes(ticketIdentity(ticket)) ?? false,
+        follow,
+      ),
+    })
+  }
   tickets.register<ReportArgs>('report', {
     persistArgs: true,
     async run({ target, reason, note }, ctx) {
@@ -285,6 +313,40 @@ export function createSafetyModule(tickets: TicketStore) {
       } catch (error) {
         throw readFailure(error)
       }
+    },
+
+    /**
+     * Web's Settings → Block lists: everyone the viewer follows, and anyone
+     * whose list they still follow after unfollowing them, each with whether
+     * its block list is followed. Rejects when either list can't be read
+     * (never "following none").
+     */
+    async blockListChoices(): Promise<BlockListChoiceDTO[]> {
+      const viewer = requireViewer('Block lists')
+      const [follows, blockFollow] = await Promise.all([
+        followService.getFollowing(viewer, { throwOnError: true }),
+        blockService.getBlockFollow(viewer),
+      ]).catch((error: unknown) => {
+        throw readFailure(error)
+      })
+      const following = follows.map(follow => follow.followingId)
+      const listed = new Set(blockFollow?.followedUserIds ?? [])
+      const ids = [...new Set([...listed, ...following])].filter(id => id && id !== viewer)
+      const users = await loadUserSummaries(ids, { viewerFollows: false })
+      return ids.flatMap(id => {
+        const user = users.get(id)
+        return user ? [{ ...user, listFollowed: listed.has(id) }] : []
+      })
+    },
+
+    /** Follow (or stop following) `targetId`'s block list: whoever they block is hidden from the viewer too. */
+    async setBlockListFollowed(targetId: string, follow: boolean): Promise<WriteTicket> {
+      assertId(targetId, 'targetId')
+      const viewer = requireViewer('Block lists')
+      if (follow && viewer === targetId) throw badRequest('You cannot follow your own blocks')
+      return tickets.submit<BlockListFollowArgs>({
+        op: follow ? 'block-list.follow' : 'block-list.unfollow', args: { targetId }, target: { identityId: targetId },
+      })
     },
 
     /**

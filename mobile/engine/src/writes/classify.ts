@@ -239,6 +239,10 @@ const FAILED_ACTION: Record<WriteOp, string> = {
   'store.review': 'post review',
   'store.report': 'send report',
   'store.report.withdraw': 'withdraw report',
+  'poll.vote': 'save vote',
+  'block-list.follow': 'follow block list',
+  'block-list.unfollow': 'unfollow block list',
+  'dpns.register': 'register username',
 }
 
 /** Map any write error to an engine code (ENGINE.md §7.3), walking `RULES` in order. */

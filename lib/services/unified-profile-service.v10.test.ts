@@ -79,6 +79,28 @@ describe('v10 profile reads', () => {
     expect(await profiles.getAvatarUrl(ownerId)).toBe('dicebear:bottts:s');
   });
 
+  it('retries a failed batch read once before giving up on a page of profiles', async () => {
+    const profiles = await service();
+    let failures = 1;
+    query.mockImplementation(async ({ dataContractId }: { dataContractId: string }) => {
+      if (dataContractId === YAPPR_CONTRACT_ID && failures-- > 0) throw new Error('DAPI timeout');
+      return stored[dataContractId] ?? [];
+    });
+    expect(await profiles.getProfilesByIdentityIds([ownerId])).toMatchObject([{ displayName: 'Ava', location: 'Lisbon' }]);
+    expect(query).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects a failed batch read when asked to, rather than answering "no profiles"', async () => {
+    const profiles = await service();
+    query.mockRejectedValue(new Error('DAPI timeout'));
+    await expect(profiles.getProfilesByIdentityIds([ownerId], { throwOnError: true })).rejects.toThrow('DAPI timeout');
+    // Fail-soft by default: the read is left out.
+    expect(await profiles.getProfilesByIdentityIds([ownerId])).toEqual([]);
+    // A proved absence is not a failure.
+    query.mockReset().mockResolvedValue([]);
+    expect(await profiles.getProfilesByIdentityIds([ownerId], { throwOnError: true })).toEqual([]);
+  });
+
   it('counts either document as an existing profile, and rejects rather than reporting none', async () => {
     const profiles = await service();
     stored[YAPPR_CONTRACT_ID] = [];

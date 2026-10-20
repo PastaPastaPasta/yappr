@@ -20,14 +20,31 @@ import { ConversationList } from '@/components/messages/conversation-list'
 import { GroupSettingsDialog } from '@/components/messages/group-settings-dialog'
 import { PrivateFeedDashboard } from '@/components/settings/private-feed-dashboard'
 import { InventoryTable } from '@/components/store/inventory-table'
-import { EMPTY_DRAFT } from '@/components/profile/profile-edit-form'
 import { ProfileHeader } from '@/components/profile/profile-header'
+import { EditProfileModal } from '@/components/profile/edit-profile-modal'
+import { EMPTY_DRAFT } from '@/components/profile/profile-edit-form'
 import { details, row, eurItem } from './qa-round1-mocks'
 import { storeEncryptionKey } from '@/lib/secure-storage'
 import '@/app/globals.css'
 const noop = () => undefined
 const params = new URLSearchParams(window.location.search)
 const fixture = params.get('fixture')
+function EditProfileFixture() {
+  const creates = params.get('creates') === '1'
+  // Links saved before today's handle rules, one on a platform the picker no longer lists.
+  const legacyLinks = params.get('legacy') === '1' ? [{ platform: 'email', handle: 'old style' }, { platform: 'myspace', handle: 'tom' }] : []
+  const [open, setOpen] = useState(true)
+  const [saved, setSaved] = useState('')
+  const initial = creates
+    ? { ...EMPTY_DRAFT, displayName: 'owner' }
+    : { ...EMPTY_DRAFT, displayName: 'Owner', bio: 'Hello', socialLinks: [{ platform: 'github', handle: 'octocat' }, ...legacyLinks] }
+  return <>
+    <p data-testid="edit-state">{open ? 'open' : 'closed'}</p>
+    <pre data-testid="saved">{saved}</pre>
+    <EditProfileModal initial={open ? initial : null} userId="owner" avatarKey={0} bannerKey={0} isSaving={false} createsProfile={creates}
+      onCancel={() => setOpen(false)} onSave={(draft) => { setSaved(JSON.stringify(draft)); setOpen(false) }} onAvatarSaved={noop} onBannerSaved={noop} />
+  </>
+}
 function threadContents(threads: ReplyThread[]): string[] {
   return threads.flatMap(thread => [thread.content.content, ...threadContents(thread.nestedReplies)]).filter(Boolean)
 }
@@ -87,6 +104,7 @@ const content = fixture === 'messages' ? <><NetworkPill /><MessagesPage /></>
   : fixture === 'composer' ? <ComposerFixture />
   : fixture === 'status' ? <StatusFixture />
   : fixture === 'profile-page' ? <UserPage />
+  : fixture === 'edit-profile' ? <EditProfileFixture />
   : fixture === 'export' ? <InventoryPage />
   : fixture === 'inbox' ? <InboxFixture />
   : fixture === 'group' ? <GroupFixture />
@@ -98,7 +116,7 @@ const content = fixture === 'messages' ? <><NetworkPill /><MessagesPage /></>
   : fixture === 'shipping' ? <ManagePage />
   : fixture === 'store' ? <StorePage />
   : fixture === 'inventory' ? <InventoryTable items={[eurItem, { ...eurItem, id: 'fallback', title: 'Store currency', currency: undefined, variants: undefined, basePrice: 600 }]} storeId="store" ownerId="owner" currency="USD" onEditItem={noop} onItemDeleted={noop} />
-  : <ProfileHeader userId="owner" profile={{ displayName: 'Owner', followersCount: count, followingCount: 0 }} displayName="Owner" isDisplayNameLoading={false} profileMissing={false} username={null} allUsernames={[]} viewerId="viewer" avatarKey={0} bannerKey={0} userStore={null} hasPrivateFeed={false} isPrivateFollower={false} isFollowing={false} followLoading={false} onFollow={noop} onTip={noop} onRequireAuth={noop} onOpenUsernameModal={noop} onSelectPayment={noop} edit={{ draft: EMPTY_DRAFT, onChange: noop, isSaving: false, onStart: noop, onCancel: noop, onSave: noop, onEditAvatar: noop, onEditBanner: noop, active: false }} />
+  : <ProfileHeader userId="owner" profile={{ displayName: 'Owner', followersCount: count, followingCount: 0 }} displayName="Owner" isDisplayNameLoading={false} profileMissing={false} username={null} allUsernames={[]} viewerId="viewer" avatarKey={0} bannerKey={0} userStore={null} hasPrivateFeed={false} isPrivateFollower={false} isFollowing={false} followLoading={false} onFollow={noop} onTip={noop} onRequireAuth={noop} onOpenUsernameModal={noop} onSelectPayment={noop} onEditProfile={noop} />
 const root = document.getElementById('root')
 if (!root) throw new Error('Missing fixture root')
 createRoot(root).render(<>{content}<Toaster /></>)

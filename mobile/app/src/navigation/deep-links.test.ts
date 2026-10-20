@@ -137,6 +137,11 @@ describe('toAppRoute: cold vs warm links', () => {
     expect(toAppRoute('https://yap.pr/settings?section=privacy', cold)).toBe('/settings/privacy');
   });
 
+  it('opens username registration natively, pinned to Profile for the launch link', () => {
+    expect(toAppRoute('https://yap.pr/dpns/register', release)).toBe('/settings/username');
+    expect(toAppRoute('yappr://dpns/register', cold)).toBe('/(profile)/settings/username');
+  });
+
   it('pins message settings to Profile for a dev launch link, as Settings opens it there', () => {
     expect(toAppRoute('yappr-dev:///settings/messages', { ...dev, initial: true })).toBe('/(profile)/settings/messages');
     expect(toAppRoute('yappr-dev:///settings/messages', dev)).toBe('/settings/messages');
@@ -169,7 +174,6 @@ describe('resolveLink: what a link does beyond its route (SR-13, PRD NET-11)', (
   const signedIn: LinkOptions = { ...release, viewerId: X };
 
   it.each([
-    ['yappr://dpns/register', 'https://yap.pr/dpns/register'],
     ['yappr://blog/hello-world', 'https://yap.pr/blog/hello-world'],
     ['yappr://terms', 'https://yap.pr/terms'],
     ['yappr://about/team', 'https://yap.pr/about/team'],
@@ -179,7 +183,7 @@ describe('resolveLink: what a link does beyond its route (SR-13, PRD NET-11)', (
   });
 
   it("opens web-only pages on this build's own deployment", () => {
-    expect(resolveLink('yappr-dev://dpns/register', devnet)).toEqual({ kind: 'browser', url: 'https://yap.pr/devnet/dpns/register' });
+    expect(resolveLink('yappr-dev://terms', devnet)).toEqual({ kind: 'browser', url: 'https://yap.pr/devnet/terms' });
     expect(resolveLink('https://yap.pr/devnet/blog', devnet)).toEqual({ kind: 'browser', url: 'https://yap.pr/devnet/blog' });
   });
 

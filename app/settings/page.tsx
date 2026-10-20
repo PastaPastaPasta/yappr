@@ -48,7 +48,6 @@ import { ModerationSettings } from '@/components/settings/moderation-settings'
 import { ContractModerationSections, useModeratedContracts } from '@/components/settings/contract-moderation-sections'
 import { OwnWarningsNotice } from '@/components/moderation/own-warnings-notice'
 import { paymentIsChoosable } from '@/lib/payment-preference'
-import type { PayWith } from '@/lib/store'
 import { DeveloperSettings } from '@/components/settings/developer-settings'
 import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { postsHaveLanguage, privateFeedClientSupported, yappCanBeFrozen } from '@/lib/contract-topology'
@@ -67,11 +66,11 @@ const MODERATION_SECTION = { id: 'moderation', label: 'Moderation', icon: NoSymb
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },
-  { id: 'contacts', label: 'Contacts', icon: UserGroupIcon, description: 'Import contacts from Dash Pay' },
+  { id: 'contacts', label: 'Contacts', icon: UserGroupIcon, description: 'Find people you know from DashPay' },
   { id: 'notifications', label: 'Notifications', icon: BellIcon, description: 'Control your notification preferences' },
-  { id: 'privacy', label: 'Privacy & Security', icon: ShieldCheckIcon, description: 'Manage your encryption keys, privacy settings, and blocked users' },
-  { id: 'privateFeed', label: 'Private Feed', icon: LockClosedIcon, description: 'Manage approved followers and private feed access' },
-  { id: 'storage', label: 'Storage', icon: CloudArrowUpIcon, description: 'Connect storage for image uploads' },
+  { id: 'privacy', label: 'Privacy & Security', icon: ShieldCheckIcon, description: 'Passkeys, blocking and what you see' },
+  { id: 'privateFeed', label: 'Private Feed', icon: LockClosedIcon, description: 'Posts only followers you approve can read' },
+  { id: 'storage', label: 'Storage', icon: CloudArrowUpIcon, description: 'Where your image uploads are stored' },
   { id: 'appearance', label: 'Appearance', icon: PaintBrushIcon, description: 'Customize how Yappr looks' },
   { id: 'developer', label: 'Developer', icon: CommandLineIcon, description: 'Query inspector and build details' },
   { id: 'about', label: 'About', icon: InformationCircleIcon, description: 'Learn more about Yappr' },
@@ -102,7 +101,7 @@ const NOTIFICATION_DESCRIPTIONS: Record<string, string> = {
   follows: 'When someone follows you',
   mentions: 'When someone mentions you',
   blogPosts: 'When a blog you follow publishes a new post',
-  store: 'New orders and reviews for your store, and updates on your orders',
+  store: 'Orders and reviews for your store, and updates on your orders',
 }
 
 function SettingsPage() {
@@ -121,6 +120,8 @@ function SettingsPage() {
   const canModerate = isAuthority || isContractModerator
   const baseSections = privateFeedClientSupported() ? settingsSections : settingsSections.filter((section) => section.id !== 'privateFeed')
   const visibleSections = canModerate ? [...baseSections, MODERATION_SECTION] : baseSections
+  // Developer tools are reachable from About (and by URL), not listed in everyone's menu.
+  const menuSections = visibleSections.filter((section) => section.id !== 'developer')
   const { theme, setTheme } = useTheme()
   const [encryptionKeyVersion, setEncryptionKeyVersion] = useState(0)
   const handleEncryptionKeyChanged = useCallback(() => {
@@ -143,6 +144,8 @@ function SettingsPage() {
   const setSensitiveContentMode = useSettingsStore((s) => s.setSensitiveContentMode)
   const payWith = useSettingsStore((s) => s.payWith)
   const setPayWith = useSettingsStore((s) => s.setPayWith)
+  const hideUnreadablePrivatePosts = useSettingsStore((s) => s.hideUnreadablePrivatePosts)
+  const setHideUnreadablePrivatePosts = useSettingsStore((s) => s.setHideUnreadablePrivatePosts)
 
   // Derive active section from URL search params
   const sectionParam = searchParams.get('section')
@@ -228,7 +231,7 @@ function SettingsPage() {
 
   const renderMainSettings = () => (
     <div className="divide-y divide-gray-200 dark:divide-gray-800">
-      {visibleSections.map((section) => (
+      {menuSections.map((section) => (
         <button
           key={section.id}
           onClick={() => setActiveSection(section.id as SettingsSection)}
@@ -250,25 +253,18 @@ function SettingsPage() {
   const renderAccountSettings = () => (
     <div className="p-6 space-y-6">
       <div>
-        <h3 className="font-semibold mb-4">Account Information</h3>
+        <h3 className="font-semibold mb-4">Account</h3>
         <div className="space-y-4 bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
           <div>
-            <p className="text-sm text-gray-500">Identity ID</p>
-            <p className="font-mono text-sm">{user?.identityId}</p>
+            <p className="text-sm text-gray-500">Account ID</p>
+            <p className="font-mono text-xs break-all text-gray-700 dark:text-gray-300">{user?.identityId}</p>
           </div>
           <div>
             <p className="text-sm text-gray-500">Balance</p>
-            <p className="font-mono">
-              {(() => {
-                const balance = user?.balance || 0;
-                // Balance is in credits, convert to DASH (1 DASH = 100,000,000,000 credits)
-                const dashBalance = balance / 100000000000;
-                return `${dashBalance.toFixed(8)} DASH`;
-              })()}
-            </p>
+            <p>{formatBalance(user?.balance || 0)}</p>
           </div>
           <div>
-            <p className="text-sm text-gray-500">Account Created</p>
+            <p className="text-sm text-gray-500">Joined</p>
             <p className="text-sm">
               {accountCreatedAt
                 ? accountCreatedAt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -281,29 +277,25 @@ function SettingsPage() {
       {/* DPNS Username Registration */}
       <div>
         {paymentIsChoosable('post') && (
-          <div className="mb-6">
-            <h3 className="font-semibold mb-4"><label htmlFor="settings-pay-with">Pay for posts with</label></h3>
-            <p id="settings-pay-with-description" className="text-sm text-gray-500 mb-4">
-              Posts, replies, likes and reposts can be paid in YAPP (Yappr then covers the network fee while it can) or in
-              Dash credits. YAPP falls back to credits automatically when your balance does not cover the cost.
-            </p>
-            <select
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <div>
+              <label htmlFor="settings-pay-with" className="block font-medium cursor-pointer">Pay with YAPP when you can</label>
+              <p id="settings-pay-with-description" className="text-sm text-gray-500">
+                Posts, replies and likes use YAPP while your balance covers them, and Dash otherwise
+              </p>
+            </div>
+            <SettingsSwitch
               id="settings-pay-with"
               aria-describedby="settings-pay-with-description"
-              value={payWith}
-              onChange={(e) => setPayWith(e.target.value as PayWith)}
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
-            >
-              <option value="yapp">YAPP when I have enough, else credits</option>
-              <option value="credits">Always credits</option>
-            </select>
+              checked={payWith === 'yapp'}
+              onCheckedChange={(checked) => setPayWith(checked ? 'yapp' : 'credits')}
+            />
           </div>
         )}
-        <h3 className="font-semibold mb-4">DPNS Usernames</h3>
+        <h3 className="font-semibold mb-4">Usernames</h3>
         <div className="space-y-4">
           {dpnsUsernames.length > 0 ? (
             <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
-              <p className="text-sm text-gray-500 mb-2">Registered Usernames</p>
               <div className="flex flex-wrap gap-2">
                 {dpnsUsernames.map((username, index) => (
                   <span
@@ -323,7 +315,7 @@ function SettingsPage() {
           ) : (
             <div className="bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                No usernames registered yet. Register a username to make it easier for others to find you.
+                Add a username so people can find you.
               </p>
             </div>
           )}
@@ -333,19 +325,16 @@ function SettingsPage() {
             onClick={() => setIsUsernameModalOpen(true)}
           >
             <UserPlusIcon className="h-4 w-4 mr-2" />
-            {dpnsUsernames.length > 0 ? 'Register More Usernames' : 'Register Username'}
+            {dpnsUsernames.length > 0 ? 'Add another username' : 'Add a username'}
           </Button>
         </div>
       </div>
 
       <div>
-        <h3 className="font-semibold mb-4">Account Actions</h3>
-        <div className="space-y-3">
-          <Button variant="outline" className="w-full justify-start" onClick={logout}>
-            <KeyIcon className="h-4 w-4 mr-2" />
-            Log Out
-          </Button>
-        </div>
+        <Button variant="outline" className="w-full justify-start" onClick={logout}>
+          <KeyIcon className="h-4 w-4 mr-2" />
+          Log out
+        </Button>
       </div>
     </div>
   )
@@ -353,9 +342,9 @@ function SettingsPage() {
   const renderContactsSettings = () => (
     <div className="p-6 space-y-6">
       <div>
-        <h3 className="font-semibold mb-4">Dash Pay Contacts</h3>
+        <h3 className="font-semibold mb-4">DashPay contacts</h3>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          Discover friends from Dash Pay who you haven&apos;t followed yet on Yappr.
+          Find people from your DashPay contacts you don&apos;t follow yet.
         </p>
         <Button
           variant="outline"
@@ -365,7 +354,7 @@ function SettingsPage() {
           }}
         >
           <UserGroupIcon className="h-5 w-5 mr-2" />
-          Find Dash Pay Contacts
+          Find DashPay contacts
         </Button>
       </div>
     </div>
@@ -413,8 +402,8 @@ function SettingsPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <label htmlFor="settings-link-previews" className="block font-medium cursor-pointer">Link Previews</label>
-              <p id="settings-link-previews-description" className="text-sm text-gray-500">Show previews with titles, descriptions, and images for links</p>
+              <label htmlFor="settings-link-previews" className="block font-medium cursor-pointer">Link previews</label>
+              <p id="settings-link-previews-description" className="text-sm text-gray-500">Show a title and image for links in posts</p>
             </div>
             <SettingsSwitch
               id="settings-link-previews"
@@ -424,30 +413,29 @@ function SettingsPage() {
             />
           </div>
           {linkPreviewsEnabled && (
-            <div className="ml-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-              <p className="text-sm text-amber-800 dark:text-amber-200">
-                <strong>Privacy note:</strong> {LINK_PREVIEW_SERVICES.summary}
-              </p>
-              <p className="text-xs text-amber-700 dark:text-amber-300 mt-2">
+            <details className="text-xs text-gray-500">
+              <summary className="cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">Which services load previews?</summary>
+              <p className="mt-2">{LINK_PREVIEW_SERVICES.summary}</p>
+              <p className="mt-2">
                 Services used:{' '}
                 <a
                   href={LINK_PREVIEW_SERVICES.imageProxy.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="underline hover:text-amber-900 dark:hover:text-amber-100"
+                  className="underline hover:text-gray-700 dark:hover:text-gray-300"
                 >
                   {LINK_PREVIEW_SERVICES.imageProxy.name}
                 </a>
                 , the IPFS gateways {LINK_PREVIEW_SERVICES.ipfsGateways.map((gateway) => gateway.name).join(', ')}, and{' '}
                 {LINK_PREVIEW_SERVICES.directServices.map((service) => service.name).join(', ')} for their own links.
               </p>
-            </div>
+            </details>
           )}
 
           <div className="flex items-center justify-between">
             <div>
-              <label htmlFor="settings-media-gate" className="block font-medium cursor-pointer">Blur Media From People You Don&apos;t Follow</label>
-              <p id="settings-media-gate-description" className="text-sm text-gray-500">Images and link previews from accounts you don&apos;t follow stay hidden behind a blurred placeholder until you tap to reveal them</p>
+              <label htmlFor="settings-media-gate" className="block font-medium cursor-pointer">Blur media from people you don&apos;t follow</label>
+              <p id="settings-media-gate-description" className="text-sm text-gray-500">Tap to reveal their images and link previews</p>
             </div>
             <SettingsSwitch
               id="settings-media-gate"
@@ -460,10 +448,10 @@ function SettingsPage() {
       </div>
 
       <div>
-        <h3 className="font-semibold mb-4">Direct Messages</h3>
+        <h3 className="font-semibold mb-4">Messages</h3>
         <div className="flex items-center justify-between">
           <div>
-            <label htmlFor="settings-read-receipts" className="block font-medium cursor-pointer">Read Receipts</label>
+            <label htmlFor="settings-read-receipts" className="block font-medium cursor-pointer">Read receipts</label>
             <p id="settings-read-receipts-description" className="text-sm text-gray-500">Let others see when you&apos;ve read their messages</p>
           </div>
           <SettingsSwitch
@@ -477,9 +465,9 @@ function SettingsPage() {
 
       {/* Sensitive Content Section */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
-        <h3 className="font-semibold mb-1">NSFW Content</h3>
+        <h3 className="font-semibold mb-1">NSFW content</h3>
         <p className="text-sm text-gray-500 mb-4">
-          How to handle posts their author flagged as NSFW
+          Posts their author marked as NSFW
         </p>
         <RadioGroup.Root
           value={sensitiveContentMode}
@@ -507,6 +495,22 @@ function SettingsPage() {
           ))}
         </RadioGroup.Root>
       </div>
+
+      {privateFeedClientSupported() && (
+        <div className="border-t border-gray-200 dark:border-gray-800 pt-6 flex items-center justify-between gap-4">
+          <div>
+            <label htmlFor="settings-hide-unreadable-private" className="block font-medium cursor-pointer">Hide private posts you can&apos;t see</label>
+            <p id="settings-hide-unreadable-private-description" className="text-sm text-gray-500">Skip private posts from people who haven&apos;t approved you</p>
+          </div>
+          <SettingsSwitch
+            id="settings-hide-unreadable-private"
+            data-testid="settings-hide-unreadable-private"
+            aria-describedby="settings-hide-unreadable-private-description"
+            checked={hideUnreadablePrivatePosts}
+            onCheckedChange={setHideUnreadablePrivatePosts}
+          />
+        </div>
+      )}
 
       {/* Block Lists Section */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
@@ -671,7 +675,7 @@ function SettingsPage() {
         <CardHeader>
           <CardTitle className="text-lg">Storage Provider</CardTitle>
           <CardDescription>
-            Connect a storage provider to attach images to your posts. Only one provider can be connected at a time.
+            Connect one to attach images to posts and profiles. Uploaded images are public.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -687,23 +691,6 @@ function SettingsPage() {
         </CardContent>
       </Card>
 
-      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-        <h4 className="font-medium mb-2 text-sm">How it works:</h4>
-        <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-          <li className="flex gap-2">
-            <span className="text-yappr-500">&bull;</span>
-            Images are uploaded to IPFS via your chosen provider
-          </li>
-          <li className="flex gap-2">
-            <span className="text-yappr-500">&bull;</span>
-            Posts reference images using <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 rounded">ipfs://CID</code> URLs
-          </li>
-          <li className="flex gap-2">
-            <span className="text-yappr-500">&bull;</span>
-            Images are publicly accessible via IPFS gateways
-          </li>
-        </ul>
-      </div>
     </div>
   )
 
@@ -718,7 +705,7 @@ function SettingsPage() {
 
         <Button variant="outline" asChild>
           <Link href="/about">
-            Learn More About Yappr
+            Learn more
           </Link>
         </Button>
       </div>
@@ -726,7 +713,7 @@ function SettingsPage() {
       <div className="space-y-3">
         <Button variant="outline" className="w-full" asChild>
           <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
-            GitHub Repository
+            Source code
           </a>
         </Button>
         <Button variant="outline" className="w-full" asChild>
@@ -738,6 +725,11 @@ function SettingsPage() {
 
       <div className="pt-6 border-t border-gray-200 dark:border-gray-800 space-y-3">
         <LegalLinks />
+        <p className="text-center">
+          <Link href="/settings?section=developer" className="text-xs text-gray-500 hover:underline">
+            Developer tools
+          </Link>
+        </p>
         <p className="text-xs text-gray-500 text-center">
           Version <span className="font-mono">{version}</span>
         </p>
@@ -837,6 +829,13 @@ function SettingsPage() {
       />
     </>
   )
+}
+
+/** Credits as DASH (1 DASH = 100,000,000,000 credits) to four places, like a wallet's summary; dust shows as "<0.0001". */
+function formatBalance(credits: number) {
+  const dash = credits / 100000000000
+  if (dash > 0 && dash < 0.0001) return '<0.0001 DASH'
+  return `${dash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} DASH`
 }
 
 export default withAuth(SettingsPage)

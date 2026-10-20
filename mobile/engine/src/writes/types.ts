@@ -56,7 +56,7 @@ export interface EngineErrorData {
 export type WriteOp =
   | 'post.publish' | 'post.delete' | 'like' | 'unlike' | 'repost' | 'unrepost' | 'bookmark' | 'unbookmark'
   | 'follow' | 'unfollow' | 'block' | 'unblock' | 'report' | 'report.withdraw' | 'profile.update'
-  | 'dm.send' | 'dm.group'
+  | 'dm.send' | 'dm.group' | 'poll.vote' | 'block-list.follow' | 'block-list.unfollow' | 'dpns.register'
   // storefront (native store)
   | 'store.save' | 'store.item' | 'store.zone' | 'store.order' | 'store.order.status' | 'store.review' | 'store.report' | 'store.report.withdraw'
 
@@ -71,7 +71,7 @@ export interface TargetRef {
   rootPostId: string | null
 }
 
-export type WriteTarget = TargetRef | { identityId: string } | { conversationKey: string }
+export type WriteTarget = TargetRef | { identityId: string } | { conversationKey: string } | { pollId: string }
 
 export interface TicketDocument {
   contractId: string

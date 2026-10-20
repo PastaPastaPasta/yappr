@@ -185,8 +185,8 @@ let authorCountTreeUnsupported = false;
  * Returns AT MOST 100 authors — Drive caps a grouped range-distinct count at
  * `DEFAULT_QUERY_LIMIT` and this query is not paginated (see
  * `rangeDistinctCount`). Fine for "top N contributors", which only reads the
- * head of the distribution; NOT usable as a distinct-author total, which is why
- * the homepage no longer shows one.
+ * head of the distribution; as a distinct-author total it is exact only below
+ * the cap, so the homepage shows "100+" once it reaches it.
  */
 async function fetchAuthorPostCountsViaCountTree(contractId: string): Promise<Map<string, number> | null> {
   if (authorCountTreeUnsupported) return null;
