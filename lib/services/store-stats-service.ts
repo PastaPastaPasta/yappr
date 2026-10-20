@@ -13,8 +13,8 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID, storefrontIsV6 } from '../constants';
 import type { ItemRatingSummary, StoreRatingSummary } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
-import { documentCount, groupedCountEntries, groupedDocumentCount, mapLimit } from './pagination-utils';
-import { documentToPlainObject, type DocumentWhereClause } from './sdk-helpers';
+import { chunk, documentCount, groupedCountEntries, groupedDocumentCount, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
+import { documentToPlainObject, identifierToHex, type DocumentWhereClause } from './sdk-helpers';
 
 const SUMMARY_TTL_MS = 60 * 1000;
 const RANKING_TTL_MS = 60 * 1000;
@@ -58,6 +58,41 @@ async function averageOf(sdk: Sdk, documentTypeName: string, where: DocumentWher
   const entry = groupedCountEntries(raw).find(([key]) => key === '')?.[1] as AverageEntry | undefined;
   if (!entry) return { count: 0, sum: 0 };
   return { count: Number(entry.count), sum: Number(entry.sum) };
+}
+
+/**
+ * `{count, sum}` per store from ONE average query grouped by `storeId`, for at
+ * most 100 stores. Keys arrive as the hex of each id's bytes; a store with no
+ * group has no reviews. Throws when groups came back but none decoded, rather
+ * than reading every store as unreviewed.
+ */
+async function groupedAverages(sdk: Sdk, storeIds: string[]): Promise<Map<string, { count: number; sum: number }>> {
+  const raw = await sdk.documents.average(
+    {
+      dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
+      documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW,
+      where: [['storeId', 'in', storeIds]],
+      groupBy: ['storeId'],
+    },
+    'rating'
+  );
+  const idByHex = new Map<string, string>();
+  for (const id of storeIds) {
+    const hex = identifierToHex(id);
+    if (hex) idByHex.set(hex, id);
+  }
+  const averages = new Map(storeIds.map((id) => [id, { count: 0, sum: 0 }]));
+  const entries = groupedCountEntries(raw).filter(([key]) => key !== '');
+  let matched = 0;
+  for (const [key, value] of entries) {
+    const id = idByHex.get(key.toLowerCase());
+    if (!id) continue;
+    const entry = value as AverageEntry;
+    averages.set(id, { count: Number(entry.count), sum: Number(entry.sum) });
+    matched += 1;
+  }
+  if (entries.length > 0 && matched === 0) throw new Error('storeStats: no grouped average key matched a store id');
+  return averages;
 }
 
 /** v6 reads item ratings through `storeItemRating`, whose prefix is the store; earlier cuts index `itemId` alone. */
@@ -113,25 +148,39 @@ class StoreStatsService {
     return summary;
   }
 
-  /** Rating summaries for many stores at once: one average query per store, in parallel batches. */
+  /**
+   * Rating summaries for many stores at once: one proved average query grouped
+   * by store per 100 stores (`storeId in [...]` on the `storeRating` average
+   * tree), where a store with no group has no reviews. Should a grouped read
+   * fail or answer in keys that do not decode, its stores fall back to one
+   * average query each.
+   */
   async getStoreRatingSummaries(storeIds: string[]): Promise<Map<string, StoreRatingSummary>> {
     const result = new Map<string, StoreRatingSummary>();
-    const missing = storeIds.filter((id) => {
+    const missing = Array.from(new Set(storeIds)).filter((id) => {
       const cached = this.storeSummaries.get(id);
       if (cached) result.set(id, cached);
       return !cached;
     });
     if (missing.length === 0) return result;
     const sdk = await getEvoSdk();
-    await mapLimit(missing, 6, async (storeId) => {
+    // Discovery cards only show the average and count; the distribution is
+    // fetched when a store page opens.
+    const cardSummary = (average: { count: number; sum: number }): StoreRatingSummary =>
+      ({ ...summaryFrom(average), ratingDistribution: emptyDistribution() });
+    await mapLimit(chunk(missing, MAX_IN_CLAUSE_VALUES), 2, async (batch) => {
       try {
-        const average = await averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, [['storeId', '==', storeId]]);
-        // Discovery cards only show the average and count; the distribution is
-        // fetched when a store page opens.
-        const summary: StoreRatingSummary = { ...summaryFrom(average), ratingDistribution: emptyDistribution() };
-        result.set(storeId, summary);
+        const averages = await groupedAverages(sdk, batch);
+        averages.forEach((average, storeId) => result.set(storeId, cardSummary(average)));
       } catch (error) {
-        logger.warn(`storeStats: average for store ${storeId} failed`, error);
+        logger.warn('storeStats: grouped store averages failed, reading each store', error);
+        await mapLimit(batch, 6, async (storeId) => {
+          try {
+            result.set(storeId, cardSummary(await averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, [['storeId', '==', storeId]])));
+          } catch (storeError) {
+            logger.warn(`storeStats: average for store ${storeId} failed`, storeError);
+          }
+        });
       }
     });
     return result;
