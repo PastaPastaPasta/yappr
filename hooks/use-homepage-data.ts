@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Post } from '@/lib/types'
 import { useSdk } from '@/contexts/sdk-context'
+import { useAuth } from '@/contexts/auth-context'
 import { loadHomepage, type HomepageSnapshot, type HomepageTopUser } from '@/lib/home/load-homepage'
 
 export type TopUser = HomepageTopUser
@@ -41,8 +42,15 @@ export interface HomepageData {
 let cache: { data: HomepageSnapshot; timestamp: number } | null = null
 const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
 
-export function useHomepageData(): HomepageData {
+/**
+ * `skipSignedIn`: a page that sends signed-in viewers elsewhere (`/` bounces
+ * them to the feed) reads nothing for them, and waits for the stored session
+ * to be checked before reading anything.
+ */
+export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boolean } = {}): HomepageData {
   const { isReady: sdkReady } = useSdk()
+  const { user, isAuthRestoring } = useAuth()
+  const enabled = sdkReady && !(skipSignedIn && (isAuthRestoring || user))
 
   const [platformStats, setPlatformStats] = useState<PlatformStats>({
     totalPosts: 0,
@@ -91,7 +99,9 @@ export function useHomepageData(): HomepageData {
     setTopUsers(prev => ({ ...prev, loading: true, error: null }))
 
     try {
-      const snapshot = await loadHomepage()
+      // The featured cards render as soon as they are proved; the stats and
+      // contributors follow with the full snapshot.
+      const snapshot = await loadHomepage((posts) => setFeaturedPosts({ posts, loading: false, error: null }))
       cache = { data: snapshot, timestamp: Date.now() }
       applySnapshot(snapshot)
     } catch (error) {
@@ -103,18 +113,18 @@ export function useHomepageData(): HomepageData {
   }, [applySnapshot])
 
   const refresh = useCallback(() => {
-    if (!sdkReady) return
+    if (!enabled) return
     cache = null
     load(true).catch((error) => logger.error('Homepage refresh failed:', error))
-  }, [sdkReady, load])
+  }, [enabled, load])
 
-  // Initial load - wait for SDK to be ready
+  // Initial load - wait for the SDK (and, when skipping signed-in viewers, the session check)
   useEffect(() => {
-    if (!sdkReady) return
+    if (!enabled) return
     if (hasLoadedRef.current) return
     hasLoadedRef.current = true
     load().catch((error) => logger.error('Homepage load failed:', error))
-  }, [sdkReady, load])
+  }, [enabled, load])
 
   return {
     platformStats,

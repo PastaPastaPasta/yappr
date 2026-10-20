@@ -29,7 +29,7 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
   const router = useRouter()
   const { user } = useAuth()
   const openLoginModal = useLoginModal((s) => s.open)
-  const { platformStats, featuredPosts, topUsers, refresh } = useHomepageData()
+  const { platformStats, featuredPosts, topUsers, refresh } = useHomepageData({ skipSignedIn: redirectAuthenticated })
 
   // Auth state comes from local storage, so the first client render can
   // differ from the static HTML; hold the sign-in button's place until hydrated.
