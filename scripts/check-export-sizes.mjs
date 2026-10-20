@@ -16,7 +16,8 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { gzipSync } from 'node:zlib'
+import { brotliDecompressSync, gunzipSync, gzipSync } from 'node:zlib'
+import { createHash } from 'node:crypto'
 
 const PAGES_FILE_LIMIT_BYTES = 25 * 1024 * 1024
 const SHOW_LARGEST = 8
@@ -77,6 +78,7 @@ console.log(`OK: ${files.length} files, none over the limit.`)
 
 // Measure scripts required to hydrate each public route, excluding later dynamic imports.
 // Strip the deployment base path: exports always store assets under out/_next.
+const checkedWasm = new Set()
 for (const route of ['/', '/feed', '/post', '/user', '/terms', '/blog/compose']) {
   const htmlFile = path.join(dir, route, 'index.html')
   let html
@@ -86,10 +88,24 @@ for (const route of ['/', '/feed', '/post', '/user', '/terms', '/blog/compose'])
     const bootstrap = [...head.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)]
       .map(match => match[1]).find(script => script.includes('window.__yapprSdkWasm'))
     const asset = bootstrap?.match(/\/_next\/static\/wasm\/sdk-[a-f0-9]{64}\.wasm\.gz/)?.[0]
-    if (!bootstrap || !asset || !files.some(({ file }) => file === path.join(dir, asset.slice(1)))) {
-      console.error(`::error file=${htmlFile}::${route} is missing its head bootstrap or matching WASM asset.`)
+    const exported = (name) => files.some(({ file }) => file === path.join(dir, name.slice(1)))
+    if (!bootstrap || !asset || !exported(asset) || !exported(asset.replace(/\.gz$/, '.br'))) {
+      console.error(`::error file=${htmlFile}::${route} is missing its head bootstrap or its matching WASM assets (.gz and .br).`)
       process.exitCode = 1
-    } else {
+    } else if (!checkedWasm.has(asset)) {
+      // Both SDK files must decode to the same WASM, named by its hash.
+      checkedWasm.add(asset)
+      const hash = asset.match(/sdk-([a-f0-9]{64})/)[1]
+      const decoded = [
+        gunzipSync(readFileSync(path.join(dir, asset.slice(1)))),
+        brotliDecompressSync(readFileSync(path.join(dir, asset.slice(1).replace(/\.gz$/, '.br')))),
+      ].map(bytes => createHash('sha256').update(bytes).digest('hex'))
+      if (decoded.some(digest => digest !== hash)) {
+        console.error(`::error file=${htmlFile}::The SDK WASM files do not decode to sdk-${hash} (gzip ${decoded[0]}, brotli ${decoded[1]}).`)
+        process.exitCode = 1
+      }
+    }
+    if (bootstrap) {
       // Also catch broken serialized function syntax before shipping the export.
       try { new Function(bootstrap) } catch (error) {
         console.error(`::error file=${htmlFile}::Invalid WASM bootstrap: ${error.message}`)

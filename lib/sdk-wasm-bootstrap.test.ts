@@ -24,6 +24,28 @@ describe('SDK WASM head bootstrap', () => {
     }
   })
 
+  it('asks for the file this browser can decode', async () => {
+    const run = async (brotli: boolean) => {
+      const Native = globalThis.DecompressionStream
+      const DS = brotli ? Native : class extends Native {
+        constructor(format: CompressionFormat) {
+          if (String(format) === 'brotli') throw new TypeError('Unsupported compression format')
+          super(format)
+        }
+      }
+      const fetch = vi.fn().mockResolvedValue(new Response('wasm'))
+      const window: { __yapprSdkWasm?: Promise<unknown> } = {}
+      const script = sdkWasmBootstrap('', '/_next/static/wasm/sdk-x.wasm.gz', 'cache')
+      new Function('location', 'window', 'caches', 'fetch', 'DecompressionStream', 'localStorage', script)(
+        { pathname: '/feed/' }, window, { open: vi.fn().mockRejectedValue(new Error('no storage')) }, fetch, DS, undefined,
+      )
+      await window.__yapprSdkWasm
+      return fetch.mock.calls[0][0]
+    }
+    expect(await run(true)).toBe('/_next/static/wasm/sdk-x.wasm.br')
+    expect(await run(false)).toBe('/_next/static/wasm/sdk-x.wasm.gz')
+  })
+
   it('escapes markup in what it embeds', () => {
     expect(sdkWasmBootstrap('/x', '/x/</script>.wasm.gz', 'c')).not.toContain('</script>')
   })

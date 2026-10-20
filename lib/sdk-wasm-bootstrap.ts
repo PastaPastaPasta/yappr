@@ -1,5 +1,5 @@
 import { STATIC_ROUTES } from './static-routes'
-import { preloadSdkWasm } from './web-wasm-preload'
+import { preloadSdkWasm, sdkWasmUrl } from './web-wasm-preload'
 
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c')
 
@@ -11,5 +11,6 @@ const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c')
  */
 export function sdkWasmBootstrap(basePath: string, url: string, cacheName: string): string {
   const skip = STATIC_ROUTES.flatMap(route => [`${basePath}${route}`, `${basePath}${route}/`])
-  return `if(!${json(skip)}.includes(location.pathname))window.__yapprSdkWasm??=(${preloadSdkWasm.toString()})(...${json([url, cacheName])});`
+  // The gzip URL goes in; the browser picks its file (sdkWasmUrl) the way init() does.
+  return `if(!${json(skip)}.includes(location.pathname))window.__yapprSdkWasm??=(${preloadSdkWasm.toString()})((${sdkWasmUrl.toString()})(${json(url)}),${json(cacheName)});`
 }
