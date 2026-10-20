@@ -417,6 +417,21 @@ async function holdsGrantInForce(ownerId: string, followerId: string): Promise<b
   return inForce(previous?.feed)
 }
 
+/**
+ * lib's own sentences for a paused follower move (`moveFollowers` in
+ * lib/services/private-feed-move.ts); any other pause (a thrown read's
+ * message) shows as {@link MOVE_PAUSED}.
+ */
+const MOVE_PAUSES = new Set([
+  'Enter your encryption key to finish moving your followers.',
+  'Your renewed private feed is full.',
+  "Waiting for the network to confirm a follower's access. Continue in a moment.",
+  "Some of your old feed's access could not be cleaned up yet.",
+  'The move paused.',
+])
+const MOVE_PAUSED = 'The move paused. Continue in a moment.'
+const pauseText = (error: string | undefined): string => (error !== undefined && MOVE_PAUSES.has(error) ? error : MOVE_PAUSED)
+
 /** `requestAccess`'s refusal when the owner has no private feed (lib/services/private-feed-follower-service.ts). */
 const NO_FEED = 'This person has no private feed'
 
@@ -487,10 +502,14 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       ctx.stage('broadcasting')
       return fromFeedResult(await privateFeedService.approveFollower(owner, memberId, publicKey, messagingKeyOf(owner)))
     },
+    // Approved: a grant in force in the current feed that answers the request still standing. A follower
+    // who asks again (a new messaging key) still holds the old grant, which lib replaces; that one says nothing.
     probe: relationProbe<MemberArgs>(async ({ viewer, ticket }) => {
-      const feed = await fetchCurrentFeed(viewer, { fresh: true })
-      const grant = feed ? await fetchGrant(viewer, feed.feed, ticketIdentity(ticket)) : null
-      return grant !== null && !(await answeredThrough(grant)).revoked
+      const member = ticketIdentity(ticket)
+      const [feed, request] = await Promise.all([fetchCurrentFeed(viewer, { fresh: true }), fetchFollowRequest(viewer, member)])
+      const grant = feed ? await fetchGrant(viewer, feed.feed, member) : null
+      if (grant === null || (request !== null && grant.createdAt < request.$createdAt)) return false
+      return !(await answeredThrough(grant)).revoked
     }, true),
   })
 
@@ -511,7 +530,9 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
    * counts as done when it runs again), and Settings offers to continue it.
    */
   const fromMoveResult = (result: PrivateFeedResult): WriteResult =>
-    result.success || result.errorCode !== undefined ? fromFeedResult(result) : { state: 'failed', error: new RpcError(result.error ?? 'The move paused.', 'PRIVATE_FEED') }
+    result.success || result.errorCode !== undefined
+      ? fromFeedResult(result)
+      : { state: 'failed', error: new RpcError(pauseText(result.error), 'PRIVATE_FEED') }
 
   register<RenewArgs>('privateFeed.renew', {
     async run({ bringHistory, fromFeed }, ctx) {

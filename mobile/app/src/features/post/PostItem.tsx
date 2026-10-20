@@ -10,7 +10,7 @@ import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useProvisionalViewerId, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { usePendingWriteStatus } from '~/features/compose/pending-posts';
-import { usePrivateBody } from '~/features/private-feed/PrivatePostBody';
+import { PendingPrivateBody, usePrivateBody } from '~/features/private-feed/PrivatePostBody';
 import { tagMaxLength } from '~/features/compose/text';
 import { usePostSafety } from '~/features/safety/use-post-safety';
 import { showActionSheet, type SheetAction } from '~/ui/action-sheet';
@@ -411,6 +411,7 @@ export const PostItem = memo(function PostItem({
         viewerId={viewerId ?? undefined}
         writeStatus={pending}
         actions={{ onAuthorPress: actions.onAuthorPress }}
+        privateBody={post.encrypted ? <PendingPrivateBody post={post} /> : undefined}
       />
     );
   }

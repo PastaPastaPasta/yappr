@@ -88,6 +88,11 @@ export function draftIsPrivate(draft: DraftDTO): boolean {
     privateDrafts.has(draft) || isKnownPrivate(draft.replyTo?.id)
 }
 
+/** Whether `run()` posts a draft encrypted: a private post, or a reply it found in a private thread. */
+function draftEncrypted(draft: DraftDTO): boolean {
+  return isPrivateVisibility(draft) || privateDrafts.has(draft)
+}
+
 /** Check a draft before a ticket exists: a bad one rejects with `BAD_REQUEST`. */
 export function validateDraft(draft: DraftDTO): void {
   if (typeof draft !== 'object' || draft === null || !Array.isArray(draft.parts)) throw badRequest('draft.parts must be an array')
@@ -204,7 +209,7 @@ type PartSearch = { found: TicketDocument[]; absent: number; unclear: string | n
 function searchParts(plan: PostToCreate[], draft: DraftDTO, ticket: WriteTicket, own: Awaited<ReturnType<FindOwnDocuments>>): PartSearch {
   const result: PartSearch = { found: [], absent: 0, unclear: null }
   // An encrypted part's text is not on the chain (a teaser at most): it can be neither found nor proved absent.
-  if (draftIsPrivate(draft)) {
+  if (draftEncrypted(draft)) {
     if (plan.length > 0) result.unclear = 'Check your profile to see whether your private post went out.'
     return result
   }

@@ -285,6 +285,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const privateVisibility = privateFeeds && !replyPrivate && visibility !== 'public';
   /** Private text is never saved to the device: no draft is kept for it (a reply to a private post included). */
   const privateDraft = privateVisibility || replyToPrivate;
+  /** A reply whose post has not loaded may be to a private one: nothing is saved (nor deleted) until it has. */
+  const targetPending = context.mode === 'reply' && targetPost === null;
   const teaserProblem =
     privateVisibility && visibility === 'private-with-teaser' && (!teaser.trim() || Array.from(teaser.trim()).length > TEASER_LIMIT);
 
@@ -300,7 +302,15 @@ function Composer({ identityId, username, context }: ComposerProps) {
   // `plannedRootPost`): the first open part with visible text, unless this replies or the thread's
   // first part already posted (the rest are then replies).
   const rootIndex = context.mode === 'reply' || parts[0]?.postedId ? -1 : parts.findIndex((p) => !p.postedId && hasVisibleContent(p.text));
-  const tagProblem = rootIndex >= 0 ? tagLimitProblem(parts[rootIndex].text, tagMax, capabilities?.tagsPerPost ?? null) : null;
+  // A private post's body is encrypted, so only its teaser's tags are indexed (and checked, engine `validateDraft`).
+  const tagsPerPost = capabilities?.tagsPerPost ?? null;
+  const teaserTagProblem =
+    privateVisibility && visibility === 'private-with-teaser' ? tagLimitProblem(teaser, tagMax, tagsPerPost) : null;
+  const tagProblem = privateVisibility
+    ? teaserTagProblem
+    : rootIndex >= 0
+      ? tagLimitProblem(parts[rootIndex].text, tagMax, tagsPerPost)
+      : null;
   // A private post is one part (web posts only the first of an encrypted thread).
   const privateThread = privateVisibility && parts.filter((p) => p.postedId || hasVisibleContent(p.text)).length > 1;
   const canPost =
@@ -321,10 +331,10 @@ function Composer({ identityId, username, context }: ComposerProps) {
 
   // Drafts: saved 500 ms after a change and when the app goes to the background (PRD COMP-09).
   const posted = useRef(false);
-  const latest = useRef({ parts, sensitive, mediaUrl, hasContent, privateDraft });
+  const latest = useRef({ parts, sensitive, mediaUrl, hasContent, privateDraft, targetPending });
   useEffect(() => {
-    latest.current = { parts, sensitive, mediaUrl, hasContent, privateDraft };
-  }, [parts, sensitive, mediaUrl, hasContent, privateDraft]);
+    latest.current = { parts, sensitive, mediaUrl, hasContent, privateDraft, targetPending };
+  }, [parts, sensitive, mediaUrl, hasContent, privateDraft, targetPending]);
   const persist = useCallback(() => {
     if (posted.current) return;
     const now = latest.current;
@@ -333,6 +343,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
       if (!now.parts.some((p) => p.postedId)) deleteOwnDraft(identityId, context, initial?.fromPending);
       return;
     }
+    if (now.targetPending) return;
     if (now.hasContent) {
       const draft = {
         context,
@@ -358,7 +369,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
   useEffect(() => {
     const timer = setTimeout(persist, SAVE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [parts, sensitive, mediaUrl, privateDraft, persist]);
+  }, [parts, sensitive, mediaUrl, privateDraft, targetPending, persist]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
@@ -581,7 +592,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
               limits={limits}
               tagMax={tagMax}
               inlineHints={inlineHints}
-              tagProblem={index === rootIndex ? tagProblem : null}
+              tagProblem={index === rootIndex && !privateVisibility ? tagProblem : null}
               joined={index < parts.length - 1}
               removable={parts.length > 1 && !part.postedId}
               autoFocus={index === firstOpen}
@@ -592,7 +603,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
               onLayout={reveal.onPartLayout}
             />
           ))}
-          {privateVisibility && visibility === 'private-with-teaser' ? <TeaserField value={teaser} onChangeText={setTeaser} /> : null}
+          {privateVisibility && visibility === 'private-with-teaser' ? <TeaserField value={teaser} onChangeText={setTeaser} tagProblem={teaserTagProblem} /> : null}
           {replyPrivate ? <PrivateNote testID="compose-reply-private">{privateCopy.compose.replyPrivate}</PrivateNote> : null}
           {replyToPrivate && replySource.isError ? (
             <View className="mb-3 pl-[60px] pr-4">

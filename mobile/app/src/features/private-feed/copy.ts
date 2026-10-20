@@ -9,6 +9,8 @@ import type { PrivateLockReason } from '@engine/api';
 export const copy = {
   post: {
     open: 'Private',
+    /** The viewer's own private post or reply while it posts: its text is not kept with the card. */
+    posting: 'Only followers you approve will see this.',
     followers: (n: number) => `Visible to ${n} private follower${n === 1 ? '' : 's'}`,
     reasons: {
       'signed-out': 'Sign in to see this private post.',
@@ -126,6 +128,8 @@ export const copy = {
   },
   compose: {
     visibility: { public: 'Everyone', private: 'Private followers', 'private-with-teaser': 'Private, with a public teaser' },
+    /** The chip's short form: it shares the header with NSFW and Post on the narrowest phones. */
+    chip: { public: 'Everyone', private: 'Private', 'private-with-teaser': 'Private + teaser' },
     label: 'Who can see this',
     teaserPlaceholder: 'Teaser everyone can see',
     teaserLabel: 'Public teaser',

@@ -73,15 +73,21 @@ export function VisibilityChip({
       onPress={choose}
       hitSlop={8}
       className={cn(
-        'min-h-8 flex-row items-center gap-1 rounded-full border px-3',
+        'min-h-8 shrink flex-row items-center gap-1 rounded-full border px-3',
         isPrivate ? 'border-purple-300 bg-purple-50 dark:border-purple-800 dark:bg-purple-950/30' : cn(tw.borderStrong, 'bg-transparent'),
         disabled && 'opacity-50',
       )}
       testID="compose-visibility"
     >
       <Icon size={14} color={isPrivate ? c.private : c.textSecondary} />
-      <Text variant="captionStrong" tone={isPrivate ? 'private' : 'secondary'} maxFontSizeMultiplier={1.5}>
-        {copy.compose.visibility[value]}
+      <Text
+        variant="captionStrong"
+        tone={isPrivate ? 'private' : 'secondary'}
+        maxFontSizeMultiplier={1.5}
+        numberOfLines={1}
+        className="shrink"
+      >
+        {copy.compose.chip[value]}
       </Text>
       <ChevronDownIcon size={12} color={isPrivate ? c.private : c.textSecondary} />
     </Pressable>
@@ -89,7 +95,16 @@ export function VisibilityChip({
 }
 
 /** The public teaser of a "private, with a public teaser" post; uncontrolled, so no keystroke is lost. */
-export function TeaserField({ value, onChangeText }: { value: string; onChangeText: (text: string) => void }) {
+export function TeaserField({
+  value,
+  onChangeText,
+  tagProblem = null,
+}: {
+  value: string;
+  onChangeText: (text: string) => void;
+  /** The teaser names more tags than a post may. */
+  tagProblem?: string | null;
+}) {
   const c = useColors();
   const { key: inputKey, attach, inputProps } = useNativeText({ value, onChangeText });
   const over = Array.from(value).length > TEASER_LIMIT;
@@ -110,6 +125,11 @@ export function TeaserField({ value, onChangeText }: { value: string; onChangeTe
       <Text variant="caption" tone={over ? 'error' : 'secondary'} className="text-right">
         {`${Array.from(value).length}/${TEASER_LIMIT}`}
       </Text>
+      {tagProblem ? (
+        <Text variant="caption" tone="error" testID="compose-teaser-too-many-tags">
+          {tagProblem}
+        </Text>
+      ) : null}
     </View>
   );
 }

@@ -26,6 +26,8 @@ const chain = vi.hoisted(() => ({
   viewer: null as string | null,
   supported: true,
   follows: new Set<string>(),
+  /** The next delete fails as a timeout would (lib returns it as an unclassified failure). */
+  failNextDelete: false,
 }))
 
 type Doc = Record<string, unknown> & { $id: string; $ownerId: string; $type: string; $createdAt: number }
@@ -79,6 +81,10 @@ async function createDocument(_contract: string, type: string, ownerId: string, 
 }
 
 async function deleteDocument(_contract: string, type: string, id: string, ownerId: string) {
+  if (chain.failNextDelete) {
+    chain.failNextDelete = false
+    return refuse('Request timed out')
+  }
   if (type === 'privateFeed' || type === 'privateFeedRekey') return refuse(`documents of type ${type} can not be deleted (code 10404)`)
   const index = chain.docs.findIndex((doc) => doc.$id === id && doc.$ownerId === ownerId)
   if (index < 0) return refuse('not found')
@@ -368,6 +374,22 @@ describe('privateFeed: locked states and refusals', () => {
     } finally {
       getPostById.mockRestore()
     }
+  })
+
+  it('never confirms a re-approval by the grant it was replacing', async () => {
+    as(G)
+    expect((await settle(writes.request(O))).state).toBe('confirmed')
+    as(O)
+    expect((await settle(writes.approve(G))).state).toBe('confirmed')
+    // G asks again (a new messaging key): their request now postdates the grant they hold.
+    const request = chain.docs.find((doc) => doc.$type === 'followRequest' && doc.$ownerId === G)
+    expect(request).toBeDefined()
+    if (request) request.$createdAt = ++chain.clock
+    // lib replaces the old grant; its delete times out, so the approval is unconfirmed.
+    chain.failNextDelete = true
+    const ticket = await settle(writes.approve(G))
+    expect(ticket.state).toBe('unconfirmed')
+    expect((await tickets.check(ticket.id)).state).not.toBe('confirmed')
   })
 
   it('checks a removal again by the feeds a removal rekeys', async () => {
