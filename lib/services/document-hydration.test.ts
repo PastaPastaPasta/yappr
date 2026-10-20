@@ -98,6 +98,33 @@ describe('strict document hydration', () => {
     expect(sdk.get).toHaveBeenCalledTimes(3);
   });
 
+  it('starts a new read for a refresh made while an invalidated batch is still out', async () => {
+    class VersionedService extends BaseDocumentService<{ id: string; version: unknown }> {
+      constructor() { super('document', 'contract'); }
+      transformDocument(doc: Record<string, unknown>) { return { id: String(doc.$id), version: doc.version }; }
+    }
+    const service = new VersionedService();
+    let finishOld: (docs: Map<string, Record<string, unknown>>) => void = () => undefined;
+    sdk.query.mockReturnValueOnce(new Promise((resolve) => { finishOld = resolve; }));
+    const old = Promise.all([service.getOrThrow('a'), service.getOrThrow('b')]);
+    await vi.waitFor(() => expect(sdk.query).toHaveBeenCalledTimes(1));
+
+    // `a` changes elsewhere; the refresh must not join the batch already out.
+    service.clearCache('a');
+    sdk.get.mockResolvedValueOnce({ $id: 'a', version: 'new' });
+    const refreshed = service.getOrThrow('a');
+    await vi.waitFor(() => expect(sdk.get).toHaveBeenCalledTimes(1));
+    expect(await refreshed).toEqual({ id: 'a', version: 'new' });
+
+    // The old batch lands late with the stale copy: it answers its own callers only.
+    finishOld(new Map([['a', { $id: 'a', version: 'old' }], ['b', { $id: 'b', version: 'old' }]]));
+    expect((await old)[0]).toEqual({ id: 'a', version: 'old' });
+    sdk.get.mockClear();
+    await expect(service.getOrThrow('a')).resolves.toEqual({ id: 'a', version: 'new' });
+    expect(sdk.get).not.toHaveBeenCalled();
+    expect(sdk.query).toHaveBeenCalledTimes(1);
+  });
+
   it('does not cache a coalesced read its document was invalidated during', async () => {
     const service = new DocumentService();
     let finish: (docs: Map<string, Record<string, unknown>>) => void = () => undefined;
