@@ -50,8 +50,6 @@ function KeyEntryEncryptionKeyModal() {
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
   const [showLostKeyModal, setShowLostKeyModal] = useState(false)
   const [noKeyOnIdentity, setNoKeyOnIdentity] = useState(false)
-  /** Auto-recovery found no key on the identity and went straight to adding one. */
-  const [openedForSetup, setOpenedForSetup] = useState(false)
 
   // Auto-recovery state
   const [autoRecoveryStatus, setAutoRecoveryStatus] = useState<AutoRecoveryStatus>('idle')
@@ -82,7 +80,6 @@ function KeyEntryEncryptionKeyModal() {
         if (!isModalActiveRef.current) return
         setAutoRecoveryStatus('failed')
         setAutoRecoveryMessage('')
-        setOpenedForSetup(true)
         setShowAddKeyModal(true)
         return
       }
@@ -159,7 +156,6 @@ function KeyEntryEncryptionKeyModal() {
       if (isAppConnectBuild()) {
         setAutoRecoveryStatus('failed')
         setAutoRecoveryMessage('')
-        setOpenedForSetup(true)
         setShowAddKeyModal(true)
         return
       }
@@ -186,7 +182,6 @@ function KeyEntryEncryptionKeyModal() {
       setEncryptionKeyInput('')
       setError(null)
       setNoKeyOnIdentity(false)
-      setOpenedForSetup(false)
       setShowLostKeyModal(false)
       setAutoRecoveryStatus('idle')
       setAutoRecoveryMessage('')
@@ -443,8 +438,8 @@ function KeyEntryEncryptionKeyModal() {
         isOpen={showAddKeyModal}
         onClose={() => {
           setShowAddKeyModal(false)
-          // App Connect builds: the prompt it opened instead of key entry (no messaging key, or one only a wallet unlocks) is the whole flow.
-          if (openedForSetup && isAppConnectBuild()) close()
+          // App Connect builds: the prompt it opened is the whole flow (it may also have handed off to a new sign-in).
+          if (isAppConnectBuild()) close()
         }}
         onSuccess={handleAddKeySuccess}
       />

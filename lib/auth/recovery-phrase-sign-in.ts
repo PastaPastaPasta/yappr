@@ -37,6 +37,7 @@ import {
   addMessagingKeyWithMasterKey,
   anchorKeyState,
   MessagingAlreadySetUpError,
+  MessagingSetupCancelledError,
   type AnchorKeyState,
   type MessagingKeyDraft,
 } from '@/lib/services/messaging-key-service'
@@ -126,12 +127,13 @@ export interface PhraseSession {
  * Platform shows it as current. `addEncryptionKey` already settles a
  * broadcast whose answer was lost, so a refusal is final: one check, no wait.
  */
-async function addMessagingKey(draft: MessagingKeyDraft, master: PhraseKey): Promise<AnchorKeyState | null> {
+async function addMessagingKey(draft: MessagingKeyDraft, master: PhraseKey, cancelled: () => boolean): Promise<AnchorKeyState | null> {
   const masterWif = privateKeyToWif(master.privateKey, keyNetwork(), true)
   let refused = false
   try {
-    await addMessagingKeyWithMasterKey(draft, masterWif)
+    await addMessagingKeyWithMasterKey(draft, masterWif, cancelled)
   } catch (error) {
+    if (error instanceof MessagingSetupCancelledError) throw new PhraseSignInCancelled()
     refused = true
     if (!(error instanceof MessagingAlreadySetUpError)) logger.warn('Recovery phrase sign-in: adding the messaging key failed:', error)
   }
@@ -176,7 +178,7 @@ export async function preparePhraseSession(
     if (state === 'absent') {
       const master = masterKey(held)
       if (cancelled()) throw new PhraseSignInCancelled()
-      const added = master ? await addMessagingKey(messagingKey, master) : null
+      const added = master ? await addMessagingKey(messagingKey, master, cancelled) : null
       // Another device may have set messaging up meanwhile: say which.
       if (added === 'other-key') return { ...session, messagingKey: null, messaging: 'another-wallet' }
       if (added !== 'this-key') return { ...session, messagingKey: null, messaging: 'not-set-up' }

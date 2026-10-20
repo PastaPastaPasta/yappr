@@ -346,14 +346,17 @@ class IdentityService {
    * @param encryptionPrivateKey - The private key bytes (32 bytes)
    * @param signingPrivateKeyWif - The MASTER level key for signing (in WIF format)
    * @param contractId - Optional contract ID to bind the key to
+   * @param options.cancelled - Asked right before the broadcast: when it answers true nothing is sent
+   *   and the result is `{ success: false, cancelled: true }`
    * @returns Result with success status and the new key ID
    */
   async addEncryptionKey(
     identityId: string,
     encryptionPrivateKey: Uint8Array,
     signingPrivateKeyWif: string,
-    _contractId?: string // Reserved for future use: contract-bound keys
-  ): Promise<{ success: boolean; keyId?: number; error?: string }> {
+    _contractId?: string, // Reserved for future use: contract-bound keys
+    options: { cancelled?: () => boolean } = {}
+  ): Promise<{ success: boolean; keyId?: number; error?: string; cancelled?: boolean }> {
     try {
       const sdk = await getEvoSdk();
 
@@ -438,6 +441,9 @@ class IdentityService {
       const encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, network);
       signer.addKey(encryptionPrivateKeyObj);
       logger.debug(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
+
+      // The last moment a caller can still back out: everything after this may be on chain.
+      if (options.cancelled?.()) return { success: false, cancelled: true };
 
       // Update the identity using typed API
       logger.debug('Calling sdk.identities.update...');

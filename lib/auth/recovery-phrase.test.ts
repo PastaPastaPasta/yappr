@@ -84,6 +84,11 @@ describe('phraseMessagingState (#1210 rules)', () => {
     expect(phraseMessagingState(mine, null, [encryptionKey(5, mine), encryptionKey(6, foreign.publicKey)], ANCHOR)).toBe('another-wallet')
   })
 
+  it('is absent when the phrase\'s point is on the identity only under another purpose or contract', () => {
+    expect(phraseMessagingState(mine, null, [encryptionKey(5, mine, OTHER_CONTRACT)], ANCHOR)).toBe('absent')
+    expect(phraseMessagingState(mine, null, [identityKey(5, KeyPurpose.AUTHENTICATION, SecurityLevel.HIGH, mine)], ANCHOR)).toBe('absent')
+  })
+
   it('does not re-add the phrase\'s key once it was disabled', () => {
     expect(phraseMessagingState(mine, null, [encryptionKey(5, mine, ANCHOR, { disabledAt: 1 })], ANCHOR)).toBe('another-wallet')
   })

@@ -6,7 +6,7 @@
  * phrase typed here and the same phrase in a wallet treat an account alike.
  */
 import { bytesEqual, normalizeBytes } from '@/lib/bytes'
-import { findAnchorEncryptionKey, type EncryptionKeyCandidate } from '@/lib/crypto/encryption-key-lookup'
+import { findAnchorEncryptionKey, isBoundToContract, type EncryptionKeyCandidate } from '@/lib/crypto/encryption-key-lookup'
 import { hash160 } from '@/lib/crypto/hash'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { toKeyInfo, type IdentityKeyLike } from '@/lib/crypto/keys'
@@ -90,5 +90,8 @@ export function phraseMessagingState(
   // The current-key read can lag the identity: its newest live anchor key decides then, as in #1210.
   const newest = findAnchorEncryptionKey([...identityKeys], anchorId)
   if (newest) return isPhraseKey(newest) ? 'current' : 'another-wallet'
-  return identityKeys.some(isPhraseKey) ? 'another-wallet' : 'absent'
+  // The phrase's anchor key, disabled: never added again. The same point under another purpose or contract is no anchor key.
+  const disabledAnchorKey = identityKeys.some((key) => key.purpose === KeyPurpose.ENCRYPTION
+    && isBoundToContract(key.contractBounds, anchorId) && isPhraseKey(key))
+  return disabledAnchorKey ? 'another-wallet' : 'absent'
 }
