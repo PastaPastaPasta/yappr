@@ -67,10 +67,8 @@ export const copy = {
   },
   report: {
     title: (noun: ReportNoun) => `Report ${noun}`,
-    /** The one required disclosure: a report is a public document, and its author sees who filed it. */
-    disclosure: 'Reports go to on-chain teams, elected by the community through masternode votes and independent of Yappr. Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.',
-    /** v13: the moderators' action fee every report pays, scaled by the network's fee multiplier. */
-    fee: (dash: string) => `Reporting pays a moderation fee of about ${dash} to the moderators, plus the network fee.`,
+    /** The one required disclosure (web's wording): a report is public, and so is who filed it. */
+    disclosure: 'Reports go to the community-elected moderators, not to Yappr. They are public, including who sent them.',
     question: 'What is wrong with it?',
     details: (required: boolean) => (required ? 'Details (required)' : 'Details (optional)'),
     placeholder: 'Anything the moderators should know',

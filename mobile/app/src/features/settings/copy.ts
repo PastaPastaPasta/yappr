@@ -34,7 +34,7 @@ export const copy = {
     created: 'Account created',
     balance: 'Balance',
     refreshFailed: "Couldn't refresh the balance. Please try again.",
-    payWithYapp: 'Pay with YAPP',
+    payWithYapp: 'Pay with YAPP when you can',
     payWithYappDescription: 'Use your YAPP for posts, replies and likes when you have enough',
     accounts: 'Accounts',
     appLock: 'App lock',
