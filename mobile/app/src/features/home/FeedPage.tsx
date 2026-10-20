@@ -6,6 +6,7 @@ import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } f
 import { RefreshControl, View } from 'react-native';
 import { useReducedMotion } from 'react-native-reanimated';
 
+import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
 import { engineSupervisor } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
@@ -161,6 +162,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
       return;
     }
     setRefreshing(true);
+    refetchPolls();
     refresh()
       .then((error) => {
         if (error && items.length > 0) toast.error(readErrorMessage(error, { offline }) ?? REFRESH_FAILED_MESSAGE);

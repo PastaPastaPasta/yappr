@@ -1168,8 +1168,6 @@ export interface WindowedRanking {
    * grids read `oldest` so the answer always spans ~18-24h / ~48-72h.
    */
   readonly selector: 'newest' | 'oldest'
-  /** What the window toggle calls it. */
-  readonly label: string
 }
 
 type TimeRangeIndexJson = { name: string; timeRange?: { range: number; step: number } }
@@ -1183,8 +1181,8 @@ export function timeRangeOf(schemas: unknown, docType: string, index: string): W
 }
 
 /** A windowed index of `docType` in `contract`, read off the committed JSON so the grid cannot drift. */
-function windowOf(contract: SocialContractJson, docType: 'like' | 'beat', index: string, selector: WindowedRanking['selector'], label: string): WindowedRanking {
-  return { docType, index, grid: timeRangeOf(contract.documentSchemas, docType, index), selector, label }
+function windowOf(contract: SocialContractJson, docType: 'like' | 'beat', index: string, selector: WindowedRanking['selector']): WindowedRanking {
+  return { docType, index, grid: timeRangeOf(contract.documentSchemas, docType, index), selector }
 }
 
 let windowedRankings: Readonly<Record<RankingAxis, WindowedRanking | null>> | null = null
@@ -1197,23 +1195,25 @@ let windowedRankings: Readonly<Record<RankingAxis, WindowedRanking | null>> | nu
  *   trending tags and per-tag top `beat.byDayHashtagPost`, top creators and a
  *   profile's top `like.byDayAuthorPost`.
  * - **v10** (rolling, `oldest` = the full window): top posts
- *   `like.byTrendPost` (72h, a new window every 24h: "3 days"), trending tags
- *   and per-tag top `like.byTrendHashtagPost` (24h, every 6h: "24h"). No
- *   creator window: the creator leaderboard and a profile's top stay all-time.
+ *   `like.byTrendPost` (72h, a new window every 24h), trending tags and
+ *   per-tag top `like.byTrendHashtagPost` (24h, every 6h). No creator
+ *   window: the creator leaderboard and a profile's top stay all-time.
+ *
+ * The UI calls every window "Recent": the span is an index detail.
  */
 export function windowedRankingFor(axis: RankingAxis): WindowedRanking | null {
   if (!windowedRankingsAvailable()) return null
   if (!windowedRankings) {
     windowedRankings = deepFreeze(isV10()
       ? {
-        posts: windowOf(devnetContract(), 'like', 'byTrendPost', 'oldest', '3 days'),
-        hashtags: windowOf(devnetContract(), 'like', 'byTrendHashtagPost', 'oldest', '24h'),
+        posts: windowOf(devnetContract(), 'like', 'byTrendPost', 'oldest'),
+        hashtags: windowOf(devnetContract(), 'like', 'byTrendHashtagPost', 'oldest'),
         creators: null,
       }
       : {
-        posts: windowOf(socialContractV9, 'like', 'byDayPost', 'newest', 'Today'),
-        hashtags: windowOf(socialContractV9, 'beat', 'byDayHashtagPost', 'newest', 'Today'),
-        creators: windowOf(socialContractV9, 'like', 'byDayAuthorPost', 'newest', 'Today'),
+        posts: windowOf(socialContractV9, 'like', 'byDayPost', 'newest'),
+        hashtags: windowOf(socialContractV9, 'beat', 'byDayHashtagPost', 'newest'),
+        creators: windowOf(socialContractV9, 'like', 'byDayAuthorPost', 'newest'),
       })
   }
   return windowedRankings[axis]

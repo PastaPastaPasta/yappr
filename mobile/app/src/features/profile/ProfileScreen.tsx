@@ -21,6 +21,7 @@ import { lastIdentity, useCapabilities, useSession } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { copyText } from '~/features/post/post-navigation';
+import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
 import { PrivateFeedAccessButton } from '~/features/private-feed/PrivateFeedAccessButton';
 import { blockWrite, useAuthorBlocked, useBlockBusy } from '~/features/safety/block-state';
@@ -130,6 +131,7 @@ function ProfileTabList({
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = () => {
     setRefreshing(true);
+    refetchPolls();
     // Top reads the author's ranking afresh rather than the engine's minute-old copy.
     const refetch = () => posts.refetch();
     Promise.all([onRefreshProfile(), tab === 'top' ? fresh.during(refetch) : refetch()])

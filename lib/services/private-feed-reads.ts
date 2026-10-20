@@ -257,17 +257,24 @@ export async function fetchNewestGrant(ownerId: string, recipientId: string): Pr
   })
 }
 
+const grantsHeldReads = new RequestDeduplicator<string, GrantDocument[]>(0)
+
 /** Every grant `recipientId` holds, by owner then feed: "the feeds I can read" on any device (D32). */
 export async function fetchGrantsHeldBy(recipientId: string): Promise<GrantDocument[]> {
-  return fetchAll(
+  // Notifications and the follower service both ask on sign-in: one read.
+  return grantsHeldReads.dedupe(recipientId, () => fetchAll(
     DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
     [['recipientId', '==', recipientId]],
     [['$ownerId', 'asc'], ['feed', 'asc']],
     toGrant,
-  )
+  ))
 }
 
-/** Every grant `ownerId` has out to `recipientId`, in any feed, oldest feed first. */
+/**
+ * Every grant `ownerId` has out to `recipientId`, in any feed, oldest feed
+ * first. Always a fresh read: the owner's approve, revoke and block flows
+ * decide on it right after their own writes.
+ */
 export async function fetchGrantsTo(ownerId: string, recipientId: string): Promise<GrantDocument[]> {
   return fetchAll(
     DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
@@ -275,6 +282,17 @@ export async function fetchGrantsTo(ownerId: string, recipientId: string): Promi
     [['feed', 'asc']],
     toGrant,
   )
+}
+
+const grantsToReads = new RequestDeduplicator<string, GrantDocument[]>(0)
+
+/**
+ * {@link fetchGrantsTo} for the viewer's decrypting reads only: one owner's
+ * private posts mounting together share one read in flight. Never for a
+ * decision made after a write, which could join a read that predates it.
+ */
+export async function readGrantsTo(ownerId: string, viewerId: string): Promise<GrantDocument[]> {
+  return grantsToReads.dedupe(`${ownerId}:${viewerId}`, () => fetchGrantsTo(ownerId, viewerId))
 }
 
 /**

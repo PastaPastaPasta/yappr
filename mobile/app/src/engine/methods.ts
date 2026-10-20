@@ -52,6 +52,7 @@ const READS = new Set([
   // A poll now (pull to refresh, "Try again"): a fresh engine polls on its own, so a replay changes nothing.
   'dm.refresh',
   'safety.followedBlockLists',
+  'safety.blockListChoices',
   'safety.reportsOpen',
   // Private feeds: reads (a replayed `read` may store keys it recovered, the same keys either engine would).
   'privateFeed.read',
@@ -61,6 +62,8 @@ const READS = new Set([
   'privateFeed.followers',
   'privateFeed.renewal',
   'privateFeed.replySource',
+  'dpns.registration',
+  'dpns.check',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 

@@ -13,6 +13,7 @@ import { useSession } from '~/data/session';
 import { runWrite, sendWrite } from '~/data/writes';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { bookmarkWrite } from '~/features/post/post-writes';
+import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
 import { Button } from '~/ui/Button';
 import { ContextMenu } from '~/ui/ContextMenu';
@@ -176,6 +177,7 @@ export function BookmarksScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
+    refetchPolls();
     list
       .refetch()
       .catch(() => undefined)

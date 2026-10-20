@@ -16,10 +16,15 @@ interface LimitProps {
 function limitsOf({ contract = 'social', document = 'post', field = 'content', limits }: LimitProps): TextLimits {
   return limits ?? fieldLimits(contract, document, field)
 }
+/** Share of the limit at which the counter appears, as on X and Bluesky. */
+const COUNTER_FROM = 0.8
+
 function Counter({ value, limits, shortened }: { value: unknown; limits: TextLimits; shortened: boolean }) {
-  const text = typeof value === 'string' ? value : ''
+  const length = [...(typeof value === 'string' ? value : '')].length
+  const max = limits.maxLength
+  const nearLimit = max !== undefined && length >= max * COUNTER_FROM
   return <span className="block text-right text-xs text-gray-500" aria-live="polite">
-    {limits.maxLength !== undefined && `${[...text].length}/${limits.maxLength} characters`}
+    {max !== undefined && (nearLimit || shortened) && `${length}/${max} characters`}
     {shortened && <span className="block">Text was shortened to fit. Some characters take more space.</span>}
   </span>
 }

@@ -4,6 +4,7 @@ const sdk = vi.hoisted(() => ({
   documents: { average: vi.fn(), count: vi.fn(), ranked: vi.fn(), composite: vi.fn() },
 }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }));
+import bs58 from 'bs58';
 import { storeStatsService } from './store-stats-service';
 
 const storeId = '11111111111111111111111111111111';
@@ -65,6 +66,62 @@ describe('store rating summary', () => {
     storeStatsService.invalidateStore(storeId);
     await storeStatsService.getStoreRatingSummary(storeId);
     expect(sdk.documents.average).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('store card rating summaries', () => {
+  const storeA = 'hZpapzaANrBFW8iDudzdwbB38ai4SW4JbHHtQH74J4g';
+  const storeB = '4H6G4KaN3aT4ohxcszjCLNo2wAFJ1DmnDeGo9Ceoa89o';
+  const hexOf = (id: string) => Buffer.from(bs58.decode(id)).toString('hex');
+
+  it('reads every store with one average query grouped by store', async () => {
+    sdk.documents.average.mockResolvedValue(new Map([[hexOf(storeA), { count: 4n, sum: 19n }]]));
+    const summaries = await storeStatsService.getStoreRatingSummaries([storeA, storeB]);
+    expect(sdk.documents.average).toHaveBeenCalledTimes(1);
+    expect(sdk.documents.average.mock.calls[0][0]).toMatchObject({ where: [['storeId', 'in', [storeA, storeB]]], groupBy: ['storeId'] });
+    expect(summaries.get(storeA)).toMatchObject({ reviewCount: 4, averageRating: 4.8 });
+    // No group: proved to have no reviews.
+    expect(summaries.get(storeB)).toMatchObject({ reviewCount: 0, averageRating: 0 });
+  });
+
+  it('falls back to one query per store when the grouped read fails', async () => {
+    sdk.documents.average
+      .mockRejectedValueOnce(new Error('grouped average unsupported'))
+      .mockResolvedValueOnce(new Map([['', { count: 2n, sum: 9n }]]))
+      .mockResolvedValueOnce(new Map());
+    const summaries = await storeStatsService.getStoreRatingSummaries([storeA, storeB]);
+    expect(sdk.documents.average).toHaveBeenCalledTimes(3);
+    expect(summaries.get(storeA)?.reviewCount).toBe(2);
+    expect(summaries.get(storeB)?.reviewCount).toBe(0);
+  });
+
+  it('does not read an ungrouped grand total as "no reviews"', async () => {
+    sdk.documents.average
+      .mockResolvedValueOnce(new Map([['', { count: 3n, sum: 12n }]]))
+      .mockResolvedValue(new Map([['', { count: 1n, sum: 5n }]]));
+    const summaries = await storeStatsService.getStoreRatingSummaries([storeA, storeA]);
+    // Duplicates are asked for once; the fallback reads the store alone.
+    expect(sdk.documents.average.mock.calls[0][0].where).toEqual([['storeId', 'in', [storeA]]]);
+    expect(sdk.documents.average).toHaveBeenCalledTimes(2);
+    expect(summaries.get(storeA)?.reviewCount).toBe(1);
+  });
+
+  it('reads more than 100 stores in batches of 100', async () => {
+    const many = Array.from({ length: 101 }, (_, i) => bs58.encode(new Uint8Array(32).fill(i + 1)));
+    sdk.documents.average.mockResolvedValue(new Map());
+    const summaries = await storeStatsService.getStoreRatingSummaries(many);
+    expect(sdk.documents.average).toHaveBeenCalledTimes(2);
+    expect(sdk.documents.average.mock.calls.map(([query]) => query.where[0][2].length).sort()).toEqual([1, 100]);
+    expect(summaries.size).toBe(101);
+  });
+
+  it('does not read undecodable group keys as "no reviews"', async () => {
+    sdk.documents.average
+      .mockResolvedValueOnce(new Map([['not-a-store', { count: 4n, sum: 19n }]]))
+      .mockResolvedValue(new Map([['', { count: 1n, sum: 5n }]]));
+    const summaries = await storeStatsService.getStoreRatingSummaries([storeA]);
+    expect(sdk.documents.average).toHaveBeenCalledTimes(2);
+    expect(summaries.get(storeA)?.reviewCount).toBe(1);
   });
 });
 

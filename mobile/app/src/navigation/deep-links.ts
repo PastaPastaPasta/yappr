@@ -46,7 +46,7 @@ export interface LinkOptions {
 export type LinkTarget =
   /** Navigate to an app route. */
   | { kind: 'route'; route: string }
-  /** A web-only page (store, blog, DPNS registration, the legal pages): the in-app browser. */
+  /** A web-only page (store, blog, the legal pages): the in-app browser. */
   | { kind: 'browser'; url: string }
   /** Home, with "This link isn't supported in the app" and "Open in browser" for `url`. */
   | { kind: 'unsupported'; url: string }
@@ -63,7 +63,6 @@ const WEB_ONLY = [
   '/about',
   '/cookies',
   '/contract',
-  '/dpns/register',
   '/store',
   '/item',
   '/cart',
@@ -167,6 +166,7 @@ const WEB_ROUTES: Record<string, (q: Query, viewerId: string | null) => string |
     return to ? withQuery('/messages/new', { with: to }) : null;
   },
   '/bookmarks': () => '/bookmarks',
+  '/dpns/register': () => '/settings/username',
   '/settings': (q) => {
     // Web's private feed section (`settings?section=privateFeed`) is the native Private feed screen.
     if (q.section === 'privateFeed') return '/settings/private-feed';
@@ -236,7 +236,7 @@ function pathFormRoute(path: string, q: Query): string | null | undefined {
  * and notification and message settings in Profile, their home under Settings.
  */
 const SHARED_ROUTE = /^\/(post|user|hashtag)\//;
-const PROFILE_SHARED_ROUTE = /^\/settings\/(notifications|messages)(?:$|\?)/;
+const PROFILE_SHARED_ROUTE = /^\/settings\/(notifications|messages|username)(?:$|\?)/;
 
 /** The launch link's route, pinned to a tab when it is a shared screen. */
 function pinColdRoute(route: string): string {

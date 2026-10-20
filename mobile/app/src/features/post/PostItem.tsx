@@ -8,7 +8,7 @@ import { useEngineQuery } from '~/data/queries';
 import { NO_READ_RETRY } from '~/data/read-retry';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useProvisionalViewerId, useViewerId } from '~/data/session';
-import { sendWrite } from '~/data/writes';
+import { sendWrite, useLandingIntent } from '~/data/writes';
 import { usePendingWriteStatus } from '~/features/compose/pending-posts';
 import { PendingPrivateBody, usePrivateBody } from '~/features/private-feed/PrivatePostBody';
 import { tagMaxLength } from '~/features/compose/text';
@@ -37,6 +37,7 @@ import {
   postWebUrl,
   sharePost,
 } from './post-navigation';
+import { pollVoteKey, pollVoteWrite } from './poll-vote';
 import { readEngageStats } from './post-stats';
 import { useRepostQuoteCounts } from './repost-quote-counts';
 import { bookmarkWrite, deleteWrite, followWrite, likeWrite, repostWrite, targetOf } from './post-writes';
@@ -123,7 +124,7 @@ function useShownPost(post: PostDTO): {
   };
 }
 
-/** The read-only poll a post shows (`posts.poll`), as the card renders it. */
+/** The poll a post shows (`posts.poll`), as the card renders it, with how the viewer can vote on it. */
 function usePoll(post: PostDTO): Loadable<CardPoll> | undefined {
   const poll = post.poll;
   const pollId = poll?.id ?? '';
@@ -133,18 +134,25 @@ function usePoll(post: PostDTO): Loadable<CardPoll> | undefined {
     (api) => api.posts.poll({ contractId, id: pollId }),
     { enabled: poll !== undefined, meta: NO_READ_RETRY },
   );
+  const voting = useCapabilities()?.pollVoting ?? null;
+  const saving = useLandingIntent(poll ? pollVoteKey(poll.id) : undefined) !== undefined;
   return useMemo(() => {
     if (!poll) return undefined;
     if (isError || data === null) return 'error';
     if (!data) return 'loading';
     const options = data.options.map((o) => ({ label: o.text, votes: o.votes }));
     return {
+      id: data.id,
       question: data.question,
       options,
       totalVotes: data.totalVotes ?? options.reduce((sum, o) => sum + o.votes, 0),
       endsAt: data.endsAt,
+      multiChoice: data.multiChoice,
+      voting,
+      myVotes: data.myVotes,
+      saving,
     };
-  }, [poll, data, isError]);
+  }, [poll, data, isError, voting, saving]);
 }
 
 /** The repost button's sheet (PRD ENG-02), by the viewer's slot. */
@@ -334,7 +342,6 @@ export const PostItem = memo(function PostItem({
         sendWrite(followWrite, { authorId: post.author.id, follow: on });
       });
 
-    const openOnWeb = () => openExternal(postWebUrl(post));
     const openEngagements = (tab?: EngagementCountTab) =>
       router.push({ pathname: '/post/[id]/engagements', params: { id: post.id, kind: post.kind, ...(tab ? { tab } : {}) } });
 
@@ -390,7 +397,10 @@ export const PostItem = memo(function PostItem({
       onMentionPress: openUser,
       onHashtagPress: openHashtag,
       onCashtagPress: openHashtag,
-      onVotePress: openOnWeb,
+      onVotePress: (choices) => {
+        const pollId = post.poll?.id;
+        if (pollId) requireAuth(() => sendWrite(pollVoteWrite, { pollId, choices }));
+      },
     };
     const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined);
     const menu: PostCardMenu | undefined = items.length > 0 ? { items, onSelect } : undefined;

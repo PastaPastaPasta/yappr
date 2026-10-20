@@ -238,6 +238,10 @@ const FAILED_ACTION: Record<WriteOp, string> = {
   'privateFeed.revoke': 'remove this follower',
   'privateFeed.renew': 'renew your private feed',
   'privateFeed.move': 'move your private followers',
+  'poll.vote': 'save vote',
+  'block-list.follow': 'follow block list',
+  'block-list.unfollow': 'unfollow block list',
+  'dpns.register': 'register username',
 }
 
 /** Map any write error to an engine code (ENGINE.md §7.3), walking `RULES` in order. */

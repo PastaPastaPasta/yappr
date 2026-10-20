@@ -10,9 +10,19 @@
  * NOT derivable (they come from the asset-lock outpoint), which is why they are
  * recorded in `.env.testing` as `E2E_IDENTITY_IDS`.
  *
+ * Two key layouts:
+ * - `legacy` (the default): the app-specific path the /testing e2e pool and the
+ *   testnet staging personas were registered under. Not a wallet path: a
+ *   wallet restoring the phrase finds none of these identities.
+ * - `dip13`: DIP-13 identity authentication keys,
+ *   `m/9'/1'/5'/0'/0'/<identity index>'/<key index>'`, the path a Dash wallet
+ *   (rs-platform-wallet `identity_auth_derivation_path`) registers and
+ *   discovers identities under, so the phrase also signs in to Yappr's
+ *   recovery-phrase sign-in and restores in a wallet. New personas use it.
+ *
  * Nothing here ever prints private key material unless `--reveal` is passed.
  *
- * Run:  node scripts/derive-identities.mjs <identityIndex> [--reveal]
+ * Run:  node scripts/derive-identities.mjs <identityIndex> [--dip13] [--reveal]
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -84,10 +94,22 @@ export function loadMnemonic(variable = 'E2E_SEED_PHRASE') {
   return mnemonic;
 }
 
-/** App-specific, hardened derivation path. Stable by fiat — no wallet compatibility requirement. */
+/** App-specific, hardened derivation path of the legacy layout. Stable by fiat — no wallet compatibility requirement. */
 export function derivationPath(identityIndex, keyIndex) {
   return `m/9'/1'/5'/0'/${identityIndex}'/${keyIndex}'`;
 }
+
+/** DIP-13 identity authentication key path on testnet (ECDSA key type `0'`), the one wallets use. */
+export function dip13DerivationPath(identityIndex, keyIndex) {
+  return `m/9'/1'/5'/0'/0'/${identityIndex}'/${keyIndex}'`;
+}
+
+/** Key layouts: their paths, and the key roles each registers. */
+export const KEY_LAYOUTS = {
+  legacy: { path: derivationPath, roles: KEY_ROLES },
+  // A wallet adds no unbound ENCRYPTION key: App Connect builds use the anchor-bound DIP-13 7' key instead.
+  dip13: { path: dip13DerivationPath, roles: KEY_ROLES.filter((role) => role.purpose !== 'ENCRYPTION') },
+};
 
 /** Encodes a raw 32-byte private key as a compressed testnet WIF. */
 export function privateKeyToWif(privateKeyBytes) {
@@ -102,17 +124,19 @@ export function privateKeyToWif(privateKeyBytes) {
 }
 
 /**
- * Derives the full key set for one bot identity.
+ * Derives the full key set for one bot identity, in `layout` (default `legacy`).
  *
  * @returns Array of `{keyIndex, path, purpose, securityLevel, keyType, wif, publicKeyHex, publicKey}`.
  */
-export function deriveIdentityKeys(identityIndex, mnemonic = loadMnemonic()) {
+export function deriveIdentityKeys(identityIndex, mnemonic = loadMnemonic(), { layout = 'legacy' } = {}) {
   if (!Number.isInteger(identityIndex) || identityIndex < 0) {
     throw new Error(`identityIndex must be a non-negative integer, got ${identityIndex}`);
   }
+  const keyLayout = KEY_LAYOUTS[layout];
+  if (!keyLayout) throw new Error(`Unknown key layout ${layout}`);
   const master = HDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic));
-  return KEY_ROLES.map((role) => {
-    const path = derivationPath(identityIndex, role.keyIndex);
+  return keyLayout.roles.map((role) => {
+    const path = keyLayout.path(identityIndex, role.keyIndex);
     const node = master.derive(path);
     if (!node.privateKey || !node.publicKey) {
       throw new Error(`Derivation produced no key material for ${path}`);
@@ -157,16 +181,17 @@ export function loadIdentityIds() {
 
 function main(argv) {
   const reveal = argv.includes('--reveal');
+  const layout = argv.includes('--dip13') ? 'dip13' : 'legacy';
   const positional = argv.filter((arg) => !arg.startsWith('--'));
-  const unknownFlags = argv.filter((arg) => arg.startsWith('--') && arg !== '--reveal');
+  const unknownFlags = argv.filter((arg) => arg.startsWith('--') && arg !== '--reveal' && arg !== '--dip13');
   const identityIndex = Number(positional[0]);
   if (unknownFlags.length > 0 || positional.length !== 1 || !Number.isInteger(identityIndex) || identityIndex < 0) {
     if (unknownFlags.length > 0) console.error(`Unknown flag: ${unknownFlags[0]}`);
-    console.error('Usage: node scripts/derive-identities.mjs <identityIndex> [--reveal]');
+    console.error('Usage: node scripts/derive-identities.mjs <identityIndex> [--dip13] [--reveal]');
     process.exit(1);
   }
 
-  const keys = deriveIdentityKeys(identityIndex);
+  const keys = deriveIdentityKeys(identityIndex, loadMnemonic(), { layout });
   console.log(`identityIndex: ${identityIndex}`);
   for (const key of keys) {
     console.log(

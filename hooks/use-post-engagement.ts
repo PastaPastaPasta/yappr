@@ -200,13 +200,13 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       if (repostsAreQuotes()) {
         // (Undo returned above: here the viewer is reposting.)
         setOwnQuote(await createBareRepost(post, viewerId))
-        toast.success('Reposted!')
+        toast.success('Reposted')
         return null
       }
       const { repostService } = await import('@/lib/services/repost-service')
       const ok = wasReposted ? await repostService.removeRepost(post.id, viewerId) : await repostService.repostPost(post.id, viewerId, post.author.id)
       if (!ok) throw new Error('Repost operation failed')
-      toast.success(wasReposted ? 'Removed repost' : 'Reposted!')
+      toast.success(wasReposted ? 'Removed repost' : 'Reposted')
     } catch (error) {
       setReposted(wasReposted)
       setReposts(prevReposts)
@@ -221,7 +221,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
           setReposted(true)
           setReposts(prevReposts + 1)
           setOwnQuote(existing)
-          toast.success('Reposted!')
+          toast.success('Reposted')
           return null
         }
         // A quote with text holds the slot: adopt it, so undo and "View your quote" work.

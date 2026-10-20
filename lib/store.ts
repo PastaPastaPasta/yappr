@@ -212,6 +212,13 @@ interface SettingsState {
    */
   payWith: PayWith
   setPayWith: (payWith: PayWith) => void
+  /**
+   * Leave out other people's private posts this viewer cannot read (no
+   * access, pending, revoked, or from before they joined). Decided per card
+   * from the decryption every private card already attempts: no extra reads.
+   */
+  hideUnreadablePrivatePosts: boolean
+  setHideUnreadablePrivatePosts: (enabled: boolean) => void
 }
 
 /** Which currency a YAPP-priced write spends when the contract lets the user choose. */
@@ -248,6 +255,8 @@ export const useSettingsStore = create<SettingsState>()(
       setSensitiveContentMode: (mode) => set({ sensitiveContentMode: mode }),
       payWith: 'yapp' as PayWith,
       setPayWith: (payWith) => set({ payWith }),
+      hideUnreadablePrivatePosts: false,
+      setHideUnreadablePrivatePosts: (enabled) => set({ hideUnreadablePrivatePosts: enabled }),
     }),
     {
       name: scopedKey('yappr-settings'),

@@ -139,7 +139,7 @@ export function SavedAddressesSettings({ encryptionKeyVersion = 0 }: SavedAddres
   if (isLoading) {
     return (
       <div>
-        <h3 className="font-semibold mb-4">Saved Shipping Addresses</h3>
+        <h3 className="font-semibold mb-4">Saved addresses</h3>
         <div className="flex items-center justify-center py-6">
           <Spinner size="sm" />
         </div>
@@ -150,17 +150,13 @@ export function SavedAddressesSettings({ encryptionKeyVersion = 0 }: SavedAddres
   if (!userHasEncryptionKey) {
     return (
       <div>
-        <h3 className="font-semibold mb-4">Saved Shipping Addresses</h3>
+        <h3 className="font-semibold mb-4">Saved addresses</h3>
         <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
           <div className="flex items-start gap-3">
             <LockClosedIcon className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                To save shipping addresses securely, you need to set up an encryption key.
-                Your addresses will be encrypted so only you can access them.
-              </p>
-              <p className="text-sm text-gray-500 mt-2">
-                You can add an encryption key in the Privacy &amp; Security section above.
+                Add your encryption key above to save shipping addresses. Only you can read them.
               </p>
             </div>
           </div>
@@ -171,7 +167,7 @@ export function SavedAddressesSettings({ encryptionKeyVersion = 0 }: SavedAddres
 
   return (
     <div>
-      <h3 className="font-semibold mb-4">Saved Shipping Addresses</h3>
+      <h3 className="font-semibold mb-4">Saved addresses</h3>
       <div className="space-y-3">
         {addresses.length === 0 ? (
           <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
@@ -179,7 +175,7 @@ export function SavedAddressesSettings({ encryptionKeyVersion = 0 }: SavedAddres
               <MapPinIcon className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  No saved addresses yet. Save an address during checkout for faster ordering.
+                  No saved addresses yet. You can save one at checkout.
                 </p>
               </div>
             </div>
@@ -216,7 +212,7 @@ export function SavedAddressesSettings({ encryptionKeyVersion = 0 }: SavedAddres
           onClick={() => setShowModal(true)}
         >
           <MapPinIcon className="h-4 w-4 mr-2" />
-          Manage Saved Addresses
+          Manage addresses
         </Button>
       </div>
 

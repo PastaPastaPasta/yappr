@@ -10,7 +10,6 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useReportPostModal, type ReportSubject } from '@/hooks/use-report-post-modal'
-import { CREDITS_PER_DASH } from '@/lib/constants'
 import { reportsAreResolved } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
 import {
@@ -24,7 +23,6 @@ import {
   reportFailureMessage,
   reportInputProblem,
   reportReasonLabel,
-  reportFeeCredits,
   reportCanBeWithdrawn,
   reportReasonsOffered,
   reportStatusLabel,
@@ -43,12 +41,6 @@ function reportTargetOf(subject: ReportSubject | null): { kind: ReportTargetKind
   if (!subject) return null
   if (subject.kind === 'profile') return { kind: 'profile', targetId: subject.identityId, targetOwnerId: subject.identityId }
   return { kind: subject.kind, targetId: subject.post.id, targetOwnerId: subject.post.author.id }
-}
-
-/** The moderators' action fee a report pays (v13: 50M credits), as DASH, or null where reports are free. */
-function reportFeeDash(): string | null {
-  const fee = reportFeeCredits()
-  return fee === null ? null : (Number(fee) / CREDITS_PER_DASH).toFixed(4)
 }
 
 /** The reader's own report on the open target: still being read, read, or unreadable. */
@@ -79,7 +71,6 @@ export function ReportPostModal() {
   const identityId = user?.identityId
   /** v10: the moderators mark a report handled (and the reporter sees how) instead of deleting it. */
   const resolving = reportsAreResolved()
-  const feeDash = reportFeeDash()
   // Mainnet v13 (`notYetUsable`): reports wait for the first seated team (41200, paid).
   const reportsOpen = useModeratedTypeOpen('report', isOpen)
   const targetKind = target?.kind
@@ -159,9 +150,7 @@ export function ReportPostModal() {
       if (!reportBarredWrite(result.error, identityId)) toast.error(reportFailureMessage(result.error, noun))
       return
     }
-    toast.success(result.confirmed === false
-      ? 'Report sent. The network has not confirmed it yet; it reaches the moderators once it does.'
-      : 'Report published for the community-elected moderators.')
+    toast.success('Report sent')
     finish()
   }
 
@@ -242,20 +231,11 @@ export function ReportPostModal() {
       {own.state === 'none' && (
         <div className="flex flex-col">
           <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-            Your report goes to on-chain moderators, elected by the community through masternode votes. These teams are independent of Yappr. Reports are public on Dash Platform: anyone, including
-            the {noun === 'profile' ? 'account\'s owner' : `${noun}'s author`}, can see that you reported it, the reason you pick and anything you write in the details.
-            {resolving && ' You can come back here to see how the moderators resolved it.'} A report expires after 90 days.
+            Reports go to the community&apos;s moderators. They are public, including who sent them.
           </Dialog.Description>
           {privatePost && (
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4" data-testid="report-private-note">
-              This {noun} is private. Your report gives the current moderators the key to read it, sealed so only they can
-              open it. That key also opens the earlier posts in the same private feed.
-              {noun === 'reply' && ' For a reply in a private thread, that is the thread owner\'s feed.'}
-            </p>
-          )}
-          {feeDash && (
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4" data-testid="report-fee">
-              Filing a report pays a moderation fee of about {feeDash} DASH to the moderators, plus the network fee.
+              This {noun} is private. Reporting it lets the moderators read it and earlier posts in the same private feed.
             </p>
           )}
           {!reportsOpen && (

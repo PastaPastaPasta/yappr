@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
+import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, RequestDeduplicator } from './sdk-helpers';
 import { documentCount, paginateFetchAll } from './pagination-utils';
 import { hashtagsAreInline, prefixRankingsAvailable } from '../contract-topology';
 
@@ -21,7 +21,8 @@ export interface TrendingHashtag {
 
 class HashtagService extends BaseDocumentService<PostHashtagDocument> {
   /** v9: the all-time and today rankings are different indexes, cached separately. */
-  private trendingCacheByWindow = new TtlMap<'all' | 'today', TrendingHashtag[]>(5 * 60 * 1000);
+  /** Per window: the ranking read and how many places it asked for (a cached top 12 cannot answer a top 50). */
+  private trendingCacheByWindow = new TtlMap<'all' | 'today', { limit: number; hashtags: TrendingHashtag[] }>(5 * 60 * 1000);
 
   constructor() {
     super('postHashtag');
@@ -289,8 +290,23 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
 
     // Check cache (per window)
     const cached = this.trendingCacheByWindow.get(window);
-    if (cached) return cached.slice(0, limit);
+    if (cached && cached.limit >= limit) return cached.hashtags.slice(0, limit);
 
+    // The sidebar and the explore page ask together on first load: one read.
+    return this.trendingReads.dedupe(`${window}:${limit}:${minPosts}:${timeWindowHours}`, () =>
+      this.readTrendingHashtags({ timeWindowHours, minPosts, limit, window })
+    );
+  }
+
+  private trendingReads = new RequestDeduplicator<string, TrendingHashtag[]>(0);
+
+  /** {@link getTrendingHashtags} past its cache. */
+  private async readTrendingHashtags({ timeWindowHours, minPosts, limit, window }: {
+    timeWindowHours: number;
+    minPosts: number;
+    limit: number;
+    window: 'all' | 'today';
+  }): Promise<TrendingHashtag[]> {
     // v9: trending is a PROVED prefix ranked page — groupBy at `hashtag` on
     // `like.byHashtagPost {at: hashtag}` (skipIfAbsent, so only tagged likes
     // exist in the index). NOTE the metric: the count is LIKES ON TAGGED
@@ -305,7 +321,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
         const trending: TrendingHashtag[] = ranked
           .filter((entry) => entry.count >= minPosts)
           .map((entry) => ({ hashtag: entry.key, postCount: entry.count }));
-        this.trendingCacheByWindow.set(window, trending);
+        this.trendingCacheByWindow.set(window, { limit, hashtags: trending });
         return trending.slice(0, limit);
       } catch (error) {
         logger.error('Error fetching proved trending hashtags:', error);
@@ -336,7 +352,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       trending.sort((a, b) => b.postCount - a.postCount);
 
       // Cache the full result (the v2 postHashtag count is all-time by construction)
-      this.trendingCacheByWindow.set('all', trending);
+      this.trendingCacheByWindow.set('all', { limit: Infinity, hashtags: trending });
 
       return trending.slice(0, limit);
     } catch (error) {

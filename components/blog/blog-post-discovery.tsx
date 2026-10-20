@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button'
  */
 const SORTS = [
   { key: 'latest', label: 'Latest posts' },
-  { key: 'discussed', label: 'Most discussed (3 days)' },
+  { key: 'discussed', label: 'Most discussed' },
 ] as const
 
 type PostSort = (typeof SORTS)[number]['key']
@@ -76,7 +76,7 @@ export function BlogPostDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
       ) : posts.length === 0 ? (
         <p className="text-center text-sm text-gray-500">
           {sort === 'discussed'
-            ? 'No post was commented on in the last 3 days.'
+            ? 'No posts are being discussed right now.'
             : cursor
               ? 'Nothing published in the newest posts read so far.'
               : 'No posts have been published yet.'}

@@ -986,7 +986,7 @@ function AddItemPage() {
               </Button>
               {!editingItemId && !pendingItemId && listingFeeCredits !== null && (
                 <p className="mt-2 text-center text-xs text-gray-500">
-                  Listing a product pays a moderation fee of about {formatCreditsAsDash(listingFeeCredits)} DASH, plus the network fee.
+                  Listing a product costs about {formatCreditsAsDash(listingFeeCredits)} DASH.
                 </p>
               )}
             </div>

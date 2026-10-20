@@ -227,11 +227,19 @@ class DocumentCache<T> extends TtlMap<string, T> {
   }
 }
 
+/** A caller waiting on a queued by-id read. */
+interface ReadWaiter<T> {
+  resolve: (value: T | null) => void;
+  reject: (error: unknown) => void;
+}
+
 export abstract class BaseDocumentService<T> {
   protected readonly contractId: string;
   protected readonly documentType: string;
   /** Documents by id, held for two minutes ({@link DocumentCache}). */
   protected cache = new DocumentCache<T>(2 * 60 * 1000);
+  /** Ids {@link getOrThrow} was asked for since the last read went out, with their callers. */
+  private queuedReads: Map<string, ReadWaiter<T>[]> | null = null;
 
   constructor(documentType: string, contractId?: string) {
     this.contractId = contractId ?? YAPPR_CONTRACT_ID;
@@ -335,6 +343,76 @@ export abstract class BaseDocumentService<T> {
     const cached = this.cache.get(documentId);
     if (cached !== undefined) return cached;
 
+    // Reads asked for in the same task (a feed's poll cards mounting together,
+    // say) go out together: one `$id in` query instead of one each. The read
+    // waits for one macrotask (a few ms; timers in hidden tabs run late), and
+    // tests on fake timers must advance them for it to go out.
+    return new Promise<T | null>((resolve, reject) => {
+      let queued = this.queuedReads;
+      if (!queued) {
+        const batch = new Map<string, ReadWaiter<T>[]>();
+        this.queuedReads = queued = batch;
+        setTimeout(() => {
+          this.queuedReads = null;
+          this.readQueued(batch);
+        }, 0);
+      }
+      const waiters = queued.get(documentId) ?? [];
+      waiters.push({ resolve, reject });
+      queued.set(documentId, waiters);
+    });
+  }
+
+  /**
+   * One read for every queued id. A lone id is a plain by-id fetch; several
+   * are one proved `$id in` query per 100 ids, where an id missing from the
+   * result is Platform proving the document absent, as a by-id fetch would.
+   * Should that query fail, each id falls back to its own fetch, so every
+   * caller still gets its own answer or its own error.
+   */
+  private readQueued(queued: Map<string, ReadWaiter<T>[]>): void {
+    const settle = (id: string, read: Promise<T | null>) => {
+      read.then(
+        (value) => queued.get(id)?.forEach((waiter) => waiter.resolve(value)),
+        (error: unknown) => queued.get(id)?.forEach((waiter) => waiter.reject(error))
+      );
+    };
+    const ids = Array.from(queued.keys());
+    if (ids.length === 1) {
+      settle(ids[0], this.fetchOne(ids[0]));
+      return;
+    }
+    const batch = this.cache.fencedRead(async (fill) => {
+      const sdk = await getEvoSdk();
+      const found = new Map<string, T>();
+      await mapLimit(chunk(ids, MAX_IN_CLAUSE_VALUES), 2, async (part) => {
+        const rawDocuments = await queryDocuments(sdk, {
+          dataContractId: this.contractId,
+          documentTypeName: this.documentType,
+          where: [['$id', 'in', part]],
+          limit: part.length,
+        });
+        for (const doc of rawDocuments) {
+          const id = doc.$id as string | undefined;
+          if (!id) continue;
+          const transformed = this.transformDocument(doc);
+          fill(id, transformed);
+          found.set(id, transformed);
+        }
+      });
+      return found;
+    });
+    const recovered = batch.catch((error: unknown) => {
+      logger.warn(`getOrThrow: batched $id-in ${this.documentType} read failed, falling back to per-id fetches:`, error);
+      return null;
+    });
+    for (const id of ids) {
+      settle(id, recovered.then((found) => (found ? found.get(id) ?? null : this.fetchOne(id))));
+    }
+  }
+
+  /** One document by id, cached unless invalidated while the read was out. */
+  private fetchOne(documentId: string): Promise<T | null> {
     return this.cache.fencedRead(async (fill) => {
       const sdk = await getEvoSdk();
       const response = await sdk.documents.get(this.contractId, this.documentType, documentId);
@@ -403,7 +481,13 @@ export abstract class BaseDocumentService<T> {
           // shape as getPostsByIds' fallback) rather than dropping up to 100
           // documents from the result on one failed query.
           logger.warn(`getMany: batched $id-in ${this.documentType} query failed, falling back to per-id fetches:`, error);
-          const fetched = await mapLimit(batch, 5, (id) => throwOnError ? this.getOrThrow(id) : this.get(id));
+          // Straight to by-id fetches: queueing them for another `$id in` read would repeat the one that just failed.
+          const fetched = await mapLimit(batch, 5, (id) => throwOnError
+            ? this.fetchOne(id)
+            : this.fetchOne(id).catch((fetchError: unknown) => {
+                logger.error(`Error getting ${this.documentType} document:`, fetchError);
+                return null;
+              }));
           for (const doc of fetched) {
             if (doc !== null) results.push(doc);
           }

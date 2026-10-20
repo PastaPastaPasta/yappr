@@ -45,7 +45,7 @@ const m = vi.hoisted(() => ({
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
   blockService: {
     blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), getUserBlocks: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
-    getBlockFollow: vi.fn(),
+    getBlockFollow: vi.fn(), followUserBlocks: vi.fn(), unfollowUserBlocks: vi.fn(),
   },
   /** `electedModeration()`: null off an elected contract. */
   elected: null as { interim: string; moderatedDocumentTypes: Record<string, string[]> } | null,
@@ -60,6 +60,7 @@ const m = vi.hoisted(() => ({
   buildReportBox: vi.fn(async (): Promise<{ kind: string; box?: Uint8Array }> => ({ kind: 'not-needed' })),
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
   notificationService: { getInitialNotifications: vi.fn(), pollNewNotifications: vi.fn() },
+  invalidateBlockCache: vi.fn(),
 }))
 
 const FLAGS = ['repostsAreQuotes', 'deletesAreTombstones', 'contractTakesReports', 'mediaCarriesHashes', 'hashtagsAreInline', 'mentionsAreInline']
@@ -106,6 +107,7 @@ vi.mock('@/lib/services/private-feed-service', () => ({
 }))
 vi.mock('@/lib/services/report-box-service', () => ({ buildReportBox: m.buildReportBox }))
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
+vi.mock('@/lib/caches/block-cache', async (load) => ({ ...await load<object>(), invalidateBlockCache: m.invalidateBlockCache }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
 vi.mock('@/lib/services/moderation-election-service', () => ({ moderationElectionService: m.election }))
 vi.mock('@/lib/services/moderation-service', async (load) => ({ ...await load<object>(), moderationService: m.moderation }))
@@ -474,6 +476,51 @@ describe('graph and safety writes', () => {
     expect(m.blockService.getBlockFollow).toHaveBeenCalledWith(VIEWER)
     m.blockService.getBlockFollow.mockRejectedValue(new Error('Request timeout'))
     await expect(safety.followedBlockLists()).rejects.toBeInstanceOf(Error)
+  })
+
+  it('lists followed accounts and still-followed lists for Block lists, and rejects an unreadable list', async () => {
+    const { safety } = engine()
+    const GONE = id('Unfollowed')
+    m.followService.getFollowing.mockResolvedValue([{ followingId: AUTHOR }, { followingId: id('Other') }])
+    m.blockService.getBlockFollow.mockResolvedValue({ $id: id('Follow'), $ownerId: VIEWER, followedUserIds: [GONE, AUTHOR] })
+    const choices = await safety.blockListChoices()
+    expect(choices.map(choice => [choice.id, choice.listFollowed])).toEqual([[GONE, true], [AUTHOR, true], [id('Other'), false]])
+    expect(m.followService.getFollowing).toHaveBeenCalledWith(VIEWER, { throwOnError: true })
+
+    m.followService.getFollowing.mockRejectedValue(new Error('no available addresses to retry'))
+    await expect(safety.blockListChoices()).rejects.toMatchObject({ code: 'NETWORK' })
+    m.viewer = null
+    await expect(safety.blockListChoices()).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
+  })
+
+  it("follows and stops following a block list, refuses the viewer's own, and checks one cut short", async () => {
+    const { safety, outcome, tickets } = engine()
+    m.blockService.followUserBlocks.mockResolvedValue({ success: true })
+    expect(await outcome(safety.setBlockListFollowed(AUTHOR, true))).toMatchObject({ op: 'block-list.follow', state: 'confirmed', target: { identityId: AUTHOR } })
+    expect(m.blockService.followUserBlocks).toHaveBeenCalledWith(VIEWER, AUTHOR)
+
+    m.blockService.unfollowUserBlocks.mockResolvedValue({ success: true })
+    expect(await outcome(safety.setBlockListFollowed(AUTHOR, false))).toMatchObject({ op: 'block-list.unfollow', state: 'confirmed' })
+    expect(m.blockService.unfollowUserBlocks).toHaveBeenCalledWith(VIEWER, AUTHOR)
+
+    // lib's cap is refused before anything is sent, in a sentence the host shows.
+    m.blockService.followUserBlocks.mockResolvedValue({ success: false, error: 'Maximum 100 block follows reached' })
+    expect(await outcome(safety.setBlockListFollowed(AUTHOR, true))).toMatchObject({
+      state: 'failed', error: { code: 'BAD_REQUEST', userMessage: expect.stringContaining('up to 100 block lists') },
+    })
+
+    await expect(safety.setBlockListFollowed(VIEWER, true)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(safety.setBlockListFollowed('not-an-id', true)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+
+    // A follow whose outcome is unknown: the probe reads the viewer's list.
+    m.blockService.followUserBlocks.mockResolvedValue({ success: false, error: 'Request timeout' })
+    const cut = await outcome(safety.setBlockListFollowed(AUTHOR, true))
+    expect(cut.state).toBe('unconfirmed')
+    m.blockService.getBlockFollow.mockResolvedValue({ $id: id('Follow'), $ownerId: VIEWER, followedUserIds: [AUTHOR] })
+    m.invalidateBlockCache.mockClear()
+    expect(await tickets.check(cut.id)).toMatchObject({ state: 'confirmed' })
+    // lib dropped no cache for the call that timed out: the confirmation does.
+    expect(m.invalidateBlockCache).toHaveBeenCalledWith(VIEWER)
   })
 
   it('says whether reports and posting are open, as lib reads the registered contract, and rejects an unreadable one', async () => {

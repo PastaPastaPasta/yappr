@@ -57,6 +57,8 @@ export const queryKeys = {
     stats: (id: string) => [...root, 'post', id, 'stats'] as const,
     /** `posts.poll`. */
     poll: (pollId: string) => [...root, 'poll', pollId] as const,
+    /** Every `posts.poll`: a prefix of the key above. */
+    pollAll: [...root, 'poll'] as const,
     /** `safety.ownReport`: the viewer's report on this post or reply. */
     ownReport: (id: string) => [...root, 'post', id, 'ownReport'] as const,
   },
@@ -99,6 +101,10 @@ export const queryKeys = {
   blockStatusAll: [...root, 'blockStatus'] as const,
   /** `safety.followedBlockLists`: how many block lists the viewer follows. */
   blockLists: [...root, 'blockLists'] as const,
+  /** `safety.blockListChoices`: followed accounts and whether their block lists are followed. */
+  blockListChoices: [...root, 'blockListChoices'] as const,
+  /** `dpns.registration`: whether usernames are registered here or in the wallet. */
+  dpnsRegistration: [...root, 'dpnsRegistration'] as const,
   /** `safety.reportsOpen`: whether a report can be filed now, or goes by email. */
   reportsOpen: [...root, 'reportsOpen'] as const,
 

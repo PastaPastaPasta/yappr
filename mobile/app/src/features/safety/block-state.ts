@@ -7,7 +7,7 @@ import { queryKeys } from '~/data/keys';
 import { setAuthorBlocked } from '~/data/optimistic';
 import { useEngineQuery, type EngineRemote } from '~/data/queries';
 import { getCapabilities, useSessionStore, useViewerId } from '~/data/session';
-import { sendWrite, useLandingIntent, useLandingTicket, type WriteSpec } from '~/data/writes';
+import { landingIntent, sendWrite, useLandingIntent, useLandingTicket, type WriteSpec } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { onMessagesBlockChosen, setBlockedInMessages } from '~/features/messages/dm-actions';
@@ -268,6 +268,33 @@ function refetchFiltered(block: boolean): void {
   refetch(queryKeys.blocked);
   for (const filters of BLOCK_FILTERED) {
     queryClient.invalidateQueries({ ...filters, refetchType: block ? 'none' : 'active' }).catch(() => undefined);
+  }
+}
+
+/**
+ * After `viewerId` used or dropped a block list: who is hidden changed for
+ * every account that list blocks. Decisions made here that a list can
+ * overturn are forgotten, so the answers read again decide: a block only a
+ * list made, and an unblock (a newly used list may block them again). Own
+ * blocks stand, and so does any block or unblock still on its way.
+ */
+export function refetchAfterBlockListChange(viewerId: string | null): void {
+  if (viewerId) {
+    const prefix = decisionKey(viewerId, '');
+    const { byKey } = useBlockDecisions.getState();
+    const stale = Object.entries(byKey).filter(
+      ([key, d]) =>
+        key.startsWith(prefix) && (d.listOnly || !d.blocked) && landingIntent(blockKey(key.slice(prefix.length))) === undefined,
+    );
+    if (stale.length > 0) {
+      const next = { ...byKey };
+      for (const [key] of stale) delete next[key];
+      useBlockDecisions.setState({ byKey: next });
+    }
+  }
+  refetch(queryKeys.blockLists);
+  for (const filters of BLOCK_FILTERED) {
+    queryClient.invalidateQueries({ ...filters, refetchType: 'active' }).catch(() => undefined);
   }
 }
 

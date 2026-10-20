@@ -1,57 +1,65 @@
 'use client'
 
-import { motion } from 'framer-motion'
-import {
-  DocumentTextIcon,
-  ArrowPathIcon
-} from '@heroicons/react/24/outline'
-import { Button } from '@/components/ui/button'
-import { formatNumber } from '@/lib/utils'
+import { cn, formatNumber } from '@/lib/utils'
 
 interface PlatformStatsProps {
   totalPosts: number
+  authorCount: number
+  authorCountCapped: boolean
+  postsToday: number | null
   loading: boolean
   error: string | null
-  onRetry?: () => void
 }
 
+interface Stat {
+  label: string
+  value: string
+}
+
+/**
+ * A row of simple counts under the hero. While loading it holds the same
+ * three cells so nothing moves when the numbers land; on error it steps aside
+ * (the posts below carry the retry).
+ */
 export function PlatformStats({
   totalPosts,
+  authorCount,
+  authorCountCapped,
+  postsToday,
   loading,
   error,
-  onRetry
 }: PlatformStatsProps) {
-  if (error) {
-    return (
-      <section className="py-8 border-y border-gray-200 dark:border-gray-800">
-        <div className="text-center py-8">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
-          {onRetry && (
-            <Button variant="outline" size="sm" onClick={onRetry}>
-              <ArrowPathIcon className="h-4 w-4 mr-2" />
-              Retry
-            </Button>
-          )}
-        </div>
-      </section>
-    )
+  if (error) return null
+
+  const stats: Stat[] = [
+    { label: 'Posts', value: formatNumber(totalPosts) },
+    { label: 'People posting', value: `${formatNumber(authorCount)}${authorCountCapped ? '+' : ''}` },
+  ]
+  if (loading || postsToday !== null) {
+    stats.push({ label: 'Posts today', value: formatNumber(postsToday ?? 0) })
   }
 
   return (
-    <section className="py-8 border-y border-gray-200 dark:border-gray-800">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="text-center"
-      >
-        <DocumentTextIcon className="h-8 w-8 text-yappr-500 mx-auto mb-2" />
-        {loading ? (
-          <div className="h-9 w-20 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-1 animate-pulse" />
-        ) : (
-          <div className="text-3xl font-bold">{formatNumber(totalPosts)}</div>
+    <section aria-label="Yappr in numbers" className="mx-auto mb-10 max-w-xl">
+      <dl
+        className={cn(
+          'grid divide-x divide-gray-200 rounded-2xl border border-gray-200 dark:divide-gray-800 dark:border-gray-800',
+          stats.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
         )}
-        <div className="text-sm text-gray-500">Total Posts</div>
-      </motion.div>
+      >
+        {stats.map((stat) => (
+          <div key={stat.label} className="flex flex-col-reverse items-center px-2 py-4 text-center">
+            <dt className="text-xs text-gray-500 dark:text-gray-400 sm:text-sm">{stat.label}</dt>
+            <dd className="mb-1 flex h-8 items-center text-2xl font-bold tabular-nums">
+              {loading ? (
+                <span aria-hidden="true" className="block h-7 w-12 animate-pulse rounded bg-gray-200 dark:bg-gray-800" />
+              ) : (
+                stat.value
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
     </section>
   )
 }

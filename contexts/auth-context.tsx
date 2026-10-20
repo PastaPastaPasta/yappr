@@ -19,6 +19,8 @@ import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/sessi
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 import { createWalletSignIn, wipeGrant } from '@/lib/app-connect/wallet-sign-in'
 import { rawKeyStoreHooks, unlockWithPasskey, type PasskeyRenewal } from '@/lib/auth/passkey-vault'
+import type { PhraseSession } from '@/lib/auth/recovery-phrase-sign-in'
+import { adoptMessagingKey } from '@/lib/services/messaging-key-service'
 import { usePasskeyPrompts, type SignInMethod } from '@/hooks/use-passkey-prompts'
 
 /**
@@ -62,6 +64,12 @@ interface AuthContextType {
    * PasskeyVaultError when the passkey cannot sign in.
    */
   loginWithPasskey: () => Promise<PasskeyRenewal | null>
+  /**
+   * Signs in with the keys a recovery phrase derived (lib/auth/recovery-phrase-sign-in.ts):
+   * the session is the one its sign-in key would make typed in, and its messaging key is
+   * kept once that session is stored. `since`: the session epoch the phrase was entered on.
+   */
+  loginWithRecoveryPhrase: (session: PhraseSession, since: number) => Promise<void>
   /** Replaces the signed-in identity's App Connect keys with a renewed grant from the same identity. */
   renewWithAppConnect: (grant: AppConnectGrant) => Promise<void>
   logout: () => Promise<void>
@@ -243,6 +251,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [controller, signInWithGrant, signInWithKey])
 
+  const loginWithRecoveryPhrase = useCallback(async (session: PhraseSession, since: number) => {
+    const { messagingKey } = session
+    try {
+      const intent = await signInWithKey(session.identityId, session.signInWif, {
+        since,
+        // Stored only inside the commit that stores the sign-in key: a sign-out or another sign-in
+        // meanwhile leaves nothing of this one behind.
+        afterStore: () => {
+          if (!messagingKey) return
+          // Never throws into the commit, which has already stored the session.
+          try {
+            adoptMessagingKey(messagingKey)
+          } catch (error) {
+            logger.warn('Recovery phrase sign-in: could not keep the messaging key:', error)
+          }
+        },
+      })
+      noteSignIn(intent, 'key', controller.sessionEpoch())
+    } finally {
+      messagingKey?.privateKey.fill(0)
+    }
+  }, [controller, signInWithKey])
+
   const renewWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
     // A revocation sign-out may still be running: let it finish first, so it
     // cannot clear the grant adopted here.
@@ -290,6 +321,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     login,
     loginWithAppConnect,
     loginWithPasskey,
+    loginWithRecoveryPhrase,
     renewWithAppConnect,
     logout,
     updateDPNSUsername,
@@ -304,6 +336,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     login,
     loginWithAppConnect,
     loginWithPasskey,
+    loginWithRecoveryPhrase,
     logout,
     refreshBalance,
     refreshDpnsUsernames,

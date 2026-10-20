@@ -8,6 +8,7 @@ import { queryKeys } from '~/data/keys';
 import { usePostRemoved } from '~/data/optimistic';
 import { readErrorMessage } from '~/data/read-error';
 import { useEngineStatus } from '~/engine/hooks';
+import { refetchPolls } from '~/features/post/poll-vote';
 import { usePrivatePost } from '~/features/private-feed/private-feed-data';
 import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
@@ -132,6 +133,7 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const refetchParent = parentQuery.refetch;
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    refetchPolls();
     // The thread's private posts are read again too: a request approved since then opens them.
     const privateReads = queryClient.invalidateQueries({ queryKey: queryKeys.privateFeed.posts });
     Promise.all([refetch(), needsParent ? refetchParent() : null, privateReads])
