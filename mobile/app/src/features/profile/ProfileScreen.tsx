@@ -322,6 +322,9 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
   // Header-bar menus (PRD PROF-05, PROF-13).
   const ownMenu: MenuItem[] = [
     { id: 'bookmarks', title: 'Bookmarks', systemImage: 'bookmark' },
+    { id: 'stores', title: 'Stores', systemImage: 'bag' },
+    { id: 'orders', title: 'My orders', systemImage: 'shippingbox' },
+    { id: 'my-store', title: 'My store', systemImage: 'storefront' },
     { id: 'blocked', title: 'Blocked accounts', systemImage: 'nosign' },
     { id: 'settings', title: 'Settings', systemImage: 'gearshape' },
     { id: 'share', title: 'Share profile', systemImage: 'square.and.arrow.up' },
@@ -355,6 +358,10 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
     if (!profileId) return;
     // The own-profile menu, also shown on the viewer's profile opened in another tab.
     if (id === 'bookmarks') openOnItsTab('/bookmarks');
+    // The storefront's screens are root routes: they open over the tabs.
+    else if (id === 'stores') router.push('/store');
+    else if (id === 'orders') router.push('/orders');
+    else if (id === 'my-store') router.push('/store/manage');
     else if (id === 'blocked') openOnItsTab('/settings/blocked');
     else if (id === 'settings') openOnItsTab('/settings');
     else if (id === 'switch') openOnItsTab('/settings/accounts');

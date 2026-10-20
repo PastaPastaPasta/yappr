@@ -57,6 +57,8 @@ export type WriteOp =
   | 'post.publish' | 'post.delete' | 'like' | 'unlike' | 'repost' | 'unrepost' | 'bookmark' | 'unbookmark'
   | 'follow' | 'unfollow' | 'block' | 'unblock' | 'report' | 'report.withdraw' | 'profile.update'
   | 'dm.send' | 'dm.group'
+  // storefront (native store)
+  | 'store.save' | 'store.item' | 'store.zone' | 'store.order' | 'store.order.status' | 'store.review' | 'store.report' | 'store.report.withdraw'
 
 export type WriteState = 'pending' | 'confirmed' | 'unconfirmed' | 'failed'
 

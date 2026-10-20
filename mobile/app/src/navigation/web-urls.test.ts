@@ -12,13 +12,18 @@ describe.each(Object.keys(VARIANTS) as Variant[])('%s web handoffs', (variant) =
 
   it('keeps polls, private posts, stores and blogs in the selected deployment', () => {
     expect(webUrl(config, '/post', { id: ID })).toBe(`${v.webBaseUrl}/post?id=${ID}`);
-    for (const path of ['/blog', '/checkout', '/orders']) {
+    for (const path of ['/blog']) {
       const url = webUrl(config, path, { id: ID });
       expect(resolveLink(url, options)).toEqual({ kind: 'browser', url });
       expect(resolveLink(`${v.scheme}://${path.slice(1)}?id=${ID}`, options)).toEqual({ kind: 'browser', url });
     }
     expect(resolveLink(webUrl(config, '/store', { id: ID }), options)).toEqual({ kind: 'route', route: `/store/${ID}` });
     expect(resolveLink(webUrl(config, '/item', { id: ID }), options)).toEqual({ kind: 'route', route: `/item/${ID}` });
+    expect(resolveLink(webUrl(config, '/store/view', { id: ID }), options)).toEqual({ kind: 'route', route: `/store/${ID}` });
+    expect(resolveLink(webUrl(config, '/checkout', { storeId: ID }), options)).toEqual({ kind: 'route', route: `/checkout/${ID}` });
+    expect(resolveLink(webUrl(config, '/orders', {}), options)).toEqual({ kind: 'route', route: '/orders' });
+    expect(resolveLink(webUrl(config, '/orders/seller', {}), options)).toEqual({ kind: 'route', route: '/store/orders' });
+    expect(resolveLink(`${v.scheme}://cart`, options)).toEqual({ kind: 'route', route: '/cart' });
     expect(resolveLink(`${v.webBaseUrl}/post?id=${ID}`, options)).toEqual({ kind: 'route', route: `/post/${ID}` });
   });
 

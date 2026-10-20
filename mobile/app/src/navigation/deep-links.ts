@@ -64,9 +64,6 @@ const WEB_ONLY = [
   '/cookies',
   '/contract',
   '/dpns/register',
-  '/cart',
-  '/checkout',
-  '/orders',
   '/blog',
   '/embed',
 ];
@@ -191,7 +188,15 @@ const WEB_ROUTES: Record<string, (q: Query, viewerId: string | null) => string |
     return t ? `/hashtag/${encodeURIComponent(t)}` : null;
   },
   '/store': (q) => id(q.id) ? `/store/${id(q.id)}` : '/store',
+  '/store/view': (q) => id(q.id) ? `/store/${id(q.id)}` : null,
   '/item': (q) => id(q.id) ? `/item/${id(q.id)}` : null,
+  // The storefront's own pages are native too: a link never sends the buyer or seller to yap.pr.
+  '/cart': () => '/cart',
+  '/checkout': (q) => id(q.storeId) ? `/checkout/${id(q.storeId)}` : '/cart',
+  '/orders': () => '/orders',
+  '/orders/seller': () => '/store/orders',
+  '/store/manage': () => '/store/manage',
+  '/store/create': () => '/store/edit',
 };
 
 /**

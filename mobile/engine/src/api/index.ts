@@ -12,7 +12,7 @@ import { createMobileAuthController, createSessionModule, foregroundBalanceRefre
 import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
-import { store } from './store'
+import { createStoreModule } from './store'
 
 /**
  * The engine API. The RN host imports `type EngineApi` only and calls it
@@ -23,6 +23,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
   const emit = runtime.emit ?? (() => undefined)
   setNoticeSink(notice => emit('engine.notice', notice))
   const tickets = createEngineTicketStore(emit)
+  const storefront = createStoreModule(tickets)
   /** Shared by the session module, its controller and messages (`SessionModuleOptions.unhydrated`). */
   const unhydrated = new Set<string>()
   const dm = createDmModule({ emit, tickets, secureDurable: runtime.secureDurable, unhydrated })
@@ -72,7 +73,8 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     explore,
     safety: createSafetyModule(tickets),
     notifications: notifications.api,
-    store,
+    store: storefront.store,
+    cart: storefront.cart,
   }
 }
 
@@ -91,4 +93,6 @@ export type * from './settings'
 export type * from './writes'
 export type { EngineNotice } from '../shims/toast'
 export type * from './store'
+export type * from './store-orders'
+export type * from './store-writes'
 export type { PlatformInfoDTO } from '../dto/capabilities'

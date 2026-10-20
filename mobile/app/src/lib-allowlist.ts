@@ -37,3 +37,12 @@ export { cashtagStorageToDisplay, isCashtagStorage } from '@/lib/post-helpers';
 export { imageSourceFor, isSafeMediaUrl } from '@/lib/media/remote-media';
 // Post-text tag matching (a whole ASCII word, so `#café` is no tag) and the over-long check, from the same import-free module.
 export { CASHTAG_PATTERN, HASHTAG_PATTERN, tagStorage } from '@/lib/post-helpers';
+// Prices in a currency's smallest unit, order ids and dates for the storefront. Imports nothing.
+export {
+  formatDate,
+  formatOrderId,
+  formatPrice,
+  fromSmallestUnit,
+  getCurrencyDecimals,
+  toSmallestUnit,
+} from '@/lib/utils/format';

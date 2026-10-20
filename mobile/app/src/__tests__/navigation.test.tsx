@@ -279,6 +279,22 @@ describe('app shell', () => {
     ['/__gallery', null],
     ['/block/abc123', null],
     ['/report/abc123?kind=post', null],
+    ['/store', null],
+    ['/store/abc123', null],
+    ['/item/abc123', null],
+    ['/cart', null],
+    ['/checkout/abc123', null],
+    ['/orders', null],
+    ['/orders/abc123', null],
+    ['/review/abc123', null],
+    ['/store/manage', null],
+    ['/store/edit', null],
+    ['/store/product', null],
+    ['/store/zone', null],
+    ['/store/kit?itemId=abc123', null],
+    ['/store/orders', null],
+    ['/store/deliver?orderId=abc123', null],
+    ['/store-report?docType=store&targetId=abc123&ownerId=def456', null],
   ])('%s has a stub', async (url, pr) => {
     const app = await renderApp('/');
     act(() => router.push(url as Href));
