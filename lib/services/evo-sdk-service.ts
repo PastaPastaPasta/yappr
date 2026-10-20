@@ -372,18 +372,20 @@ class EvoSdkService {
     trackRegisteredRefresh((async () => {
       try {
         const bundle = await this._bundle();
-        if (!bundle) return;
+        // Nothing seeded from a bundle: what was recorded came from the network.
+        if (!bundle) return true;
         // Versions only: from protocol version 14 the proof covers the
         // contracts' version items, a few hundred bytes per contract.
         const latest = await getLatestVersions({ contractIds: [...ids] });
         const stale = staleContractIds(bundle.contracts, latest, ids);
         if (stale.length === 0) {
           logger.debug(`EvoSdkService: ${ids.length} bundled contract(s) are current`);
-          return;
+          return true;
         }
         logger.info(`EvoSdkService: ${stale.length} bundled contract(s) are stale, refetching:`, stale);
         // The fetch replaces the seeded entries in the SDK's cache.
         rememberFetched(await getMany(stale));
+        return true;
       } catch (error) {
         // Nodes below the query's protocol version answer UNIMPLEMENTED; the
         // seeded contracts stay in use and the SDK's own staleness guard applies.
@@ -392,6 +394,8 @@ class EvoSdkService {
         } else {
           logger.warn('EvoSdkService: bundled contract revalidation failed:', error);
         }
+        // Unverified: a priced write reads its contract from the chain before agreeing to a fee.
+        return false;
       }
     })());
   }

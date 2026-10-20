@@ -39,29 +39,33 @@ type RawActionFees = { pricing?: unknown } & Partial<Record<DocumentAction, { ow
 const known = new Map<string, RegisteredContract>()
 
 /** The refresh of recorded contracts in flight (the SDK's bundle revalidation), settled or not. */
-let refreshing: Promise<unknown> = Promise.resolve()
+let refreshing: Promise<boolean> = Promise.resolve(true)
 
 /** How long a write waits for a refresh in flight before it reads the records as they stand. */
 const REFRESH_WAIT_MS = 10_000
 
 /**
  * Registers a refresh in flight: the SDK seeds the bundled snapshot at once
- * and checks it against the chain afterwards, refetching what is stale.
+ * and checks it against the chain afterwards, refetching what is stale. It
+ * resolves true once the records are proved current, false when the check
+ * failed or could not be made.
  */
-export function trackRegisteredRefresh(refresh: Promise<unknown>): void {
-  refreshing = refresh.catch(() => undefined)
+export function trackRegisteredRefresh(refresh: Promise<boolean>): void {
+  refreshing = refresh.catch(() => false)
 }
 
 /**
- * Resolves once the refresh in flight has settled, or after
- * {@link REFRESH_WAIT_MS}: a priced write awaits it before reading the fee it
- * agrees to, so a snapshot older than the chain cannot be agreed to (40133).
- * Reads never wait: by the time a user writes, the check has long settled.
+ * Whether the recorded contracts were proved current: waits for the refresh
+ * in flight, at most {@link REFRESH_WAIT_MS}. A priced write awaits it before
+ * reading the fee it agrees to; on false (the check failed, could not be made
+ * or is still running) it reads its contract from the chain first, so an
+ * unverified snapshot is never agreed to (40133). Reads never wait.
  */
-export async function registeredContractsSettled(): Promise<void> {
+export async function registeredContractsSettled(): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined
-  await Promise.race([refreshing, new Promise<void>((resolve) => { timer = setTimeout(resolve, REFRESH_WAIT_MS) })])
+  const verified = await Promise.race([refreshing, new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), REFRESH_WAIT_MS) })])
   clearTimeout(timer)
+  return verified
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null

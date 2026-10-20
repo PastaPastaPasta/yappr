@@ -52,26 +52,28 @@ describe('registered contract declarations', () => {
 })
 
 describe('a refresh in flight', () => {
-  it('holds a write until the snapshot check settles, so the refetched fee is the one agreed to', async () => {
+  it('holds a write until the snapshot check settles, then reports the records proved current', async () => {
     let finish: () => void = () => undefined
-    trackRegisteredRefresh(new Promise<void>((resolve) => { finish = () => { rememberRegisteredContract('refreshed', { schemas: { post: { actionFees: { create: { moderators: BigInt(7) } } } } }); resolve() } }))
-    const settled = registeredContractsSettled().then(() => registeredActionFee('refreshed', 'post', 'create')?.moderators)
+    trackRegisteredRefresh(new Promise<boolean>((resolve) => { finish = () => { rememberRegisteredContract('refreshed', { schemas: { post: { actionFees: { create: { moderators: BigInt(7) } } } } }); resolve(true) } }))
+    const settled = registeredContractsSettled().then((verified) => [verified, registeredActionFee('refreshed', 'post', 'create')?.moderators])
     finish()
-    await expect(settled).resolves.toBe(7n)
+    await expect(settled).resolves.toEqual([true, 7n])
   })
 
-  it('does not hold a write on a check that fails or never answers', async () => {
+  it('reports the records unverified when the check fails, could not be made, or does not answer in time', async () => {
     trackRegisteredRefresh(Promise.reject(new Error('offline')))
-    await expect(registeredContractsSettled()).resolves.toBeUndefined()
+    await expect(registeredContractsSettled()).resolves.toBe(false)
+    trackRegisteredRefresh(Promise.resolve(false))
+    await expect(registeredContractsSettled()).resolves.toBe(false)
     vi.useFakeTimers()
     try {
-      trackRegisteredRefresh(new Promise(() => undefined))
+      trackRegisteredRefresh(new Promise<boolean>(() => undefined))
       const waiting = registeredContractsSettled()
       await vi.advanceTimersByTimeAsync(10_000)
-      await expect(waiting).resolves.toBeUndefined()
+      await expect(waiting).resolves.toBe(false)
     } finally {
       vi.useRealTimers()
-      trackRegisteredRefresh(Promise.resolve())
+      trackRegisteredRefresh(Promise.resolve(true))
     }
   })
 })
