@@ -12,7 +12,8 @@ import { textBytes } from '@/lib/text-limits'
 import { keyNetwork } from '@/lib/constants'
 import { APPROVED_PAYMENT_SCHEMES } from '@/lib/utils/payment-uri'
 import { profileTextLimits } from '@/lib/profile/v10-profile'
-import { splitPaymentUri, type LinkRow, type TipRow } from '@/lib/profile/edit-rows'
+import { rowKey, splitPaymentUri, type Keyed, type TipRow } from '@/lib/profile/edit-rows'
+import type { TextLimits } from '@/lib/text-limits'
 import { cn } from '@/lib/utils'
 
 export interface ProfileDraft {
@@ -40,9 +41,6 @@ export const EMPTY_DRAFT: ProfileDraft = {
 /** The text fields and the NSFW flag; links and tips are edited as rows. */
 export type ProfileFields = Omit<ProfileDraft, 'paymentUris' | 'socialLinks'>
 
-/** A row with a stable key, so removing one keeps the others' focus and input. */
-export type Keyed<T> = T & { key: number }
-
 const MAX_ROWS = 10
 
 /** The default tip coin: Dash on the network this build talks to. */
@@ -53,10 +51,15 @@ export function tipSchemeLabel(scheme: string): string {
   return scheme === DEFAULT_TIP_SCHEME ? 'Dash' : PAYMENT_SCHEME_LABELS[scheme] ?? scheme
 }
 
-export const FIELD =
+const FIELD =
   'h-auto rounded-lg border-gray-300 bg-transparent px-3 py-2.5 text-[15px] focus-visible:ring-yappr-500 focus-visible:ring-offset-0 dark:border-gray-700 dark:bg-transparent dark:focus-visible:ring-yappr-500'
 const SELECT =
-  'shrink-0 rounded-lg border border-gray-300 bg-transparent px-2 py-2.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 dark:border-gray-700 dark:bg-neutral-900 disabled:opacity-50'
+  'w-[7.5rem] shrink-0 rounded-lg border border-gray-300 bg-transparent px-2 py-2.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 dark:border-gray-700 dark:bg-neutral-900 disabled:opacity-50'
+
+/** What is left of a stored field's limits once `prefix` (a scheme or platform) takes its share. */
+function afterPrefix(limits: TextLimits, prefix: string, fallback: number): TextLimits {
+  return { maxLength: (limits.maxLength ?? fallback) - [...prefix].length, maxBytes: (limits.maxBytes ?? fallback) - textBytes(prefix) }
+}
 
 function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
   return (
@@ -70,8 +73,8 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor: string; c
 interface ProfileEditFormProps {
   fields: ProfileFields
   onFieldsChange: (fields: ProfileFields) => void
-  links: Keyed<LinkRow>[]
-  onLinksChange: (links: Keyed<LinkRow>[]) => void
+  links: Keyed<SocialLink>[]
+  onLinksChange: (links: Keyed<SocialLink>[]) => void
   linkErrors: (string | null)[]
   tips: Keyed<TipRow>[]
   onTipsChange: (tips: Keyed<TipRow>[]) => void
@@ -81,11 +84,6 @@ interface ProfileEditFormProps {
   extrasOpen: boolean
   onExtrasOpenChange: (open: boolean) => void
   disabled: boolean
-}
-
-let nextRowKey = 1
-export function rowKey(): number {
-  return nextRowKey++
 }
 
 /** The fields of the edit-profile dialog; the dialog owns the state and saves it. */
@@ -109,7 +107,7 @@ export function ProfileEditForm({
   const added = links.filter((l) => l.handle.trim()).length + tips.filter((t) => t.address.trim()).length
   const extrasId = `${id}-extras`
 
-  const updateLink = (key: number, patch: Partial<LinkRow>) =>
+  const updateLink = (key: number, patch: Partial<SocialLink>) =>
     onLinksChange(links.map((row) => (row.key === key ? { ...row, ...patch } : row)))
   const updateTip = (key: number, patch: Partial<TipRow>) =>
     onTipsChange(tips.map((row) => (row.key === key ? { ...row, ...patch } : row)))
@@ -157,9 +155,7 @@ export function ProfileEditForm({
               disabled={disabled}
               onAdd={() => onLinksChange([...links, { key: rowKey(), platform: 'twitter', handle: '' }])}
             >
-              {links.map((row, index) => {
-                const prefix = `${row.platform}:`
-                return (
+              {links.map((row, index) => (
                   <Row
                     key={row.key}
                     error={errorFor(row.key, linkErrors[index] ?? null)}
@@ -167,11 +163,11 @@ export function ProfileEditForm({
                     onRemove={() => onLinksChange(links.filter((l) => l.key !== row.key))}
                     disabled={disabled}
                   >
-                    <select aria-label="Link type" value={row.platform} onChange={(e) => updateLink(row.key, { platform: e.target.value })} disabled={disabled} className={cn(SELECT, 'w-[7.5rem]')}>
+                    <select aria-label="Link type" value={row.platform} onChange={(e) => updateLink(row.key, { platform: e.target.value })} disabled={disabled} className={SELECT}>
                       {SOCIAL_PLATFORMS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                     </select>
                     <LimitedInput
-                      limits={{ maxLength: (linkLimits.maxLength ?? 256) - [...prefix].length, maxBytes: (linkLimits.maxBytes ?? 256) - textBytes(prefix) }}
+                      limits={afterPrefix(linkLimits, `${row.platform}:`, 256)}
                       aria-label={`${getPlatformLabel(row.platform)} handle`}
                       type="text"
                       value={row.handle}
@@ -182,8 +178,7 @@ export function ProfileEditForm({
                       className={FIELD}
                     />
                   </Row>
-                )
-              })}
+              ))}
             </RowList>
 
             <RowList
@@ -201,11 +196,11 @@ export function ProfileEditForm({
                   onRemove={() => onTipsChange(tips.filter((t) => t.key !== row.key))}
                   disabled={disabled}
                 >
-                  <select aria-label="Currency" value={row.scheme} onChange={(e) => updateTip(row.key, { scheme: e.target.value })} disabled={disabled} className={cn(SELECT, 'w-[7.5rem]')}>
+                  <select aria-label="Currency" value={row.scheme} onChange={(e) => updateTip(row.key, { scheme: e.target.value })} disabled={disabled} className={SELECT}>
                     {tipSchemes.map((scheme) => <option key={scheme} value={scheme}>{tipSchemeLabel(scheme)}</option>)}
                   </select>
                   <LimitedInput
-                    limits={{ maxLength: (tipLimits.maxLength ?? 512) - row.scheme.length, maxBytes: (tipLimits.maxBytes ?? 512) - textBytes(row.scheme) }}
+                    limits={afterPrefix(tipLimits, row.scheme, 512)}
                     aria-label={`${tipSchemeLabel(row.scheme)} address`}
                     type="text"
                     value={row.address}

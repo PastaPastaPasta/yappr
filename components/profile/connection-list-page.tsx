@@ -87,6 +87,8 @@ const COPY: Record<ConnectionKind, {
 
 const KINDS: ConnectionKind[] = ['followers', 'following']
 
+const BAR = 'bg-gray-200 animate-pulse dark:bg-gray-800'
+
 /** DPNS search is over homograph-safe names; fall back to the raw input before the SDK is up. */
 function toHomographSafe(input: string): string {
   try {
@@ -430,7 +432,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
                   )}
                   <div className="min-w-0">
                     <h1 className="truncate text-xl font-bold">
-                      {targetUserName ?? <span className="inline-block h-6 w-32 rounded bg-gray-200 align-middle animate-pulse dark:bg-gray-800" />}
+                      {targetUserName ?? <span className={`inline-block h-6 w-32 rounded align-middle ${BAR}`} />}
                     </h1>
                     <p className="text-sm text-gray-500">{subtitle}</p>
                   </div>
@@ -555,10 +557,10 @@ function ConnectionSkeleton() {
     <div aria-busy="true" aria-label="Loading">
       {Array.from({ length: 6 }, (_, i) => (
         <div key={i} className="flex items-start gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-800">
-          <div className="h-12 w-12 shrink-0 rounded-full bg-gray-200 animate-pulse dark:bg-gray-800" />
+          <div className={`h-12 w-12 shrink-0 rounded-full ${BAR}`} />
           <div className="flex-1 space-y-2 pt-1">
-            <div className="h-4 w-32 rounded bg-gray-200 animate-pulse dark:bg-gray-800" />
-            <div className="h-3.5 w-24 rounded bg-gray-200 animate-pulse dark:bg-gray-800" />
+            <div className={`h-4 w-32 rounded ${BAR}`} />
+            <div className={`h-3.5 w-24 rounded ${BAR}`} />
           </div>
         </div>
       ))}

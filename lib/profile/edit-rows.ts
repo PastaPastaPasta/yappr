@@ -8,18 +8,21 @@ import { socialLinkAddProblem, validateSocialHandle } from '@/lib/social-link-va
  * stores and say what is wrong with each row; blank rows are dropped.
  */
 
-export interface LinkRow {
-  platform: string
-  handle: string
-}
-
 export interface TipRow {
   /** An approved scheme, colon included (`dash:`). */
   scheme: string
   address: string
 }
 
-export interface RowCheck<T> {
+/** A row with a stable key, so removing one keeps the others' focus and input. */
+export type Keyed<T> = T & { key: number }
+
+let nextRowKey = 1
+export function rowKey(): number {
+  return nextRowKey++
+}
+
+interface RowCheck<T> {
   values: T[]
   /** One entry per row, in order: the problem, or null. */
   errors: (string | null)[]
@@ -40,7 +43,7 @@ export function splitPaymentUri(value: string): TipRow | null {
   return { scheme, address: trimmed.slice(colon + 1) }
 }
 
-export function checkLinkRows(rows: readonly LinkRow[], platformLabel: (platform: string) => string): RowCheck<SocialLink> {
+export function checkLinkRows(rows: readonly SocialLink[], platformLabel: (platform: string) => string): RowCheck<SocialLink> {
   const values: SocialLink[] = []
   const errors = rows.map((row) => {
     const handle = row.handle.trim()

@@ -11,10 +11,12 @@ import { AvatarCustomization } from '@/components/settings/avatar-customization'
 import { BannerCustomization } from '@/components/settings/banner-customization'
 import { getPlatformLabel } from '@/components/profile/social-links-input'
 import {
-  DEFAULT_TIP_SCHEME, ProfileEditForm, rowKey, tipSchemeLabel,
-  type Keyed, type ProfileDraft, type ProfileFields,
+  DEFAULT_TIP_SCHEME, ProfileEditForm, tipSchemeLabel, type ProfileDraft, type ProfileFields,
 } from '@/components/profile/profile-edit-form'
-import { checkLinkRows, checkTipRows, normalizeWebsite, tipRowFromUri, type LinkRow, type TipRow } from '@/lib/profile/edit-rows'
+import {
+  checkLinkRows, checkTipRows, normalizeWebsite, rowKey, tipRowFromUri, type Keyed, type TipRow,
+} from '@/lib/profile/edit-rows'
+import type { SocialLink } from '@/lib/types'
 import { fieldLimits } from '@/lib/field-limits'
 
 interface EditProfileModalProps {
@@ -53,6 +55,8 @@ export function EditProfileModal({ initial, ...props }: EditProfileModalProps) {
 
 type View = 'form' | 'avatar' | 'banner'
 
+const SUBVIEW_TITLES: Record<View, string | null> = { form: null, avatar: 'Edit avatar', banner: 'Edit banner' }
+
 /** Equal for drafts that would save the same profile. */
 function draftKey(d: ProfileDraft): string {
   return JSON.stringify([
@@ -69,24 +73,25 @@ function EditProfileDialog({
   initial, requestCloseRef, userId, bannerUri, avatarKey, bannerKey, isSaving, createsProfile, onCancel, onSave, onAvatarSaved, onBannerSaved,
 }: Omit<EditProfileModalProps, 'initial'> & { initial: ProfileDraft; requestCloseRef: MutableRefObject<() => void> }) {
   const [fields, setFields] = useState<ProfileFields>(() => fieldsOf(initial))
-  const [links, setLinks] = useState<Keyed<LinkRow>[]>(() => initial.socialLinks.map((link) => ({ key: rowKey(), ...link })))
+  const [links, setLinks] = useState<Keyed<SocialLink>[]>(() => initial.socialLinks.map((link) => ({ key: rowKey(), ...link })))
   const [tips, setTips] = useState<Keyed<TipRow>[]>(() => initial.paymentUris.map((uri) => ({ key: rowKey(), ...tipRowFromUri(uri, DEFAULT_TIP_SCHEME) })))
   const [extrasOpen, setExtrasOpen] = useState(false)
   const [showAllErrors, setShowAllErrors] = useState(false)
   const [view, setView] = useState<View>('form')
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const websiteMax = fieldLimits('social', 'yapprProfile', 'website').maxLength
+  const [initialKey] = useState(() => draftKey({ ...initial, website: normalizeWebsite(initial.website, websiteMax) }))
 
   const linkCheck = checkLinkRows(links, getPlatformLabel)
   const tipCheck = checkTipRows(tips, tipSchemeLabel)
   const hasErrors = [...linkCheck.errors, ...tipCheck.errors].some(Boolean)
-  const websiteMax = fieldLimits('social', 'yapprProfile', 'website').maxLength
   const next: ProfileDraft = {
     ...fields,
     website: normalizeWebsite(fields.website, websiteMax),
     socialLinks: linkCheck.values,
     paymentUris: tipCheck.values,
   }
-  const dirty = draftKey(next) !== draftKey({ ...initial, website: normalizeWebsite(initial.website, websiteMax) })
+  const dirty = draftKey(next) !== initialKey
 
   const requestClose = () => {
     if (isSaving) return
@@ -109,7 +114,7 @@ function EditProfileDialog({
     else onSave(next)
   }
 
-  const subview = view === 'avatar' ? 'Edit avatar' : view === 'banner' ? 'Edit banner' : null
+  const subview = SUBVIEW_TITLES[view]
 
   return (
     <>
