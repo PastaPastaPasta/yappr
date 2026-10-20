@@ -19,7 +19,7 @@
 
 import { logger } from '@/lib/logger'
 import { privateFeedKeyStore } from './private-feed-key-store'
-import { fetchFeed, fetchFeeds, fetchGrant, fetchGrantsTo, mainFeeds, type GrantDocument, type PrivateFeedDocument } from './private-feed-reads'
+import { fetchFeed, fetchFeeds, fetchGrant, mainFeeds, readGrantsTo, type GrantDocument, type PrivateFeedDocument } from './private-feed-reads'
 import { identifierToBytes, RequestDeduplicator } from './sdk-helpers'
 import { targetKindOf } from '@/lib/contract-topology'
 import { cekAt, decryptContent, hashBack, historyKey, openCarry, type ContentKind } from '@/lib/private-feed/crypto'
@@ -185,7 +185,7 @@ export async function contentKeyFor(
     if (direct && 'cek' in direct) return direct
     const isOwner = viewerId === ownerId
     const feeds = await fetchFeeds(ownerId)
-    const grants = isOwner ? [] : await fetchGrantsTo(ownerId, viewerId)
+    const grants = isOwner ? [] : await readGrantsTo(ownerId, viewerId)
     const grantIn = (number: number) => grants.find((grant) => grant.feed === number) ?? null
     let fallback: LockReason | null = null
     const note = (reason: LockReason) => {

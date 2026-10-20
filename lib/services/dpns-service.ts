@@ -132,6 +132,12 @@ class DpnsService {
 
   private aliasCache = new TtlMap<string, string[]>(5 * 60 * 1000);
 
+  /** identity id -> the alias read under way for it */
+  private aliasReads = new Map<string, Promise<Map<string, string[]>>>();
+
+  /** How many times the alias cache has been cleared, which fences reads that overlap a clear. */
+  private aliasClears = 0;
+
   hasCachedUsername(identityId: string): boolean {
     return this.reverseCache.has(identityId) || this.reverseMissCache.has(identityId);
   }
@@ -183,6 +189,37 @@ class DpnsService {
       return cached === undefined;
     });
     if (missing.length === 0) return result;
+    // An identity whose aliases are already being read joins that read
+    // instead of issuing an identical query of its own.
+    const reads = new Map<string, Promise<Map<string, string[]>>>();
+    const fresh = missing.filter(id => {
+      const shared = this.aliasReads.get(id);
+      if (shared) reads.set(id, shared);
+      return !shared;
+    });
+    if (fresh.length > 0) {
+      const read: Promise<Map<string, string[]>> = this.readAliases(fresh).finally(() => {
+        fresh.forEach(id => {
+          if (this.aliasReads.get(id) === read) this.aliasReads.delete(id);
+        });
+      });
+      fresh.forEach(id => {
+        reads.set(id, read);
+        this.aliasReads.set(id, read);
+      });
+    }
+    await Promise.all(Array.from(reads, async ([id, read]) => {
+      const aliases = (await read).get(id);
+      if (aliases) result.set(id, [...aliases]);
+    }));
+    return result;
+  }
+
+  /** {@link getAllUsernamesSortedBatch}'s read of the ids it had nothing cached
+   * or in flight for: the complete alias sets it read, cached. Never rejects. */
+  private async readAliases(missing: string[]): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+    const clearsAtStart = this.aliasClears;
     let sdk: Awaited<ReturnType<typeof getEvoSdk>>;
     try {
       sdk = await getEvoSdk();
@@ -235,6 +272,9 @@ class DpnsService {
         names.forEach((aliases, id) => {
           const sorted = sortUsernames(Array.from(new Set(aliases)));
           result.set(id, sorted);
+          // A read the cache was cleared during answers its callers but caches
+          // nothing: it may predate the change that was invalidated.
+          if (this.aliasClears !== clearsAtStart) return;
           this.aliasCache.set(id, sorted);
           // Forward lookup knows every alias; reverse lookup knows the PRIMARY.
           sorted.forEach(name => this.cache.set(name.toLowerCase(), id));
@@ -273,16 +313,11 @@ class DpnsService {
       if (cached !== undefined) return cached;
       if (this.reverseMissCache.has(identityId)) return null;
 
-      // Get all usernames for this identity and pick the primary one
+      // Get all usernames for this identity and pick the primary one. The alias
+      // read already cached it, unless the cache was cleared while it was out:
+      // caching here too would put back a name that clear invalidated.
       const allUsernames = await this.getAllUsernames(identityId);
-      const bestUsername = getPrimaryUsername(allUsernames);
-
-      if (!bestUsername) {
-        return null;
-      }
-
-      this._cacheEntry(bestUsername, identityId);
-      return bestUsername;
+      return getPrimaryUsername(allUsernames);
     } catch (error) {
       logger.error('DPNS: Error resolving username:', error);
       return null;
@@ -732,8 +767,16 @@ class DpnsService {
    * Clear cache entries
    */
   clearCache(username?: string, identityId?: string): void {
-    if (identityId) this.aliasCache.delete(identityId);
-    else this.aliasCache.clear();
+    // A read already under way may predate the change being invalidated, so
+    // later lookups must not join it, and it must not cache what it read.
+    this.aliasClears += 1;
+    if (identityId) {
+      this.aliasCache.delete(identityId);
+      this.aliasReads.delete(identityId);
+    } else {
+      this.aliasCache.clear();
+      this.aliasReads.clear();
+    }
     if (username) {
       this.cache.delete(username.toLowerCase());
     }
