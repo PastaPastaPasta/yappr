@@ -11,7 +11,7 @@ jest.mock('nativewind', () => ({
 }));
 
 interface WebTailwindConfig {
-  darkMode: string;
+  darkMode: string | [string, string];
   theme: { extend: { colors: { yappr: Record<string, string> } } };
 }
 
@@ -24,8 +24,15 @@ describe('tokens', () => {
     expect(colors.yappr600).toBe(webConfig.theme.extend.colors.yappr[600]);
   });
 
+  // NativeWind lets Settings override the system scheme only with plain
+  // 'class'. The web's scoped variant is still class-driven, but mobile pins
+  // 'class' itself rather than inherit it.
   it('keeps darkMode class so Settings can override the system scheme', () => {
-    expect(webConfig.darkMode).toBe('class');
+    const mobileConfig = jest.requireActual<{ darkMode?: unknown }>('../../tailwind.config.js');
+    expect(mobileConfig.darkMode).toBe('class');
+    const { darkMode } = webConfig;
+    if (typeof darkMode !== 'string') expect(darkMode).toEqual(['variant', expect.stringContaining(':is(.dark *)')]);
+    else expect(darkMode).toBe('class');
   });
 });
 
