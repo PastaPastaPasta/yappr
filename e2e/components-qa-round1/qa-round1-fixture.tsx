@@ -116,7 +116,7 @@ const content = fixture === 'messages' ? <><NetworkPill /><MessagesPage /></>
   : fixture === 'shipping' ? <ManagePage />
   : fixture === 'store' ? <StorePage />
   : fixture === 'inventory' ? <InventoryTable items={[eurItem, { ...eurItem, id: 'fallback', title: 'Store currency', currency: undefined, variants: undefined, basePrice: 600 }]} storeId="store" ownerId="owner" currency="USD" onEditItem={noop} onItemDeleted={noop} />
-  : <ProfileHeader userId="owner" profile={{ displayName: 'Owner', followersCount: count, followingCount: 0 }} displayName="Owner" isDisplayNameLoading={false} profileMissing={false} username={null} allUsernames={[]} viewerId="viewer" avatarKey={0} bannerKey={0} userStore={null} hasPrivateFeed={false} isPrivateFollower={false} isFollowing={false} followLoading={false} onFollow={noop} onTip={noop} onRequireAuth={noop} onOpenUsernameModal={noop} onSelectPayment={noop} onEditProfile={noop} />
+  : <ProfileHeader userId="owner" profile={{ displayName: params.get('missing') ? 'User 3f9a2c' : 'Owner', followersCount: count, followingCount: 0 }} displayName="Owner" isDisplayNameLoading={false} profileMissing={params.get('missing') === '1'} username={params.get('handle')} allUsernames={[]} viewerId="viewer" avatarKey={0} bannerKey={0} userStore={null} hasPrivateFeed={false} isPrivateFollower={false} isFollowing={false} followLoading={false} onFollow={noop} onTip={noop} onRequireAuth={noop} onOpenUsernameModal={noop} onSelectPayment={noop} onEditProfile={noop} />
 const root = document.getElementById('root')
 if (!root) throw new Error('Missing fixture root')
 createRoot(root).render(<>{content}<Toaster /></>)
