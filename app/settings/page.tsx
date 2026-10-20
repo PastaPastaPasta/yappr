@@ -21,7 +21,9 @@ import {
   CloudArrowUpIcon,
   NoSymbolIcon,
   CommandLineIcon,
+  ClipboardDocumentIcon,
 } from '@heroicons/react/24/outline'
+import toast from 'react-hot-toast'
 import { Lockup } from '@/components/brand/brand'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
@@ -251,15 +253,24 @@ function SettingsPage() {
     </div>
   )
 
+  // Support and developers sometimes need the account ID; nobody needs to read it.
+  const copyAccountId = (identityId: string) => {
+    navigator.clipboard.writeText(identityId)
+      .then(() => toast.success('Account ID copied'))
+      .catch(() => toast.error('Could not copy the account ID'))
+  }
+
   const renderAccountSettings = () => (
     <div className="p-6 space-y-6">
       <div>
         <h3 className="font-semibold mb-4">Account</h3>
         <div className="space-y-4 bg-gray-50 dark:bg-gray-950 rounded-lg p-4">
-          <div>
-            <p className="text-sm text-gray-500">Account ID</p>
-            <p className="font-mono text-xs break-all text-gray-700 dark:text-gray-300">{user?.identityId}</p>
-          </div>
+          {user?.identityId && (
+            <Button variant="outline" size="sm" onClick={() => copyAccountId(user.identityId)}>
+              <ClipboardDocumentIcon className="h-4 w-4 mr-1.5" aria-hidden="true" />
+              Copy account ID
+            </Button>
+          )}
           <div>
             <p className="text-sm text-gray-500">Balance</p>
             <p>{formatBalance(user?.balance || 0)}</p>
@@ -395,7 +406,7 @@ function SettingsPage() {
 
       {/* A wallet sign-in manages its keys in the wallet instead */}
       {walletSession
-        ? <WalletConnectionsSettings />
+        ? <WalletConnectionsSettings showBudgets={false} />
         : <EncryptionKeySettings onEncryptionKeyChanged={handleEncryptionKeyChanged} />}
 
       <div>
@@ -760,7 +771,12 @@ function SettingsPage() {
       case 'appearance':
         return renderAppearanceSettings()
       case 'developer':
-        return <DeveloperSettings />
+        return (
+          <>
+            <DeveloperSettings />
+            {walletSession && <div className="p-6 pt-0"><WalletConnectionsSettings showBudgets /></div>}
+          </>
+        )
       case 'about':
         return renderAboutSettings()
       case 'moderation':
