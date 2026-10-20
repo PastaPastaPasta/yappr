@@ -403,6 +403,9 @@ export const PostItem = memo(function PostItem({
     handlers: actions,
     // A post still publishing is its optimistic card: nothing on the chain to read yet.
     enabled: !pending,
+    // The card's own gate (its props win over the safety gates, as PostCard spreads them).
+    mediaGated: cardProps.mediaGated ?? safety.gates.mediaGated,
+    onRevealMedia: cardProps.onRevealMedia ?? safety.gates.onRevealMedia,
   });
 
   if ((removed && !asStub) || safety.hidden) return null;

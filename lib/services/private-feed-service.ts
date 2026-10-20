@@ -70,6 +70,8 @@ export interface PrivateFeedResult {
   success: boolean
   error?: string
   errorCode?: PrivateFeedErrorCode
+  /** Sent, but the network has not confirmed it yet (a `success` whose create may still land). */
+  confirmed?: false
 }
 
 /** The sentence for each refusal (the mobile engine passes these through as they are). */
@@ -407,7 +409,7 @@ class PrivateFeedService {
       keyGeneration: keys.keyGeneration,
       encryptedPayload,
     })
-    if (result.success) return { success: true }
+    if (result.success) return result.confirmed === false ? { success: true, confirmed: false } : { success: true }
     return grantRefusal(result.error) ?? { success: false, error: result.error || 'Could not approve this follower.' }
   }
 

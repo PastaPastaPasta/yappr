@@ -482,7 +482,14 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>,
    * twice.
    */
   async function probe(ticket: WriteTicket, draft: DraftDTO | undefined, kit: ProbeKit): Promise<ProbeResult> {
-    if (!draft) return { state: 'unknown', error: new Error('This post can no longer be checked: its draft was not kept') }
+    if (!draft) {
+      // Only a private draft is not kept (`persistArgs`), and a private post is one part: the document the
+      // ticket names is all of it, so it can still be proved there without the text.
+      const named = ticket.documents.filter(doc => doc.action === 'create')
+      if (named.length === 0) return { state: 'unknown', error: new Error('This post can no longer be checked: its draft was not kept') }
+      const proved = await kit.proveDocuments(named)
+      return proved.state === 'applied' ? proved : { ...proved, state: 'unknown', error: new Error('Check your profile to see whether your private post went out.') }
+    }
     const posted = postedIds(draft, ticket.documents)
     const plan = planDraft(draft, posted, false)
     if (plan.length === 0) return kit.proveDocuments(ticket.documents)

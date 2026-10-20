@@ -138,6 +138,8 @@ export interface PostCardProps {
    * panel's button is offered as an action too.
    */
   privateAction?: { label: string; run: () => void };
+  /** A private post's decrypted text carries an image (for the screen reader's "Show media"). */
+  privateMedia?: boolean;
 }
 
 export interface PostCardMenu {
@@ -424,6 +426,7 @@ export const PostCard = memo(function PostCard({
   canReply: replyable,
   privateText,
   privateAction,
+  privateMedia = false,
 }: PostCardProps) {
   const [revealed, reveal] = useSensitiveReveal(post.id);
   const { external } = useMediaUrls();
@@ -582,7 +585,7 @@ export const PostCard = memo(function PostCard({
       !quoted.deleted &&
       !quoted.encrypted &&
       quoted.media.length > 0;
-    if ((mediaGated && (post.media.length > 0 || previewImage)) || quoteMediaHidden)
+    if ((mediaGated && (post.media.length > 0 || previewImage || privateMedia)) || quoteMediaHidden)
       a11yActions.push({ name: 'showMedia', label: 'Show media', run: onRevealMedia });
     // Everything tappable inside the card, which VoiceOver can't reach on its own.
     if (!post.deleted && !post.encrypted) {

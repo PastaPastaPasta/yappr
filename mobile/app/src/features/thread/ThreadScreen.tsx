@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, View } from 'react-native';
 import { DocumentMagnifyingGlassIcon } from 'react-native-heroicons/outline';
 
+import { queryKeys } from '~/data/keys';
 import { usePostRemoved } from '~/data/optimistic';
 import { readErrorMessage } from '~/data/read-error';
 import { useEngineStatus } from '~/engine/hooks';
 import { usePrivatePost } from '~/features/private-feed/private-feed-data';
+import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { LinkText } from '~/ui/LinkText';
@@ -89,6 +91,8 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const repliesError = query.isError && !query.isFetchNextPageError ? readErrorMessage(query.error) : null;
   // The last read lost a focus already shown: keep its replies, but never offer it as live.
   const focusUnavailable = thread?.focus != null && query.error instanceof FocusUnavailableError;
+  // Replying is blocked on a private focus the viewer can't open (the docked bar says why): no invitation.
+  const replyBlocked = focus?.encrypted === true && privateFocus.data?.state !== 'open';
   const rows = useMemo(
     () =>
       buildThreadRows({
@@ -100,8 +104,10 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
         focusUnavailable,
         highlightId,
         repliesError,
+        replyBlocked,
       }),
     [
+      replyBlocked,
       thread,
       seed,
       needsParent,
@@ -119,7 +125,9 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const refetchParent = parentQuery.refetch;
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    Promise.all([refetch(), needsParent ? refetchParent() : null])
+    // The thread's private posts are read again too: a request approved since then opens them.
+    const privateReads = queryClient.invalidateQueries({ queryKey: queryKeys.privateFeed.posts });
+    Promise.all([refetch(), needsParent ? refetchParent() : null, privateReads])
       .then(([result]) => {
         // A failed refresh keeps what is shown; say so rather than fail silently.
         if (result.isError && result.data) toast.error(readErrorMessage(result.error));

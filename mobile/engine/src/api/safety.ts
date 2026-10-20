@@ -5,6 +5,9 @@ import { isReportGoneError, isReportResolvedError, reportCanBeWithdrawn, reportI
 import { blockService, type BlockWriteResult } from '@/lib/services/block-service'
 import { moderationService } from '@/lib/services/moderation-service'
 import { reportService } from '@/lib/services/report-service'
+import type { Post } from '@/lib/types'
+import { privatePostOf } from '../dto/private-content'
+import { readPostOrReply } from './posts'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, badRequest, loadUserSummaries, notSupported, readFailure, requireViewer } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
@@ -91,6 +94,27 @@ async function moderatedTypeOpen(docType: string): Promise<boolean> {
  * `components/moderation/report-post-modal.tsx`). The NSFW and media gates
  * run in RN; following other users' block lists is post-1.0.
  */
+/**
+ * The moderators' box for a report of a private post or reply (web
+ * `ReportPostModal.sealForModerators`): the content's key, sealed to the
+ * moderation team, so they can read what was reported. None for a public
+ * target, or when no key or no moderator can take one (filed without, as
+ * web does). A failed read of the target or the team throws before anything
+ * is sent: a report its moderators can't open is not filed by mistake.
+ */
+async function reportBoxFor(reporterId: string, targetId: string): Promise<Uint8Array | undefined> {
+  const known = privatePostOf(targetId)
+  const post = known ?? (await readPostOrReply(targetId).catch((error: unknown) => {
+    throw new NotSentError(error)
+  }))
+  if (post?.encryptedContent === undefined) return undefined
+  const { buildReportBox } = await import('@/lib/services/report-box-service')
+  const outcome = await buildReportBox(reporterId, post as Post).catch((error: unknown) => {
+    throw new NotSentError(error)
+  })
+  return outcome.kind === 'sealed' ? outcome.box : undefined
+}
+
 export function createSafetyModule(tickets: TicketStore) {
   /** The viewer's own block on the ticket's account; `getBlockProvenance` rejects when that list cannot be read. */
   // The block document itself: lib's block status answers from a cache its own write fills, even unconfirmed.
@@ -131,8 +155,10 @@ export function createSafetyModule(tickets: TicketStore) {
   tickets.register<ReportArgs>('report', {
     persistArgs: true,
     async run({ target, reason, note }, ctx) {
-      const result = await reportService.fileReport(signer(ctx), {
-        kind: target.kind, targetId: target.id, targetOwnerId: target.ownerId, reason, note,
+      const reporter = signer(ctx)
+      const box = await reportBoxFor(reporter, target.id)
+      const result = await reportService.fileReport(reporter, {
+        kind: target.kind, targetId: target.id, targetOwnerId: target.ownerId, reason, note, ...(box ? { box } : {}),
       })
       return fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'report'))
     },

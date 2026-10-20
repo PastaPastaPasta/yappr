@@ -382,7 +382,8 @@ export const privateFeedReads = {
  * own error, classified as any write's (a timeout may have landed).
  */
 function fromFeedResult(result: PrivateFeedResult): WriteResult {
-  if (result.success) return { state: 'confirmed' }
+  // Sent but not yet confirmed (a grant's create): its probe settles it.
+  if (result.success) return { state: result.confirmed === false ? 'unconfirmed' : 'confirmed' }
   switch (result.errorCode) {
     case 'UNCONFIRMED': return { state: 'unconfirmed' }
     case 'SYNC_REQUIRED': return { state: 'failed', error: noMessagingKey() }
@@ -441,6 +442,8 @@ const NO_FEED = 'This person has no private feed'
 const CLOCK_SKEW_MS = 60_000
 
 interface OwnerArgs { ownerId: string }
+/** `replacing`: the request standing when it was asked (Ask again replaces it), which never proves the new one landed. */
+interface RequestArgs extends OwnerArgs { replacing?: string }
 interface MemberArgs { memberId: string }
 interface RenewArgs { bringHistory: boolean; fromFeed: number }
 
@@ -457,7 +460,7 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
     probe: relationProbe(async ({ viewer }) => (await fetchCurrentFeed(viewer, { fresh: true })) !== null, true),
   })
 
-  register<OwnerArgs>('privateFeed.request', {
+  register<RequestArgs>('privateFeed.request', {
     async run({ ownerId }, ctx) {
       const me = signer(ctx)
       // The requester's messaging public key: from the key on this device, else the identity's (web's usePrivateFeedRequest).
@@ -472,14 +475,15 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
         // incidental to the request
       }
       const result = await privateFeedFollowerService.requestAccess(ownerId, me, publicKey)
-      if (result.success) return { state: 'confirmed' }
+      if (result.success) return { state: result.confirmed === false ? 'unconfirmed' : 'confirmed' }
       // Refused before anything was sent: the owner has no private feed (any more).
       if (result.error === NO_FEED) return { state: 'failed', error: new RpcError("This person doesn't have a private feed.", 'PRIVATE_FEED') }
       return { state: 'failed', error: new Error(result.error) }
     },
-    probe: relationProbe<OwnerArgs>(async ({ viewer, ticket }) => {
+    probe: relationProbe<RequestArgs>(async ({ viewer, ticket, args }) => {
       const request = await fetchFollowRequest(ticketIdentity(ticket), viewer)
-      return request !== null && request.$createdAt >= ticket.createdAt.getTime() - CLOCK_SKEW_MS
+      if (request === null || request.$id === args?.replacing) return false
+      return request.$createdAt >= ticket.createdAt.getTime() - CLOCK_SKEW_MS
     }, true),
   })
 
@@ -589,7 +593,13 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       return submitAbout<Record<string, never>>('privateFeed.enable', {}, viewer)
     },
     /** Ask `ownerId` for access to their private feed (following them first, as web does); also how a removed follower asks again. */
-    request: async (ownerId: string): Promise<WriteTicket> => submitAbout<OwnerArgs>('privateFeed.request', { ownerId: otherAccount(ownerId, 'ownerId') }, ownerId),
+    request: async (ownerId: string): Promise<WriteTicket> => {
+      const owner = otherAccount(ownerId, 'ownerId')
+      const viewer = requireViewer('Requesting access')
+      // Best effort: without it, a recent request still proves this one (as before).
+      const standing = await fetchFollowRequest(owner, viewer).catch(() => null)
+      return submitAbout<RequestArgs>('privateFeed.request', { ownerId: owner, ...(standing ? { replacing: standing.$id } : {}) }, ownerId)
+    },
     /** Withdraw a pending request, or leave a private feed (PF8). */
     leave: async (ownerId: string): Promise<WriteTicket> => submitAbout<OwnerArgs>('privateFeed.leave', { ownerId: otherAccount(ownerId, 'ownerId') }, ownerId),
     /** Approve `memberId`'s request: a grant in the viewer's current feed. */

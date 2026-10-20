@@ -28,6 +28,8 @@ const chain = vi.hoisted(() => ({
   follows: new Set<string>(),
   /** The next delete fails as a timeout would (lib returns it as an unclassified failure). */
   failNextDelete: false,
+  /** Creates of these types land, but report themselves unconfirmed (a confirmation wait that timed out). */
+  unconfirmedTypes: new Set<string>(),
 }))
 
 type Doc = Record<string, unknown> & { $id: string; $ownerId: string; $type: string; $createdAt: number }
@@ -77,7 +79,7 @@ async function createDocument(_contract: string, type: string, ownerId: string, 
     if (!asked) return refuse('referenced deletable document followRequest not found for path recipientId (code 40120)')
   }
   chain.docs.push(doc)
-  return { success: true, document: doc, transactionHash: doc.$id }
+  return { success: true, document: doc, transactionHash: doc.$id, ...(chain.unconfirmedTypes.has(type) ? { confirmed: false } : {}) }
 }
 
 async function deleteDocument(_contract: string, type: string, id: string, ownerId: string) {
@@ -374,6 +376,39 @@ describe('privateFeed: locked states and refusals', () => {
     } finally {
       getPostById.mockRestore()
     }
+  })
+
+  it('leaves a request and an approval that landed unconfirmed to their checks, which find them', async () => {
+    chain.unconfirmedTypes = new Set(['followRequest', 'privateFeedGrant'])
+    // Real times: the request's check compares its $createdAt with the ticket's.
+    chain.clock = Math.max(chain.clock, Date.now())
+    try {
+      as(G)
+      const request = await settle(writes.request(O))
+      expect(request).toMatchObject({ state: 'unconfirmed' })
+      const checked = await tickets.check(request.id)
+      expect(checked).toMatchObject({ state: 'confirmed' })
+      as(O)
+      const approval = await settle(writes.approve(G))
+      expect(approval.state).toBe('unconfirmed')
+      expect(await tickets.check(approval.id)).toMatchObject({ state: 'confirmed' })
+    } finally {
+      chain.unconfirmedTypes = new Set()
+    }
+  })
+
+  it('never confirms Ask again by the request it was replacing', async () => {
+    // Real times: the request's check compares its $createdAt with the ticket's.
+    chain.clock = Math.max(chain.clock, Date.now())
+    as(G)
+    expect((await settle(writes.request(O))).state).toBe('confirmed')
+    // Asked again at once: lib deletes the standing request first, and that delete times out.
+    chain.failNextDelete = true
+    const again = await settle(writes.request(O))
+    expect(again.state).not.toBe('confirmed')
+    expect((await tickets.check(again.id)).state).not.toBe('confirmed')
+    // Tidy: withdraw what still stands, for the tests after this one.
+    await settle(writes.leave(O))
   })
 
   it('never confirms a re-approval by the grant it was replacing', async () => {

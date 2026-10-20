@@ -1,5 +1,5 @@
 import type { PostDTO } from '@engine/api';
-import { router } from 'expo-router';
+import { openOnItsTab } from '~/navigation/tab-routes';
 import { Pressable, TextInput, View } from 'react-native';
 import { ChevronDownIcon, GlobeAltIcon, LockClosedIcon } from 'react-native-heroicons/outline';
 
@@ -60,7 +60,7 @@ export function VisibilityChip({
           }
           showActionSheet({
             title: `${copy.compose.setUpTitle}. ${copy.compose.setUpBody}`,
-            actions: [{ label: copy.compose.setUp, onPress: () => router.push('/settings/private-feed') }],
+            actions: [{ label: copy.compose.setUp, onPress: () => openOnItsTab('/settings/private-feed') }],
           });
         },
       })),

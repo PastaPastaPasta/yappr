@@ -122,6 +122,8 @@ export const queryKeys = {
 
   /** Private feeds. Never persisted: decrypted text must not reach MMKV. */
   privateFeed: {
+    /** Every private-feed read: a prefix of the keys below. */
+    all: [...root, 'privateFeed'] as const,
     /** `privateFeed.read`: one private post or reply, decrypted or why not. */
     post: (id: string) => [...root, 'privateFeed', 'post', id] as const,
     /** Every `post` read: a prefix of the key above. */

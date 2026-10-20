@@ -190,6 +190,19 @@ describe('a private post in a feed', () => {
     expect(teaserOf(fixturePost({ content: ' a peek ' }))).toBe('a peek');
     expect(splitImage('look\n\nhttps://img.example/a.png')).toEqual({ text: 'look', image: 'https://img.example/a.png' });
     expect(splitImage('no image here')).toEqual({ text: 'no image here', image: null });
+    expect(splitImage('pin\n\nipfs://bafy123')).toEqual({ text: 'pin', image: 'ipfs://bafy123' });
+    // A link someone wrote at the end stays theirs: text, not a broken image.
+    const article = 'Read this\n\nhttps://example.com/article';
+    expect(splitImage(article)).toEqual({ text: article, image: null });
+  });
+
+  it("keeps a decrypted image behind the post's media gate, like any other", async () => {
+    fakeEngine.method('privateFeed.read').mockResolvedValue({
+      state: 'open', text: 'look\n\nhttps://img.example/a.png', own: false, followerCount: null, feedOwnerId: OWNER,
+    });
+    renderIn(<PostItem post={post} mediaGated onRevealMedia={() => undefined} />);
+    await screen.findByTestId('private-post-open');
+    expect(screen.queryByTestId('media-gate')).toBeTruthy();
   });
 });
 

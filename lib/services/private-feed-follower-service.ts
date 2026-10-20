@@ -32,7 +32,8 @@ import { applyRekey, decodeRekeyPackets, openGrant } from '@/lib/private-feed/cr
  */
 export type AccessStatus = 'none' | 'pending' | 'approved' | 'approved-no-keys' | 'renewing' | 'revoked'
 
-type Outcome = { success: true } | { success: false; error: string }
+/** `confirmed: false`: sent, but the network has not confirmed it yet. */
+type Outcome = { success: true; confirmed?: false } | { success: false; error: string }
 
 /** A follower's keys for an owner's current feed, ready to encrypt a reply. */
 type CurrentKeys = { success: true; feed: number; keys: MemberFeedKeys } | { success: false; error: string }
@@ -63,7 +64,8 @@ class PrivateFeedFollowerService {
       const data: Record<string, unknown> = { targetId: identifierToBytes(ownerId) }
       if (publicKey) data.publicKey = publicKey
       const result = await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.FOLLOW_REQUEST, myId, data)
-      return result.success ? { success: true } : { success: false, error: result.error || 'Could not send your request' }
+      if (!result.success) return { success: false, error: result.error || 'Could not send your request' }
+      return result.confirmed === false ? { success: true, confirmed: false } : { success: true }
     } catch (error) {
       logger.error('Error requesting access:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Could not send your request' }

@@ -186,6 +186,9 @@ export function startSessionSync(): () => void {
     // A fresh sign-in stored a key that works (AUTH-14); a switch or restore brings back the old one.
     if (reason === 'signed-in' && session) clearSessionExpired(session.identityId);
     applySession(session);
+    // Renewed in the wallet (same account): the messaging key may be here now, so locked private posts and
+    // the private feed's settings are read again.
+    if (reason === 'renewed') queryClient.invalidateQueries({ queryKey: queryKeys.privateFeed.all }).catch(() => undefined);
   });
   const stopStatus = engineSupervisor.subscribeStatus(onStatus);
   onStatus();

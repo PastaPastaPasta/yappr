@@ -28,11 +28,23 @@ export function teaserOf(post: Pick<PostDTO, 'content'>): string | null {
 }
 
 /** An encrypted post's image link rides at the end of its text (lib `planPosts`): shown as the image, not the link. */
-const TRAILING_IMAGE = /\n\n((?:https|ipfs):\/\/\S+)\s*$/;
+const TRAILING_LINK = /\n\n((?:https|ipfs):\/\/\S+)\s*$/;
+/** lib/link-preview/urls.ts `IMAGE_EXTENSIONS`: an https link names an image by its path. */
+const IMAGE_PATH = /\.(jpe?g|png|gif|webp|bmp|svg|ico|avif)$/i;
+
+/** Whether a trailing link is the attached image (an IPFS link, or an image's https link), not a link someone wrote. */
+function isImageLink(url: string): boolean {
+  if (url.startsWith('ipfs://')) return true;
+  try {
+    return IMAGE_PATH.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
 
 export function splitImage(text: string): { text: string; image: string | null } {
-  const match = TRAILING_IMAGE.exec(text);
-  return match ? { text: text.slice(0, match.index).trimEnd(), image: match[1] } : { text, image: null };
+  const match = TRAILING_LINK.exec(text);
+  return match && isImageLink(match[1]) ? { text: text.slice(0, match.index).trimEnd(), image: match[1] } : { text, image: null };
 }
 
 /**
@@ -120,7 +132,15 @@ function RequestControl({ ownerId, reason }: { ownerId: string; reason: PrivateL
  */
 export function usePrivateBody(
   post: PostDTO,
-  options: { variant?: 'feed' | 'detail'; tagMaxLength?: number; handlers?: RichTextHandlers; enabled?: boolean } = {},
+  options: {
+    variant?: 'feed' | 'detail';
+    tagMaxLength?: number;
+    handlers?: RichTextHandlers;
+    enabled?: boolean;
+    /** The post's media gate (`usePostSafety`): a decrypted image waits for it like any other. */
+    mediaGated?: boolean;
+    onRevealMedia?: () => void;
+  } = {},
 ): {
   privateBody?: ReactNode;
   canReply?: boolean;
@@ -128,6 +148,8 @@ export function usePrivateBody(
   privateAction?: { label: string; run: () => void };
   /** Known to be locked for the viewer (not their own post): a list may leave it out. */
   unreadable?: boolean;
+  /** The decrypted post has an image (behind the media gate, if any). */
+  privateMedia?: boolean;
 } {
   const read = usePrivatePost(post, options.enabled);
   const viewerId = useViewerId();
@@ -140,6 +162,7 @@ export function usePrivateBody(
     privateAction: privateActionOf(state, read.isError, retry),
     // Only what the viewer can't read for want of access: never their own post or reply, a failed read,
     // nor a feed they're approved for but read elsewhere (no messaging key here).
+    privateMedia: state?.state === 'open' && splitImage(state.text).image !== null,
     unreadable:
       state?.state === 'locked' && !state.own && post.author.id !== viewerId && HIDEABLE.has(state.reason),
     privateBody: (
@@ -150,6 +173,8 @@ export function usePrivateBody(
         onRetry={retry}
         variant={options.variant}
         tagMaxLength={options.tagMaxLength}
+        mediaGated={options.mediaGated ?? false}
+        onRevealMedia={options.onRevealMedia}
         {...options.handlers}
       />
     ),
@@ -207,6 +232,8 @@ export interface PrivatePostBodyProps extends RichTextHandlers {
   onRetry: () => void;
   variant?: 'feed' | 'detail';
   tagMaxLength?: number;
+  mediaGated?: boolean;
+  onRevealMedia?: () => void;
 }
 
 /**
@@ -238,11 +265,13 @@ function PrivatePostSkeleton() {
 }
 
 /** The decrypted post in its private card; for the owner, who it reaches. */
-function OpenBody({ state, detail, tagMaxLength, handlers }: {
+function OpenBody({ state, detail, tagMaxLength, handlers, mediaGated, onRevealMedia }: {
   state: Extract<PrivatePostDTO, { state: 'open' }>;
   detail: boolean;
   tagMaxLength?: number;
   handlers: RichTextHandlers;
+  mediaGated: boolean;
+  onRevealMedia?: () => void;
 }) {
   const c = useColors();
   const { text, image } = splitImage(state.text);
@@ -258,7 +287,7 @@ function OpenBody({ state, detail, tagMaxLength, handlers }: {
         {text ? (
           <RichText text={text} variant={detail ? 'bodyLarge' : 'body'} tagMaxLength={tagMaxLength} {...handlers} testID="private-post-text" />
         ) : null}
-        {image ? <MediaGrid media={[{ type: 'image', url: image }]} gated={false} /> : null}
+        {image ? <MediaGrid media={[{ type: 'image', url: image }]} gated={mediaGated} onReveal={onRevealMedia} /> : null}
       </View>
       {state.own && state.followerCount !== null ? (
         <View className="flex-row items-center gap-1.5 border-t border-purple-200 px-3 py-1.5 dark:border-purple-900">
@@ -299,7 +328,17 @@ function LockedBody({ state, onRetry }: { state: Extract<PrivatePostDTO, { state
  * the viewer can do about it: request access, cancel a pending request,
  * get the messaging key onto this phone, or try again.
  */
-export function PrivatePostBody({ post, state, failed, onRetry, variant = 'feed', tagMaxLength, ...handlers }: PrivatePostBodyProps) {
+export function PrivatePostBody({
+  post,
+  state,
+  failed,
+  onRetry,
+  variant = 'feed',
+  tagMaxLength,
+  mediaGated = false,
+  onRevealMedia,
+  ...handlers
+}: PrivatePostBodyProps) {
   const teaser = teaserOf(post);
   const detail = variant === 'detail';
   let body: ReactNode;
@@ -316,7 +355,16 @@ export function PrivatePostBody({ post, state, failed, onRetry, variant = 'feed'
     body = <PrivatePostSkeleton />;
   } else if (state.state === 'open') {
     testID = 'private-post-open';
-    body = <OpenBody state={state} detail={detail} tagMaxLength={tagMaxLength} handlers={handlers} />;
+    body = (
+      <OpenBody
+        state={state}
+        detail={detail}
+        tagMaxLength={tagMaxLength}
+        handlers={handlers}
+        mediaGated={mediaGated}
+        onRevealMedia={onRevealMedia}
+      />
+    );
   } else {
     testID = 'private-post-locked';
     body = <LockedBody state={state} onRetry={onRetry} />;

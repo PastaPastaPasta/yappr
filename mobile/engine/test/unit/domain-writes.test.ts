@@ -57,6 +57,7 @@ const m = vi.hoisted(() => ({
   getEncryptionSource: vi.fn(),
   prepareOwnerEncryption: vi.fn(async () => ({ success: true, data: {} })),
   prepareInheritedEncryption: vi.fn(async () => ({ success: true, data: {} })),
+  buildReportBox: vi.fn(async (): Promise<{ kind: string; box?: Uint8Array }> => ({ kind: 'not-needed' })),
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
   notificationService: { getInitialNotifications: vi.fn(), pollNewNotifications: vi.fn() },
 }))
@@ -101,6 +102,7 @@ vi.mock('@/lib/services/private-feed-service', () => ({
   prepareOwnerEncryption: m.prepareOwnerEncryption,
   prepareInheritedEncryption: m.prepareInheritedEncryption,
 }))
+vi.mock('@/lib/services/report-box-service', () => ({ buildReportBox: m.buildReportBox }))
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
 vi.mock('@/lib/services/moderation-election-service', () => ({ moderationElectionService: m.election }))
@@ -509,6 +511,21 @@ describe('graph and safety writes', () => {
     await expect(safety.report(TARGET, 0)).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
   })
 
+  it("reports a private post with the moderators' box, and sends nothing when the team can't be read", async () => {
+    const { outcome, safety } = engine()
+    m.postService.getPostById.mockResolvedValue(post(TARGET.id, { encryptedContent: new Uint8Array(4), nonce: new Uint8Array(24), keyGeneration: 1, feed: 1 }))
+    const box = new Uint8Array([7, 7, 7])
+    m.buildReportBox.mockResolvedValueOnce({ kind: 'sealed', box })
+    m.reportService.fileReport.mockResolvedValue({ success: true, transactionHash: id('Report'), confirmed: true })
+    await outcome(safety.report(TARGET, 0))
+    expect(m.reportService.fileReport).toHaveBeenLastCalledWith(VIEWER, expect.objectContaining({ targetId: TARGET.id, box }))
+
+    m.reportService.fileReport.mockClear()
+    m.buildReportBox.mockRejectedValueOnce(new Error('fetch failed'))
+    expect(await outcome(safety.report(TARGET, 0))).toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
+    expect(m.reportService.fileReport).not.toHaveBeenCalled()
+  })
+
   it('withdraws the viewer\'s report by deleting it, says when it is already gone, and checks it by its absence', async () => {
     const { tickets, outcome, safety } = engine()
     const REPORT = id('Report')
@@ -834,6 +851,29 @@ describe('posts.publish and posts.delete', () => {
       return { ticket: restored, tickets: after, advance: (ms: number) => { clock += ms } }
     }
     const own = (postId: string, content: string, createdAt: number, extra: Partial<Post> = {}) => post(postId, { content, createdAt: new Date(createdAt), ...extra })
+
+    it('confirms a private post that landed unconfirmed by its recorded id after a restart, without its text', async () => {
+      m.topology.privateFeeds = true
+      const items = new Map<string, string>()
+      const kv = { getItem: (key: string) => items.get(key) ?? null, setItem: (key: string, value: string) => { items.set(key, value) } }
+      const options = { storage: kv, emit, currentIdentity: () => m.viewer, documentExists: m.documentExists, absenceRecheckMs: 0 }
+      const before = createTicketStore(options)
+      const landed = id('PrivateLanded')
+      m.postService.createPost.mockImplementation(async () => {
+        m.unconfirmed.add(landed)
+        return post(landed)
+      })
+      const ticket = await createPostWrites(before, emit).publish({ parts: [{ text: 'just for followers' }], visibility: 'private' })
+      const sent = await settled(before, ticket.id)
+      expect(sent).toMatchObject({ state: 'unconfirmed', documents: [{ id: landed, confirmed: false }] })
+      // Nothing of the private text was kept for the next engine.
+      expect([...items.values()].join('')).not.toContain('just for followers')
+
+      const after = createTicketStore(options)
+      createPostWrites(after, emit)
+      m.documentExists.mockResolvedValue(true)
+      expect(await after.check(ticket.id)).toMatchObject({ state: 'confirmed', documents: [{ id: landed, confirmed: true }] })
+    })
 
     it('is failed and retryable when the restart came before it sent anything', async () => {
       const { ticket, tickets } = await cutShort({ parts: [{ text: 'hi' }], replyTo: TARGET }, 'read')
