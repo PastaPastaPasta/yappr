@@ -32,7 +32,7 @@ export function PageShell({ children, mainClassName, hideRightSidebar = false, r
           {children}
         </main>
       </div>
-      {!hideRightSidebar && (rightSidebar ? <RightRail>{rightSidebar}</RightRail> : <RightSidebar />)}
+      {!hideRightSidebar && (rightSidebar !== undefined ? <RightRail>{rightSidebar}</RightRail> : <RightSidebar />)}
     </div>
   )
 }

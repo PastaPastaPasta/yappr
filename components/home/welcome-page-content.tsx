@@ -41,12 +41,10 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
     if (redirectAuthenticated && user) router.push('/feed')
   }, [redirectAuthenticated, user, router])
 
-  const topContributors = (
-    <TopUsersSection users={topUsers.users} loading={topUsers.loading} error={topUsers.error} />
-  )
-
   return (
-    <PageShell rightSidebar={topContributors}>
+    <PageShell
+      rightSidebar={<TopUsersSection users={topUsers.users} loading={topUsers.loading} error={topUsers.error} />}
+    >
       <section className="px-4 pb-8 pt-10 text-center md:pb-10 md:pt-14">
         <h1 className="mb-4 text-3xl font-bold md:text-5xl">
           Welcome to <Wordmark />
@@ -101,7 +99,12 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
       </div>
 
       {/* The right rail carries these from `lg` up. */}
-      <div className="px-4 pb-12 lg:hidden">{topContributors}</div>
+      <TopUsersSection
+        users={topUsers.users}
+        loading={topUsers.loading}
+        error={topUsers.error}
+        className="mx-4 mb-12 lg:hidden"
+      />
 
       {/* From tablet width up the sidebar carries these links. */}
       <footer className="px-4 pb-8 md:hidden">
