@@ -25,15 +25,19 @@ export const accessKey = (ownerId: string) => `privateFeed:${ownerId}`;
 export const memberKey = (memberId: string) => `privateFeed.member:${memberId}`;
 export const OWNER_KEY = 'privateFeed.owner';
 
-/** A private post or reply for the viewer (`privateFeed.read`); not read for a post that isn't private. */
-export function usePrivatePost(post: Pick<PostDTO, 'id' | 'encrypted'>) {
+/**
+ * A private post or reply for the viewer (`privateFeed.read`); not read for
+ * a post that isn't private, nor while `enabled` is false (an optimistic
+ * card, which is not on the chain yet).
+ */
+export function usePrivatePost(post: Pick<PostDTO, 'id' | 'encrypted'>, enabled = true) {
   const viewerId = useViewerId();
   const id = post.id;
   return useEngineQuery(
     // The viewer is in the key: an account switch never shows another account's decryption.
     [...queryKeys.privateFeed.post(id), viewerId ?? ''],
     (api) => api.privateFeed.read(id),
-    { enabled: post.encrypted, staleTime: STALE_MS },
+    { enabled: enabled && post.encrypted, staleTime: STALE_MS },
   );
 }
 
@@ -78,6 +82,20 @@ function refreshFeedOf(ownerId: string): void {
 function refreshOwnFeed(): void {
   refresh(queryKeys.privateFeed.owner);
   refresh(queryKeys.privateFeed.posts);
+  // Compose reads the viewer's own feed through `access` (whether there is one to post into).
+  refresh(queryKeys.privateFeed.accessAll);
+}
+
+/**
+ * Whether a reply to the private post `id` is private (its thread is), for
+ * compose; not read for a public target. A failed read stays an error, so
+ * compose never guesses.
+ */
+export function useReplySource(id: string, enabled: boolean) {
+  return useEngineQuery(queryKeys.privateFeed.replySource(id), (api) => api.privateFeed.replySource(id), {
+    enabled,
+    staleTime: STALE_MS,
+  });
 }
 
 const aboutIdentity = (ticket: WriteTicket) => (ticket.target as { identityId?: string } | null)?.identityId;

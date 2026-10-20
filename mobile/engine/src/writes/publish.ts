@@ -4,6 +4,7 @@ import { mediaCarriesHashes, privateFeedClientSupported, threadRootIdOf } from '
 import { extractErrorMessage } from '@/lib/error-utils'
 import { imageDigestForUrl } from '@/lib/media/image-digest'
 import type { MediaItemInput } from '@/lib/media/media-fields'
+import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { getEncryptionSource, type EncryptionSource } from '@/lib/services/reply-service'
 import type { PostVisibility } from '@/lib/store'
 import type { Post } from '@/lib/types'
@@ -13,7 +14,7 @@ import { textBytes } from '@/lib/text-limits'
 import { isKnownPrivate } from '../dto/private-content'
 import { RpcError } from '../protocol/envelope'
 import { assertId, assertMediaUrl, assertTarget, badRequest, characters, notSent, settleTarget, signer, socialDoc } from './handler-kit'
-import { ABSENCE_AFTER_MS, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
+import { ABSENCE_AFTER_MS, NotSentError, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
 import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types'
 
 /**
@@ -58,6 +59,16 @@ export interface DraftDTO {
   visibility?: PostVisibility
   /** `private-with-teaser`: the public line, up to {@link TEASER_LIMIT} characters. */
   teaser?: string | null
+  /**
+   * `replyTo` is a private post or reply: the reply's text is never kept
+   * with its ticket on disk, whether or not its thread turns out private.
+   */
+  replyToPrivate?: boolean
+  /**
+   * The composer showed this reply as private (`privateFeed.replySource`):
+   * if its thread is not private after all, nothing is posted.
+   */
+  expectInherited?: boolean
 }
 
 const VISIBILITIES: readonly PostVisibility[] = ['public', 'private', 'private-with-teaser']
@@ -73,7 +84,8 @@ const privateDrafts = new WeakSet<DraftDTO>()
 
 /** Whether a draft's text is private, as far as is known now: a private post, or a reply to a private post. */
 export function draftIsPrivate(draft: DraftDTO): boolean {
-  return isPrivateVisibility(draft) || privateDrafts.has(draft) || isKnownPrivate(draft.replyTo?.id)
+  return isPrivateVisibility(draft) || draft.replyToPrivate === true || draft.expectInherited === true ||
+    privateDrafts.has(draft) || isKnownPrivate(draft.replyTo?.id)
 }
 
 /** Check a draft before a ticket exists: a bad one rejects with `BAD_REQUEST`. */
@@ -87,6 +99,7 @@ export function validateDraft(draft: DraftDTO): void {
   if (draft.replyTo && draft.quote) throw badRequest('A post replies or quotes, not both')
   if ((draft.replyTo || draft.quote) && parts.length > 1) throw badRequest('A reply or a quote cannot be a thread')
   if (draft.visibility !== undefined && !VISIBILITIES.includes(draft.visibility)) throw badRequest(`visibility is one of ${VISIBILITIES.join(', ')}`)
+  if (draft.expectInherited && !draft.replyTo) throw badRequest('expectInherited needs replyTo')
   if (isPrivateVisibility(draft)) {
     if (!privateFeedClientSupported()) throw new RpcError('Private posts are not available on this network', 'NOT_SUPPORTED')
     if (parts.filter(part => hasVisibleContent(part.text)).length > 1) throw badRequest('A private post cannot be a thread')
@@ -324,6 +337,24 @@ function createdDocuments(outcome: PublishOutcome, plan: PostToCreate[], replyin
 }
 
 /** `publishThread`'s refusal to reference an unconfirmed parent, as the engine code for it. */
+/**
+ * Run lib's encryption preparation for the first part (`prepareOwnerEncryption`
+ * or `prepareInheritedEncryption`, what `createPost` / `createReply` run): it
+ * syncs with the chain and encrypts locally, writing nothing. Throws its
+ * refusal as `PRIVATE_FEED` (or `NO_MESSAGING_KEY`), before anything is sent.
+ */
+async function preflightEncryption(authorId: string, part: PostToCreate, inherited: EncryptionSource | null): Promise<void> {
+  const { prepareInheritedEncryption, prepareOwnerEncryption } = await import('@/lib/services/private-feed-service')
+  const key = getEncryptionKeyBytes(authorId) ?? undefined
+  const prepared = inherited
+    ? await prepareInheritedEncryption(part.content, { ownerId: inherited.ownerId }, authorId, inherited.ownerId === authorId ? key : undefined)
+    : await prepareOwnerEncryption(authorId, part.content, 'post', part.visibility === 'private-with-teaser' ? part.teaser : undefined, key)
+  if (prepared.success) return
+  if (prepared.error.startsWith('SYNC_REQUIRED:')) throw new RpcError('Your messaging key is needed to post privately', 'NO_MESSAGING_KEY')
+  // A replier's own refusals are lib's lower-case diagnostics; the owner's are already sentences.
+  throw new RpcError(inherited && inherited.ownerId !== authorId ? "You can't reply privately in this thread right now." : prepared.error, 'PRIVATE_FEED')
+}
+
 function failureOf(error: Error | null): unknown {
   const message = error?.message ?? 'Post creation failed'
   return message.startsWith('The post this one references has not confirmed yet')
@@ -351,6 +382,10 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>,
     // Everything before publishThread is reads and local work: a failure there sent nothing.
     const [replyingTo, quotingPost] = await Promise.all([loadTarget(draft.replyTo, load, 'reply'), loadTarget(draft.quote, load, 'quote')]).catch(notSent)
     const inherited = await inheritedEncryptionOf(replyingTo).catch(notSent)
+    // The composer said this reply would be private: a thread that turns out public is not posted in the clear.
+    if (draft.expectInherited && inherited === null) {
+      throw new NotSentError(new RpcError('This reply would not be private, so nothing was posted. Open the post again.', 'PRIVATE_FEED'))
+    }
     const isPrivate = isPrivateVisibility(draft) && inherited === null
     const encrypted = isPrivate || inherited !== null
     // A private visibility already marks the draft private (`draftIsPrivate`); an inherited one is found only here.
@@ -358,6 +393,10 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>,
     const plan = planDraft({ ...draft, mediaUrl }, posted, encrypted)
     // An encrypted post carries its image link inside the encrypted text, never as a media field.
     const media = encrypted ? [] : await mediaFields(mediaUrl).catch(notSent)
+    // lib refuses to encrypt inside its create call (a follower move under way, a key change, a removed
+    // replier) with an error that reads as "may have landed". Its own preparation, reads and local
+    // work only, answers first, so such a refusal is a refusal.
+    if (encrypted && plan[0]) await preflightEncryption(authorId, plan[0], inherited).catch(notSent)
 
     const before = posted.filter(Boolean).length
     let stage: WriteStage | null = null

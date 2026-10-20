@@ -55,6 +55,8 @@ const m = vi.hoisted(() => ({
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   settleReplaces: vi.fn(async () => 0),
   getEncryptionSource: vi.fn(),
+  prepareOwnerEncryption: vi.fn(async () => ({ success: true, data: {} })),
+  prepareInheritedEncryption: vi.fn(async () => ({ success: true, data: {} })),
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
   notificationService: { getInitialNotifications: vi.fn(), pollNewNotifications: vi.fn() },
 }))
@@ -95,6 +97,10 @@ vi.mock('@/lib/services/repost-service', () => ({ repostService: m.repostService
 vi.mock('@/lib/services/post-service', async (load) => ({ ...await load<object>(), postService: m.postService }))
 vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>(), replyService: m.replyService, getEncryptionSource: m.getEncryptionSource }))
 vi.mock('@/lib/services/follow-service', () => ({ followService: m.followService }))
+vi.mock('@/lib/services/private-feed-service', () => ({
+  prepareOwnerEncryption: m.prepareOwnerEncryption,
+  prepareInheritedEncryption: m.prepareInheritedEncryption,
+}))
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
 vi.mock('@/lib/services/moderation-election-service', () => ({ moderationElectionService: m.election }))
@@ -1013,6 +1019,27 @@ describe('posts.publish and posts.delete', () => {
 
     // A private post is never quoted.
     expect(await outcome(posts.publish({ parts: [{ text: 'quoting' }], quote: TARGET }))).toMatchObject({ state: 'failed', error: { code: 'NOT_SUPPORTED' } })
+  })
+
+  it("refuses a private post lib won't encrypt before anything is sent, and a reply shown as private whose thread is public", async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.topology.privateFeeds = true
+    const moving = 'Your followers are being moved to your renewed private feed. Try again when the move finishes.'
+    m.prepareOwnerEncryption.mockResolvedValueOnce({ success: false, error: moving } as never)
+    expect(await outcome(posts.publish({ parts: [{ text: 'secret' }], visibility: 'private' })))
+      .toMatchObject({ state: 'failed', error: { code: 'PRIVATE_FEED', outcome: 'local', userMessage: moving } })
+    m.prepareOwnerEncryption.mockResolvedValueOnce({ success: false, error: 'SYNC_REQUIRED:Enter your encryption key.' } as never)
+    expect(await outcome(posts.publish({ parts: [{ text: 'secret' }], visibility: 'private' })))
+      .toMatchObject({ state: 'failed', error: { code: 'NO_MESSAGING_KEY' } })
+    expect(m.postService.createPost).not.toHaveBeenCalled()
+
+    // The composer showed it as private, but its thread is public now: nothing goes out in the clear.
+    m.postService.getPostById.mockResolvedValue(post(TARGET.id, { encryptedContent: new Uint8Array(4), nonce: new Uint8Array(24), keyGeneration: 1, feed: 1 }))
+    m.getEncryptionSource.mockResolvedValue(null)
+    expect(await outcome(posts.publish({ parts: [{ text: 'thought private' }], replyTo: TARGET, expectInherited: true })))
+      .toMatchObject({ state: 'failed', error: { code: 'PRIVATE_FEED', outcome: 'local' } })
+    expect(m.replyService.createReply).not.toHaveBeenCalled()
   })
 
   it('replies to a loaded target, refuses a private one where the network has no private feeds, and carries v10 media hashes', async () => {

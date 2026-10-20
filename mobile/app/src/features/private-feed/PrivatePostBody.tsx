@@ -119,9 +119,9 @@ function RequestControl({ ownerId, reason }: { ownerId: string; reason: PrivateL
  */
 export function usePrivateBody(
   post: PostDTO,
-  options: { variant?: 'feed' | 'detail'; tagMaxLength?: number; handlers?: RichTextHandlers } = {},
+  options: { variant?: 'feed' | 'detail'; tagMaxLength?: number; handlers?: RichTextHandlers; enabled?: boolean } = {},
 ): { privateBody?: ReactNode; canReply?: boolean; privateText?: string } {
-  const read = usePrivatePost(post);
+  const read = usePrivatePost(post, options.enabled);
   if (!post.encrypted) return {};
   const state = read.data;
   return {

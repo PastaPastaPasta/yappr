@@ -14,11 +14,12 @@ import { canBringHistory, estimateRenewal, renewPrivateFeed, runMove, adoptUnfin
 import { loadMove, moveProgress } from '@/lib/services/private-feed-move-job'
 import { decryptPostOrReply, privateContentOf } from '@/lib/services/private-feed-reader'
 import {
-  answeredThrough, fetchCurrentFeed, fetchFollowRequest, fetchGrant, fetchGrantsTo, type FollowRequestDocument,
+  answeredThrough, fetchCurrentFeed, fetchFeeds, fetchFollowRequest, fetchGrant, fetchGrantsTo, mainFeeds, type FollowRequestDocument,
 } from '@/lib/services/private-feed-reads'
+import { getEncryptionSource } from '@/lib/services/reply-service'
 import { privateFeedService, type PrivateFeedResult } from '@/lib/services/private-feed-service'
 import { loadUserSummaries, readFailure, requireViewer, viewerId } from '../dto/hydrate'
-import { privatePostOf, type PrivatePostRecord } from '../dto/private-content'
+import { privatePostOf, rememberPrivatePost, type PrivatePostRecord } from '../dto/private-content'
 import { RpcError } from '../protocol/envelope'
 import { assertId, badRequest, notSent, relationProbe, signer, ticketIdentity } from '../writes/handler-kit'
 import { NotSentError, type TicketStore, type WriteHandler, type WriteResult, type WriteRunContext } from '../writes/tickets'
@@ -171,7 +172,12 @@ async function read<T>(load: () => Promise<T>): Promise<T> {
 
 /** A private post or reply by id: the engine's copy of what it handed the host, else read again. */
 async function privatePost(id: string): Promise<PrivatePostRecord | null> {
-  return privatePostOf(id) ?? readPostOrReply(id)
+  const known = privatePostOf(id)
+  if (known) return known
+  const post = await readPostOrReply(id)
+  // Remembered, so a reply to it is known to be private (`draftIsPrivate`).
+  if (post) rememberPrivatePost(post)
+  return post
 }
 
 /** An identity's messaging public key, from its identity keys (lib's lookup: the anchor key on App Connect builds). */
@@ -276,6 +282,22 @@ export const privateFeedReads = {
     return readPrivatePost(id, rootOwnerHint)
   },
 
+  /**
+   * Whether a reply to the private post or reply `id` is private: its thread
+   * root is private, so the reply is encrypted to the root's feed (web's
+   * `useInheritedEncryption`). A private reply under a public root is not:
+   * the replier chooses. Rejects when the thread cannot be read (the root
+   * deleted, or a failed read), so compose never guesses.
+   */
+  async replySource(id: string): Promise<{ private: boolean }> {
+    assertId(id, 'id')
+    requireSupport()
+    const post = await read(() => privatePost(id))
+    if (!post) throw new RpcError('This post could not be found', 'TARGET_GONE')
+    if (post.encryptedContent === undefined) return { private: false }
+    return { private: (await read(() => getEncryptionSource(post))) !== null }
+  },
+
   /** Where the viewer stands with `ownerId`'s private feed. Rejects when the reads fail. */
   async access(ownerId: string): Promise<PrivateAccessDTO> {
     assertId(ownerId, 'ownerId')
@@ -378,12 +400,21 @@ function requireMessagingKey(identityId: string): Uint8Array {
   return key
 }
 
-/** Whether `followerId` holds a grant in force in any of `ownerId`'s feeds. */
+/**
+ * Whether `followerId` still holds a grant in force where a removal rekeys
+ * (lib `revokeFollower`): the current feed, or the previous one while a
+ * renewal's move has not reached them. Older feeds keep their grants (a
+ * renewal without history), so they say nothing about a removal.
+ */
 async function holdsGrantInForce(ownerId: string, followerId: string): Promise<boolean> {
-  for (const grant of await fetchGrantsTo(ownerId, followerId)) {
-    if (!(await answeredThrough(grant)).revoked) return true
+  const [current, previous] = mainFeeds(await fetchFeeds(ownerId, { fresh: true }))
+  const held = await fetchGrantsTo(ownerId, followerId)
+  const inForce = async (feed: number | undefined) => {
+    const grant = feed === undefined ? undefined : held.find((candidate) => candidate.feed === feed)
+    return grant !== undefined && !(await answeredThrough(grant)).revoked
   }
-  return false
+  if (held.some((grant) => grant.feed === current?.feed)) return inForce(current?.feed)
+  return inForce(previous?.feed)
 }
 
 /** `requestAccess`'s refusal when the owner has no private feed (lib/services/private-feed-follower-service.ts). */
@@ -475,16 +506,25 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
   /** Progress through a follower move, as the ticket's progress (a long move reports each follower). */
   const moveProgressTo = (ctx: WriteRunContext) => ({ done, total }: { done: number; total: number }) => ctx.progress(done, total)
 
-  /** A renewal or a move that paused: the move job keeps its place, and Settings offers to continue it. */
+  /**
+   * A move that paused: its job keeps its place (a grant already written
+   * counts as done when it runs again), and Settings offers to continue it.
+   */
   const fromMoveResult = (result: PrivateFeedResult): WriteResult =>
     result.success || result.errorCode !== undefined ? fromFeedResult(result) : { state: 'failed', error: new RpcError(result.error ?? 'The move paused.', 'PRIVATE_FEED') }
 
   register<RenewArgs>('privateFeed.renew', {
-    async run({ bringHistory }, ctx) {
+    async run({ bringHistory, fromFeed }, ctx) {
       const owner = signer(ctx)
       const key = requireMessagingKey(owner)
       ctx.stage('broadcasting')
-      return fromMoveResult(await renewPrivateFeed(owner, key, { bringHistory }, moveProgressTo(ctx)))
+      const result = await renewPrivateFeed(owner, key, { bringHistory }, moveProgressTo(ctx))
+      if (result.success) return { state: 'confirmed' }
+      // The new feed is there: the renewal landed, and only the move after it paused (its own ticket continues it).
+      const renewed = await fetchCurrentFeed(owner, { fresh: true }).then((feed) => (feed?.feed ?? 0) > fromFeed, () => false)
+      if (renewed) return { state: 'confirmed' }
+      // A refusal the feed names is one; anything else (a timeout opening the feed) is classified as any write's.
+      return result.errorCode !== undefined ? fromFeedResult(result) : { state: 'failed', error: new Error(result.error ?? 'The network did not accept this change') }
     },
     // Renewed: a newer feed than the one it renewed exists. The move after it is its own (`privateFeed.move`).
     probe: relationProbe<RenewArgs>(async ({ viewer, args }) => {
@@ -502,7 +542,8 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       ctx.stage('broadcasting')
       return fromMoveResult(await runMove(owner, key, moveProgressTo(ctx)))
     },
-    probe: relationProbe(async ({ viewer }) => loadMove(viewer) === null && (await adoptUnfinishedMove(viewer)) === 0, true),
+    // Finished: the job this device keeps is gone (runMove clears it at the end). Reads only.
+    probe: relationProbe(async ({ viewer }) => loadMove(viewer) === null, true),
     deadlineMs: null,
   })
 

@@ -30,6 +30,7 @@ import {
   type Visibility,
 } from '~/features/private-feed/ComposeVisibility';
 import { copy as privateCopy } from '~/features/private-feed/copy';
+import { useReplySource } from '~/features/private-feed/private-feed-data';
 import { cn } from '~/lib-allowlist';
 import { showActionSheet } from '~/ui/action-sheet';
 import { Button } from '~/ui/Button';
@@ -273,12 +274,17 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const author = viewerAuthor(identityId, username, profile.data);
 
   // Private posting (web's visibility selector): a reply in a private thread is private whatever is chosen.
+  // A reply to a private post is private when its thread is (web `useInheritedEncryption`); under a public
+  // root the replier chooses. Until that is known nothing is posted, and a failed read never guesses.
   const privateFeeds = capabilities?.privateFeeds === true;
-  const replyPrivate = context.mode === 'reply' && targetPost?.encrypted === true;
+  const replyToPrivate = context.mode === 'reply' && targetPost?.encrypted === true;
+  const replySource = useReplySource(targetId, privateFeeds && replyToPrivate);
+  const replyPrivate = replyToPrivate && replySource.data?.private === true;
+  const replySourceKnown = !replyToPrivate || !privateFeeds || replySource.data !== undefined;
   const ownFeed = useOwnPrivateFeed(identityId, privateFeeds && !replyPrivate);
   const privateVisibility = privateFeeds && !replyPrivate && visibility !== 'public';
-  /** Private text is never saved to the device: no draft is kept for it. */
-  const privateDraft = privateVisibility || replyPrivate;
+  /** Private text is never saved to the device: no draft is kept for it (a reply to a private post included). */
+  const privateDraft = privateVisibility || replyToPrivate;
   const teaserProblem =
     privateVisibility && visibility === 'private-with-teaser' && (!teaser.trim() || Array.from(teaser.trim()).length > TEASER_LIMIT);
 
@@ -296,7 +302,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const rootIndex = context.mode === 'reply' || parts[0]?.postedId ? -1 : parts.findIndex((p) => !p.postedId && hasVisibleContent(p.text));
   const tagProblem = rootIndex >= 0 ? tagLimitProblem(parts[rootIndex].text, tagMax, capabilities?.tagsPerPost ?? null) : null;
   // A private post is one part (web posts only the first of an encrypted thread).
-  const privateThread = privateVisibility && open.filter((p) => hasVisibleContent(p.text)).length > 1;
+  const privateThread = privateVisibility && parts.filter((p) => p.postedId || hasVisibleContent(p.text)).length > 1;
   const canPost =
     open.some((p) => hasVisibleContent(p.text)) &&
     !overLimit &&
@@ -305,7 +311,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
     mediaValid &&
     targetReady &&
     !teaserProblem &&
-    !privateThread;
+    !privateThread &&
+    replySourceKnown;
   const postLabel = context.mode === 'reply' ? 'Reply' : contentful.length > 1 ? `Post all (${contentful.length})` : 'Post';
   const canAddPart = context.mode === 'post' && parts.length < MAX_PARTS && !privateVisibility;
 
@@ -437,6 +444,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
         target: targetPost,
         author,
         ...(privateVisibility ? { visibility, teaser } : {}),
+        ...(replyPrivate ? { expectInherited: true } : {}),
       },
       hasVisibleContent,
     );
@@ -500,7 +508,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
       <View className={cn('min-h-14 flex-row items-center gap-2 px-2 py-1', tw.border)} testID="compose-header">
         <CloseButton onPress={close} />
         <View className="flex-1" />
-        {privateFeeds && !replyPrivate ? (
+        {privateFeeds && replySourceKnown && !replyPrivate ? (
           <VisibilityChip value={visibility} onChange={setVisibility} hasFeed={ownFeed} />
         ) : null}
         <NsfwToggle on={sensitive} onToggle={() => setSensitive(!sensitive)} />
@@ -586,6 +594,11 @@ function Composer({ identityId, username, context }: ComposerProps) {
           ))}
           {privateVisibility && visibility === 'private-with-teaser' ? <TeaserField value={teaser} onChangeText={setTeaser} /> : null}
           {replyPrivate ? <PrivateNote testID="compose-reply-private">{privateCopy.compose.replyPrivate}</PrivateNote> : null}
+          {replyToPrivate && replySource.isError ? (
+            <View className="mb-3 pl-[60px] pr-4">
+              <TargetUnread onRetry={() => replySource.refetch()} inset={false} />
+            </View>
+          ) : null}
           {privateDraft && mediaOpen ? <PrivateNote testID="compose-private-image">{privateCopy.compose.imageWarning}</PrivateNote> : null}
           {mediaOpen ? (
             <View className="mb-3 pl-[60px] pr-4" testID="compose-media">

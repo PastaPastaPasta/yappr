@@ -395,6 +395,8 @@ export const PostItem = memo(function PostItem({
     variant: detail ? 'detail' : 'feed',
     tagMaxLength: tagMaxLength(capabilities?.hashtagsInline === true),
     handlers: actions,
+    // A post still publishing is its optimistic card: nothing on the chain to read yet.
+    enabled: !pending,
   });
 
   if ((removed && !asStub) || safety.hidden) return null;

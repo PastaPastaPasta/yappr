@@ -339,8 +339,35 @@ describe('privateFeed: locked states and refusals', () => {
     expect(() => validateDraft({ parts: [{ text: 'body' }], visibility: 'private' })).toThrow('not available on this network')
   })
 
+  it("says whether a reply to a private post is private: only in a private thread", async () => {
+    as(O)
+    const id = await privatePost(O, 'a private root')
+    // A root post: its own thread is private (getEncryptionSource reads the root by id).
+    const { postService } = await import('@/lib/services/post-service')
+    const { privatePostOf } = await import('../../src/dto/private-content')
+    const root = privatePostOf(id)
+    const getPostById = vi.spyOn(postService, 'getPostById').mockResolvedValue(root as never)
+    try {
+      expect(await api.privateFeedReads.replySource(id)).toEqual({ private: true })
+      getPostById.mockResolvedValue({ ...root, encryptedContent: undefined } as never)
+      expect(await api.privateFeedReads.replySource(id)).toEqual({ private: false })
+    } finally {
+      getPostById.mockRestore()
+    }
+  })
+
+  it('checks a removal again by the feeds a removal rekeys', async () => {
+    as(G)
+    expect((await settle(writes.request(O))).state).toBe('confirmed')
+    as(O)
+    expect((await settle(writes.approve(G))).state).toBe('confirmed')
+    const ticket = await settle(writes.revoke(G))
+    expect(ticket.state).toBe('confirmed')
+    expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+  })
+
   it('estimates a renewal that brings older posts along', async () => {
     as(O)
-    expect(await api.privateFeedReads.renewal()).toMatchObject({ followers: 1, canBringHistory: 'yes' })
+    expect(await api.privateFeedReads.renewal()).toMatchObject({ followers: 0, canBringHistory: 'yes' })
   })
 })

@@ -1219,3 +1219,52 @@ it('a post deleted while pinned does not come back with the pin', async () => {
   queryClient.setQueryData(HOME, page([existing]));
   expect(homeIds()).toEqual(['existing-1']);
 });
+
+it('keeps a private post and a reply to a private post off the device: a private card, no text, no draft', async () => {
+  queryClient.setQueryData(HOME, page([existing]));
+  fakeEngine.method('posts.publish').mockResolvedValue(ticket({ op: 'post.publish' }));
+  const localId = publishPost(
+    {
+      identityId: VIEWER_ID,
+      context: POST,
+      parts: parts('for my followers only'),
+      sensitive: false,
+      mediaUrl: 'https://img.example/secret.png',
+      target: null,
+      author: viewerAuthor(VIEWER_ID, 'alice'),
+      visibility: 'private-with-teaser',
+      teaser: 'a peek',
+    },
+    hasVisibleContent,
+  );
+  await settle();
+  const card = queryClient.getQueryData<InfiniteData<Page<PostDTO>>>(HOME)?.pages[0]?.items.find((p) => p.id === localId);
+  expect(card).toMatchObject({ encrypted: true, content: 'a peek', media: [] });
+  expect(fakeEngine.method('posts.publish')).toHaveBeenCalledWith(
+    expect.objectContaining({ visibility: 'private-with-teaser', teaser: 'a peek', mediaUrl: 'https://img.example/secret.png' }),
+  );
+
+  const parent = fixturePost({ id: 'private-parent', author: AUTHORS.bob, encrypted: true, content: '' });
+  publishPost(
+    {
+      identityId: VIEWER_ID,
+      context: { mode: 'reply', targetId: parent.id },
+      parts: parts('a private reply'),
+      sensitive: false,
+      mediaUrl: null,
+      target: parent,
+      author: viewerAuthor(VIEWER_ID, 'alice'),
+      expectInherited: true,
+    },
+    hasVisibleContent,
+  );
+  await settle();
+  expect(fakeEngine.method('posts.publish')).toHaveBeenLastCalledWith(
+    expect.objectContaining({ replyToPrivate: true, expectInherited: true }),
+  );
+  // Neither text reaches the stored pending posts.
+  const stored = syncStorage.getItem(PENDING_KEY) ?? '';
+  expect(stored).not.toContain('for my followers only');
+  expect(stored).not.toContain('a private reply');
+  expect(stored).not.toContain('secret.png');
+});

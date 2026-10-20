@@ -305,7 +305,8 @@ function Manage({ overview }: { overview: Extract<PrivateFeedOverviewDTO, { enab
         body={move.error ?? copy.settings.moveBody}
         testID="private-move"
         action={
-          move.error || move.done >= move.total ? (
+          // Paused, finished but not cleaned up, or left by an engine restart: nothing is moving it now.
+          move.error || move.done >= move.total || !ownerBusy ? (
             <Button
               label={copy.settings.continueMove}
               variant="outline"

@@ -60,6 +60,7 @@ const READS = new Set([
   'privateFeed.requests',
   'privateFeed.followers',
   'privateFeed.renewal',
+  'privateFeed.replySource',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 

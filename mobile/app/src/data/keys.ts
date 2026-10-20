@@ -128,6 +128,10 @@ export const queryKeys = {
     posts: [...root, 'privateFeed', 'post'] as const,
     /** `privateFeed.access`: where the viewer stands with one owner's private feed. */
     access: (ownerId: string) => [...root, 'privateFeed', 'access', ownerId] as const,
+    /** Every `access` read: a prefix of the key above. */
+    accessAll: [...root, 'privateFeed', 'access'] as const,
+    /** `privateFeed.replySource`: whether a reply to this private post is private (its thread is). */
+    replySource: (id: string) => [...root, 'privateFeed', 'replySource', id] as const,
     /** The viewer's own feed: `overview`, `requests`, `followers` and `renewal`. */
     owner: [...root, 'privateFeed', 'owner'] as const,
     overview: [...root, 'privateFeed', 'owner', 'overview'] as const,
