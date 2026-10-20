@@ -56,7 +56,7 @@ export default function StoreBrowsePage() {
     // A category lists its newest stores; the rankings span every category.
     if (key !== 'newest') setCategory('')
   }
-  const sortTabs = useTabKeyboard({ keys: SORT_OPTIONS.map(([key]) => key), active: sort, onSelect: selectSort })
+  const sortTabs = useTabKeyboard({ keys: SORT_OPTIONS.map(([key]) => key), active: sort, onSelect: selectSort, manualActivation: true })
 
   // Check if user has a store
   useEffect(() => {

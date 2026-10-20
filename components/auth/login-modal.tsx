@@ -128,8 +128,8 @@ export function LoginModal() {
   const switchedView = useRef(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [advanced, setAdvanced] = useState<AdvancedSection | null>(null)
-  /** The recovery phrase form is looking up or signing in: the other options wait, so it isn't unmounted mid-flight. */
-  const [phraseBusy, setPhraseBusy] = useState(false)
+  /** The recovery phrase or private key form is signing in: the other options wait, so it isn't unmounted mid-flight. */
+  const [signingIn, setSigningIn] = useState(false)
   const toggleAdvanced = (section: AdvancedSection) => setAdvanced((current) => (current === section ? null : section))
 
   // Reset to the first view whenever the dialog closes.
@@ -171,12 +171,12 @@ export function LoginModal() {
     <div data-testid="sign-in-options">
       <div className="flex flex-col gap-3">
         {!renewing && (
-          <Button ref={walletButton} type="button" size="lg" className="w-full gap-2" disabled={phraseBusy} onClick={() => switchView(true)}>
+          <Button ref={walletButton} type="button" size="lg" className="w-full gap-2" disabled={signingIn} onClick={() => switchView(true)}>
             <Wallet aria-hidden="true" className="w-5 h-5" />
             Sign in with Dash Wallet
           </Button>
         )}
-        <PasskeySignIn onComplete={close} onRenewalChange={setRenewing} disabled={phraseBusy} secondary />
+        <PasskeySignIn onComplete={close} onRenewalChange={setRenewing} disabled={signingIn} secondary />
       </div>
 
       <div className="mt-4">
@@ -186,7 +186,7 @@ export function LoginModal() {
           onToggle={() => setShowAdvanced((value) => !value)}
           label="Other ways to sign in"
           centered
-          disabled={phraseBusy}
+          disabled={signingIn}
         >
           <div className="space-y-4 rounded-xl border border-gray-100 dark:border-gray-800 p-4">
             {phraseAvailable && (
@@ -196,9 +196,9 @@ export function LoginModal() {
                 onToggle={() => toggleAdvanced('phrase')}
                 icon={<ScrollText aria-hidden="true" className="w-4 h-4" />}
                 label="Sign in with your recovery phrase"
-                disabled={phraseBusy}
+                disabled={signingIn}
               >
-                <RecoveryPhraseForm onComplete={close} onBusyChange={setPhraseBusy} />
+                <RecoveryPhraseForm onComplete={close} onBusyChange={setSigningIn} />
               </Disclosure>
             )}
             <Disclosure
@@ -207,14 +207,14 @@ export function LoginModal() {
               onToggle={() => toggleAdvanced('key')}
               icon={<KeyRound aria-hidden="true" className="w-4 h-4" />}
               label="Sign in with a private key"
-              disabled={phraseBusy}
+              disabled={signingIn}
             >
               <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
                 {phraseAvailable
                   ? 'Messages, orders and private feeds need your Dash wallet or recovery phrase.'
                   : 'Messages, orders and private feeds need your Dash wallet.'}
               </p>
-              <KeyLoginForm onComplete={close} />
+              <KeyLoginForm onComplete={close} onBusyChange={setSigningIn} />
             </Disclosure>
           </div>
         </Disclosure>
