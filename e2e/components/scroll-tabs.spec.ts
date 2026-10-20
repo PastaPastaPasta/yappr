@@ -64,3 +64,32 @@ test('pill tabs share the keyboard model', async ({ page }) => {
   await expect(page.getByTestId('sort')).toHaveText('rising')
   await expect(pills.nth(2)).toHaveAttribute('tabindex', '0')
 })
+
+test('manual activation moves focus with the arrows and selects on Enter or Space', async ({ page }) => {
+  await page.goto('/scroll-tabs.html')
+  const tabs = page.getByRole('tablist', { name: 'Manual' }).getByRole('tab')
+  const selections = page.getByTestId('manual-selections')
+  await tabs.nth(0).focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(tabs.nth(1)).toBeFocused()
+  await page.keyboard.press('ArrowRight')
+  await expect(tabs.nth(2)).toBeFocused()
+  await page.keyboard.press('Home')
+  await expect(tabs.nth(0)).toBeFocused()
+  await page.keyboard.press('End')
+  await expect(tabs.nth(2)).toBeFocused()
+  // Focus alone selected nothing.
+  await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
+  await expect(selections).toHaveText('0')
+
+  await page.keyboard.press('ArrowLeft')
+  await expect(tabs.nth(1)).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
+  await expect(selections).toHaveText('1')
+
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Space')
+  await expect(tabs.nth(2)).toHaveAttribute('aria-selected', 'true')
+  await expect(selections).toHaveText('2')
+})

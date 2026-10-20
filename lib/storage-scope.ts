@@ -69,3 +69,17 @@ export function scopedKeysWithPrefix(prefix: string): string[] {
 
 /** localStorage key holding the persisted login session. */
 export const SESSION_STORAGE_KEY = scopedKey('yappr_session')
+
+/**
+ * Whether this browser holds a saved login session. A cheap synchronous hint
+ * for reserving layout while the session restores; it proves nothing about
+ * whether the session will restore. Client-only: `false` on the server.
+ */
+export function hasStoredSession(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return localStorage.getItem(SESSION_STORAGE_KEY) !== null
+  } catch {
+    return false
+  }
+}

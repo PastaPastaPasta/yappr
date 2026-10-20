@@ -71,6 +71,8 @@ function credentialBorderClass(hasError: boolean, isSubmitting: boolean): string
 interface KeyLoginFormProps {
   /** Called once a session has been established. */
   onComplete: () => void
+  /** Reports while a sign-in is under way, so a parent can keep this form mounted. */
+  onBusyChange?: (busy: boolean) => void
 }
 
 /**
@@ -78,7 +80,7 @@ interface KeyLoginFormProps {
  * key), or with the Dash username or identity ID it belongs to. The key must
  * be one of the identity's enabled CRITICAL or HIGH authentication keys.
  */
-export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
+export function KeyLoginForm({ onComplete, onBusyChange }: KeyLoginFormProps) {
   // Identity lookup states
   const [identityInput, setIdentityInput] = useState('')
   const [isLookingUp, setIsLookingUp] = useState(false)
@@ -115,6 +117,9 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
       if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
     }
   }, [])
+
+  useEffect(() => onBusyChange?.(isLoading), [onBusyChange, isLoading])
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange])
 
   const { login } = useAuth()
 

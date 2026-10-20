@@ -102,7 +102,7 @@ export function StarterGrantModal() {
         </ModalTitle>
         <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
           {paused
-            ? 'YAPP can\'t be spent right now, so posts, replies, likes and reposts are paid in credits instead.'
+            ? 'YAPP can\'t be used right now.'
             : claimState === 'claimed'
               ? 'You\'ve used up your starter YAPP. Try again to pay with credits instead.'
               : 'You don\'t have enough YAPP for this. Try again to pay with credits instead.'}

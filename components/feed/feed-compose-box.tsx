@@ -1,13 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { useAppStore } from '@/lib/store';
 import { UserAvatar } from '@/components/ui/avatar-image';
 import { Button } from '@/components/ui/button';
+import { hasStoredSession } from '@/lib/storage-scope';
+
+// Layout effects only run in the browser; the server render skips them quietly.
+const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 export function FeedComposeBox() {
   const [isHydrated, setIsHydrated] = useState(false);
+  // Read before the first paint, never during render, so the server and first
+  // client render agree (nothing reserved) and a signed-out visitor never sees
+  // the box appear and collapse.
+  const [hasSavedSession, setHasSavedSession] = useState(false);
   const { user, isAuthRestoring } = useAuth();
   const setComposeOpen = useAppStore((state) => state.setComposeOpen);
 
@@ -15,8 +23,13 @@ export function FeedComposeBox() {
     setIsHydrated(true);
   }, []);
 
+  useBrowserLayoutEffect(() => {
+    setHasSavedSession(hasStoredSession());
+  }, []);
+
   // Signed out there is nothing to compose, and the sidebar already offers Sign in.
-  if (!user && !isAuthRestoring) return null;
+  // Without a saved session there is nothing to restore either, so no height is held.
+  if (!user && !(isAuthRestoring && hasSavedSession)) return null;
 
   // While a saved session is restored, the box holds its full size (the same
   // markup, inert) so the feed below does not jump down when it appears.
