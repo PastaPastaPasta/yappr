@@ -63,6 +63,9 @@ export const pollVoteWrite: WriteSpec<PollVoteVars> = {
   },
   failureMessage: ({ choices }) => (choices.length > 0 ? "Couldn't save your vote. Try again." : "Couldn't withdraw your vote. Try again."),
   failureText: (ticket) => (ticket.error?.code === 'BAD_REQUEST' ? ticket.error.userMessage : null),
+  // A ticket the engine kept when a restart cut the call short.
+  matches: (ticket, { pollId }) =>
+    ticket.op === 'poll.vote' && (ticket.target as { pollId?: string } | null)?.pollId === pollId,
   onConfirmed: (_ticket, { pollId }) => {
     setTimeout(() => {
       queryClient.invalidateQueries({ queryKey: queryKeys.post.poll(pollId) }).catch(() => undefined);

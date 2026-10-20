@@ -57,7 +57,13 @@ const blockListWrite: WriteSpec<BlockListVars> = {
   failureMessage: ({ follow }) => (follow ? copy.blockLists.followFailed : copy.blockLists.unfollowFailed),
   // The row keeps the change (a re-read this soon could still show the old list); who is hidden is read again.
   // Who is hidden changed for every account the list blocks: feeds, threads and profiles read again.
-  onConfirmed: refetchAfterBlockListChange,
+  onConfirmed: (ticket) => refetchAfterBlockListChange(ticket.identityId),
+  // The cap's own sentence (stop using a list first) rather than "Try again".
+  failureText: (ticket) => (ticket.error?.code === 'BAD_REQUEST' ? ticket.error.userMessage : null),
+  // A ticket the engine kept when a restart cut the call short.
+  matches: (ticket, { userId, follow }) =>
+    ticket.op === (follow ? 'block-list.follow' : 'block-list.unfollow') &&
+    (ticket.target as { identityId?: string } | null)?.identityId === userId,
 };
 
 const BlockListRow = memo(function BlockListRow({ user }: { user: BlockListChoiceDTO }) {

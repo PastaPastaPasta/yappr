@@ -28,6 +28,7 @@ import { assertId, assertTarget, badRequest, relationProbe, signer, socialDoc, t
 import { pollVoting } from '../dto/capabilities'
 import { documentExists, fromDeleteBoolean } from '../writes/lib-results'
 import { createPublishHandler, validateDraft, type DraftDTO, type FindOwnDocuments, type OwnDocument } from '../writes/publish'
+import { classify } from '../writes/classify'
 import { NotSentError, type TicketStore, type WriteResult } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
 import {
@@ -318,9 +319,14 @@ function refusedSet(result: SetVoteResult): WriteResult {
   if (result.choices === undefined && result.error?.startsWith("Couldn't read your ballot")) {
     throw new NotSentError(readFailure(new Error(result.error)))
   }
-  // Refused before writing, or refused and proved unable to land (lib re-read the ballot).
-  return refusedVote(NOT_SAVED)
+  // Refused before writing, or refused and proved unable to land (lib re-read the ballot). Platform's own
+  // verdicts the host acts on (too few credits, a revoked key) keep their text, so the classifier names them.
+  const error = new Error(result.error ?? NOT_SAVED)
+  return ACTIONABLE.has(classify(error, 'poll.vote').code) ? { state: 'failed', error } : refusedVote(NOT_SAVED)
 }
+
+/** Refusals with their own guidance in the host (balance, renewing, signing in again). */
+const ACTIONABLE: ReadonlySet<string> = new Set(['INSUFFICIENT_CREDITS', 'INSUFFICIENT_YAPP', 'RENEW_REQUIRED', 'KEY_REVOKED', 'NEEDS_WALLET'])
 
 /**
  * Poll ballots (web's `components/poll/poll-card.tsx`). Pollr v7/v8 set the
@@ -373,7 +379,7 @@ export function createPollWrites(tickets: TicketStore) {
         throw badRequest('choices must be distinct option indexes')
       }
       if (mode === 'once' && choices.length === 0) throw badRequest('Choose an option')
-      return tickets.submit<PollVoteArgs>({ op: 'poll.vote', args: { pollId, choices: [...choices] }, target: null })
+      return tickets.submit<PollVoteArgs>({ op: 'poll.vote', args: { pollId, choices: [...choices] }, target: { pollId } })
     },
   }
 }

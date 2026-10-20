@@ -31,7 +31,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { BlockedAccountsScreen } from './BlockedAccountsScreen';
 import { BlockListsScreen } from './BlockListsScreen';
-import { blockWrite, resetBlockDecisions } from './block-state';
+import { blockWrite, refetchAfterBlockListChange, resetBlockDecisions } from './block-state';
 import { BlockScreen } from './BlockScreen';
 import { copy } from './copy';
 import { ReportScreen } from './ReportScreen';
@@ -1467,6 +1467,25 @@ describe('BlockedAccountsScreen', () => {
     expect(toastMessage()).toBe(copy.toast.stillBlocked);
     expect(screen.queryByTestId(`blocked-${BOB.id}`)).toBeNull();
     expect(screen.getByTestId(`blocked-${AUTHORS.carol.id}`)).toBeTruthy();
+    expect(screen.queryByTestId('post-card-b1')).toBeNull();
+
+    // Then the list that blocked bob is dropped: the decision made from it no longer holds, and the
+    // feed read again (bob blocked by nobody now) shows his post.
+    act(() => refetchAfterBlockListChange(VIEWER_ID));
+    act(() => queryClient.setQueryData(queryKeys.feed.home({ tab: 'forYou' }), [fixturePost({ id: 'b1' })]));
+    await settle();
+    expect(screen.getByTestId('post-card-b1')).toBeTruthy();
+  });
+
+  it('keeps own blocks, and any block still on its way, when a block list changes', async () => {
+    queryClient.setQueryData(queryKeys.feed.home({ tab: 'forYou' }), [fixturePost({ id: 'b1' })]);
+    fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block', target: { identityId: BOB.id } }));
+    withProviders(<CachedList />);
+    await settle();
+    await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+    expect(screen.queryByTestId('post-card-b1')).toBeNull();
+    act(() => refetchAfterBlockListChange(VIEWER_ID));
+    await settle();
     expect(screen.queryByTestId('post-card-b1')).toBeNull();
   });
 

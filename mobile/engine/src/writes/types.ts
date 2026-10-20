@@ -69,7 +69,7 @@ export interface TargetRef {
   rootPostId: string | null
 }
 
-export type WriteTarget = TargetRef | { identityId: string } | { conversationKey: string }
+export type WriteTarget = TargetRef | { identityId: string } | { conversationKey: string } | { pollId: string }
 
 export interface TicketDocument {
   contractId: string

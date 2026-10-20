@@ -118,6 +118,14 @@ describe('posts.vote', () => {
     expect(await outcome(polls.vote(POLL, [1]))).toMatchObject({ state: 'failed', error: { code: 'BAD_REQUEST', userMessage: "Your vote wasn't saved. Try again." } })
   })
 
+  it('keeps Platform refusals the host acts on (credits, a revoked key) and names the poll on the ticket', async () => {
+    const { polls, outcome } = engine()
+    m.voteService.setVote.mockResolvedValue({ success: false, choices: [], closed: false, stale: false, error: 'Identity insufficient identity credit balance: credits balance 10 is not enough to pay 900' })
+    expect(await outcome(polls.vote(POLL, [1]))).toMatchObject({ state: 'failed', target: { pollId: POLL }, error: { code: 'INSUFFICIENT_CREDITS' } })
+    m.voteService.setVote.mockResolvedValue({ success: false, choices: [], closed: false, stale: false, error: 'Identity key 2 is disabled' })
+    expect(await outcome(polls.vote(POLL, [1]))).toMatchObject({ state: 'failed', error: { code: 'KEY_REVOKED' } })
+  })
+
   it('fails a vote whose poll or ballot read failed as not sent and retryable, never "poll gone"', async () => {
     const { polls, outcome } = engine()
     m.pollService.fetchPoll.mockRejectedValue(new Error('no available addresses to retry'))

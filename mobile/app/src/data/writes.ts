@@ -518,10 +518,13 @@ function landingWrite(key: string): WriteOf | undefined {
  * write as busy ("Blocking…") and holds back the opposite action.
  */
 export function useLandingIntent(key: string | undefined): unknown {
-  return useWriteTickets(() => {
-    const write = key === undefined ? undefined : landingWrite(key);
-    return write ? (write.spec.intent?.(write.vars) ?? true) : undefined;
-  });
+  return useWriteTickets(() => landingIntent(key));
+}
+
+/** {@link useLandingIntent} now, outside React (a write's follow-up). */
+export function landingIntent(key: string | undefined): unknown {
+  const write = key === undefined ? undefined : landingWrite(key);
+  return write ? (write.spec.intent?.(write.vars) ?? true) : undefined;
 }
 
 /**

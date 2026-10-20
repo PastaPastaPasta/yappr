@@ -73,6 +73,9 @@ const registerWrite: WriteSpec<RegisterVars> = {
     toast.success(contested ? copy.joinedVote(label) : copy.registered(label));
     queryClient.invalidateQueries({ queryKey: queryKeys.profile.detail(viewerId) }).catch(() => undefined);
   },
+  // A ticket the engine kept when a restart cut the call short (one registration per account at a time).
+  matches: (ticket, { viewerId }) =>
+    ticket.op === 'dpns.register' && (ticket.target as { identityId?: string } | null)?.identityId === viewerId,
 };
 
 /** How long typing pauses before the name is checked. */
