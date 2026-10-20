@@ -9,7 +9,6 @@ import { X, ArrowLeft, ChevronDown, Wallet, ScrollText, KeyRound } from 'lucide-
 import type { AppConnectGrant } from 'platform-auth'
 import { Wordmark } from '@/components/brand/brand'
 import { useAuth } from '@/contexts/auth-context'
-import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { getConfiguredNetwork } from '@/lib/constants'
 import { COMMUNITY_RULES_HREF } from '@/lib/legal'
@@ -127,7 +126,6 @@ export function LoginModal() {
   const pathname = usePathname()
   const { isOpen, close } = useLoginModal()
   const { loginWithAppConnect } = useAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const reduceMotion = useReducedMotion()
   const sectionId = useId()
   const opener = useRef<HTMLElement | null>(null)
@@ -265,11 +263,12 @@ export function LoginModal() {
       {isOpen && (
         <Dialog.Portal forceMount>
         <Dialog.Overlay asChild>
+        {/* A plain dim, no backdrop blur: Chromium drops a backdrop blur while its layer's opacity animates, so it popped in after the fade and off before it. */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className={`fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+          className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60"
         >
           <Dialog.Content
             asChild
