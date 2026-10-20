@@ -187,7 +187,19 @@ export const deletePostWrite: WriteSpec<{ postId: string; blogId: string }> = {
 
 /** A comment shown while it posts: its id until the post's comments are read back with the real one. */
 export const PENDING_COMMENT = 'pending:';
+/** A pending comment once it is confirmed, kept until the post's comments are read again. */
+const SENT_COMMENT = 'sent:';
 export const isPendingComment = (comment: BlogCommentDTO) => comment.id.startsWith(PENDING_COMMENT);
+/** Shown from this device only (pending or just sent): not yet a comment that can be deleted or reported. */
+export const isLocalComment = (comment: BlogCommentDTO) => isPendingComment(comment) || comment.id.startsWith(SENT_COMMENT);
+
+/** How long after a comment is confirmed, or its answer lost, the post's comments are read again: a lagging node may not have it yet. */
+const REREAD_AFTER_MS = 15_000;
+
+/** Reads the post's comments again a little later, which swaps a pending or sent comment for the real one, or drops it. */
+export function rereadCommentsLater(postId: string): void {
+  setTimeout(() => refetch(queryKeys.blog.comments(postId)), REREAD_AFTER_MS);
+}
 
 interface CommentVars {
   postId: string;
@@ -218,14 +230,24 @@ function showComment(vars: CommentVars): () => void {
 }
 
 export const commentWrite: WriteSpec<CommentVars> = {
+  // One new comment per post at a time (the screen sends one at a time too); the key lets `reapply` run.
+  key: ({ postId }) => `blogComment:new:${postId}`,
   submit: (api, { postId, postOwnerId, content }) => api.blogs.comment(postId, postOwnerId, content),
-  // Shown at once, so the tap visibly did something; the read after confirmation swaps in the real comment.
+  // Shown at once, so the tap visibly did something.
   optimistic: showComment,
   reconcile: null,
   reapply: (vars) => {
     showComment(vars);
   },
-  onConfirmed: (_ticket, { postId }) => refetch(queryKeys.blog.comments(postId)),
+  // Kept as sent rather than read at once, which a lagging node could answer without it; read again a little later.
+  onConfirmed: (_ticket, vars) => {
+    const id = pendingComment(vars).id;
+    queryClient.setQueryData<BlogCommentDTO[]>(queryKeys.blog.comments(vars.postId), (current) =>
+      current?.map((c) => (c.id === id ? { ...c, id: `${SENT_COMMENT}${vars.localId}` } : c)),
+    );
+    rereadCommentsLater(vars.postId);
+  },
+  onFailed: (_ticket, { postId }) => refetch(queryKeys.blog.comments(postId)),
   failureMessage: "Couldn't post your comment. Try again.",
 };
 

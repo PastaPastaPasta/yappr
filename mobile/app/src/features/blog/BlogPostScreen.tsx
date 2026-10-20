@@ -219,7 +219,7 @@ export function BlogPostScreen() {
           onScroll={(e) => {
             scrollY.current = e.nativeEvent.contentOffset.y;
           }}
-          scrollEventThrottle={32}
+          scrollEventThrottle={16}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.accent} colors={[palette.accent]} />}
           testID="blog-post-scroll"
         >

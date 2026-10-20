@@ -16,7 +16,7 @@ import { Spinner } from '~/ui/Spinner';
 import { MIN_TARGET } from '~/ui/tokens';
 import { useRelativeTime } from '~/ui/use-relative-time';
 
-import { commentWrite, deleteCommentWrite, isPendingComment } from './blog-writes';
+import { commentWrite, deleteCommentWrite, isLocalComment, isPendingComment, rereadCommentsLater } from './blog-writes';
 import { onColor, type BlogPalette } from './blog-theme';
 
 function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
@@ -31,6 +31,7 @@ function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
   const name = comment.author?.displayName ?? 'Someone';
   const handle = comment.author ? handleOf(comment.author) : null;
   const pending = isPendingComment(comment);
+  const local = isLocalComment(comment);
   return (
     <View style={{ flexDirection: 'row', gap: 10, paddingVertical: 12, borderTopWidth: 1, borderColor: palette.border, opacity: pending ? 0.6 : 1 }} testID={`blog-comment-${comment.id}`}>
       <Avatar avatar={comment.author?.avatar} identityId={comment.ownerId} size="sm" name={name} onPress={() => openUser(comment.ownerId)} />
@@ -43,7 +44,7 @@ function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
         <View style={{ flexDirection: 'row', gap: 16 }}>
           {pending ? (
             <RNText style={{ color: palette.muted, fontSize: 13, minHeight: MIN_TARGET, textAlignVertical: 'center', paddingTop: 12 }}>Posting…</RNText>
-          ) : own ? (
+          ) : local ? null : own ? (
             <Pressable onPress={onDelete} accessibilityRole="button" accessibilityLabel="Delete your comment" hitSlop={12} style={{ minHeight: MIN_TARGET, justifyContent: 'center' }} testID={`blog-comment-delete-${comment.id}`}>
               <RNText style={{ color: palette.muted, fontSize: 13 }}>Delete</RNText>
             </Pressable>
@@ -73,7 +74,9 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
 }) {
   const viewerId = useViewerId();
   const username = useSessionStore((state) => state.session?.username ?? null);
-  const [text, setText] = useState('');
+  const [typed, setTyped] = useState('');
+  /** What the last tap sent, until the writer types again: given back if it fails. */
+  const [sent, setSent] = useState<string | null>(null);
   const send = useWrite(commentWrite);
   const comments = useEngineQuery(queryKeys.blog.comments(post.id), (api) => api.blogs.comments(post.id), {
     enabled: post.commentsEnabled,
@@ -83,6 +86,17 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
   const [starting, setStarting] = useState(false);
   const inFlight = useRef(false);
   const sending = starting || send.status === 'pending';
+  // A comment that failed after it went out (or is stuck where it can be retried) gives its words back.
+  const ticket = send.ticket;
+  const lost =
+    sent !== null &&
+    ticket !== null &&
+    ((send.status === 'failed' && ticket.error?.outcome !== 'unknown') || (send.status === 'unconfirmed' && ticket.retryable));
+  const text = typed || (lost ? sent : '');
+  const setText = (value: string) => {
+    setTyped(value);
+    setSent(null);
+  };
 
   // The Post comment button sits below the field, where iOS doesn't scroll to: bring it up above the keyboard.
   const actions = useRef<View>(null);
@@ -131,13 +145,16 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
       inFlight.current = true;
       setStarting(true);
       // Sent: the field clears and the comment shows in the list at once (`commentWrite` is optimistic).
-      setText('');
-      const restore = () => setText((current) => current || content);
+      setTyped('');
+      setSent(content);
+      const restore = () => setTyped((current) => current || content);
       send
         .send({ postId: post.id, postOwnerId: post.ownerId, content, author: viewerAuthor(viewerId, username), localId: `${Date.now()}` })
         .then((result) => {
           // Refused before it went out: nothing was sent, so the words come back to fix or send again.
           if (result.status === 'refused') restore();
+          // Its answer was lost: read the comments again later, so the list says whether it landed.
+          if (result.status === 'unknown') rereadCommentsLater(post.id);
         })
         .catch(restore)
         .finally(() => {
