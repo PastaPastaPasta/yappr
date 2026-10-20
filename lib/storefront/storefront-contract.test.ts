@@ -158,6 +158,16 @@ describe('size guards (item transition budget, legacy variants JSON caps)', () =
     expect(isOwnStore({ ownerId: 'me' }, undefined)).toBe(false)
   })
 
+  it('takes payment only when a loaded store lists a payment address', async () => {
+    const { storeTakesPayment } = await load('v6')
+    expect(storeTakesPayment({ paymentUris: [{ scheme: 'dash', uri: 'dash:yXYZ' }] })).toBe(true)
+    expect(storeTakesPayment({ paymentUris: [] })).toBe(false)
+    expect(storeTakesPayment({})).toBe(false)
+    // Unknown yet: never block on a store that hasn't loaded.
+    expect(storeTakesPayment(null)).toBe(true)
+    expect(storeTakesPayment(undefined)).toBe(true)
+  })
+
   it('caps both digital payloads at the contract value', async () => {
     const { DIGITAL_PAYLOAD_MAX_BYTES } = await load('v6')
     expect(DIGITAL_PAYLOAD_MAX_BYTES).toBe(5120)

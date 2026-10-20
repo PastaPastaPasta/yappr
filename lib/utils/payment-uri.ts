@@ -1,5 +1,6 @@
 import type { ParsedPaymentUri } from '@/lib/types'
 import bs58check from 'bs58check'
+import { keyNetwork, type KeyNetwork } from '@/lib/constants'
 
 /** Validate a Dash Base58Check address and ensure its network version matches. */
 export function isValidDashAddress(address: string, network: 'mainnet' | 'testnet'): boolean {
@@ -50,12 +51,18 @@ const DESTINATION_SHAPES: Record<string, RegExp> = {
   'lightning:': /^((ln|LN)[a-zA-Z0-9]{10,}|[^\s@]+@[^\s@]+\.[^\s@]+)$/,
 }
 
-export function isValidPaymentAddress(scheme: string, address: string): boolean {
+/**
+ * Whether `address` is a valid destination for `scheme`. `dash:` is the scheme
+ * Dash Core and the Dash wallets use on every network, so it takes an address
+ * of this build's network (`network`, testnet's prefixes on a devnet) and never
+ * the other one. `tdash:` always takes a testnet address.
+ */
+export function isValidPaymentAddress(scheme: string, address: string, network: KeyNetwork = keyNetwork()): boolean {
   const normalizedScheme = scheme.toLowerCase()
   // A custom payment URI may include optional amount, label, or message fields.
   // Validate its destination without changing or discarding the query parameters.
   const destination = address.split('?', 1)[0].trim()
-  if (normalizedScheme === 'dash:') return isValidDashAddress(destination, 'mainnet')
+  if (normalizedScheme === 'dash:') return isValidDashAddress(destination, network)
   if (normalizedScheme === 'tdash:') return isValidDashAddress(destination, 'testnet')
   const shape = DESTINATION_SHAPES[normalizedScheme]
   return shape ? shape.test(destination) : false

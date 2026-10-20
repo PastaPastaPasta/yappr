@@ -7,7 +7,8 @@
 }
 
 @layer base {
-  :root {
+  :root,
+  .theme-light {
     --background: 0 0% 100%;
     --accent-text: 3 105 161;
     --accent-text-hover: 7 89 133;

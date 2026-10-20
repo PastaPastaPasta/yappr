@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 
 import { INSIGHT_API_URLS, INSIGHT_API_CONFIG, getConfiguredNetwork } from '@/lib/constants'
 import type { AppNetwork } from '@/lib/constants'
+import { isValidDashAddress } from '@/lib/utils/payment-uri'
 
 export interface Utxo {
   txid: string
@@ -130,17 +131,23 @@ export function isDashScheme(scheme: string): boolean {
 }
 
 /**
- * Get the network for a Dash payment scheme
+ * The chain a Dash payment address lives on. `dash:` is used on every network,
+ * so its address decides: a testnet-prefixed one is this deployment's test
+ * network (testnet, or the devnet it runs on), anything else mainnet.
+ * `tdash:` is always the test network.
  */
-export function getNetworkFromScheme(scheme: string): AppNetwork {
-  // `tdash:` covers both testnet and devnet (devnets reuse testnet address
-  // prefixes), so it resolves to the deployment's configured network — a
-  // /devnet build must poll its own Insight host, not testnet's.
-  if (scheme.toLowerCase() === 'tdash:') {
-    const configured = getConfiguredNetwork()
-    return configured === 'mainnet' ? 'testnet' : configured
-  }
-  return 'mainnet'
+export function getDashPaymentNetwork(scheme: string, address: string): AppNetwork {
+  if (scheme.toLowerCase() === 'tdash:') return dashTestNetwork()
+  return isValidDashAddress(address.split('?', 1)[0], 'testnet') ? dashTestNetwork() : 'mainnet'
+}
+
+/**
+ * The network a testnet-prefixed Dash address belongs to here. Devnets reuse
+ * testnet's prefixes, so a /devnet build polls its own Insight host.
+ */
+export function dashTestNetwork(): AppNetwork {
+  const configured = getConfiguredNetwork()
+  return configured === 'mainnet' ? 'testnet' : configured
 }
 
 /** Link a Dash payment to the explorer for the chain that received it. */
@@ -149,7 +156,7 @@ export function getPaymentVerificationUrl(txid: string, paymentUri: unknown): st
   const scheme = paymentUri.slice(0, paymentUri.indexOf(':') + 1)
   if (!isDashScheme(scheme)) return null
 
-  const network = getNetworkFromScheme(scheme)
+  const network = getDashPaymentNetwork(scheme, paymentUri.slice(scheme.length))
   const baseUrl = network === 'devnet'
     // Enter through the root hash route: direct deep links on Moutai return 404.
     ? `${new URL(INSIGHT_API_URLS.devnet).origin}/#!/tx/`

@@ -51,7 +51,7 @@ const content = fixture === 'username' ? <UsernameFixture />
   : fixture === 'thread-page' ? <><button onClick={publishReply}>Publish accepted reply</button><button onClick={finishThreadRead}>Finish thread read</button><PostPage /></>
   : fixture === 'thread' ? <Thread />
   : fixture === 'guide' ? <PrivateGuide />
-  : <BlogThemeProvider blogName="QA blog" hideHeader themeConfig={theme} readerOverrides={getReaderOverrideStyle(params.get('mode') === 'dark' ? 'dark' : params.get('mode') === 'sepia' ? 'sepia' : 'light')}><p style={{ color: 'var(--blog-muted)' }}>Published yesterday · 4 min read</p><BlogViewer blocks={[{ type: 'quote', content: 'A readable quotation.' }]} /></BlogThemeProvider>
+  : <BlogThemeProvider blogName="QA blog" hideHeader themeConfig={theme} readerOverrides={getReaderOverrideStyle(params.get('mode') === 'dark' ? 'dark' : params.get('mode') === 'sepia' ? 'sepia' : 'light')}><p style={{ color: 'var(--blog-muted)' }}>Published yesterday · 4 min read</p><BlogViewer blocks={[{ type: 'quote', content: 'A readable quotation.' }]} theme="light" /></BlogThemeProvider>
 const root = document.getElementById('root')
 if (!root) throw new Error('Missing root')
 createRoot(root).render(<main>{content}<Toaster /></main>)

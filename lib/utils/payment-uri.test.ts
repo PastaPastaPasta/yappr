@@ -1,5 +1,5 @@
 import bs58check from 'bs58check'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { isValidDashAddress, isValidPaymentAddress, parsePaymentUri, filterPaymentUris } from './payment-uri'
 
 const mainnetAddress = 'XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ'
@@ -38,7 +38,39 @@ describe('isValidDashAddress', () => {
   })
 })
 
+afterEach(() => vi.unstubAllEnvs())
+
+describe('dash: takes an address of the build\'s network, as Dash wallets write it', () => {
+  it.each([
+    // build      address         dash: accepted
+    ['mainnet', mainnetAddress, true],
+    ['mainnet', testnetAddress, false],
+    ['testnet', testnetAddress, true],
+    ['testnet', mainnetAddress, false],
+    ['devnet', testnetAddress, true],
+    ['devnet', mainnetAddress, false],
+  ] as const)('on a %s build, dash:%s is %s', (network, address, accepted) => {
+    vi.stubEnv('NEXT_PUBLIC_NETWORK', network)
+    expect(isValidPaymentAddress('dash:', address)).toBe(accepted)
+    expect(parsePaymentUri(`dash:${address}`) !== null).toBe(accepted)
+  })
+
+  it.each(['mainnet', 'testnet', 'devnet'])('keeps tdash: for testnet addresses only, on a %s build', (network) => {
+    vi.stubEnv('NEXT_PUBLIC_NETWORK', network)
+    expect(isValidPaymentAddress('tdash:', testnetAddress)).toBe(true)
+    expect(isValidPaymentAddress('tdash:', mainnetAddress)).toBe(false)
+  })
+
+  it('reads a seeded demo store (dash: with a testnet address) on a testnet build', () => {
+    vi.stubEnv('NEXT_PUBLIC_NETWORK', 'testnet')
+    expect(filterPaymentUris(JSON.stringify([{ scheme: 'dash:', uri: `dash:${testnetAddress}`, label: 'Store (Dash)' }])))
+      .toEqual([{ scheme: 'dash:', uri: `dash:${testnetAddress}`, label: 'Dash' }])
+  })
+})
+
 describe('isValidPaymentAddress', () => {
+  beforeEach(() => vi.stubEnv('NEXT_PUBLIC_NETWORK', 'mainnet'))
+
   it('enforces the payment URI network, including mixed-case schemes', () => {
     expect(isValidPaymentAddress('dash:', mainnetAddress)).toBe(true)
     expect(isValidPaymentAddress('TDASH:', testnetAddress)).toBe(true)
@@ -111,6 +143,9 @@ describe('isValidPaymentAddress', () => {
 
 
 describe('untrusted payment URIs (SEC-02)', () => {
+  // On a mainnet build, where dash: takes mainnet addresses.
+  beforeEach(() => vi.stubEnv('NEXT_PUBLIC_NETWORK', 'mainnet'))
+
   it.each([
     'javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'data:text/html,SECURITY_QA',
     'vbscript:msgbox(1)', 'file:///etc/passwd', 'https://wallet.example/pay',

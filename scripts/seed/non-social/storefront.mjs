@@ -683,6 +683,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
   if (!args.verifyOnly) {
     await phase('stores', STORES, byStore, async (store) => {
       const actor = actors.get(store.persona);
+      // `dash:` on every network, as the wallets and the store's payment form write it.
       const uris = [{ scheme: 'dash:', uri: `dash:${payoutAddress(store.persona)}`, label: `${store.name} (Dash)` }];
       const data = storeData(store, uris);
       // `store` is unique per $ownerId and the registration battery leaves a
