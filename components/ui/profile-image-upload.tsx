@@ -29,7 +29,12 @@ export interface ProfileImageUploadProps {
   placeholder?: string
   /** Limits of the field that stores this image address. */
   urlLimits?: TextLimits
+  /** Sizes the image area alone (e.g. a small logo), leaving the paste-URL row the full width. */
+  previewClassName?: string
 }
+
+/** Shown when an upload finds no storage provider; "Paste image URL" names the link below the uploader. */
+const NO_STORAGE_MESSAGE = 'To upload images, connect storage in Settings → Storage, or use Paste image URL.'
 
 /**
  * Profile image upload component for avatars and banners.
@@ -44,6 +49,7 @@ export function ProfileImageUpload({
   label = 'Upload Image',
   placeholder = 'Click or drag to upload',
   urlLimits = { maxLength: 512, maxBytes: 512 },
+  previewClassName = '',
 }: ProfileImageUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { upload, isUploading, progress, error, isProviderConnected, checkProvider, clearError } = useImageUpload()
@@ -93,7 +99,7 @@ export function ProfileImageUpload({
       setPreviewUrl(null)
       const msg = err instanceof Error ? err.message : 'Image upload failed'
       if (msg.toLowerCase().includes('provider')) {
-        toast.error('No storage provider connected. Set one up in Settings to upload images.')
+        toast.error(NO_STORAGE_MESSAGE)
       } else {
         toast.error(msg)
       }
@@ -127,7 +133,7 @@ export function ProfileImageUpload({
     if (isUploading) return
     if (!isProviderConnected) {
       // Say where to set it up, but stay here: leaving would throw away the rest of the form.
-      toast.error('To upload images, connect storage in Settings → Storage, or paste an image link.', {
+      toast.error(NO_STORAGE_MESSAGE, {
         duration: 5000,
       })
       return
@@ -204,7 +210,7 @@ export function ProfileImageUpload({
         disabled={isUploading}
       />
 
-      <div className="relative">
+      <div className={`relative ${previewClassName}`}>
         <div
           role="button"
           tabIndex={isUploading ? -1 : 0}

@@ -64,7 +64,7 @@ function ContractReportDialog({ target, reporterId, close }: { target: ContractR
   return <Modal open onOpenChange={value => { if (!value && !busy) close() }} className="w-[440px] max-w-[90vw] max-h-[90vh] overflow-y-auto">
     <ModalTitle>{own ? `You reported this ${noun}` : `Report this ${noun}`}</ModalTitle>
     <Dialog.Description className="text-sm text-gray-500 mb-4">
-      Reports go to the community&apos;s moderators. They are public, including who sent them.
+      Reports go to the community-elected moderators, not to Yappr. They are public, including who sent them.
     </Dialog.Description>
     {loading ? <p>Checking your reports…</p> : failed ? <p role="alert">Could not check your reports. Close this window and try again.</p> : own ? <div className="space-y-3">
       <p>You reported it for {reportReasonLabel(own.reason)}.</p>

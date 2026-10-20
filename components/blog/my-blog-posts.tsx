@@ -1,12 +1,28 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { blogPostService } from '@/lib/services'
 import type { BlogPost } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
+
+/** Pages read in one go while looking for a post from a deleted blog. */
+const MAX_PAGES_PER_LOAD = 5
+
+/** Reads pages from `startAfter` until one holds a post from a deleted blog, the posts run out, or the cap is hit. */
+async function readUntilVisible(ownerId: string, startAfter: string | undefined, isLive: (blogId: string) => boolean) {
+  const found: BlogPost[] = []
+  let next = startAfter
+  for (let page = 0; page < MAX_PAGES_PER_LOAD; page++) {
+    const result = await blogPostService.getOwnerPostsPage(ownerId, next ? { startAfter: next } : undefined)
+    found.push(...result.posts)
+    next = result.nextCursor
+    if (!next || result.posts.some((post) => !isLive(post.blogId))) break
+  }
+  return { posts: found, nextCursor: next }
+}
 
 /**
  * The author's posts whose blog is gone, so they can still be deleted. Posts in
@@ -18,33 +34,43 @@ export function MyBlogPosts({ ownerId, liveBlogIds }: { ownerId: string; liveBlo
   const [cursor, setCursor] = useState<string>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  // Set by a deletion: keep the section in place until the reload settles.
+  const [refreshing, setRefreshing] = useState(false)
   const [deleting, setDeleting] = useState<BlogPost | null>(null)
   const [busy, setBusy] = useState(false)
   const [refreshVersion, setRefreshVersion] = useState(0)
+  // Read through a ref so a new set from the parent doesn't restart the load.
+  const liveBlogIdsRef = useRef(liveBlogIds)
+  useEffect(() => { liveBlogIdsRef.current = liveBlogIds }, [liveBlogIds])
+  const isLive = useCallback((blogId: string) => liveBlogIdsRef.current?.has(blogId) ?? false, [])
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(false)
-    setPosts([])
-    setCursor(undefined)
-    blogPostService.getOwnerPostsPage(ownerId).then((page) => {
+    // The previous posts stay on screen until the new ones arrive.
+    readUntilVisible(ownerId, undefined, isLive).then((result) => {
       if (!cancelled) {
-        setPosts(page.posts)
-        setCursor(page.nextCursor)
+        setPosts(result.posts)
+        setCursor(result.nextCursor)
       }
     }).catch(() => { if (!cancelled) setError(true) })
-      .finally(() => { if (!cancelled) setLoading(false) })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false)
+          setRefreshing(false)
+        }
+      })
     return () => { cancelled = true }
-  }, [ownerId, refreshVersion])
+  }, [ownerId, refreshVersion, isLive])
 
   const loadMore = async () => {
     setLoading(true)
     setError(false)
     try {
-      const page = await blogPostService.getOwnerPostsPage(ownerId, { startAfter: cursor })
-      setPosts((previous) => [...previous, ...page.posts])
-      setCursor(page.nextCursor)
+      const result = await readUntilVisible(ownerId, cursor, isLive)
+      setPosts((previous) => [...previous, ...result.posts])
+      setCursor(result.nextCursor)
     } catch {
       setError(true)
     } finally {
@@ -54,9 +80,12 @@ export function MyBlogPosts({ ownerId, liveBlogIds }: { ownerId: string; liveBlo
 
   const retract = async () => {
     if (!deleting) return
+    const removed = deleting
     setBusy(true)
     try {
-      if (!await blogPostService.deletePost(deleting.id, ownerId)) throw new Error('Delete refused')
+      if (!await blogPostService.deletePost(removed.id, ownerId)) throw new Error('Delete refused')
+      setPosts((previous) => previous.filter((post) => post.id !== removed.id))
+      setRefreshing(true)
       // A tombstone leaves the owner index, so its id can no longer be a paging cursor.
       setRefreshVersion((version) => version + 1)
       setDeleting(null)
@@ -69,7 +98,7 @@ export function MyBlogPosts({ ownerId, liveBlogIds }: { ownerId: string; liveBlo
   }
 
   const visiblePosts = liveBlogIds ? posts.filter((post) => !liveBlogIds.has(post.blogId)) : posts
-  if (visiblePosts.length === 0 && !cursor && !error) return null
+  if (visiblePosts.length === 0 && !refreshing) return null
 
   return (
     <section className="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-800">

@@ -260,10 +260,7 @@ function SettingsPage() {
           </div>
           <div>
             <p className="text-sm text-gray-500">Balance</p>
-            <p>
-              {/* Credits to DASH (1 DASH = 100,000,000,000 credits), to four places like a wallet's summary. */}
-              {`${((user?.balance || 0) / 100000000000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} DASH`}
-            </p>
+            <p>{formatBalance(user?.balance || 0)}</p>
           </div>
           <div>
             <p className="text-sm text-gray-500">Joined</p>
@@ -818,6 +815,13 @@ function SettingsPage() {
       />
     </>
   )
+}
+
+/** Credits as DASH (1 DASH = 100,000,000,000 credits) to four places, like a wallet's summary; dust shows as "<0.0001". */
+function formatBalance(credits: number) {
+  const dash = credits / 100000000000
+  if (dash > 0 && dash < 0.0001) return '<0.0001 DASH'
+  return `${dash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} DASH`
 }
 
 export default withAuth(SettingsPage)

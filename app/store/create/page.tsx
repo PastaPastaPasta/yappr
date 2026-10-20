@@ -281,8 +281,9 @@ function CreateStorePage() {
               )}
 
               <div className="flex flex-col gap-4 sm:flex-row">
-                <div className="w-28 shrink-0">
+                <div className="w-full shrink-0 sm:w-56">
                   <ProfileImageUpload
+                    previewClassName="w-28"
                     currentUrl={logoUrl || undefined}
                     onUpload={(url) => setLogoUrl(ipfsToGatewayUrl(url))}
                     onClear={() => setLogoUrl('')}
