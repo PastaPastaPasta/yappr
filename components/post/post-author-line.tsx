@@ -44,7 +44,7 @@ export function PostAuthorLine({ author, usernameState, displayName, avatarUrl, 
     if (usernameState) {
       return (
         <ProfileHoverCard {...hover} username={usernameState}>
-          <Link href={`/user?id=${author.id}`} onClick={stopPropagation} className="text-gray-500 hover:underline truncate">
+          <Link href={`/user?id=${author.id}`} onClick={stopPropagation} className="text-gray-500 hover:underline truncate min-w-[4ch] shrink-[4]">
             @{usernameState}
           </Link>
         </ProfileHoverCard>

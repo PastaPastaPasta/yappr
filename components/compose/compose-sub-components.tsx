@@ -83,24 +83,6 @@ function RetryIcon({ className }: { className?: string }) {
   )
 }
 
-function ReplyIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-      />
-    </svg>
-  )
-}
-
 function ThreadIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -114,24 +96,6 @@ function ThreadIcon({ className }: { className?: string }) {
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M4 6h16M4 12h16m-7 6h7"
-      />
-    </svg>
-  )
-}
-
-function SendIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
       />
     </svg>
   )
@@ -186,13 +150,9 @@ export function PostButtonContent({ state }: PostButtonContentProps) {
         </span>
       )
 
+    // Plain words, as on X and Bluesky: the send glyph read as a warning sign.
     case 'reply':
-      return (
-        <span className="flex items-center gap-1.5">
-          <ReplyIcon className="w-4 h-4" />
-          Reply
-        </span>
-      )
+      return <span>Reply</span>
 
     case 'thread':
       return (
@@ -203,12 +163,7 @@ export function PostButtonContent({ state }: PostButtonContentProps) {
       )
 
     case 'post':
-      return (
-        <span className="flex items-center gap-1.5">
-          <SendIcon className="w-4 h-4" />
-          Post
-        </span>
-      )
+      return <span>Post</span>
   }
 }
 

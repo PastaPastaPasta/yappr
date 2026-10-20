@@ -17,7 +17,6 @@ import { useInheritedEncryption } from '@/hooks/use-inherited-encryption'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { extractErrorMessage, categorizeError } from '@/lib/error-utils'
 import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
-import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsConfigured, pollrIsV4 } from '@/lib/constants'
 import { privateFeedClientSupported } from '@/lib/contract-topology'
@@ -243,7 +242,7 @@ export function ComposeModal() {
         return
       }
       if (willBeEncrypted && posts.length > 1) {
-        toast.error('Encrypted posts cannot be threads. Only the first post will be published.')
+        toast.error('Private posts can’t be threads, so only the first post is being posted.')
         posts.length = 1
       }
 
@@ -310,7 +309,7 @@ export function ComposeModal() {
       const markPosted = () => successful.forEach(({ threadPostId, postId }) => markThreadPostAsPosted(threadPostId, postId))
 
       if (failedAtIndex === null && timedOut.length === 0) {
-        toast.success(posts.length > 1 ? `Thread with ${posts.length} posts created!` : 'Post created successfully!')
+        toast.success(posts.length > 1 ? 'Thread posted' : replyingTo ? 'Reply posted' : 'Posted')
         if (successful.length > 1) {
           window.dispatchEvent(new CustomEvent('thread-created', { detail: { posts: successful, totalPosts: successful.length } }))
         }
@@ -465,22 +464,19 @@ export function ComposeModal() {
                       )}
                       {isPosting && postingProgress && <PostingProgressBar progress={postingProgress} />}
                       {replyingTo && <ReplyContext author={replyingTo.author} />}
-                      <div className="px-4 sm:px-5 pt-2 empty:hidden">
-                        <PaymentHint docType={replyingTo ? 'reply' : 'post'} />
-                      </div>
 
                       <div ref={scrollContainerRef} className="px-4 sm:px-5 py-4 max-h-[60vh] overflow-y-auto">
                         <div className="space-y-4">
                           {inherited.source && !isPrivateVisibility && (
                             <Banner tone="purple">
                               <LinkIcon className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                              <span className="text-sm text-purple-700 dark:text-purple-300">Your reply will be visible to all subscribers of this private feed</span>
+                              <span className="text-sm text-purple-700 dark:text-purple-300">Only people who can see this private post will see your reply</span>
                             </Banner>
                           )}
                           {inherited.loading && replyingTo && isPrivatePost(replyingTo) && (
                             <Banner tone="gray">
                               <Spinner size="sm" className="h-4 w-4 border-purple-500" />
-                              <span className="text-sm text-gray-500 dark:text-gray-400">Checking encryption inheritance...</span>
+                              <span className="text-sm text-gray-500 dark:text-gray-400">Checking who can see this thread…</span>
                             </Banner>
                           )}
                           {inherited.error && replyingTo && isPrivatePost(replyingTo) && (
@@ -492,7 +488,7 @@ export function ComposeModal() {
                               <div className="flex items-center gap-2">
                                 <ExclamationTriangleIcon className="w-4 h-4 text-red-600 dark:text-red-400" />
                                 <span className="text-sm text-red-700 dark:text-red-300">
-                                  Unable to determine encryption inheritance — replies to this private post cannot be posted right now.
+                                  Couldn’t load this private thread, so you can’t reply yet.
                                 </span>
                               </div>
                               <Button
@@ -511,8 +507,8 @@ export function ComposeModal() {
                               <LockClosedIcon className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                               <span className="text-sm text-amber-700 dark:text-amber-300">
                                 {visibility === 'private'
-                                  ? 'This post will be encrypted and only visible to your private followers'
-                                  : 'The main content will be encrypted. Teaser will be visible to everyone.'}
+                                  ? 'Only your private followers will see this post'
+                                  : 'Everyone sees the teaser. Only your private followers see the rest.'}
                               </span>
                             </Banner>
                           )}
@@ -526,7 +522,7 @@ export function ComposeModal() {
                                 className="rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-neutral-900 overflow-hidden"
                               >
                                 <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
-                                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Public Teaser (visible to everyone)</span>
+                                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Teaser · everyone can see this</span>
                                 </div>
                                 <div className="p-4">
                                   <textarea
@@ -550,7 +546,7 @@ export function ComposeModal() {
                               </motion.div>
                               <div className="flex items-center gap-2 mt-2">
                                 <LockClosedIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Private Content (encrypted)</span>
+                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Private · only your private followers</span>
                               </div>
                             </>
                           )}
@@ -563,6 +559,7 @@ export function ComposeModal() {
                                 index={index}
                                 isActive={post.id === activeThreadPostId}
                                 isOnly={threadPosts.length === 1}
+                                placeholder={replyingTo ? 'Post your reply' : quotingPost ? 'Add a comment' : undefined}
                                 showPreview={showPreview}
                                 onActivate={() => setActiveThreadPost(post.id)}
                                 onRemove={() => removeThreadPost(post.id)}
@@ -599,11 +596,8 @@ export function ComposeModal() {
                                 progress={image.progress}
                                 onRemove={image.remove}
                               />
-                              {imageUrlExtraLength > 0 && (
-                                <div className={`mt-2 text-xs ${isOverLimitDueToImage ? 'text-red-600 dark:text-red-400' : 'text-gray-500'}`}>
-                                  Image URL adds {imageUrlExtraLength} characters to your private post.
-                                  {isOverLimitDueToImage && <span className="ml-1">Too long. Shorten your post.</span>}
-                                </div>
+                              {isOverLimitDueToImage && (
+                                <p className="mt-2 text-xs text-red-600 dark:text-red-400">With the image, this post is too long. Shorten it a little.</p>
                               )}
                             </>
                           )}
