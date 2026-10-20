@@ -17,7 +17,7 @@ import { TextField } from '~/ui/TextField';
 
 import { ManageUnavailable, Notice, Section } from './parts';
 import { saveItemWrite } from './store-writes';
-import { AmountField, emptyVariants, VariantEditor } from './VariantEditor';
+import { AmountField, convertVariantPrices, emptyVariants, VariantEditor } from './VariantEditor';
 
 type EditableStatus = Exclude<StoreItemStatus, 'deleted'>;
 
@@ -59,11 +59,15 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
   const [revision] = useState(item?.$revision);
   // A saved options table keeps its option ids for carts, orders and kits: it can be edited, not removed here.
   const [savedOptions] = useState(Boolean(item?.variants?.combinations.length));
+  const [savedIds] = useState<ReadonlySet<number>>(() => new Set((item?.variants?.axes ?? []).flatMap((axis) => axis.options.map((option) => option.id))));
+  // The currency the variant prices are expressed in, to re-express them when it changes.
+  const [pricedIn, setPricedIn] = useState(initialCurrency);
   const [withOptions, setWithOptions] = useState(savedOptions);
   const [variants, setVariants] = useState<ItemVariants>(item?.variants ?? emptyVariants());
 
   useEffect(() => {
-    if (save.status === 'confirmed' && !id) router.back();
+    // Closed once saved: the draft's revision is spent, and a second save from it would be refused.
+    if (save.status === 'confirmed') router.back();
     if (archive.status === 'confirmed') router.back();
   }, [save.status, archive.status, id]);
 
@@ -94,7 +98,18 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
           <TextField label="Title" value={title} onChangeText={setTitle} maxLength={200} testID="product-title" />
           <TextField label="Description" value={description} onChangeText={setDescription} multiline maxLength={5000} testID="product-description" />
           <TextField label="Image links, one per line (https:// or ipfs://)" value={images} onChangeText={setImages} multiline autoCapitalize="none" autoCorrect={false} testID="product-images" />
-          <TextField label="Currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" autoCorrect={false} maxLength={5} testID="product-currency" />
+          <TextField
+            label="Currency"
+            value={currency}
+            onChangeText={setCurrency}
+            onEndEditing={() => {
+              const next = currency.trim().toUpperCase();
+              if (!next || next === pricedIn) return;
+              setVariants((current) => convertVariantPrices(current, pricedIn, next));
+              setPricedIn(next);
+            }}
+            autoCapitalize="characters"
+            autoCorrect={false} maxLength={5} testID="product-currency" />
           {!withOptions ? (
             <>
               <AmountField label={`Price (${currency})`} amount={amount} onAmount={setAmount} testID="product-price" />
@@ -135,7 +150,7 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
 
         <Section title="Options">
           {savedOptions ? null : <SwitchRow label="This product has options" description="Sizes, colors and the like, each with its own price and stock." value={withOptions} onValueChange={setWithOptions} testID="product-options" />}
-          {withOptions ? <VariantEditor variants={variants} currency={currency} defaultPrice={amount === undefined ? variants.combinations[0]?.price ?? 0 : toSmallestUnit(amount, currency)} onChange={setVariants} /> : null}
+          {withOptions ? <VariantEditor variants={variants} savedIds={savedIds} currency={pricedIn} defaultPrice={amount === undefined ? variants.combinations[0]?.price ?? 0 : toSmallestUnit(amount, pricedIn)} onChange={setVariants} /> : null}
         </Section>
 
         {save.status === 'unconfirmed' ? <Notice tone="warning" text="Saved, awaiting network confirmation." /> : null}

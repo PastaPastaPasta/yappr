@@ -30,12 +30,14 @@ const m = vi.hoisted(() => ({
   sellerKey: null as Uint8Array | null,
   deliveries: { loadDecrypted: vi.fn() },
   kits: { loadKits: vi.fn(), saveKit: vi.fn() },
-  items: { getManyFresh: vi.fn(), getById: vi.fn(), createItem: vi.fn() },
+  items: { getManyFresh: vi.fn(), getById: vi.fn(), createItem: vi.fn(), updateItem: vi.fn() },
+  reviews: { getOrderReviews: vi.fn(), createReview: vi.fn() },
+  itemReviews: { query: vi.fn(), createItemReview: vi.fn() },
   fulfillOrder: vi.fn(),
 }))
 
 vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>(), getCurrentUserId: () => m.viewer }))
-vi.mock('@/lib/constants', async (load) => ({ ...await load<object>(), storefrontIsV6: () => true, storefrontSupportsDigital: () => true, storefrontStatusIsSealed: () => false }))
+vi.mock('@/lib/constants', async (load) => ({ ...await load<object>(), storefrontIsV2: () => true, storefrontIsV6: () => true, storefrontSupportsDigital: () => true, storefrontStatusIsSealed: () => false }))
 vi.mock('@/lib/secure-storage', async (load) => ({ ...await load<object>(), getEncryptionKeyBytes: () => m.buyerKey }))
 vi.mock('@/lib/crypto/encryption-key-lookup', async (load) => ({ ...await load<object>(), resolveEncryptionPublicKey: async () => m.sellerKey }))
 vi.mock('@/lib/services/cart-service', async (load) => {
@@ -66,6 +68,8 @@ vi.mock('@/lib/services/order-status-service', async (load) => ({ ...await load<
 vi.mock('@/lib/services/order-delivery-service', () => ({ orderDeliveryService: m.deliveries }))
 vi.mock('@/lib/services/item-deliverable-service', async (load) => ({ ...await load<object>(), itemDeliverableService: m.kits }))
 vi.mock('@/lib/services/store-item-service', () => ({ storeItemService: m.items }))
+vi.mock('@/lib/services/store-review-service', () => ({ storeReviewService: m.reviews }))
+vi.mock('@/lib/services/item-review-service', () => ({ itemReviewService: m.itemReviews }))
 vi.mock('@/lib/services/digital-fulfillment', async (load) => ({ ...await load<object>(), fulfillOrder: m.fulfillOrder }))
 
 const { createTicketStore } = await import('../../src/writes/tickets')
@@ -398,6 +402,14 @@ describe('seller forms', () => {
     await expect(e.store.saveStore({ fields: { name: 'Shop', category: 'books', paymentUris: ['tdash:yLadnCajwhccmjsUS1Bm2icVv5ehdeFtxj'] } })).resolves.toMatchObject({ op: 'store.save' })
   })
 
+  it('never clears a saved options table (its ids live on in carts and kits)', async () => {
+    m.items.getById.mockResolvedValue({ id: ITEM, ownerId: SELLER, variants: { axes: [], combinations: [{ id: '1', optionIds: [1], price: 1 }], nextOptionId: 2 } })
+    const e = engine()
+    const ticket = await settled(e.tickets, await e.store.saveItem({ storeId: STORE, itemId: ITEM, revision: 1, fields: { title: 'Mug', variants: { axes: [], combinations: [], nextOptionId: 2 } } }))
+    expect(ticket.error).toMatchObject({ code: 'BAD_REQUEST', userMessage: expect.stringMatching(/options can't be removed/) })
+    expect(m.items.updateItem).not.toHaveBeenCalled()
+  })
+
   it('creates the store once', async () => {
     m.store.getByOwner.mockResolvedValue(null)
     m.store.createStore.mockResolvedValue({ id: STORE, __createConfirmed: true })
@@ -408,6 +420,35 @@ describe('seller forms', () => {
     m.store.getByOwner.mockResolvedValue(store())
     const again = await settled(e.tickets, await e.store.saveStore({ fields: { name: 'Shop', category: 'books' } }))
     expect(again.error?.userMessage).toMatch(/already have a store/)
+  })
+})
+
+describe('reviews', () => {
+  beforeEach(() => {
+    m.viewer = BUYER
+    m.order.get.mockResolvedValue({ id: ORDER, buyerId: BUYER, sellerId: SELLER, storeId: STORE })
+  })
+
+  it('resumes after an item review failed: neither the store review nor a landed item review is written twice', async () => {
+    m.reviews.getOrderReviews.mockResolvedValue(new Map([[ORDER, { id: id('Review') }]]))
+    const A = id('ItemA')
+    const B = id('ItemB')
+    m.itemReviews.query.mockImplementation(async ({ where }: { where: [string, string, string][] }) => ({ documents: where[1][2] === A ? [{ id: id('RevA') }] : [] }))
+    m.itemReviews.createItemReview.mockResolvedValue({ id: id('RevB'), __createConfirmed: true })
+    const e = engine()
+    const ticket = await settled(e.tickets, await e.store.review({ orderId: ORDER, rating: 5, items: [{ itemId: A, rating: 4 }, { itemId: B, rating: 5 }] }))
+    expect(ticket.state).toBe('confirmed')
+    expect(m.reviews.createReview).not.toHaveBeenCalled()
+    expect(m.itemReviews.createItemReview).toHaveBeenCalledTimes(1)
+    expect(m.itemReviews.createItemReview).toHaveBeenCalledWith(BUYER, expect.objectContaining({ itemId: B }))
+  })
+
+  it('sends nothing when it cannot tell whether the store review landed', async () => {
+    m.reviews.getOrderReviews.mockRejectedValue(new Error('network'))
+    const e = engine()
+    const ticket = await settled(e.tickets, await e.store.review({ orderId: ORDER, rating: 5 }))
+    expect(ticket).toMatchObject({ state: 'failed', retryable: true })
+    expect(m.reviews.createReview).not.toHaveBeenCalled()
   })
 })
 

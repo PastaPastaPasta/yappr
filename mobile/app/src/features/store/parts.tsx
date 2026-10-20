@@ -4,7 +4,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as WebBrowser from 'expo-web-browser';
 import { useState, type ReactNode } from 'react';
-import { Pressable, RefreshControl, View } from 'react-native';
+import { Linking, Pressable, RefreshControl, View } from 'react-native';
 
 import { formatPrice } from '~/lib-allowlist';
 import { engine } from '~/engine';
@@ -275,6 +275,18 @@ export function DeliveryList({ orderId, deliveries, testID }: { orderId: string;
               {item.assets.map((asset, assetIndex) => {
                 const key = `${delivery.id}-${index}-${assetIndex}`;
                 if (asset.kind === 'code') return <CopyRow key={key} label={asset.label} value={asset.code} />;
+                if (asset.kind === 'link' && /^magnet:/i.test(asset.url)) {
+                  // A torrent link: handed to the buyer's torrent app, and copyable when none is installed.
+                  return (
+                    <View key={key} className="gap-2">
+                      <Pressable accessibilityRole="link" onPress={() => { Linking.openURL(asset.url).catch(() => toast.error('No app on this device opens this link. Copy it instead.')); }} style={{ minHeight: 44, justifyContent: 'center' }}>
+                        <Text tone="link">{asset.label}</Text>
+                      </Pressable>
+                      <CopyRow label={`${asset.label} link`} value={asset.url} />
+                      {asset.code ? <CopyRow label={`${asset.label} code`} value={asset.code} /> : null}
+                    </View>
+                  );
+                }
                 if (asset.kind === 'link') {
                   return (
                     <View key={key} className="gap-2">

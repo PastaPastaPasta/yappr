@@ -269,6 +269,12 @@ export function createStoreWrites(tickets: TicketStore) {
         return { state: 'confirmed' }
       }
       const data = checkedBeforeSending(() => itemData(input.fields as ItemFields))
+      // A saved options table is never cleared: its option ids live on in carts, orders and kits,
+      // and a new table would hand them out again from 1.
+      if (input.itemId && 'variants' in data && !data.variants) {
+        const stored = await storeItemService.getById(input.itemId).catch((error: unknown) => { throw new NotSentError(readFailure(error)) })
+        if (stored?.variants?.combinations.length) throw new NotSentError(badRequest("A product's options can't be removed. Pause it and list a new product instead."))
+      }
       if (!input.itemId) return created(STOREFRONT_DOCUMENT_TYPES.STORE_ITEM, await storeItemService.createItem(owner, input.storeId, data).catch(beforeSigning), ctx)
       await storeItemService.updateItem(input.itemId, owner, input.storeId, data, input.revision).catch(beforeSigning)
       return { state: 'confirmed' }
@@ -307,10 +313,11 @@ export function createStoreWrites(tickets: TicketStore) {
       if (!order) throw new NotSentError(badRequest('This order could not be found'))
       if (order.buyerId !== buyer) throw new NotSentError(badRequest('Only the buyer can review this order'))
       const rated = storefrontIsV2() ? (input.items ?? []).filter(item => item.rating >= 1 && item.rating <= 5) : []
+      // A retry after an item review failed: the store review stands already (one per order), so only the
+      // items go. A failed read is never "none": it sends nothing, and the retry reads again.
+      const landed = (await storeReviewService.getOrderReviews([order.id]).catch((error: unknown) => { throw new NotSentError(readFailure(error)) })).get(order.id)
       ctx.stage('signing')
       ctx.progress(0, 1 + rated.length)
-      // A retry after an item review failed: the store review stands already (one per order), so only the items go.
-      const landed = (await storeReviewService.getOrderReviews([order.id]).catch(() => new Map<string, { id: string }>())).get(order.id)
       const review = landed ?? await storeReviewService.createReview(buyer, {
         storeId: order.storeId, orderId: order.id, sellerId: order.sellerId, rating: input.rating,
         title: input.title?.trim() || undefined, content: input.content?.trim() || undefined,
@@ -322,8 +329,8 @@ export function createStoreWrites(tickets: TicketStore) {
         ctx.progress(index + 1, 1 + rated.length)
         try {
           // A retry after a later item failed: an item review that landed already is never written twice.
-          const prior = (await itemReviewService.getItemReviews(item.itemId, { limit: 50 }).catch(() => ({ reviews: [] }))).reviews
-            .find(review => review.orderId === order.id && review.reviewerId === buyer)
+          // The contract's unique (orderId, itemId) index answers it exactly; a failed read fails the write, never recreates.
+          const prior = (await itemReviewService.query({ where: [['orderId', '==', order.id], ['itemId', '==', item.itemId]], limit: 1 })).documents[0]
           if (prior) {
             documents.push(storefrontDoc(STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW, prior.id, 'create', true))
             continue
