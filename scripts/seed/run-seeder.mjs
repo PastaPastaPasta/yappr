@@ -1239,13 +1239,15 @@ async function selfTest() {
   // The payment bags are wasm objects, unlike everything above them.
   await ensureInitialized();
   // A live write agrees to the fee its contract was REGISTERED with (sakura's v17 set predates D41's).
+  // Any amount other than the file's, so the check holds on every cut (v10–v16 also declare 80M).
+  const registeredFee = postFee.moderators + 1n;
   const registeredSdk = {
-    contracts: { fetch: async () => ({ schemas: { post: { actionFees: { pricing: 'feeMultiplier', create: { moderators: 80_000_000n } } } } }) },
+    contracts: { fetch: async () => ({ schemas: { post: { actionFees: { pricing: 'feeMultiplier', create: { moderators: registeredFee } } } } }) },
     epoch: { current: async () => ({ feeMultiplierPermille: 1000 }) },
   };
   const registeredAgreement = await feeAgreementFor(registeredSdk, 'post', undefined, { contractId: 'self-test-registered' });
   check('a live create agrees to the registered fee, not the committed file\'s',
-    registeredAgreement?.moderators === 80_000_000n && postFee.moderators !== 80_000_000n,
+    registeredAgreement?.moderators === registeredFee,
     `${registeredAgreement?.moderators} vs file ${postFee.moderators}`);
   check('the registered schemas are read once per contract',
     (await registeredSchemasOf({ contracts: { fetch: async () => { throw new Error('read twice'); } } }, 'self-test-registered')).post !== undefined);
