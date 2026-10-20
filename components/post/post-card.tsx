@@ -128,7 +128,7 @@ export function PostCard(props: PostCardProps) {
  * counts and the viewer's marks are the target's, not the repost's; the
  * repost's own enrichment names the reposter.
  */
-function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
+function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCardProps) {
   const { user } = useAuth()
   const viewerId = user?.identityId
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
@@ -209,6 +209,7 @@ function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
         post={{ ...target, repostedBy: reposter, repostTimestamp: post.createdAt, repostedByOthers: post.repostedByOthers }}
         // Deleting the target drops the repost that showed it.
         onDelete={onDelete ? () => onDelete(post.id) : undefined}
+        keepIfUnreadable={keepIfUnreadable}
       />
     )
   }
@@ -714,7 +715,7 @@ function PostCardView({
           <SensitiveContentGate postId={post.id} active={gateSensitive}>
             {isTombstoned ? (
               <p className="mt-2 text-sm italic text-gray-500 dark:text-gray-400">{isReply ? 'This reply was deleted.' : 'This post was deleted.'}</p>
-            ) : isPrivatePost(post) ? (
+            ) : privatePost ? (
               <PrivatePostContent
                 post={post}
                 rootPostOwnerId={rootPostOwnerId}
@@ -738,7 +739,7 @@ function PostCardView({
               />
             ) : null}
 
-            {!isTombstoned && embeddedPollId && !isPrivatePost(post) && <PollCard pollId={embeddedPollId} postContent={displayContent} postAuthorId={post.author.id} nativeEmbed={nativePollId !== null} />}
+            {!isTombstoned && embeddedPollId && !privatePost && <PollCard pollId={embeddedPollId} postContent={displayContent} postAuthorId={post.author.id} nativeEmbed={nativePollId !== null} />}
 
             {!isTombstoned && quotedPostLoading && <EmbeddedPostSkeleton />}
             {!isTombstoned && quotedPostUnavailable && (quotedTarget && quotedTarget.where !== 'blogPost' && referencesMayDangle()

@@ -174,7 +174,7 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
             <ActionTooltip label={bookmark.active ? 'Remove bookmark' : 'Bookmark'}>
               <button
                 data-testid={`bookmark-btn-${postId}`}
-                aria-label={bookmark.active ? 'Remove bookmark' : 'Bookmark'}
+                aria-label="Bookmark"
                 aria-pressed={bookmark.active}
                 onClick={(e) => stopAndRun(e, bookmark.onClick)}
                 disabled={bookmark.loading}

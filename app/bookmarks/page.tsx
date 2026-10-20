@@ -281,6 +281,7 @@ function BookmarksPage() {
               >
                 <PostCard
                   post={post}
+                  keepIfUnreadable
                   bookmarkAction={{ active: true, loading: isMutating, onClick: () => removeBookmark(post.id) }}
                 />
                 

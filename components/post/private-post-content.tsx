@@ -46,8 +46,8 @@ interface PrivatePostContentProps {
  * Whether the viewer can read a private post: `pending` until decryption
  * settles; `unreadable` for someone else's post they have no way into right
  * now (no access, pending, revoked, renewing, or from before they joined).
- * A failed read and an approved follower who only needs to recover keys stay
- * `readable`: both have a way in from the card itself.
+ * A signed-out viewer, a failed read and an approved follower who only needs
+ * to recover keys stay `readable`: each has a way in from the card itself.
  */
 export type PrivateReadability = 'pending' | 'readable' | 'unreadable'
 
@@ -63,7 +63,7 @@ export function knownPrivateReadability(postId: string, viewerId: string | undef
 
 function readabilityOf(state: DecryptionState, isOwner: boolean): PrivateReadability {
   if (state.status === 'idle' || state.status === 'loading') return 'pending'
-  if (state.status !== 'locked' || isOwner || state.reason === 'approved-no-keys') return 'readable'
+  if (state.status !== 'locked' || isOwner || state.reason === 'approved-no-keys' || state.reason === 'no-auth') return 'readable'
   return 'unreadable'
 }
 
@@ -77,7 +77,7 @@ type DecryptionState =
 type PrivateContentCardStatus = 'decrypted' | 'error'
 
 /** The one-line locked row, and the loading row shaped like it. */
-const LOCKED_ROW = 'rounded-lg border flex items-center justify-between gap-2 px-3 py-2 min-h-[2.5rem]'
+const LOCKED_ROW = 'rounded-lg border flex items-center justify-between gap-2 px-3 py-2 min-h-[42px]'
 
 interface PrivateContentCardProps {
   children: React.ReactNode
