@@ -8,7 +8,6 @@ import {
   withHeldDeliveries, type ItemListing,
 } from '@/lib/services/digital-delivery-plan'
 import { fulfillOrder, FulfillmentError, KeyRecoveryError, kitsOf, newerKits, toKitPayloads } from '@/lib/services/digital-fulfillment'
-import { fetchDecryptedFile } from '@/lib/services/digital-file-service'
 import { getPaymentVerificationUrl } from '@/lib/services/insight-api-service'
 import { bytesToBase64 } from '@/lib/bytes'
 import { itemDeliverableService, KitWriteUncertainError, type SellerKit } from '@/lib/services/item-deliverable-service'
@@ -30,6 +29,7 @@ import { RpcError } from '../protocol/envelope'
 import { badRequest, readFailure, requireViewer } from '../dto/hydrate'
 import { decodeCursor, encodeCursor } from '../dto/cursor'
 import type { Page } from './dto'
+import { fetchDeliveredFile } from './delivered-file'
 import { NotSentError, type ProbeKit, type ProbeResult, type TicketStore } from '../writes/tickets'
 import { signer } from '../writes/handler-kit'
 import { wasConfirmed } from '../writes/lib-results'
@@ -918,10 +918,9 @@ export function createOrderModule(tickets: TicketStore) {
       const asset = delivery?.payload?.items[input.itemIndex]?.assets[input.assetIndex]
       if (!asset || asset.kind !== 'file') throw badRequest('This file could not be found in the delivery')
       if (asset.size > MAX_SAVED_FILE_BYTES) throw badRequest(FILE_TOO_LARGE_MESSAGE)
-      const blob = await fetchDecryptedFile(asset)
-      // The declared size is the seller's word: the bytes decide.
-      if (blob.size > MAX_SAVED_FILE_BYTES) throw badRequest(FILE_TOO_LARGE_MESSAGE)
-      return { name: asset.name, base64: bytesToBase64(new Uint8Array(await blob.arrayBuffer())) }
+      // The declared size is the seller's word: the download itself stops past the cap.
+      const bytes = await fetchDeliveredFile(asset, MAX_SAVED_FILE_BYTES)
+      return { name: asset.name, base64: bytesToBase64(bytes) }
     },
 
     /** The seller's delivery content for a digital product; `locked` without the key on this device. */
