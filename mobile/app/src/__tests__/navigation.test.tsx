@@ -298,6 +298,14 @@ describe('app shell', () => {
     ['/store/orders', null],
     ['/store/deliver?orderId=abc123', null],
     ['/store-report?docType=store&targetId=abc123&ownerId=def456', null],
+    ['/blogs', null],
+    ['/blogs/mine', null],
+    ['/blogs/new', null],
+    ['/blog/abc123', null],
+    ['/blog/abc123/settings', null],
+    ['/blog/abc123/write', null],
+    ['/blog/abc123/post/hello', null],
+    ['/blog/abc123/post/hello/edit', null],
   ])('%s has a stub', async (url, pr) => {
     const app = await renderApp('/');
     act(() => router.push(url as Href));

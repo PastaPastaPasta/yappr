@@ -2,12 +2,15 @@ import type { CapabilitiesDTO, ProfileDTO } from '@engine/api';
 import { router, Stack, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
+import { ChevronDownIcon } from 'react-native-heroicons/outline';
+import { CameraIcon } from 'react-native-heroicons/solid';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { useCapabilities, useViewerId } from '~/data/session';
 import { useWrite } from '~/data/writes';
 import { useEngineStatus } from '~/engine/hooks';
+import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { confirmAlert } from '~/ui/Dialog';
@@ -20,6 +23,7 @@ import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
+import { tw, useColors } from '~/ui/tokens';
 
 import { AvatarPicker, type AvatarStyles } from './AvatarPicker';
 import {
@@ -50,6 +54,9 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   const [initial] = useState(() => formFromProfile(profile, defaultStyle));
   const [form, setForm] = useState<ProfileForm>(initial);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // A stored banner link that needs fixing starts it open; the row alone opens and closes it after.
+  const [moreOpen, setMoreOpen] = useState(() => validateForm(initial, limits).bannerUri !== undefined);
+  const c = useColors();
   const save = useWrite(profileUpdateWrite);
   // A confirmed save closes the modal (below), and the form keeps its saving look until it has
   // gone. Re-enabling the fields in the render that closes it would move the inputs between
@@ -193,28 +200,51 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         editable={!locked}
         testID="edit-website"
       />
-      <TextField
-        label="Banner image link"
-        value={form.bannerUri}
-        onChangeText={set('bannerUri')}
-        maxLength={FIXED_LIMITS.banner}
-        error={errors.bannerUri}
-        placeholder="Paste an image link"
-        keyboardType="url"
-        autoCapitalize="none"
-        autoCorrect={false}
-        editable={!locked}
-        testID="edit-banner"
-      />
-      <SwitchRow
-        label="NSFW content"
-        description="Mark your profile as containing adult content"
-        value={form.nsfw}
-        onValueChange={set('nsfw')}
-        disabled={locked}
-        testID="edit-nsfw"
-      />
     </>
+  );
+  // The rarely changed settings, folded away until asked for.
+  const moreFields = (
+    <View className={cn('overflow-hidden rounded-xl border', tw.border)}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: moreOpen }}
+        onPress={() => setMoreOpen((open) => !open)}
+        testID="edit-more"
+        className={cn('min-h-12 flex-row items-center px-4 py-3', tw.pressed)}
+      >
+        <Text variant="bodyStrong" className="flex-1">
+          More
+        </Text>
+        <View style={{ transform: [{ rotate: moreOpen ? '180deg' : '0deg' }] }}>
+          <ChevronDownIcon size={18} color={c.textSecondary} />
+        </View>
+      </Pressable>
+      {moreOpen ? (
+        <View className={cn('gap-4 border-t px-4 py-4', tw.border)}>
+          <TextField
+            label="Banner image link"
+            value={form.bannerUri}
+            onChangeText={set('bannerUri')}
+            maxLength={FIXED_LIMITS.banner}
+            error={errors.bannerUri}
+            placeholder="Paste an image link"
+            keyboardType="url"
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!locked}
+            testID="edit-banner"
+          />
+          <SwitchRow
+            label="NSFW content"
+            description="Mark your profile as containing adult content"
+            value={form.nsfw}
+            onValueChange={set('nsfw')}
+            disabled={locked}
+            testID="edit-nsfw"
+          />
+        </View>
+      ) : null}
+    </View>
   );
 
   return (
@@ -257,18 +287,20 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
             </View>
           ) : null}
           <ProfileBanner uri={form.bannerUri.trim() || undefined} height={120} />
-          <View className="-mt-11 flex-row items-end gap-3 px-4">
-            <Avatar avatar={avatarDtoOf(form.avatar, viewerId, defaultStyle)} identityId={viewerId} size="profile" />
+          {/* The avatar is the button, as on X and Bluesky: a camera badge says so. */}
+          <View className="-mt-11 flex-row px-4">
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel="Change avatar"
               onPress={() => setPickerOpen(true)}
               disabled={locked}
-              className="mb-2 active:opacity-60"
+              className="active:opacity-80"
               testID="edit-change-avatar"
             >
-              <Text variant="subheadStrong" tone="link">
-                Change avatar
-              </Text>
+              <Avatar avatar={avatarDtoOf(form.avatar, viewerId, defaultStyle)} identityId={viewerId} size="profile" />
+              <View className="absolute bottom-1 right-1 h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-neutral-900/75 dark:border-neutral-900">
+                <CameraIcon size={16} color="#ffffff" />
+              </View>
             </Pressable>
           </View>
           {/* One list, whichever documents the fields live in (#20). */}
@@ -281,6 +313,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
               </Text>
             ) : null}
             {otherFields}
+            {moreFields}
           </View>
         </ScrollView>
       </KeyboardAvoider>

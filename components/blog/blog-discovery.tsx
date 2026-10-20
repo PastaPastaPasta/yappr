@@ -32,7 +32,7 @@ interface BlogWithUsername extends Blog {
  * covers today up to v6 and the last ~3 days on v7.
  */
 const SORTS = [
-  { key: 'newest', label: 'Newest' },
+  { key: 'newest', label: 'Latest' },
   { key: 'followed', label: 'Most followed' },
   { key: 'trending', label: 'Trending' },
 ] as const
@@ -198,7 +198,7 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
         <div className="space-y-2">
           {incomplete && sort === 'newest' && (
             <p className="text-center text-xs text-gray-500">
-              Newest among the first {DISCOVERY_SCAN_LIMIT.toLocaleString()} blogs found; there are more.
+              Latest among the first {DISCOVERY_SCAN_LIMIT.toLocaleString()} blogs found; there are more.
             </p>
           )}
           {filtered.map((blog) => (

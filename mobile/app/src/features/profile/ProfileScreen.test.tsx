@@ -144,7 +144,7 @@ describe('ProfileScreen', () => {
     expect(screen.getByLabelText('Message Sigrid Dahl')).toBeTruthy();
     expect(screen.getByTestId('profile-tabs-top')).toBeTruthy();
     expect(fakeEngine.method('profiles.posts')).toHaveBeenCalledWith({ id: OTHER, tab: 'posts', cursor: null });
-    expect(await screen.findByText('No original posts yet')).toBeTruthy();
+    expect(await screen.findByText('No posts yet')).toBeTruthy();
   });
 
   it('right-aligns an RTL paragraph of the bio', async () => {

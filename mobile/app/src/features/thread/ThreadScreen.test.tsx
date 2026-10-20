@@ -230,6 +230,15 @@ describe('ThreadScreen', () => {
     }
   });
 
+  it("reads the thread's private posts again on a pull to refresh (an approval since opens them)", async () => {
+    fakeEngine.method('posts.thread').mockResolvedValue(threadOf([reply('r1', 'First reply')]));
+    renderThread();
+    await act(async () => {});
+    queryClient.setQueryData(queryKeys.privateFeed.post('r1'), { state: 'locked', reason: 'pending' });
+    await act(async () => screen.getByTestId('thread-list').props.refreshControl.props.onRefresh());
+    expect(queryClient.getQueryState(queryKeys.privateFeed.post('r1'))?.isInvalidated).toBe(true);
+  });
+
   it('toasts a failed pull to refresh and keeps the thread', async () => {
     fakeEngine.method('posts.thread').mockResolvedValueOnce(threadOf([reply('r1', 'First reply')]));
     renderThread();

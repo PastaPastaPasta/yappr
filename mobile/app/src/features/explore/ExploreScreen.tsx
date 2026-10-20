@@ -8,9 +8,11 @@ import { FireIcon, HashtagIcon, TrophyIcon } from 'react-native-heroicons/outlin
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useCapabilities } from '~/data/session';
+import { BlogsLink } from '~/features/blog/BlogsLink';
 import { openHashtag } from '~/features/post/post-navigation';
 import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
+import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { cn } from '~/lib-allowlist';
 import { ComposeFab } from '~/ui/ComposeFab';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -23,9 +25,17 @@ import { exploreSegments, shownSegment, useExplorePrefs, type ExploreSegment } f
 import { FollowableUserRow, readFollowStatus, withFollowStatus } from './FollowableUserRow';
 import { postItemType } from './PagedPostList';
 import { SearchLauncher } from './SearchField';
-import { LoadingRow, OfflineBanner, readErrorMessage, SectionHeader, useOffline } from './states';
+import {
+  OfflineBanner,
+  PostListSkeleton,
+  readErrorMessage,
+  SectionHeader,
+  TagListSkeleton,
+  UserListSkeleton,
+  useOffline,
+} from './states';
 import { TagRow } from './TagRow';
-import { countLabel, POST_WINDOWS, TAG_WINDOWS } from './tags';
+import { countLabel, RANKING_WINDOWS } from './tags';
 
 type Row =
   | { type: 'tag'; key: string; tag: TagDTO; rank: number }
@@ -55,6 +65,8 @@ const COPY: Record<ExploreSegment, { loading: string; empty: string; emptyDescri
 };
 
 const EMPTY_ICON = { trending: HashtagIcon, top: FireIcon, creators: TrophyIcon } as const;
+
+const LOADING = { trending: TagListSkeleton, top: PostListSkeleton, creators: UserListSkeleton } as const;
 
 /** The leaderboards as rows: likes received, then the most followed, each under its header. */
 function creatorRows(entries: readonly RankedUserDTO[]): Row[] {
@@ -109,6 +121,7 @@ export function ExploreScreen() {
     { persist: true, enabled: segment === 'creators' },
   );
   const active = segment === 'trending' ? trending : segment === 'top' ? top : creators;
+  const hidePrivate = useHideUnreadablePrivate();
 
   let rows: Row[] = [];
   if (segment === 'trending') {
@@ -138,10 +151,11 @@ export function ExploreScreen() {
       .finally(() => setRefreshing(false));
   };
 
-  const windows = segment === 'trending' ? TAG_WINDOWS : segment === 'top' ? POST_WINDOWS : null;
+  const windows = segment === 'trending' || segment === 'top' ? RANKING_WINDOWS : null;
   const header = (
     <View className={cn('gap-3 border-b px-4 pb-3', Platform.OS === 'ios' ? 'pt-1' : 'pt-3', tw.border)}>
       <SearchLauncher onPress={() => router.push('/explore/search')} />
+      <BlogsLink />
       {segments.length > 1 ? (
         <SegmentedControl
           options={segments}
@@ -177,7 +191,9 @@ export function ExploreScreen() {
       />
     );
   } else if (active.isPending) {
-    empty = <LoadingRow label={copy.loading} testID={`explore-${segment}-loading`} />;
+    // Shaped like the rows that replace it, so nothing jumps when they land.
+    const Loading = LOADING[segment];
+    empty = <Loading label={copy.loading} testID={`explore-${segment}-loading`} />;
   } else {
     empty = (
       <EmptyState
@@ -210,7 +226,7 @@ export function ExploreScreen() {
                 />
               );
             case 'post':
-              return <PostItem post={item.post} />;
+              return <PostItem post={item.post} hideUnreadablePrivate={hidePrivate} />;
             case 'section':
               return <SectionHeader title={item.title} />;
             case 'user':

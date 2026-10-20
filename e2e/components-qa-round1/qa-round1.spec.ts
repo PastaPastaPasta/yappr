@@ -333,3 +333,18 @@ test('PROFILE-EDIT-05: links saved under older rules open without errors or a di
   await expect(page.getByText('Discard changes?')).toHaveCount(0)
   await expect(page.getByTestId('edit-state')).toHaveText('closed')
 })
+
+test('D-500: the profile menu names the person by handle, never by an id stand-in', async ({ page }) => {
+  await page.goto('/qa-round1.html?fixture=profile&handle=alice.dash')
+  await page.getByRole('button', { name: 'More' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Report @alice.dash' })).toBeVisible()
+  // Read the label itself: the open menu hides the rest of the page from role queries.
+  await expect(page.locator('button[aria-label="Message @alice.dash"]')).toHaveCount(1)
+
+  await page.goto('/qa-round1.html?fixture=profile&missing=1')
+  await page.getByRole('button', { name: 'More' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Report', exact: true })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('User 3f9a2c')
+  await expect(page.locator('button[aria-label="Message"]')).toHaveCount(1)
+  await expect(page.locator('[aria-label*="3f9a2c"]')).toHaveCount(0)
+})

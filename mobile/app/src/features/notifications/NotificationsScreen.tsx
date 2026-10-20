@@ -11,6 +11,7 @@ import { engineSupervisor } from '~/engine';
 import { EngineBanner } from '~/engine/EngineBanner';
 import { useEngineStatus } from '~/engine/hooks';
 import { SignedOutEmptyState } from '~/features/auth/SignedOutPlaceholder';
+import { openBlogPost } from '~/features/blog/blog-navigation';
 import { useOffline } from '~/features/home/use-app-active';
 import { openExternal, openPost, openUser } from '~/features/post/post-navigation';
 import { useSettings } from '~/features/settings/settings-data';
@@ -146,6 +147,7 @@ export function NotificationsScreen() {
     if (destination.kind === 'post') openPost(destination.id);
     else if (destination.kind === 'user') openUser(destination.id);
     else if (destination.kind === 'privateFeedRequests') openOnItsTab('/settings/private-feed');
+    else if (destination.kind === 'blogPost') openBlogPost(destination.blogId, destination.slug);
     else openExternal(`${config.webBaseUrl}${destination.path}`);
   }, []);
 

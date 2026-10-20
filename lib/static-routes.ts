@@ -1,4 +1,6 @@
-/** These pages contain information, with no account controls or Platform reads. */
+/** Pages that contain information, with no account controls or Platform reads. */
+export const STATIC_ROUTES = ['/terms', '/privacy', '/cookies', '/about', '/about/private-feeds']
+
 export function isStaticRoute(pathname: string): boolean {
-  return ['/terms', '/privacy', '/cookies', '/about', '/about/private-feeds'].includes(pathname.replace(/\/$/, ''))
+  return STATIC_ROUTES.includes(pathname.replace(/\/$/, ''))
 }

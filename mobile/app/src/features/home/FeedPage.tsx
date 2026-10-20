@@ -8,6 +8,7 @@ import { useReducedMotion } from 'react-native-reanimated';
 
 import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
+import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { engineSupervisor } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
 import { Button } from '~/ui/Button';
@@ -112,6 +113,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
   const pinned = usePinnedPosts();
   const pins = tab === 'forYou' && sort === 'recent' ? pinned : NO_POSTS;
   const feedItems = feed.items;
+  const hidePrivate = useHideUnreadablePrivate();
   const items = useMemo(() => {
     if (pins.length === 0) return feedItems;
     const inFeed = new Set(feedItems.map((post) => post.id));
@@ -267,7 +269,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
         data={items}
         keyExtractor={(post) => post.id}
         getItemType={itemType}
-        renderItem={({ item }) => <PostItem post={item} />}
+        renderItem={({ item }) => <PostItem post={item} hideUnreadablePrivate={hidePrivate} />}
         ListEmptyComponent={empty}
         ListFooterComponent={footer}
         onEndReached={onEndReached}

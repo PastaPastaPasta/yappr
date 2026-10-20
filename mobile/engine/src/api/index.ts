@@ -15,6 +15,7 @@ import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
 import { createStoreModule } from './store'
+import { blogReads, createBlogWrites } from './blog'
 
 /**
  * The engine API. The RN host imports `type EngineApi` only and calls it
@@ -79,6 +80,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     cart: storefront.cart,
     privateFeed: { ...privateFeedReads, ...createPrivateFeedWrites(tickets) },
     dpns: createDpnsModule(tickets, controller),
+    blogs: { ...blogReads, ...createBlogWrites(tickets) },
   }
 }
 
@@ -102,3 +104,4 @@ export type * from './store'
 export type * from './store-orders'
 export type * from './store-writes'
 export type { PlatformInfoDTO } from '../dto/capabilities'
+export type * from './blog'

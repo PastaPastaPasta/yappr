@@ -306,7 +306,9 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
                 <PaperAirplaneIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
                 <h2 className="text-2xl font-semibold mb-2">{rows.length === 0 ? 'Welcome to Messages' : 'Select a conversation'}</h2>
                 <p className="text-gray-500 mb-2">Private 1-on-1 and group conversations.</p>
-                <p className="text-gray-400 text-sm mb-6">Messages are encrypted, and nobody watching Dash Platform can tell who you talk to.</p>
+                {rows.length === 0
+                  ? <p className="text-gray-400 text-sm mb-6">No messages yet. Start a conversation from someone&apos;s profile.</p>
+                  : <div className="mb-6" />}
                 <div className="flex gap-2 justify-center">
                   <Button onClick={openNewMessage} className="gap-2">
                     <PlusIcon className="h-5 w-5" />

@@ -6,7 +6,7 @@ import { Platform } from 'react-native';
  */
 export const copy = {
   welcome: {
-    tagline: 'The decentralized social platform where you own your data, your identity, and your voice.',
+    tagline: 'Social media you own. Your name and your posts belong to you.',
     signIn: 'Sign in',
     browse: 'Browse without signing in',
     terms: 'Terms of Use',
@@ -19,11 +19,12 @@ export const copy = {
     reauth: (name: string) => `Sign in again as ${name} with its wallet or key.`,
     openWallet: 'Open wallet',
     otherDevice: 'Use a wallet on another device',
-    other: 'Other ways to sign in',
+    other: 'Advanced',
     privateKey: 'Sign in with a private key',
     newToDash: 'New to Dash?',
-    createIdentity: 'Create an identity',
-    noWallet: 'Yappr uses a Dash wallet for your identity. No wallet on this phone handles Dash sign-in links.',
+    /** Web's sign-in footer link, word for word. */
+    getDashWallet: 'Get Dash Wallet',
+    noWallet: "You'll need the Dash wallet to sign in.",
     getWallet: 'Get a Dash wallet',
     nothingOpened:
       'Nothing opened? No wallet app on this device handles Dash links. Scan the QR code with a wallet on another device, or copy the link into your wallet.',

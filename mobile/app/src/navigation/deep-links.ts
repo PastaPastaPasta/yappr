@@ -63,7 +63,6 @@ const WEB_ONLY = [
   '/about',
   '/cookies',
   '/contract',
-  '/blog',
   '/embed',
 ];
 
@@ -138,6 +137,10 @@ function withQuery(path: string, query: Record<string, string | undefined>): str
   return parts.length ? `${path}?${parts.join('&')}` : path;
 }
 
+/** A blog post's address (`generateSlug`: lowercase words and dashes, at most 63). */
+const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+const slug = (value: string | undefined) => (value !== undefined && SLUG.test(value) ? value : null);
+
 /** The viewer's own followers or following list when `id` is left out (web's default). */
 function listOf(q: Query, viewerId: string | null, list: 'followers' | 'following'): string | null {
   const who = q.id === undefined ? viewerId : id(q.id);
@@ -168,6 +171,15 @@ const WEB_ROUTES: Record<string, (q: Query, viewerId: string | null) => string |
     return q.section && SETTINGS_SECTIONS.has(q.section) ? `/settings/${q.section}` : '/settings';
   },
   '/search': (q) => withQuery('/explore/search', { q: q.q }),
+  // `getBlogUrl` / `getBlogPostUrl`: `/blog?blog=<id>&post=<slug>`; `/blog?view=posts` is the posts discovery.
+  '/blog': (q) => {
+    if (q.blog === undefined) return q.view === 'posts' ? '/blogs?view=posts' : '/blogs';
+    const blog = id(q.blog);
+    if (!blog) return null;
+    if (q.post === undefined) return `/blog/${blog}`;
+    const post = slug(q.post);
+    return post ? `/blog/${blog}/post/${post}` : null;
+  },
   '/post': (q) => {
     const post = id(q.id);
     return post ? withQuery(`/post/${post}`, { reply: id(q.reply) }) : null;
@@ -244,7 +256,7 @@ function pathFormRoute(path: string, q: Query): string | null | undefined {
  * alphabetically (Explore), so the launch link opens detail screens in Home
  * and notification and message settings in Profile, their home under Settings.
  */
-const SHARED_ROUTE = /^\/(post|user|hashtag)\//;
+const SHARED_ROUTE = /^\/(post|user|hashtag|blog)\/|^\/blogs(?:$|\?|\/)/;
 const PROFILE_SHARED_ROUTE = /^\/settings\/(notifications|messages|username)(?:$|\?)/;
 
 /** The launch link's route, pinned to a tab when it is a shared screen. */

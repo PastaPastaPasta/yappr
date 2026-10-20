@@ -174,7 +174,6 @@ describe('resolveLink: what a link does beyond its route (SR-13, PRD NET-11)', (
   const signedIn: LinkOptions = { ...release, viewerId: X };
 
   it.each([
-    ['yappr://blog/hello-world', 'https://yap.pr/blog/hello-world'],
     ['yappr://terms', 'https://yap.pr/terms'],
     ['yappr://about/team', 'https://yap.pr/about/team'],
     ['yappr://embed?post=1', 'https://yap.pr/embed?post=1'],
@@ -184,7 +183,15 @@ describe('resolveLink: what a link does beyond its route (SR-13, PRD NET-11)', (
 
   it("opens web-only pages on this build's own deployment", () => {
     expect(resolveLink('yappr-dev://terms', devnet)).toEqual({ kind: 'browser', url: 'https://yap.pr/devnet/terms' });
-    expect(resolveLink('https://yap.pr/devnet/blog', devnet)).toEqual({ kind: 'browser', url: 'https://yap.pr/devnet/blog' });
+  });
+
+  it('opens blogs natively, from the web addresses `getBlogUrl` and `getBlogPostUrl` write', () => {
+    expect(resolveLink('https://yap.pr/devnet/blog', devnet)).toEqual({ kind: 'route', route: '/blogs' });
+    expect(resolveLink('https://yap.pr/blog?view=posts', release)).toEqual({ kind: 'route', route: '/blogs?view=posts' });
+    expect(resolveLink(`https://yap.pr/blog?blog=${X}`, release)).toEqual({ kind: 'route', route: `/blog/${X}` });
+    expect(resolveLink(`yappr://blog?blog=${X}&post=field-notes-2`, release)).toEqual({ kind: 'route', route: `/blog/${X}/post/field-notes-2` });
+    expect(resolveLink(`https://yap.pr/blog?blog=${X}&post=..%2Fsettings`, release)).toEqual({ kind: 'unsupported', url: `https://yap.pr/blog?blog=${X}&post=..%2Fsettings` });
+    expect(resolveLink('https://yap.pr/blog?blog=bad', release)).toEqual({ kind: 'unsupported', url: 'https://yap.pr/blog?blog=bad' });
   });
 
   it.each([

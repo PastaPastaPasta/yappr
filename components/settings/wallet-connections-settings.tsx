@@ -30,9 +30,11 @@ const SCOPE_COPY = {
 /**
  * Settings → Privacy & Security on App Connect builds: what the user's
  * wallets let Yappr do, read from chain, with this browser's keys marked.
- * Yappr cannot revoke keys itself; that happens in the wallet.
+ * Yappr cannot revoke keys itself; that happens in the wallet. Spending
+ * budgets are developer detail: Privacy shows each connection without them,
+ * Settings → Developer with them.
  */
-export function WalletConnectionsSettings() {
+export function WalletConnectionsSettings({ showBudgets }: { showBudgets: boolean }) {
   const { user } = useAuth()
   const openRenew = useRenewModal((state) => state.open)
   const sessionIdentity = useAppConnectStatus((state) => state.identityId)
@@ -103,14 +105,18 @@ export function WalletConnectionsSettings() {
                 <span className="px-2 py-0.5 rounded-full text-xs bg-yappr-100 text-yappr-700 dark:bg-yappr-900/30 dark:text-yappr-300">This browser</span>
               )}
             </div>
-            <p className="text-gray-600 dark:text-gray-400 mt-1">
-              {row.totalBudget === undefined
-                ? 'No spending limit'
-                : row.remaining !== undefined
-                  ? `${formatDash(row.remaining)} of ${formatDash(row.totalBudget)} DASH left`
-                  : `Up to ${formatDash(row.totalBudget)} DASH`}
-              {row.expiresAt !== undefined && ` · until ${formatDate(row.expiresAt)}`}
-            </p>
+            {showBudgets ? (
+              <p className="text-gray-600 dark:text-gray-400 mt-1">
+                {row.totalBudget === undefined
+                  ? 'No spending limit'
+                  : row.remaining !== undefined
+                    ? `${formatDash(row.remaining)} of ${formatDash(row.totalBudget)} DASH left`
+                    : `Up to ${formatDash(row.totalBudget)} DASH`}
+                {row.expiresAt !== undefined && ` · until ${formatDate(row.expiresAt)}`}
+              </p>
+            ) : row.expiresAt !== undefined && (
+              <p className="text-gray-600 dark:text-gray-400 mt-1">Active until {formatDate(row.expiresAt)}</p>
+            )}
           </div>
         ))}
         {signedInWithWallet && (

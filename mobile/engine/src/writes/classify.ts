@@ -250,6 +250,18 @@ const FAILED_ACTION: Record<WriteOp, string> = {
   'block-list.follow': 'follow block list',
   'block-list.unfollow': 'unfollow block list',
   'dpns.register': 'register username',
+  'blog.create': 'create blog',
+  'blog.update': 'update blog',
+  'blog.delete': 'delete blog',
+  'blog.follow': 'follow blog',
+  'blog.unfollow': 'unfollow blog',
+  'blog.report': 'send report',
+  'blog.report.withdraw': 'withdraw report',
+  'blogPost.publish': 'publish post',
+  'blogPost.update': 'update post',
+  'blogPost.delete': 'delete post',
+  'blogComment.create': 'post comment',
+  'blogComment.delete': 'delete comment',
 }
 
 /** Map any write error to an engine code (ENGINE.md §7.3), walking `RULES` in order. */

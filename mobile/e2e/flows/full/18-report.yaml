@@ -29,7 +29,7 @@ tags:
       notVisible:
         id: "report-existing|report-email"
     commands:
-      - assertVisible: "Reports are public\\..*"
+      - assertVisible: "Reports go to the community-elected moderators.*"
       - assertVisible: "What is wrong with it\\?"
       - tapOn:
           id: report-reason-0

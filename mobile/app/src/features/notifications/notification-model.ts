@@ -177,6 +177,7 @@ export type Destination =
   | { kind: 'user'; id: string }
   | { kind: 'web'; path: string }
   | { kind: 'privateFeedRequests' }
+  | { kind: 'blogPost'; blogId: string; slug: string }
   | null;
 
 /**
@@ -184,18 +185,15 @@ export type Destination =
  * removals open the actor's profile; an access request the viewer's private
  * feed settings, where it is approved; likes and reposts the liked post;
  * replies, quotes and mentions the new post (its thread shows the context);
- * blog events the blog post, and store events the order, store or item, on
- * the web (no blogs or store in 1.0).
+ * blog events the blog post, natively; store events the order, store or
+ * item, on the web.
  */
 export function destinationOf(row: NotificationRowModel): Destination {
   if (row.store) return row.store.path ? { kind: 'web', path: row.store.path } : null;
   if (row.type === 'privateFeedRequest') return { kind: 'privateFeedRequests' };
   if (row.type === 'blogPost' || row.type === 'blogComment') {
     if (!row.blog) return null;
-    return {
-      kind: 'web',
-      path: `/blog?blog=${encodeURIComponent(row.blog.blogId)}&post=${encodeURIComponent(row.blog.slug)}`,
-    };
+    return { kind: 'blogPost', blogId: row.blog.blogId, slug: row.blog.slug };
   }
   if (row.target) {
     // Only the id: a preview's stats and viewer marks are placeholders, not a post to seed the thread with.
