@@ -63,6 +63,9 @@ export type WriteOp =
   | 'dm.send' | 'dm.group' | 'poll.vote' | 'block-list.follow' | 'block-list.unfollow' | 'dpns.register'
   | 'privateFeed.enable' | 'privateFeed.request' | 'privateFeed.leave' | 'privateFeed.approve' | 'privateFeed.revoke'
   | 'privateFeed.renew' | 'privateFeed.move'
+  // blogs (`api/blog.ts`)
+  | 'blog.create' | 'blog.update' | 'blog.delete' | 'blog.follow' | 'blog.unfollow' | 'blog.report' | 'blog.report.withdraw'
+  | 'blogPost.publish' | 'blogPost.update' | 'blogPost.delete' | 'blogComment.create' | 'blogComment.delete'
 
 export type WriteState = 'pending' | 'confirmed' | 'unconfirmed' | 'failed'
 
@@ -75,7 +78,12 @@ export interface TargetRef {
   rootPostId: string | null
 }
 
-export type WriteTarget = TargetRef | { identityId: string } | { conversationKey: string } | { pollId: string }
+/** A blog, post, comment or report a blog write names (for a create: its parent). */
+export interface BlogTargetRef {
+  blog: { type: 'blog' | 'blogPost' | 'blogComment' | 'report'; id: string }
+}
+
+export type WriteTarget = TargetRef | { identityId: string } | { conversationKey: string } | { pollId: string } | BlogTargetRef
 
 export interface TicketDocument {
   contractId: string

@@ -159,8 +159,8 @@ describe('destinationOf', () => {
     expect(destinationOf(follow)).toEqual({ kind: 'user', id: AUTHORS.carol.id });
   });
 
-  it('sends blog events to the web, or nowhere without coordinates', () => {
-    expect(destinationOf(blog)).toEqual({ kind: 'web', path: '/blog?blog=blog%201&post=hi%26there' });
+  it('opens blog events on the native post, or nowhere without coordinates', () => {
+    expect(destinationOf(blog)).toEqual({ kind: 'blogPost', blogId: 'blog 1', slug: 'hi&there' });
     expect(destinationOf(blogless)).toBeNull();
   });
 });

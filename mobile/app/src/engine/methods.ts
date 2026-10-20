@@ -64,6 +64,21 @@ const READS = new Set([
   'privateFeed.replySource',
   'dpns.registration',
   'dpns.check',
+  // Blogs: reads only; every blog write is a ticket (`blogs.create`, `blogs.publish`, ...).
+  'blogs.info',
+  'blogs.discover',
+  'blogs.latestPosts',
+  'blogs.followed',
+  'blogs.mine',
+  'blogs.get',
+  'blogs.posts',
+  'blogs.post',
+  'blogs.postBySlug',
+  'blogs.comments',
+  'blogs.followState',
+  'blogs.myPosts',
+  'blogs.reportsOpen',
+  'blogs.ownReport',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 

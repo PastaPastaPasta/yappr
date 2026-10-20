@@ -282,6 +282,14 @@ describe('app shell', () => {
     ['/__gallery', null],
     ['/block/abc123', null],
     ['/report/abc123?kind=post', null],
+    ['/blogs', null],
+    ['/blogs/mine', null],
+    ['/blogs/new', null],
+    ['/blog/abc123', null],
+    ['/blog/abc123/settings', null],
+    ['/blog/abc123/write', null],
+    ['/blog/abc123/post/hello', null],
+    ['/blog/abc123/post/hello/edit', null],
   ])('%s has a stub', async (url, pr) => {
     const app = await renderApp('/');
     act(() => router.push(url as Href));

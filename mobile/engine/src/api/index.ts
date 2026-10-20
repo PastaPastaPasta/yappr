@@ -14,6 +14,7 @@ import { createMobileAuthController, createSessionModule, foregroundBalanceRefre
 import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
+import { blogReads, createBlogWrites } from './blog'
 
 /**
  * The engine API. The RN host imports `type EngineApi` only and calls it
@@ -75,6 +76,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     notifications: notifications.api,
     privateFeed: { ...privateFeedReads, ...createPrivateFeedWrites(tickets) },
     dpns: createDpnsModule(tickets, controller),
+    blogs: { ...blogReads, ...createBlogWrites(tickets) },
   }
 }
 
@@ -95,3 +97,4 @@ export type * from './settings'
 export type * from './writes'
 export type { EngineNotice } from '../shims/toast'
 export type { PlatformInfoDTO } from '../dto/capabilities'
+export type * from './blog'

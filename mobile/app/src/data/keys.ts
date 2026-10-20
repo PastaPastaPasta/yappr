@@ -85,6 +85,41 @@ export const queryKeys = {
     mentions: (prefix: string) => [...root, 'explore', 'mentions', prefix.toLowerCase()] as const,
   },
 
+  blog: {
+    /** Every blog query: a prefix that invalidates them all. */
+    all: [...root, 'blogs'] as const,
+    /** `blogs.info`: the cut's capabilities, limits and theme presets. */
+    info: [...root, 'blogs', 'info'] as const,
+    /** `blogs.discover`. */
+    discover: [...root, 'blogs', 'discover'] as const,
+    /** `blogs.latestPosts`. */
+    latestPosts: [...root, 'blogs', 'latestPosts'] as const,
+    /** `blogs.followed` (the viewer's). */
+    followed: [...root, 'blogs', 'followed'] as const,
+    /** `blogs.mine`. */
+    mine: [...root, 'blogs', 'mine'] as const,
+    /** `blogs.myPosts`. */
+    myPosts: [...root, 'blogs', 'myPosts'] as const,
+    /** `blogs.get`; a prefix of the blog's posts and follow state. */
+    detail: (id: string) => [...root, 'blogs', 'blog', id] as const,
+    /** `blogs.posts`. */
+    posts: (id: string) => [...root, 'blogs', 'blog', id, 'posts'] as const,
+    /** `blogs.followState`. */
+    follow: (id: string) => [...root, 'blogs', 'blog', id, 'follow'] as const,
+    /** `blogs.post`; a prefix of its comments. */
+    post: (id: string) => [...root, 'blogs', 'post', id] as const,
+    /** `blogs.postBySlug`. */
+    postBySlug: (blogId: string, slug: string) => [...root, 'blogs', 'slug', blogId, slug] as const,
+    /** Every `blogs.postBySlug` of one blog: a prefix. */
+    slugs: (blogId: string) => [...root, 'blogs', 'slug', blogId] as const,
+    /** `blogs.comments`. */
+    comments: (postId: string) => [...root, 'blogs', 'post', postId, 'comments'] as const,
+    /** `blogs.reportsOpen`. */
+    reportsOpen: [...root, 'blogs', 'reportsOpen'] as const,
+    /** `blogs.ownReport`. */
+    ownReport: (docType: string, id: string) => [...root, 'blogs', 'ownReport', docType, id] as const,
+  },
+
   /** `engage.bookmarks`. */
   bookmarks: [...root, 'bookmarks'] as const,
 
