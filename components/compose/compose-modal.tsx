@@ -3,6 +3,7 @@
 import { logger } from '@/lib/logger'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import Link from 'next/link'
 import { XMarkIcon, PlusIcon, EyeIcon, EyeSlashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -309,7 +310,19 @@ export function ComposeModal() {
       const markPosted = () => successful.forEach(({ threadPostId, postId }) => markThreadPostAsPosted(threadPostId, postId))
 
       if (failedAtIndex === null && timedOut.length === 0) {
-        toast.success(posts.length > 1 ? 'Thread posted' : replyingTo ? 'Reply posted' : 'Posted')
+        // As on X: say it was sent, with a way to it from wherever you are (Top included).
+        const sentId = successful[0]?.postId
+        const sentLabel = posts.length > 1 ? 'Your thread was sent' : replyingTo ? 'Your reply was sent' : 'Your post was sent'
+        toast.success((t) => (
+          <span className="flex items-center gap-3">
+            {sentLabel}
+            {sentId && (
+              <Link href={`/post?id=${sentId}`} onClick={() => toast.dismiss(t.id)} className="font-semibold text-yappr-300 hover:underline">
+                View
+              </Link>
+            )}
+          </span>
+        ), { id: 'post-sent', duration: 5000 })
         if (successful.length > 1) {
           window.dispatchEvent(new CustomEvent('thread-created', { detail: { posts: successful, totalPosts: successful.length } }))
         }

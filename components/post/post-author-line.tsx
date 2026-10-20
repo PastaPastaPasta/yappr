@@ -44,7 +44,7 @@ export function PostAuthorLine({ author, usernameState, displayName, avatarUrl, 
     if (usernameState) {
       return (
         <ProfileHoverCard {...hover} username={usernameState}>
-          <Link href={`/user?id=${author.id}`} onClick={stopPropagation} className="text-gray-500 hover:underline truncate min-w-[4ch] shrink-[4]">
+          <Link href={`/user?id=${author.id}`} onClick={stopPropagation} className="text-gray-500 hover:underline truncate min-w-[4ch] shrink-[1000]">
             @{usernameState}
           </Link>
         </ProfileHoverCard>
@@ -76,7 +76,7 @@ export function PostAuthorLine({ author, usernameState, displayName, avatarUrl, 
         <span className="inline-block w-24 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
       ) : (
         <ProfileHoverCard {...hover} username={usernameState}>
-          <Link href={`/user?id=${author.id}`} onClick={stopPropagation} className="font-semibold hover:underline truncate">
+          <Link href={`/user?id=${author.id}`} onClick={stopPropagation} className="font-semibold hover:underline truncate min-w-[3ch]">
             {/* A profile is optional: without one the DPNS label is the name. */}
             {hasProfile ? displayName : usernameState?.replace(/\.dash$/, '') || 'Unknown User'}
           </Link>
