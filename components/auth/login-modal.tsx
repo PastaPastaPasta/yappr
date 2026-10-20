@@ -5,14 +5,14 @@ import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { X, ChevronDown, Wallet, ScrollText, KeyRound } from 'lucide-react'
+import { X, ArrowLeft, ChevronDown, Wallet, ScrollText, KeyRound } from 'lucide-react'
 import type { AppConnectGrant } from 'platform-auth'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
-import { identityBridgeUrl } from '@/lib/identity-bridge'
 import { getConfiguredNetwork } from '@/lib/constants'
-import { COMMUNITY_RULES_HREF, MINIMUM_AGE } from '@/lib/legal'
+import { COMMUNITY_RULES_HREF } from '@/lib/legal'
+import { Button } from '@/components/ui/button'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { KeyLoginForm } from './key-login-form'
@@ -20,19 +20,13 @@ import { PasskeySignIn } from './passkey-sign-in'
 import { RecoveryPhraseForm } from './recovery-phrase-form'
 import { recoveryPhraseOffered } from '@/lib/auth/recovery-phrase'
 
-/** Where newcomers go: the wallet on mainnet, the identity bridge elsewhere. */
+/** Where newcomers go: an account starts in the Dash wallet. */
 const DASH_WALLET_DOWNLOAD_URL = 'https://www.dash.org/download/'
-
-function newUserLink(): { href: string; label: string } {
-  return getConfiguredNetwork() === 'mainnet'
-    ? { href: DASH_WALLET_DOWNLOAD_URL, label: 'Get the Dash wallet' }
-    : { href: identityBridgeUrl(), label: 'Create a Dash identity' }
-}
 
 /** A legal page opened in a new tab, so the sign-in under way is not lost. */
 function ConsentLink({ href, children }: { href: string; children: string }) {
   return (
-    <Link href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-gray-700 dark:hover:text-gray-200">
+    <Link href={href} target="_blank" rel="noopener noreferrer" className="whitespace-nowrap underline underline-offset-2 hover:text-gray-700 dark:hover:text-gray-200">
       {children}
       <span className="sr-only"> (opens in new tab)</span>
     </Link>
@@ -44,22 +38,22 @@ function walletSignInAvailable(): boolean {
   return isAppConnectBuild() && appConnectPins() !== null
 }
 
-type Section = 'wallet' | 'phrase' | 'key'
-
-/** One collapsible sign-in option; its content mounts only while open (the wallet request is made on opening). */
+/** One collapsible option; its content mounts only while open. */
 function Disclosure({
   id,
   open,
   onToggle,
   icon,
   label,
+  centered = false,
   children,
 }: {
   id: string
   open: boolean
   onToggle: () => void
-  icon: React.ReactNode
+  icon?: React.ReactNode
   label: string
+  centered?: boolean
   children: React.ReactNode
 }) {
   const reduceMotion = useReducedMotion()
@@ -68,9 +62,9 @@ function Disclosure({
       <button
         type="button"
         aria-expanded={open}
-        aria-controls={id}
+        aria-controls={open ? id : undefined}
         onClick={onToggle}
-        className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
+        className={`w-full flex items-center ${centered ? 'justify-center gap-1' : 'justify-between'} text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500`}
       >
         <span className="flex items-center gap-2">
           {icon}
@@ -96,16 +90,17 @@ function Disclosure({
   )
 }
 
+type AdvancedSection = 'phrase' | 'key'
+
 /**
  * Global sign-in dialog.
  *
- * App Connect builds (D38): the Dash wallet first, then the wallet's recovery
- * phrase, both of which unlock messaging with the key the wallet uses;
- * private-key sign-in sits under "Advanced". Each opens on demand, one at a
- * time, so the wallet request is only made once its option is opened.
+ * App Connect builds: the Dash wallet is the main way in, a passkey added on
+ * an earlier sign-in comes second, and the recovery phrase and private key
+ * sit under "Other ways to sign in". The wallet request is only made once the wallet
+ * option is chosen.
  *
- * Other builds: private-key sign-in is the primary path, with the way to
- * create an identity right under it.
+ * Other builds: a passkey where one exists, then private-key sign-in.
  */
 export function LoginModal() {
   const router = useRouter()
@@ -116,17 +111,41 @@ export function LoginModal() {
   const reduceMotion = useReducedMotion()
   const sectionId = useId()
   const opener = useRef<HTMLElement | null>(null)
+  const content = useRef<HTMLDivElement>(null)
 
-  const newUser = newUserLink()
   const walletAvailable = walletSignInAvailable()
   const phraseAvailable = walletAvailable && recoveryPhraseOffered(getConfiguredNetwork())
-  const [open, setOpen] = useState<Section | null>(null)
-  const toggle = (section: Section) => setOpen((current) => (current === section ? null : section))
+  const [showWallet, setShowWallet] = useState(false)
+  /** A passkey whose wallet sign-in ran out shows its own wallet renewal: the main wallet button steps aside. */
+  const [renewing, setRenewing] = useState(false)
+  const walletButton = useRef<HTMLButtonElement>(null)
+  const backButton = useRef<HTMLButtonElement>(null)
+  const switchedView = useRef(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [advanced, setAdvanced] = useState<AdvancedSection | null>(null)
+  const toggleAdvanced = (section: AdvancedSection) => setAdvanced((current) => (current === section ? null : section))
 
-  // Reset to the primary view whenever the dialog closes.
+  // Reset to the first view whenever the dialog closes.
   useEffect(() => {
-    if (!isOpen) setOpen(null)
+    if (isOpen) return
+    setShowWallet(false)
+    setRenewing(false)
+    setShowAdvanced(false)
+    setAdvanced(null)
+    switchedView.current = false
   }, [isOpen])
+
+  // Switching between the options and the wallet view keeps keyboard focus on the matching control.
+  useEffect(() => {
+    if (!switchedView.current) return
+    const target = showWallet ? backButton.current : walletButton.current
+    target?.focus()
+  }, [showWallet])
+
+  const switchView = (wallet: boolean) => {
+    switchedView.current = true
+    setShowWallet(wallet)
+  }
 
   const handleClose = useCallback(() => {
     close()
@@ -140,6 +159,80 @@ export function LoginModal() {
   const signInWithGrant = useCallback(async (grant: AppConnectGrant) => {
     await loginWithAppConnect(grant)
   }, [loginWithAppConnect])
+
+  const walletOptions = (
+    <div data-testid="sign-in-options">
+      <div className="flex flex-col gap-3">
+        {!renewing && (
+          <Button ref={walletButton} type="button" size="lg" className="w-full gap-2" onClick={() => switchView(true)}>
+            <Wallet aria-hidden="true" className="w-5 h-5" />
+            Sign in with Dash Wallet
+          </Button>
+        )}
+        <PasskeySignIn onComplete={close} onRenewalChange={setRenewing} secondary />
+      </div>
+
+      <div className="mt-4">
+        <Disclosure
+          id={`${sectionId}-advanced`}
+          open={showAdvanced}
+          onToggle={() => setShowAdvanced((value) => !value)}
+          label="Other ways to sign in"
+          centered
+        >
+          <div className="space-y-4 rounded-xl border border-gray-100 dark:border-gray-800 p-4">
+            {phraseAvailable && (
+              <Disclosure
+                id={`${sectionId}-phrase`}
+                open={advanced === 'phrase'}
+                onToggle={() => toggleAdvanced('phrase')}
+                icon={<ScrollText aria-hidden="true" className="w-4 h-4" />}
+                label="Sign in with your recovery phrase"
+              >
+                <RecoveryPhraseForm onComplete={close} />
+              </Disclosure>
+            )}
+            <Disclosure
+              id={`${sectionId}-key`}
+              open={advanced === 'key'}
+              onToggle={() => toggleAdvanced('key')}
+              icon={<KeyRound aria-hidden="true" className="w-4 h-4" />}
+              label="Sign in with a private key"
+            >
+              <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
+                {phraseAvailable
+                  ? 'Messages, orders and private feeds need your Dash wallet or recovery phrase.'
+                  : 'Messages, orders and private feeds need your Dash wallet.'}
+              </p>
+              <KeyLoginForm onComplete={close} />
+            </Disclosure>
+          </div>
+        </Disclosure>
+      </div>
+    </div>
+  )
+
+  const walletView = (
+    <div>
+      <button
+        ref={backButton}
+        type="button"
+        onClick={() => switchView(false)}
+        aria-label="Back"
+        className="absolute top-3 left-3 z-10 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
+      >
+        <ArrowLeft aria-hidden="true" className="w-5 h-5" />
+      </button>
+      <AppConnectLoginPanel onGrant={signInWithGrant} onComplete={close} />
+    </div>
+  )
+
+  const keyOptions = (
+    <>
+      <PasskeySignIn onComplete={close} />
+      <KeyLoginForm onComplete={close} />
+    </>
+  )
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) handleClose() }}>
@@ -155,8 +248,11 @@ export function LoginModal() {
         >
           <Dialog.Content
             asChild
-            onOpenAutoFocus={() => {
+            onOpenAutoFocus={(event) => {
               opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+              // Focus the dialog itself rather than ringing the close button on open.
+              event.preventDefault()
+              content.current?.focus({ preventScroll: true })
             }}
             onCloseAutoFocus={(event) => {
               event.preventDefault()
@@ -164,12 +260,13 @@ export function LoginModal() {
             }}
           >
           <motion.div
+            ref={content}
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.97 }}
             transition={{ duration: 0.2 }}
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-neutral-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto"
+            className="bg-white dark:bg-neutral-900 rounded-2xl shadow-xl w-full max-w-md relative max-h-[90vh] overflow-y-auto outline-none"
           >
             <button
               type="button"
@@ -181,87 +278,36 @@ export function LoginModal() {
             </button>
 
             <div className="px-6 pt-7 pb-6">
-              {/* Header */}
               <div className="text-center mb-6">
                 <Dialog.Title asChild>
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
                   Sign in to <span className="text-gradient">Yappr</span>
                 </h1>
                 </Dialog.Title>
-                <Dialog.Description asChild>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                  {walletAvailable ? 'Sign in with your Dash wallet.' : 'Sign in with your Dash identity\'s private key.'}
-                </p>
+                <Dialog.Description className="sr-only">
+                  Choose how to sign in.
                 </Dialog.Description>
               </div>
 
-              {/* Fastest where it works: a passkey added on an earlier sign-in */}
-              <PasskeySignIn onComplete={close} />
+              {!walletAvailable ? keyOptions : showWallet ? walletView : walletOptions}
 
-              {walletAvailable ? (
-                <div className="space-y-4" data-testid="sign-in-options">
-                  <Disclosure
-                    id={`${sectionId}-wallet`}
-                    open={open === 'wallet'}
-                    onToggle={() => toggle('wallet')}
-                    icon={<Wallet aria-hidden="true" className="w-4 h-4" />}
-                    label="Sign in with your Dash wallet"
-                  >
-                    <p className="mb-4 text-xs text-center text-gray-500 dark:text-gray-400">
-                      Wallet sign-in is coming to the Dash wallet apps soon. If yours already supports it, scan this code with it.
-                    </p>
-                    <AppConnectLoginPanel onGrant={signInWithGrant} onComplete={close} />
-                  </Disclosure>
-                  {phraseAvailable && (
-                    <Disclosure
-                      id={`${sectionId}-phrase`}
-                      open={open === 'phrase'}
-                      onToggle={() => toggle('phrase')}
-                      icon={<ScrollText aria-hidden="true" className="w-4 h-4" />}
-                      label="Sign in with your recovery phrase"
-                    >
-                      <RecoveryPhraseForm onComplete={close} />
-                    </Disclosure>
-                  )}
-                  <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
-                    <Disclosure
-                      id={`${sectionId}-key`}
-                      open={open === 'key'}
-                      onToggle={() => toggle('key')}
-                      icon={<KeyRound aria-hidden="true" className="w-4 h-4" />}
-                      label="Advanced: sign in with a private key"
-                    >
-                      <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
-                        A private key signs you in to post and browse. To use messages, store orders and private feeds,
-                        sign in with your Dash wallet or your recovery phrase.
-                      </p>
-                      <KeyLoginForm onComplete={close} />
-                    </Disclosure>
-                  </div>
-                </div>
-              ) : (
-                <KeyLoginForm onComplete={close} />
-              )}
-              <p className="mt-3 text-xs text-center text-gray-600 dark:text-gray-400">
-                By continuing, you agree to the <ConsentLink href="/terms">Terms</ConsentLink> and{' '}
-                <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink> and confirm you are {MINIMUM_AGE} or
-                older. The <ConsentLink href="/privacy">Privacy Policy</ConsentLink> explains what is public. Yappr has no centralized moderation.
+              <p className="mt-5 text-xs text-center text-gray-500 dark:text-gray-400">
+                By continuing you agree to the <ConsentLink href="/terms">Terms</ConsentLink> and{' '}
+                <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink>.
               </p>
 
-              {/* New users */}
-              <div className="mt-5 rounded-xl bg-gray-50 dark:bg-neutral-800/60 px-4 py-3 text-center">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Don&apos;t have a Dash identity yet?
-                </p>
+              <p className="mt-4 border-t border-gray-100 dark:border-gray-800 pt-4 text-sm text-center text-gray-600 dark:text-gray-400">
+                New to Dash?{' '}
                 <a
-                  href={newUser.href}
+                  href={DASH_WALLET_DOWNLOAD_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-1 inline-block text-sm font-semibold text-yappr-600 dark:text-yappr-400 hover:underline underline-offset-4"
+                  className="font-semibold text-yappr-600 dark:text-yappr-400 hover:underline underline-offset-4"
                 >
-                  {newUser.label}
+                  Get Dash Wallet
+                  <span className="sr-only"> (opens in new tab)</span>
                 </a>
-              </div>
+              </p>
             </div>
           </motion.div>
           </Dialog.Content>

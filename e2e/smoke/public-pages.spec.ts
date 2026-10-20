@@ -62,49 +62,49 @@ test('login page shows the login affordance', async ({ page }) => {
   // is also offered on supported deployments and browsers.
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByRole('link', { name: /Create a Dash identity|Get the Dash wallet/ })).toBeVisible()
+  await expect(dialog.getByRole('link', { name: /^Get Dash Wallet/ })).toHaveAttribute('href', 'https://www.dash.org/download/')
   await expect(dialog.getByText(/password/i)).toHaveCount(0)
 
-  const walletToggle = dialog.getByRole('button', { name: 'Sign in with your Dash wallet' })
+  const walletButton = dialog.getByRole('button', { name: 'Sign in with Dash Wallet' })
   if (!isAppConnectBuild()) {
     // Other builds: private-key sign-in is the primary path, and there is no wallet option.
     await expect(dialog.locator('#loginCredential')).toBeVisible()
     await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
-    await expect(walletToggle).toHaveCount(0)
+    await expect(walletButton).toHaveCount(0)
     return
   }
 
-  // App Connect builds (D38): the wallet, then its recovery phrase (not yet on mainnet), then a private key under Advanced.
-  const options = dialog.getByTestId('sign-in-options').getByRole('button', { expanded: false })
+  // App Connect builds: the wallet first, then a passkey where offered; the
+  // recovery phrase (not yet on mainnet) and a private key sit under "Other ways to sign in".
+  await expect(walletButton).toBeVisible()
   await expect(dialog.locator('#loginCredential')).toHaveCount(0)
+  const phraseOption = dialog.getByRole('button', { name: 'Sign in with your recovery phrase' })
+  const keyOption = dialog.getByRole('button', { name: 'Sign in with a private key' })
+  await expect(phraseOption).toHaveCount(0)
+  await expect(keyOption).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Other ways to sign in' }).click()
   if (await expectedNetwork() === 'mainnet') {
-    await expect(options).toHaveText(['Sign in with your Dash wallet', 'Advanced: sign in with a private key'])
-    await expect(dialog.getByRole('button', { name: 'Sign in with your recovery phrase' })).toHaveCount(0)
-    await dialog.getByRole('button', { name: 'Advanced: sign in with a private key' }).click()
-    await expect(dialog.locator('#loginCredential')).toBeVisible()
-    await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
-    await expect(dialog.getByRole('link', { name: 'Open in wallet app' })).toHaveCount(0)
-    await walletToggle.click()
-    await expect(dialog.getByRole('link', { name: 'Open in wallet app' })).toHaveAttribute('href', /^dash-key:/)
-    return
+    await expect(phraseOption).toHaveCount(0)
+  } else {
+    await phraseOption.click()
+    const phrase = dialog.getByLabel('Recovery phrase', { exact: true })
+    // Masked, but not a password field (browsers would offer to save it), and in no form.
+    await expect(phrase).toHaveAttribute('type', 'text')
+    await expect(phrase).toHaveAttribute('autocomplete', 'off')
+    await expect(phrase).toHaveCSS('-webkit-text-security', 'disc')
+    await expect(dialog.locator('form').getByLabel('Recovery phrase', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByText('Your recovery phrase controls your Dash wallet. It stays on this device and is never saved. Only enter it on yap.pr.')).toBeVisible()
   }
-  await expect(options).toHaveText(['Sign in with your Dash wallet', 'Sign in with your recovery phrase', 'Advanced: sign in with a private key'])
-  await dialog.getByRole('button', { name: 'Sign in with your recovery phrase' }).click()
-  const phrase = dialog.getByLabel('Recovery phrase', { exact: true })
-  // Masked, but not a password field (browsers would offer to save it), and in no form.
-  await expect(phrase).toHaveAttribute('type', 'text')
-  await expect(phrase).toHaveAttribute('autocomplete', 'off')
-  await expect(phrase).toHaveCSS('-webkit-text-security', 'disc')
-  await expect(dialog.locator('form').getByLabel('Recovery phrase', { exact: true })).toHaveCount(0)
-  await expect(dialog.getByText('Your recovery phrase controls your Dash wallet. It stays on this device and is never saved. Only enter it on yap.pr.')).toBeVisible()
-  await dialog.getByRole('button', { name: 'Advanced: sign in with a private key' }).click()
+  await keyOption.click()
   await expect(dialog.getByLabel('Recovery phrase', { exact: true })).toHaveCount(0)
   await expect(dialog.locator('#loginCredential')).toBeVisible()
   await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
 
+  // The wallet request is made only once the wallet option is chosen.
   await expect(dialog.getByRole('link', { name: 'Open in wallet app' })).toHaveCount(0)
-  await walletToggle.click()
+  await walletButton.click()
+  await expect(dialog.locator('#loginCredential')).toHaveCount(0)
 
   // The deep link is offered on desktop too (Dash Evo Tool runs on the same
   // machine), with copy-the-link as the manual fallback.

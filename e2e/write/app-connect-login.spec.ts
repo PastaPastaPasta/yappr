@@ -33,8 +33,8 @@ test.beforeEach(() => {
 async function requestUri(page: Page): Promise<string> {
   await page.goto(appUrl('/login/'))
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
-  // Each sign-in option opens on demand; the wallet request is made when it opens.
-  await dialog.getByRole('button', { name: 'Sign in with your Dash wallet' }).click()
+  // The wallet request is made once the wallet option is chosen.
+  await dialog.getByRole('button', { name: 'Sign in with Dash Wallet' }).click()
   const link = dialog.getByRole('link', { name: 'Open in wallet app' })
   await expect(link).toBeVisible({ timeout: 60_000 })
   const uri = await link.getAttribute('href')

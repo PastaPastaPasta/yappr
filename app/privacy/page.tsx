@@ -75,8 +75,8 @@ const THIRD_PARTIES: ThirdParty[] = [
     what: 'Blogs that use a custom font load it from Google Fonts, which sees your IP address.',
   },
   {
-    name: 'Getting an identity',
-    what: 'The sign-in screen links to a separate service for getting a Dash identity: on test networks, an identity bridge funded by a faucet.',
+    name: 'Getting the Dash wallet',
+    what: 'The sign-in screen links to dash.org, where you can download the Dash wallet.',
   },
 ]
 
