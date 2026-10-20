@@ -9,7 +9,6 @@ import { PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { SOCIAL_PLATFORMS, getPlatformLabel, getPlatformPlaceholder } from '@/components/profile/social-links-input'
 import { fieldLimits } from '@/lib/field-limits'
 import { textBytes } from '@/lib/text-limits'
-import { keyNetwork } from '@/lib/constants'
 import { APPROVED_PAYMENT_SCHEMES } from '@/lib/utils/payment-uri'
 import { profileTextLimits } from '@/lib/profile/v10-profile'
 import { rowKey, splitPaymentUri, type Keyed, type TipRow } from '@/lib/profile/edit-rows'
@@ -43,8 +42,12 @@ export type ProfileFields = Omit<ProfileDraft, 'paymentUris' | 'socialLinks'>
 
 const MAX_ROWS = 10
 
-/** The default tip coin: Dash on the network this build talks to. */
-export const DEFAULT_TIP_SCHEME = keyNetwork() === 'mainnet' ? 'dash:' : 'tdash:'
+/**
+ * The default tip coin: Dash, written `dash:` as the wallets do on every
+ * network (the address must be this build's network's). A saved `tdash:` tip
+ * keeps its own row.
+ */
+export const DEFAULT_TIP_SCHEME = 'dash:'
 
 /** A tip currency's name; this network's Dash is plain "Dash". */
 export function tipSchemeLabel(scheme: string): string {
