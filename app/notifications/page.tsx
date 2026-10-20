@@ -13,18 +13,15 @@ import {
   ArrowPathRoundedSquareIcon,
   ChatBubbleLeftIcon,
   ChatBubbleBottomCenterTextIcon,
-  ChevronDownIcon,
-  FunnelIcon,
   BookOpenIcon,
   ShoppingBagIcon,
   StarIcon,
   TruckIcon,
 } from '@heroicons/react/24/outline'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
+import { ScrollTabs } from '@/components/ui/scroll-tabs'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
@@ -130,17 +127,41 @@ function previewText(notification: Notification): string {
 
 type NotificationFilter = 'all' | 'follow' | 'mention' | 'like' | 'repost' | 'reply' | 'blogPost' | 'store' | 'privateFeed'
 
-const FILTER_TABS: { key: NotificationFilter; label: string; icon: JSX.Element }[] = [
-  { key: 'all', label: 'All', icon: <BellIcon className="h-4 w-4" /> },
-  { key: 'like', label: 'Likes', icon: <HeartIcon className="h-4 w-4 text-red-500" /> },
-  { key: 'repost', label: 'Reposts', icon: <ArrowPathRoundedSquareIcon className="h-4 w-4 text-green-500" /> },
-  { key: 'reply', label: 'Replies', icon: <ChatBubbleLeftIcon className="h-4 w-4 text-blue-500" /> },
-  { key: 'follow', label: 'Follows', icon: <UserPlusIcon className="h-4 w-4 text-purple-500" /> },
-  { key: 'mention', label: 'Mentions', icon: <AtSymbolIcon className="h-4 w-4 text-yellow-500" /> },
-  { key: 'blogPost', label: 'Blog', icon: <BookOpenIcon className="h-4 w-4 text-yappr-500" /> },
-  { key: 'store', label: 'Store', icon: <ShoppingBagIcon className="h-4 w-4 text-emerald-500" /> },
-  { key: 'privateFeed', label: 'Private', icon: <LockClosedIcon className="h-4 w-4 text-blue-500" /> }
+const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'like', label: 'Likes' },
+  { key: 'repost', label: 'Reposts' },
+  { key: 'reply', label: 'Replies' },
+  { key: 'follow', label: 'Follows' },
+  { key: 'mention', label: 'Mentions' },
+  { key: 'blogPost', label: 'Blog' },
+  { key: 'store', label: 'Store' },
+  { key: 'privateFeed', label: 'Private' }
 ]
+
+/** Placeholder rows shaped like a loaded notification (icon, avatar row, one line, a preview). */
+function NotificationSkeleton() {
+  return (
+    <div className="divide-y divide-gray-200 dark:divide-gray-800" aria-busy="true" aria-label="Loading notifications">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <div key={i} className="flex gap-3 px-4 py-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+            <div className="h-5 w-5 rounded bg-gray-200 dark:bg-gray-800 animate-pulse" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex h-8 items-center">
+              <div className="h-8 w-8 rounded-full bg-gray-200 dark:bg-gray-800 animate-pulse" />
+            </div>
+            <div className="mt-1.5 flex h-5 items-center">
+              <div className="h-3.5 w-3/5 rounded bg-gray-200 dark:bg-gray-800 animate-pulse" />
+            </div>
+            <div className="mt-2 h-11 rounded-lg bg-gray-100 dark:bg-gray-900 animate-pulse" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 const NOTIFICATION_ICONS: Record<Notification['type'], JSX.Element> = {
   follow: <UserPlusIcon className="h-5 w-5 text-purple-500" />,
@@ -233,16 +254,26 @@ function NotificationsPage() {
   return (
     <PageShell>
         <PageHeader>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 py-3 md:flex md:justify-between">
+          <div className="flex items-center justify-between gap-2 px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
-            <div className="contents md:flex md:items-center md:gap-2">
+            <div className="flex items-center gap-1">
+              {unreadCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => markAllAsRead(notificationSettings)}
+                  className="text-yappr-500 hover:text-yappr-600 text-sm"
+                >
+                  Mark all as read
+                </Button>
+              )}
               <Tooltip.Provider>
                 <Tooltip.Root>
                   <Tooltip.Trigger asChild>
                     <Link
                       href="/settings?section=notifications"
                       aria-label="Notification settings"
-                      className="col-start-2 row-start-1 justify-self-end p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
+                      className="p-2 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-full"
                     >
                       <Cog6ToothIcon className="h-5 w-5" />
                     </Link>
@@ -254,109 +285,21 @@ function NotificationsPage() {
                   </Tooltip.Portal>
                 </Tooltip.Root>
               </Tooltip.Provider>
-              {unreadCount > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => markAllAsRead(notificationSettings)}
-                  className="col-start-1 row-start-2 justify-self-start text-yappr-500 hover:text-yappr-600 text-sm"
-                >
-                  Mark all as read
-                </Button>
-              )}
-              {/* Mobile filter dropdown */}
-              <div className="col-start-2 row-start-2 justify-self-end md:hidden">
-                <DropdownMenu.Root>
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-full bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                      data-testid="notification-filter-dropdown"
-                    >
-                      <FunnelIcon className="h-4 w-4" />
-                      <span>{FILTER_TABS.find(t => t.key === filter)?.label}</span>
-                      {getUnreadCountForTab(filter) > 0 && (
-                        <span className="w-2 h-2 bg-yappr-500 rounded-full" />
-                      )}
-                      <ChevronDownIcon className="h-4 w-4" />
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      className="min-w-[200px] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-50"
-                      sideOffset={8}
-                      align="end"
-                    >
-                      {FILTER_TABS.map((tab) => {
-                        const tabUnreadCount = getUnreadCountForTab(tab.key)
-                        return (
-                          <DropdownMenu.Item
-                            key={tab.key}
-                            data-testid={`notification-filter-${tab.key}`}
-                            onClick={() => setFilter(tab.key)}
-                            className={`flex items-center justify-between px-4 py-3 text-sm cursor-pointer outline-none transition-colors ${
-                              filter === tab.key
-                                ? 'bg-yappr-50 dark:bg-yappr-950/30 text-yappr-600 dark:text-yappr-400'
-                                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                            }`}
-                          >
-                            <span className="flex items-center gap-3">
-                              {tab.icon}
-                              <span className="font-medium">{tab.label}</span>
-                            </span>
-                            {tabUnreadCount > 0 && (
-                              <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold bg-yappr-500 text-white rounded-full">
-                                {tabUnreadCount > 99 ? '99+' : tabUnreadCount}
-                              </span>
-                            )}
-                          </DropdownMenu.Item>
-                        )
-                      })}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-              </div>
             </div>
           </div>
 
-          {/* Desktop tabs - hidden on mobile */}
-          <div className="hidden md:flex border-b border-gray-200 dark:border-gray-800">
-            {FILTER_TABS.map((tab) => {
-              const tabUnreadCount = getUnreadCountForTab(tab.key)
-              return (
-                <button
-                  key={tab.key}
-                  data-testid={`notification-tab-${tab.key}`}
-                  onClick={() => setFilter(tab.key)}
-                  className={`flex-1 py-4 text-sm font-medium transition-colors relative ${
-                    filter === tab.key
-                      ? 'text-gray-900 dark:text-white'
-                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-                  }`}
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    {tab.label}
-                    {tabUnreadCount > 0 && (
-                      <span className="w-2 h-2 bg-yappr-500 rounded-full" />
-                    )}
-                  </span>
-                  {filter === tab.key && (
-                    <motion.div
-                      layoutId="notificationTab"
-                      className="absolute bottom-0 left-0 right-0 h-1 bg-yappr-500"
-                    />
-                  )}
-                </button>
-              )
-            })}
-          </div>
+          <ScrollTabs
+            tabs={FILTER_TABS.map((tab) => ({ key: tab.key, label: tab.label, dot: getUnreadCountForTab(tab.key) > 0 }))}
+            active={filter}
+            onSelect={setFilter}
+            testIdPrefix="notification-tab"
+            ariaLabel="Filter notifications"
+          />
         </PageHeader>
 
         {isLoading || !hasFetchedOnce ? (
-          <div className="p-8 text-center">
-            <Spinner size="md" className="mx-auto mb-4" />
-            <p className="text-gray-500">Loading notifications...</p>
-          </div>
-        ) : filteredNotifications.length === 0 ? (
+          <NotificationSkeleton />
+        ) :filteredNotifications.length === 0 ? (
           <div className="p-8 text-center">
             <BellIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">No notifications yet</p>
@@ -376,98 +319,94 @@ function NotificationsPage() {
                     markAsRead(notification.id)
                   }
                 }}
-                className={`p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer ${
+                className={`flex gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer ${
                   !notification.read ? 'bg-yappr-50/20 dark:bg-yappr-950/10' : ''
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <div className="flex-shrink-0">
-                    {NOTIFICATION_ICONS[notification.type] || <BellIcon className="h-5 w-5 text-gray-500" />}
+                {/* The type icon sits level with the avatar row. */}
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+                  {NOTIFICATION_ICONS[notification.type] || <BellIcon className="h-5 w-5 text-gray-500" />}
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  {/* Avatar left, time and unread dot right, so the sentence below gets the full width. */}
+                  <div className="flex h-8 items-center gap-2">
+                    <Link
+                      href={`/user?id=${notification.from?.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="h-8 w-8 shrink-0 rounded-full overflow-hidden bg-white dark:bg-neutral-900"
+                    >
+                      <UserAvatar userId={notification.from?.id || ''} size="sm" alt="User avatar" />
+                    </Link>
+                    <span className="flex-1" />
+                    {/* A v11 like's time is only when this device noticed it: not shown. */}
+                    {!notification.timeless && (
+                      <span className="shrink-0 text-sm text-gray-500">
+                        {formatTimeCompact(notification.createdAt)}
+                      </span>
+                    )}
+                    {!notification.read && (
+                      <span data-testid="unread-badge" className="h-2 w-2 shrink-0 rounded-full bg-yappr-500" />
+                    )}
                   </div>
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3">
-                      <Link
-                        href={`/user?id=${notification.from?.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0"
-                      >
-                        <UserAvatar userId={notification.from?.id || ''} size="md" alt="User avatar" />
-                      </Link>
+                  <p className="mt-1.5 text-sm break-words">
+                    <Link
+                      href={`/user?id=${notification.from?.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-semibold hover:underline"
+                    >
+                      {notification.from?.displayName || notification.from?.username || 'Unknown User'}
+                    </Link>
+                    {' '}
+                    {notificationMessage(notification)}
+                  </p>
 
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm flex-1">
-                            <Link
-                              href={`/user?id=${notification.from?.id}`}
-                              onClick={(e) => e.stopPropagation()}
-                              className="font-semibold hover:underline"
-                            >
-                              {notification.from?.displayName || notification.from?.username || 'Unknown User'}
-                            </Link>
-                            {' '}
-                            {notificationMessage(notification)}
-                            {/* A v11 like's time is only when this device noticed it: not shown. */}
-                            {!notification.timeless && (
-                              <span className="text-gray-500 ml-2">
-                                {formatTimeCompact(notification.createdAt)}
-                              </span>
-                            )}
-                          </p>
-
-                          {/* Action buttons for private feed notifications */}
-                          {notification.type === 'privateFeedRequest' && (
-                            <Link
-                              href="/settings?section=privateFeed"
-                              onClick={(e) => e.stopPropagation()}
-                              className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 dark:text-blue-400 dark:bg-blue-950 dark:hover:bg-blue-900 rounded-full transition-colors flex-shrink-0"
-                            >
-                              View Requests
-                            </Link>
-                          )}
-                          {notification.type === 'privateFeedApproved' && (
-                            <Link
-                              href={`/user?id=${notification.from?.id}`}
-                              onClick={(e) => e.stopPropagation()}
-                              className="px-3 py-1 text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 rounded-full transition-colors flex-shrink-0"
-                            >
-                              View Profile
-                            </Link>
-                          )}
-                        </div>
-
-                        {(() => {
-                          const notifUrl = getNotificationUrl(notification)
-                          if (!notifUrl) return null
-                          const post = notification.post
-                          // Cards gate the viewer's own posts; previews of
-                          // their own content deliberately do not.
-                          const gateSensitivePreview =
-                            shouldGateSensitive(post, sensitiveContentMode) && post?.author.id !== user?.identityId
-                          return (
-                            <Link
-                              href={notifUrl}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                if (!notification.read) markAsRead(notification.id)
-                              }}
-                              className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
-                            >
-                              {gateSensitivePreview ? (
-                                <span className="italic text-gray-500">NSFW content</span>
-                              ) : (
-                                previewText(notification)
-                              )}
-                            </Link>
-                          )
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-
-                  {!notification.read && (
-                    <div data-testid="unread-badge" className="w-2 h-2 bg-yappr-500 rounded-full flex-shrink-0" />
+                  {/* Action buttons for private feed notifications */}
+                  {notification.type === 'privateFeedRequest' && (
+                    <Link
+                      href="/settings?section=privateFeed"
+                      onClick={(e) => e.stopPropagation()}
+                      className="mt-2 inline-block px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 dark:text-blue-400 dark:bg-blue-950 dark:hover:bg-blue-900 rounded-full transition-colors"
+                    >
+                      View Requests
+                    </Link>
                   )}
+                  {notification.type === 'privateFeedApproved' && (
+                    <Link
+                      href={`/user?id=${notification.from?.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="mt-2 inline-block px-3 py-1 text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 dark:text-green-400 dark:bg-green-950 dark:hover:bg-green-900 rounded-full transition-colors"
+                    >
+                      View Profile
+                    </Link>
+                  )}
+
+                  {(() => {
+                    const notifUrl = getNotificationUrl(notification)
+                    if (!notifUrl) return null
+                    const post = notification.post
+                    // Cards gate the viewer's own posts; previews of
+                    // their own content deliberately do not.
+                    const gateSensitivePreview =
+                      shouldGateSensitive(post, sensitiveContentMode) && post?.author.id !== user?.identityId
+                    return (
+                      <Link
+                        href={notifUrl}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (!notification.read) markAsRead(notification.id)
+                        }}
+                        className="mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded-lg block text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors line-clamp-3"
+                      >
+                        {gateSensitivePreview ? (
+                          <span className="italic text-gray-500">NSFW content</span>
+                        ) : (
+                          previewText(notification)
+                        )}
+                      </Link>
+                    )
+                  })()}
                 </div>
               </motion.div>
             ))}

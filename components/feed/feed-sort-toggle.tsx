@@ -20,9 +20,9 @@ interface FeedSortToggleProps {
 }
 
 /**
- * Recent | Top for the home feed, mirroring the hashtag page's Latest | Top
+ * Latest | Top for the home feed, mirroring the hashtag page's Latest | Top
  * pills. Top rides the v9 ranked like axes, so callers only mount this when
- * `likesAreIndexOnly()`. The window switch appears under Top where the tab's
+ * `likesAreIndexOnly()`. The window switch sits beside Top where the tab's
  * axis has a window (`RankingWindowToggle` renders nothing elsewhere).
  */
 export function FeedSortToggle({ sortMode, onSortModeChange, rankingWindow, onRankingWindowChange, activeTab = 'forYou' }: FeedSortToggleProps) {
@@ -42,14 +42,12 @@ export function FeedSortToggle({ sortMode, onSortModeChange, rankingWindow, onRa
   );
 
   return (
-    <>
-      <div className="flex gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-        {option('recent', 'Recent')}
-        {option('top', 'Top')}
-      </div>
+    <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+      {option('recent', 'Latest')}
+      {option('top', 'Top')}
       {sortMode === 'top' && (
-        <RankingWindowToggle axis={activeTab === 'following' ? 'creators' : 'posts'} value={rankingWindow} onChange={onRankingWindowChange} testIdPrefix="feed-top" />
+        <RankingWindowToggle inline axis={activeTab === 'following' ? 'creators' : 'posts'} value={rankingWindow} onChange={onRankingWindowChange} testIdPrefix="feed-top" />
       )}
-    </>
+    </div>
   );
 }

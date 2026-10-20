@@ -71,7 +71,7 @@ async function openReadyExplore(page: Page): Promise<void> {
   await expect(page.getByTestId('explore-creators-tab')).toBeVisible({ timeout: 30_000 })
   // The initial trending request starts in a client effect. Its loading state
   // disappearing proves hydration has run, including when the result is empty.
-  await expect(page.getByText('Loading trending hashtags...', { exact: true }))
+  await expect(page.getByTestId('explore-trending-loading'))
     .toBeHidden({ timeout: 60_000 })
 }
 
@@ -112,8 +112,8 @@ const WRONG_TOPOLOGY_REASON = `the compiled topology ${SPEC_TOPOLOGY} is not a d
  * What the app itself says about the compiled topology, read through lib/'s own
  * helpers so this spec names no cut: whether a delete is a tombstone (v9) or a
  * removal (v10), whether a repost is a `repost` document (v9) or a bare quote
- * post (v10), and each ranked axis's recent window (v9 a daily "Today" on
- * every axis; v10 "3 days" on `like.byTrendPost`, "24h" on
+ * post (v10), and each ranked axis's recent window (v9 a daily window on
+ * every axis; v10 72h on `like.byTrendPost`, 24h on
  * `like.byTrendHashtagPost`, and no creator window), and how a post names its
  * tags (one `hashtag` through v15, a `tags` list on v16). The descriptor
  * resolves the topology from the env on first use, so it is read once here
@@ -152,11 +152,11 @@ function windowIndex(axis: RankingAxis): string {
   const window = WINDOWS?.[axis]
   return window ? `${window.docType}.${window.index}` : 'no window'
 }
-/** The window a surface's switch must show, or throws where the axis has none. */
+/** The label a surface's window switch shows ("Recent" on every axis), or throws where the axis has none. */
 function windowLabel(axis: RankingAxis): string {
   const window = WINDOWS?.[axis]
   if (!window) throw new Error(`${SPEC_TOPOLOGY} has no ${axis} window`)
-  return window.label
+  return 'Recent'
 }
 
 /**
@@ -981,7 +981,7 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
     await expect(today).toHaveText(windowLabel('hashtags'))
     await today.click()
     await expect(today).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByText('Loading trending hashtags...', { exact: true })).toBeHidden({ timeout: 60_000 })
+    await expect(page.getByTestId('explore-trending-loading')).toBeHidden({ timeout: 60_000 })
     // Seeded tags can outrank this run's one-like tags in the global top-12.
     // The pinned tag test above proves the run's exact window membership,
     // under each tag on v16.
