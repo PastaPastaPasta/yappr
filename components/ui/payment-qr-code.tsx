@@ -1,6 +1,7 @@
 'use client'
 
 import { parsePaymentUri } from '@/lib/utils/payment-uri'
+import { getDashPaymentNetwork, isDashScheme } from '@/lib/services/insight-api-service'
 import { useState, useMemo } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { ClipboardIcon, CheckIcon, ArrowLeftIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
@@ -102,8 +103,8 @@ function ValidPaymentQRCode({
     return buildUriWithAmount(paymentUri.uri, cryptoAmount)
   }, [paymentUri.uri, cryptoAmount])
 
-  // tdash is used by both testnet and devnet.
-  const isTestCurrency = paymentUri.scheme.toLowerCase() === 'tdash:'
+  // Test coins: tdash:, or dash: with a testnet address (the wallets' scheme on every network).
+  const isTestCurrency = isDashScheme(paymentUri.scheme) && getDashPaymentNetwork(paymentUri.scheme, address) !== 'mainnet'
 
   // Format the crypto symbol
   const cryptoSymbol = getCryptoSymbol(paymentUri.scheme)

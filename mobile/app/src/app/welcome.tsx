@@ -1,22 +1,19 @@
-import { Image } from 'expo-image';
 import { router, useNavigation } from 'expo-router';
 import { useEffect } from 'react';
 import { View } from 'react-native';
 import Animated, { Keyframe } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import pbdeDark from '@assets/images/pbde-dark.png';
-import pbdeLight from '@assets/images/pbde-light.png';
 import { config } from '~/config';
 import { copy } from '~/features/auth/copy';
 import { links, openInApp, setWelcomed } from '~/features/auth/onboarding';
-import { Wordmark } from '~/features/auth/Wordmark';
 import { useChipState } from '~/features/network/NetworkChipButton';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
+import { Lockup, PoweredByDash } from '~/ui/brand/Brand';
 import { NetworkChip } from '~/ui/NetworkChip';
 import { Text } from '~/ui/Text';
-import { tw, useIsDark } from '~/ui/tokens';
+import { tw } from '~/ui/tokens';
 
 /** Web's hero `motion.div`: fade in and rise 20 pt over 500 ms (none with Reduce Motion). */
 const ENTER = new Keyframe({
@@ -30,7 +27,6 @@ const ENTER = new Keyframe({
  */
 export default function WelcomeScreen() {
   const insets = useSafeAreaInsets();
-  const dark = useIsDark();
   const chipState = useChipState();
   const navigation = useNavigation();
 
@@ -55,17 +51,11 @@ export default function WelcomeScreen() {
       </View>
 
       <Animated.View entering={ENTER} className="flex-1 items-center justify-center gap-6">
-        <Wordmark size={64} />
+        <Lockup height={56} header />
         <Text variant="bodyLarge" tone="secondary" className="max-w-[340px] text-center">
           {copy.welcome.tagline}
         </Text>
-        <Image
-          source={dark ? pbdeDark : pbdeLight}
-          style={{ width: 240, height: 99 }}
-          contentFit="contain"
-          accessibilityLabel={copy.welcome.poweredBy}
-          accessible
-        />
+        <PoweredByDash />
       </Animated.View>
 
       <Animated.View entering={ENTER} className="gap-3">

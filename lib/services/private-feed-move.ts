@@ -43,6 +43,9 @@ const FEED_CREDITS = 35_000_000
 /** 1M credits ≈ 0.06¢ (1 DASH = 1e11 credits at $60). */
 const USD_PER_CREDIT = 60 / 1e11
 
+/** A move whose target feed was renewed again on another device: it can only be finished there. */
+export const RENEWED_ELSEWHERE = 'Your private feed was renewed again on another device. Move your followers from there.'
+
 export interface RenewalEstimate {
   followers: number
   credits: number
@@ -249,7 +252,7 @@ async function moveFollowers(ownerId: string, encryptionPrivateKey?: Uint8Array,
     if (!synced.success) return pause(synced.errorCode === 'SYNC_REQUIRED' ? 'Enter your encryption key to finish moving your followers.' : synced.error ?? 'The move paused.')
     if (synced.state.feed.feed !== job.to) {
       clearMove(ownerId)
-      return { success: false, error: 'Your private feed was renewed again on another device. Move your followers from there.' }
+      return { success: false, error: RENEWED_ELSEWHERE }
     }
     const [existing, blocked] = await Promise.all([fetchMembers(ownerId, job.to), blockedBy(ownerId)])
     // Anyone who joined the old feed since the move was planned moves too.

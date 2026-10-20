@@ -78,6 +78,9 @@ describe('buildThreadRows', () => {
 
   it('says "No replies yet" for a loaded thread without replies', () => {
     expect(types(buildThreadRows({ thread: thread() }))).toEqual(['focus', 'repliesEmpty']);
+    // Replying blocked (a private post the viewer can't open): no invitation to.
+    expect(buildThreadRows({ thread: thread() }).at(-1)).toMatchObject({ type: 'repliesEmpty', invite: true });
+    expect(buildThreadRows({ thread: thread(), replyBlocked: true }).at(-1)).toMatchObject({ type: 'repliesEmpty', invite: false });
   });
 
   it('puts ancestors above a focused reply, joined by the thread line, with "Replying to" (POST-03)', () => {

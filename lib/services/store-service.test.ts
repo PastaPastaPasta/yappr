@@ -6,7 +6,7 @@ vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateD
 import { storeService } from './store-service';
 import { storeStatsService } from './store-stats-service';
 
-const paymentUris = [{ scheme: 'dash:', uri: 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ', label: 'Dash' }];
+const paymentUris = [{ scheme: 'dash:', uri: 'dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw', label: 'Dash' }];
 const contactMethods = [{ platform: 'email', handle: 'shop@example.com' }];
 const raw = {
   $id: 'store', $ownerId: 'owner', $revision: 3, $createdAt: 1700000000000,

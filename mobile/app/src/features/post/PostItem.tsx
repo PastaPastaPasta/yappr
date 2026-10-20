@@ -10,6 +10,7 @@ import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useProvisionalViewerId, useViewerId } from '~/data/session';
 import { sendWrite, useLandingIntent } from '~/data/writes';
 import { usePendingWriteStatus } from '~/features/compose/pending-posts';
+import { PendingPrivateBody, usePrivateBody } from '~/features/private-feed/PrivatePostBody';
 import { tagMaxLength } from '~/features/compose/text';
 import { usePostSafety } from '~/features/safety/use-post-safety';
 import { showActionSheet, type SheetAction } from '~/ui/action-sheet';
@@ -21,7 +22,6 @@ import {
   PostCard,
   type EngagementCountTab,
   type PostCardActions,
-  type PostCardMenu,
   type PostCardProps,
 } from '~/ui/post/PostCard';
 import type { CardPoll, Loadable } from '~/ui/post/types';
@@ -36,7 +36,7 @@ import {
   postWebUrl,
   sharePost,
 } from './post-navigation';
-import { HIDE_PRIVATE_LABEL, hidePrivateFromMenu, isUnreadablePrivate, useHideUnreadablePrivate } from './hidden-private';
+import { HIDE_PRIVATE_LABEL, hidePrivateFromMenu, useHideUnreadablePrivate } from './hidden-private';
 import { pollVoteKey, pollVoteWrite } from './poll-vote';
 import { readEngageStats } from './post-stats';
 import { useRepostQuoteCounts } from './repost-quote-counts';
@@ -59,6 +59,11 @@ export interface PostItemProps
    * keeps it as its only item.
    */
   onRemoveBookmark?: (post: PostDTO) => void;
+  /**
+   * Leave out a private post the viewer can't read (locked for them, not
+   * their own): for lists, behind a "hide private posts I can't see" setting.
+   */
+  hideUnreadablePrivate?: boolean;
 }
 
 /**
@@ -256,6 +261,7 @@ export const PostItem = memo(function PostItem({
   post: listed,
   removal = 'hide',
   onRemoveBookmark,
+  hideUnreadablePrivate = false,
   ...cardProps
 }: PostItemProps) {
   const { post: shownPost, marksPending, marksLoading, reloadMarks } = useShownPost(listed);
@@ -285,16 +291,13 @@ export const PostItem = memo(function PostItem({
 
   const own = viewerId !== null && viewerId === post.author.id;
   const detail = cardProps.variant === 'detail';
-  // A private post the viewer can't read offers to hide them all from feeds (`useFeedPosts`).
   const hidingPrivate = useHideUnreadablePrivate();
-  const unreadablePrivate = isUnreadablePrivate(post, safetyViewerId);
-  const offerHidePrivate = unreadablePrivate && !hidingPrivate;
   const repostQuoteCounts = useRepostQuoteCounts(post, detail && capabilities?.repostsAreQuotes === true);
   // A bare repost's target comes without the viewer's follow of its author: offer no follow item then.
   const followKnown =
     viewerId === null || !listed.bareRepost || typeof listed.quoted?.viewer?.followsAuthor === 'boolean';
 
-  const { actions, menu } = useMemo(() => {
+  const { actions, onSelect } = useMemo(() => {
     // A bare repost's marks are unknown until engage.stats answers: acting on a guess would send a
     // duplicate. Its buttons wait with a spinner meanwhile (`marksLoading`); after a failed read a
     // press reads them again. Signed out, the sign-in sheet comes first either way.
@@ -347,7 +350,6 @@ export const PostItem = memo(function PostItem({
         sendWrite(followWrite, { authorId: post.author.id, follow: on });
       });
 
-    const openOnWeb = () => openExternal(postWebUrl(post));
     const openEngagements = (tab?: EngagementCountTab) =>
       router.push({ pathname: '/post/[id]/engagements', params: { id: post.id, kind: post.kind, ...(tab ? { tab } : {}) } });
 
@@ -408,27 +410,30 @@ export const PostItem = memo(function PostItem({
         const pollId = post.poll?.id;
         if (pollId) requireAuth(() => sendWrite(pollVoteWrite, { pollId, choices }));
       },
-      onOpenPrivate: openOnWeb,
     };
+    return { actions, onSelect };
+  }, [post, own, marksPending, reloadMarks, viewerId, capabilities, external, detail, onRemoveBookmark, listed]);
+  // A private post: decrypted for the viewer, or why not (and what to do about it).
+  const privateCard = usePrivateBody(post, {
+    variant: detail ? 'detail' : 'feed',
+    tagMaxLength: tagMaxLength(capabilities?.hashtagsInline === true),
+    handlers: actions,
+    // A post still publishing is its optimistic card: nothing on the chain to read yet.
+    enabled: !pending,
+    // The card's own gate (its props win over the safety gates, as PostCard spreads them).
+    mediaGated: cardProps.mediaGated ?? safety.gates.mediaGated,
+    onRevealMedia: cardProps.onRevealMedia ?? safety.gates.onRevealMedia,
+  });
+  // A private post locked for the viewer offers to leave them all out of feeds, until they do.
+  const offerHidePrivate = privateCard.unreadable === true && !hidingPrivate;
+  const menu = useMemo(() => {
     const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined, offerHidePrivate);
-    const menu: PostCardMenu | undefined = items.length > 0 ? { items, onSelect } : undefined;
-    return { actions, menu };
-  }, [
-    post,
-    own,
-    followKnown,
-    marksPending,
-    reloadMarks,
-    viewerId,
-    capabilities,
-    external,
-    detail,
-    onRemoveBookmark,
-    listed,
-    offerHidePrivate,
-  ]);
+    return items.length > 0 ? { items, onSelect } : undefined;
+  }, [post, own, followKnown, onRemoveBookmark, offerHidePrivate, onSelect]);
 
   if ((removed && !asStub) || safety.hidden) return null;
+  const { unreadable, ...privateProps } = privateCard;
+  if (hideUnreadablePrivate && unreadable) return null;
 
   if (pending) {
     return (
@@ -440,6 +445,7 @@ export const PostItem = memo(function PostItem({
         viewerId={viewerId ?? undefined}
         writeStatus={pending}
         actions={{ onAuthorPress: actions.onAuthorPress }}
+        privateBody={post.encrypted ? <PendingPrivateBody post={post} /> : undefined}
       />
     );
   }
@@ -460,6 +466,7 @@ export const PostItem = memo(function PostItem({
       repostQuoteCounts={repostQuoteCounts}
       actions={actions}
       menu={menu}
+      {...privateProps}
     />
   );
 });

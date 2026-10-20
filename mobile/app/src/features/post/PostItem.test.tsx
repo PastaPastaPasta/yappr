@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { ActionSheetIOS, Alert, Share, Text, type AlertButton } from 'react-native';
+import { ActionSheetIOS, Alert, Share, type AlertButton } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useRemovedPosts } from '~/data/optimistic';
@@ -17,7 +17,7 @@ import { keepHandlesWhole } from '~/ui/handle';
 import { AUTHORS, POSTS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
-import { useFeedPosts, useHiddenPrivateStore } from './hidden-private';
+import { useHiddenPrivateStore, useHideUnreadablePrivate } from './hidden-private';
 import { PostItem } from './PostItem';
 import { likeWrite } from './post-writes';
 
@@ -399,54 +399,63 @@ describe('post write specs', () => {
 describe('PostItem private posts the viewer cannot read', () => {
   afterEach(() => useHiddenPrivateStore.setState({ hide: false }));
 
-  /** A feed as screens wire it: its posts through `useFeedPosts`. */
+  const LOCKED = { state: 'locked', reason: 'none', feedOwnerId: AUTHORS.carol.id, own: false, messagingKey: 'ready' };
+
+  /** A feed as screens wire it: the setting passed to each card. */
   function Feed({ posts }: { posts: PostDTO[] }) {
-    const shown = useFeedPosts(posts);
+    const hide = useHideUnreadablePrivate();
     return (
       <>
-        <Text testID="feed-count">{shown.length}</Text>
-        {shown.map((post) => (
-          <PostItem key={post.id} post={post} />
+        {posts.map((post) => (
+          <PostItem key={post.id} post={post} hideUnreadablePrivate={hide} />
         ))}
       </>
     );
   }
 
-  it('offers "Hide private posts I can\'t see", which leaves them out of feeds, with Undo', () => {
-    const own = fixturePost({ id: 'own-private', author: AUTHORS.alice, content: '', encrypted: true });
+  it('offers "Hide private posts I can\'t see" on a locked post, which leaves them out of feeds, with Undo', async () => {
+    fakeEngine.method('privateFeed.read').mockResolvedValue(LOCKED as never);
     render(
       <QueryClientProvider client={queryClient}>
-        <Feed posts={[POSTS.private, own]} />
+        <Feed posts={[POSTS.private]} />
       </QueryClientProvider>,
     );
+    await act(async () => {});
     expect(menuIds('post-private')).toContain('hide-private');
-    // The viewer's own private posts are theirs to read.
-    expect(menuIds('own-private')).not.toContain('hide-private');
 
     selectMenu('post-private', 'hide-private');
     expect(useHiddenPrivateStore.getState().hide).toBe(true);
     expect(screen.queryByTestId('post-card-post-private')).toBeNull();
-    expect(screen.getByTestId('post-card-own-private')).toBeTruthy();
-    // Out of the list itself, so its empty state and counts see what is shown.
-    expect(screen.getByTestId('feed-count')).toHaveTextContent('1');
 
     act(() => useToastStore.getState().current?.action?.onPress());
     expect(useHiddenPrivateStore.getState().hide).toBe(false);
     expect(screen.getByTestId('post-card-post-private')).toBeTruthy();
   });
 
-  it('leaves out a bare repost of such a post, and drops the menu item once hiding is on', () => {
-    useHiddenPrivateStore.setState({ hide: true });
-    const repost = fixturePost({ id: 'repost', author: AUTHORS.bob, bareRepost: true, quoted: POSTS.private });
-    render(
+  it("doesn't offer it on a post the viewer can read, nor once hiding is on", async () => {
+    fakeEngine
+      .method('privateFeed.read')
+      .mockResolvedValue({ state: 'open', text: 'for my followers', feedOwnerId: AUTHORS.carol.id, own: false, followerCount: null } as never);
+    const { unmount } = render(
       <QueryClientProvider client={queryClient}>
-        <Feed posts={[repost]} />
         <PostItem post={POSTS.private} />
       </QueryClientProvider>,
     );
-    expect(screen.getByTestId('feed-count')).toHaveTextContent('0');
+    await act(async () => {});
+    expect(menuIds('post-private')).not.toContain('hide-private');
+    unmount();
+
+    queryClient.clear();
+    useHiddenPrivateStore.setState({ hide: true });
+    fakeEngine.method('privateFeed.read').mockResolvedValue(LOCKED as never);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostItem post={POSTS.private} />
+      </QueryClientProvider>,
+    );
+    await act(async () => {});
     // Outside a feed (a thread, a profile, bookmarks) the post still shows.
-    expect(screen.getAllByTestId('post-card-post-private')).toHaveLength(1);
+    expect(screen.getByTestId('post-card-post-private')).toBeTruthy();
     expect(menuIds('post-private')).not.toContain('hide-private');
   });
 });

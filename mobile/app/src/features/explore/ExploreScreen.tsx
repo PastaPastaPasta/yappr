@@ -11,7 +11,7 @@ import { useCapabilities } from '~/data/session';
 import { openHashtag } from '~/features/post/post-navigation';
 import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
-import { useFeedPosts } from '~/features/post/hidden-private';
+import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { cn } from '~/lib-allowlist';
 import { ComposeFab } from '~/ui/ComposeFab';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -41,8 +41,6 @@ type Row =
   | { type: 'post'; key: string; post: PostDTO }
   | { type: 'section'; key: string; title: string }
   | { type: 'user'; key: string; entry: RankedUserDTO; rank: number };
-
-const NO_POSTS: PostDTO[] = [];
 
 /** Room under the last row for the compose button. */
 const FAB_CLEARANCE = 96;
@@ -122,13 +120,13 @@ export function ExploreScreen() {
     { persist: true, enabled: segment === 'creators' },
   );
   const active = segment === 'trending' ? trending : segment === 'top' ? top : creators;
-  const topPosts = useFeedPosts(top.data ?? NO_POSTS);
+  const hidePrivate = useHideUnreadablePrivate();
 
   let rows: Row[] = [];
   if (segment === 'trending') {
     rows = (trending.data ?? []).map((tag, index) => ({ type: 'tag', key: `tag:${tag.tag}`, tag, rank: index + 1 }));
   } else if (segment === 'top') {
-    rows = topPosts.map((post) => ({ type: 'post', key: `post:${post.id}`, post }));
+    rows = (top.data ?? []).map((post) => ({ type: 'post', key: `post:${post.id}`, post }));
   } else {
     rows = creatorRows(creators.data ?? []);
   }
@@ -226,7 +224,7 @@ export function ExploreScreen() {
                 />
               );
             case 'post':
-              return <PostItem post={item.post} />;
+              return <PostItem post={item.post} hideUnreadablePrivate={hidePrivate} />;
             case 'section':
               return <SectionHeader title={item.title} />;
             case 'user':

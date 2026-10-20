@@ -44,6 +44,25 @@
       "rules": {
         "no-console": "off"
       }
+    },
+    {
+      "files": [
+        "components/blog/**",
+        "app/blog/**"
+      ],
+      "rules": {
+        "no-restricted-syntax": [
+          "error",
+          {
+            "selector": "ObjectPattern > Property[key.name='setTheme']",
+            "message": "A blog's theme stays on the blog (BlogReadingScope). Never write the reader's app theme."
+          },
+          {
+            "selector": "MemberExpression[property.name='setTheme']",
+            "message": "A blog's theme stays on the blog (BlogReadingScope). Never write the reader's app theme."
+          }
+        ]
+      }
     }
   ],
   "ignorePatterns": [

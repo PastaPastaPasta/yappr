@@ -8,7 +8,7 @@ import { CartItemRow } from './cart-item-row'
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
 import { cartLineKey, cartService, getCartCurrency, type CartItemAvailability } from '@/lib/services/cart-service'
-import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront-contract'
+import { NOT_FOR_SALE_YET_MESSAGE, OWN_STORE_ORDER_MESSAGE, isOwnStore, storeTakesPayment } from '@/lib/storefront/storefront-contract'
 import { useAuth } from '@/contexts/auth-context'
 import type { BlockSource } from '@/lib/services/block-service'
 import type { CartItem, Store } from '@/lib/types'
@@ -38,6 +38,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
     // on chain), and a store that is not open takes no orders.
     let checkoutBlocker: string | null = null
     if (isOwnStore(store, user?.identityId)) checkoutBlocker = OWN_STORE_ORDER_MESSAGE
+    else if (!storeTakesPayment(store)) checkoutBlocker = `${NOT_FOR_SALE_YET_MESSAGE}.`
     else if (store !== undefined && store.status !== 'active') checkoutBlocker = 'This store is not accepting orders right now.'
     const hasAvailabilityIssue = availability.some(result => result.reason)
 

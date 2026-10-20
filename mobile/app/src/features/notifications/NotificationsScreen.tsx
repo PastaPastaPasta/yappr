@@ -14,6 +14,7 @@ import { SignedOutEmptyState } from '~/features/auth/SignedOutPlaceholder';
 import { useOffline } from '~/features/home/use-app-active';
 import { openExternal, openPost, openUser } from '~/features/post/post-navigation';
 import { useSettings } from '~/features/settings/settings-data';
+import { openOnItsTab } from '~/navigation/tab-routes';
 import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -144,6 +145,7 @@ export function NotificationsScreen() {
     if (!destination) return;
     if (destination.kind === 'post') openPost(destination.id);
     else if (destination.kind === 'user') openUser(destination.id);
+    else if (destination.kind === 'privateFeedRequests') openOnItsTab('/settings/private-feed');
     else openExternal(`${config.webBaseUrl}${destination.path}`);
   }, []);
 

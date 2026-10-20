@@ -5,6 +5,7 @@ import { displayHost } from './LinkPreviewCard';
 import { pollEndLabel, pollPercents } from './PollCard';
 import { PostCard } from './PostCard';
 import { PostStub, stubText } from './PostStub';
+import { Text } from '../Text';
 import { AUTHORS, POSTS, SAMPLE_POLL, SAMPLE_PREVIEW, VIEWER_ID, fixturePost } from './fixtures';
 
 const hidden = { includeHiddenElements: true };
@@ -243,15 +244,29 @@ describe('PostCard gates', () => {
     expect(card.props.accessibilityActions.map((a: { label: string }) => a.label)).not.toContain('Show media');
   });
 
-  it('renders a private post as the placeholder, with no reply', () => {
-    const onOpenPrivate = jest.fn();
-    render(<PostCard post={POSTS.private} actions={{ onOpenPrivate }} />);
+  it('renders a private post as the placeholder, with no reply and no web link', () => {
+    render(<PostCard post={POSTS.private} />);
     expect(screen.getByText('Private post')).toBeTruthy();
     // Who can see it, with no "not in the app yet" (#23).
     expect(screen.getByText('Only approved followers can see this.')).toBeTruthy();
     expect(screen.queryByTestId('reply-btn-post-private')).toBeNull();
-    fireEvent.press(screen.getByText('Open on yap.pr'));
-    expect(onOpenPrivate).toHaveBeenCalled();
+    expect(screen.queryByText('Open on yap.pr')).toBeNull();
+  });
+
+  it('renders a private post with the body it is given, and Reply when it opened', () => {
+    render(
+      <PostCard
+        post={POSTS.private}
+        privateBody={<Text testID="decrypted">for my followers</Text>}
+        privateText="for my followers"
+        canReply
+        actions={{ onReply: jest.fn() }}
+      />,
+    );
+    expect(screen.getByTestId('decrypted')).toBeTruthy();
+    expect(screen.queryByText('Only approved followers can see this.')).toBeNull();
+    expect(screen.getByTestId('reply-btn-post-private')).toBeTruthy();
+    expect(byId(`post-card-${POSTS.private.id}`).props.accessibilityLabel).toContain('Private post: for my followers.');
   });
 });
 

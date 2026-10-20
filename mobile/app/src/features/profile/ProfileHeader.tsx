@@ -38,6 +38,8 @@ export interface ProfileHeaderProps {
   bannerHeight: number;
   bannerGated: boolean;
   actions: ProfileHeaderActions;
+  /** Under the buttons: the private-feed control (request access, pending, private follower). */
+  privateAccess?: ReactNode;
 }
 
 function MetaItem({ icon: Icon, children }: { icon: typeof MapPinIcon; children: ReactNode }) {
@@ -83,6 +85,7 @@ export function ProfileHeader({
   bannerHeight,
   bannerGated,
   actions,
+  privateAccess,
 }: ProfileHeaderProps) {
   // Nameless: no DPNS name and no profile name, so the truncated id is the name (PRD AUTH-15).
   const nameless = !profile.username && !profile.hasProfile;
@@ -143,6 +146,7 @@ export function ProfileHeader({
             )}
           </View>
         </View>
+        {privateAccess}
 
         <View className="mt-3 gap-1">
           {nameless ? (

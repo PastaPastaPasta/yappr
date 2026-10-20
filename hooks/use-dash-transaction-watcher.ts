@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   waitForUtxo,
   isDashScheme,
-  getNetworkFromScheme,
+  getDashPaymentNetwork,
   satoshisToDash,
   type WaitForUtxoResult
 } from '@/lib/services/insight-api-service'
@@ -64,7 +64,7 @@ export function useDashTransactionWatcher({
     setRemainingTime(INSIGHT_API_CONFIG.timeoutMs)
     setElapsedTime(0)
 
-    const network = getNetworkFromScheme(scheme)
+    const network = getDashPaymentNetwork(scheme, address)
 
     waitForUtxo(address, {
       network,

@@ -217,6 +217,17 @@ export function itemSizeError(fields: Record<string, unknown>): string | null {
  */
 export const OWN_STORE_ORDER_MESSAGE = 'This is your own store. You cannot place an order with yourself.'
 
+/** What a buyer sees on a store with no payment address yet: checkout would have nothing to pay to. */
+export const NOT_FOR_SALE_YET_MESSAGE = 'Not available for purchase yet'
+
+/** What the seller sees on their own store in that state. */
+export const ADD_PAYMENT_METHOD_HINT = 'Buyers can’t check out until you add a payment address in Manage.'
+
+/** Whether a loaded store lists somewhere to pay (false for a store that has none; true while it is unknown). */
+export function storeTakesPayment(store: { paymentUris?: readonly unknown[] } | null | undefined): boolean {
+  return !store || (store.paymentUris?.length ?? 0) > 0
+}
+
 /** Whether `viewerId` owns `store` (false while either is unknown, so a missing store never reads as "yours"). */
 export function isOwnStore(store: { ownerId: string } | null | undefined, viewerId: string | undefined): boolean {
   return Boolean(store && viewerId && store.ownerId === viewerId)

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 211 64">
+<g transform="translate(0 0)"><path fill="#38bdf8" fill-rule="evenodd" d="M2 10H11L22 35L32 10H41L24 51C21 58 17 61 10 61H5V57L9 53H10C14 53 16 51 18 46Z"/></g>
+<g transform="translate(46 0)"><path fill="#38bdf8" fill-rule="evenodd" d="M18 9C7 9 0 17 0 28C0 39 7 47 17 47C23 47 27 45 30 41V46H38V10H30V15C27 11 23 9 18 9ZM19 17C26 17 30 21 30 28C30 35 26 39 19 39C12 39 8 35 8 28C8 21 12 17 19 17Z"/></g>
+<g transform="translate(92 0)"><path fill="#38bdf8" fill-rule="evenodd" d="M0 10H8V15C11 11 15 9 21 9C31 9 38 17 38 28C38 39 31 47 21 47C15 47 11 45 8 41V61H0ZM19 17C12 17 8 21 8 28C8 35 12 39 19 39C26 39 30 35 30 28C30 21 26 17 19 17Z"/></g>
+<g transform="translate(138 0)"><path fill="#38bdf8" fill-rule="evenodd" d="M0 10H8V15C11 11 15 9 21 9C31 9 38 17 38 28C38 39 31 47 21 47C15 47 11 45 8 41V61H0ZM19 17C12 17 8 21 8 28C8 35 12 39 19 39C26 39 30 35 30 28C30 21 26 17 19 17Z"/></g>
+<g transform="translate(184 0)"><path fill="#38bdf8" fill-rule="evenodd" d="M0 10H8V16C11 11 15 9 22 9H25V17H21C13 17 8 22 8 31V46H0Z"/></g>
+</svg>

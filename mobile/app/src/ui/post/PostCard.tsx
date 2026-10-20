@@ -61,7 +61,6 @@ export interface PostCardActions extends RichTextHandlers {
   onMediaPress?: (index: number) => void;
   onLinkPreviewPress?: (url: string) => void;
   onVotePress?: (choices: number[]) => void;
-  onOpenPrivate?: () => void;
   /** Detail only: a count in the counts row, to open that engagements tab (UX_SPEC §4.9). */
   onCountPress?: (tab: EngagementCountTab) => void;
 }
@@ -124,6 +123,23 @@ export interface PostCardProps {
   menu?: PostCardMenu;
   tagMaxLength?: number;
   actions?: PostCardActions;
+  /**
+   * A private post's body (the decrypted text, or why it doesn't open), in
+   * place of the "Private post" panel.
+   */
+  privateBody?: ReactNode;
+  /** Whether Reply is offered; by default not on a private or deleted post. */
+  canReply?: boolean;
+  /** A private post's decrypted text, for the screen-reader summary. */
+  privateText?: string;
+  /**
+   * What the viewer can do about a private post that doesn't open (request
+   * access, try again…): the card is one element to a screen reader, so its
+   * panel's button is offered as an action too.
+   */
+  privateAction?: { label: string; run: () => void };
+  /** A private post's decrypted text carries an image (for the screen reader's "Show media"). */
+  privateMedia?: boolean;
 }
 
 export interface PostCardMenu {
@@ -345,13 +361,15 @@ function postAccessibilityLabel(
     quoteCovered: boolean;
     /** Detail: the counts row's reposts and quotes, which the summary repeats (D-L4a-009). */
     repostSplit?: RepostQuoteCounts | null;
+    /** A private post's decrypted text. */
+    privateText?: string;
   },
 ): string {
   const parts = [`${post.author.displayName}, ${handleOf(post.author)}, ${extras.time}.`];
   if (extras.repostedBy) parts.push(`Reposted by ${extras.repostedBy}.`);
   if (extras.replyingTo) parts.push(`Replying to @${extras.replyingTo}.`);
   if (post.deleted) parts.push(stubText('deleted', post.kind));
-  else if (post.encrypted) parts.push('Private post.');
+  else if (post.encrypted) parts.push(extras.privateText ? `Private post: ${extras.privateText}.` : 'Private post.');
   else if (extras.content) parts.push(`${extras.content}.`);
   const { quoted } = post;
   if (quoted?.viewer?.authorBlocked) {
@@ -404,6 +422,11 @@ export const PostCard = memo(function PostCard({
   tagMaxLength,
   menu,
   actions = {},
+  privateBody,
+  canReply: replyable,
+  privateText,
+  privateAction,
+  privateMedia = false,
 }: PostCardProps) {
   const [revealed, reveal] = useSensitiveReveal(post.id);
   const { external } = useMediaUrls();
@@ -449,7 +472,7 @@ export const PostCard = memo(function PostCard({
     variant === 'optimistic' &&
     (writeStatus?.status.state === 'posting' || writeStatus?.status.state === 'threadProgress');
   const showActionBar = (variant === 'feed' || detail) && !post.deleted;
-  const canReply = !post.encrypted && !post.deleted;
+  const canReply = replyable ?? (!post.encrypted && !post.deleted);
   const repostTotal = post.stats.reposts + post.stats.quotes;
   const reposter = post.repostedBy
     ? post.repostedBy.id === viewerId
@@ -461,7 +484,7 @@ export const PostCard = memo(function PostCard({
   if (post.deleted) {
     body = <DeletedLine kind={post.kind} />;
   } else if (post.encrypted) {
-    body = <PrivatePostPlaceholder onOpenWeb={actions.onOpenPrivate} />;
+    body = privateBody ?? <PrivatePostPlaceholder />;
   } else {
     let quoteSlot: ReactNode = null;
     if (post.quoted?.viewer?.authorBlocked) {
@@ -562,7 +585,7 @@ export const PostCard = memo(function PostCard({
       !quoted.deleted &&
       !quoted.encrypted &&
       quoted.media.length > 0;
-    if ((mediaGated && (post.media.length > 0 || previewImage)) || quoteMediaHidden)
+    if ((mediaGated && (post.media.length > 0 || previewImage || privateMedia)) || quoteMediaHidden)
       a11yActions.push({ name: 'showMedia', label: 'Show media', run: onRevealMedia });
     // Everything tappable inside the card, which VoiceOver can't reach on its own.
     if (!post.deleted && !post.encrypted) {
@@ -599,6 +622,7 @@ export const PostCard = memo(function PostCard({
   const onMore = variant === 'compact' ? undefined : actions.onMore;
   // Long press and the screen-reader action: the "⋯" menu's items as an action sheet.
   const openMenu = cardMenu ? () => openPostMenu(cardMenu) : undefined;
+  if (post.encrypted && !post.deleted && privateAction) a11yActions.push({ name: 'private', label: privateAction.label, run: privateAction.run });
   a11yActions.push(
     { name: 'profile', label: 'Open profile', run: actions.onAuthorPress },
     { name: 'more', label: 'More', run: openMenu ?? onMore },
@@ -623,6 +647,7 @@ export const PostCard = memo(function PostCard({
               replyingTo,
               quoteCovered: (quoteNsfwGated ?? post.quoted?.sensitive) === true,
               repostSplit: detail ? repostQuoteCounts : undefined,
+              privateText,
             })
       }
       accessibilityActions={available.map(({ name, label }) => ({ name, label }))}

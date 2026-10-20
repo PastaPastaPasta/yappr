@@ -54,6 +54,10 @@ const m = vi.hoisted(() => ({
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   settleReplaces: vi.fn(async () => 0),
+  getEncryptionSource: vi.fn(),
+  prepareOwnerEncryption: vi.fn(async () => ({ success: true, data: {} })),
+  prepareInheritedEncryption: vi.fn(async () => ({ success: true, data: {} })),
+  buildReportBox: vi.fn(async (): Promise<{ kind: string; box?: Uint8Array }> => ({ kind: 'not-needed' })),
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
   notificationService: { getInitialNotifications: vi.fn(), pollNewNotifications: vi.fn() },
   invalidateBlockCache: vi.fn(),
@@ -67,7 +71,10 @@ vi.mock('@/lib/contract-topology', async (load) => {
     ...Object.fromEntries(FLAGS.map(flag => [flag, () => m.topology[flag] === true])),
     canRepost: (kind: string) => m.topology[`repost:${kind}`] !== false,
     canBookmark: (kind: string) => m.topology[`bookmark:${kind}`] !== false,
+    privateFeedClientSupported: () => m.topology.privateFeeds === true,
     electedModeration: () => m.elected,
+    // Reports carry a moderators' box (v13+) unless a test says otherwise.
+    reportShape: () => ({ ...(actual.reportShape as () => object)(), boxMaxBytes: m.topology.noReportBox === true ? null : 4096 }),
   }
 })
 vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>(), getCurrentUserId: () => m.viewer }))
@@ -92,8 +99,13 @@ vi.mock('@/lib/services/like-service', () => ({ likeService: m.likeService }))
 vi.mock('@/lib/services/bookmark-service', () => ({ bookmarkService: m.bookmarkService }))
 vi.mock('@/lib/services/repost-service', () => ({ repostService: m.repostService }))
 vi.mock('@/lib/services/post-service', async (load) => ({ ...await load<object>(), postService: m.postService }))
-vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>(), replyService: m.replyService }))
+vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>(), replyService: m.replyService, getEncryptionSource: m.getEncryptionSource }))
 vi.mock('@/lib/services/follow-service', () => ({ followService: m.followService }))
+vi.mock('@/lib/services/private-feed-service', () => ({
+  prepareOwnerEncryption: m.prepareOwnerEncryption,
+  prepareInheritedEncryption: m.prepareInheritedEncryption,
+}))
+vi.mock('@/lib/services/report-box-service', () => ({ buildReportBox: m.buildReportBox }))
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
 vi.mock('@/lib/caches/block-cache', async (load) => ({ ...await load<object>(), invalidateBlockCache: m.invalidateBlockCache }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
@@ -548,6 +560,41 @@ describe('graph and safety writes', () => {
     await expect(safety.report(TARGET, 0)).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
   })
 
+  it("reports a private post with the moderators' box, and never boxless because a read failed", async () => {
+    const { outcome, safety } = engine()
+    const privateTarget = post(TARGET.id, { encryptedContent: new Uint8Array(4), nonce: new Uint8Array(24), keyGeneration: 1, feed: 1 })
+    m.postService.getPostById.mockResolvedValue(privateTarget)
+    const box = new Uint8Array([7, 7, 7])
+    m.buildReportBox.mockResolvedValueOnce({ kind: 'sealed', box })
+    m.reportService.fileReport.mockResolvedValue({ success: true, transactionHash: id('Report'), confirmed: true })
+    await outcome(safety.report(TARGET, 0, undefined, { encrypted: true }))
+    expect(m.reportService.fileReport).toHaveBeenLastCalledWith(VIEWER, expect.objectContaining({ targetId: TARGET.id, box }))
+
+    // The team can't be read, or the post itself can't: nothing is filed (never without its box).
+    m.reportService.fileReport.mockClear()
+    m.buildReportBox.mockRejectedValueOnce(new Error('fetch failed'))
+    expect(await outcome(safety.report(TARGET, 0, undefined, { encrypted: true }))).toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
+    m.postService.getPostById.mockRejectedValueOnce(new Error('fetch failed'))
+    expect(await outcome(safety.report({ ...TARGET, id: id('Unread') }, 0, undefined, { encrypted: true })))
+      .toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
+    expect(m.reportService.fileReport).not.toHaveBeenCalled()
+
+    // No key, or no moderator to read it: filed without, and the ticket says so (web's toast).
+    m.postService.getPostById.mockResolvedValue(privateTarget)
+    m.buildReportBox.mockResolvedValueOnce({ kind: 'no-recipients' })
+    expect(await outcome(safety.report(TARGET, 0, undefined, { encrypted: true }))).toMatchObject({ state: 'confirmed', notice: 'unsealed-no-moderators' })
+    expect(m.reportService.fileReport).toHaveBeenLastCalledWith(VIEWER, expect.not.objectContaining({ box: expect.anything() }))
+
+    // A public target is not read at all, nor where reports carry no box.
+    m.postService.getPostById.mockClear()
+    await outcome(safety.report(TARGET, 0))
+    m.topology.noReportBox = true
+    await outcome(safety.report(TARGET, 0, undefined, { encrypted: true }))
+    expect(m.postService.getPostById).not.toHaveBeenCalled()
+    m.postService.getPostById.mockReset()
+    m.replyService.getReplyById.mockReset()
+  })
+
   it('withdraws the viewer\'s report by deleting it, says when it is already gone, and checks it by its absence', async () => {
     const { tickets, outcome, safety } = engine()
     const REPORT = id('Report')
@@ -874,6 +921,29 @@ describe('posts.publish and posts.delete', () => {
     }
     const own = (postId: string, content: string, createdAt: number, extra: Partial<Post> = {}) => post(postId, { content, createdAt: new Date(createdAt), ...extra })
 
+    it('confirms a private post that landed unconfirmed by its recorded id after a restart, without its text', async () => {
+      m.topology.privateFeeds = true
+      const items = new Map<string, string>()
+      const kv = { getItem: (key: string) => items.get(key) ?? null, setItem: (key: string, value: string) => { items.set(key, value) } }
+      const options = { storage: kv, emit, currentIdentity: () => m.viewer, documentExists: m.documentExists, absenceRecheckMs: 0 }
+      const before = createTicketStore(options)
+      const landed = id('PrivateLanded')
+      m.postService.createPost.mockImplementation(async () => {
+        m.unconfirmed.add(landed)
+        return post(landed)
+      })
+      const ticket = await createPostWrites(before, emit).publish({ parts: [{ text: 'just for followers' }], visibility: 'private' })
+      const sent = await settled(before, ticket.id)
+      expect(sent).toMatchObject({ state: 'unconfirmed', documents: [{ id: landed, confirmed: false }] })
+      // Nothing of the private text was kept for the next engine.
+      expect([...items.values()].join('')).not.toContain('just for followers')
+
+      const after = createTicketStore(options)
+      createPostWrites(after, emit)
+      m.documentExists.mockResolvedValue(true)
+      expect(await after.check(ticket.id)).toMatchObject({ state: 'confirmed', documents: [{ id: landed, confirmed: true }] })
+    })
+
     it('is failed and retryable when the restart came before it sent anything', async () => {
       const { ticket, tickets } = await cutShort({ parts: [{ text: 'hi' }], replyTo: TARGET }, 'read')
       expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: { code: 'ENGINE_RESTARTED', outcome: 'not-sent' } })
@@ -1029,7 +1099,76 @@ describe('posts.publish and posts.delete', () => {
     expect(m.replyService.createReply).not.toHaveBeenCalled()
   })
 
-  it('replies to a loaded target, refuses a private one, and carries v10 media hashes', async () => {
+  it('encrypts a private post with its image link inside, and a reply in a private thread to the root\'s feed', async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.topology.privateFeeds = true
+    m.topology.mediaCarriesHashes = true
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'secret' }], visibility: 'private-with-teaser', teaser: 'a peek', mediaUrl: 'https://img.example/a.png' }))
+    expect(ticket.state).toBe('confirmed')
+    const [, content, options] = m.postService.createPost.mock.calls[0] as [string, string, Record<string, unknown>]
+    expect(content).toBe('secret\n\nhttps://img.example/a.png')
+    expect(options.encryption).toMatchObject({ type: 'owner', teaser: 'a peek' })
+    // No media field and no fingerprint: anyone could read those.
+    expect(options.media).toBeUndefined()
+    expect(m.imageDigest).not.toHaveBeenCalled()
+
+    m.postService.getPostById.mockResolvedValue(post(TARGET.id, { encryptedContent: new Uint8Array(4), nonce: new Uint8Array(24), keyGeneration: 1, feed: 1 }))
+    m.getEncryptionSource.mockResolvedValue({ ownerId: AUTHOR, feed: 1, keyGeneration: 1, inherited: true })
+    expect((await outcome(posts.publish({ parts: [{ text: 'a private reply' }], replyTo: TARGET }))).state).toBe('confirmed')
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'a private reply', expect.anything(), expect.objectContaining({
+      encryption: expect.objectContaining({ type: 'inherited', source: { ownerId: AUTHOR } }),
+    }))
+
+    // The thread could not be read: nothing goes out in the clear.
+    m.replyService.createReply.mockClear()
+    m.getEncryptionSource.mockRejectedValue(new Error('The thread could not be read'))
+    expect(await outcome(posts.publish({ parts: [{ text: 'maybe clear' }], replyTo: TARGET }))).toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
+    expect(m.replyService.createReply).not.toHaveBeenCalled()
+
+    // A private post is never quoted.
+    expect(await outcome(posts.publish({ parts: [{ text: 'quoting' }], quote: TARGET }))).toMatchObject({ state: 'failed', error: { code: 'NOT_SUPPORTED' } })
+  })
+
+  it("refuses a private post lib won't encrypt before anything is sent, and a reply shown as private whose thread is public", async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.topology.privateFeeds = true
+    const moving = 'Your followers are being moved to your renewed private feed. Try again when the move finishes.'
+    m.prepareOwnerEncryption.mockResolvedValueOnce({ success: false, error: moving } as never)
+    expect(await outcome(posts.publish({ parts: [{ text: 'secret' }], visibility: 'private' })))
+      .toMatchObject({ state: 'failed', error: { code: 'PRIVATE_FEED', outcome: 'local', userMessage: moving } })
+    m.prepareOwnerEncryption.mockResolvedValueOnce({ success: false, error: 'SYNC_REQUIRED:Enter your encryption key.' } as never)
+    expect(await outcome(posts.publish({ parts: [{ text: 'secret' }], visibility: 'private' })))
+      .toMatchObject({ state: 'failed', error: { code: 'NO_MESSAGING_KEY' } })
+    expect(m.postService.createPost).not.toHaveBeenCalled()
+
+    // The composer showed it as private, but its thread is public now: nothing goes out in the clear.
+    m.postService.getPostById.mockResolvedValue(post(TARGET.id, { encryptedContent: new Uint8Array(4), nonce: new Uint8Array(24), keyGeneration: 1, feed: 1 }))
+    m.getEncryptionSource.mockResolvedValue(null)
+    expect(await outcome(posts.publish({ parts: [{ text: 'thought private' }], replyTo: TARGET, expectInherited: true })))
+      .toMatchObject({ state: 'failed', error: { code: 'PRIVATE_FEED', outcome: 'local' } })
+    expect(m.replyService.createReply).not.toHaveBeenCalled()
+
+    // A reply in someone else's private thread: lib's sentences pass through, its diagnostics get one,
+    // and a failed read is no refusal (it may be tried again).
+    m.getEncryptionSource.mockResolvedValue({ ownerId: AUTHOR, feed: 1, keyGeneration: 1, inherited: true })
+    const reply = () => outcome(posts.publish({ parts: [{ text: 'a private reply' }], replyTo: TARGET, expectInherited: true }))
+    const tooLong = 'This is too long. Use fewer characters and try again.'
+    m.prepareInheritedEncryption.mockResolvedValueOnce({ success: false, error: tooLong } as never)
+    expect(await reply()).toMatchObject({ state: 'failed', error: { code: 'PRIVATE_FEED', userMessage: tooLong } })
+    m.prepareInheritedEncryption.mockResolvedValueOnce({ success: false, error: 'Cannot encrypt reply: this private feed is gone' } as never)
+    expect(await reply()).toMatchObject({
+      state: 'failed', error: { code: 'PRIVATE_FEED', userMessage: "You can't reply privately in this thread right now." },
+    })
+    m.prepareInheritedEncryption.mockResolvedValueOnce({ success: false, error: 'fetch failed' } as never)
+    const failedRead = await reply()
+    expect(failedRead).toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
+    expect(failedRead).not.toMatchObject({ error: { code: 'PRIVATE_FEED' } })
+    expect(m.replyService.createReply).not.toHaveBeenCalled()
+  })
+
+  it('replies to a loaded target, refuses a private one where the network has no private feeds, and carries v10 media hashes', async () => {
     const { outcome, posts } = engine()
     creating()
     m.postService.getPostById.mockResolvedValue(null)

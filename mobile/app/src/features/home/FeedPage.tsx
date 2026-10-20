@@ -8,7 +8,7 @@ import { useReducedMotion } from 'react-native-reanimated';
 
 import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
-import { useFeedPosts } from '~/features/post/hidden-private';
+import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { engineSupervisor } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
 import { Button } from '~/ui/Button';
@@ -113,13 +113,12 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
   const pinned = usePinnedPosts();
   const pins = tab === 'forYou' && sort === 'recent' ? pinned : NO_POSTS;
   const feedItems = feed.items;
-  const allItems = useMemo(() => {
+  const hidePrivate = useHideUnreadablePrivate();
+  const items = useMemo(() => {
     if (pins.length === 0) return feedItems;
     const inFeed = new Set(feedItems.map((post) => post.id));
     return [...pins.filter((post) => !inFeed.has(post.id)), ...feedItems];
   }, [pins, feedItems]);
-  // What the list shows: without private posts the viewer can't see, when they asked.
-  const items = useFeedPosts(allItems);
   useEffect(() => {
     if (pins.length === 0) return;
     const inFeed = new Set(feedItems.map((post) => post.id));
@@ -130,14 +129,14 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
     tab,
     // The pins are newer than the feed but say nothing about others' posts in between.
     items: feedItems,
-    shown: allItems,
+    shown: items,
     readAt: feed.dataUpdatedAt,
     // A failed next page or refresh keeps the pages read (status `error`); the polling goes on.
     enabled: live && !offline && readable && sort === 'recent' && feed.data !== undefined,
   });
   // Only Recent takes new posts; a cached Recent answer for the same newest post must not leak into Top.
   const pending = sort === 'recent' ? polled : null;
-  const newPosts = useFeedPosts(pending?.posts ?? NO_POSTS);
+  const newPosts = pending?.posts ?? NO_POSTS;
 
   const listRef = useRef<FlashListRef<PostDTO>>(null);
   const scrollToTop = () => listRef.current?.scrollToTop({ animated: !reduceMotion });
@@ -270,7 +269,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
         data={items}
         keyExtractor={(post) => post.id}
         getItemType={itemType}
-        renderItem={({ item }) => <PostItem post={item} />}
+        renderItem={({ item }) => <PostItem post={item} hideUnreadablePrivate={hidePrivate} />}
         ListEmptyComponent={empty}
         ListFooterComponent={footer}
         onEndReached={onEndReached}

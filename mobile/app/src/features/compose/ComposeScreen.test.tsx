@@ -347,6 +347,28 @@ it('saves the draft 500 ms after a change', async () => {
   jest.useRealTimers();
 });
 
+it("keeps no draft of a reply until its post has loaded (it may be a private post's)", async () => {
+  jest.useFakeTimers();
+  queryClient.setQueryDefaults(queryKeys.post.detail('target-6'), { retry: false });
+  fakeEngine.method('posts.get').mockRejectedValue(Object.assign(new Error('read failed'), { code: 'NETWORK' }));
+  jest.mocked(useLocalSearchParams).mockReturnValue({ replyTo: 'target-6' });
+  await renderCompose();
+  type('maybe a private reply');
+  act(() => jest.advanceTimersByTime(600));
+  expect(loadDraft(VIEWER_ID, { mode: 'reply', targetId: 'target-6' })).toBeNull();
+  jest.useRealTimers();
+});
+
+it('offers no visibility for a reply until its post has loaded (its thread may be private)', async () => {
+  fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, privateFeeds: true } } });
+  queryClient.setQueryDefaults(queryKeys.post.detail('target-7'), { retry: false });
+  fakeEngine.method('posts.get').mockRejectedValue(Object.assign(new Error('read failed'), { code: 'NETWORK' }));
+  fakeEngine.method('privateFeed.access').mockResolvedValue({ hasFeed: true, status: 'self', messagingKey: 'ready' });
+  jest.mocked(useLocalSearchParams).mockReturnValue({ replyTo: 'target-7' });
+  await renderCompose();
+  expect(screen.queryByTestId('compose-visibility')).toBeNull();
+});
+
 it('closes an empty composer at once', async () => {
   await renderCompose();
   fireEvent.press(byId('compose-close'));
@@ -559,4 +581,23 @@ it("edits a failed post on a slot of its own, leaving the context's draft alone"
   expect(loadDraft(VIEWER_ID, POST)?.parts[0]?.text).toBe('Draft B');
   expect(loadDraft(VIEWER_ID, { ...POST, pendingId: 'pending-a' })).toBeNull();
   jest.useRealTimers();
+});
+
+it('offers to set up a private feed only when there is none, never on a failed read', async () => {
+  fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, privateFeeds: true } } });
+  queryClient.setQueryDefaults(queryKeys.privateFeed.access(VIEWER_ID), { retry: false });
+  fakeEngine.method('privateFeed.access').mockRejectedValue(Object.assign(new Error('read failed'), { code: 'NETWORK' }));
+  await renderCompose();
+  fireEvent.press(byId('compose-visibility'));
+  act(() => sheet?.choose('Private followers'));
+  expect(byId('compose-visibility')).toHaveProp('accessibilityLabel', 'Who can see this: Private followers');
+
+  screen.unmount();
+  queryClient.clear();
+  fakeEngine.method('privateFeed.access').mockResolvedValue({ hasFeed: false, status: 'self', messagingKey: 'ready' });
+  await renderCompose();
+  fireEvent.press(byId('compose-visibility'));
+  act(() => sheet?.choose('Private followers'));
+  expect(sheet?.options).toEqual(['Set up private feed', 'Cancel']);
+  expect(byId('compose-visibility')).toHaveProp('accessibilityLabel', 'Who can see this: Everyone');
 });

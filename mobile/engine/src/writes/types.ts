@@ -32,6 +32,10 @@ export type EngineErrorCode =
   | 'REPORT_RESOLVED'
   // the image a post names could not be read (an HTTP error, not an image, or no CORS) to fingerprint it
   | 'MEDIA_UNREADABLE'
+  // a private-feed write the feed's state refused (full, moving, withdrawn, ...): `userMessage` says which, for the user
+  | 'PRIVATE_FEED'
+  // a private-feed write that needs this account's messaging key, which this device does not hold
+  | 'NO_MESSAGING_KEY'
 
 /**
  * What is known about a write that did not confirm:
@@ -57,6 +61,8 @@ export type WriteOp =
   | 'post.publish' | 'post.delete' | 'like' | 'unlike' | 'repost' | 'unrepost' | 'bookmark' | 'unbookmark'
   | 'follow' | 'unfollow' | 'block' | 'unblock' | 'report' | 'report.withdraw' | 'profile.update'
   | 'dm.send' | 'dm.group' | 'poll.vote' | 'block-list.follow' | 'block-list.unfollow' | 'dpns.register'
+  | 'privateFeed.enable' | 'privateFeed.request' | 'privateFeed.leave' | 'privateFeed.approve' | 'privateFeed.revoke'
+  | 'privateFeed.renew' | 'privateFeed.move'
 
 export type WriteState = 'pending' | 'confirmed' | 'unconfirmed' | 'failed'
 
@@ -101,4 +107,13 @@ export interface WriteTicket {
   createdAt: Date
   updatedAt: Date
   lastCheckedAt: Date | null
+  /**
+   * What the viewer should know about a write that went through (a report
+   * filed without the moderators' box: `unsealed-no-key`, this device could
+   * not confirm a key to the post; `unsealed-no-moderators`, no moderator can
+   * read private posts yet). Absent for most writes.
+   */
+  notice?: WriteNotice
 }
+
+export type WriteNotice = 'unsealed-no-key' | 'unsealed-no-moderators'

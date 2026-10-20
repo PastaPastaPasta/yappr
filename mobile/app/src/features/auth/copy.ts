@@ -11,7 +11,6 @@ export const copy = {
     browse: 'Browse without signing in',
     terms: 'Terms of Use',
     privacy: 'Privacy',
-    poweredBy: 'Powered by Dash Platform',
   },
   signin: {
     title: 'Sign in with your Dash wallet',

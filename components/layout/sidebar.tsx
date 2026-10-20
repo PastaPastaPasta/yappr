@@ -1,8 +1,8 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import Image from 'next/image'
 import Link from 'next/link'
+import { BrandMark, Lockup } from '@/components/brand/brand'
 import { useRoutePath } from '@/hooks/use-route-path'
 import { useState, useEffect } from 'react'
 import {
@@ -37,7 +37,6 @@ import {
   BookOpenIcon as BookOpenIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
-import { publicAsset } from '@/lib/public-asset'
 import { BetaPill } from '@/components/ui/beta-pill'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/lib/store'
@@ -116,8 +115,8 @@ const NAV_LABEL = 'sr-only xl:not-sr-only'
 function SidebarBrand() {
   return (
     <>
-      <Image src={publicAsset('/icon-192.png')} alt="" width={40} height={40} className="rounded-xl xl:hidden" />
-      <span className="hidden text-2xl font-bold text-gradient xl:inline">Yappr</span>
+      <span className="flex xl:hidden"><BrandMark size={40} alt="" /></span>
+      <span className="hidden xl:flex"><Lockup height={32} /></span>
     </>
   )
 }

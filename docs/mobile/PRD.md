@@ -179,7 +179,7 @@ Every story inherits these rules. A story repeats one only to add something spec
 | **G-12 Theme and type** | Every screen | Correct in light and dark mode, and at every text size from the smallest to AX5 (iOS) / 200% (Android), with no clipped or overlapping text. |
 | **G-13 Formatting** | Every time and count | Times use `formatTimeCompact` (`30s`, `2m`, `3h`, `4d`, then `Mar 4`, with the year when not the current one). Counts use `formatNumber` (`1.2K`, `3.4M`); a zero count is blank. |
 | **G-14 Content gates** | Every post surface | The NSFW gate (SAFE-06) and the media gate (SAFE-07) apply on every surface that shows a post: feeds, threads, profiles, search, hashtags, bookmarks, quotes and notifications. |
-| **G-15 Private posts** | Every post surface | An encrypted private-feed post renders the "Private post" placeholder (POST-08). |
+| **G-15 Private posts** | Every post surface | A private-feed post opens in place for the owner and approved followers; anyone else sees the "Private post" panel with what they can do (POST-08). |
 | **G-16 Accessibility** | Every control | A screen-reader label, a role, a hit target of at least 44 pt / 48 dp, and a stable `testID`. |
 
 ---
@@ -442,11 +442,13 @@ As anyone, I want a yap.pr post link to open in the app, so that sharing works.
 - `yappr://post?id=X` and `https://yap.pr/post?id=X` open post X. `&reply=Y` opens reply Y in the context of post X.
 - Universal links work once the association files are served (NET-11).
 
-#### POST-08 · Private post placeholder · P0 · all
-As a reader, I want to know a private-feed post exists without seeing broken ciphertext, so that the feed is clean.
-- An encrypted post renders its header and action bar normally and, in place of the body, a muted panel with a lock icon: "Private post / Only approved followers can see this." and "Open on yap.pr" (in-app browser to the post).
-- A private post with a public teaser shows the teaser text above the panel.
-- Replying to or quoting a private post is not offered (the menu and action bar hide Reply and Quote); liking and bookmarking are allowed.
+#### POST-08 · Private posts · P0 · all
+As a reader, I want to read the private posts I'm approved for, and know how to get access to the rest, without leaving the app.
+- The owner and approved followers see the decrypted text in place, in a purple "Private" card (the owner also sees how many private followers it reaches). Replies in a private thread are private too.
+- Anyone else sees a muted panel with a lock icon, "Private post", why it is locked (not approved, pending, removed, from before they could see the feed, or the messaging key is not on this phone) and what they can do: "Request access" (following first, as on web), "Cancel request", "Ask again", or "Renew in your wallet". Nothing links out to the web.
+- A private post with a public teaser shows the teaser text above it.
+- Quoting a private post is not offered; replying is offered once it opened for the viewer. Liking and bookmarking are allowed.
+- The owner manages the feed in Settings → Private feed (turn on, approve, remove, renew), and can post privately from compose.
 
 #### POST-09 · Polls (read-only) · P0 · all
 As a reader, I want to see a poll and its results, so that I'm not missing part of the post.
@@ -1118,7 +1120,6 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 | --- | --- | --- | --- |
 | Push notifications, relay, NSE, background polling | No (web polls in a tab) | ADR E7; needs the relay and the WebView can't run in the background | 1.1 |
 | Background sync | No | ADR E1: foreground only until the Rust engine | Rust engine |
-| Private feeds (post privately, request access, approve, decrypt, reset) | Yes | ADR E7; 3.4k lines of crypto surface, needs encryption-key UX | 1.x |
 | Tips (posts and profiles), payment-URI QR codes | Yes | ADR E7; App Review 3.1.1 constraints on iOS | 1.x |
 | Storefront, cart, orders | Yes | ADR E7; links out to yap.pr | 1.x reader |
 | Blog (read, write, comments; Explore Blogs tab; profile Blog tab; blog notifications) | Yes | ADR E7; links out | 1.x reader |

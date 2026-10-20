@@ -176,17 +176,20 @@ export type Destination =
   | { kind: 'post'; id: string }
   | { kind: 'user'; id: string }
   | { kind: 'web'; path: string }
+  | { kind: 'privateFeedRequests' }
   | null;
 
 /**
- * Where a tap goes (NOTIF-01): follows and private-feed events open the
- * actor's profile; likes and reposts the liked post; replies, quotes and
- * mentions the new post (its thread shows the context); blog events the
- * blog post, and store events the order, store or item, on the web (no
- * blogs or store in 1.0).
+ * Where a tap goes (NOTIF-01): follows and private-feed approvals and
+ * removals open the actor's profile; an access request the viewer's private
+ * feed settings, where it is approved; likes and reposts the liked post;
+ * replies, quotes and mentions the new post (its thread shows the context);
+ * blog events the blog post, and store events the order, store or item, on
+ * the web (no blogs or store in 1.0).
  */
 export function destinationOf(row: NotificationRowModel): Destination {
   if (row.store) return row.store.path ? { kind: 'web', path: row.store.path } : null;
+  if (row.type === 'privateFeedRequest') return { kind: 'privateFeedRequests' };
   if (row.type === 'blogPost' || row.type === 'blogComment') {
     if (!row.blog) return null;
     return {

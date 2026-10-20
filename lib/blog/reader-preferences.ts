@@ -56,12 +56,12 @@ export function getReaderFontSize(level: FontSizeLevel): string | undefined {
 }
 
 /**
- * Determine the app-level theme ('light' | 'dark') that best matches the
- * reading mode.  For 'author' mode we check the blog's background colour
- * luminance so the nav / comments / buttons feel consistent with the blog
- * theme.
+ * The theme ('light' | 'dark') a post is shown in for this reading mode.  For
+ * 'author' mode we check the blog's background colour luminance so comments
+ * and buttons inside the post match the blog. Applied to the post only, never
+ * to the reader's app theme.
  */
-export function getAppThemeForReadingMode(
+export function getThemeForReadingMode(
   mode: ReadingMode,
   authorBg?: string,
 ): 'light' | 'dark' {

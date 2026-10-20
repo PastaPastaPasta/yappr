@@ -7,7 +7,7 @@ import { RefreshControl, View, type NativeScrollEvent, type NativeSyntheticEvent
 import { useEngineInfiniteQuery, type PullToRefresh } from '~/data/queries';
 import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
-import { useFeedPosts } from '~/features/post/hidden-private';
+import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -73,7 +73,7 @@ export interface PagedPostListProps {
  * FEED-07, EXPL-07).
  */
 export function PagedPostList({ queryKey, query, header, loadingLabel, empty, offline, pullToRefresh, testID }: PagedPostListProps) {
-  const items = useFeedPosts(query.items);
+  const hidePrivate = useHideUnreadablePrivate();
   const c = useColors();
   const [refreshing, setRefreshing] = useState(false);
   // Automatic paging pauses after MAX_AUTO_PAGES until the reader asks for more.
@@ -140,7 +140,7 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
   };
 
   let footer = null;
-  if (items.length > 0) {
+  if (query.items.length > 0) {
     if (isFetchingNextPage) {
       footer = (
         <View className="items-center p-6">
@@ -178,10 +178,10 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
 
   return (
     <FlashList
-      data={items}
+      data={query.items}
       keyExtractor={(post) => post.id}
       getItemType={postItemType}
-      renderItem={({ item }) => <PostItem post={item} />}
+      renderItem={({ item }) => <PostItem post={item} hideUnreadablePrivate={hidePrivate} />}
       ListHeaderComponent={header}
       ListEmptyComponent={emptyState}
       ListFooterComponent={footer}
