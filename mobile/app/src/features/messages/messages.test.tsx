@@ -1806,14 +1806,14 @@ describe('New message (DM-05)', () => {
     expect(screen.getByTestId('picker-search')).toHaveDisplayValue(BOB_ID);
   });
 
-  it("says the person hasn't set up messages yet, not that nobody was found (SR-40, D-900)", async () => {
+  it("says the person hasn't set up messaging yet, not that nobody was found (SR-40, D-900)", async () => {
     const noMessaging = Object.assign(new Error("This person hasn't set up messaging yet."), { code: 'PEER_NO_MESSAGING' });
     fakeEngine.method('dm.startDirect').mockRejectedValue(noMessaging);
     await renderAt(`/messages/new?with=${BOB_ID}`);
     // An id from a link: no handle to name.
-    expect(useToastStore.getState().current?.message).toBe("This person hasn't set up messages yet.");
+    expect(useToastStore.getState().current?.message).toBe("This person hasn't set up messaging yet.");
     // Picked from the list: by handle.
-    expect(startFailedMessage(noMessaging, 'bob')).toBe(keepHandlesWhole("@bob hasn't set up messages yet."));
+    expect(startFailedMessage(noMessaging, 'bob')).toBe(keepHandlesWhole("@bob hasn't set up messaging yet."));
   });
 
   it('says a pasted id that is not one is invalid, without looking it up or blaming the connection (QA D-L4a-007)', async () => {

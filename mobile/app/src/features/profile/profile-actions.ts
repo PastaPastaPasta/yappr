@@ -4,6 +4,7 @@ import { Platform, Share } from 'react-native';
 import { errorCode, sendWrite } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { noMessagingYet } from '~/features/messages/no-messaging';
 import { copyText } from '~/features/post/post-navigation';
 import { followWrite } from '~/features/post/post-writes';
 import { openOnItsTab } from '~/navigation/tab-routes';
@@ -55,9 +56,9 @@ export function toggleFollow(identityId: string, handle: string, following: bool
  * `dm.startDirect` finds or opens it without writing anything; when it
  * can't yet (messages locked, still restoring), the new-message screen
  * takes the user from there. A request that can never work (signed out, a
- * bad peer) says so instead.
+ * bad peer, someone without messaging yet) says so instead, staying here.
  */
-export async function messageUser(identityId: string): Promise<void> {
+export async function messageUser(identityId: string, username?: string | null): Promise<void> {
   try {
     const conversationId = await engine.api.dm.startDirect(identityId);
     // On the Messages tab, whichever tab the profile is on, with the inbox underneath.
@@ -65,6 +66,10 @@ export async function messageUser(identityId: string): Promise<void> {
   } catch (error) {
     appendLog('info', 'host', `Opening a conversation from a profile: ${errorMessage(error)}`);
     const code = errorCode(error);
+    if (code === 'PEER_NO_MESSAGING') {
+      toast.error(noMessagingYet(username));
+      return;
+    }
     if (code === 'NOT_SIGNED_IN' || code === 'BAD_REQUEST') {
       toast.error(code === 'BAD_REQUEST' ? errorMessage(error) : 'Sign in to send messages');
       return;

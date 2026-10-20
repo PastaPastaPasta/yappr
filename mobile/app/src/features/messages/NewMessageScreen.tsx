@@ -7,7 +7,6 @@ import { useSession } from '~/data/session';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
-import { keepHandlesWhole } from '~/ui/handle';
 import { IconButton } from '~/ui/IconButton';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
@@ -17,6 +16,7 @@ import { toast } from '~/ui/toast';
 import { openConversationScreen } from './dm-actions';
 import { readErrorMessage, useDmViewer } from './dm-data';
 import { DmSignedOut } from './DmStates';
+import { noMessagingYet } from './no-messaging';
 import { UserPicker } from './UserPicker';
 
 /** Closes the modal and opens the conversation on the Messages tab. */
@@ -43,7 +43,7 @@ export function startFailedMessage(error: unknown, username?: string | null): st
   switch (errorCode(error)) {
     // The account exists but has no messaging key yet (D-900).
     case 'PEER_NO_MESSAGING':
-      return username ? keepHandlesWhole(`@${username} hasn't set up messages yet.`) : "This person hasn't set up messages yet.";
+      return noMessagingYet(username);
     case 'BAD_REQUEST':
       return errorMessage(error).includes('yourself') ? "You can't message yourself" : 'No user found with this identity ID';
     case 'NO_KEY':

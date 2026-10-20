@@ -36,6 +36,8 @@ export type EngineErrorCode =
   | 'PRIVATE_FEED'
   // a private-feed write that needs this account's messaging key, which this device does not hold
   | 'NO_MESSAGING_KEY'
+  // dm.startDirect (v5): the other person has no messaging key yet, so nothing can be sent to them
+  | 'PEER_NO_MESSAGING'
 
 /**
  * What is known about a write that did not confirm:
