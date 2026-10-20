@@ -233,7 +233,7 @@ export default function ExplorePage() {
 
   return (
     <PageShell>
-          <PageHeader>
+          <PageHeader borderless={!searchQuery}>
             <div className="flex items-center gap-4 p-4">
               {isSearchFocused && (
                 <button
@@ -356,7 +356,7 @@ export default function ExplorePage() {
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTrends ? (
                           <TrendingHashtagRowSkeleton count={8} testId="explore-trending-loading" />
-                        ) :trendingHashtags.length === 0 ? (
+                        ) : trendingHashtags.length === 0 ? (
                           <div className="p-8 text-center">
                             <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                             <p className="text-gray-500">No trending tags yet</p>

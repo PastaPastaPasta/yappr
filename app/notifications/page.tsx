@@ -253,7 +253,7 @@ function NotificationsPage() {
 
   return (
     <PageShell>
-        <PageHeader>
+        <PageHeader borderless>
           <div className="flex items-center justify-between gap-2 px-4 py-3">
             <h1 className="text-xl font-bold">Notifications</h1>
             <div className="flex items-center gap-1">
@@ -264,7 +264,7 @@ function NotificationsPage() {
                   onClick={() => markAllAsRead(notificationSettings)}
                   className="text-yappr-500 hover:text-yappr-600 text-sm"
                 >
-                  Mark all as read
+                  Mark all read
                 </Button>
               )}
               <Tooltip.Provider>
@@ -299,7 +299,7 @@ function NotificationsPage() {
 
         {isLoading || !hasFetchedOnce ? (
           <NotificationSkeleton />
-        ) :filteredNotifications.length === 0 ? (
+        ) : filteredNotifications.length === 0 ? (
           <div className="p-8 text-center">
             <BellIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">No notifications yet</p>
