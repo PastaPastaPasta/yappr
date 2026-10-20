@@ -8,6 +8,7 @@ import { ArrowLeftIcon, HashtagIcon, CurrencyDollarIcon } from '@heroicons/react
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
+import { PostListSkeleton } from '@/components/post/post-card-skeleton'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { formatNumber } from '@/lib/utils'
@@ -319,14 +320,10 @@ function HashtagPageContent() {
           {/* Content */}
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
             {(sortMode === 'top' ? topLoading || !topLoaded : isLoading) ? (
-              <div className="p-8 text-center">
-                <Spinner size="md" className="mx-auto mb-4" />
-                <p className="text-gray-500">
-                  {sortMode === 'top'
-                    ? `Loading top posts with ${tagSymbol}${displayTag}...`
-                    : `Loading posts with ${tagSymbol}${displayTag}...`}
-                </p>
-              </div>
+              <PostListSkeleton
+                label={sortMode === 'top' ? `Loading top posts with ${tagSymbol}${displayTag}` : `Loading posts with ${tagSymbol}${displayTag}`}
+                testId="hashtag-loading"
+              />
             ) : sortMode === 'top' && topPosts.length === 0 ? (
               <div className="p-12 text-center" data-testid="hashtag-top-empty">
                 <TagIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />

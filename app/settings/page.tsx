@@ -333,7 +333,7 @@ function SettingsPage() {
       <div>
         <Button variant="outline" className="w-full justify-start" onClick={logout}>
           <KeyIcon className="h-4 w-4 mr-2" />
-          Log out
+          Sign out
         </Button>
       </div>
     </div>

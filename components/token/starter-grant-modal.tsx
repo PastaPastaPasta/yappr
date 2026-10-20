@@ -123,9 +123,7 @@ export function StarterGrantModal() {
         Claim your starter YAPP
       </ModalTitle>
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-        {paused
-          ? `Every account can claim ${amount.toString()} YAPP once. YAPP can't be spent right now, so posts, replies, likes and reposts are paid in credits.`
-          : `Every account can claim ${amount.toString()} YAPP once. Posts, replies, likes and reposts paid in YAPP have their network fee covered by Yappr while the grant lasts; after that you can keep posting on credits${locked ? '.' : ' or buy more YAPP.'}`}
+        {paused ? `Every account gets ${amount.toString()} free YAPP.` : `Claim your free ${amount.toString()} YAPP to start posting.`}
       </Dialog.Description>
       {needsCritical && (
         <div className="mb-4">

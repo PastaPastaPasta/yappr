@@ -93,7 +93,7 @@ export default function DPNSRegisterPage() {
                 onClick={logout}
                 className="text-sm text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
               >
-                Log out
+                Sign out
               </button>
             </div>
             <p className="text-gray-600 dark:text-gray-400">

@@ -1504,7 +1504,7 @@ export function categorizeError(error: unknown, action = 'create post'): string 
     errorMessage.includes('Private key not found') ||
     errorMessage.includes('Not logged in')
   ) {
-    return 'Your session has expired. Please log in again.'
+    return 'Your session has expired. Please sign in again.'
   }
 
   return `Failed to ${action}: ${errorMessage}`

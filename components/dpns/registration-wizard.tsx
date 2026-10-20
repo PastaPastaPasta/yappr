@@ -107,13 +107,13 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
   const handleRegister = useCallback(async () => {
     if (!identityId) {
-      toast.error('No identity found. Please log in again.')
+      toast.error('Please sign in again.')
       return
     }
 
     const privateKey = getPrivateKey(identityId)
     if (!privateKey) {
-      toast.error('Authentication required. Please log in again.')
+      toast.error('Please sign in again.')
       return
     }
 
