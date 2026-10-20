@@ -1,6 +1,6 @@
 import type { ItemVariants, Store, StoreItem, StoreItemStatus, StoreManageDTO } from '@engine/api';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -15,7 +15,7 @@ import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { ManageUnavailable, Notice, Section } from './parts';
+import { ManageUnavailable, Notice, Section, useCloseWhenDone } from './parts';
 import { saveItemWrite } from './store-writes';
 import { AmountField, convertVariantPrices, emptyVariants, remapVariantImages, VariantEditor } from './VariantEditor';
 
@@ -40,7 +40,6 @@ export function ProductEditScreen() {
 }
 
 function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: Store; item: StoreItem | null }) {
-  const id = item?.id;
   const save = useWrite(saveItemWrite);
   const archive = useWrite(saveItemWrite);
   const initialCurrency = item?.currency ?? store.defaultCurrency ?? 'USD';
@@ -65,11 +64,8 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
   const [withOptions, setWithOptions] = useState(savedOptions);
   const [variants, setVariants] = useState<ItemVariants>(item?.variants ?? emptyVariants());
 
-  useEffect(() => {
-    // Closed once saved: the draft's revision is spent, and a second save from it would be refused.
-    if (save.status === 'confirmed') router.back();
-    if (archive.status === 'confirmed') router.back();
-  }, [save.status, archive.status, id]);
+  // Closed once saved: the draft's revision is spent, and a second save from it would be refused.
+  useCloseWhenDone(save.status === 'confirmed' || archive.status === 'confirmed');
 
   const supportsDigital = manage.supportsDigital;
   const zoneList = manage.zones;

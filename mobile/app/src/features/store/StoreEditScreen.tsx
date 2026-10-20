@@ -1,6 +1,6 @@
 import type { StoreManageDTO, StorePolicy, StoreStatus } from '@engine/api';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { useState } from 'react';
 import { ScrollView, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -13,7 +13,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { ManageUnavailable, Notice, patchAt, Section } from './parts';
+import { ManageUnavailable, Notice, patchAt, Section, useCloseWhenDone } from './parts';
 import { saveStoreWrite, STORE_CREATE_KEY } from './store-writes';
 
 const STATUSES: { value: StoreStatus; title: string; description: string }[] = [
@@ -47,9 +47,7 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
   const [payments, setPayments] = useState<string[]>(store?.paymentUris?.length ? store.paymentUris.map((payment) => payment.uri) : ['']);
   const [policies, setPolicies] = useState<StorePolicy[]>(store ? manage.policies : []);
 
-  useEffect(() => {
-    if (save.status === 'confirmed') router.back();
-  }, [save.status]);
+  useCloseWhenDone(save.status === 'confirmed');
 
   const submit = () => {
     save.run({

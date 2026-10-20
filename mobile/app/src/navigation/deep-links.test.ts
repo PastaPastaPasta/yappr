@@ -127,6 +127,10 @@ describe('toAppRoute: cold vs warm links', () => {
   it('pins detail screens to Home for the launch link only', () => {
     expect(toAppRoute(`yappr://post?id=${X}`, cold)).toBe(`/(home)/post/${X}`);
     expect(toAppRoute(`yappr://user/${X}/followers`, cold)).toBe(`/(home)/user/${X}/followers`);
+    // The store's screens live in every tab's stack too (D-970).
+    expect(toAppRoute(`https://yap.pr/store/view?id=${X}`, cold)).toBe(`/(home)/store/${X}`);
+    expect(toAppRoute('https://yap.pr/orders', cold)).toBe('/(home)/orders');
+    expect(toAppRoute('yappr://cart', cold)).toBe('/(home)/cart');
     expect(toAppRoute(`yappr://post?id=${X}`, release)).toBe(`/post/${X}`);
   });
 

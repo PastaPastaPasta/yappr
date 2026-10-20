@@ -1,5 +1,5 @@
-import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { useMemo, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -11,7 +11,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { Loading, Notice, Section, StarInput } from './parts';
+import { Loading, Notice, Section, StarInput, useCloseWhenDone } from './parts';
 import { reviewWrite } from './store-writes';
 
 const RATING_LABELS = ['Tap a star to rate', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
@@ -32,9 +32,7 @@ export function ReviewScreen() {
     [buyerOrder],
   );
 
-  useEffect(() => {
-    if (write.status === 'confirmed' || write.status === 'unconfirmed') router.back();
-  }, [write.status]);
+  useCloseWhenDone(write.status === 'confirmed' || write.status === 'unconfirmed');
 
   if (order.isPending) return <Screen><Loading /></Screen>;
   if (!buyerOrder) return <Screen><ErrorState message="Only the buyer can review this order." /></Screen>;
