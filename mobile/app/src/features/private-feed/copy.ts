@@ -11,6 +11,8 @@ export const copy = {
     open: 'Private',
     /** The viewer's own private post or reply while it posts: its text is not kept with the card. */
     posting: 'Only followers you approve will see this.',
+    /** The viewer's own private reply while it posts: it goes to the thread's audience, not their own. */
+    postingReply: 'Only people who can see this thread will see this.',
     followers: (n: number) => `Visible to ${n} private follower${n === 1 ? '' : 's'}`,
     reasons: {
       'signed-out': 'Sign in to see this private post.',

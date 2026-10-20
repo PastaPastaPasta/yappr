@@ -162,7 +162,7 @@ export function usePrivateBody(
  * The viewer's own private post or reply while it posts (its optimistic card):
  * the public teaser, if any, and who will see it. The card keeps no private text.
  */
-export function PendingPrivateBody({ post }: { post: Pick<PostDTO, 'content'> }) {
+export function PendingPrivateBody({ post }: { post: Pick<PostDTO, 'content' | 'kind'> }) {
   const teaser = teaserOf(post);
   return (
     <View testID="private-post-posting">
@@ -171,7 +171,7 @@ export function PendingPrivateBody({ post }: { post: Pick<PostDTO, 'content'> })
           <RichText text={teaser} variant="body" />
         </View>
       ) : null}
-      <PrivatePostPlaceholder message={copy.post.posting} />
+      <PrivatePostPlaceholder message={post.kind === 'reply' ? copy.post.postingReply : copy.post.posting} />
     </View>
   );
 }

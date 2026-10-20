@@ -17,7 +17,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { PrivateFeedAccessButton } from './PrivateFeedAccessButton';
 import { PrivateFeedScreen } from './PrivateFeedScreen';
-import { splitImage, teaserOf } from './PrivatePostBody';
+import { PendingPrivateBody, splitImage, teaserOf } from './PrivatePostBody';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 jest.mock('expo-router', () => ({ router: { push: jest.fn() }, Stack: { Screen: () => null } }));
@@ -174,6 +174,15 @@ describe('a private post in a feed', () => {
     renderIn(<PostItem post={post} />);
     expect(await screen.findByText('Your access to this private feed was removed.')).toBeTruthy();
     expect(screen.getByText('Ask again')).toBeTruthy();
+  });
+
+  it("says who a private post or reply goes to while it posts: the viewer's followers, or the thread's audience", () => {
+    renderIn(<PendingPrivateBody post={{ content: 'a peek', kind: 'post' }} />);
+    expect(screen.getByText('a peek')).toBeTruthy();
+    expect(screen.getByText('Only followers you approve will see this.')).toBeTruthy();
+    screen.unmount();
+    renderIn(<PendingPrivateBody post={{ content: '', kind: 'reply' }} />);
+    expect(screen.getByText('Only people who can see this thread will see this.')).toBeTruthy();
   });
 
   it('keeps the public teaser, and shows an encrypted image link as the image', () => {
