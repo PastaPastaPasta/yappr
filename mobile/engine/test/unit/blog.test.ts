@@ -11,7 +11,7 @@ const m = vi.hoisted(() => ({
     getNewestBlogs: vi.fn(), createBlog: vi.fn(), updateBlog: vi.fn(), deleteBlog: vi.fn(), clearCache: vi.fn(),
   },
   blogPostService: {
-    getPost: vi.fn(), getOrThrow: vi.fn(), getPostBySlug: vi.fn(), getPostsByBlog: vi.fn(), getLatestPublishedPosts: vi.fn(), getOwnerPostsPage: vi.fn(),
+    getOrThrow: vi.fn(), getPostBySlug: vi.fn(), getPostsByBlog: vi.fn(), getLatestPublishedPosts: vi.fn(), getOwnerPostsPage: vi.fn(),
     createPost: vi.fn(), updatePost: vi.fn(), deletePost: vi.fn(), clearCache: vi.fn(),
   },
   blogCommentService: { getCommentsByPost: vi.fn(), createComment: vi.fn(), deleteComment: vi.fn() },
@@ -74,8 +74,24 @@ describe('blog reads', () => {
 
   it("hides someone else's draft", async () => {
     m.viewer = 'READER'
-    m.blogPostService.getPost.mockResolvedValue(libPost({ publishedAt: undefined }))
+    m.blogPostService.getOrThrow.mockResolvedValue(libPost({ publishedAt: undefined }))
     expect(await blogReads.post(POST)).toBeNull()
+  })
+
+  it('rejects a failed blog or post read instead of reading it as gone', async () => {
+    m.blogService.getBlog.mockRejectedValue(new Error('timeout'))
+    m.blogPostService.getOrThrow.mockRejectedValue(new Error('timeout'))
+    await expect(blogReads.get(BLOG)).rejects.toBeTruthy()
+    expect(m.blogService.getBlog).toHaveBeenCalledWith(BLOG, { throwOnError: true })
+    await expect(blogReads.post(POST)).rejects.toBeTruthy()
+  })
+
+  it("can't trace a publish whose title gives no address of its own", async () => {
+    expect(await blogReads.publishOutcome(BLOG, '日本語', Date.now())).toBe('unknown')
+    expect(m.blogPostService.getPostBySlug).not.toHaveBeenCalled()
+    m.blogPostService.getPostBySlug.mockResolvedValue(null)
+    expect(await blogReads.publishOutcome(BLOG, 'Hello there', Date.now())).toBe('absent')
+    expect(m.blogPostService.getPostBySlug).toHaveBeenCalledWith(BLOG, 'hello-there')
   })
 
   it('lists published posts to readers and drafts to the owner', async () => {

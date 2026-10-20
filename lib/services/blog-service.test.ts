@@ -258,6 +258,13 @@ it('does not reopen a blog deleted while its detail read was in flight', async (
   expect(await reading).toBeNull()
 })
 
+it('reads a failed detail read as no blog, or throws it when asked', async () => {
+  get.mockReset().mockRejectedValue(new Error('timeout'))
+  query.mockReset().mockRejectedValue(new Error('timeout'))
+  expect(await blogService.getBlog(blogId)).toBeNull()
+  await expect(blogService.getBlog(blogId, { throwOnError: true })).rejects.toThrow('timeout')
+})
+
 
 it('excludes blogs deleted during a batched hydration read and from its populated cache', async () => {
   let release: (value: typeof raw[]) => void = () => undefined

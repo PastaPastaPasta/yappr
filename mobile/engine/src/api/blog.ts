@@ -27,7 +27,7 @@ import { moderatedContract } from '@/lib/moderated-contracts'
 import { isReportResolvedError, reportStatusLabel, withdrawFailureMessage } from '@/lib/reports'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { compressContent } from '@/lib/utils/compression'
-import { generateSlug } from '@/lib/utils/slug'
+import { generateSlug, titleSlug } from '@/lib/utils/slug'
 import { blogCommentService, COMMENTS_OFF_MESSAGE } from '@/lib/services/blog-comment-service'
 import { blogFollowService } from '@/lib/services/blog-follow-service'
 import { blogPostService, PrePublishRateLimitError, type UpdateBlogPostData } from '@/lib/services/blog-post-service'
@@ -371,7 +371,7 @@ export const blogReads = {
   /** One blog, or `null` when it does not exist or was deleted. */
   async get(id: string): Promise<BlogDTO | null> {
     assertId(id, 'id')
-    const blog = await read(() => blogService.getBlog(id))
+    const blog = await read(() => blogService.getBlog(id, { throwOnError: true }))
     return blog ? (await toBlogDTOs([blog]))[0] : null
   },
 
@@ -392,23 +392,24 @@ export const blogReads = {
   /** One post with its content; `null` when it does not exist, or is someone else's draft. */
   async post(id: string): Promise<BlogPostDTO | null> {
     assertId(id, 'id')
-    const post = await read(() => blogPostService.getPost(id))
+    const post = await read(() => blogPostService.getOrThrow(id))
     return readable(post) ? toPostDTO(post) : null
   },
 
   /** A post by its web address (`/blog?blog=<id>&post=<slug>`). */
   /**
    * Whether the viewer's publish of `title` to `blogId`, sent at `since`
-   * (epoch ms), landed, by the address it takes (`generateSlug`; the slug is
+   * (epoch ms), landed, by the address it takes (`titleSlug`; the slug is
    * unique per blog, tombstones keep it). `absent`: nothing has that address,
    * so it never landed. `unknown`: someone else's or an older post holds it
-   * (this one would then carry a suffix), so the address proves nothing. A
-   * failed read rejects.
+   * (this one would then carry a suffix), or the title gives no address of its
+   * own (lib then stamps one with the send time, which can't be recomputed),
+   * so the address proves nothing. A failed read rejects.
    */
   async publishOutcome(blogId: string, title: string, since: number): Promise<'published' | 'absent' | 'unknown'> {
     assertId(blogId, 'blogId')
     const viewer = requireViewer('Your post')
-    const slug = generateSlug(String(title).trim())
+    const slug = titleSlug(String(title).trim())
     if (!slug) return 'unknown'
     blogPostService.clearCache()
     const post = await read(() => blogPostService.getPostBySlug(blogId, slug))

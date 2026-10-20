@@ -138,10 +138,11 @@ class BlogService extends BaseDocumentService<Blog> {
     return true
   }
 
-  async getBlog(blogId: string): Promise<Blog | null> {
+  /** `throwOnError`: a failed read throws instead of reading as "no blog". */
+  async getBlog(blogId: string, options: { throwOnError?: boolean } = {}): Promise<Blog | null> {
     if (!this.isConfigured()) return null
     if (useDeletedBlogs.getState().ids.has(blogId)) return null
-    const blog = await this.get(blogId)
+    const blog = await (options.throwOnError ? this.getOrThrow(blogId) : this.get(blogId))
     return useDeletedBlogs.getState().ids.has(blogId) ? null : blog
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generateSlug, isValidSlug } from './slug'
+import { generateSlug, isValidSlug, titleSlug } from './slug'
 
 describe('generateSlug', () => {
   it('lowercases, strips accents and punctuation, and hyphenates spaces', () => {
@@ -20,6 +20,13 @@ describe('generateSlug', () => {
   it('falls back to a timestamp slug when nothing survives', () => {
     expect(generateSlug('日本語')).toMatch(/^post-[0-9a-z]+$/)
     expect(generateSlug('🎉🎉')).toMatch(/^post-[0-9a-z]+$/)
+  })
+})
+
+describe('titleSlug', () => {
+  it('is the title-derived slug, empty when nothing survives', () => {
+    expect(titleSlug('Hello, World')).toBe('hello-world')
+    expect(titleSlug('日本語')).toBe('')
   })
 })
 
