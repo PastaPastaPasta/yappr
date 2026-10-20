@@ -58,6 +58,11 @@ export interface PostItemProps
    * keeps it as its only item.
    */
   onRemoveBookmark?: (post: PostDTO) => void;
+  /**
+   * Leave out a private post the viewer can't read (locked for them, not
+   * their own): for lists, behind a "hide private posts I can't see" setting.
+   */
+  hideUnreadablePrivate?: boolean;
 }
 
 /**
@@ -241,6 +246,7 @@ export const PostItem = memo(function PostItem({
   post: listed,
   removal = 'hide',
   onRemoveBookmark,
+  hideUnreadablePrivate = false,
   ...cardProps
 }: PostItemProps) {
   const { post: shownPost, marksPending, marksLoading, reloadMarks } = useShownPost(listed);
@@ -400,6 +406,8 @@ export const PostItem = memo(function PostItem({
   });
 
   if ((removed && !asStub) || safety.hidden) return null;
+  const { unreadable, ...privateProps } = privateCard;
+  if (hideUnreadablePrivate && unreadable) return null;
 
   if (pending) {
     return (
@@ -432,7 +440,7 @@ export const PostItem = memo(function PostItem({
       repostQuoteCounts={repostQuoteCounts}
       actions={actions}
       menu={menu}
-      {...privateCard}
+      {...privateProps}
     />
   );
 });

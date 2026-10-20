@@ -120,19 +120,29 @@ function RequestControl({ ownerId, reason }: { ownerId: string; reason: PrivateL
 export function usePrivateBody(
   post: PostDTO,
   options: { variant?: 'feed' | 'detail'; tagMaxLength?: number; handlers?: RichTextHandlers; enabled?: boolean } = {},
-): { privateBody?: ReactNode; canReply?: boolean; privateText?: string } {
+): {
+  privateBody?: ReactNode;
+  canReply?: boolean;
+  privateText?: string;
+  privateAction?: { label: string; run: () => void };
+  /** Known to be locked for the viewer (not their own post): a list may leave it out. */
+  unreadable?: boolean;
+} {
   const read = usePrivatePost(post, options.enabled);
   if (!post.encrypted) return {};
   const state = read.data;
+  const retry = () => {
+    read.refetch().catch(() => undefined);
+  };
   return {
+    privateAction: privateActionOf(state, read.isError, retry),
+    unreadable: state?.state === 'locked' && !state.own,
     privateBody: (
       <PrivatePostBody
         post={post}
         state={state}
         failed={read.isError}
-        onRetry={() => {
-          read.refetch().catch(() => undefined);
-        }}
+        onRetry={retry}
         variant={options.variant}
         tagMaxLength={options.tagMaxLength}
         {...options.handlers}
@@ -161,6 +171,20 @@ export function PendingPrivateBody({ post }: { post: Pick<PostDTO, 'content'> })
   );
 }
 
+/** The locked panel's button as a screen-reader action of its card (see `LockedBody`); none when it opens. */
+function privateActionOf(state: PrivatePostDTO | undefined, failed: boolean, retry: () => void): { label: string; run: () => void } | undefined {
+  if (failed) return { label: copy.post.retry, run: retry };
+  if (state?.state !== 'locked') return undefined;
+  const { reason, feedOwnerId, own } = state;
+  if (reason === 'signed-out') return { label: 'Sign in', run: () => router.push('/sign-in') };
+  if (reason === 'failed') return { label: copy.post.retry, run: retry };
+  if (own) return undefined;
+  if (reason === 'pending') return { label: copy.access.cancel, run: () => confirmLeave(feedOwnerId, false).catch(() => undefined) };
+  if (reason === 'none') return { label: copy.access.request, run: () => requestAccess(feedOwnerId) };
+  if (reason === 'revoked' || reason === 'key-changed') return { label: copy.access.requestAgain, run: () => requestAccess(feedOwnerId) };
+  return undefined;
+}
+
 export interface PrivatePostBodyProps extends RichTextHandlers {
   post: PostDTO;
   /** `privateFeed.read`'s answer; undefined while it loads. */
@@ -170,6 +194,34 @@ export interface PrivatePostBodyProps extends RichTextHandlers {
   onRetry: () => void;
   variant?: 'feed' | 'detail';
   tagMaxLength?: number;
+}
+
+/**
+ * While a private post opens: the locked card's shape (its box, title, a
+ * line and a button), what most viewers get, so little moves when it lands.
+ */
+function PrivatePostSkeleton() {
+  const c = useColors();
+  return (
+    <View
+      className="mt-1 gap-1 rounded-xl border border-purple-200 bg-purple-50 p-3 dark:border-purple-900 dark:bg-purple-950/30"
+      accessible
+      accessibilityLabel="Opening private post"
+    >
+      <View className="flex-row items-center gap-1.5">
+        <LockClosedIcon size={16} color={c.private} />
+        <Text variant="subheadStrong" tone="private">
+          Private post
+        </Text>
+      </View>
+      <View className="h-5 justify-center">
+        <Skeleton width="80%" />
+      </View>
+      <View className="mt-1">
+        <Skeleton width={136} height={32} />
+      </View>
+    </View>
+  );
 }
 
 /** The decrypted post in its private card; for the owner, who it reaches. */
@@ -248,12 +300,7 @@ export function PrivatePostBody({ post, state, failed, onRetry, variant = 'feed'
     );
   } else if (!state) {
     testID = 'private-post-loading';
-    body = (
-      <View className="mt-1 gap-2 rounded-xl border border-purple-200 p-3 dark:border-purple-900" accessibilityLabel="Opening private post">
-        <Skeleton width="90%" />
-        <Skeleton width="60%" />
-      </View>
-    );
+    body = <PrivatePostSkeleton />;
   } else if (state.state === 'open') {
     testID = 'private-post-open';
     body = <OpenBody state={state} detail={detail} tagMaxLength={tagMaxLength} handlers={handlers} />;

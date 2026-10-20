@@ -113,6 +113,30 @@ describe('a private post in a feed', () => {
     expect(await screen.findByTestId('private-pending')).toBeTruthy();
   });
 
+  it('opens in the locked card’s shape, and a list may leave out what the viewer can’t read', async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    fakeEngine.method('privateFeed.read').mockReturnValue(new Promise((resolve) => (answer = resolve)) as never);
+    renderIn(<PostItem post={post} hideUnreadablePrivate />);
+    // Loading is no answer: the card shows, shaped like the locked panel.
+    expect(screen.getByTestId('private-post-loading')).toHaveTextContent('Private post', { exact: false });
+    await act(async () => answer({ state: 'locked', reason: 'none', feedOwnerId: OWNER, own: false, messagingKey: 'ready' }));
+    expect(screen.queryByTestId(`post-card-${post.id}`)).toBeNull();
+  });
+
+  it("offers the locked card's button to a screen reader, as an action of the card", async () => {
+    fakeEngine.method('privateFeed.read').mockResolvedValue({ state: 'locked', reason: 'none', feedOwnerId: OWNER, own: false, messagingKey: 'ready' });
+    const sent = ticket({ op: 'privateFeed.request', target: { identityId: OWNER } });
+    fakeEngine.method('privateFeed.request').mockResolvedValue(sent);
+    renderIn(<PostItem post={post} />);
+    await screen.findByTestId('private-request-access');
+    const card = screen.getByTestId(`post-card-${post.id}`);
+    expect(card.props.accessibilityActions).toContainEqual({ name: 'private', label: 'Request access' });
+    fireEvent(card, 'accessibilityAction', { nativeEvent: { actionName: 'private' } });
+    await waitFor(() => expect(fakeEngine.method('privateFeed.request')).toHaveBeenCalledWith(OWNER));
+    // Settled, so no request is left on its way for the next test.
+    act(() => fakeEngine.emit('write.status', advance(sent, { state: 'confirmed' })));
+  });
+
   it('cancels a pending request after a confirmation', async () => {
     fakeEngine.method('privateFeed.read').mockResolvedValue({ state: 'locked', reason: 'pending', feedOwnerId: OWNER, own: false, messagingKey: 'ready' });
     fakeEngine.method('privateFeed.leave').mockResolvedValue(ticket({ op: 'privateFeed.leave', target: { identityId: OWNER } }));
@@ -187,8 +211,9 @@ describe('Settings → Private feed', () => {
     const sent = ticket({ op: 'privateFeed.enable' });
     fakeEngine.method('privateFeed.enable').mockResolvedValue(sent);
     renderIn(<PrivateFeedScreen />);
-    expect(await screen.findByText(/the moderators can read it/)).toBeTruthy();
-    expect(screen.getByText(/Attached images aren't encrypted/)).toBeTruthy();
+    expect(await screen.findByText('Moderators can read a private post if someone reports it')).toBeTruthy();
+    // No implementation detail on the way in: no capacity, keys or encryption talk.
+    expect(screen.queryByText(/4,096|encrypt|messaging key/)).toBeNull();
     fireEvent.press(screen.getByTestId('private-enable'));
     await waitFor(() => expect(fakeEngine.method('privateFeed.enable')).toHaveBeenCalled());
     // Its key is the owner's: settled, so the tests after it start with none on its way.

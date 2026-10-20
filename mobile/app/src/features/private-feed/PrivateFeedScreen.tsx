@@ -60,24 +60,6 @@ function Panel({ children, testID }: { children: ReactNode; testID?: string }) {
   );
 }
 
-/** One of the stats tiles: a number, what it is and its limit. */
-function Stat({ value, label, of }: { value: number; label: string; of?: number }) {
-  return (
-    <View className={cn('flex-1 items-center rounded-xl px-2 py-3', tw.bgMuted)} accessible accessibilityLabel={`${label}: ${value}${of !== undefined ? ` ${copy.settings.stats.of(of)}` : ''}`}>
-      <Text variant="headline" tone="emphasis" tabular>
-        {value.toLocaleString()}
-      </Text>
-      {of !== undefined ? (
-        <Text variant="caption" tone="secondary">
-          {copy.settings.stats.of(of)}
-        </Text>
-      ) : null}
-      <Text variant="caption" tone="secondary">
-        {label}
-      </Text>
-    </View>
-  );
-}
 
 /** A person with the owner's actions beside them: approve a request, or remove a follower. */
 function PersonRow({ person, detail, actions, testID }: { person: PrivateRequestDTO['user']; detail?: string; actions: ReactNode; testID: string }) {
@@ -192,14 +174,7 @@ function TurnOn({ overview }: { overview: Extract<PrivateFeedOverviewDTO, { enab
       <SettingsGroup>
         <Panel testID="private-feed-off">
           <Text variant="body">{copy.settings.intro}</Text>
-          <Bullets items={copy.settings.benefits(overview.capacity)} />
-          {ready ? (
-            <Text variant="subhead" tone="secondary">
-              {copy.settings.walletKey}
-            </Text>
-          ) : (
-            <MessagingKeyHelp messagingKey={overview.messagingKey} />
-          )}
+          {ready ? null : <MessagingKeyHelp messagingKey={overview.messagingKey} />}
           <Button
             label={busy ? copy.settings.enabling : copy.settings.enable}
             size="block"
@@ -351,15 +326,10 @@ function Manage({ overview }: { overview: Extract<PrivateFeedOverviewDTO, { enab
               {copy.settings.enabledTitle}
             </Text>
           </View>
-          <Text variant="subhead" tone="secondary">
-            {copy.settings.enabledBody} {copy.settings.since(overview.since.toLocaleDateString())}
+          <Text variant="subhead" tone="secondary" testID="private-follower-count">
+            {copy.settings.followerCount(overview.followers)}
           </Text>
           {overview.messagingKey === 'ready' ? null : <MessagingKeyHelp messagingKey={overview.messagingKey} />}
-          <View className="flex-row gap-2" testID="private-stats">
-            <Stat value={overview.followers} of={overview.capacity} label={copy.settings.stats.followers} />
-            <Stat value={overview.removals} of={overview.maxRemovals} label={copy.settings.stats.removals} />
-            <Stat value={overview.capacity - overview.followers} label={copy.settings.stats.available} />
-          </View>
         </Panel>
       </SettingsGroup>
 

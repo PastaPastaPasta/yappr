@@ -132,6 +132,12 @@ export interface PostCardProps {
   canReply?: boolean;
   /** A private post's decrypted text, for the screen-reader summary. */
   privateText?: string;
+  /**
+   * What the viewer can do about a private post that doesn't open (request
+   * access, try again…): the card is one element to a screen reader, so its
+   * panel's button is offered as an action too.
+   */
+  privateAction?: { label: string; run: () => void };
 }
 
 export interface PostCardMenu {
@@ -417,6 +423,7 @@ export const PostCard = memo(function PostCard({
   privateBody,
   canReply: replyable,
   privateText,
+  privateAction,
 }: PostCardProps) {
   const [revealed, reveal] = useSensitiveReveal(post.id);
   const { external } = useMediaUrls();
@@ -612,6 +619,7 @@ export const PostCard = memo(function PostCard({
   const onMore = variant === 'compact' ? undefined : actions.onMore;
   // Long press and the screen-reader action: the "⋯" menu's items as an action sheet.
   const openMenu = cardMenu ? () => openPostMenu(cardMenu) : undefined;
+  if (post.encrypted && privateAction) a11yActions.push({ name: 'private', label: privateAction.label, run: privateAction.run });
   a11yActions.push(
     { name: 'profile', label: 'Open profile', run: actions.onAuthorPress },
     { name: 'more', label: 'More', run: openMenu ?? onMore },
