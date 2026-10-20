@@ -294,7 +294,7 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
         <>
           <ModalTitle><KeyIcon className="h-6 w-6 text-yappr-500" />{offer ? 'Sign in faster with a passkey' : 'Add a passkey'}</ModalTitle>
           <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-3">
-            Use Face ID, Touch ID, Windows Hello or your phone to sign in to Yappr on any device. Your sign-in is saved encrypted, and only your passkey can open it.
+            Next time, sign in with Face ID, Touch ID, Windows Hello or your phone.
           </Dialog.Description>
           {step.kind === 'pending' ? (
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">
@@ -306,7 +306,7 @@ function EnrolDialog({ identityId, username, offer, onClose }: { identityId: str
               {step.kind === 'confirm' || step.kind === 'saving' ? (
                 <p className="text-sm text-gray-700 dark:text-gray-300 mb-5">Your device asks once more so your passkey can encrypt your sign-in.</p>
               ) : (
-                <p className="text-sm text-gray-500 mb-5">Your device will ask twice. Saving it costs less than 3¢ from your balance.</p>
+                <p className="text-sm text-gray-500 mb-5">Your device will ask twice.</p>
               )}
             </>
           )}
