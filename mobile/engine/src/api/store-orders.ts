@@ -416,13 +416,17 @@ async function sellerOrders(seller: string, orders: StoreOrder[]): Promise<Selle
     if (payload) payloads.set(order.id, payload)
   }))
   let statusesFailed = false
-  const [statusMap, names] = await Promise.all([
+  const [statusMap, names, ownStore] = await Promise.all([
     orderStatusService.getLatestStatuses(orders.map(order => order.id)).catch(() => {
       statusesFailed = true
       return new Map<string, OrderStatusUpdate>()
     }),
     dpnsService.resolveUsernamesBatch([...new Set(orders.map(order => order.buyerId))]).catch(() => new Map<string, string | null>()),
+    // A buyer's payment link is shown only when it pays one of these addresses.
+    // Without the store the links are just omitted: the orders themselves still show.
+    Promise.resolve().then(() => storeService.getByOwner(seller)).catch(() => null),
   ])
+  const storePaymentUris = ownStore?.paymentUris ?? []
   const statuses = storefrontStatusIsSealed() && key ? openStatusNotesAsSeller(statusMap, orders, key) : statusMap
 
   const digitalOrders = storefrontSupportsDigital() ? orders.filter(order => hasDigitalLines(payloads.get(order.id))) : []
@@ -455,7 +459,7 @@ async function sellerOrders(seller: string, orders: StoreOrder[]): Promise<Selle
       ...base,
       // DPNS answers the full name (`alice.dash`): shown as a handle, like everywhere else.
       buyerName: names.get(order.buyerId)?.replace(/\.dash$/i, '') ?? null,
-      paymentUrl: payload?.txid ? getPaymentVerificationUrl(payload.txid, payload.paymentUri) : null,
+      paymentUrl: payload?.txid ? getPaymentVerificationUrl(payload.txid, payload.paymentUri, storePaymentUris) : null,
       uncertain,
       missingKits: digital && payload ? planDelivery(payload, kitPayloads, listings).missingKits : [],
       readyToDeliver: digital && payload !== null && !uncertain && isReadyForBulkDelivery({
