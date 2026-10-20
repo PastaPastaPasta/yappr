@@ -55,15 +55,15 @@ function unlocked(close: () => void): void {
   close();
 }
 
+const NO_KEY_BODY = 'Messages are set up with your Dash wallet. To use them on this phone, sign out, then sign back in with your wallet.';
+const NO_KEY_ACTION = 'Sign out and use my wallet';
+
 /**
  * No messaging key this sign-in can unlock or set up (D38): messages come
  * from a wallet sign-in, which brings the account's messaging key. The
  * account is already signed in here, so it signs out first (asked), then
  * signs back in with its wallet.
  */
-const NO_KEY_BODY = 'Messages are set up with your Dash wallet. To use them on this phone, sign out, then sign back in with your wallet.';
-const NO_KEY_ACTION = 'Sign out and use my wallet';
-
 function signOutForWallet(): void {
   const session = useSessionStore.getState().session;
   if (!session) return;

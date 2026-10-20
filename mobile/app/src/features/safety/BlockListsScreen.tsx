@@ -75,9 +75,12 @@ const BlockListRow = memo(function BlockListRow({ user }: { user: BlockListChoic
     const follow = !user.listFollowed;
     sendWrite(blockListWrite, { userId: user.id, follow, handle }, follow ? copy.blockLists.followed(handle) : copy.blockLists.unfollowed(handle));
   };
+  let buttonLabel: string = copy.blockLists.follow;
+  if (saving) buttonLabel = copy.blockLists.saving;
+  else if (user.listFollowed) buttonLabel = copy.blockLists.following;
   const button = (
     <Button
-      label={saving ? copy.blockLists.saving : user.listFollowed ? copy.blockLists.following : copy.blockLists.follow}
+      label={buttonLabel}
       variant={user.listFollowed ? 'outline' : 'primary'}
       size="sm"
       accessibilityLabel={user.listFollowed ? copy.blockLists.unfollowA11y(handle) : copy.blockLists.followA11y(handle)}

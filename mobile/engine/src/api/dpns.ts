@@ -18,6 +18,8 @@ interface RegisterArgs { label: string }
 /** How this account registers a username: here, signed with its own key, or in its Dash wallet. */
 export type DpnsRegistrationDTO = 'native' | 'wallet'
 
+const walletRefusal = () => new RpcError('Register usernames in your Dash wallet.', 'NOT_SUPPORTED')
+
 const normalize = (label: string) => String(label).trim().toLowerCase().replace(/^@/, '').replace(/\.dash$/, '')
 
 /** The fund a contested name pays into its masternode vote, at the network's protocol version. */
@@ -70,7 +72,7 @@ export function createDpnsModule(tickets: TicketStore, controller: { refreshUser
 
   /** Why `label` can't be registered by this account now (an engine-coded refusal), or null. Rejects when a read fails. */
   async function preflight(identityId: string, label: string): Promise<RpcError | null> {
-    if (await registration(identityId) !== 'native') return new RpcError('Register usernames in your Dash wallet.', 'NOT_SUPPORTED')
+    if (await registration(identityId) !== 'native') return walletRefusal()
     const check = await availability(label)
     if (check.invalid) return new RpcError(check.invalid, 'BAD_REQUEST')
     if (!check.available) return new RpcError(`${label} is already taken.`, 'BAD_REQUEST')
@@ -93,7 +95,7 @@ export function createDpnsModule(tickets: TicketStore, controller: { refreshUser
       })
       if (refusal) return { state: 'failed', error: refusal }
       const privateKey = getPrivateKey(identityId)
-      if (!privateKey) return { state: 'failed', error: new RpcError('Register usernames in your Dash wallet.', 'NOT_SUPPORTED') }
+      if (!privateKey) return { state: 'failed', error: walletRefusal() }
       try {
         await dpnsService.registerUsername(label, identityId, privateKey)
       } catch (error) {

@@ -290,10 +290,13 @@ interface PollVoteArgs { pollId: string; choices: number[] }
 /** A ballot refused before anything was sent: an engine code, so the host shows the sentence. */
 const refusedVote = (message: string): WriteResult => ({ state: 'failed', error: new RpcError(message, 'BAD_REQUEST') })
 const POLL_GONE = 'This poll is no longer available.'
+const POLL_CLOSED = 'This poll has closed.'
 const NOT_SAVED = "Your vote wasn't saved. Try again."
 
-const sorted = (choices: readonly number[]) => [...choices].sort((x, y) => x - y)
-const sameChoices = (a: readonly number[], b: readonly number[]) => sorted(a).join(',') === sorted(b).join(',')
+const sameChoices = (a: readonly number[], b: readonly number[]) => {
+  const key = (choices: readonly number[]) => [...choices].sort((x, y) => x - y).join(',')
+  return key(a) === key(b)
+}
 
 /** The poll, or null only when Platform says it does not exist; a failed read sent nothing. */
 async function readPoll(pollId: string): Promise<Poll | null> {
@@ -308,7 +311,7 @@ async function readPoll(pollId: string): Promise<Poll | null> {
 function refusedSet(result: SetVoteResult): WriteResult {
   if (result.unconfirmed) return { state: 'unconfirmed' }
   if (result.gone) return refusedVote(POLL_GONE)
-  if (result.closed) return refusedVote('This poll has closed.')
+  if (result.closed) return refusedVote(POLL_CLOSED)
   if (result.heldBack) return refusedVote('Your last vote is still being confirmed. Try again in a moment.')
   if (result.stale) return refusedVote('Your vote changed on another device. Pull to refresh and try again.')
   // Its ballot read failed: nothing was planned, so nothing was sent.
@@ -331,7 +334,7 @@ export function createPollWrites(tickets: TicketStore) {
       const ownerId = signer(ctx)
       const poll = await readPoll(pollId)
       if (!poll) return refusedVote(POLL_GONE)
-      if (pollIsClosed(poll)) return refusedVote('This poll has closed.')
+      if (pollIsClosed(poll)) return refusedVote(POLL_CLOSED)
       if (choices.some(choice => choice >= poll.options.length)) return refusedVote('That is not an option of this poll.')
       if (!poll.multiChoice && choices.length > 1) return refusedVote('This poll takes one choice.')
       if (pollVoting() === 'editable') {

@@ -317,18 +317,14 @@ export function createSafetyModule(tickets: TicketStore) {
      */
     async blockListChoices(): Promise<BlockListChoiceDTO[]> {
       const viewer = requireViewer('Block lists')
-      let following: string[]
-      let listed: Set<string>
-      try {
-        const [follows, blockFollow] = await Promise.all([
-          followService.getFollowing(viewer, { throwOnError: true }),
-          blockService.getBlockFollow(viewer),
-        ])
-        following = follows.map(follow => follow.followingId)
-        listed = new Set(blockFollow?.followedUserIds ?? [])
-      } catch (error) {
+      const [follows, blockFollow] = await Promise.all([
+        followService.getFollowing(viewer, { throwOnError: true }),
+        blockService.getBlockFollow(viewer),
+      ]).catch((error: unknown) => {
         throw readFailure(error)
-      }
+      })
+      const following = follows.map(follow => follow.followingId)
+      const listed = new Set(blockFollow?.followedUserIds ?? [])
       const ids = [...new Set([...listed, ...following])].filter(id => id && id !== viewer)
       const users = await loadUserSummaries(ids, { viewerFollows: false })
       return ids.flatMap(id => {

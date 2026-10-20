@@ -114,6 +114,10 @@ function NativeRegistration({ viewerId }: { viewerId: string }) {
     setCheck(null);
   }
 
+  let registerLabel = copy.register;
+  if (registering) registerLabel = copy.registering;
+  else if (result !== null && result.contestFundCredits !== null) registerLabel = copy.registerContested;
+
   let verdict = null;
   if (check === 'failed') {
     verdict = (
@@ -170,7 +174,7 @@ function NativeRegistration({ viewerId }: { viewerId: string }) {
       {verdict}
       {result?.available ? (
         <Button
-          label={registering ? copy.registering : result.contestFundCredits !== null ? copy.registerContested : copy.register}
+          label={registerLabel}
           size="block"
           loading={registering}
           disabled={registering}

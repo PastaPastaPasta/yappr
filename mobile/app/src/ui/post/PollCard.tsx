@@ -31,7 +31,8 @@ export function pollPercents(poll: CardPoll): number[] {
   return poll.options.map((o) => (poll.totalVotes > 0 ? Math.round((o.votes / poll.totalVotes) * 100) : 0));
 }
 
-const ballotKey = (choices: readonly number[] | null | undefined) => (choices ? [...choices].sort((a, b) => a - b).join(',') : '');
+/** A ballot as one comparable string: its option indexes in order. */
+export const ballotKey = (choices: readonly number[] | null | undefined) => (choices ? [...choices].sort((a, b) => a - b).join(',') : '');
 
 /** The time now, read again every 30 s while `endsAt` is still ahead (an open poll closes on screen). */
 function useNow(endsAt: Date | null): number {
@@ -86,6 +87,11 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
   const multi = ready.multiChoice === true;
   const marked = canVote ? selected : mine;
   const unchanged = ballotKey(selected) === cast;
+  let role: 'radio' | 'checkbox' | null = null;
+  if (canVote) role = multi ? 'checkbox' : 'radio';
+  let voteLabel = 'Vote';
+  if (saving) voteLabel = 'Saving…';
+  else if (voted) voteLabel = 'Change vote';
   const pick = (i: number) =>
     setSelected((current) => (multi ? (current.includes(i) ? current.filter((v) => v !== i) : [...current, i]) : [i]));
 
@@ -108,7 +114,7 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
             percent={percents[i] ?? 0}
             lead={ready.totalVotes > 0 && option.votes === leading}
             picked={marked.includes(i)}
-            role={canVote ? (multi ? 'checkbox' : 'radio') : null}
+            role={role}
             disabled={saving}
             onPress={() => pick(i)}
             testID={`poll-option-${i}`}
@@ -132,7 +138,7 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
               />
             ) : null}
             <Button
-              label={saving ? 'Saving…' : voted ? 'Change vote' : 'Vote'}
+              label={voteLabel}
               size="sm"
               loading={saving}
               disabled={saving || selected.length === 0 || unchanged}

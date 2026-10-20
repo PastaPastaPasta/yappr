@@ -3,6 +3,7 @@ import type { PollDTO } from '@engine/api';
 import { queryKeys } from '~/data/keys';
 import type { WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
+import { ballotKey } from '~/ui/post/PollCard';
 
 export interface PollVoteVars {
   pollId: string;
@@ -44,7 +45,7 @@ function applyBallot({ pollId, choices }: PollVoteVars): () => void {
  */
 export const pollVoteWrite: WriteSpec<PollVoteVars> = {
   key: ({ pollId }) => pollVoteKey(pollId),
-  intent: ({ choices }) => [...choices].sort((a, b) => a - b).join(','),
+  intent: ({ choices }) => ballotKey(choices),
   submit: (api, { pollId, choices }) => api.posts.vote(pollId, choices),
   // Its change is the query cache's alone, which the chain read repairs.
   reconcile: null,
