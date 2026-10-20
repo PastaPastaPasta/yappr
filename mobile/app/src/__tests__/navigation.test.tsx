@@ -85,6 +85,28 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/explore');
   });
 
+  it('opens the store inside the current tab, never over the tab bar (D-970)', async () => {
+    const app = await renderApp('/');
+
+    fireEvent.press(tab('Profile'));
+    act(() => router.push('/store/manage'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(profile)', 'store', 'manage']);
+    act(() => router.push('/store/edit'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(profile)', 'store', 'edit']);
+
+    // Back, and another tab straight away: that tab answers, and Profile keeps My store.
+    act(() => router.back());
+    fireEvent.press(tab('Home'));
+    expect(app.getPathname()).toBe('/');
+    fireEvent.press(tab('Profile'));
+    expect(app.getPathname()).toBe('/store/manage');
+
+    for (const path of ['/store', '/cart', '/orders', '/store-report?docType=store&targetId=abc123&ownerId=def456']) {
+      act(() => router.push(path as Href));
+      expect(app.getSegments().slice(0, 2)).toEqual(['(tabs)', '(profile)']);
+    }
+  });
+
   it('opens a profile from a conversation and goes back to the conversation', async () => {
     const app = await renderApp('/');
 

@@ -256,7 +256,7 @@ function pathFormRoute(path: string, q: Query): string | null | undefined {
  * alphabetically (Explore), so the launch link opens detail screens in Home
  * and notification and message settings in Profile, their home under Settings.
  */
-const SHARED_ROUTE = /^\/(post|user|hashtag|blog)\/|^\/blogs(?:$|\?|\/)/;
+const SHARED_ROUTE = /^\/(post|user|hashtag|blog|item|checkout|review)\/|^\/(blogs|store|cart|orders|store-report)(?:$|\?|\/)/;
 const PROFILE_SHARED_ROUTE = /^\/settings\/(notifications|messages|username)(?:$|\?)/;
 
 /** The launch link's route, pinned to a tab when it is a shared screen. */

@@ -1,5 +1,5 @@
 import type { KitDTO } from '@engine/api';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useState } from 'react';
 import { ScrollView, View } from 'react-native';
 
@@ -18,7 +18,7 @@ import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
 
-import { errorText, Loading, Notice, patchAt, Section } from './parts';
+import { closeIfStillOpen, errorText, Loading, Notice, patchAt, Section } from './parts';
 
 const EMPTY: KitDTO = { instructions: '', files: [], links: [], codes: [], licenseKeys: null, deliverWhen: 'payment_confirmed' };
 
@@ -53,6 +53,7 @@ export function KitEditScreen() {
 function KitForm({ itemId, initial, revision: loadedRevision }: { itemId: string; initial: KitDTO; revision: number | null }) {
   // The revision this draft was read at, frozen with it: a refetch must never pair the old pool with a newer revision.
   const [revision] = useState(loadedRevision);
+  const navigation = useNavigation();
   const [kit, setKit] = useState<KitDTO>(initial);
   const [keysText, setKeysText] = useState((initial.licenseKeys ?? []).join('\n'));
   const [saving, setSaving] = useState(false);
@@ -67,7 +68,7 @@ function KitForm({ itemId, initial, revision: loadedRevision }: { itemId: string
         queryClient.invalidateQueries({ queryKey: queryKeys.store.kit(itemId) }).catch(() => undefined);
         queryClient.invalidateQueries({ queryKey: queryKeys.store.sellerOrders() }).catch(() => undefined);
         toast.success('Delivery content saved');
-        router.back();
+        closeIfStillOpen(navigation);
       })
       .catch((error: unknown) => toast.error(errorText(error, "Couldn't save the delivery content.")))
       .finally(() => setSaving(false));
