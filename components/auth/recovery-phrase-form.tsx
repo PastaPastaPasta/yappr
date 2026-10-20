@@ -191,7 +191,8 @@ export function RecoveryPhraseForm({ onComplete, onBusyChange }: { onComplete: (
             placeholder="Your recovery phrase"
             aria-describedby={noteId}
             disabled={busy}
-            // Masked without type=password where CSS can (browsers offer to save passwords); never autofilled or corrected.
+            // Masked without type=password where CSS can (browsers offer to save passwords); never autofilled or corrected,
+            // and Safari's Passwords button is hidden in the field.
             style={show || !cssMasking ? undefined : { WebkitTextSecurity: 'disc' } as React.CSSProperties}
             autoComplete="off"
             autoCorrect="off"
@@ -201,7 +202,7 @@ export function RecoveryPhraseForm({ onComplete, onBusyChange }: { onComplete: (
             data-lpignore="true"
             data-bwignore
             data-form-type="other"
-            className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
+            className="w-full px-3 py-2 pr-10 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent [&::-webkit-credentials-auto-fill-button]:!hidden"
           />
           <button
             type="button"

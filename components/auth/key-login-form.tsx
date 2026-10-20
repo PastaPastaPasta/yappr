@@ -278,7 +278,8 @@ export function KeyLoginForm({ onComplete, onBusyChange }: KeyLoginFormProps) {
     return 'Your key stays on this device. Every signature happens locally.'
   })()
 
-  const inputClass = 'w-full px-3 py-2 bg-gray-50 dark:bg-gray-950 border rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors'
+  // Neither field is offered to password managers; that includes Safari's Passwords button inside the field.
+  const inputClass = 'w-full px-3 py-2 bg-gray-50 dark:bg-gray-950 border rounded-lg text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent transition-colors [&::-webkit-credentials-auto-fill-button]:!hidden'
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
@@ -347,6 +348,9 @@ export function KeyLoginForm({ onComplete, onBusyChange }: KeyLoginFormProps) {
             onChange={(e) => setIdentityInput(e.target.value)}
             placeholder="john.dash or 5DbLwAxGBzUzo…"
             autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore
             spellCheck={false}
             className={`${inputClass} pr-10 border-gray-200 dark:border-gray-800`}
           />
