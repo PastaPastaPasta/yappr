@@ -82,6 +82,7 @@ export const SAMPLE_PREVIEW: CardLinkPreview = {
 };
 
 export const SAMPLE_POLL: CardPoll = {
+  id: 'poll-sample',
   question: 'Which tab do you open first?',
   options: [
     { label: 'Home', votes: 31 },

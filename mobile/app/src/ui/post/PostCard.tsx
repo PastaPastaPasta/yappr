@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
-import { Platform, Pressable, View, type AccessibilityActionEvent } from 'react-native';
+import { AccessibilityInfo, Platform, Pressable, View, type AccessibilityActionEvent } from 'react-native';
 import { ArrowPathIcon, EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { LockClosedIcon } from 'react-native-heroicons/solid';
 
@@ -30,6 +30,7 @@ import { useRelativeTime } from '../use-relative-time';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { MediaGrid, mediaKindLabel } from './MediaGrid';
 import { PollCard } from './PollCard';
+import { pickOption, pollBallot, pollSpokenLabel, usePollClock, usePollSelection } from './poll-ballot';
 import { PostActionBar, plural, repostSplitParts, splitPartLabel } from './PostActionBar';
 import { DeletedLine, PostStub, stubText } from './PostStub';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
@@ -363,6 +364,8 @@ function postAccessibilityLabel(
     repostSplit?: RepostQuoteCounts | null;
     /** A private post's decrypted text. */
     privateText?: string;
+    /** The poll, spoken (`pollSpokenLabel`). */
+    poll?: string;
   },
 ): string {
   const parts = [`${post.author.displayName}, ${handleOf(post.author)}, ${extras.time}.`];
@@ -382,6 +385,7 @@ function postAccessibilityLabel(
     const kind = mediaKindLabel(media.type);
     parts.push(`${kind}: ${media.alt || kind.toLowerCase()}.`);
   }
+  if (extras.poll && !post.deleted && !post.encrypted) parts.push(extras.poll);
   const { replies, reposts, quotes, likes } = post.stats;
   const split = repostSplitParts(extras.repostSplit);
   const shared = split ? split.map(splitPartLabel).join(', ') : plural(reposts + quotes, 'repost', 'reposts');
@@ -452,6 +456,10 @@ export const PostCard = memo(function PostCard({
   const ripple = useRipple();
   // Live like the visible time, so the screen reader does not keep the first one.
   const spokenTime = useRelativeTime(post.createdAt, 'spoken');
+  // The poll's picks, shared with PollCard: its options are picked here too, by screen-reader actions (D-957).
+  const pollShown = poll === undefined || poll === 'loading' || poll === 'error' ? null : poll;
+  const [pollSelected, setPollSelected] = usePollSelection(pollShown, viewerId);
+  const pollClock = usePollClock(pollShown?.endsAt ?? null);
   if (post.viewer?.authorBlocked) {
     // The stub keeps a menu only where one is given for it (Bookmarks' "Remove bookmark", PRD ENG-04).
     const stubMenu = variant === 'compact' ? undefined : menu;
@@ -525,7 +533,15 @@ export const PostCard = memo(function PostCard({
             ) : null}
           </View>
         ) : null}
-        {poll ? <PollCard poll={poll} onVotePress={actions.onVotePress} /> : null}
+        {poll ? (
+          <PollCard
+            poll={poll}
+            clock={pollClock}
+            selected={pollSelected}
+            onSelect={setPollSelected}
+            onVotePress={actions.onVotePress}
+          />
+        ) : null}
         {quoteSlot}
         <MediaGrid
           media={post.media}
@@ -550,6 +566,9 @@ export const PostCard = memo(function PostCard({
 
   // The card is one screen-reader element, so everything tappable inside it
   // that is actually shown is offered as a custom action (UX_SPEC §6.2).
+  const pollBallotNow = pollShown
+    ? pollBallot(pollShown, pollSelected, pollClock.closed, actions.onVotePress !== undefined)
+    : null;
   const a11yActions: { name: string; label: string; run?: () => void }[] = [];
   if (covered) {
     a11yActions.push({ name: 'show', label: 'Show', run: reveal });
@@ -616,6 +635,32 @@ export const PostCard = memo(function PostCard({
           }),
         );
       }
+      // The poll's options and Vote, as on the card: pick, then send (D-957).
+      const vote = actions.onVotePress;
+      if (pollShown && pollBallotNow?.canVote && vote) {
+        const { multi, marked, saving, unchanged, voteLabel, voted } = pollBallotNow;
+        pollShown.options.forEach((option, i) => {
+          const picked = marked.includes(i);
+          if (picked && !multi) return;
+          a11yActions.push({
+            name: `poll-option-${i}`,
+            label: `${picked ? 'Deselect' : 'Select'} ${option.label}`,
+            run: saving
+              ? undefined
+              : () => {
+                  setPollSelected(pickOption(pollSelected, i, multi));
+                  AccessibilityInfo.announceForAccessibility(`${option.label} ${picked ? 'deselected' : 'selected'}`);
+                },
+          });
+        });
+        a11yActions.push({
+          name: 'poll-vote',
+          label: voteLabel === 'Change vote' ? 'Change vote' : 'Vote',
+          run: saving || pollSelected.length === 0 || unchanged ? undefined : () => vote(pollSelected),
+        });
+        if (voted && pollShown.voting === 'editable')
+          a11yActions.push({ name: 'poll-withdraw', label: 'Withdraw vote', run: saving ? undefined : () => vote([]) });
+      }
     }
   }
   const cardMenu = variant === 'compact' ? undefined : menu;
@@ -648,6 +693,7 @@ export const PostCard = memo(function PostCard({
               quoteCovered: (quoteNsfwGated ?? post.quoted?.sensitive) === true,
               repostSplit: detail ? repostQuoteCounts : undefined,
               privateText,
+              poll: pollShown && pollBallotNow ? pollSpokenLabel(pollShown, pollBallotNow, pollClock.endSpoken, formatNumber) : undefined,
             })
       }
       accessibilityActions={available.map(({ name, label }) => ({ name, label }))}

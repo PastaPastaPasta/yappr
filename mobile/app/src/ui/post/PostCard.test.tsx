@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { AccessibilityInfo } from 'react-native';
 
 import { singleAspectRatio } from './MediaGrid';
 import { displayHost } from './LinkPreviewCard';
-import { pollEndLabel, pollPercents } from './PollCard';
+import { clearPollSelections, pollEndLabel, pollEndSpoken, pollPercents } from './poll-ballot';
 import { PostCard } from './PostCard';
 import { PostStub, stubText } from './PostStub';
 import { Text } from '../Text';
@@ -19,7 +20,11 @@ jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
 function setFontScale(fontScale: number) {
   mockFontScale = fontScale;
 }
-beforeEach(() => setFontScale(1));
+beforeEach(() => {
+  setFontScale(1);
+  // Unsent poll picks are kept per poll (`usePollSelection`): every test starts with none.
+  clearPollSelections();
+});
 
 // The card is one accessible element, so query its controls by test id.
 const byId = (id: string) => screen.getByTestId(id);
@@ -370,6 +375,115 @@ describe('PostCard embeds', () => {
     expect(screen.getByTestId('poll-vote')).toBeDisabled();
     expect(screen.getByTestId('poll-withdraw')).toBeDisabled();
     expect(screen.getByTestId('poll-option-1')).toBeDisabled();
+  });
+
+  describe('a poll for VoiceOver, where the card is one element (D-957)', () => {
+    const card = () => screen.getByTestId('post-card-post-poll');
+    const actionLabels = () => (card().props.accessibilityActions as { label: string }[]).map((a) => a.label);
+    const pollActions = () => actionLabels().filter((l) => /^(Select|Deselect|Vote|Change vote|Withdraw vote)/.test(l));
+    const act11y = (actionName: string) => fireEvent(card(), 'accessibilityAction', { nativeEvent: { actionName } });
+    const open = { ...SAMPLE_POLL, voting: 'editable' as const, myVotes: [] };
+    let announce: jest.SpyInstance;
+    beforeEach(() => {
+      announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
+    });
+    afterEach(() => announce.mockRestore());
+
+    it('speaks the question, every option with its share, the vote count and the close in words', () => {
+      render(<PostCard post={POSTS.poll} poll={SAMPLE_POLL} actions={{ onVotePress: jest.fn() }} />);
+      expect(card().props.accessibilityLabel).toContain(
+        'Poll: Which tab do you open first? Home, 62 percent. Explore, 24 percent. Messages, 14 percent. 50 votes, Ends in 2 days.',
+      );
+      // Results only: nothing to vote with.
+      expect(pollActions()).toEqual([]);
+    });
+
+    it('picks an option, announces it, then sends it with Vote, as the card does', () => {
+      const onVotePress = jest.fn();
+      render(<PostCard post={POSTS.poll} poll={open} actions={{ onVotePress }} />);
+      expect(pollActions()).toEqual(['Select Home', 'Select Explore', 'Select Messages']);
+
+      act11y('poll-option-2');
+      expect(announce).toHaveBeenCalledWith('Messages selected');
+      expect(card().props.accessibilityLabel).toContain('Messages, 14 percent, selected.');
+      // The card shows the same pick.
+      expect(screen.getByTestId('poll-option-2')).toHaveProp('accessibilityState', expect.objectContaining({ checked: true }));
+      expect(pollActions()).toEqual(['Select Home', 'Select Explore', 'Vote']);
+      act11y('poll-vote');
+      expect(onVotePress).toHaveBeenCalledWith([2]);
+    });
+
+    it('changes or withdraws an editable multiple-choice ballot, announcing what it drops', () => {
+      const onVotePress = jest.fn();
+      const poll = { ...open, multiChoice: true, myVotes: [1] };
+      render(<PostCard post={POSTS.poll} poll={poll} actions={{ onVotePress }} />);
+      expect(card().props.accessibilityLabel).toContain('Choose one or more. Home, 62 percent. Explore, 24 percent, your vote.');
+      // The ballot as cast: nothing to change yet.
+      expect(pollActions()).toEqual(['Select Home', 'Deselect Explore', 'Select Messages', 'Withdraw vote']);
+      act11y('poll-option-0');
+      act11y('poll-option-1');
+      expect(announce).toHaveBeenLastCalledWith('Explore deselected');
+      expect(pollActions()).toContain('Change vote');
+      act11y('poll-vote');
+      expect(onVotePress).toHaveBeenLastCalledWith([0]);
+      act11y('poll-withdraw');
+      expect(onVotePress).toHaveBeenLastCalledWith([]);
+    });
+
+    it("says a ballot is saving and offers nothing meanwhile; a final ballot or a closed poll offers nothing", () => {
+      const { rerender } = render(
+        <PostCard post={POSTS.poll} poll={{ ...open, myVotes: [0], saving: true }} actions={{ onVotePress: jest.fn() }} />,
+      );
+      expect(card().props.accessibilityLabel).toContain('50 votes, Ends in 2 days, saving your vote.');
+      expect(pollActions()).toEqual([]);
+
+      rerender(<PostCard post={POSTS.poll} poll={{ ...SAMPLE_POLL, voting: 'once', myVotes: [0] }} actions={{ onVotePress: jest.fn() }} />);
+      expect(card().props.accessibilityLabel).toContain('Home, 62 percent, your vote.');
+      expect(card().props.accessibilityLabel).toContain('50 votes, Ends in 2 days, You voted.');
+      expect(pollActions()).toEqual([]);
+
+      rerender(<PostCard post={POSTS.poll} poll={{ ...open, endsAt: new Date(Date.now() - 60_000) }} actions={{ onVotePress: jest.fn() }} />);
+      expect(card().props.accessibilityLabel).toContain('50 votes, Ended.');
+      expect(pollActions()).toEqual([]);
+    });
+
+    it("reads a reused row's new poll as it is now: closed, with nothing to vote on", () => {
+      const { rerender } = render(<PostCard post={POSTS.poll} poll={{ ...open, id: 'a' }} actions={{ onVotePress: jest.fn() }} />);
+      expect(pollActions()).toHaveLength(3);
+      rerender(
+        <PostCard post={POSTS.poll} poll={{ ...open, id: 'b', endsAt: new Date(Date.now() - 10 * 60_000) }} actions={{ onVotePress: jest.fn() }} />,
+      );
+      expect(card().props.accessibilityLabel).toContain('Ended.');
+      expect(screen.getByTestId('poll-status')).toHaveTextContent('50 votes · Ended');
+      expect(pollActions()).toEqual([]);
+    });
+
+    it("keeps each account's picks to itself, and finds them again after a vote that failed", () => {
+      const { rerender } = render(<PostCard post={POSTS.poll} poll={open} viewerId="alice" actions={{ onVotePress: jest.fn() }} />);
+      act11y('poll-option-1');
+      // Another account (or signed out) on the same poll: nothing picked for it.
+      rerender(<PostCard post={POSTS.poll} poll={open} viewerId="bob" actions={{ onVotePress: jest.fn() }} />);
+      expect(screen.getByTestId('poll-option-1')).toHaveProp('accessibilityState', expect.objectContaining({ checked: false }));
+      expect(pollActions()).not.toContain('Vote');
+
+      rerender(<PostCard post={POSTS.poll} poll={open} viewerId="alice" actions={{ onVotePress: jest.fn() }} />);
+      expect(screen.getByTestId('poll-option-1')).toHaveProp('accessibilityState', expect.objectContaining({ checked: true }));
+      // Sent and saving, then rolled back: the pick is still there, to try again.
+      rerender(<PostCard post={POSTS.poll} poll={{ ...open, myVotes: [1], saving: true }} viewerId="alice" actions={{ onVotePress: jest.fn() }} />);
+      rerender(<PostCard post={POSTS.poll} poll={open} viewerId="alice" actions={{ onVotePress: jest.fn() }} />);
+      expect(screen.getByTestId('poll-option-1')).toHaveProp('accessibilityState', expect.objectContaining({ checked: true }));
+      expect(pollActions()).toContain('Vote');
+    });
+
+    it('says the close in words', () => {
+      const now = Date.UTC(2026, 9, 20, 12);
+      expect(pollEndSpoken(new Date(now + 50 * 60_000), now)).toBe('Ends in 50 minutes');
+      expect(pollEndSpoken(new Date(now + 60_000), now)).toBe('Ends in 1 minute');
+      expect(pollEndSpoken(new Date(now + 5 * 3_600_000), now)).toBe('Ends in 5 hours');
+      expect(pollEndSpoken(new Date(now + 26 * 3_600_000), now)).toBe('Ends in 1 day');
+      expect(pollEndSpoken(new Date(now - 1), now)).toBe('Ended');
+      expect(pollEndSpoken(null, now)).toBe('No end date');
+    });
   });
 
   it('lays out the media grid for each count', () => {
