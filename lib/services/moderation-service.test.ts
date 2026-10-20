@@ -761,6 +761,78 @@ describe('settled documents (v11 deleteWithin + deleteSettled)', () => {
     await expect(moderationService.getSeatedTeam()).resolves.toEqual({ leaderId: LEADER, members: [MEMBER], electedMembers: [MEMBER], seats: 12 })
   })
 
+  it('judges the phase by the REGISTERED window, not the committed template, in either direction', async () => {
+    topology.v11 = true
+    const DAY_MS = 86_400_000
+    const registered = (deleteWithin?: bigint) => ({
+      ownerId: { toBase58: () => OWNER },
+      config: { moderation: { moderators: { ...elected({ $type: 'contractOwner' }), maxAddedModerators: 10 } } },
+      ...(deleteWithin === undefined ? {} : {
+        schemas: Object.fromEntries(['post', 'reply'].map((type) => [type, { moderatorAbilities: { delete: true, deleteWithin, deleteSettled: { leader: true, approvals: BigInt(3) } } }])),
+      }),
+    })
+    sdk.moderationCharters.team.mockResolvedValue({
+      leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], electedMembers: [{ toBase58: () => MEMBER }], seats: () => 3, free: vi.fn(),
+    })
+    try {
+      // Before any read the template (a week here) answers, and a route is not guessed from it.
+      expect(moderationService.deleteWindowSeconds('post')).toBe(604800)
+      sdk.contracts.fetch.mockRejectedValueOnce(new Error('offline'))
+      await expect(moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 2 * DAY_MS)).rejects.toThrow('offline')
+      sdk.contracts.fetch.mockResolvedValue(registered(BigInt(86400)))
+      // The route reads the team first, so a two-day-old post is settled by the registered day.
+      expect(await moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 2 * DAY_MS)).toMatchObject({ route: 'team' })
+      expect(moderationService.deleteWindowSeconds('reply')).toBe(86400)
+      expect(moderationService.isSettled('post', createdAt, createdAt + 2 * DAY_MS)).toBe(true)
+      // It survives the team being dropped after an action: a window is fixed with its type.
+      moderationService.invalidateTeam()
+      expect(moderationService.isSettled('post', createdAt, createdAt + 2 * DAY_MS)).toBe(true)
+      // The /staging shape: the registered window is LONGER than the template's
+      // (there 604800 against the file's 86400; here two weeks against a
+      // week), so a ten-day-old post is still one moderator's to remove.
+      sdk.contracts.fetch.mockResolvedValue(registered(BigInt(1_209_600)))
+      await moderationService.getTeam()
+      expect(await moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 10 * DAY_MS)).toEqual({ route: 'single', closing: false })
+      expect(moderationService.isSettled('reply', createdAt, createdAt + 10 * DAY_MS)).toBe(false)
+    } finally {
+      sdk.contracts.fetch.mockResolvedValue(registered())
+      moderationService.invalidateTeam()
+      await moderationService.getTeam()
+    }
+    expect(moderationService.deleteWindowSeconds('post')).toBe(604800)
+  })
+
+  it('takes the settled rule and owner protection from the REGISTERED contract (D41 files: two approvals, owner unprotected)', async () => {
+    topology.v11 = true
+    const DAY_MS = 86_400_000
+    const registered = (approvals: bigint | null, ownerProtected: boolean) => ({
+      ownerId: { toBase58: () => OWNER },
+      config: { moderation: { moderators: { ...elected({ $type: 'contractOwner' }), maxAddedModerators: 10, ownerProtected } } },
+      ...(approvals === null ? {} : {
+        schemas: Object.fromEntries(['post', 'reply'].map((type) => [type, { moderatorAbilities: { delete: true, deleteWithin: BigInt(604800), deleteSettled: { leader: true, approvals } } }])),
+      }),
+    })
+    sdk.moderationCharters.team.mockResolvedValue({
+      leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }, { toBase58: () => APPOINTED }], electedMembers: [{ toBase58: () => MEMBER }, { toBase58: () => APPOINTED }], seats: () => 3, free: vi.fn(),
+    })
+    try {
+      // The template (the mocked topology) asks three approvals and protects the owner.
+      sdk.contracts.fetch.mockResolvedValue(registered(BigInt(2), false))
+      expect(await moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 10 * DAY_MS)).toMatchObject({ route: 'team', needed: 2, leaderRequired: true })
+      expect(moderationService.settledRule('reply')).toEqual({ windowSeconds: 604800, leaderRequired: true, approvals: 2 })
+      expect(await moderationService.getProtectedIdentities()).toEqual(new Set([LEADER, MEMBER, APPOINTED]))
+      // /staging's set: three approvals, the owner protected.
+      sdk.contracts.fetch.mockResolvedValue(registered(BigInt(3), true))
+      moderationService.invalidateTeam()
+      expect(await moderationService.getProtectedIdentities()).toEqual(new Set([LEADER, MEMBER, APPOINTED, OWNER]))
+      expect(moderationService.settledRule('post')?.approvals).toBe(3)
+    } finally {
+      sdk.contracts.fetch.mockResolvedValue(registered(null, true))
+      moderationService.invalidateTeam()
+      await moderationService.getTeam()
+    }
+  })
+
   it('counts only the signers still on the team', () => {
     expect(countedSigners([LEADER, MEMBER, 'Gone1'], { leaderId: LEADER, members: [MEMBER] })).toEqual([LEADER, MEMBER])
     expect(countedSigners(['A', 'B'], null)).toEqual(['A', 'B'])

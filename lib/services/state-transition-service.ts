@@ -18,6 +18,7 @@ import { documentToPlainObject } from './sdk-helpers';
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 import { documentIdForCreate, identityContractNonceConsumed } from '@/lib/document-id';
 import { buildSignedCreateTransition } from '@/lib/manual-batch';
+import { ensureRegisteredContract } from '@/lib/registered-contracts';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce';
 import {
@@ -630,6 +631,12 @@ class StateTransitionService {
     try {
       const sdk = await getEvoSdk();
       const wasm = sdk.wasm;
+      // A priced create agrees to the registered contract's fee: unless this contract's record is
+      // proved (read from the chain, or a bundled seed revalidation confirmed), read it from the
+      // chain first, so an unproved or missing declaration is never agreed to (40133).
+      if (declaredActionFeeFor(contractId, documentType, 'create')) {
+        await ensureRegisteredContract(contractId, () => sdk.contracts.fetch(contractId));
+      }
 
       const identity = await sdk.identities.fetch(ownerId);
       if (!identity) {

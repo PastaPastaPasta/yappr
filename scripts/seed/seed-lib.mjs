@@ -1081,13 +1081,32 @@ export function forgetFeeMultiplier() {
   cachedFeeMultiplierPermille = null;
 }
 
+/** The document schemas each REGISTERED contract declares, read once per process. */
+const registeredSchemas = new Map();
+
+/**
+ * The schemas `contractId` was registered with, as the chain holds them: a
+ * deployment registered from an earlier cut of a file (sakura's and /staging's
+ * v17 sets predate D41's fees) declares other fees than the committed JSON,
+ * and agreeing to the file's amount there is a paid 40133.
+ */
+export async function registeredSchemasOf(sdk, contractId) {
+  if (!registeredSchemas.has(contractId)) {
+    const contract = await sdk.contracts.fetch(contractId);
+    if (!contract?.schemas) throw new Error(`contract ${contractId} could not be read to agree to its fees`);
+    registeredSchemas.set(contractId, contract.schemas);
+  }
+  return registeredSchemas.get(contractId);
+}
+
 /**
  * The agreement a create of `docType` must carry, or undefined when the action
  * is unpriced. Reads the epoch multiplier on first use. `schemas` as for
- * {@link actionFeeFor}.
+ * {@link actionFeeFor}; with `contractId`, the fee is the one that contract
+ * was REGISTERED with (a live write), whatever the committed file says.
  */
-export async function feeAgreementFor(sdk, docType, schemas = SOCIAL_DOCUMENT_SCHEMAS) {
-  const fee = actionFeeFor(docType, schemas);
+export async function feeAgreementFor(sdk, docType, schemas = SOCIAL_DOCUMENT_SCHEMAS, { contractId } = {}) {
+  const fee = actionFeeFor(docType, contractId ? await registeredSchemasOf(sdk, contractId) : schemas);
   if (!fee) return undefined;
   return new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, await feeMultiplierPermille(sdk)));
 }

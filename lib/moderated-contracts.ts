@@ -40,6 +40,7 @@ import {
   type ModeratorAbilities,
   type SettledDeletionRule,
 } from '@/lib/contract-topology'
+import { settledRuleOf } from '@/lib/registered-contracts'
 
 export const MODERATED_CONTRACTS = ['social', 'storefront', 'blog'] as const
 export type ModeratedContractKey = (typeof MODERATED_CONTRACTS)[number]
@@ -138,16 +139,6 @@ export function electedDeclarationOf(moderation: DeclaredModeration | undefined)
     moderatedDocumentTypes: elected.moderatedDocumentTypes,
     interim: elected.interim.$type,
     ownerProtected: elected.ownerProtected === true,
-  }
-}
-
-/** Pure: the settled-deletion rule moderator abilities declare (`deleteWithin` + `deleteSettled`), or null. */
-export function settledRuleOf(abilities: ModeratorAbilities | null | undefined): SettledDeletionRule | null {
-  if (!abilities?.delete || abilities.deleteWithin === undefined || !abilities.deleteSettled) return null
-  return {
-    windowSeconds: abilities.deleteWithin,
-    leaderRequired: abilities.deleteSettled.leader === true,
-    approvals: abilities.deleteSettled.approvals ?? 1,
   }
 }
 

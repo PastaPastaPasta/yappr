@@ -11,6 +11,7 @@ import { ModerationKeyNotice } from '@/components/moderation/moderation-key-noti
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { formatDuration } from '@/lib/utils/format'
 import { documentNoun, moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import { countedSigners, moderationServiceFor, teamCanApprove, type ModerationService, type SeatedTeamSeats, type TeamAction, type TeamActionTargetState } from '@/lib/services/moderation-service'
 import type { SeatedReasonsState } from './charter-reason-picker'
@@ -54,7 +55,7 @@ async function deadActions(service: ModerationService, actions: readonly TeamAct
 
 /**
  * The seated team's queue of settled deletions (v11): a member proposes the
- * removal of a post or reply past its week (from the post menu), and the
+ * removal of a post or reply past its window (from the post menu), and the
  * others approve it here until the leader and enough members agree, when it
  * runs. An active action shows its approvals against what its rule needs
  * (`min(approvals, seats)`), who signed, the document and the reason; a
@@ -69,6 +70,8 @@ export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social'
   const service = moderationServiceFor(contract)
   const social = contract === 'social'
   const enabled = service.teamDeletesSettled()
+  /** The registered contract's window once `refresh` has read the team (it carries it), the template's before. */
+  const postWindow = service.deleteWindowSeconds('post')
   const [state, setState] = useState<TeamActionsState | null>(null)
   const [names, setNames] = useState<ReadonlyMap<string, string | null>>(new Map())
   const [loading, setLoading] = useState(false)
@@ -173,7 +176,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social'
         <CardTitle className="flex items-center gap-2"><UserGroupIcon className="h-5 w-5" /> Team removals</CardTitle>
         <CardDescription>
           {social
-            ? 'A week after it was written a post or reply settles: no moderator removes it alone. A member of the seated team proposes its removal from the post menu,'
+            ? `A post or reply settles ${postWindow === null ? 'once its removal window has passed' : `${formatDuration(postWindow)} after it was written`}: no moderator removes it alone. A member of the seated team proposes its removal from the post menu,`
             : 'Past its removal window a document settles: no moderator removes it alone. A member of the seated team proposes its removal from the moderator menu beside it,'}
           {' and it runs once the leader and enough members approve it here. A team removal cannot be undone.'}
           {seated && ` The team is the leader and ${seated.members.length} member${seated.members.length === 1 ? '' : 's'}${seated.seats === null ? '' : `, with ${seated.seats} seat${seated.seats === 1 ? '' : 's'}`}.`}

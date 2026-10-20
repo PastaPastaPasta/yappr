@@ -39,7 +39,7 @@
         "interim": {
           "$type": "contractOwner"
         },
-        "ownerProtected": true
+        "ownerProtected": false
       }
     }
   },
@@ -139,7 +139,7 @@
       "actionFees": {
         "pricing": "feeMultiplier",
         "create": {
-          "moderators": 80000000
+          "moderators": 500000000
         }
       }
     },
@@ -339,10 +339,10 @@
           "blogId",
           "$createdAt"
         ],
-        "deleteWithin": 604800,
+        "deleteWithin": 86400,
         "deleteSettled": {
           "leader": true,
-          "approvals": 3
+          "approvals": 2
         }
       },
       "propertyConstraints": {
@@ -469,7 +469,7 @@
       "actionFees": {
         "pricing": "feeMultiplier",
         "create": {
-          "moderators": 80000000
+          "moderators": 20000000
         }
       }
     },
@@ -570,16 +570,16 @@
           "blogPostId",
           "$createdAt"
         ],
-        "deleteWithin": 604800,
+        "deleteWithin": 86400,
         "deleteSettled": {
           "leader": true,
-          "approvals": 3
+          "approvals": 2
         }
       },
       "actionFees": {
         "pricing": "feeMultiplier",
         "create": {
-          "moderators": 16000000
+          "moderators": 10000000
         }
       }
     },
@@ -718,7 +718,7 @@
       "actionFees": {
         "pricing": "feeMultiplier",
         "create": {
-          "moderators": 50000000
+          "moderators": 20000000
         }
       },
       "additionalProperties": false,

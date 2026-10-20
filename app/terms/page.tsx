@@ -7,11 +7,14 @@ import { SupportEmailLink } from '@/components/layout/legal-links'
 import { LEGAL_UPDATED, MINIMUM_AGE } from '@/lib/legal'
 import {
   declaredActionFee,
+  settledDeletionFor,
   starterGrantAmount,
   tokenCostFor,
   yappIsLocked,
   yappIsTransferable,
 } from '@/lib/contract-topology'
+import { moderatedContract } from '@/lib/moderated-contracts'
+import { formatDuration } from '@/lib/utils/format'
 
 const COMMUNITY_RULES = [
   { title: 'Nothing illegal', body: 'Don’t post, sell or link to anything that is illegal where you or the people you share it with live.' },
@@ -47,6 +50,38 @@ function yappCostCopy(): string {
   if (yappIsLocked()) sentences.push('YAPP has no monetary value, and Yappr never sells it.')
   if (!yappIsTransferable()) sentences.push('YAPP can’t be sent to other people.')
   return ` ${sentences.join(' ')}`
+}
+
+/**
+ * When a removal needs the team, from the settled-deletion rule the build's
+ * contracts declare (a day on the release set, D39); empty where moderators
+ * remove at any age. The /staging rehearsal set and sakura's /devnet set were
+ * registered before D39 and D41, so their contracts declare other values than
+ * the files they are built from: there the sentence names no window or count
+ * (#822).
+ */
+function settledRemovalCopy(): string {
+  const rule = settledDeletionFor('post')
+  if (!rule) return ''
+  const blogRule = moderatedContract('blog').settledDeletionFor('blogPost')
+  const blogToo = blogRule?.windowSeconds === rule.windowSeconds && blogRule.approvals === rule.approvals && blogRule.leaderRequired === rule.leaderRequired
+  const what = blogToo ? 'a post, reply, blog post or blog comment' : 'a post or reply'
+  if (EARLIER_REGISTERED_BASE_PATHS.includes(process.env.NEXT_PUBLIC_BASE_PATH ?? '')) {
+    return ` Once ${what} is past the time in which one moderator may remove it alone, removing it needs the team’s leader and other moderators to agree.`
+  }
+  return ` Removing ${what} that is more than ${formatDuration(rule.windowSeconds)} old needs ${approversCopy(rule)} to agree.`
+}
+
+/** Deployments whose registered contracts predate the files' moderation values (the testnet rehearsal, sakura). */
+const EARLIER_REGISTERED_BASE_PATHS = ['/staging', '/devnet']
+
+const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+
+/** Who must agree to a settled removal: "the team’s leader and one more moderator" for two approvals with the leader (D41). */
+function approversCopy({ approvals, leaderRequired }: { approvals: number; leaderRequired: boolean }): string {
+  const count = (n: number, noun: string) => `${COUNT_WORDS[n] ?? n} ${noun}${n === 1 ? '' : 's'}`
+  if (!leaderRequired) return `${count(approvals, 'moderator')} of the team`
+  return approvals <= 1 ? 'the team’s leader' : `the team’s leader and ${count(approvals - 1, 'more moderator')}`
 }
 
 export default function TermsPage() {
@@ -153,8 +188,7 @@ export default function TermsPage() {
           </BulletList>
           <p>
             Moderation happens in the open. Every removal, warning, suspension or ban leaves a public record of who did it, to what,
-            and when. Removing a post or reply
-            that is more than a week old needs the team&apos;s leader and two more moderators to agree.
+            and when.{settledRemovalCopy()}
           </p>
           <p>
             Before a team is elected, posting and reporting may be closed under the contract’s rules. Yappr’s authors do not

@@ -20,12 +20,12 @@ network-specific moderation configuration.
 | Role | Source file | SHA-256 |
 | --- | --- | --- |
 | app | [yappr-app-contract.json](yappr-app-contract.json) | `d3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41` |
-| social | [yappr-social-contract-v17.json](yappr-social-contract-v17.json) | `b21d61f7cbfe37d5b784bae52884c9ac0db42b87a97152d2a1519c7c2f605bcf` |
+| social | [yappr-social-contract-v17.json](yappr-social-contract-v17.json) | `3c7e167f31f8aadd7b1ce779e62be1c2dcad89a2c1519e85c4fea2dfa8f25aa6` |
 | blocks | [yappr-blocks-contract.json](yappr-blocks-contract.json) | `ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677` |
 | dmV5 | [yappr-dm-contract-v5.json](yappr-dm-contract-v5.json) | `4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21` |
-| blog | [yappr-blog-contract.json](yappr-blog-contract.json) | `a03012221e543b850d7524b27148e6b9c2b84fae3a0c291426e22de30d6dccef` |
+| blog | [yappr-blog-contract.json](yappr-blog-contract.json) | `448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c` |
 | pollr | [pollr-contract.json](pollr-contract.json) | `a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347` |
-| storefront | [yappr-storefront-contract.json](yappr-storefront-contract.json) | `581122bbf27b76ed014c2695e6c84d4dc14a9712c9c6fb97f9f3614a4455bdca` |
+| storefront | [yappr-storefront-contract.json](yappr-storefront-contract.json) | `69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc` |
 
 The passkey vault is implemented and registered by its own work package (PR
 [#786](https://github.com/PastaPastaPasta/yappr/pull/786)); its current code and

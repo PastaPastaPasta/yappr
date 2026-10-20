@@ -1485,5 +1485,15 @@ describe('contract topology', () => {
       }
       expect(await surfaces('v17')).toEqual(await surfaces('v16'))
     })
+
+    it('lets one moderator remove a post or reply for a day (D39), then two approvals with the leader (D41), where v16 kept a week and three', async () => {
+      const settled = async (topology: string) => {
+        const m = await topologyModule(topology)
+        return (['post', 'reply'] as const).map((docType) => [m.settledDeletionFor(docType), m.moderatorDeleteWindowSeconds(docType)])
+      }
+      const rule = (windowSeconds: number, approvals: number) => [{ windowSeconds, leaderRequired: true, approvals }, windowSeconds]
+      expect(await settled('v17')).toEqual([rule(86_400, 2), rule(86_400, 2)])
+      expect(await settled('v16')).toEqual([rule(604_800, 3), rule(604_800, 3)])
+    })
   })
 })

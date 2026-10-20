@@ -704,7 +704,8 @@ function builderExpectations(shapes, version) {
     ['blocks resolve to the social contract up to v12, to the blocks contract from v13',
       shapes.contractFor('block', { social: 'S', blocks: 'B' }) === (fromV13 ? 'B' : 'S') && shapes.contractFor('follow', { social: 'S', blocks: 'B' }) === 'S'],
     ['blocks without a blocks contract throw from v13', throws(() => shapes.contractFor('blockFollow', { social: 'S' })) === fromV13],
-    ['a report pays an action fee from v13 (50M credits to the moderators)', fromV13 ? shapes.actionFee('report')?.moderators === 50_000_000n : shapes.actionFee('report') === null],
+    // v17 lowers it to 20M (D41).
+    ['a report pays an action fee from v13 (50M credits to the moderators; 20M on v17)', fromV13 ? shapes.actionFee('report')?.moderators === (cut.privateFeeds ? 20_000_000n : 50_000_000n) : shapes.actionFee('report') === null],
     ['no mention writes nothing', JSON.stringify(shapes.mentions([])) === '{}'],
     ['one mention is mentionedUserId up to v14, a one-element mentionedUserIds on v15',
       cut.mentionArray ? shapes.mentions([id]).mentionedUserIds?.[0] === id : shapes.mentions([id]).mentionedUserId === id],

@@ -73,6 +73,21 @@ export function formatDate(date: Date | string): string {
 }
 
 /**
+ * A length of time in seconds in its largest whole unit: "a day", "7 days",
+ * "36 hours", "an hour", "90 seconds". `adjective` gives the hyphenated form
+ * ("1-day window"). For a contract's windows, which are whole numbers of
+ * seconds.
+ */
+export function formatDuration(seconds: number, { adjective = false }: { adjective?: boolean } = {}): string {
+  const units: ReadonlyArray<readonly [string, number]> = [['day', 86_400], ['hour', 3_600], ['minute', 60]]
+  const [unit, size] = units.find(([, length]) => seconds >= length && seconds % length === 0) ?? ['second', 1]
+  const count = seconds / size
+  if (adjective) return `${count}-${unit}`
+  if (count === 1) return unit === 'hour' ? 'an hour' : `a ${unit}`
+  return `${count} ${unit}s`
+}
+
+/**
  * Format an order ID for display (truncated)
  */
 export function formatOrderId(id: string): string {
