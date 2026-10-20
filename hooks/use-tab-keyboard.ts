@@ -20,6 +20,7 @@ export function useTabKeyboard<K extends string>({
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLElement>) => {
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      if (keys.length === 0) return
       const current = keys.indexOf(active)
       let next: number
       switch (event.key) {
@@ -27,7 +28,7 @@ export function useTabKeyboard<K extends string>({
           next = (current + 1) % keys.length
           break
         case 'ArrowLeft':
-          next = (current - 1 + keys.length) % keys.length
+          next = current < 0 ? keys.length - 1 : (current - 1 + keys.length) % keys.length
           break
         case 'Home':
           next = 0
@@ -39,9 +40,8 @@ export function useTabKeyboard<K extends string>({
           return
       }
       event.preventDefault()
-      const tab = listRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[next]
-      tab?.focus()
-      tab?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      // Focusing scrolls the tab into view within its bar.
+      listRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus()
       if (keys[next] !== active) onSelect(keys[next])
     },
     [keys, active, onSelect],
