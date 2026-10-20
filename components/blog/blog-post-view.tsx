@@ -14,6 +14,7 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import dynamic from 'next/dynamic'
 
 import { BlogThemeProvider } from './theme-provider'
+import { OwnerHandle } from './blog-view-skeleton'
 import { BlogReadingScope } from './blog-reading-scope'
 import { BlogComments } from './blog-comments'
 import { EmbedPreview } from './embed-preview'
@@ -44,6 +45,8 @@ interface BlogPostViewProps {
   blog: Blog
   post: BlogPost
   username: string
+  /** The owner's username is still being looked up. */
+  usernamePending?: boolean
 }
 
 function BlogAvatar({ blog, size }: { blog: Blog; size: 'sm' | 'md' }) {
@@ -63,7 +66,7 @@ function BlogAvatar({ blog, size }: { blog: Blog; size: 'sm' | 'md' }) {
   return <UserAvatar userId={blog.ownerId} alt={blog.name} size={size} className="shrink-0" />
 }
 
-export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
+export function BlogPostView({ blog, post, username, usernamePending }: BlogPostViewProps) {
   const router = useRouter()
   const blocks = Array.isArray(post.content) ? post.content : []
   const { text: summaryText, hidden: summaryHidden } = decodeSummary(post.subtitle)
@@ -202,7 +205,7 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
                 {blog.name}
               </p>
               <p className="truncate text-xs" style={{ color: 'var(--blog-muted)' }}>
-                {authorHandle} · {relativeTime}
+                <OwnerHandle username={username} pending={usernamePending} fallback={authorHandle} /> · {relativeTime}
               </p>
             </div>
             {!isOwnBlog && user && (
@@ -308,7 +311,13 @@ export function BlogPostView({ blog, post, username }: BlogPostViewProps) {
           {/* Cover image */}
           {post.coverImage && (
             <div className="mt-6">
-              <IpfsImage src={post.coverImage} alt={post.title} className="w-full rounded-2xl" />
+              <IpfsImage
+                src={post.coverImage}
+                alt={post.title}
+                className="w-full rounded-2xl"
+                // Holds a typical cover's room while it loads, so the article below it does not jump.
+                loadingFallback={<div className="aspect-[16/9] w-full rounded-2xl bg-[var(--blog-border)] opacity-40" aria-hidden="true" />}
+              />
             </div>
           )}
 
