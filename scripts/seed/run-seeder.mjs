@@ -125,6 +125,7 @@ import {
   paymentInfo,
   paysInCredits,
   feeAgreementFor,
+  registeredSchemasOf,
   randomEntropy,
   readback,
   refRecordOf,
@@ -1237,6 +1238,21 @@ async function selfTest() {
 
   // The payment bags are wasm objects, unlike everything above them.
   await ensureInitialized();
+  // A live write agrees to the fee its contract was REGISTERED with (sakura's v17 set predates D41's).
+  const registeredSdk = {
+    contracts: { fetch: async () => ({ schemas: { post: { actionFees: { pricing: 'feeMultiplier', create: { moderators: 80_000_000n } } } } }) },
+    epoch: { current: async () => ({ feeMultiplierPermille: 1000 }) },
+  };
+  const registeredAgreement = await feeAgreementFor(registeredSdk, 'post', undefined, { contractId: 'self-test-registered' });
+  check('a live create agrees to the registered fee, not the committed file\'s',
+    registeredAgreement?.moderators === 80_000_000n && postFee.moderators !== 80_000_000n,
+    `${registeredAgreement?.moderators} vs file ${postFee.moderators}`);
+  check('the registered schemas are read once per contract',
+    (await registeredSchemasOf({ contracts: { fetch: async () => { throw new Error('read twice'); } } }, 'self-test-registered')).post !== undefined);
+  let unreadable = null;
+  try { await feeAgreementFor({ contracts: { fetch: async () => null } }, 'post', undefined, { contractId: 'self-test-unreadable' }); } catch (error) { unreadable = error; }
+  check('a contract that cannot be read fails before an agreement is built', unreadable !== null, String(unreadable));
+
   // Build the REAL wasm object, not just the options bag: the constructor
   // deserializes through serde, so a field it stopped accepting (or a bigint it
   // started rejecting) would leave every assertion above passing while every
