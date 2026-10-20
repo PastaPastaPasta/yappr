@@ -321,16 +321,23 @@ function PostCardView({
   }
   // A reply the viewer just sent counts at once. Each count read after it
   // already includes it, so a changed base drops the local bump.
-  const [sentReplies, setSentReplies] = useState({ base: stats.replies, count: 0 })
+  // A post's count is its whole thread where replies name their root (v9+),
+  // so a reply anywhere under it counts; a reply's count is its direct replies.
+  const [sentReplies, setSentReplies] = useState({ postId: post.id, base: stats.replies, count: 0 })
   useEffect(() => {
     const onReplyCreated = (event: Event) => {
-      if ((event as CustomEvent<{ reply?: { parentId?: string } }>).detail?.reply?.parentId !== post.id) return
-      setSentReplies((sent) => ({ base: stats.replies, count: (sent.base === stats.replies ? sent.count : 0) + 1 }))
+      const reply = (event as CustomEvent<{ reply?: { parentId?: string; rootPostId?: string } }>).detail?.reply
+      if (!reply || (reply.parentId !== post.id && (isReply || reply.rootPostId !== post.id))) return
+      setSentReplies((sent) => ({
+        postId: post.id,
+        base: stats.replies,
+        count: (sent.postId === post.id && sent.base === stats.replies ? sent.count : 0) + 1,
+      }))
     }
     window.addEventListener('reply-created', onReplyCreated)
     return () => window.removeEventListener('reply-created', onReplyCreated)
-  }, [post.id, stats.replies])
-  const replyCount = stats.replies + (sentReplies.base === stats.replies ? sentReplies.count : 0)
+  }, [post.id, isReply, stats.replies])
+  const replyCount = stats.replies + (sentReplies.postId === post.id && sentReplies.base === stats.replies ? sentReplies.count : 0)
 
   // On v10 a repost IS a quote post, so the quote count is the whole repost
   // count and there is no separate repost count to add to it.

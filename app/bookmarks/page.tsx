@@ -182,10 +182,9 @@ function BookmarksPage() {
           <div className="flex items-center justify-between px-4 py-3">
             <div>
               <h1 className="text-xl font-bold">Bookmarks</h1>
-              <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-gray-500">
+              <p className="flex flex-wrap items-center gap-x-3 text-sm text-gray-500">
                 <span className="whitespace-nowrap">{bookmarkCount} saved {bookmarkCount === 1 ? 'post' : 'posts'}</span>
                 <span className="inline-flex items-center gap-1 whitespace-nowrap" data-testid="bookmarks-public-note">
-                  <span aria-hidden="true">·</span>
                   <GlobeAltIcon className="h-3.5 w-3.5" aria-hidden="true" />
                   Visible to everyone
                 </span>

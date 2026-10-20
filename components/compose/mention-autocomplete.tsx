@@ -46,6 +46,8 @@ export function MentionAutocomplete({
   // A new anchor per position, so the popover re-measures when the @ moves.
   const caretAnchor = useMemo(() => ({
     current: {
+      // Lets the popover follow the textarea's scroll containers, not just the window.
+      contextElement: textareaRef.current ?? undefined,
       getBoundingClientRect: () => {
         const rect = textareaRef.current?.getBoundingClientRect()
         return DOMRect.fromRect({ x: (rect?.left ?? 0) + dropdownPosition.left, y: (rect?.top ?? 0) + dropdownPosition.top, width: 0, height: 0 })
