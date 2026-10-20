@@ -36,7 +36,7 @@ import {
   postWebUrl,
   sharePost,
 } from './post-navigation';
-import { HIDE_PRIVATE_LABEL, hidePrivateFromMenu, isUnreadablePrivate, useHiddenPrivateStore } from './hidden-private';
+import { HIDE_PRIVATE_LABEL, hidePrivateFromMenu, isUnreadablePrivate, useHideUnreadablePrivate } from './hidden-private';
 import { readEngageStats } from './post-stats';
 import { useRepostQuoteCounts } from './repost-quote-counts';
 import { bookmarkWrite, deleteWrite, followWrite, likeWrite, repostWrite, targetOf } from './post-writes';
@@ -286,8 +286,9 @@ export const PostItem = memo(function PostItem({
   const detail = cardProps.variant === 'detail';
   // Private posts the viewer can't read: offered in the menu, and left out of lists that ask.
   // The provisional viewer, so the account's own private posts don't blink out while it restores.
-  const hidePrivate = useHiddenPrivateStore((s) => s.hide);
+  const hidingPrivate = useHideUnreadablePrivate();
   const unreadablePrivate = isUnreadablePrivate(post, safetyViewerId);
+  const offerHidePrivate = unreadablePrivate && !hidingPrivate;
   const repostQuoteCounts = useRepostQuoteCounts(post, detail && capabilities?.repostsAreQuotes === true);
   // A bare repost's target comes without the viewer's follow of its author: offer no follow item then.
   const followKnown =
@@ -406,7 +407,7 @@ export const PostItem = memo(function PostItem({
       onVotePress: openOnWeb,
       onOpenPrivate: openOnWeb,
     };
-    const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined, unreadablePrivate && !hidePrivate);
+    const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined, offerHidePrivate);
     const menu: PostCardMenu | undefined = items.length > 0 ? { items, onSelect } : undefined;
     return { actions, menu };
   }, [
@@ -421,8 +422,7 @@ export const PostItem = memo(function PostItem({
     detail,
     onRemoveBookmark,
     listed,
-    unreadablePrivate,
-    hidePrivate,
+    offerHidePrivate,
   ]);
 
   if ((removed && !asStub) || safety.hidden) return null;

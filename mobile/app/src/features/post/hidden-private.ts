@@ -23,7 +23,7 @@ export const useHiddenPrivateStore = create<HiddenPrivate>()(
   }),
 );
 
-/** Whether browsing lists (feeds, Explore, tag pages, search) leave unreadable private posts out. */
+/** The setting: browsing lists (feeds, Explore, tag pages, search) leave unreadable private posts out. */
 export const useHideUnreadablePrivate = () => useHiddenPrivateStore((s) => s.hide);
 
 export function setHidePrivate(hide: boolean): void {

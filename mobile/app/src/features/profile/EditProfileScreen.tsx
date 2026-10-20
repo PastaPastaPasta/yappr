@@ -203,12 +203,11 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
     </>
   );
   // The rarely changed settings, folded away until asked for.
-  const moreShown = moreOpen;
   const moreFields = (
     <View className={cn('overflow-hidden rounded-xl border', tw.border)}>
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ expanded: moreShown }}
+        accessibilityState={{ expanded: moreOpen }}
         onPress={() => setMoreOpen((open) => !open)}
         testID="edit-more"
         className={cn('min-h-12 flex-row items-center px-4 py-3', tw.pressed)}
@@ -216,11 +215,11 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         <Text variant="bodyStrong" className="flex-1">
           More
         </Text>
-        <View style={{ transform: [{ rotate: moreShown ? '180deg' : '0deg' }] }}>
+        <View style={{ transform: [{ rotate: moreOpen ? '180deg' : '0deg' }] }}>
           <ChevronDownIcon size={18} color={c.textSecondary} />
         </View>
       </Pressable>
-      {moreShown ? (
+      {moreOpen ? (
         <View className={cn('gap-4 border-t px-4 py-4', tw.border)}>
           <TextField
             label="Banner image link"

@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import { View } from 'react-native';
 
 import { useCapabilities, useSession } from '~/data/session';
-import { HIDE_PRIVATE_LABEL, setHidePrivate, useHiddenPrivateStore } from '~/features/post/hidden-private';
+import { HIDE_PRIVATE_LABEL, setHidePrivate, useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { useAppearance } from '~/state/appearance';
 import { ErrorState } from '~/ui/EmptyState';
 import { selectionTick } from '~/ui/haptics';
@@ -82,7 +82,7 @@ export function NotificationSettingsScreen() {
 export function PrivacySettingsScreen() {
   const { signedIn } = useSession();
   const capabilities = useCapabilities();
-  const hidePrivate = useHiddenPrivateStore((s) => s.hide);
+  const hidePrivate = useHideUnreadablePrivate();
   const { data, gate } = useSettingsGate(copy.sections.privacy);
   if (!data) return gate;
   return (
