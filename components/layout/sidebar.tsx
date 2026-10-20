@@ -179,6 +179,7 @@ export function Sidebar() {
     }
   }, [identityId])
 
+  const onNotificationsPage = pathname === '/notifications'
   // Initial notification fetch and polling
   useEffect(() => {
     // Blocks made this session belong to the account that made them.
@@ -251,7 +252,8 @@ export function Sidebar() {
     // poll for what is new, and only once the interval since the last fetch is up.
     const warm = notificationsFetched?.userId === userId && useNotificationStore.getState().hasFetchedOnce
     let initial = !warm
-    const due = !warm || Date.now() - (notificationsFetched?.at ?? 0) >= NOTIFICATION_POLL_INTERVAL
+    // Opening the notifications page itself always checks for new ones.
+    const due = !warm || onNotificationsPage || Date.now() - (notificationsFetched?.at ?? 0) >= NOTIFICATION_POLL_INTERVAL
     const stopPolling = startVisibilityPolling(async () => {
       try {
         await fetchNotifications(initial)
@@ -264,7 +266,7 @@ export function Sidebar() {
       cancelled = true
       stopPolling()
     }
-  }, [user?.identityId, dmV5])
+  }, [user?.identityId, dmV5, onNotificationsPage])
   
   // Get navigation based on auth status (use safe defaults during SSR)
   const navigation = getNavigation(isHydrated ? !!user : false, user?.identityId)
