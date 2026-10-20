@@ -70,11 +70,16 @@ async function wasmResponse(response: Response | undefined, brotli: boolean): Pr
     },
     cancel(reason) { return reader.cancel(reason) },
   })
-  // gzip by its magic. WASM itself (`\0asm`) passes through: a host that set
-  // Content-Encoding, which the browser already decoded. Brotli has no magic
-  // number, so the .br file is known by its name.
+  // WASM itself (`\0asm`) passes through: a host that set Content-Encoding,
+  // which the browser already decoded. Otherwise the .br file is brotli, known
+  // by its name (a brotli stream can begin with the gzip magic bytes), and
+  // the .gz file is gzip by its magic.
+  const wasm = magic[0] === 0x00 && magic[1] === 0x61
   let body: ReadableStream<BufferSource> = stream
-  if (magic[0] === 0x1f && magic[1] === 0x8b) body = stream.pipeThrough(new DecompressionStream('gzip'))
-  else if (brotli && !(magic[0] === 0x00 && magic[1] === 0x61)) body = stream.pipeThrough(new DecompressionStream('brotli' as CompressionFormat))
+  if (brotli) {
+    if (!wasm) body = stream.pipeThrough(new DecompressionStream('brotli' as CompressionFormat))
+  } else if (magic[0] === 0x1f && magic[1] === 0x8b) {
+    body = stream.pipeThrough(new DecompressionStream('gzip'))
+  }
   return new Response(body, { headers: { 'Content-Type': 'application/wasm' } })
 }

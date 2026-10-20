@@ -8,6 +8,7 @@ import { loadCompositeFeedPage, usernamesByIdentity, type CompositeFeedPage } fr
 import { dpnsService } from '@/lib/services/dpns-service';
 import { getEvoSdk } from '@/lib/services/evo-sdk-service';
 import { postService } from '@/lib/services/post-service';
+import type { AuthorPostCounts } from '@/lib/services/post-query-helpers';
 import { topLikedPosts } from '@/lib/services/ranked-likes';
 import { documentToPlainObject } from '@/lib/services/sdk-helpers';
 import { unifiedProfileService, type UnifiedProfileDocument } from '@/lib/services/unified-profile-service';
@@ -97,8 +98,9 @@ function topAuthors(authorCounts: ReadonlyMap<string, number>): [string, number]
     .slice(0, TOP_USERS_LIMIT);
 }
 
-function authorStats(authorCounts: ReadonlyMap<string, number>): Pick<HomepageSnapshot, 'authorCount' | 'authorCountCapped'> {
-  return { authorCount: authorCounts.size, authorCountCapped: authorCounts.size >= AUTHOR_GROUP_CAP };
+/** A count the grouping capped, or a scan that stopped short, is a floor: shown as "N+". */
+function authorStats({ counts, truncated }: AuthorPostCounts): Pick<HomepageSnapshot, 'authorCount' | 'authorCountCapped'> {
+  return { authorCount: counts.size, authorCountCapped: truncated || counts.size >= AUTHOR_GROUP_CAP };
 }
 
 /** The pre-composite shape: works on every topology and every node version. */
@@ -111,7 +113,7 @@ async function loadHomepageLegacy(): Promise<HomepageSnapshot> {
   ]);
   return {
     totalPosts, postsToday, featuredPosts, ...authorStats(authorCounts),
-    topUsers: await topContributors(authorCounts, lookUpContributors),
+    topUsers: await topContributors(authorCounts.counts, lookUpContributors),
   };
 }
 
@@ -173,7 +175,7 @@ async function loadHomepageRanked(onFeatured?: (posts: Post[]) => void): Promise
     authorCounts,
     // A failed composite costs the contributors only their composite: they fall
     // back to per-slice lookups, so featured cards already shown are never re-read.
-    topUsers: await topContributors(authorCounts, (ids) => loadContributorIdentities(ids).catch((error: unknown) => {
+    topUsers: await topContributors(authorCounts.counts, (ids) => loadContributorIdentities(ids).catch((error: unknown) => {
       logger.warn('Homepage: contributors composite failed, looking them up one slice at a time:', error);
       return lookUpContributors(ids);
     })),
