@@ -1,7 +1,7 @@
 import type { StoreManageDTO, StorePolicy, StoreStatus } from '@engine/api';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -13,7 +13,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { ManageUnavailable, Notice, patchAt, Section } from './parts';
+import { FormScroll, ManageUnavailable, Notice, patchAt, Section } from './parts';
 import { saveStoreWrite, STORE_CREATE_KEY } from './store-writes';
 
 const STATUSES: { value: StoreStatus; title: string; description: string }[] = [
@@ -65,7 +65,7 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
   return (
     <Screen>
       <Stack.Screen options={{ title: editing ? 'Edit store' : 'Create store' }} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID="store-edit">
+      <FormScroll testID="store-edit">
         <View className="gap-3">
           <TextField label="Store name" value={name} onChangeText={setName} maxLength={100} testID="store-name" />
           <TextField label="Description" value={description} onChangeText={setDescription} multiline maxLength={1000} testID="store-description" />
@@ -110,7 +110,7 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
         </Section>
         {save.status === 'unconfirmed' ? <Notice tone="warning" text="Saved, awaiting network confirmation." /> : null}
         <Button className="mt-6" size="block" testID="store-save" label={editing ? 'Save store' : 'Create store'} loading={save.status === 'pending'} disabled={!name.trim() || (!editing && creating)} onPress={submit} />
-      </ScrollView>
+      </FormScroll>
     </Screen>
   );
 }

@@ -1,7 +1,7 @@
 import type { ShippingPricingConfig, ShippingZone, Store } from '@engine/api';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, View } from 'react-native';
+import { Alert, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -16,7 +16,7 @@ import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { ManageUnavailable, Notice, patchAt, Section } from './parts';
+import { FormScroll, ManageUnavailable, Notice, patchAt, Section } from './parts';
 import { saveZoneWrite } from './store-writes';
 import { AmountField } from './VariantEditor';
 
@@ -98,7 +98,7 @@ function ZoneForm({ store, zone: loaded }: { store: Store; zone: ShippingZone | 
   return (
     <Screen>
       <Stack.Screen options={{ title: zone ? 'Edit zone' : 'Add zone' }} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID="zone-edit">
+      <FormScroll testID="zone-edit">
         <View className="gap-3">
           <TextField label="Zone name" value={name} onChangeText={setName} maxLength={100} placeholder="Domestic" testID="zone-name" />
           <SwitchRow label="Worldwide" value={worldwide} onValueChange={setWorldwide} testID="zone-worldwide" />
@@ -131,7 +131,7 @@ function ZoneForm({ store, zone: loaded }: { store: Store; zone: ShippingZone | 
         {save.status === 'unconfirmed' ? <Notice tone="warning" text="Saved, awaiting network confirmation." /> : null}
         <Button className="mt-6" size="block" testID="zone-save" label={zone ? 'Save zone' : 'Add zone'} loading={save.status === 'pending'} disabled={!name.trim()} onPress={submit} />
         {zone ? <Button className="mt-3" size="block" variant="ghost" label="Delete zone" loading={remove.status === 'pending'} onPress={confirmDelete} /> : null}
-      </ScrollView>
+      </FormScroll>
     </Screen>
   );
 }

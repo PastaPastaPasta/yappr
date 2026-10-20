@@ -89,7 +89,7 @@ const READ_MODULES = new Set(['feed', 'explore']);
  */
 const STORE_READS = new Set([
   'store.discover', 'store.get', 'store.detail', 'store.items', 'store.item', 'store.reviews', 'store.itemReviews',
-  'store.zones', 'store.mine', 'store.manage', 'store.checkout', 'store.myOrders', 'store.sellerOrders', 'store.order',
+  'store.zones', 'store.mine', 'store.manage', 'store.checkout', 'store.paymentAmount', 'store.myOrders', 'store.sellerOrders', 'store.order',
   'store.deliveryPlan', 'store.kit', 'store.reviewsOpen', 'store.ownReport', 'cart.get',
 ]);
 /**

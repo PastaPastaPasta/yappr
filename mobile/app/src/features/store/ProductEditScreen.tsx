@@ -1,7 +1,7 @@
 import type { ItemVariants, Store, StoreItem, StoreItemStatus, StoreManageDTO } from '@engine/api';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, View } from 'react-native';
+import { Alert, Pressable, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -15,7 +15,7 @@ import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { ManageUnavailable, Notice, Section } from './parts';
+import { FormScroll, ManageUnavailable, Notice, Section } from './parts';
 import { saveItemWrite } from './store-writes';
 import { AmountField, convertVariantPrices, emptyVariants, remapVariantImages, VariantEditor } from './VariantEditor';
 
@@ -94,7 +94,7 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
   return (
     <Screen>
       <Stack.Screen options={{ title: item ? 'Edit product' : 'Add product' }} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID="product-edit">
+      <FormScroll testID="product-edit">
         <View className="gap-3">
           <TextField label="Title" value={title} onChangeText={setTitle} maxLength={200} testID="product-title" />
           <TextField label="Description" value={description} onChangeText={setDescription} multiline maxLength={5000} testID="product-description" />
@@ -172,7 +172,7 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
             }
           />
         ) : null}
-      </ScrollView>
+      </FormScroll>
     </Screen>
   );
 }

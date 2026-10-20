@@ -1,7 +1,7 @@
 import type { KitDTO } from '@engine/api';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -18,7 +18,7 @@ import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
 
-import { errorText, Loading, Notice, patchAt, Section } from './parts';
+import { errorText, FormScroll, Loading, Notice, patchAt, Section } from './parts';
 
 const EMPTY: KitDTO = { instructions: '', files: [], links: [], codes: [], licenseKeys: null, deliverWhen: 'payment_confirmed' };
 
@@ -76,7 +76,7 @@ function KitForm({ itemId, initial, revision: loadedRevision }: { itemId: string
   return (
     <Screen>
       <Stack.Screen options={{ title: 'Delivery content' }} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID="kit-edit">
+      <FormScroll testID="kit-edit">
         <Text tone="secondary">What every buyer of this product receives. Only you and your buyers can see it.</Text>
         <Section title="When to deliver">
           <RadioGroup
@@ -124,7 +124,7 @@ function KitForm({ itemId, initial, revision: loadedRevision }: { itemId: string
           </Section>
         ) : null}
         <Button className="mt-6" size="block" testID="kit-save" label="Save delivery content" loading={saving} onPress={submit} />
-      </ScrollView>
+      </FormScroll>
     </Screen>
   );
 }

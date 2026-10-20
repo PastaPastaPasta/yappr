@@ -1,6 +1,6 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -11,7 +11,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { Loading, Notice, Section, StarInput } from './parts';
+import { FormScroll, Loading, Notice, Section, StarInput } from './parts';
 import { reviewWrite } from './store-writes';
 
 const RATING_LABELS = ['Tap a star to rate', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
@@ -52,7 +52,7 @@ export function ReviewScreen() {
   return (
     <Screen>
       <Stack.Screen options={{ title: 'Leave a review' }} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }} keyboardShouldPersistTaps="handled" testID="review">
+      <FormScroll testID="review">
         <Text variant="title">{buyerOrder.storeName ?? 'This store'}</Text>
         {open.data === false ? <Notice tone="warning" text="Reviews aren't open yet. Check back soon." /> : null}
         <Section title="Your rating">
@@ -75,7 +75,7 @@ export function ReviewScreen() {
         ) : null}
         <Text variant="caption" tone="secondary" className="mt-4">Reviews are public.</Text>
         <Button className="mt-4" size="block" label="Post review" testID="review-submit" disabled={rating < 1 || open.data === false} loading={write.status === 'pending'} onPress={submit} />
-      </ScrollView>
+      </FormScroll>
     </Screen>
   );
 }

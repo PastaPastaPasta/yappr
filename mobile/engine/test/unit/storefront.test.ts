@@ -36,6 +36,7 @@ const m = vi.hoisted(() => ({
   reviews: { getOrderReviews: vi.fn(), createReview: vi.fn() },
   itemReviews: { query: vi.fn(), createItemReview: vi.fn() },
   fulfillOrder: vi.fn(),
+  convertToCrypto: vi.fn(),
 }))
 
 vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>(), getCurrentUserId: () => m.viewer }))
@@ -74,6 +75,7 @@ vi.mock('@/lib/services/item-deliverable-service', async (load) => ({ ...await l
 vi.mock('@/lib/services/store-item-service', () => ({ storeItemService: m.items }))
 vi.mock('@/lib/services/store-review-service', () => ({ storeReviewService: m.reviews }))
 vi.mock('@/lib/services/item-review-service', () => ({ itemReviewService: m.itemReviews }))
+vi.mock('@/lib/services/crypto-price-service', () => ({ cryptoPriceService: { convertToCrypto: m.convertToCrypto } }))
 vi.mock('@/lib/services/digital-fulfillment', async (load) => ({ ...await load<object>(), fulfillOrder: m.fulfillOrder }))
 
 const { createTicketStore } = await import('../../src/writes/tickets')
@@ -201,6 +203,13 @@ describe('placing an order', () => {
     expect(ticket.error?.userMessage).toMatch(message)
     expect(m.order.createOrder).not.toHaveBeenCalled()
     expect(m.removeStoreItems).not.toHaveBeenCalled()
+  })
+
+  it('never places an order with something to ship and no address (D-953)', async () => {
+    const e = engine()
+    const ticket = await settled(e.tickets, await e.store.placeOrder({ storeId: STORE, shipTo: null, paymentUri: 'dash:yXdashAddress', reviewed: reviewed(2, 0) }))
+    expect(ticket.error).toMatchObject({ code: 'BAD_REQUEST', outcome: 'local', userMessage: expect.stringMatching(/shipping address/) })
+    expect(m.order.createOrder).not.toHaveBeenCalled()
   })
 
   it('refuses a payment method the store does not list', async () => {
@@ -520,6 +529,28 @@ describe('reviews', () => {
     const ticket = await settled(e.tickets, await e.store.review({ orderId: ORDER, rating: 5 }))
     expect(ticket).toMatchObject({ state: 'failed', retryable: true })
     expect(m.reviews.createReview).not.toHaveBeenCalled()
+  })
+})
+
+describe('payment amount (D-952)', () => {
+  const uri = 'dash:yLadnCajwhccmjsUS1Bm2icVv5ehdeFtxj'
+
+  it('converts the fiat total at the averaged price and asks for it in the URI', async () => {
+    m.convertToCrypto.mockResolvedValue({ cryptoAmount: 0.6333, price: 30, sources: ['a'] })
+    await expect(engine().store.paymentAmount({ paymentUri: uri, total: 1900, currency: 'USD' })).resolves.toEqual({
+      amount: 0.6333, display: '0.63330000 DASH', uri: `${uri}?amount=0.63330000`,
+    })
+    expect(m.convertToCrypto).toHaveBeenCalledWith(19, 'USD', 'dash:')
+  })
+
+  it('needs no price for a store priced in the coin itself', async () => {
+    await expect(engine().store.paymentAmount({ paymentUri: uri, total: 150_000_000, currency: 'DASH' })).resolves.toMatchObject({ amount: 1.5, uri: `${uri}?amount=1.50000000` })
+    expect(m.convertToCrypto).not.toHaveBeenCalled()
+  })
+
+  it('answers null when no price can be read, so the buyer pays the fiat total', async () => {
+    m.convertToCrypto.mockResolvedValue(null)
+    await expect(engine().store.paymentAmount({ paymentUri: uri, total: 1900, currency: 'USD' })).resolves.toBeNull()
   })
 })
 

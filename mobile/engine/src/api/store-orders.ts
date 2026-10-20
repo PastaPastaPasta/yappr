@@ -118,6 +118,7 @@ async function readPayload(order: StoreOrder, key: Uint8Array, sellerKey: Uint8A
   }
 }
 const ORDER_STATUSES: readonly OrderStatus[] = ['pending', 'payment_received', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'disputed']
+const SHIPPING_ADDRESS_MESSAGE = 'Add a shipping address to check out.'
 const CART_CHANGED_MESSAGE = 'Your cart changed since you reviewed this order. Review it again before continuing.'
 const FULFILLMENT_CHANGED_MESSAGE = 'The seller changed how one of these products is delivered (shipped or digital). Review your order and shipping again before continuing.'
 
@@ -754,6 +755,8 @@ async function prepareOrder(buyer: string, input: PlaceOrderInput) {
 
   const digitalOnly = lines.every(line => line.fulfillment === 'digital')
   const shipTo = input.shipTo && !digitalOnly ? cleanAddress(input.shipTo) : undefined
+  // Anything to ship needs an address, priced under the seller's zones (web checkout).
+  if (!digitalOnly && !shipTo) throw notSent(SHIPPING_ADDRESS_MESSAGE)
   let shippingCost = 0
   if (shipTo) {
     let fresh: ShippingCheck | null
