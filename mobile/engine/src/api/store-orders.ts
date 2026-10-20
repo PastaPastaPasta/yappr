@@ -37,6 +37,41 @@ import type { TicketDocument, WriteTicket } from '../writes/types'
 import { checkoutBlockerMessage, checkoutReadiness, cleanAddress, cleanContact, sellerEncryptionKey, storefrontDoc } from './store-shared'
 
 const ORDERS_PAGE = 20
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+const isText = (value: unknown): value is string => typeof value === 'string'
+const isAmount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+
+/**
+ * The decrypted order as the screens may read it, or null. The payload is the
+ * BUYER's JSON: decrypting it proves nothing about its shape, and one order
+ * whose `items` is not a list would break the seller's whole list.
+ */
+function validPayload(value: unknown): OrderPayload | null {
+  if (!isRecord(value) || !Array.isArray(value.items)) return null
+  const items = value.items.filter((line): line is OrderPayload['items'][number] =>
+    isRecord(line) && isText(line.itemId) && isText(line.itemTitle) && isAmount(line.quantity) && isAmount(line.unitPrice))
+  if (items.length !== value.items.length || items.length === 0) return null
+  if (!isAmount(value.subtotal) || !isAmount(value.shippingCost) || !isAmount(value.total) || !isText(value.currency) || !isText(value.paymentUri)) return null
+  const address = value.shippingAddress
+  if (address !== undefined && !(isRecord(address) && ['name', 'street', 'city', 'postalCode', 'country'].every(field => isText(address[field])))) return null
+  for (const field of ['txid', 'notes', 'refundAddress'] as const) if (value[field] !== undefined && !isText(value[field])) return null
+  const contact = isRecord(value.buyerContact) ? value.buyerContact : {}
+  return {
+    ...(value as unknown as OrderPayload),
+    items,
+    buyerContact: { ...(isText(contact.email) ? { email: contact.email } : {}), ...(isText(contact.phone) ? { phone: contact.phone } : {}) },
+  }
+}
+
+/** Decrypt and validate one order's payload; null when this key can't read it or it is malformed. */
+async function readPayload(order: StoreOrder, key: Uint8Array, sellerKey: Uint8Array | null, isBuyer: boolean): Promise<OrderPayload | null> {
+  try {
+    return validPayload(await storeOrderService.decryptOrderPayload(order.encryptedPayload, order.nonce, order.storeId, key, sellerKey, isBuyer))
+  } catch {
+    return null
+  }
+}
 const ORDER_STATUSES: readonly OrderStatus[] = ['pending', 'payment_received', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'disputed']
 const CART_CHANGED_MESSAGE = 'Your cart changed since you reviewed this order. Review it again before continuing.'
 const FULFILLMENT_CHANGED_MESSAGE = 'The seller changed how one of these products is delivered (shipped or digital). Review your order and shipping again before continuing.'
@@ -331,11 +366,9 @@ async function sellerOrders(seller: string, orders: StoreOrder[]): Promise<Selle
   const payloads = new Map<string, OrderPayload>()
   await Promise.all(orders.map(async order => {
     if (!key) return
-    try {
-      payloads.set(order.id, await storeOrderService.decryptOrderPayload(order.encryptedPayload, order.nonce, order.storeId, key, null, false))
-    } catch {
-      // Shown as "could not be read".
-    }
+    const payload = await readPayload(order, key, null, false)
+    // Unreadable or malformed: shown as "could not be read".
+    if (payload) payloads.set(order.id, payload)
   }))
   let statusesFailed = false
   const [statusMap, names] = await Promise.all([
@@ -406,11 +439,8 @@ async function buyerOrders(buyer: string, orders: StoreOrder[]): Promise<BuyerOr
   await Promise.all(orders.map(async order => {
     const sellerKey = keys.get(order.sellerId)
     if (!key || !sellerKey) return
-    try {
-      payloads.set(order.id, await storeOrderService.decryptOrderPayload(order.encryptedPayload, order.nonce, order.storeId, key, sellerKey, true))
-    } catch {
-      // Shown as "could not be read".
-    }
+    const payload = await readPayload(order, key, sellerKey, true)
+    if (payload) payloads.set(order.id, payload)
   }))
   const statuses = storefrontStatusIsSealed() && key ? openStatusNotesAsBuyer(statusMap, orders, key, keys) : statusMap
 
@@ -471,12 +501,8 @@ interface DeliveryState {
 /** Everything a delivery is worked out from, read fresh. Throws when any read fails: nothing is sent on a guess. */
 async function deliveryState(seller: string, orderId: string, key: Uint8Array): Promise<DeliveryState> {
   const order = await sellerOrder(seller, orderId)
-  let payload: OrderPayload
-  try {
-    payload = await storeOrderService.decryptOrderPayload(order.encryptedPayload, order.nonce, order.storeId, key, null, false)
-  } catch {
-    throw badRequest('This order could not be read with your key')
-  }
+  const payload = await readPayload(order, key, null, false)
+  if (!payload) throw badRequest('This order could not be read with your key')
   const lines = digitalLines(payload)
   if (lines.length === 0) throw badRequest('This order has nothing to deliver digitally')
   const itemIds = [...new Set(lines.map(line => line.itemId))]

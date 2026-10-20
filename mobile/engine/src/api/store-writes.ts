@@ -204,24 +204,40 @@ function beforeSigning(error: unknown): never {
  * "Check again" for an update: the document's revision moved past the one the
  * edit was made from. A disagreement counts only when a second read agrees.
  */
-function revisionProbe(type: string) {
-  return async (ticket: WriteTicket, args: { id?: string; revision?: number } | undefined, kit: ProbeKit): Promise<ProbeResult> => {
+/**
+ * "Check again" for an update. A revision past the one the edit was made
+ * from proves only that SOME update landed (another device may have won):
+ * it is this edit only when the stored document also shows what this edit
+ * wrote (`shows`). A newer revision showing something else stays unknown.
+ * No newer revision, twice, is not applied.
+ */
+function revisionProbe<A extends UpdateArgs>(type: string, shows: (args: A) => Promise<boolean>) {
+  return async (ticket: WriteTicket, args: A | undefined, kit: ProbeKit): Promise<ProbeResult> => {
     if (!args?.id || args.revision === undefined) return kit.proveDocuments(ticket.documents)
     const { id, revision: editedFrom } = args
-    const read = async () => {
+    const moved = async () => {
       const sdk = await getEvoSdk()
       const document = await sdk.documents.get(YAPPR_STOREFRONT_CONTRACT_ID, type, id) as { revision?: unknown; $revision?: unknown } | null
       return Number(document?.revision ?? document?.$revision ?? 0) > editedFrom
     }
     try {
-      if (await read()) return { state: 'applied' }
-      await kit.recheckDelay()
-      return (await read()) ? { state: 'applied' } : { state: 'not-applied' }
+      if (!(await moved())) {
+        await kit.recheckDelay()
+        if (!(await moved())) return { state: 'not-applied' }
+      }
+      return (await shows(args)) ? { state: 'applied' } : { state: 'unknown', error: new Error('Another edit landed after this one was made') }
     } catch (error) {
       return { state: 'unknown', error }
     }
   }
 }
+
+const sameText = (stored: string | undefined, sent: string | undefined) => (stored ?? '').trim() === (sent ?? '').trim()
+
+const zoneUpdateProbe = revisionProbe<ZoneSaveInput & UpdateArgs>(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE, async ({ id, storeId, fields }) => {
+  const stored = (await shippingZoneService.getByStore(storeId)).find(zone => zone.id === id)
+  return Boolean(stored) && sameText(stored?.name, fields?.name) && stored?.flatRate === fields?.flatRate && sameText(stored?.countryPattern, fields?.countryPattern)
+})
 
 /** Input checks run before anything is signed: a refusal there is a failed ticket that sent nothing. */
 function checkedBeforeSending<T>(check: () => T): T {
@@ -243,8 +259,6 @@ function created(type: string, document: { id: string } | null, ctx: { documents
 interface UpdateArgs { id?: string; revision?: number }
 
 export function createStoreWrites(tickets: TicketStore) {
-  const zoneRevisionProbe = revisionProbe(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE)
-
   tickets.register<StoreSaveInput & UpdateArgs>('store.save', {
     persistArgs: true,
     async run(input, ctx) {
@@ -257,7 +271,10 @@ export function createStoreWrites(tickets: TicketStore) {
       await storeService.updateStore(input.storeId, owner, data).catch(beforeSigning)
       return { state: 'confirmed' }
     },
-    probe: revisionProbe(STOREFRONT_DOCUMENT_TYPES.STORE),
+    probe: revisionProbe<StoreSaveInput & UpdateArgs>(STOREFRONT_DOCUMENT_TYPES.STORE, async ({ id, fields }) => {
+      const stored = await storeService.getCurrent(id as string)
+      return Boolean(stored) && sameText(stored?.name, fields.name) && stored?.status === (fields.status ?? 'active') && sameText(stored?.description, fields.description)
+    }),
   })
 
   tickets.register<ItemSaveInput & UpdateArgs>('store.item', {
@@ -279,7 +296,12 @@ export function createStoreWrites(tickets: TicketStore) {
       await storeItemService.updateItem(input.itemId, owner, input.storeId, data, input.revision).catch(beforeSigning)
       return { state: 'confirmed' }
     },
-    probe: revisionProbe(STOREFRONT_DOCUMENT_TYPES.STORE_ITEM),
+    probe: revisionProbe<ItemSaveInput & UpdateArgs>(STOREFRONT_DOCUMENT_TYPES.STORE_ITEM, async ({ id, archive, fields }) => {
+      const [stored] = await storeItemService.getManyFresh([id as string])
+      if (!stored) return false
+      if (archive) return stored.status === 'deleted'
+      return sameText(stored.title, fields?.title) && stored.status === (fields?.status ?? 'active') && stored.basePrice === fields?.basePrice && stored.stockQuantity === fields?.stockQuantity
+    }),
   })
 
   tickets.register<ZoneSaveInput & UpdateArgs>('store.zone', {
@@ -300,7 +322,9 @@ export function createStoreWrites(tickets: TicketStore) {
       await shippingZoneService.updateZone(input.zoneId, owner, input.storeId, data).catch(beforeSigning)
       return { state: 'confirmed' }
     },
-    probe: async (ticket, args, kit) => (args?.delete ? kit.proveDocuments(ticket.documents) : zoneRevisionProbe(ticket, args, kit)),
+    probe: async (ticket, args, kit) => (args?.delete
+      ? kit.proveDocuments(ticket.documents)
+      : zoneUpdateProbe(ticket, args, kit)),
   })
 
   tickets.register<ReviewInput>('store.review', {
@@ -345,6 +369,24 @@ export function createStoreWrites(tickets: TicketStore) {
       }
       ctx.progress(1 + rated.length, 1 + rated.length)
       return { state: documents.every(doc => doc.confirmed) ? 'confirmed' : 'unconfirmed', documents }
+    },
+    // Applied only when the store review and every requested item review are on chain (unique per order and item).
+    async probe(ticket, input, kit) {
+      if (!input) return kit.proveDocuments(ticket.documents)
+      try {
+        if (!(await storeReviewService.getOrderReviews([input.orderId])).has(input.orderId)) {
+          await kit.recheckDelay()
+          return (await storeReviewService.getOrderReviews([input.orderId])).has(input.orderId) ? { state: 'unknown', error: new Error('The review is still landing') } : { state: 'not-applied' }
+        }
+        const rated = storefrontIsV2() ? (input.items ?? []).filter(item => item.rating >= 1 && item.rating <= 5) : []
+        for (const item of rated) {
+          const found = (await itemReviewService.query({ where: [['orderId', '==', input.orderId], ['itemId', '==', item.itemId]], limit: 1 })).documents[0]
+          if (!found) return { state: 'not-applied' }
+        }
+        return { state: 'applied' }
+      } catch (error) {
+        return { state: 'unknown', error }
+      }
     },
   })
 

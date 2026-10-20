@@ -340,6 +340,11 @@ describe('digital delivery', () => {
     expect(failed.recoveryText).toContain('KEY-1')
   })
 
+  it('treats a malformed buyer-written payload as unreadable instead of handing it to the screens', async () => {
+    m.order.decryptOrderPayload.mockResolvedValue({ items: {}, total: 1, subtotal: 1, shippingCost: 0, currency: 'USD', paymentUri: 'x' })
+    await expect(engine().store.deliveryPlan(ORDER)).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/could not be read/) })
+  })
+
   it('needs the key on this device', async () => {
     m.buyerKey = null
     await expect(engine().store.deliveryPlan(ORDER)).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/Unlock/) })

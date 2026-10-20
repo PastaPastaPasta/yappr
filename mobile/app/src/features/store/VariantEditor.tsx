@@ -54,6 +54,25 @@ export function addAxis(variants: ItemVariants, name: string, choice: string, pr
   return { axes, combinations, nextOptionId: id + 1 };
 }
 
+/**
+ * Combination photos follow their image when the gallery changes: `image` is a
+ * 1-based gallery position, so each is re-pointed by URL (cleared when its
+ * image was removed).
+ */
+export function remapVariantImages(variants: ItemVariants, before: readonly string[], after: readonly string[]): ItemVariants {
+  return {
+    ...variants,
+    combinations: variants.combinations.map((combination) => {
+      if (combination.image === undefined) return combination;
+      const index = after.indexOf(before[combination.image - 1] ?? '');
+      const next: VariantCombination = { ...combination };
+      if (index >= 0) next.image = index + 1;
+      else delete next.image;
+      return next;
+    }),
+  };
+}
+
 /** Re-express every combination price in `to` (web `convertPrices`): prices are in each currency's smallest unit. */
 export function convertVariantPrices(variants: ItemVariants, from: string, to: string): ItemVariants {
   return { ...variants, combinations: variants.combinations.map((combination) => ({ ...combination, price: toSmallestUnit(fromSmallestUnit(combination.price, from), to) })) };

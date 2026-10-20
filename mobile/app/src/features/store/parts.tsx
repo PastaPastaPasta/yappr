@@ -8,6 +8,8 @@ import { Linking, Pressable, RefreshControl, View } from 'react-native';
 
 import { formatPrice } from '~/lib-allowlist';
 import { engine } from '~/engine';
+
+import { ReportLink } from './StoreReportScreen';
 import { Button } from '~/ui/Button';
 import { Card } from '~/ui/Card';
 import { ErrorState } from '~/ui/EmptyState';
@@ -30,6 +32,7 @@ export function patchAt<T extends object>(list: readonly T[], index: number, pat
 
 interface ReviewLike {
   id: string;
+  reviewerId: string;
   rating: number;
   title?: string;
   content?: string;
@@ -39,7 +42,7 @@ interface ReviewLike {
 /** A store's or a product's reviews. */
 export const reviewCount = (count: number) => `${count} review${count === 1 ? '' : 's'}`;
 
-export function ReviewsSection({ reviews, failed = false, onRetry }: { reviews: readonly ReviewLike[] | undefined; failed?: boolean; onRetry?: () => void }) {
+export function ReviewsSection({ reviews, docType, failed = false, onRetry }: { reviews: readonly ReviewLike[] | undefined; docType: 'storeReview' | 'itemReview'; failed?: boolean; onRetry?: () => void }) {
   return (
     <Section title="Reviews">
       {failed && !reviews ? (
@@ -53,7 +56,10 @@ export function ReviewsSection({ reviews, failed = false, onRetry }: { reviews: 
           <Stars rating={review.rating} />
           {review.title ? <Text variant="bodyStrong">{review.title}</Text> : null}
           {review.content ? <Text>{review.content}</Text> : null}
-          <Text variant="caption" tone="secondary">{review.createdAt.toLocaleDateString()}</Text>
+          <View className="flex-row items-center justify-between">
+            <Text variant="caption" tone="secondary">{review.createdAt.toLocaleDateString()}</Text>
+            <ReportLink target={{ docType, targetId: review.id, ownerId: review.reviewerId }} noun="review" compact />
+          </View>
         </View>
       ))}
     </Section>

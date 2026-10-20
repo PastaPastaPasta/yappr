@@ -42,6 +42,8 @@ function ZoneForm({ store, zone }: { store: Store; zone: ShippingZone | null }) 
   const remove = useWrite(saveZoneWrite);
   const initialCurrency = zone?.currency ?? store.defaultCurrency ?? 'USD';
   const config = zone?.tiers && !Array.isArray(zone.tiers) ? (zone.tiers as ShippingPricingConfig) : null;
+  // Weight or order-total tier tables: the app keeps them exactly as stored and edits everything else.
+  const tiered = zone !== null && (zone.rateType !== 'flat' || Array.isArray(zone.tiers));
   const [name, setName] = useState(zone?.name ?? '');
   const [worldwide, setWorldwide] = useState(zone ? !zone.countryPattern : false);
   const [countries, setCountries] = useState(zone?.countryPattern ?? '');
@@ -72,9 +74,9 @@ function ZoneForm({ store, zone }: { store: Store; zone: ShippingZone | null }) 
       ...(zone ? { zoneId: zone.id, revision: zone.$revision } : {}),
       fields: {
         name,
-        rateType: 'flat',
-        flatRate: base ? toSmallestUnit(base, currency) : undefined,
-        tiers,
+        ...(tiered && zone
+          ? { rateType: zone.rateType, flatRate: zone.flatRate, tiers: zone.tiers }
+          : { rateType: 'flat' as const, flatRate: base ? toSmallestUnit(base, currency) : undefined, tiers }),
         currency,
         countryPattern: worldwide ? undefined : countries.trim() || undefined,
         priority: Math.max(0, priority ?? 0),
@@ -101,7 +103,12 @@ function ZoneForm({ store, zone }: { store: Store; zone: ShippingZone | null }) 
           <AmountField label="Priority (lower matches first)" whole amount={priority} onAmount={setPriority} testID="zone-priority" />
           <TextField label="Currency" value={currency} onChangeText={setCurrency} autoCapitalize="characters" autoCorrect={false} maxLength={5} testID="zone-currency" />
         </View>
-        <Section title="Pricing">
+        {tiered ? (
+          <Section title="Pricing">
+            <Text tone="secondary">This zone charges by weight or order total in tiers. Its rates stay as they are.</Text>
+          </Section>
+        ) : null}
+        {tiered ? null : <><Section title="Pricing">
           <AmountField label={`Base rate (${currency}, blank: free)`} amount={base} onAmount={setBase} testID="zone-base" />
           <AmountField label={`Rate per weight unit (${currency}, optional)`} amount={weightRate} onAmount={setWeightRate} testID="zone-weight-rate" />
           {weightRate ? (
@@ -117,7 +124,7 @@ function ZoneForm({ store, zone }: { store: Store; zone: ShippingZone | null }) 
               <Button size="sm" variant="ghost" label="Remove" onPress={() => setMultipliers((list) => list.filter((_, i) => i !== index))} />
             </Card>
           ))}
-        </Section>
+        </Section></>}
         {save.status === 'unconfirmed' ? <Notice tone="warning" text="Saved, awaiting network confirmation." /> : null}
         <Button className="mt-6" size="block" testID="zone-save" label={zone ? 'Save zone' : 'Add zone'} loading={save.status === 'pending'} disabled={!name.trim()} onPress={submit} />
         {zone ? <Button className="mt-3" size="block" variant="ghost" label="Delete zone" loading={remove.status === 'pending'} onPress={confirmDelete} /> : null}

@@ -17,7 +17,7 @@ import { TextField } from '~/ui/TextField';
 
 import { ManageUnavailable, Notice, Section } from './parts';
 import { saveItemWrite } from './store-writes';
-import { AmountField, convertVariantPrices, emptyVariants, VariantEditor } from './VariantEditor';
+import { AmountField, convertVariantPrices, emptyVariants, remapVariantImages, VariantEditor } from './VariantEditor';
 
 type EditableStatus = Exclude<StoreItemStatus, 'deleted'>;
 
@@ -74,6 +74,7 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
   const supportsDigital = manage.supportsDigital;
   const zoneList = manage.zones;
   const submit = () => {
+    const gallery = images.split(/\s+/).filter(Boolean);
     save.run({
       storeId: store.id,
       ...(item ? { itemId: item.id, revision } : {}),
@@ -82,10 +83,10 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
         basePrice: amount === undefined ? undefined : toSmallestUnit(amount, currency),
         stockQuantity: stock,
         weight,
-        imageUrls: images.split(/\s+/).filter(Boolean),
+        imageUrls: gallery,
         fulfillment: digital ? 'digital' : 'shipped',
         shippingZoneIds: digital ? undefined : zones ?? undefined,
-        ...(withOptions ? { variants } : {}),
+        ...(withOptions ? { variants: remapVariantImages(variants, item?.imageUrls ?? [], gallery) } : {}),
       },
     }).catch(() => undefined);
   };

@@ -135,7 +135,7 @@ export function ItemScreen() {
           </View>
         )}
 
-        <ReviewsSection reviews={reviews.data?.reviews} failed={reviews.isError} onRetry={() => reviews.refetch()} />
+        <ReviewsSection docType="itemReview" reviews={reviews.data?.reviews} failed={reviews.isError} onRetry={() => reviews.refetch()} />
         {!own ? <ReportLink target={{ docType: 'storeItem', targetId: value.id, ownerId: value.ownerId }} noun="product" /> : null}
       </ScrollView>
     </Screen>

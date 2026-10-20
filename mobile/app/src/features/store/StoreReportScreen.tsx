@@ -23,7 +23,7 @@ import { storeReportWrite, withdrawStoreReportWrite } from './store-writes';
 const DOC_TYPES: readonly StoreReportTarget['docType'][] = ['store', 'storeItem', 'storeReview', 'itemReview'];
 
 /** "Report" under a store, product or review (web `ContractReportButton`): not on the viewer's own. */
-export function ReportLink({ target, noun }: { target: StoreReportTarget; noun: string }) {
+export function ReportLink({ target, noun, compact = false }: { target: StoreReportTarget; noun: string; compact?: boolean }) {
   const viewerId = useViewerId();
   if (viewerId === target.ownerId) return null;
   return (
@@ -32,9 +32,9 @@ export function ReportLink({ target, noun }: { target: StoreReportTarget; noun: 
       testID="store-report-link"
       onPress={() => requireAuth(() => router.push({ pathname: '/store-report', params: { ...target, noun } }))}
       style={{ minHeight: 44, justifyContent: 'center' }}
-      className="mt-6"
+      className={compact ? undefined : 'mt-6'}
     >
-      <Text tone="secondary">Report this {noun}</Text>
+      <Text variant={compact ? 'caption' : 'body'} tone="secondary">{compact ? 'Report' : `Report this ${noun}`}</Text>
     </Pressable>
   );
 }

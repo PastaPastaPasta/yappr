@@ -1,6 +1,6 @@
 import type { ItemVariants } from '@engine/api';
 
-import { addAxis, addOption, convertVariantPrices, emptyVariants, removeOption, renameOption } from './VariantEditor';
+import { addAxis, addOption, convertVariantPrices, emptyVariants, remapVariantImages, removeOption, renameOption } from './VariantEditor';
 
 const colors: ItemVariants = {
   axes: [{ name: 'Color', options: [{ id: 1, name: 'Red' }, { id: 2, name: 'Blue' }] }],
@@ -46,5 +46,12 @@ describe('id-stable variant edits', () => {
   it('re-expresses prices in the new currency', () => {
     expect(convertVariantPrices(colors, 'USD', 'EUR').combinations.map((c) => c.price)).toEqual([500, 2000]);
     expect(convertVariantPrices(colors, 'USD', 'DASH').combinations.map((c) => c.price)).toEqual([500_000_000, 2_000_000_000]);
+  });
+
+  it('keeps each combination on its photo when the gallery changes', () => {
+    const withPhotos = { ...colors, combinations: [{ ...colors.combinations[0], image: 2 }, { ...colors.combinations[1], image: 1 }] };
+    const next = remapVariantImages(withPhotos, ['A', 'B', 'C'], ['B', 'C']);
+    expect(next.combinations[0].image).toBe(1);
+    expect('image' in next.combinations[1]).toBe(false);
   });
 });

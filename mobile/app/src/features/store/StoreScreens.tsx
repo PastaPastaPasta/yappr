@@ -110,7 +110,7 @@ export function StoreScreen() {
   const footer = (
     <View className="px-4 pb-12">
       {items.hasNextPage ? <Button className="mt-2" variant="outline" label="Show more products" loading={items.isFetchingNextPage} onPress={() => items.fetchNextPage()} /> : null}
-      <ReviewsSection reviews={reviews.data?.reviews} failed={reviews.isError} onRetry={() => reviews.refetch()} />
+      <ReviewsSection docType="storeReview" reviews={reviews.data?.reviews} failed={reviews.isError} onRetry={() => reviews.refetch()} />
       {value ? <ReportLink target={{ docType: 'store', targetId: value.id, ownerId: value.ownerId }} noun="store" /> : null}
     </View>
   );
