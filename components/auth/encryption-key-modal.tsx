@@ -104,6 +104,7 @@ function KeyEntryEncryptionKeyModal() {
         if (!isModalActiveRef.current) return
         setAutoRecoveryStatus('failed')
         setAutoRecoveryMessage('')
+        if (isAppConnectBuild()) setShowAddKeyModal(true)
         return
       }
 
@@ -166,6 +167,8 @@ function KeyEntryEncryptionKeyModal() {
       if (!isModalActiveRef.current) return
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('')
+      // App Connect builds: the wallet / recovery-phrase prompt, never the bare key entry (D38).
+      if (isAppConnectBuild()) setShowAddKeyModal(true)
     }
   }, [close, user, onSuccess])
 

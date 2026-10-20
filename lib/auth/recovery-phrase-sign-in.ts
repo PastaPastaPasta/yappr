@@ -111,6 +111,8 @@ export type PhraseMessaging =
   | 'another-wallet'
   /** The account has none and adding it failed or did not show up in time. */
   | 'not-set-up'
+  /** The account has none, and the phrase doesn't hold the MASTER key that could add it. */
+  | 'no-master-key'
   /** This build has no messaging anchor. */
   | 'unavailable'
 
@@ -144,7 +146,10 @@ async function addMessagingKey(draft: MessagingKeyDraft, master: PhraseKey, canc
     state = await anchorKeyState(draft).catch(() => null)
     if (state === 'this-key' || state === 'other-key') return state
   }
-  return state
+  if (refused) return state
+  // Added, but the current-key read still lags: the identity's own newest anchor key decides.
+  const identity = await identityService.getIdentity(draft.identityId, { fresh: true }).catch(() => null)
+  return identity && phraseMessagingState(draft.publicKey, null, identity.publicKeys, draft.anchorId) === 'current' ? 'this-key' : state
 }
 
 /**
@@ -177,8 +182,9 @@ export async function preparePhraseSession(
     if (state === 'another-wallet') return { ...session, messagingKey: null, messaging: 'another-wallet' }
     if (state === 'absent') {
       const master = masterKey(held)
+      if (!master) return { ...session, messagingKey: null, messaging: 'no-master-key' }
       if (cancelled()) throw new PhraseSignInCancelled()
-      const added = master ? await addMessagingKey(messagingKey, master, cancelled) : null
+      const added = await addMessagingKey(messagingKey, master, cancelled)
       // Another device may have set messaging up meanwhile: say which.
       if (added === 'other-key') return { ...session, messagingKey: null, messaging: 'another-wallet' }
       if (added !== 'this-key') return { ...session, messagingKey: null, messaging: 'not-set-up' }

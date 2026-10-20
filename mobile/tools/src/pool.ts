@@ -14,7 +14,7 @@ import * as secp256k1 from '@noble/secp256k1'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { WasmSdk } from '@dashevo/evo-sdk'
 import { decodeYapprIdentityId } from '../../../vendor/platform-auth/src/key-exchange/yappr-protocol'
-import { dip13Wallet, identityAuthKeyPath, normalizeRecoveryPhrase, type Dip13Network, type Dip13Wallet } from '../../../lib/crypto/dip13'
+import { dip13Wallet, identityAuthKeyPath, InvalidPhraseError, normalizeRecoveryPhrase, type Dip13Network, type Dip13Wallet } from '../../../lib/crypto/dip13'
 import { dip13ConnectKeys, legacyConnectKeys, type ConnectKeys } from './app-connect/derive'
 
 export const POOL_ENV_VAR = 'YAPPR_SAKURA_IDENTITIES'
@@ -119,8 +119,10 @@ function poolWallet(pool: Pool): Dip13Wallet {
     if (!pool.mnemonic) throw new Error('The pool names no recovery phrase')
     try {
       wallet = dip13Wallet(WasmSdk, pool.mnemonic, poolDip13Network(pool.network))
-    } catch {
-      throw new Error('The pool\'s recovery phrase is not a valid BIP-39 phrase')
+    } catch (error) {
+      // Only a checksum failure is the phrase's fault; anything else (say, the SDK not initialised) is reported as it is.
+      if (error instanceof InvalidPhraseError) throw new Error('The pool\'s recovery phrase is not a valid BIP-39 phrase')
+      throw error
     }
     wallets.set(pool, wallet)
   }
