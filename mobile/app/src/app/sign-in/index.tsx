@@ -178,13 +178,13 @@ export default function SignInScreen() {
         </View>
 
         {/* Without a wallet the primary button already offers it. */}
-        {walletInstalled === false ? null : (
+        {walletInstalled !== true ? null : (
           <View className="flex-row flex-wrap items-center justify-center gap-1 pt-2">
             <Text variant="subhead" tone="secondary">
               {copy.signin.newToDash}
             </Text>
             <Button
-              label={copy.signin.getDashWallet}
+              label={copy.signin.getWallet}
               variant="link"
               size="sm"
               className="px-1"

@@ -1,5 +1,5 @@
 # Sign in with a private key (PRD AUTH-01, AUTH-08, AUTH-09; ADR E8), from a
-# cleared install: Welcome, Sign in, Other ways, the key (SIGN_IN_KEY, typed
+# cleared install: Welcome, Sign in, Advanced, the key (SIGN_IN_KEY, typed
 # from `-e`), "Identity found", the terms gate, Home. The account stays signed
 # in for the flows after this one.
 appId: ${APP_ID}

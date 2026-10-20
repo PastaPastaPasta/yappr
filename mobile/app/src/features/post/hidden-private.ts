@@ -6,7 +6,7 @@ import { syncStorage } from '~/state/storage';
 import { selectionTick } from '~/ui/haptics';
 import { toast } from '~/ui/toast';
 
-/** The setting's name, in the post menu and in Privacy & Safety (web uses the same words). */
+/** The setting's name, in the post menu and in Privacy & Safety (owner finding #4's wording). */
 export const HIDE_PRIVATE_LABEL = "Hide private posts I can't see";
 
 interface HiddenPrivate {
@@ -22,6 +22,9 @@ export const useHiddenPrivateStore = create<HiddenPrivate>()(
     merge: (persisted, current) => ({ ...current, hide: (persisted as Partial<HiddenPrivate> | undefined)?.hide === true }),
   }),
 );
+
+/** Whether browsing lists (feeds, Explore, tag pages, search) leave unreadable private posts out. */
+export const useHideUnreadablePrivate = () => useHiddenPrivateStore((s) => s.hide);
 
 export function setHidePrivate(hide: boolean): void {
   selectionTick();

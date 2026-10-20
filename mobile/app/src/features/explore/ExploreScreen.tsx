@@ -10,6 +10,7 @@ import { useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useCapabilities } from '~/data/session';
 import { openHashtag } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
+import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { cn } from '~/lib-allowlist';
 import { ComposeFab } from '~/ui/ComposeFab';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -87,6 +88,7 @@ function creatorRows(entries: readonly RankedUserDTO[]): Row[] {
  * each ranked list with its window where the axis has one.
  */
 export function ExploreScreen() {
+  const hidePrivate = useHideUnreadablePrivate();
   const c = useColors();
   const capabilities = useCapabilities();
   const offline = useOffline();
@@ -220,7 +222,7 @@ export function ExploreScreen() {
                 />
               );
             case 'post':
-              return <PostItem post={item.post} />;
+              return <PostItem post={item.post} hideUnreadablePrivate={hidePrivate} />;
             case 'section':
               return <SectionHeader title={item.title} />;
             case 'user':

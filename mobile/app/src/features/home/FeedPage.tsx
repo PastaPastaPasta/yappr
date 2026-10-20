@@ -7,6 +7,7 @@ import { RefreshControl, View } from 'react-native';
 import { useReducedMotion } from 'react-native-reanimated';
 
 import { PostItem } from '~/features/post/PostItem';
+import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { engineSupervisor } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
 import { Button } from '~/ui/Button';
@@ -102,6 +103,7 @@ function Connecting({ connecting }: { connecting: boolean }) {
  * FEED-01 – FEED-07, FEED-11).
  */
 export function FeedPage({ tab, sort, window, readable, live, offline, ref }: FeedPageProps) {
+  const hidePrivate = useHideUnreadablePrivate();
   const c = useColors();
   const reduceMotion = useReducedMotion();
   const { state: engineState } = useEngineStatus();
@@ -265,7 +267,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
         data={items}
         keyExtractor={(post) => post.id}
         getItemType={itemType}
-        renderItem={({ item }) => <PostItem post={item} />}
+        renderItem={({ item }) => <PostItem post={item} hideUnreadablePrivate={hidePrivate} />}
         ListEmptyComponent={empty}
         ListFooterComponent={footer}
         onEndReached={onEndReached}

@@ -48,8 +48,8 @@ export const tagCountLabel = (tag: TagDTO) => countLabel(tag.count, tag.countKin
 /**
  * A ranked list's window switch (web `windowedRankingFor`). Trending tags and
  * a tag's Top read the 24 h hashtag axis, Top posts the 3-day post axis;
- * both say "Recent", as web does, rather than name the span. Creators have
- * no window.
+ * both say "Recent" (owner finding #6) rather than name the span. Creators
+ * have no window.
  */
 export const RANKING_WINDOWS: readonly TabOption<RankingWindow>[] = [
   { value: 'today', label: 'Recent' },

@@ -2,10 +2,10 @@ import {
   canBookmark, canRepost, contentLimits, contractTakesReports, dashpayProfileExtension, deletesAreTombstones,
   followRankingsAvailable, hasFlatThreads, hashtagsAreInline, inlineTags, likesAreIndexOnly, mediaItemLimit, postsHaveLanguage,
   prefixRankingsAvailable, profilesAreReportable, reportShape, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
-  tokenCostFor, yappIsPausedForGood,
 } from '@/lib/contract-topology'
 import { dmIsV5 } from '@/lib/constants'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
+import { paymentIsChoosable } from '@/lib/payment-preference'
 import { reportFeeCredits } from '@/lib/reports'
 import { avatarSeedMaxLength, profileTextLimits } from '@/lib/profile/v10-profile'
 import { DICEBEAR_STYLES, DICEBEAR_STYLE_LABELS, DEFAULT_AVATAR_STYLE } from '@/lib/services/unified-profile-service'
@@ -49,7 +49,7 @@ export function platformInfo(): PlatformInfoDTO {
       profileLimits: { ...profileTextLimits() },
       dashpayProfile: dashpayProfileExtension() !== null,
       yappLocked: yappIsLocked(),
-      yappPayments: tokenCostFor('post')?.optional === true && !yappIsPausedForGood(),
+      yappPayments: paymentIsChoosable('post'),
       dm: dmIsV5() ? 'v5' : 'legacy',
       walletSignIn: isAppConnectBuild() ? 'app-connect' : 'legacy',
     },

@@ -54,7 +54,8 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   const [initial] = useState(() => formFromProfile(profile, defaultStyle));
   const [form, setForm] = useState<ProfileForm>(initial);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
+  // A stored banner link that needs fixing starts it open; the row alone opens and closes it after.
+  const [moreOpen, setMoreOpen] = useState(() => validateForm(initial, limits).bannerUri !== undefined);
   const c = useColors();
   const save = useWrite(profileUpdateWrite);
   // A confirmed save closes the modal (below), and the form keeps its saving look until it has
@@ -201,8 +202,8 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
       />
     </>
   );
-  // The rarely changed settings, folded away until asked for (or until one needs fixing).
-  const moreShown = moreOpen || errors.bannerUri !== undefined;
+  // The rarely changed settings, folded away until asked for.
+  const moreShown = moreOpen;
   const moreFields = (
     <View className={cn('overflow-hidden rounded-xl border', tw.border)}>
       <Pressable

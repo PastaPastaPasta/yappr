@@ -17,7 +17,7 @@ import { keepHandlesWhole } from '~/ui/handle';
 import { AUTHORS, POSTS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
-import { useHiddenPrivateStore } from './hidden-private';
+import { useHiddenPrivateStore, useHideUnreadablePrivate } from './hidden-private';
 import { PostItem } from './PostItem';
 import { likeWrite } from './post-writes';
 
@@ -399,11 +399,23 @@ describe('post write specs', () => {
 describe('PostItem private posts the viewer cannot read', () => {
   afterEach(() => useHiddenPrivateStore.setState({ hide: false }));
 
-  it('offers "Hide private posts I can\'t see", which hides them from lists with Undo, never the open post', () => {
+  /** A browsing list as screens wire it: it passes the setting. */
+  function List({ posts }: { posts: PostDTO[] }) {
+    const hide = useHideUnreadablePrivate();
+    return (
+      <>
+        {posts.map((post) => (
+          <PostItem key={post.id} post={post} hideUnreadablePrivate={hide} />
+        ))}
+      </>
+    );
+  }
+
+  it('offers "Hide private posts I can\'t see", which leaves them out of lists, with Undo', () => {
+    const own = fixturePost({ id: 'own-private', author: AUTHORS.alice, content: '', encrypted: true });
     render(
       <QueryClientProvider client={queryClient}>
-        <PostItem post={POSTS.private} />
-        <PostItem post={fixturePost({ id: 'own-private', author: AUTHORS.alice, content: '', encrypted: true })} />
+        <List posts={[POSTS.private, own]} />
       </QueryClientProvider>,
     );
     expect(menuIds('post-private')).toContain('hide-private');
@@ -420,11 +432,24 @@ describe('PostItem private posts the viewer cannot read', () => {
     expect(screen.getByTestId('post-card-post-private')).toBeTruthy();
   });
 
-  it('still shows the open post itself', () => {
+  it('hides a bare repost of such a post, and leaves the menu item out once hiding is on', () => {
+    useHiddenPrivateStore.setState({ hide: true });
+    const repost = fixturePost({ id: 'repost', author: AUTHORS.bob, bareRepost: true, quoted: POSTS.private });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <List posts={[repost]} />
+        <PostItem post={POSTS.private} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getAllByTestId('post-card-post-private')).toHaveLength(1);
+    expect(menuIds('post-private')).not.toContain('hide-private');
+  });
+
+  it('keeps them where the list does not ask: the open post, threads, profiles and bookmarks', () => {
     useHiddenPrivateStore.setState({ hide: true });
     render(
       <QueryClientProvider client={queryClient}>
-        <PostItem post={POSTS.private} variant="detail" />
+        <PostItem post={POSTS.private} variant="detail" hideUnreadablePrivate />
       </QueryClientProvider>,
     );
     expect(screen.getByTestId('post-card-post-private')).toBeTruthy();

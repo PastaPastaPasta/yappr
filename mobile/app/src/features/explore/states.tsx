@@ -70,7 +70,7 @@ export function LoadingRow({ label, testID }: { label: string; testID?: string }
 /** Rows of post skeletons, about a screen of them: the list loads in place, without a jump. */
 export function PostListSkeleton({ label, testID }: { label: string; testID?: string }) {
   return (
-    <View accessible accessibilityLabel={label} testID={testID}>
+    <View accessible accessibilityLabel={label} accessibilityLiveRegion="polite" testID={testID}>
       {[0, 1, 2, 3].map((i) => (
         <PostSkeleton key={i} />
       ))}
@@ -96,7 +96,7 @@ function TagSkeleton() {
 /** Trending tags: rows shaped like `TagRow`. */
 export function TagListSkeleton({ label, testID }: { label: string; testID?: string }) {
   return (
-    <View accessible accessibilityLabel={label} testID={testID}>
+    <View accessible accessibilityLabel={label} accessibilityLiveRegion="polite" testID={testID}>
       {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
         <TagSkeleton key={i} />
       ))}
@@ -107,7 +107,7 @@ export function TagListSkeleton({ label, testID }: { label: string; testID?: str
 /** Ranked people: the section header, then user rows. */
 export function UserListSkeleton({ label, testID }: { label: string; testID?: string }) {
   return (
-    <View accessible accessibilityLabel={label} testID={testID}>
+    <View accessible accessibilityLabel={label} accessibilityLiveRegion="polite" testID={testID}>
       <View className={cn('min-h-11 justify-center border-b px-4 py-2', tw.border, tw.bgSubtle)}>
         <Skeleton width={180} />
       </View>

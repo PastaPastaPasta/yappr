@@ -229,8 +229,8 @@ export interface CapabilitiesDTO {
   dashpayProfile: boolean
   yappLocked: boolean
   /**
-   * Posts may pay with YAPP or with credits, as the user's `payWith` setting says (an optional token
-   * cost on a token that isn't paused for good; `planPayment`). False where they always pay one way.
+   * Posts may pay with YAPP or with credits, as the user's `payWith` setting says (web's
+   * `paymentIsChoosable('post')`). False where they always pay one way.
    */
   yappPayments: boolean
   /** Messages: DM v5 (1:1 and groups, no read receipts) or legacy 1:1 with read receipts (`dmIsV5`). */

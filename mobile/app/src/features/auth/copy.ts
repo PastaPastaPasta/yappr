@@ -23,7 +23,6 @@ export const copy = {
     other: 'Advanced',
     privateKey: 'Sign in with a private key',
     newToDash: "Don't have a Dash identity yet?",
-    getDashWallet: 'Get the Dash wallet',
     noWallet: "You'll need the Dash wallet to sign in.",
     getWallet: 'Get a Dash wallet',
     nothingOpened:
