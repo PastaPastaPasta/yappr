@@ -51,7 +51,8 @@ export function EditProfileModal({ initial, ...props }: EditProfileModalProps) {
       overlayClassName="items-stretch px-0 sm:items-center sm:px-4"
       className="flex h-[100dvh] max-w-[600px] flex-col rounded-none sm:h-auto sm:max-h-[90vh] sm:rounded-2xl"
     >
-      {shown && <EditProfileDialog initial={shown} requestCloseRef={requestClose} {...props} />}
+      {/* While it animates out, it takes no more input (a stray Save would write again). */}
+      {shown && <EditProfileDialog initial={shown} requestCloseRef={requestClose} {...props} isSaving={props.isSaving || initial === null} />}
     </Modal>
   )
 }

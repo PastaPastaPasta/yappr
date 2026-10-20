@@ -360,7 +360,8 @@ function UserProfileContent() {
   const markProfileWritten = () => {
     if (!profileDocumentMissing) return
     setProfileDocumentMissing(false)
-    setProfile((prev) => (prev ? { ...prev, displayName } : prev))
+    const name = dpnsLabel?.slice(0, profileTextLimits().displayName) || displayName
+    setProfile((prev) => (prev ? { ...prev, displayName: name } : prev))
   }
 
   // `?edit=true` deep-links into edit mode once, then drops the parameter.
