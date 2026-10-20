@@ -98,6 +98,12 @@ export interface PendingPost {
    * real post then carries the write status instead of a second card.
    */
   adoptedId?: string;
+  /**
+   * A private post, or a reply in a private thread: its text stays in memory,
+   * never on the device (MMKV is not encrypted). A kill forgets it; the
+   * engine's ticket still settles it.
+   */
+  private?: true;
 }
 
 /** How long a confirmed post stays pinned in the lists it was put in. */
@@ -127,8 +133,10 @@ function restore(): Record<string, PendingPost> {
 export const usePendingPosts = create<PendingState>()(() => ({ entries: restore() }));
 
 usePendingPosts.subscribe(({ entries }) => {
-  if (Object.keys(entries).length === 0) syncStorage.removeItem(STORAGE_KEY);
-  else syncStorage.setItem(STORAGE_KEY, stringify(entries));
+  // Private text never reaches the device's storage (`PendingPost.private`).
+  const kept = Object.fromEntries(Object.entries(entries).filter(([, entry]) => !entry.private));
+  if (Object.keys(kept).length === 0) syncStorage.removeItem(STORAGE_KEY);
+  else syncStorage.setItem(STORAGE_KEY, stringify(kept));
 });
 
 const getEntry = (localId: string): PendingPost | undefined => usePendingPosts.getState().entries[localId];
@@ -490,6 +498,9 @@ export function pendingDraft(localId: string): ComposeDraft | null {
     mediaUrl: entry.draft.mediaUrl ?? '',
     updatedAt: Date.now(),
     fromPending: entry.localId,
+    ...(entry.draft.visibility && entry.draft.visibility !== 'public'
+      ? { visibility: entry.draft.visibility, teaser: entry.draft.teaser ?? '' }
+      : {}),
   };
 }
 
@@ -509,7 +520,8 @@ function draftSlotFree(entry: PendingPost): boolean {
  * slot of its own. Returns whether the draft now holds it.
  */
 function returnToDraft(entry: PendingPost): boolean {
-  if (!draftSlotFree(entry)) return false;
+  // A private post's text is never saved as a draft: it stays with its card, for Retry or Edit.
+  if (entry.private || !draftSlotFree(entry)) return false;
   const draft = pendingDraft(entry.localId);
   if (draft) saveDraft(entry.identityId, draft);
   return draft !== null;
@@ -569,6 +581,11 @@ export interface PublishInput {
   /** The post replied to or quoted. */
   target: PostDTO | null;
   author: AuthorDTO;
+  /** A private post (and its public teaser); public by default. */
+  visibility?: 'public' | 'private' | 'private-with-teaser';
+  teaser?: string;
+  /** A reply compose showed as private (its thread is): the engine posts nothing if that is no longer so. */
+  expectInherited?: boolean;
 }
 
 const newLocalId = () => `pending-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -592,20 +609,26 @@ export function publishPost(input: PublishInput, hasContent: (text: string) => b
   const { mode } = input.context;
   const target = input.target;
   const localId = newLocalId();
-  const media = firstOpen === 0 && input.mediaUrl ? [{ type: 'image' as const, url: input.mediaUrl }] : [];
   const reply = mode === 'reply' && target !== null;
+  const visibility = input.visibility ?? 'public';
+  // A private post or a reply to a private post: its card goes into lists that are kept on the device,
+  // so it shows as private, with no text but its public teaser and no image link.
+  const isPrivate = visibility !== 'public' || (reply && target.encrypted);
+  const media = !isPrivate && firstOpen === 0 && input.mediaUrl ? [{ type: 'image' as const, url: input.mediaUrl }] : [];
   const post: PostDTO = {
     id: localId,
     kind: reply ? 'reply' : 'post',
     author: input.author,
-    content: (parts[firstOpen]?.text ?? '').trim(),
+    content: isPrivate
+      ? (visibility === 'private-with-teaser' ? (input.teaser ?? '').trim() : '')
+      : (parts[firstOpen]?.text ?? '').trim(),
     createdAt: new Date(),
     stats: { likes: 0, reposts: 0, replies: 0, quotes: 0 },
     viewer: EMPTY_VIEWER,
     media,
     sensitive: input.sensitive,
     deleted: false,
-    encrypted: false,
+    encrypted: isPrivate,
     ...(reply ? { parentId: target.id, rootPostId: target.rootPostId ?? target.id } : {}),
     ...(mode === 'quote' && target ? { quotedPostId: target.id, quoted: target } : {}),
     quotedRemoved: false,
@@ -619,6 +642,12 @@ export function publishPost(input: PublishInput, hasContent: (text: string) => b
     // The image went with the first part: a resume past it must not put it on the next one.
     mediaUrl: firstOpen === 0 ? input.mediaUrl || null : null,
     resume: postedIdList.some(Boolean) ? { postedIds: postedIdList } : null,
+    ...(visibility !== 'public'
+      ? { visibility, teaser: visibility === 'private-with-teaser' ? input.teaser?.trim() : null }
+      : {}),
+    // A reply to a private post is never kept with its ticket on disk, whatever its thread turns out to be.
+    ...(reply && target.encrypted ? { replyToPrivate: true } : {}),
+    ...(reply && input.expectInherited ? { expectInherited: true } : {}),
   };
   const entry: PendingPost = {
     localId,
@@ -632,6 +661,7 @@ export function publishPost(input: PublishInput, hasContent: (text: string) => b
     ticket: null,
     refused: false,
     createdAt: Date.now(),
+    ...(isPrivate ? { private: true } : {}),
   };
   usePendingPosts.setState(({ entries }) => ({ entries: { ...entries, [localId]: entry } }));
   // The draft moves into the pending post; a failure brings it back.

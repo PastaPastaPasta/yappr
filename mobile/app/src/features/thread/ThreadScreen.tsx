@@ -4,10 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, View } from 'react-native';
 import { DocumentMagnifyingGlassIcon } from 'react-native-heroicons/outline';
 
+import { queryKeys } from '~/data/keys';
 import { usePostRemoved } from '~/data/optimistic';
 import { readErrorMessage } from '~/data/read-error';
 import { useEngineStatus } from '~/engine/hooks';
 import { refetchPolls } from '~/features/post/poll-vote';
+import { usePrivatePost } from '~/features/private-feed/private-feed-data';
+import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { LinkText } from '~/ui/LinkText';
@@ -74,6 +77,8 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const focusId = focus?.id ?? id;
   const focusRemoved = usePostRemoved(focusId);
   const { state: engineState } = useEngineStatus();
+  // A private post takes replies from those who can read it (the same read as its card).
+  const privateFocus = usePrivatePost({ id: focusId, encrypted: focus?.encrypted === true });
 
   // Flat threads list only the root above a reply: read its direct parent for the context line.
   const parentId = focus?.parentId;
@@ -87,6 +92,15 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const repliesError = query.isError && !query.isFetchNextPageError ? readErrorMessage(query.error) : null;
   // The last read lost a focus already shown: keep its replies, but never offer it as live.
   const focusUnavailable = thread?.focus != null && query.error instanceof FocusUnavailableError;
+  // Replying is blocked (a private focus the viewer can't open, a deleted or unavailable one): the docked
+  // bar says why, and the empty replies invite nothing.
+  const block = replyBlockOf(
+    focus ?? undefined,
+    focusRemoved,
+    (thread !== undefined && !thread.focus) || focusUnavailable,
+    privateFocus.data?.state === 'open',
+  );
+  const replyBlocked = block !== null;
   const rows = useMemo(
     () =>
       buildThreadRows({
@@ -98,8 +112,10 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
         focusUnavailable,
         highlightId,
         repliesError,
+        replyBlocked,
       }),
     [
+      replyBlocked,
       thread,
       seed,
       needsParent,
@@ -118,7 +134,9 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     refetchPolls();
-    Promise.all([refetch(), needsParent ? refetchParent() : null])
+    // The thread's private posts are read again too: a request approved since then opens them.
+    const privateReads = queryClient.invalidateQueries({ queryKey: queryKeys.privateFeed.posts });
+    Promise.all([refetch(), needsParent ? refetchParent() : null, privateReads])
       .then(([result]) => {
         // A failed refresh keeps what is shown; say so rather than fail silently.
         if (result.isError && result.data) toast.error(readErrorMessage(result.error));
@@ -214,7 +232,6 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
     );
   }
 
-  const block = replyBlockOf(focus ?? undefined, focusRemoved, (thread !== undefined && !thread.focus) || focusUnavailable);
   const connecting = !thread && !seed && engineState !== 'ready';
 
   return (

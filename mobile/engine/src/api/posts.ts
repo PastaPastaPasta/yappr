@@ -79,7 +79,7 @@ const replyPages = new TtlMap<string, { documents: Reply[]; nextCursor?: string 
 const STUB_AUTHOR: AuthorDTO = { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false }
 
 /** A post, or a reply as a Post, the way web's post page looks an id up. lib answers a failed read as null too. */
-async function read(id: string): Promise<Post | null> {
+export async function readPostOrReply(id: string): Promise<Post | null> {
   const post = await postService.getPostById(id, { skipEnrichment: true })
   if (post) return post
   // Replies are a separate doctype; web's usePostDetail falls back the same way.
@@ -118,8 +118,8 @@ async function provedMissing<T>(
 }
 
 /** `read`, with `null` kept for a post or reply proved missing; a failed read rejects. */
-async function load(id: string): Promise<Post | null> {
-  return (await read(id)) ?? provedMissing(id, ['post', 'reply'], () => read(id))
+export async function loadPostProved(id: string): Promise<Post | null> {
+  return (await readPostOrReply(id)) ?? provedMissing(id, ['post', 'reply'], () => readPostOrReply(id))
 }
 
 /** The most documents of each type publish's probe reads (Platform's page). */
@@ -151,11 +151,11 @@ const findOwnDocuments: FindOwnDocuments = async (authorId) => {
   return { documents, completeSince: Math.max(reach(posts), reach(replies)) }
 }
 
-/** `load`, following a v10 bare repost to its target, as web's post page redirects to it. */
+/** `loadPostProved`, following a v10 bare repost to its target, as web's post page redirects to it. */
 async function loadFocus(id: string): Promise<Post | null> {
-  const post = await load(id)
+  const post = await loadPostProved(id)
   const target = post && isBareRepost(post) ? quotedTargetIdOf(post) : undefined
-  return target && target !== id ? load(target) : post
+  return target && target !== id ? loadPostProved(target) : post
 }
 
 /**
@@ -175,7 +175,7 @@ async function loadAncestors(focus: Post): Promise<{ chain: Post[]; removed: str
   // The chain is context above the focus: an unreadable parent ends it, as on web.
   const chain: Post[] = []
   for (let parentId = focus.parentId; parentId && chain.length < MAX_ANCESTORS;) {
-    const parent = await read(parentId)
+    const parent = await readPostOrReply(parentId)
     if (!parent) break
     chain.unshift(parent)
     parentId = parent.parentId
@@ -590,12 +590,12 @@ function forwardCreatedContent(emit: (event: ContentCreatedEvent) => void): void
 export function createPostWrites(tickets: TicketStore, emit: (event: 'content.created', payload: ContentCreatedEvent) => void) {
   forwardCreatedContent(payload => emit('content.created', payload))
   const tombstoned = relationProbe<{ target: TargetRef }>(async ({ ticket }) => {
-    const post = await load(ticketTarget(ticket).id)
+    const post = await loadPostProved(ticketTarget(ticket).id)
     // lib's single reads answer a failure as "absent", and a tombstone is never absent.
     if (!post) throw new Error('The post could not be read')
     return post.deleted !== true
   }, false)
-  tickets.register<DraftDTO>('post.publish', createPublishHandler(load, findOwnDocuments))
+  tickets.register<DraftDTO>('post.publish', createPublishHandler(loadPostProved, findOwnDocuments))
   tickets.register<{ target: TargetRef }>('post.delete', {
     persistArgs: true,
     async run({ target }, ctx) {

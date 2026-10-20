@@ -33,6 +33,12 @@ export interface ComposeDraft {
   mediaUrl: string;
   updatedAt: number;
   /**
+   * A private post's (only ever on a draft held in memory, from a post that
+   * did not go through: private text is never saved to the device).
+   */
+  visibility?: 'private' | 'private-with-teaser';
+  teaser?: string;
+  /**
    * The failed post this draft came back from. A later success of that post
    * deletes the draft only while it still carries this mark (the user has
    * not edited it since).

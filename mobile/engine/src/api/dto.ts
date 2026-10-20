@@ -4,6 +4,7 @@ import { DEFAULT_AVATAR_STYLE, DICEBEAR_STYLES } from '@/lib/services/unified-pr
 import { isImageAvatar } from '@/lib/profile/v10-profile'
 import { isBareRepost } from '@/lib/feed/quote-reposts'
 import { findPollrPollLink, getEmbeddedPollId } from '@/lib/poll-embed'
+import { rememberPrivatePost } from '../dto/private-content'
 
 /**
  * Plain data the engine returns to the host. The RN side renders these and
@@ -103,7 +104,10 @@ export interface PostDTO {
   sensitive: boolean
   /** A v9 tombstone, or (threads) the stand-in for a reply proved deleted. */
   deleted: boolean
-  /** Private-feed post: the content is ciphertext, render the "Private post" placeholder. */
+  /**
+   * Private-feed post or reply: `content` is only its public teaser (often
+   * empty); `privateFeed.read` decrypts the rest for a viewer who may read it.
+   */
   encrypted: boolean
   /** Replies: the post or reply this answers. */
   parentId?: string
@@ -235,6 +239,13 @@ export interface CapabilitiesDTO {
    * and group) or the legacy two-step key exchange (`session.*KeyExchange`).
    */
   walletSignIn: 'app-connect' | 'legacy'
+  /**
+   * Private feeds (`privateFeedClientSupported`: social v17's multi-feed
+   * shape): reading private posts, requesting access, the owner's settings
+   * and private posting. False on earlier cuts, where a private post stays
+   * a "Private post" panel and there is nothing to request.
+   */
+  privateFeeds: boolean
   /**
    * Poll ballots: `editable` (Pollr v7/v8: changed or withdrawn until the close), `once` (v3: one
    * immutable ballot), or null where polls are read-only (v4, or no Pollr contract).
@@ -452,6 +463,8 @@ function pollOf(post: Post): PostDTO['poll'] {
 }
 
 export function toPostDTO(post: Post, options: PostMappingOptions): PostDTO {
+  // `privateFeed.read` decrypts by id: the DTO itself carries no ciphertext.
+  rememberPrivatePost(post)
   return omitUndefined<PostDTO>({
     id: post.id,
     kind: post.targetKind ?? 'post',

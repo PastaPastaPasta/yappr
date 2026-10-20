@@ -54,6 +54,14 @@ const READS = new Set([
   'safety.followedBlockLists',
   'safety.blockListChoices',
   'safety.reportsOpen',
+  // Private feeds: reads (a replayed `read` may store keys it recovered, the same keys either engine would).
+  'privateFeed.read',
+  'privateFeed.access',
+  'privateFeed.overview',
+  'privateFeed.requests',
+  'privateFeed.followers',
+  'privateFeed.renewal',
+  'privateFeed.replySource',
   'dpns.registration',
   'dpns.check',
 ]);

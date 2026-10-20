@@ -37,7 +37,8 @@ export type ThreadRow =
   /** Replies nested deeper than the one indent level: "Continue thread · N more replies". */
   | { type: 'continue'; key: string; replyId: string; count: number }
   | { type: 'repliesLoading'; key: string }
-  | { type: 'repliesEmpty'; key: string }
+  /** `invite`: the viewer can reply here, so the empty state asks them to. */
+  | { type: 'repliesEmpty'; key: string; invite: boolean }
   | { type: 'repliesError'; key: string; message: string };
 
 export interface ThreadRowsInput {
@@ -56,6 +57,8 @@ export interface ThreadRowsInput {
   /** `?reply=`: the reply to highlight. */
   highlightId?: string;
   repliesError?: string | null;
+  /** Replying is blocked here (a private post the viewer can't open, a deleted one): no invitation to. */
+  replyBlocked?: boolean;
 }
 
 /** "@name" for a reply context line, or nothing when the author has no username. */
@@ -110,6 +113,7 @@ export function buildThreadRows({
   focusUnavailable = false,
   highlightId,
   repliesError,
+  replyBlocked = false,
 }: ThreadRowsInput): ThreadRow[] {
   const rows: ThreadRow[] = [];
   // A post shown before (the tapped card) stays on screen, as a stub, if the thread no longer finds it.
@@ -168,7 +172,7 @@ export function buildThreadRows({
     rows.push(
       repliesError || focusUnavailable
         ? { type: 'repliesError', key: 'replies-error', message: repliesError ?? GENERIC_MESSAGE }
-        : { type: 'repliesEmpty', key: 'replies-empty' },
+        : { type: 'repliesEmpty', key: 'replies-empty', invite: !replyBlocked },
     );
     return rows;
   }

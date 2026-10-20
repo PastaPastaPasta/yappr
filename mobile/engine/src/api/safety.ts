@@ -1,12 +1,16 @@
 import { invalidateBlockCache } from '@/lib/caches/block-cache'
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
-import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
+import { blocksContractId, contractTakesReports, reportShape } from '@/lib/contract-topology'
 import { isReportGoneError, isReportResolvedError, reportCanBeWithdrawn, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService, type BlockWriteResult } from '@/lib/services/block-service'
 import { followService } from '@/lib/services/follow-service'
 import { moderationService } from '@/lib/services/moderation-service'
 import { reportService } from '@/lib/services/report-service'
+import type { Post } from '@/lib/types'
+import { privatePostOf } from '../dto/private-content'
+import { loadPostProved } from './posts'
+import type { WriteNotice } from '../writes/types'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, badRequest, loadUserSummaries, notSupported, readFailure, requireViewer } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
@@ -61,6 +65,8 @@ interface ReportArgs {
   target: TargetRef
   reason: number
   note?: string
+  /** The target is a private post or reply (`PostDTO.encrypted`): its report carries the moderators' box. */
+  encrypted?: boolean
 }
 
 interface WithdrawReportArgs {
@@ -96,6 +102,33 @@ async function moderatedTypeOpen(docType: string): Promise<boolean> {
  * `components/moderation/report-post-modal.tsx`). The NSFW and media gates
  * run in RN; following other users' block lists is post-1.0.
  */
+/**
+ * The moderators' box for a report of a private post or reply (web
+ * `ReportPostModal.sealForModerators`): the content's key, sealed to the
+ * moderation team, so they can read what was reported. Null where reports
+ * carry no box. Filed without one when no key or no moderator can take it,
+ * as web does, with a notice saying so. A failed read of the post or the
+ * team throws before anything is sent: a private post's report never goes
+ * out boxless because a read failed.
+ */
+async function reportBoxFor(reporterId: string, targetId: string): Promise<{ box?: Uint8Array; notice?: WriteNotice } | null> {
+  if (reportShape().boxMaxBytes === null) return null
+  const notSent = (error: unknown): never => {
+    throw new NotSentError(error)
+  }
+  const post = privatePostOf(targetId) ?? (await loadPostProved(targetId).catch(notSent))
+  if (!post) throw new NotSentError(new RpcError('This post is gone, so there is nothing to report.', 'TARGET_GONE'))
+  if (post.encryptedContent === undefined) return null
+  const { buildReportBox } = await import('@/lib/services/report-box-service')
+  const outcome = await buildReportBox(reporterId, post as Post).catch(notSent)
+  switch (outcome.kind) {
+    case 'sealed': return { box: outcome.box }
+    case 'no-key': return { notice: 'unsealed-no-key' }
+    case 'no-recipients': return { notice: 'unsealed-no-moderators' }
+    default: return null
+  }
+}
+
 export function createSafetyModule(tickets: TicketStore) {
   /** The viewer's own block on the ticket's account; `getBlockProvenance` rejects when that list cannot be read. */
   // The block document itself: lib's block status answers from a cache its own write fills, even unconfirmed.
@@ -158,11 +191,14 @@ export function createSafetyModule(tickets: TicketStore) {
   }
   tickets.register<ReportArgs>('report', {
     persistArgs: true,
-    async run({ target, reason, note }, ctx) {
-      const result = await reportService.fileReport(signer(ctx), {
-        kind: target.kind, targetId: target.id, targetOwnerId: target.ownerId, reason, note,
+    async run({ target, reason, note, encrypted }, ctx) {
+      const reporter = signer(ctx)
+      const sealed = encrypted === true ? await reportBoxFor(reporter, target.id) : null
+      const result = await reportService.fileReport(reporter, {
+        kind: target.kind, targetId: target.id, targetOwnerId: target.ownerId, reason, note, ...(sealed?.box ? { box: sealed.box } : {}),
       })
-      return fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'report'))
+      const settled = fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'report'))
+      return sealed?.notice && settled.state !== 'failed' ? { ...settled, notice: sealed.notice } : settled
     },
     // getOwnReport throws on a failed read, so a missing report is a proved absence.
     probe: relationProbe(async ({ viewer, ticket }) => {
@@ -264,10 +300,10 @@ export function createSafetyModule(tickets: TicketStore) {
      * most 500 characters. One report per reporter and target: a second fails
      * `DUPLICATE`, so read `ownReport` first, as web's dialog does. On v13 a
      * report pays `capabilities.reportFeeCredits` to the moderators. The engine
-     * reads no private feeds, so its reports carry no moderators' box. Gated by
+     * seals the moderators' box for a private target (`options.encrypted`). Gated by
      * `capabilities.reports`.
      */
-    async report(target: TargetRef, reason: number, note?: string): Promise<WriteTicket> {
+    async report(target: TargetRef, reason: number, note?: string, options: { encrypted?: boolean } = {}): Promise<WriteTicket> {
       assertTarget(target)
       const viewer = requireViewer('Reporting')
       if (!contractTakesReports()) throw notSupported('Reporting')
@@ -277,7 +313,8 @@ export function createSafetyModule(tickets: TicketStore) {
       // Consensus refuses a report naming the reporter as the target's author (10419).
       if (target.ownerId === viewer) throw badRequest('You cannot report your own post')
       const trimmed = note?.trim()
-      return tickets.submit<ReportArgs>({ op: 'report', args: { target, reason, ...(trimmed ? { note: trimmed } : {}) }, target })
+      const encrypted = options?.encrypted === true
+      return tickets.submit<ReportArgs>({ op: 'report', args: { target, reason, ...(trimmed ? { note: trimmed } : {}), ...(encrypted ? { encrypted } : {}) }, target })
     },
 
     /**

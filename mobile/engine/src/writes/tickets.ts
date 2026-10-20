@@ -8,6 +8,7 @@ import type {
   WriteStage,
   WriteTarget,
   WriteTicket,
+  WriteNotice,
 } from './types'
 
 /**
@@ -57,7 +58,7 @@ export const AUTO_RETRY_DELAYS_MS: readonly number[] = [2_000, 5_000, 15_000]
 
 /** What a write's lib call came to. Thrown errors are classified instead. */
 export type WriteResult =
-  | { state: 'confirmed' | 'unconfirmed'; documents?: TicketDocument[] }
+  | { state: 'confirmed' | 'unconfirmed'; documents?: TicketDocument[]; notice?: WriteNotice }
   | { state: 'failed'; error: unknown; documents?: TicketDocument[] }
 
 /**
@@ -111,9 +112,10 @@ export interface WriteHandler<A = unknown> {
    * Persist the arguments with the ticket (plain engine kv, MMKV on the
    * host), so a retry still works after an engine restart. Off by default:
    * opt in only for arguments that may sit on disk (never DM plaintext or
-   * private-feed content).
+   * private-feed content). A function decides per write, on every save, so
+   * a handler can drop the arguments once `run()` finds them private.
    */
-  persistArgs?: boolean
+  persistArgs?: boolean | ((args: A) => boolean)
   /**
    * `run()` reports a stage (`ctx.stage`) before any write call it makes, so
    * a restart that finds this write still `queued` proves that attempt sent
@@ -285,7 +287,11 @@ export function createTicketStore(options: TicketStoreOptions) {
   const allConfirmed = (documents: TicketDocument[]) => documents.map(doc => ({ ...doc, confirmed: true }))
 
   /** Fail closed: only a registered handler that opts in, and never a DM (its arguments are message bodies). */
-  const keepsArgs = (op: WriteOp) => handlers.get(op)?.persistArgs === true && !op.startsWith('dm.')
+  const keepsArgs = (op: WriteOp, args: unknown) => {
+    const persistArgs = handlers.get(op)?.persistArgs
+    if (op.startsWith('dm.') || !persistArgs) return false
+    return persistArgs === true || persistArgs(args)
+  }
 
   function persist() {
     const cutoff = now() - CONFIRMED_TTL_MS
@@ -309,7 +315,7 @@ export function createTicketStore(options: TicketStoreOptions) {
         updatedAt: ticket.updatedAt.getTime(),
         lastCheckedAt: ticket.lastCheckedAt?.getTime() ?? null,
       },
-      ...(args !== undefined && keepsArgs(ticket.op) ? { args } : {}),
+      ...(args !== undefined && keepsArgs(ticket.op, args) ? { args } : {}),
       ...(unsent ? { unsent } : {}),
       ...(settledAt !== undefined ? { settledAt } : {}),
       ...(running !== undefined ? { running: true } : {}),
@@ -577,6 +583,8 @@ export function createTicketStore(options: TicketStoreOptions) {
           error: null,
           retryable: false,
           documents: result.state === 'confirmed' ? allConfirmed(documents) : documents,
+          // Always written: a retry that sealed the box clears an earlier attempt's notice.
+          notice: result.notice,
         })
       }, error => {
         if (finish()) fail(id, error)
@@ -658,7 +666,8 @@ export function createTicketStore(options: TicketStoreOptions) {
   return {
     /** Register how `op` runs; M7b's write methods each register one. */
     register<A>(op: WriteOp, handler: WriteHandler<A>): void {
-      handlers.set(op, handler)
+      // The store hands each handler only the arguments its own op was submitted with.
+      handlers.set(op, handler as WriteHandler)
     },
 
     /**

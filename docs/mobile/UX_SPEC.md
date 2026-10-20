@@ -1568,8 +1568,8 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | stub.blockedReply | Reply from an account you blocked |
 | stub.blockedPost | Post from an account you blocked |
 | private.title | Private post |
-| private.body | Only approved followers can see this. (with "Open on yap.pr") |
-| private.open | Open on yap.pr |
+| private.body | Only approved followers can see this. (with "Request access", "Pending · Cancel request", or why it is locked; decrypted in place for the owner and approved followers) |
+| private.request | Request access / Ask again |
 | poll.votes | {N} votes |
 | poll.endsIn / ended / noEnd | Ends in {time} / Ended / No end date |
 | poll.vote | Vote on yap.pr |

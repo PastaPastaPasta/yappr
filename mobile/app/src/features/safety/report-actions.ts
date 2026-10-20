@@ -16,6 +16,8 @@ export interface ReportVars {
   reason: number;
   note?: string;
   noun: ReportNoun;
+  /** A private post or reply: the engine seals the moderators' box with the report. */
+  encrypted?: boolean;
 }
 
 /** The write's own words for the refusals the sheet acts on, and the unseated moderation team. */
@@ -112,12 +114,15 @@ export function announceReportSent(ticketId: string): void {
  */
 export const reportWrite: WriteSpec<ReportVars> = {
   key: ({ target }) => `report:${target.id}`,
-  submit: (api, { target, reason, note }) => api.safety.report(target, reason, note),
+  submit: (api, { target, reason, note, encrypted }) => api.safety.report(target, reason, note, { encrypted: encrypted === true }),
   intent: () => 'report',
   matches: (ticket, { target }) =>
     ticket.op === 'report' && (ticket.target as { id?: string } | null)?.id === target.id,
-  onConfirmed: (_ticket, { target }) => {
+  onConfirmed: (ticket, { target, noun }) => {
     queryClient.invalidateQueries({ queryKey: queryKeys.post.ownReport(target.id) }).catch(() => undefined);
+    // Filed without the moderators' box (web's toasts): they may not be able to read it.
+    if (ticket.notice === 'unsealed-no-moderators') toast(copy.toast.reportUnsealedNoModerators(noun));
+    else if (ticket.notice === 'unsealed-no-key') toast(copy.toast.reportUnsealedNoKey(noun));
   },
   failureText: reportFailureText,
   failureMessage: copy.toast.reportFailed,
