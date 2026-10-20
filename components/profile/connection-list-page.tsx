@@ -114,7 +114,8 @@ interface Enrichment {
  */
 async function fetchEnrichment(ids: string[]): Promise<Enrichment[]> {
   const [profiles, followerCounts, followingCounts] = await Promise.all([
-    unifiedProfileService.getProfilesByIdentityIds(ids),
+    // A failed read rejects: it must not be cached as a page of people without profiles.
+    unifiedProfileService.getProfilesByIdentityIds(ids, { throwOnError: true }),
     followService.countFollowersBatch(ids),
     followService.countFollowingBatch(ids),
   ])

@@ -538,12 +538,18 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         const found = new Map<string, PlainDocument>();
         let failure: { error: unknown } | null = null;
         try {
-          const response = await sdk.documents.query({
+          const query: Parameters<EvoSDK['documents']['query']>[0] = {
             dataContractId: source.contractId,
             documentTypeName: source.documentType,
             where: [['$ownerId', 'in', chunk]],
             orderBy: [['$ownerId', 'asc']],
             limit: chunk.length
+          };
+          // One retry: a transport blip on a busy page would otherwise leave a
+          // whole page of people without their profiles until the next visit.
+          const response = await sdk.documents.query(query).catch((error: unknown) => {
+            logger.warn('UnifiedProfileService: batch profile read failed, retrying once:', error);
+            return sdk.documents.query(query);
           });
 
           for (const doc of this.normalizeDocumentResponse(response)) {
@@ -1211,19 +1217,21 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * reused and concurrent callers coalesce into a single 'in' query.
    * Result order follows the (deduplicated) input, NOT $ownerId order —
    * key results by $ownerId rather than relying on position.
+   *
+   * By default a profile whose read failed is left out, as one with no profile
+   * is. `throwOnError` rejects instead, for callers that must not cache or show
+   * a failed read as "no profile".
    */
-  async getProfilesByIdentityIds(identityIds: string[]): Promise<UnifiedProfileDocument[]> {
-    try {
-      if (identityIds.length === 0) return [];
-
-      const uniqueIds = Array.from(new Set(identityIds));
-      // A profile whose read failed (logged by the batch) is left out, as one with no profile is; the rest still answer.
-      const docs = await Promise.all(uniqueIds.map(id => this.loadProfileDoc(id).catch(() => null)));
+  async getProfilesByIdentityIds(identityIds: string[], { throwOnError = false } = {}): Promise<UnifiedProfileDocument[]> {
+    if (identityIds.length === 0) return [];
+    const uniqueIds = Array.from(new Set(identityIds));
+    if (throwOnError) {
+      const docs = await Promise.all(uniqueIds.map(id => this.loadProfileDoc(id)));
       return docs.filter((doc): doc is UnifiedProfileDocument => doc !== null);
-    } catch (error) {
-      logger.error('UnifiedProfileService: Error getting profiles by identity IDs:', error);
-      return [];
     }
+    // A failed read is logged by the batch; the rest still answer.
+    const docs = await Promise.all(uniqueIds.map(id => this.loadProfileDoc(id).catch(() => null)));
+    return docs.filter((doc): doc is UnifiedProfileDocument => doc !== null);
   }
 
   /**
