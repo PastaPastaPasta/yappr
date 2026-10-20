@@ -57,6 +57,8 @@ export const queryKeys = {
     stats: (id: string) => [...root, 'post', id, 'stats'] as const,
     /** `posts.poll`. */
     poll: (pollId: string) => [...root, 'poll', pollId] as const,
+    /** Every `posts.poll`: a prefix of the key above. */
+    pollAll: [...root, 'poll'] as const,
     /** `safety.ownReport`: the viewer's report on this post or reply. */
     ownReport: (id: string) => [...root, 'post', id, 'ownReport'] as const,
   },

@@ -4,12 +4,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { router } from 'expo-router';
 import { Keyboard, View } from 'react-native';
 
-import { useSessionStore } from '~/data/session';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
-import { addAccount } from '~/features/auth/accounts';
-import { confirmSignOut } from '~/features/auth/AccountSwitcher';
 import { copy as authCopy } from '~/features/auth/copy';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
@@ -23,6 +20,7 @@ import { tw, useColors } from '~/ui/tokens';
 
 import { readErrorMessage, refreshDm } from './dm-data';
 import { MessagingSetup } from './MessagingSetup';
+import { signOutForWallet } from './wallet-messaging';
 
 type Phase = 'recovering' | 'manual' | 'no-key' | 'setup' | 'wallet';
 
@@ -55,30 +53,9 @@ function unlocked(close: () => void): void {
   close();
 }
 
+/** No messaging key this sign-in can unlock or set up (D38): messages come from a wallet sign-in. */
 const NO_KEY_BODY = 'Messages are set up with your Dash wallet. To use them on this phone, sign out, then sign back in with your wallet.';
 const NO_KEY_ACTION = 'Sign out and use my wallet';
-
-/**
- * No messaging key this sign-in can unlock or set up (D38): messages come
- * from a wallet sign-in, which brings the account's messaging key. The
- * account is already signed in here, so it signs out first (asked), then
- * signs back in with its wallet.
- */
-function signOutForWallet(): void {
-  const session = useSessionStore.getState().session;
-  if (!session) return;
-  confirmSignOut(session)
-    .then(() => {
-      const now = useSessionStore.getState().session;
-      // Kept signed in (cancelled): nothing to do.
-      if (now?.identityId === session.identityId) return undefined;
-      // Signed out: the wallet sign-in, beside the account that took over if there is one.
-      if (now) return addAccount();
-      router.push('/sign-in');
-      return undefined;
-    })
-    .catch((e: unknown) => appendLog('warn', 'host', `Sign-out for wallet messaging failed: ${errorMessage(e)}`));
-}
 
 /** WIF (51 or 52 base58 characters) or 64 hex: the formats an encryption key comes in (engine `dm.unlock`). */
 const KEY_SHAPE = /^([1-9A-HJ-NP-Za-km-z]{51,52}|[0-9a-fA-F]{64})$/;

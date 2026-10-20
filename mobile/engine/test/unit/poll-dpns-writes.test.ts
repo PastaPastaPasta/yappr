@@ -133,8 +133,15 @@ describe('posts.vote', () => {
     const { polls, outcome } = engine()
     m.mode = 'once'
     m.voteService.castVote.mockResolvedValue({ success: true, created: [2], alreadyVoted: [], unresolvedDuplicate: false, failed: [] })
+    m.voteService.getMyVotes.mockResolvedValueOnce([2])
     expect(await outcome(polls.vote(POLL, [2]))).toMatchObject({ state: 'confirmed' })
     expect(m.voteService.setVote).not.toHaveBeenCalled()
+
+    // Cast, but not read back yet (a confirmation wait that timed out): unconfirmed, for the probe.
+    m.voteService.getMyVotes.mockResolvedValueOnce([])
+    expect(await outcome(polls.vote(POLL, [2]))).toMatchObject({ state: 'unconfirmed' })
+    m.voteService.getMyVotes.mockRejectedValueOnce(new Error('Request timeout'))
+    expect(await outcome(polls.vote(POLL, [2]))).toMatchObject({ state: 'unconfirmed' })
 
     m.voteService.castVote.mockResolvedValue({ success: true, created: [], alreadyVoted: [0], unresolvedDuplicate: false, failed: [] })
     expect(await outcome(polls.vote(POLL, [2]))).toMatchObject({ state: 'failed', error: { userMessage: 'You already voted in this poll.' } })

@@ -271,6 +271,18 @@ function refetchFiltered(block: boolean): void {
   }
 }
 
+/**
+ * After a block list is used or dropped: who is hidden changed for every
+ * account that list blocks, with no decision on this device to show it, so
+ * everything filtered by block status on screen is read again.
+ */
+export function refetchAfterBlockListChange(): void {
+  refetch(queryKeys.blockLists);
+  for (const filters of BLOCK_FILTERED) {
+    queryClient.invalidateQueries({ ...filters, refetchType: 'active' }).catch(() => undefined);
+  }
+}
+
 export interface BlockVars {
   /** The signed-in viewer, whose decision this is. */
   viewerId: string;

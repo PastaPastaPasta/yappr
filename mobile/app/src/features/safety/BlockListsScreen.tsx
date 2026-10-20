@@ -22,6 +22,7 @@ import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { monoFont, tw, useColors, useLargeText } from '~/ui/tokens';
 
+import { refetchAfterBlockListChange } from './block-state';
 import { copy } from './copy';
 
 const BLOCK_LISTS_KEY = 'block-lists';
@@ -55,11 +56,8 @@ const blockListWrite: WriteSpec<BlockListVars> = {
   optimistic: ({ userId, follow }) => setListFollowed(userId, follow),
   failureMessage: ({ follow }) => (follow ? copy.blockLists.followFailed : copy.blockLists.unfollowFailed),
   // The row keeps the change (a re-read this soon could still show the old list); who is hidden is read again.
-  onConfirmed: () => {
-    for (const queryKey of [queryKeys.blockLists, queryKeys.blockStatusAll]) {
-      queryClient.invalidateQueries({ queryKey }).catch(() => undefined);
-    }
-  },
+  // Who is hidden changed for every account the list blocks: feeds, threads and profiles read again.
+  onConfirmed: refetchAfterBlockListChange,
 };
 
 const BlockListRow = memo(function BlockListRow({ user }: { user: BlockListChoiceDTO }) {

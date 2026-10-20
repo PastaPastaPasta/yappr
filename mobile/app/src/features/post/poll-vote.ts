@@ -13,6 +13,14 @@ export interface PollVoteVars {
 
 export const pollVoteKey = (pollId: string) => `poll:${pollId}`;
 
+/** A pull to refresh reads the polls on screen again too: they are their own queries, not part of a post. */
+export function refetchPolls(): void {
+  queryClient.invalidateQueries({ queryKey: queryKeys.post.pollAll }).catch(() => undefined);
+}
+
+/** How long after a confirmed ballot the poll is read again: long enough for every node to have it. */
+const REREAD_AFTER_MS = 15_000;
+
 /**
  * The viewer's ballot on the cached poll, with the tally moved to match:
  * their old choices lose a vote, the new ones gain one (a total counts
@@ -40,8 +48,8 @@ function applyBallot({ pollId, choices }: PollVoteVars): () => void {
  * shows it at once and waits while it lands; a refusal puts the old ballot
  * back with the engine's sentence (closed, already voted), anything else the
  * generic one. A confirmed ballot keeps the change rather than reading the poll
- * at once, which a lagging node could answer with the old ballot; the next read
- * (a refresh) brings the chain's tally.
+ * at once, which a lagging node could answer with the old ballot; it is read
+ * again a little later (and on a pull to refresh) for the chain's tally.
  */
 export const pollVoteWrite: WriteSpec<PollVoteVars> = {
   key: ({ pollId }) => pollVoteKey(pollId),
@@ -55,4 +63,9 @@ export const pollVoteWrite: WriteSpec<PollVoteVars> = {
   },
   failureMessage: ({ choices }) => (choices.length > 0 ? "Couldn't save your vote. Try again." : "Couldn't withdraw your vote. Try again."),
   failureText: (ticket) => (ticket.error?.code === 'BAD_REQUEST' ? ticket.error.userMessage : null),
+  onConfirmed: (_ticket, { pollId }) => {
+    setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.post.poll(pollId) }).catch(() => undefined);
+    }, REREAD_AFTER_MS);
+  },
 };

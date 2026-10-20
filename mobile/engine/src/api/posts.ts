@@ -346,7 +346,11 @@ export function createPollWrites(tickets: TicketStore) {
       const other = result.unresolvedDuplicate || result.alreadyVoted.some(choice => !choices.includes(choice))
       if (other) return refusedVote('You already voted in this poll.')
       // A choice that failed may still have landed; its unique index makes a retry safe.
-      return result.success ? { state: 'confirmed' } : { state: 'failed', error: new Error(result.error ?? 'Your vote could not be saved') }
+      if (!result.success) return { state: 'failed', error: new Error(result.error ?? 'Your vote could not be saved') }
+      // castVote counts a broadcast whose confirmation wait timed out as cast: only a ballot read
+      // back confirms it. Otherwise it stays unconfirmed for the probe (v3 ballots never change).
+      const cast = await pollrVoteService.getMyVotes(poll, ownerId).catch(() => null)
+      return cast !== null && sameChoices(cast, choices) ? { state: 'confirmed' } : { state: 'unconfirmed' }
     },
     probe: relationProbe<PollVoteArgs>(async ({ viewer, args }) => {
       if (!args) throw new Error('The ballot is not known')
