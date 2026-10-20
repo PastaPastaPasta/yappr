@@ -190,7 +190,10 @@ test.describe('passkey vault', () => {
     await page.goto(appUrl('/login/'))
     const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
     // App Connect builds keep private-key sign-in under Advanced (D38).
-    if (WALLET_BUILD) await dialog.getByRole('button', { name: 'Advanced: sign in with a private key' }).click()
+    if (WALLET_BUILD) {
+      await dialog.getByRole('button', { name: 'Advanced', exact: true }).click()
+      await dialog.getByRole('button', { name: 'Sign in with a private key' }).click()
+    }
     await dialog.locator('#loginCredential').fill(KEY_WIF as string)
     await expect(dialog.getByText(/^Signing in as /)).toBeVisible({ timeout: 60_000 })
     await dialog.getByRole('button', { name: 'Sign In', exact: true }).click()

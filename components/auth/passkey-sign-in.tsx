@@ -17,8 +17,11 @@ import { RENEW_COPY, signInErrorCopy } from './passkey-copy'
  * that was a wallet sign-in that has since run out, the wallet is asked to
  * renew it right here. Shown only where passkeys work (yap.pr, a browser with
  * WebAuthn, a deployment with the vault).
+ *
+ * `secondary`: an outlined button under the wallet option, with no "or"
+ * divider; otherwise the main button above the private-key form.
  */
-export function PasskeySignIn({ onComplete }: { onComplete: () => void }) {
+export function PasskeySignIn({ onComplete, secondary = false }: { onComplete: () => void; secondary?: boolean }) {
   const { loginWithPasskey, loginWithAppConnect } = useAuth()
   const offered = usePasskeysOffered()
   const [busy, setBusy] = useState(false)
@@ -54,16 +57,26 @@ export function PasskeySignIn({ onComplete }: { onComplete: () => void }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <Button type="button" onClick={signIn} disabled={busy} className="w-full gap-2" data-testid="passkey-sign-in">
+      <Button
+        type="button"
+        onClick={signIn}
+        disabled={busy}
+        variant={secondary ? 'outline' : 'default'}
+        size={secondary ? 'lg' : 'default'}
+        className="w-full gap-2"
+        data-testid="passkey-sign-in"
+      >
         {busy ? <Spinner size="sm" /> : <KeyIcon aria-hidden="true" className="h-5 w-5" />}
         Sign in with a passkey
       </Button>
       {error && <p role="alert" className="text-sm text-center text-red-600 dark:text-red-400">{error}</p>}
-      <div className="flex items-center gap-3 my-2" aria-hidden="true">
-        <span className="h-px flex-1 bg-gray-200 dark:bg-gray-800" />
-        <span className="text-xs text-gray-500">or</span>
-        <span className="h-px flex-1 bg-gray-200 dark:bg-gray-800" />
-      </div>
+      {!secondary && (
+        <div className="flex items-center gap-3 my-2" aria-hidden="true">
+          <span className="h-px flex-1 bg-gray-200 dark:bg-gray-800" />
+          <span className="text-xs text-gray-500">or</span>
+          <span className="h-px flex-1 bg-gray-200 dark:bg-gray-800" />
+        </div>
+      )}
     </div>
   )
 }

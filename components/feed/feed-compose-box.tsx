@@ -47,7 +47,7 @@ export function FeedComposeBox() {
             onClick={() => openLoginPrompt()}
             className="h-auto px-0 text-yappr-500 hover:text-yappr-600 font-medium py-1"
           >
-            Login to share your thoughts
+            Sign in to post
           </Button>
         </div>
       )}
