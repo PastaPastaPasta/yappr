@@ -23,7 +23,6 @@ import {
   CommandLineIcon,
   ClipboardDocumentIcon,
 } from '@heroicons/react/24/outline'
-import toast from 'react-hot-toast'
 import { Lockup } from '@/components/brand/brand'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
@@ -56,6 +55,7 @@ import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
 import { postsHaveLanguage, privateFeedClientSupported, yappCanBeFrozen } from '@/lib/contract-topology'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
+import { useCopy } from '@/hooks/use-copy'
 import { useSettingsStore, type SensitiveContentMode } from '@/lib/store'
 import { LINK_PREVIEW_SERVICES } from '@/lib/link-preview/fetch'
 import { UsernameModal } from '@/components/dpns/username-modal'
@@ -111,6 +111,7 @@ function SettingsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
+  const copy = useCopy()
   const walletSession = useWalletSession()
   // Only where the configured YAPP lets its authority freeze or slash (not on social v17).
   const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID && yappCanBeFrozen()
@@ -254,11 +255,7 @@ function SettingsPage() {
   )
 
   // Support and developers sometimes need the account ID; nobody needs to read it.
-  const copyAccountId = (identityId: string) => {
-    navigator.clipboard.writeText(identityId)
-      .then(() => toast.success('Account ID copied'))
-      .catch(() => toast.error('Could not copy the account ID'))
-  }
+  const copyAccountId = (identityId: string) => copy(identityId, 'Account ID copied')
 
   const renderAccountSettings = () => (
     <div className="p-6 space-y-6">

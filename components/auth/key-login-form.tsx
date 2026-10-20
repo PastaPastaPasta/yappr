@@ -367,7 +367,7 @@ export function KeyLoginForm({ onComplete }: KeyLoginFormProps) {
             Signing in
           </span>
         ) : (
-          'Sign In'
+          'Sign in'
         )}
       </Button>
     </form>

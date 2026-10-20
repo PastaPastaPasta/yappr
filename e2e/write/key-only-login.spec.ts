@@ -24,7 +24,7 @@ test('a private key alone signs in without a username', async ({ page }) => {
   await dialog.locator('#loginCredential').fill(bot.wif)
 
   await expect(dialog.getByText(/^Signing in as /)).toBeVisible()
-  const submit = dialog.getByRole('button', { name: 'Sign In', exact: true })
+  const submit = dialog.getByRole('button', { name: /^sign in$/i })
   await expect(submit).toBeEnabled()
   await submit.click()
 

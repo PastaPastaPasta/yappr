@@ -71,7 +71,7 @@ test('login page shows the login affordance', async ({ page }) => {
     // Other builds: private-key sign-in is the primary path, and there is no wallet option.
     await expect(dialog.locator('#loginCredential')).toBeVisible()
     await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
-    await expect(dialog.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: /^sign in$/i })).toBeVisible()
     await expect(walletButton).toHaveCount(0)
     return
   }

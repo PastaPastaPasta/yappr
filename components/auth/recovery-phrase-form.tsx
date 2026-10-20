@@ -51,7 +51,7 @@ function accountLabel(account: PhraseAccount): string {
  * password. It is emptied as soon as a valid phrase is submitted, whatever
  * happens next.
  */
-export function RecoveryPhraseForm({ onComplete }: { onComplete: () => void }) {
+export function RecoveryPhraseForm({ onComplete, onBusyChange }: { onComplete: () => void; onBusyChange?: (busy: boolean) => void }) {
   const inputId = useId()
   const noteId = useId()
   const { controller, loginWithRecoveryPhrase } = useAuth()
@@ -73,6 +73,11 @@ export function RecoveryPhraseForm({ onComplete }: { onComplete: () => void }) {
   const since = useRef(0)
   /** False once the dialog closes: a sign-in under way then stops before writing anything. */
   const alive = useRef(true)
+
+  // A lookup or sign-in under way tells the dialog, which keeps the other options from unmounting this form.
+  const working = phase.kind === 'finding' || phase.kind === 'signing-in'
+  useEffect(() => onBusyChange?.(working), [onBusyChange, working])
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange])
 
   useEffect(() => {
     alive.current = true
@@ -183,7 +188,7 @@ export function RecoveryPhraseForm({ onComplete }: { onComplete: () => void }) {
             type={show || cssMasking ? 'text' : 'password'}
             onInput={(event) => { setHasText(event.currentTarget.value.trim().length > 0); setError(null) }}
             onKeyDown={(event) => { if (event.key === 'Enter' && !busy) submit().catch(fail) }}
-            placeholder="Your 12 or 24 words"
+            placeholder="Your recovery phrase"
             aria-describedby={noteId}
             disabled={busy}
             // Masked without type=password where CSS can (browsers offer to save passwords); never autofilled or corrected.
@@ -217,7 +222,7 @@ export function RecoveryPhraseForm({ onComplete }: { onComplete: () => void }) {
             <Spinner size="sm" className="border-white" />
             {phase.kind === 'finding' ? 'Finding your account' : 'Signing in'}
           </span>
-        ) : 'Sign In'}
+        ) : 'Sign in'}
       </Button>
     </div>
   )

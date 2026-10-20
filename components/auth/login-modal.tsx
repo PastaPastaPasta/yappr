@@ -47,6 +47,7 @@ function Disclosure({
   icon,
   label,
   centered = false,
+  disabled = false,
   children,
 }: {
   id: string
@@ -55,6 +56,8 @@ function Disclosure({
   icon?: React.ReactNode
   label: string
   centered?: boolean
+  /** Locks the section as it is: it can't be opened or closed. */
+  disabled?: boolean
   children: React.ReactNode
 }) {
   const reduceMotion = useReducedMotion()
@@ -65,7 +68,8 @@ function Disclosure({
         aria-expanded={open}
         aria-controls={open ? id : undefined}
         onClick={onToggle}
-        className={`w-full flex items-center ${centered ? 'justify-center gap-1' : 'justify-between'} text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500`}
+        disabled={disabled}
+        className={`w-full flex items-center ${centered ? 'justify-center gap-1' : 'justify-between'} text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 disabled:opacity-50 disabled:hover:text-gray-600 dark:disabled:hover:text-gray-400`}
       >
         <span className="flex items-center gap-2">
           {icon}
@@ -124,6 +128,8 @@ export function LoginModal() {
   const switchedView = useRef(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [advanced, setAdvanced] = useState<AdvancedSection | null>(null)
+  /** The recovery phrase form is looking up or signing in: the other options wait, so it isn't unmounted mid-flight. */
+  const [phraseBusy, setPhraseBusy] = useState(false)
   const toggleAdvanced = (section: AdvancedSection) => setAdvanced((current) => (current === section ? null : section))
 
   // Reset to the first view whenever the dialog closes.
@@ -165,12 +171,12 @@ export function LoginModal() {
     <div data-testid="sign-in-options">
       <div className="flex flex-col gap-3">
         {!renewing && (
-          <Button ref={walletButton} type="button" size="lg" className="w-full gap-2" onClick={() => switchView(true)}>
+          <Button ref={walletButton} type="button" size="lg" className="w-full gap-2" disabled={phraseBusy} onClick={() => switchView(true)}>
             <Wallet aria-hidden="true" className="w-5 h-5" />
             Sign in with Dash Wallet
           </Button>
         )}
-        <PasskeySignIn onComplete={close} onRenewalChange={setRenewing} secondary />
+        <PasskeySignIn onComplete={close} onRenewalChange={setRenewing} disabled={phraseBusy} secondary />
       </div>
 
       <div className="mt-4">
@@ -180,6 +186,7 @@ export function LoginModal() {
           onToggle={() => setShowAdvanced((value) => !value)}
           label="Other ways to sign in"
           centered
+          disabled={phraseBusy}
         >
           <div className="space-y-4 rounded-xl border border-gray-100 dark:border-gray-800 p-4">
             {phraseAvailable && (
@@ -189,8 +196,9 @@ export function LoginModal() {
                 onToggle={() => toggleAdvanced('phrase')}
                 icon={<ScrollText aria-hidden="true" className="w-4 h-4" />}
                 label="Sign in with your recovery phrase"
+                disabled={phraseBusy}
               >
-                <RecoveryPhraseForm onComplete={close} />
+                <RecoveryPhraseForm onComplete={close} onBusyChange={setPhraseBusy} />
               </Disclosure>
             )}
             <Disclosure
@@ -199,6 +207,7 @@ export function LoginModal() {
               onToggle={() => toggleAdvanced('key')}
               icon={<KeyRound aria-hidden="true" className="w-4 h-4" />}
               label="Sign in with a private key"
+              disabled={phraseBusy}
             >
               <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
                 {phraseAvailable

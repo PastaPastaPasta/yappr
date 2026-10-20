@@ -23,6 +23,7 @@ import { DISCOVERY_SCAN_LIMIT } from '@/lib/services/pagination-utils'
 import { storefrontIsV2, storefrontIsV6 } from '@/lib/constants'
 import { storeCategoryLabel } from '@/lib/storefront/storefront-contract'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
+import { useTabKeyboard } from '@/hooks/use-tab-keyboard'
 import type { Store, StoreRatingSummary } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { ModerationClosedBanner } from '@/components/moderation/moderation-closed-notice'
@@ -50,6 +51,12 @@ export default function StoreBrowsePage() {
   const [scanIncomplete, setScanIncomplete] = useState(false)
   const [rankingUnavailable, setRankingUnavailable] = useState(false)
   const [loadFailed, setLoadFailed] = useState(false)
+  const selectSort = (key: StoreSort) => {
+    setSort(key)
+    // A category lists its newest stores; the rankings span every category.
+    if (key !== 'newest') setCategory('')
+  }
+  const sortTabs = useTabKeyboard({ keys: SORT_OPTIONS.map(([key]) => key), active: sort, onSelect: selectSort })
 
   // Check if user has a store
   useEffect(() => {
@@ -211,17 +218,15 @@ export default function StoreBrowsePage() {
 
             {/* Sort (ranked tabs need the v2 contract's ranking trees) */}
             {storefrontIsV2() && (
-            <div className="flex gap-2 px-4 pb-3" role="tablist" aria-label="Sort stores">
+            <div ref={sortTabs.listRef} onKeyDown={sortTabs.onKeyDown} className="flex gap-2 px-4 pb-3" role="tablist" aria-label="Sort stores">
               {SORT_OPTIONS.map(([key, label]) => (
                 <button
                   key={key}
+                  type="button"
                   role="tab"
                   aria-selected={sort === key}
-                  onClick={() => {
-                    setSort(key)
-                    // A category lists its newest stores; the rankings span every category.
-                    if (key !== 'newest') setCategory('')
-                  }}
+                  tabIndex={sort === key ? 0 : -1}
+                  onClick={() => selectSort(key)}
                   className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
                     sort === key
                       ? 'bg-yappr-500 text-white'

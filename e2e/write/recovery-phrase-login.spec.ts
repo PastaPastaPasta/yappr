@@ -51,7 +51,7 @@ async function signInWithPhrase(browser: Browser, username: string): Promise<Pag
   await dialog.getByRole('button', { name: 'Sign in with your recovery phrase' }).click()
   const field = dialog.getByLabel('Recovery phrase', { exact: true })
   await field.fill(readFileSync(PHRASE_FILE as string, 'utf8').trim())
-  await dialog.getByRole('button', { name: 'Sign In', exact: true }).click()
+  await dialog.getByRole('button', { name: /^sign in$/i }).click()
   // Several identities share the phrase: pick one. The field is already empty.
   const accounts = dialog.getByTestId('recovery-phrase-accounts')
   await expect(accounts).toBeVisible({ timeout: 120_000 })

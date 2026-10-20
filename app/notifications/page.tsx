@@ -21,7 +21,7 @@ import {
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
-import { ScrollTabs } from '@/components/ui/scroll-tabs'
+import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { shouldGateSensitive } from '@/lib/sensitive-content'
@@ -294,9 +294,11 @@ function NotificationsPage() {
             onSelect={setFilter}
             testIdPrefix="notification-tab"
             ariaLabel="Filter notifications"
+            panelId="notifications-panel"
           />
         </PageHeader>
 
+        <div id="notifications-panel" role="tabpanel" aria-labelledby={scrollTabId('notifications-panel', filter)}>
         {isLoading || !hasFetchedOnce ? (
           <NotificationSkeleton />
         ) : filteredNotifications.length === 0 ? (
@@ -412,6 +414,7 @@ function NotificationsPage() {
             ))}
           </div>
         )}
+        </div>
     </PageShell>
   )
 }

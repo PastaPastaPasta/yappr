@@ -366,7 +366,7 @@ export function Sidebar() {
             onClick={openLoginModal}
           >
             <ArrowRightEndOnRectangleIcon className="h-6 w-6 xl:hidden" />
-            <span className={NAV_LABEL}>Sign In</span>
+            <span className={NAV_LABEL}>Sign in</span>
           </Button>
         ) : (
           // Show loading state during SSR/hydration

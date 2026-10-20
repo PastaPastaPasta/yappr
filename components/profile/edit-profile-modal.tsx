@@ -110,8 +110,13 @@ function EditProfileDialog({
 
   // While the discard prompt is up, the form behind it takes no focus or clicks.
   const formRef = useRef<HTMLDivElement>(null)
+  // Keeping the edit hands focus back to Cancel, the control that raised the prompt.
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const wasConfirming = useRef(false)
   useEffect(() => {
     if (formRef.current) formRef.current.inert = confirmDiscard
+    if (wasConfirming.current && !confirmDiscard) cancelRef.current?.focus()
+    wasConfirming.current = confirmDiscard
   }, [confirmDiscard])
   const discardTitleId = useId()
 
@@ -136,7 +141,7 @@ function EditProfileDialog({
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
           ) : (
-            <Button variant="ghost" size="sm" onClick={requestClose} disabled={isSaving} className="text-sm">
+            <Button ref={cancelRef} variant="ghost" size="sm" onClick={requestClose} disabled={isSaving} className="text-sm">
               Cancel
             </Button>
           )}

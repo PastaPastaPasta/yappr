@@ -29,10 +29,13 @@ export function PasskeySignIn({
   onComplete,
   onRenewalChange,
   secondary = false,
+  disabled = false,
 }: {
   onComplete: () => void
   onRenewalChange?: (renewing: boolean) => void
   secondary?: boolean
+  /** Another sign-in is under way on this dialog. */
+  disabled?: boolean
 }) {
   const { loginWithPasskey, loginWithAppConnect } = useAuth()
   const offered = usePasskeysOffered()
@@ -69,6 +72,8 @@ export function PasskeySignIn({
 
   if (!offered) return null
 
+  const statusText = busy && slow ? (connected ? 'Opening your account…' : 'Connecting…') : ''
+
   if (renewal) {
     return (
       <div className="flex flex-col gap-3" data-testid="passkey-renew">
@@ -84,12 +89,12 @@ export function PasskeySignIn({
       <Button
         type="button"
         onClick={signIn}
-        disabled={busy}
+        disabled={busy || disabled}
         aria-busy={busy}
         variant={secondary ? 'outline' : 'default'}
         size={secondary ? 'lg' : 'default'}
         // Busy is shown by the spinner and label, not by fading the button out.
-        className="w-full gap-2 disabled:opacity-100"
+        className={`w-full gap-2 ${busy ? 'disabled:opacity-100' : ''}`}
         data-testid="passkey-sign-in"
       >
         {busy
@@ -97,11 +102,14 @@ export function PasskeySignIn({
           : <KeyIcon aria-hidden="true" className="h-5 w-5" />}
         {busy ? 'Signing in…' : 'Sign in with a passkey'}
       </Button>
-      {busy && slow && (
-        <p aria-live="polite" className="text-xs text-center text-gray-500 dark:text-gray-400" data-testid="passkey-sign-in-status">
-          {connected ? 'Opening your account…' : 'Connecting…'}
-        </p>
-      )}
+      {/* Always mounted so screen readers hear the text change; with no text it takes no room. */}
+      <p
+        aria-live="polite"
+        className={statusText ? 'text-xs text-center text-gray-500 dark:text-gray-400' : 'sr-only'}
+        data-testid="passkey-sign-in-status"
+      >
+        {statusText}
+      </p>
       {error && <p role="alert" className="text-sm text-center text-red-600 dark:text-red-400">{error}</p>}
       {!secondary && (
         <div className="flex items-center gap-3 my-2" aria-hidden="true">

@@ -12,7 +12,7 @@ for (const kind of ['followers', 'following'] as const) {
       await expect(content.getByText(/^0 (followers|users)$/)).toHaveCount(0)
 
       if (kind === 'followers') {
-        await content.getByRole('button', { name: 'Sign In', exact: true }).click()
+        await content.getByRole('button', { name: /^sign in$/i }).click()
         await expect(page.getByRole('dialog', { name: /Sign in to Yappr/ })).toBeVisible()
       } else {
         await content.getByRole('button', { name: 'Explore Yappr' }).click()

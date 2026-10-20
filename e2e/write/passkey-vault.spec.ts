@@ -196,7 +196,7 @@ test.describe('passkey vault', () => {
     }
     await dialog.locator('#loginCredential').fill(KEY_WIF as string)
     await expect(dialog.getByText(/^Signing in as /)).toBeVisible({ timeout: 60_000 })
-    await dialog.getByRole('button', { name: 'Sign In', exact: true }).click()
+    await dialog.getByRole('button', { name: /^sign in$/i }).click()
     await expect(page.getByTestId('user-menu-trigger')).toBeVisible({ timeout: 60_000 })
 
     await measure('add a passkey (key sign-in)', probe, () => addPasskeyFromOffer(page))

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 
 export function FeedComposeBox() {
   const [isHydrated, setIsHydrated] = useState(false);
-  const { user } = useAuth();
+  const { user, isAuthRestoring } = useAuth();
   const setComposeOpen = useAppStore((state) => state.setComposeOpen);
 
   useEffect(() => {
@@ -16,13 +16,17 @@ export function FeedComposeBox() {
   }, []);
 
   // Signed out there is nothing to compose, and the sidebar already offers Sign in.
-  if (!user) return null;
+  if (!user && !isAuthRestoring) return null;
+
+  // While a saved session is restored, the box holds its full size (the same
+  // markup, inert) so the feed below does not jump down when it appears.
+  const placeholder = !user;
 
   return (
-    <div className="border-b border-gray-200 dark:border-gray-800 px-4 py-2 md:p-4">
+    <div className="border-b border-gray-200 dark:border-gray-800 px-4 py-2 md:p-4" aria-hidden={placeholder || undefined}>
         <div className="flex gap-3">
           <div className="h-10 w-10 md:h-12 md:w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 flex-shrink-0">
-            {isHydrated ? (
+            {isHydrated && user ? (
               <UserAvatar userId={user.identityId} size="lg" alt="Your avatar" />
             ) : (
               <div className="w-full h-full bg-gray-300 dark:bg-gray-700 animate-pulse rounded-full" />
@@ -31,7 +35,9 @@ export function FeedComposeBox() {
           <Button
             type="button"
             variant="ghost"
-            data-testid="open-compose-btn"
+            data-testid={placeholder ? undefined : 'open-compose-btn'}
+            disabled={placeholder}
+            tabIndex={placeholder ? -1 : undefined}
             onClick={() => setComposeOpen(true)}
             className="flex-1 justify-start h-auto text-left px-4 py-3 bg-gray-50 dark:bg-gray-950 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
           >
