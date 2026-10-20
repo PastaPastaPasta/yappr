@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { BlogPostDiscovery } from './blog-post-discovery'
 import { PillTabs } from './pill-tabs'
 import { DISCOVERY_SCAN_LIMIT } from '@/lib/services/pagination-utils'
+import { KeptPanel } from '@/components/ui/kept-panel'
 
 interface BlogWithUsername extends Blog {
   username: string | null
@@ -88,8 +89,6 @@ async function hydrateBlogs(blogs: Blog[], viewerId: string | undefined): Promis
 export function BlogDiscovery({ sdkReady = true, showHeader = false, initialView = 'blogs' }: { sdkReady?: boolean; showHeader?: boolean; initialView?: 'blogs' | 'posts' }) {
   const [view, setView] = useState<'blogs' | 'posts'>(initialView)
   const postsView = blogIsV7() && view === 'posts'
-  const [postsSeen, setPostsSeen] = useState(postsView)
-  if (postsView && !postsSeen) setPostsSeen(true)
 
   return (
     <div className="space-y-4">
@@ -124,14 +123,12 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false, initialView
       )}
 
       {/* Both views stay mounted once opened and are only hidden, so switching back is instant. */}
-      {(postsView || postsSeen) && (
-        <div hidden={!postsView}>
-          <BlogPostDiscovery sdkReady={sdkReady} />
-        </div>
-      )}
-      <div hidden={postsView}>
+      <KeptPanel active={postsView}>
+        <BlogPostDiscovery sdkReady={sdkReady} />
+      </KeptPanel>
+      <KeptPanel active={!postsView}>
         <BlogList sdkReady={sdkReady} />
-      </div>
+      </KeptPanel>
     </div>
   )
 }

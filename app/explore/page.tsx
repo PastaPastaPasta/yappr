@@ -17,6 +17,7 @@ import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/explore/trending-hashtag-row'
 import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
+import { KeptPanel } from '@/components/ui/kept-panel'
 import { likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
@@ -33,8 +34,6 @@ export default function ExplorePage() {
   const { user } = useAuth()
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
-  // Tabs opened so far: their panels stay mounted (hidden when inactive).
-  const [visitedTabs, setVisitedTabs] = useState<ReadonlySet<ExploreTab>>(() => new Set<ExploreTab>(['hashtags']))
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [searchResults, setSearchResults] = useState<Post[]>([])
@@ -60,7 +59,6 @@ export default function ExplorePage() {
 
   const selectTab = useCallback((tab: ExploreTab) => {
     setActiveTab(tab)
-    setVisitedTabs((prev) => (prev.has(tab) ? prev : new Set(prev).add(tab)))
     // Keep the URL in step without a navigation (so nothing remounts).
     const url = new URL(window.location.href)
     if (tab === 'hashtags') url.searchParams.delete('tab')
@@ -79,6 +77,11 @@ export default function ExplorePage() {
     const match = available.find((tab) => tab === requested)
     if (match) selectTab(match)
   }, [selectTab])
+
+  // The Top lists are filtered by the viewer's blocks: drop them on sign-in/out.
+  useEffect(() => {
+    setTopByWindow({})
+  }, [user?.identityId])
 
   // Load the global most-liked posts while the Top tab is open (v9 on — the
   // ranking is one proved `documents.ranked()` page). A revisit shows the kept
@@ -369,8 +372,7 @@ export default function ExplorePage() {
             aria-labelledby={scrollTabId('explore-panel', activeTab)}
             hidden={!!searchQuery}
           >
-            {visitedTabs.has('hashtags') && (
-              <div hidden={activeTab !== 'hashtags'}>
+            <KeptPanel active={activeTab === 'hashtags'}>
                 <RankingWindowToggle axis="hashtags" value={trendingWindow} onChange={setTrendingWindow} testIdPrefix="explore-trending" />
                 <div className="divide-y divide-gray-200 dark:divide-gray-800">
                   {!trendingHashtags ? (
@@ -385,11 +387,9 @@ export default function ExplorePage() {
                     trendingHashtags.map((trend, index) => <TrendingHashtagRow key={trend.hashtag} trend={trend} index={index} />)
                   )}
                 </div>
-              </div>
-            )}
+            </KeptPanel>
 
-            {visitedTabs.has('top') && (
-              <div hidden={activeTab !== 'top'}>
+            <KeptPanel active={activeTab === 'top'}>
                 {/* Global most-liked posts (proved ranking, top 20) */}
                 <RankingWindowToggle axis="posts" value={topWindow} onChange={setTopWindow} testIdPrefix="explore-top" />
                 <div className="divide-y divide-gray-200 dark:divide-gray-800">
@@ -407,19 +407,15 @@ export default function ExplorePage() {
                     ))
                   )}
                 </div>
-              </div>
-            )}
+            </KeptPanel>
 
-            {visitedTabs.has('creators') && (
-              <div hidden={activeTab !== 'creators'}>
+            <KeptPanel active={activeTab === 'creators'}>
                 {/* v9 creator leaderboard (proved prefix rankings). */}
                 <RankingWindowToggle axis="creators" value={creatorsWindow} onChange={setCreatorsWindow} testIdPrefix="explore-creators" />
                 <TopCreators window={creatorsWindow} />
-              </div>
-            )}
+            </KeptPanel>
 
-            {visitedTabs.has('blogs') && (
-              <div hidden={activeTab !== 'blogs'}>
+            <KeptPanel active={activeTab === 'blogs'}>
                 {isLoadingBlogs ? (
                   <BlogPostCardSkeleton count={10} />
                 ) : boundedPostListState(recentBlogPosts.length, moreBlogPostsAfter) === 'filtered' ? (
@@ -454,8 +450,7 @@ export default function ExplorePage() {
                     )}
                   </div>
                 )}
-              </div>
-            )}
+            </KeptPanel>
           </div>
     </PageShell>
   )

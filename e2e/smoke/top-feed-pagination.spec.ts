@@ -10,7 +10,8 @@ test('Top pagination preserves the loaded cards and reading position', async ({ 
 
   const list = page.getByTestId('feed-top-list')
   await expect(list.or(page.getByTestId('feed-top-empty'))).toBeVisible()
-  const sentinel = page.getByTestId('infinite-scroll-sentinel')
+  // Scoped to Top: the Latest list stays mounted (hidden) with its own sentinel.
+  const sentinel = page.getByTestId('feed-top-panel').getByTestId('infinite-scroll-sentinel')
   test.skip(await sentinel.count() === 0, 'Requires at least one full page of public ranked posts')
 
   // PostCard is a direct article today; use the top-level cards independently
@@ -28,7 +29,7 @@ test('Top pagination preserves the loaded cards and reading position', async ({ 
 
   // The wider ranking replaces the page in place: no full-page spinner, and the
   // cards already on screen keep their identity and order.
-  await expect(page.getByText('Loading top posts...', { exact: true })).toHaveCount(0)
+  await expect(page.getByTestId('feed-top-loading')).toHaveCount(0)
   await expect.poll(async () => (await ids()).length).toBeGreaterThan(beforeIds.length)
   expect((await ids()).slice(0, beforeIds.length)).toEqual(beforeIds)
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(beforeY - 100)
@@ -49,7 +50,8 @@ test('Top pagination retains the page and offers a retry on connection failures'
   await top.click()
   const list = page.getByTestId('feed-top-list')
   await expect(list.or(page.getByTestId('feed-top-empty'))).toBeVisible()
-  const sentinel = page.getByTestId('infinite-scroll-sentinel')
+  // Scoped to Top: the Latest list stays mounted (hidden) with its own sentinel.
+  const sentinel = page.getByTestId('feed-top-panel').getByTestId('infinite-scroll-sentinel')
   test.skip(await sentinel.count() === 0, 'Requires at least one full page of public ranked posts')
 
   const ids = () => list.locator('article[data-testid^="post-card-"]').evaluateAll(elements =>

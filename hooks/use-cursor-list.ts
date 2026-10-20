@@ -45,6 +45,9 @@ export function useCursorList<T extends { id: string }>(
   const [incomplete, setIncomplete] = useState(false)
   const currentLoad = useRef(loadPage)
   const firstPages = useRef(new Map<string, CursorPage<T>>())
+  // A kept list refreshing in the background: a next page waits for it, so
+  // the refreshed first page cannot overwrite pages appended meanwhile.
+  const refreshing = useRef(false)
 
   useEffect(() => {
     currentLoad.current = loadPage
@@ -56,6 +59,7 @@ export function useCursorList<T extends { id: string }>(
       setError(null)
       if (kept) {
         // Show the list read before at once; the read below refreshes it.
+        refreshing.current = true
         setItems(kept.items)
         setCursor(kept.nextCursor)
         setIncomplete(kept.incomplete === true)
@@ -77,7 +81,10 @@ export function useCursorList<T extends { id: string }>(
         // A failed refresh keeps the kept list; only a first read shows the error.
         if (!cancelled && !kept) setError(loadError)
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          refreshing.current = false
+          setLoading(false)
+        }
       }
     }
 
@@ -89,11 +96,12 @@ export function useCursorList<T extends { id: string }>(
     })
     return () => {
       cancelled = true
+      refreshing.current = false
     }
   }, [enabled, loadPage, loadError, cacheKey])
 
   const loadMore = useCallback(async () => {
-    if (!cursor || loadingMore) return
+    if (!cursor || loadingMore || refreshing.current) return
     const source = loadPage
     setLoadingMore(true)
     try {

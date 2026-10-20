@@ -125,7 +125,8 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         // and only a failed first load shows empty.
         if (append) throw error;
         setPosts((current) => current ?? []);
-        setHasMore(false);
+        // A kept page on screen keeps its paging; only an empty first load ends it.
+        if (!firstPagesRef.current.has(viewKey)) setHasMore(false);
       } finally {
         if (isCurrent()) {
           setIsLoading(false);

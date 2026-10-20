@@ -43,7 +43,7 @@ export function FeedTopList({ posts, isLoading, activeTab, rankingWindow, onPost
   // Only a ranking with nothing to show yet gets the placeholder; a reload of
   // one already on screen keeps it there and swaps rows in place.
   if (posts === null) {
-    return <PostListSkeleton label="Loading top posts" />;
+    return <PostListSkeleton label="Loading top posts" testId="feed-top-loading" />;
   }
 
   const visiblePosts = filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId);

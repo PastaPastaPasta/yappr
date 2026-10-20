@@ -11,11 +11,19 @@
  * scrollbars (Linux, Windows, macOS with a mouse or "Show scroll bars:
  * Always") a page that briefly fits the window used to drop its scrollbar and
  * the centred layout jumped sideways and back; a reserved gutter never
- * changes width. (A dialog's scroll lock still hides the scrollbar and pads
- * the body by the same width, so nothing moves then either.)
+ * changes width.
+ *
+ * While a dialog locks scrolling, its scroll lock hides the scrollbar and pads
+ * the body by the scrollbar's width itself, so the gutter is released then;
+ * otherwise a browser that keeps the gutter under overflow:hidden would count
+ * the width twice.
  */
 html {
   scrollbar-gutter: stable;
+}
+
+html:has(> body[data-scroll-locked]) {
+  scrollbar-gutter: auto;
 }
 
 @layer base {

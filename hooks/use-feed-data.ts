@@ -571,7 +571,9 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     // the list already shown for this tab stays (no skeleton, no card
     // re-hydration) and polling picks up anything new once it resumes.
     if (!enabled) {
+      // A first page or a next page cut off here is dropped; neither may leave its flag set.
       setLoading(false);
+      setIsLoadingMore(false);
       return invalidateFeedLoads;
     }
     const shown = shownFeedRef.current;
