@@ -75,10 +75,21 @@ test('login page shows the login affordance', async ({ page }) => {
     return
   }
 
-  // App Connect builds (D38): the wallet, then its recovery phrase, then a private key under Advanced.
+  // App Connect builds (D38): the wallet, then its recovery phrase (not yet on mainnet), then a private key under Advanced.
   const options = dialog.getByTestId('sign-in-options').getByRole('button', { expanded: false })
-  await expect(options).toHaveText(['Sign in with your Dash wallet', 'Sign in with your recovery phrase', 'Advanced: sign in with a private key'])
   await expect(dialog.locator('#loginCredential')).toHaveCount(0)
+  if (await expectedNetwork() === 'mainnet') {
+    await expect(options).toHaveText(['Sign in with your Dash wallet', 'Advanced: sign in with a private key'])
+    await expect(dialog.getByRole('button', { name: 'Sign in with your recovery phrase' })).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Advanced: sign in with a private key' }).click()
+    await expect(dialog.locator('#loginCredential')).toBeVisible()
+    await expect(dialog.locator('#loginIdentityInput')).toBeVisible()
+    await expect(dialog.getByRole('link', { name: 'Open in wallet app' })).toHaveCount(0)
+    await walletToggle.click()
+    await expect(dialog.getByRole('link', { name: 'Open in wallet app' })).toHaveAttribute('href', /^dash-key:/)
+    return
+  }
+  await expect(options).toHaveText(['Sign in with your Dash wallet', 'Sign in with your recovery phrase', 'Advanced: sign in with a private key'])
   await dialog.getByRole('button', { name: 'Sign in with your recovery phrase' }).click()
   const phrase = dialog.getByLabel('Recovery phrase', { exact: true })
   // Masked, but not a password field (browsers would offer to save it), and in no form.
