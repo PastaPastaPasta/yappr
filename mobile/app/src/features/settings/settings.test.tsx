@@ -18,6 +18,7 @@ import { useExpiredSessions } from '~/data/session-expiry';
 import { useAccounts } from '~/features/auth/accounts';
 import { AccountList } from '~/features/auth/AccountSwitcher';
 import { SignedOutPlaceholder } from '~/features/auth/SignedOutPlaceholder';
+import { useHiddenPrivateStore } from '~/features/post/hidden-private';
 import { useAppearance } from '~/state/appearance';
 import { queryClient } from '~/state/query-client';
 import { chipStateOf } from '~/ui/NetworkChip';
@@ -398,6 +399,17 @@ describe('Privacy & Safety (SET-04, SAFE-06, SAFE-07)', () => {
     expect(router.push).toHaveBeenCalledWith('/settings/blocked-lists');
   });
 
+  it("hides private posts the viewer can't see, a device setting of its own", async () => {
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+    expect(byId('privacy-hide-private')).not.toBeChecked();
+    act(() => fireEvent.press(byId('privacy-hide-private')));
+    expect(useHiddenPrivateStore.getState().hide).toBe(true);
+    expect(byId('privacy-hide-private')).toBeChecked();
+    expect(fakeEngine.method('settings.set')).not.toHaveBeenCalled();
+    act(() => useHiddenPrivateStore.setState({ hide: false }));
+  });
+
   it('offers read receipts on legacy messages', async () => {
     fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as CapabilitiesDTO } });
     fakeEngine.method('settings.set').mockResolvedValue({ ...SETTINGS, sendReadReceipts: false });
@@ -513,9 +525,9 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     expect(byId('account-username-alice')).toBeTruthy();
     expect(byId('account-username-alice2')).toBeTruthy();
     expect(screen.getByText('March 4, 2026')).toBeTruthy();
-    // 4 decimals, the exact credits muted beside it (agent-isms #15).
+    // 4 decimals, and no credits: Platform's unit is not the user's.
     expect(screen.getByText('1.2345 DASH')).toBeTruthy();
-    expect(screen.getByText('123,456,789,000 credits')).toBeTruthy();
+    expect(screen.queryByText(/credits/)).toBeNull();
     expect(screen.queryByText(ALICE)).toBeNull();
 
     // Names first, the balance next, the id last.
@@ -546,6 +558,22 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
 
     expect(byId('account-no-username')).toBeTruthy();
     expect(byId('account-register')).toHaveTextContent('Choose a username');
+  });
+
+  it('chooses how posts pay with one switch, only where YAPP can pay (owner finding #3)', async () => {
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+    expect(screen.queryByTestId('account-pay-with-yapp')).toBeNull();
+    screen.unmount();
+
+    fakeEngine.setStatus({ info: { capabilities: { dm: 'v5', yappPayments: true } as CapabilitiesDTO } });
+    fakeEngine.method('settings.set').mockResolvedValue({ ...SETTINGS, payWith: 'yapp' });
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+    expect(byId('account-pay-with-yapp')).not.toBeChecked();
+    await act(async () => fireEvent.press(byId('account-pay-with-yapp')));
+    expect(fakeEngine.method('settings.set')).toHaveBeenCalledWith({ payWith: 'yapp' });
+    expect(byId('account-pay-with-yapp')).toBeChecked();
   });
 
   it('reads the balance again on open, quietly, with no refresh button', async () => {
@@ -804,7 +832,7 @@ describe('About (SET-06, SET-07)', () => {
     // A scrolling sheet, so large text still reaches every rule.
     expect(mockSheetScroll).toHaveBeenCalledWith(expect.objectContaining({ testID: 'about-community-rules-sheet' }));
     expect(byId('about-rules-summary')).toHaveTextContent(copy.about.rulesIntro, { exact: false });
-    expect(screen.getByText('What you post is public and permanent on Dash Platform.')).toBeTruthy();
+    expect(screen.getByText('What you post is public and permanent.')).toBeTruthy();
     expect(screen.getByText('Zero tolerance for abuse')).toBeTruthy();
   });
 

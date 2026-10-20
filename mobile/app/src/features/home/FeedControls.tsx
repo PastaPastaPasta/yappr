@@ -3,6 +3,7 @@ import type { FeedTab } from '@engine/api/feed';
 import { View } from 'react-native';
 import { SignalSlashIcon } from 'react-native-heroicons/outline';
 
+import { RANKING_WINDOWS } from '~/features/explore/tags';
 import { cn } from '~/lib-allowlist';
 import { SegmentedControl, TopTabs, type TabOption } from '~/ui/Tabs';
 import { Text } from '~/ui/Text';
@@ -16,15 +17,10 @@ const TABS: readonly TabOption<FeedTab>[] = [
   { value: 'following', label: 'Following' },
 ];
 
+/** "Latest", as on hashtag pages: "Recent" is Top's window below it. */
 const SORTS: readonly TabOption<FeedSort>[] = [
-  { value: 'recent', label: 'Recent' },
+  { value: 'recent', label: 'Latest' },
   { value: 'top', label: 'Top' },
-];
-
-/** The posts axis's window on the dev cut (`windowedRankingFor('posts')`: "3 days"). */
-const WINDOWS: readonly TabOption<RankingWindow>[] = [
-  { value: 'today', label: '3 days' },
-  { value: 'all', label: 'All time' },
 ];
 
 export interface FeedControlsProps {
@@ -40,7 +36,7 @@ export interface FeedControlsProps {
   showWindow: boolean;
 }
 
-/** For You / Following, then Recent / Top and the window where the contract ranks likes. */
+/** For You / Following, then Latest / Top and the window where the contract ranks likes. */
 export function FeedControls({
   tab,
   onTab,
@@ -61,7 +57,7 @@ export function FeedControls({
           </View>
           {showWindow ? (
             <View className="flex-1">
-              <SegmentedControl options={WINDOWS} value={window} onChange={onWindow} testID="home-window" />
+              <SegmentedControl options={RANKING_WINDOWS} value={window} onChange={onWindow} testID="home-window" />
             </View>
           ) : null}
         </View>

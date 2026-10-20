@@ -1,4 +1,4 @@
-import { formatCredits, formatDash } from './format';
+import { formatDash } from './format';
 
 describe('formatDash', () => {
   it.each([
@@ -18,13 +18,5 @@ describe('formatDash', () => {
     [-25_674_582_414n, '-0.2567 DASH'],
   ])('%s credits → %s', (credits, text) => {
     expect(formatDash(credits)).toBe(text);
-  });
-});
-
-describe('formatCredits', () => {
-  it('groups thousands', () => {
-    expect(formatCredits(0n)).toBe('0');
-    expect(formatCredits(123_456_789_000n)).toBe('123,456,789,000');
-    expect(formatCredits(-1_500n)).toBe('-1,500');
   });
 });

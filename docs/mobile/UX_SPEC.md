@@ -739,10 +739,10 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │  │  device                   │  │
 │  └───────────────────────────┘  │
 │                                 │
-│  Other ways to sign in      ˅   │  disclosure row
+│  Advanced                   ˅   │  disclosure row
 │    Sign in with a private key ›│  (revealed)
 │                                 │
-│  New to Dash? Create an identity│  link → identity bridge
+│  New to Dash? Get Dash Wallet   │  link → dash.org/download
 └─────────────────────────────────┘
 ```
 
@@ -850,15 +850,6 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │  By continuing, you accept the  │  body
 │  Terms of Use and Community    │
 │  Rules. Here is what to know:  │
-│  • You must be 18 or older.    │
-│  • Yappr is open-source code   │
-│    for Dash Platform. Its      │
-│    authors cannot change,      │
-│    remove or recover your data.│
-│  • No centralized moderation.  │
-│    Independent on-chain teams │
-│    are elected by the community│
-│    through masternode votes.   │
 │  • No harassment, hate, threats │  body, bulleted (copy 5.1)
 │    or illegal content. There is │
 │    zero tolerance for abuse.    │
@@ -870,7 +861,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │    report posts that break      │
 │    these rules.                 │
 │  • What you post is public and  │
-│    permanent on Dash Platform.  │
+│    permanent.                   │
 │                                 │
 │  Terms of Use · Privacy Policy  │  links (in-app browser)
 │  · Community rules              │
@@ -1456,10 +1447,11 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | signin.subtitle | Approve one request in your wallet. Your keys never leave it. |
 | signin.openWallet | Open wallet |
 | signin.otherDevice | Use a wallet on another device |
-| signin.other | Other ways to sign in |
+| signin.other | Advanced |
 | signin.privateKey | Sign in with a private key |
-| signin.newToDash | New to Dash? Create an identity **(web: "New to Dash?")** |
-| signin.noWallet | Yappr uses a Dash wallet for your identity. No wallet on this phone handles Dash sign-in links. |
+| signin.newToDash | New to Dash? **(web)** |
+| signin.getDashWallet | Get Dash Wallet **(web)**, opens https://www.dash.org/download/ |
+| signin.noWallet | You'll need the Dash wallet to sign in. |
 | signin.getWallet | Get a Dash wallet |
 | signin.nothingOpened | Nothing opened? No wallet app on this device handles Dash links. Scan the QR code with a wallet on another device, or copy the link into your wallet. **(web)** |
 | signin.waiting | Waiting for your wallet… |
@@ -1498,13 +1490,12 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | key.show / hide | Show key / Hide key |
 | terms.title | Before you start |
 | terms.intro | By continuing, you accept the Terms of Use and Community Rules. Here is what to know: |
-| terms.rule1 | You must be 18 or older to use Yappr. |
-| terms.rule2 | No harassment, hate, threats or illegal content. There is zero tolerance for abuse. |
-| terms.rule3 | Yappr is open-source software for Dash Platform. Its authors cannot change, remove or recover your data on the network. |
-| terms.rule4 | Yappr has no centralized moderation. On-chain teams are elected by the community through masternode votes and are independent of Yappr. |
-| terms.rule5 | Reported content can be removed by the community's moderators, and abusive accounts can be banned. |
-| terms.rule6 | You can block anyone, and report posts that break these rules. |
-| terms.rule7 | What you post is public and permanent on Dash Platform. |
+| terms.rule1 | No harassment, hate, threats or illegal content. There is zero tolerance for abuse. |
+| terms.rule2 | Reported content can be removed by the community's moderators, and abusive accounts can be banned. |
+| terms.rule3 | You can block anyone, and report posts that break these rules. |
+| terms.rule4 | What you post is public and permanent. |
+
+No age line and no moderation lecture in the gate (2026-10-20 launch polish): the age requirement stays in the Terms of Use, and the store age rating is set in App Store Connect and Play Console (COMPLIANCE.md, "Age rating and minors").
 | terms.agree | Agree and continue |
 | terms.notNow | Not now |
 | username.cardTitle | Get a username |

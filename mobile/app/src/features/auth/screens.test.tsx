@@ -2,6 +2,7 @@ import type { CapabilitiesDTO, SessionDTO } from '@engine/api';
 import { act, fireEvent, render as rtlRender, screen } from '@testing-library/react-native';
 import type { ReactElement } from 'react';
 import { router } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { Linking } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -199,6 +200,8 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
 
     expect(screen.getByTestId('sign-in-no-wallet')).toBeTruthy();
     expect(screen.queryByTestId('sign-in-open-wallet')).toBeNull();
+    // "Get a Dash wallet" is the primary button: no second link to the same place.
+    expect(screen.queryByTestId('sign-in-new-to-dash')).toBeNull();
     fireEvent.press(screen.getByTestId('sign-in-other-device'));
     expect(router.push).toHaveBeenCalledWith('/sign-in/qr');
   });
@@ -223,14 +226,20 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
     );
   });
 
-  it('leads with "Open wallet" when a wallet handles dash-key:, and hides the private key under "Other ways"', async () => {
+  it('leads with "Open wallet" when a wallet handles dash-key:, and hides the private key under "Advanced"', async () => {
     jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true);
     render(<SignInScreen />);
     await act(async () => {});
 
     fireEvent.press(screen.getByTestId('sign-in-open-wallet'));
     expect(router.push).toHaveBeenCalledWith('/sign-in/wallet');
+    // Without an identity: the Dash wallet makes one.
+    expect(screen.getByText('New to Dash?')).toBeTruthy();
+    expect(screen.getByTestId('sign-in-new-to-dash')).toHaveTextContent('Get Dash Wallet');
+    fireEvent.press(screen.getByTestId('sign-in-new-to-dash'));
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://www.dash.org/download/');
     expect(screen.queryByTestId('sign-in-private-key')).toBeNull();
+    expect(screen.getByTestId('sign-in-other-ways')).toHaveTextContent('Advanced');
     fireEvent.press(screen.getByTestId('sign-in-other-ways'));
     fireEvent.press(screen.getByTestId('sign-in-private-key'));
     expect(router.push).toHaveBeenCalledWith('/sign-in/key');
@@ -297,6 +306,9 @@ describe('terms gate (AUTH-09)', () => {
 
   it('records acceptance for this identity and network', () => {
     render(<TermsGateScreen />);
+    // Short and plain: no age line and no moderation lecture (those are in the Terms of Use).
+    expect(screen.queryByText(/18 or older/)).toBeNull();
+    expect(screen.queryByText(/centralized moderation|masternode/)).toBeNull();
     fireEvent.press(screen.getByTestId('terms-agree'));
 
     expect(Object.values(useTermsStore.getState().accepted)).toHaveLength(1);

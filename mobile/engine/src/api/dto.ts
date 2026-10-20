@@ -232,6 +232,11 @@ export interface CapabilitiesDTO {
   /** v10: the DashPay profile plus the `yapprProfile` extension. */
   dashpayProfile: boolean
   yappLocked: boolean
+  /**
+   * Posts may pay with YAPP or with credits, as the user's `payWith` setting says (web's
+   * `paymentIsChoosable('post')`). False where they always pay one way.
+   */
+  yappPayments: boolean
   /** Messages: DM v5 (1:1 and groups, no read receipts) or legacy 1:1 with read receipts (`dmIsV5`). */
   dm: 'v5' | 'legacy'
   /**

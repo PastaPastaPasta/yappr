@@ -172,6 +172,20 @@ describe('EditProfileScreen', () => {
     expect(router.back).toHaveBeenCalled();
   });
 
+  it('folds the banner link and the NSFW switch under More, and counts no field far from its limit', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+
+    expect(screen.queryByText(/ \/ \d+$/)).toBeNull();
+    expect(screen.queryByTestId('edit-banner')).toBeNull();
+    expect(screen.queryByTestId('edit-nsfw')).toBeNull();
+    fireEvent.press(screen.getByTestId('edit-more'));
+    expect(screen.getByTestId('edit-banner')).toBeTruthy();
+    expect(screen.getByTestId('edit-nsfw')).toBeTruthy();
+    expect(screen.getByLabelText('Change avatar')).toBeTruthy();
+  });
+
   it('opens the profile it edited when a saved form has nothing under it (a cold link)', async () => {
     jest.mocked(router.canGoBack).mockReturnValue(false);
     try {
@@ -200,6 +214,7 @@ describe('EditProfileScreen', () => {
     renderScreen(<EditProfileScreen />);
     await flush();
     fireEvent.changeText(screen.getByTestId('edit-bio'), 'Film and food.');
+    fireEvent.press(screen.getByTestId('edit-more'));
     await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
     const fields = ['edit-name', 'edit-bio', 'edit-pronouns', 'edit-location', 'edit-website', 'edit-banner'];
     for (const id of fields) expect(screen.getByTestId(id)).toBeDisabled();

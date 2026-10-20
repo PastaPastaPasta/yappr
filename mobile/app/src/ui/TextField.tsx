@@ -11,8 +11,12 @@ import { useNativeText, type TextResetHandle } from './native-text';
 import { Text } from './Text';
 import { tw, useColors } from './tokens';
 
-/** The counter shows once the text is this close to `maxLength` (UX_SPEC §2.11). */
-const COUNTER_WITHIN = 20;
+/**
+ * The counter shows once the text is this close to `maxLength` (UX_SPEC
+ * §2.11): the last 20 characters, or the last fifth of a short field, so a
+ * 25-character name doesn't count from the first letter.
+ */
+const counterWithin = (maxLength: number) => Math.min(20, Math.ceil(maxLength / 5));
 /** The multi-line input's text, as its `GrowMirror` lays it out. */
 const BODY_LINE_HEIGHT = 24;
 /**
@@ -85,7 +89,7 @@ export function TextField({
   const [revealed, setRevealed] = useState(false);
   const line = BODY_LINE_HEIGHT * useWindowDimensions().fontScale;
   const length = value?.length ?? 0;
-  const showCounter = maxLength !== undefined && (alwaysCount || maxLength - length <= COUNTER_WITHIN);
+  const showCounter = maxLength !== undefined && (alwaysCount || maxLength - length <= counterWithin(maxLength));
   // Multi-line: min 3 lines, grows to 8, then scrolls; iOS needs the measured height (`useGrowHeight`).
   const grow = useGrowHeight({ min: line * 3 + 20, max: line * 8 + 20, padding: 20 });
   const inputStyle = multiline

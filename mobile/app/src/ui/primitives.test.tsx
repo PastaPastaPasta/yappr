@@ -229,6 +229,13 @@ describe('TextField', () => {
     expect(screen.queryByText(/\/ 160/)).toBeNull();
   });
 
+  it('counts a short field only in its last fifth', () => {
+    const { rerender } = render(<TextField label="Name" value="Staging 56" maxLength={25} onChangeText={jest.fn()} />);
+    expect(screen.queryByText(/\/ 25/)).toBeNull();
+    rerender(<TextField label="Name" value={'x'.repeat(20)} maxLength={25} onChangeText={jest.fn()} />);
+    expect(screen.getByText('20 / 25')).toBeTruthy();
+  });
+
   describe('typing (QA rc7 D-2)', () => {
     /** A form field as screens use it: the parent holds the text, and can reset or replace it. */
     function Form({ initial = '' }: { initial?: string }) {

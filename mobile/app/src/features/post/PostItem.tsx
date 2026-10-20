@@ -22,7 +22,6 @@ import {
   PostCard,
   type EngagementCountTab,
   type PostCardActions,
-  type PostCardMenu,
   type PostCardProps,
 } from '~/ui/post/PostCard';
 import type { CardPoll, Loadable } from '~/ui/post/types';
@@ -37,6 +36,7 @@ import {
   postWebUrl,
   sharePost,
 } from './post-navigation';
+import { HIDE_PRIVATE_LABEL, hidePrivateFromMenu, useHideUnreadablePrivate } from './hidden-private';
 import { pollVoteKey, pollVoteWrite } from './poll-vote';
 import { readEngageStats } from './post-stats';
 import { useRepostQuoteCounts } from './repost-quote-counts';
@@ -183,7 +183,13 @@ function repostSheet(
 const REMOVE_BOOKMARK: MenuItem = { id: 'remove-bookmark', title: 'Remove bookmark', systemImage: 'bookmark.slash' };
 
 /** The ⋯ and long-press menu (PRD ENG-08), in its order; a screen's own item (Bookmarks) after "Share…". */
-function menuItems(post: PostDTO, own: boolean, followKnown: boolean, removeBookmark: boolean): MenuItem[] {
+function menuItems(
+  post: PostDTO,
+  own: boolean,
+  followKnown: boolean,
+  removeBookmark: boolean,
+  offerHidePrivate: boolean,
+): MenuItem[] {
   const handle = post.author.username ? `@${post.author.username}` : post.author.displayName;
   const follows = post.viewer?.followsAuthor === true;
   const noun = post.kind === 'reply' ? 'reply' : 'post';
@@ -203,6 +209,7 @@ function menuItems(post: PostDTO, own: boolean, followKnown: boolean, removeBook
     { id: 'share', title: 'Share…', systemImage: 'square.and.arrow.up' },
   );
   if (removeBookmark) items.push(REMOVE_BOOKMARK);
+  if (offerHidePrivate) items.push({ id: 'hide-private', title: HIDE_PRIVATE_LABEL, systemImage: 'eye.slash' });
   if (own && !post.deleted) {
     items.push({ id: 'delete', title: `Delete ${noun}`, systemImage: 'trash', destructive: true });
   }
@@ -284,12 +291,13 @@ export const PostItem = memo(function PostItem({
 
   const own = viewerId !== null && viewerId === post.author.id;
   const detail = cardProps.variant === 'detail';
+  const hidingPrivate = useHideUnreadablePrivate();
   const repostQuoteCounts = useRepostQuoteCounts(post, detail && capabilities?.repostsAreQuotes === true);
   // A bare repost's target comes without the viewer's follow of its author: offer no follow item then.
   const followKnown =
     viewerId === null || !listed.bareRepost || typeof listed.quoted?.viewer?.followsAuthor === 'boolean';
 
-  const { actions, menu } = useMemo(() => {
+  const { actions, onSelect } = useMemo(() => {
     // A bare repost's marks are unknown until engage.stats answers: acting on a guess would send a
     // duplicate. Its buttons wait with a spinner meanwhile (`marksLoading`); after a failed read a
     // press reads them again. Signed out, the sign-in sheet comes first either way.
@@ -364,6 +372,7 @@ export const PostItem = memo(function PostItem({
         else requireAuth(openReport);
       },
       ...(onRemoveBookmark ? { 'remove-bookmark': () => onRemoveBookmark(listed) } : {}),
+      'hide-private': hidePrivateFromMenu,
     };
     const onSelect = (id: string) => menuActions[id]?.();
 
@@ -402,10 +411,8 @@ export const PostItem = memo(function PostItem({
         if (pollId) requireAuth(() => sendWrite(pollVoteWrite, { pollId, choices }));
       },
     };
-    const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined);
-    const menu: PostCardMenu | undefined = items.length > 0 ? { items, onSelect } : undefined;
-    return { actions, menu };
-  }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external, detail, onRemoveBookmark, listed]);
+    return { actions, onSelect };
+  }, [post, own, marksPending, reloadMarks, viewerId, capabilities, external, detail, onRemoveBookmark, listed]);
   // A private post: decrypted for the viewer, or why not (and what to do about it).
   const privateCard = usePrivateBody(post, {
     variant: detail ? 'detail' : 'feed',
@@ -417,6 +424,12 @@ export const PostItem = memo(function PostItem({
     mediaGated: cardProps.mediaGated ?? safety.gates.mediaGated,
     onRevealMedia: cardProps.onRevealMedia ?? safety.gates.onRevealMedia,
   });
+  // A private post locked for the viewer offers to leave them all out of feeds, until they do.
+  const offerHidePrivate = privateCard.unreadable === true && !hidingPrivate;
+  const menu = useMemo(() => {
+    const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined, offerHidePrivate);
+    return items.length > 0 ? { items, onSelect } : undefined;
+  }, [post, own, followKnown, onRemoveBookmark, offerHidePrivate, onSelect]);
 
   if ((removed && !asStub) || safety.hidden) return null;
   const { unreadable, ...privateProps } = privateCard;

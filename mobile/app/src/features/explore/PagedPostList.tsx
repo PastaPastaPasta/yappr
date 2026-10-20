@@ -7,6 +7,7 @@ import { RefreshControl, View, type NativeScrollEvent, type NativeSyntheticEvent
 import { useEngineInfiniteQuery, type PullToRefresh } from '~/data/queries';
 import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
+import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -14,7 +15,7 @@ import { Spinner } from '~/ui/Spinner';
 import { toast } from '~/ui/toast';
 import { useColors, type IconComponent } from '~/ui/tokens';
 
-import { LoadingRow, readErrorMessage } from './states';
+import { PostListSkeleton, readErrorMessage } from './states';
 
 /** PRD FEED-07: within 1.5 screens of the end, and at most 3 pages without the reader scrolling. */
 const END_THRESHOLD = 1.5;
@@ -72,6 +73,7 @@ export interface PagedPostListProps {
  * FEED-07, EXPL-07).
  */
 export function PagedPostList({ queryKey, query, header, loadingLabel, empty, offline, pullToRefresh, testID }: PagedPostListProps) {
+  const hidePrivate = useHideUnreadablePrivate();
   const c = useColors();
   const [refreshing, setRefreshing] = useState(false);
   // Automatic paging pauses after MAX_AUTO_PAGES until the reader asks for more.
@@ -167,7 +169,7 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
       />
     );
   } else if (query.isPending) {
-    emptyState = <LoadingRow label={loadingLabel} testID={`${testID}-loading`} />;
+    emptyState = <PostListSkeleton label={loadingLabel} testID={`${testID}-loading`} />;
   } else {
     emptyState = (
       <EmptyState title={empty.title} description={empty.description} icon={empty.icon} testID={`${testID}-empty`} />
@@ -179,7 +181,7 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
       data={query.items}
       keyExtractor={(post) => post.id}
       getItemType={postItemType}
-      renderItem={({ item }) => <PostItem post={item} />}
+      renderItem={({ item }) => <PostItem post={item} hideUnreadablePrivate={hidePrivate} />}
       ListHeaderComponent={header}
       ListEmptyComponent={emptyState}
       ListFooterComponent={footer}

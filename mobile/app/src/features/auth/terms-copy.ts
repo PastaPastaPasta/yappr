@@ -1,11 +1,9 @@
 /** The legal and community-rules summary on the consent gate. */
 export const TERMS_SUMMARY = [
   'No harassment, hate, threats or illegal content. There is zero tolerance for abuse.',
-  'Yappr is open-source software for Dash Platform. Its authors cannot change, remove or recover your data on the network.',
-  'Yappr has no centralized moderation. On-chain teams are elected by the community through masternode votes and are independent of Yappr.',
   "Reported content can be removed by the community's moderators, and abusive accounts can be banned.",
   'You can block anyone, and report posts that break these rules.',
-  'What you post is public and permanent on Dash Platform.',
+  'What you post is public and permanent.',
 ] as const;
 
 /**
