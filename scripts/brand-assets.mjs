@@ -7,7 +7,7 @@
  *   npm run brand -- --use <style>      install docs/brand/candidates/<style>/ first, then regenerate
  *
  * public/brand/ holds one set in the file layout of docs/brand/README.md (mark, wordmark, lockup,
- * favicon, app icon, powered-by). This writes:
+ * favicon, app icon). This writes:
  *   public/brand/brand.json                      the set's name, aspect ratios and icon background
  *   public/favicon.ico                           16, 32 and 48 px from favicon.svg
  *   public/icon-192.png, icon-512.png            rounded tiles for the web manifest
@@ -123,7 +123,7 @@ async function writeManifest() {
     // Where the wordmark's baseline sits, in its 64-unit-high viewBox (for inline use in text).
     baseline: authored.baseline,
     iconBackground,
-    ratio: { wordmark: ratio('wordmark.svg'), lockup: ratio('lockup.svg'), poweredBy: ratio('powered-by.svg') },
+    ratio: { wordmark: ratio('wordmark.svg'), lockup: ratio('lockup.svg') },
     // The SVGs every generated file was built from; scripts/brand-set.test.mjs fails when they change.
     source: sourceHash(BRAND),
   };
@@ -201,12 +201,10 @@ ${entry('mark', 'mark.svg')}
 ${entry('markDark', 'mark-dark.svg')}
 ${entry('lockup', 'lockup.svg')}
 ${entry('lockupDark', 'lockup-dark.svg')}
-${entry('poweredBy', 'powered-by.svg')}
-${entry('poweredByDark', 'powered-by-dark.svg')}
 } as const;
 
 /** Width over height of each wide asset (the marks are square). */
-export const brandRatio = ${JSON.stringify({ lockup: manifest.ratio.lockup, poweredBy: manifest.ratio.poweredBy })} as const;
+export const brandRatio = ${JSON.stringify({ lockup: manifest.ratio.lockup })} as const;
 `;
   fs.mkdirSync(path.dirname(MOBILE_SVGS), { recursive: true });
   fs.writeFileSync(MOBILE_SVGS, source);

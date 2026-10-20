@@ -9,8 +9,7 @@ All lettering and contours are hand-authored paths. No font was converted;
 there is no font dependency or third-party artwork.
 
 Colors: ink-blue #0c4a6e for light surfaces; sky-blue #38bdf8 on dark;
-brand blue #0369a1 for the app tile and favicon; white #ffffff for icon subjects
-and the dark footer. Dash blue #008de4 appears only in the Dash footer credit.
+brand blue #0369a1 for the app tile and favicon; white #ffffff for icon subjects.
 App-icon background: #0369a1. No additional accent color.
 
 The transparent app foreground is white, intended over the same brand-blue
@@ -22,4 +21,4 @@ chat-related than a bubble or mascot. The medium-weight wordmark is intended
 for UI header sizes; use the simplified tiled favicon at 16px.
 
 Preview PNGs cover 16px and 32px marks/favicons, both surface colors,
-1024px app tiles and foregrounds, and wordmark/lockup/footer treatments.
+1024px app tiles and foregrounds, and wordmark/lockup treatments.

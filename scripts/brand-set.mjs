@@ -16,8 +16,6 @@ export const FILES = [
   'favicon.svg',
   'app-icon.svg',
   'app-icon-foreground.svg',
-  'powered-by.svg',
-  'powered-by-dark.svg',
 ];
 
 /** The viewBox height (or exact size) each file's geometry is drawn for. */
@@ -32,8 +30,6 @@ const SHAPES = {
   'favicon.svg': [32, 32],
   'app-icon.svg': [1024, 1024],
   'app-icon-foreground.svg': [1024, 1024],
-  'powered-by.svg': [null, 32],
-  'powered-by-dark.svg': [null, 32],
 };
 
 export function viewBox(svg) {

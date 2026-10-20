@@ -4,8 +4,8 @@ A vivid sky-to-deep-blue gradient brings a lowercase y into a soft speech bubble
 The bubble signals conversation; the blue links Yappr to its Dash Platform home
 without borrowing Dash’s logo or Evolution artwork.
 
-Colors: #38bdf8 → #0ea5e9 → #0369a1 → #075985, plus white and
-#008de4 only for “Dash” in the quiet footer credit. No extra accent color.
+Colors: #38bdf8 → #0ea5e9 → #0369a1 → #075985, plus white.
+No extra accent color.
 The app-icon background is #ffffff, opaque and full bleed. The gradient
 bubble subject is identical in app-icon.svg and app-icon-foreground.svg,
 so it also remains visible on white adaptive backgrounds. The OS supplies

@@ -6,7 +6,6 @@ The constant-weight line, round caps, and open interior stay friendly and legibl
 
 - Primary: #0369a1; dark-background variant: #38bdf8.
 - App-icon background: #0369a1, opaque and square; subject: #ffffff.
-- Dash credit alone uses #008de4; light credit lettering uses #0c4a6e.
 - No extra accent, gradients, external assets, or fonts.
 - All lettering and centerlines are hand-authored SVG paths.
 - Mark/wordmark strokes: 6 units; all caps and joins are round.

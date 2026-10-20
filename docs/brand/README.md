@@ -30,6 +30,11 @@ other systems draw slightly different PNGs.
 Revert the brand PR's merge commit. That restores the text logo, the fox icons
 and the "Powered by Dash Evolution" image.
 
+The "Powered by Dash" credit is not part of a set: it is plain text styled in
+`PoweredByDash` (`components/brand/brand.tsx` on web,
+`mobile/app/src/ui/brand/Brand.tsx` on mobile), so swapping a style never
+touches it.
+
 ## A set's files
 
 Every set has the same files, so any set can be installed:
@@ -43,7 +48,6 @@ Every set has the same files, so any set can be installed:
 | `favicon.svg` | The browser tab icon, drawn for 16 and 32 px |
 | `app-icon.svg` | The full-bleed 1024 app tile, subject inside the centered 680 px circle |
 | `app-icon-foreground.svg` | The tile's subject on transparency, inside a radius-300 circle (Android adaptive icon, splash) |
-| `powered-by.svg`, `powered-by-dark.svg` | The "Powered by Dash" credit (height 32) |
 | `brand.json` | `style`, and `baseline`: where the wordmark's baseline sits in its 64-unit viewBox |
 
 SVGs must not use `<style>`, `<text>`, `<image>` or `class=` (the mobile app

@@ -11,7 +11,7 @@ const VIEW_HEIGHT = 64
  * theme's `dark` class picks one.
  */
 function Themed({ name, alt, height, ratio, className, style }: {
-  name: 'mark' | 'wordmark' | 'lockup' | 'powered-by'
+  name: 'mark' | 'wordmark' | 'lockup'
   alt: string
   height: number
   ratio: number
@@ -54,16 +54,21 @@ export function Wordmark() {
   )
 }
 
-/** The "Powered by Dash" credit, linking to Dash Platform's source. */
+/**
+ * The "Powered by Dash" credit, linking to Dash Platform's source. Plain text in the app's font:
+ * "Dash" is semibold Dash blue (#008DE4), which is 5.1:1 on the dark page but only 3.5:1 on
+ * white, so light mode uses #0072BC (5.1:1) to stay above WCAG AA.
+ */
 export function PoweredByDash() {
   return (
     <a
       href="https://github.com/dashpay/platform"
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex opacity-80 transition-opacity hover:opacity-100"
+      className="group inline-flex items-baseline gap-1 text-sm leading-5 text-gray-500 transition-colors hover:text-gray-900 dark:hover:text-gray-100"
     >
-      <Themed name="powered-by" alt="Powered by Dash" height={24} ratio={brand.ratio.poweredBy} />
+      Powered by{' '}
+      <span className="font-semibold text-[#0072BC] group-hover:underline dark:text-[#008DE4]">Dash</span>
     </a>
   )
 }
