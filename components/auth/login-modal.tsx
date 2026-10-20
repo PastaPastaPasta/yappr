@@ -7,6 +7,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { X, ArrowLeft, ChevronDown, Wallet, ScrollText, KeyRound } from 'lucide-react'
 import type { AppConnectGrant } from 'platform-auth'
+import { Wordmark } from '@/components/brand/brand'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -281,7 +282,7 @@ export function LoginModal() {
               <div className="text-center mb-6">
                 <Dialog.Title asChild>
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                  Sign in to <span className="text-gradient">Yappr</span>
+                  Sign in to <Wordmark />
                 </h1>
                 </Dialog.Title>
                 <Dialog.Description className="sr-only">

@@ -11,6 +11,7 @@
     "build:testing": "set -a && . ./.env.testing && set +a && BASE_PATH=/testing next build && node scripts/write-static-404.mjs out /testing",
     "build:devnet": "set -a && . ./.env.devnet && set +a && BASE_PATH=/devnet next build && node scripts/write-static-404.mjs out /devnet",
     "contracts:snapshot": "node scripts/snapshot-contracts.mjs",
+    "brand": "node scripts/brand-assets.mjs",
     "start": "next start",
     "lint": "next lint --dir app --dir components --dir contexts --dir hooks --dir lib --dir types --max-warnings 0",
     "lint:dead": "knip",

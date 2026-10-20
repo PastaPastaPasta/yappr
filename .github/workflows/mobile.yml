@@ -16,6 +16,9 @@ on:
       - 'package-lock.json'
       - '.env.*'
       - 'tailwind.config.js'
+      - 'public/brand/**'
+      - 'scripts/brand-assets.mjs'
+      - 'scripts/brand-set.mjs'
       - '.github/workflows/mobile.yml'
   pull_request:
     paths:
@@ -27,6 +30,9 @@ on:
       - 'package-lock.json'
       - '.env.*'
       - 'tailwind.config.js'
+      - 'public/brand/**'
+      - 'scripts/brand-assets.mjs'
+      - 'scripts/brand-set.mjs'
       - '.github/workflows/mobile.yml'
 
 permissions:

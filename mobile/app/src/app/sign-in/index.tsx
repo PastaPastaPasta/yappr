@@ -10,8 +10,8 @@ import { copy } from '~/features/auth/copy';
 import { links, openInApp } from '~/features/auth/onboarding';
 import { useCloseSignIn } from '~/features/auth/navigation';
 import { HeaderClose, SignInBody } from '~/features/auth/SignInChrome';
-import { Wordmark } from '~/features/auth/Wordmark';
 import { cn } from '~/lib-allowlist';
+import { Lockup } from '~/ui/brand/Brand';
 import { Button } from '~/ui/Button';
 import { Text } from '~/ui/Text';
 import { motion, tw, useColors, type IconComponent } from '~/ui/tokens';
@@ -102,7 +102,7 @@ export default function SignInScreen() {
       />
       <SignInBody testID="sign-in-screen">
         <View className="items-center gap-3 pt-4">
-          <Wordmark size={40} />
+          <Lockup height={40} header />
           <Text variant="titleLarge" tone="emphasis" className="text-center">
             {copy.signin.title}
           </Text>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 188 32">
+<g transform="translate(2 6)"><path d="M0 16 V0 H5 C12 0 12 8 5 8 H0" fill="none" stroke="#0c4a6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(14 6)"><path d="M0 10 C0 2 10 2 10 10 C10 18 0 18 0 10" fill="none" stroke="#0c4a6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(27 6)"><path d="M0 4 L3 16 L7 7 L11 16 L14 4" fill="none" stroke="#0c4a6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(44 6)"><path d="M0 10 H10 C10 2 0 2 0 10 C0 17 6 18 10 14" fill="none" stroke="#0c4a6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(57 6)"><path d="M0 16 V4 M0 9 Q3 3 8 4" fill="none" stroke="#0c4a6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(68 6)"><path d="M0 10 H10 C10 2 0 2 0 10 C0 17 6 18 10 14" fill="none" stroke="#0c4a6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(81 6)"><path d="M10 0 V16 M10 10 C10 2 0 2 0 10 C0 18 10 18 10 10" fill="none" stroke="#0c4a6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(101 6)"><path d="M0 0 V16 M0 10 C0 2 10 2 10 10 C10 18 0 18 0 10" fill="none" stroke="#0c4a6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(114 6)"><path d="M0 4 L5 15 M10 4 L4 21 Q2 24 0 22" fill="none" stroke="#0c4a6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(134 6)"><path d="M0 16 V0 H4 C16 0 16 16 4 16 Z" fill="none" stroke="#008de4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(150 6)"><path d="M10 4 V16 M10 10 C10 2 0 2 0 10 C0 18 10 18 10 10" fill="none" stroke="#008de4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(163 6)"><path d="M9 5 C3 1 -2 7 4 9 L7 10 C13 13 7 19 0 15" fill="none" stroke="#008de4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(175 6)"><path d="M0 16 V0 M0 9 C0 2 10 2 10 9 V16" fill="none" stroke="#008de4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>

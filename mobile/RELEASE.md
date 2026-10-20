@@ -75,10 +75,11 @@ release; engine keys stay unscoped so host session and secret routing agree.
 ## Icons and splash
 
 The icons in `assets/images/icons/<variant>/` and `assets/images/splash-icon.png`
-are generated from the fox (`assets/images/icon.png`) by
-`npm run icons` (`scripts/generate-icons.mjs`) and committed. Rerun it after
-changing the art or the badges. It fetches `sharp` into a temp folder, so the
-app gets no new dependency.
+are generated from the brand set in the web's `public/brand/` by `npm run icons`
+(the repo root's `scripts/brand-assets.mjs`, which also builds the web favicons)
+and committed. Rerun it after changing the set or the badges; see
+`docs/brand/README.md`. It fetches `sharp` into a cache folder, so the app gets no
+new dependency.
 
 | File | Used for |
 | --- | --- |

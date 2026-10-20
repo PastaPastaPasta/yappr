@@ -19,11 +19,14 @@ export const metadata: Metadata = {
   applicationName: 'Yappr',
   manifest: `${basePath}/manifest.webmanifest`,
   icons: {
+    // Built from public/brand/ by `npm run brand` (docs/brand/README.md).
     icon: [
-      { url: `${basePath}/favicon.ico`, sizes: '32x32' },
+      { url: `${basePath}/favicon.ico`, sizes: '16x16 32x32 48x48' },
       { url: `${basePath}/icon-192.png`, type: 'image/png', sizes: '192x192' },
+      // Last: browsers that take the last usable icon get the one drawn for tab sizes.
+      { url: `${basePath}/brand/favicon.svg`, type: 'image/svg+xml' },
     ],
-    apple: `${basePath}/icon-192.png`,
+    apple: `${basePath}/apple-touch-icon.png`,
   },
   openGraph: {
     type: 'website',
