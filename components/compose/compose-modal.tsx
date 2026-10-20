@@ -285,7 +285,7 @@ export function ComposeModal() {
         poll.setUnconfirmed(false)
       }
 
-      setPostingProgress({ current: 0, total: posts.length, status: 'Starting...' })
+      setPostingProgress({ current: 0, total: posts.length, status: posts.length > 1 ? 'Starting...' : '' })
       const outcome = await publishThread({
         authorId: authedUser.identityId,
         posts,
@@ -462,11 +462,12 @@ export function ComposeModal() {
                           {POSTING_CLOSED_COPY}
                         </p>
                       )}
-                      {isPosting && postingProgress && <PostingProgressBar progress={postingProgress} />}
+                      {isPosting && postingProgress?.status && <PostingProgressBar progress={postingProgress} />}
                       {replyingTo && <ReplyContext author={replyingTo.author} />}
 
                       <div ref={scrollContainerRef} className="px-4 sm:px-5 py-4 max-h-[60vh] overflow-y-auto">
                         <div className="space-y-4">
+                          {replyingTo && <div className="[&>div]:mt-0"><QuotedPostPreview post={replyingTo} /></div>}
                           {inherited.source && !isPrivateVisibility && (
                             <Banner tone="purple">
                               <LinkIcon className="w-4 h-4 text-purple-600 dark:text-purple-400" />

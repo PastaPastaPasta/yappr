@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Post } from '@/lib/types'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
-import { getInitials, formatTime, truncateId } from '@/lib/utils'
+import { getInitials, formatTimeCompact, truncateId } from '@/lib/utils'
 import { privateContentOf } from '@/lib/services/private-feed-reader'
 import { decryptQuote, useRetryWhenKeysArrive, type QuoteDecryptionState } from '@/hooks/use-quote-decryption'
 import { LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
@@ -178,7 +178,7 @@ export function getPostButtonState(
   isReply: boolean,
   threadPostCount: number
 ): PostButtonState {
-  if (isPosting && postingProgress) {
+  if (isPosting && postingProgress && postingProgress.total > 1) {
     return { type: 'posting-progress', progress: postingProgress }
   }
   if (isPosting) {
@@ -251,18 +251,18 @@ function PostPreviewHeader({ author, createdAt, showLockIcon, authorDisplayOverr
       : (authorDisplayOverride || '')
 
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <Avatar className="h-5 w-5">
+    <div className="flex items-center gap-1.5 text-sm min-w-0">
+      <Avatar className="h-5 w-5 flex-shrink-0">
         <AvatarImage src={author.avatar} />
         <AvatarFallback>{getInitials(author.displayName)}</AvatarFallback>
       </Avatar>
-      <span className="font-semibold text-gray-900 dark:text-gray-100">
+      <span className="font-semibold text-gray-900 dark:text-gray-100 truncate">
         {author.displayName}
       </span>
-      {usernameDisplay && <span className="text-gray-500">{usernameDisplay}</span>}
-      <span className="text-gray-500">·</span>
-      <span className="text-gray-500">{formatTime(createdAt)}</span>
-      {showLockIcon && <LockClosedIcon className="h-3.5 w-3.5 text-gray-500" />}
+      {usernameDisplay && <span className="text-gray-500 truncate min-w-[4ch] shrink-[4]">{usernameDisplay}</span>}
+      <span className="text-gray-500 flex-shrink-0">·</span>
+      <span className="text-gray-500 flex-shrink-0 whitespace-nowrap">{formatTimeCompact(createdAt)}</span>
+      {showLockIcon && <LockClosedIcon className="h-3.5 w-3.5 text-gray-500 flex-shrink-0" />}
     </div>
   )
 }
