@@ -62,6 +62,35 @@ describe('DPNS composite cache seeds', () => {
     expect(query).toHaveBeenCalledTimes(2);
   });
 
+  it('shares one alias read between concurrent lookups of the same identity', async () => {
+    let answer: (docs: unknown[]) => void = () => undefined;
+    query.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    const first = dpnsService.resolveUsername('111111111');
+    const second = dpnsService.getAllUsernamesSortedBatch(['111111111', '222222222']);
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
+    // The second read asks only for the identity nobody was reading yet.
+    expect(query.mock.calls[1][0].where[0][2]).toEqual(['222222222']);
+    answer([{ $ownerId: '111111111', records: { identity: '111111111' }, label: 'alice' }]);
+    expect(await first).toBe('alice.dash');
+    expect((await second).get('111111111')).toEqual(['alice.dash']);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not join a read started before the cache was cleared', async () => {
+    let answer: (docs: unknown[]) => void = () => undefined;
+    query.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    const before = dpnsService.resolveUsername('111111111');
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
+    dpnsService.clearCache(undefined, '111111111');
+    query.mockResolvedValueOnce([{ $ownerId: '111111111', records: { identity: '111111111' }, label: 'renamed' }]);
+    expect(await dpnsService.resolveUsername('111111111')).toBe('renamed.dash');
+    answer([]);
+    await before;
+    // The overtaken read did not cache its stale "no name".
+    expect(await dpnsService.resolveUsername('111111111')).toBe('renamed.dash');
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
   // The auth session adapter relies on this to tell a failed lookup from "no name".
   it('caches a proven absence but not a failed reverse lookup', async () => {
     query.mockRejectedValueOnce(new Error('offline'));

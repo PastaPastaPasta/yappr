@@ -257,24 +257,30 @@ export async function fetchNewestGrant(ownerId: string, recipientId: string): Pr
   })
 }
 
+const grantsHeldReads = new RequestDeduplicator<string, GrantDocument[]>(0)
+
 /** Every grant `recipientId` holds, by owner then feed: "the feeds I can read" on any device (D32). */
 export async function fetchGrantsHeldBy(recipientId: string): Promise<GrantDocument[]> {
-  return fetchAll(
+  // Notifications and the follower service both ask on sign-in: one read.
+  return grantsHeldReads.dedupe(recipientId, () => fetchAll(
     DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
     [['recipientId', '==', recipientId]],
     [['$ownerId', 'asc'], ['feed', 'asc']],
     toGrant,
-  )
+  ))
 }
+
+const grantsToReads = new RequestDeduplicator<string, GrantDocument[]>(0)
 
 /** Every grant `ownerId` has out to `recipientId`, in any feed, oldest feed first. */
 export async function fetchGrantsTo(ownerId: string, recipientId: string): Promise<GrantDocument[]> {
-  return fetchAll(
+  // One owner's private posts ask once each as they mount together: one read.
+  return grantsToReads.dedupe(`${ownerId}:${recipientId}`, () => fetchAll(
     DOCUMENT_TYPES.PRIVATE_FEED_GRANT,
     [['recipientId', '==', recipientId], ['$ownerId', '==', ownerId]],
     [['feed', 'asc']],
     toGrant,
-  )
+  ))
 }
 
 /**

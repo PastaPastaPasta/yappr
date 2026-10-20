@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
+import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, RequestDeduplicator } from './sdk-helpers';
 import { documentCount, paginateFetchAll } from './pagination-utils';
 import { hashtagsAreInline, prefixRankingsAvailable } from '../contract-topology';
 
@@ -291,6 +291,21 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
     const cached = this.trendingCacheByWindow.get(window);
     if (cached) return cached.slice(0, limit);
 
+    // The sidebar and the explore page ask together on first load: one read.
+    return this.trendingReads.dedupe(`${window}:${limit}:${minPosts}:${timeWindowHours}`, () =>
+      this.readTrendingHashtags({ timeWindowHours, minPosts, limit, window })
+    );
+  }
+
+  private trendingReads = new RequestDeduplicator<string, TrendingHashtag[]>(0);
+
+  /** {@link getTrendingHashtags} past its cache. */
+  private async readTrendingHashtags({ timeWindowHours, minPosts, limit, window }: {
+    timeWindowHours: number;
+    minPosts: number;
+    limit: number;
+    window: 'all' | 'today';
+  }): Promise<TrendingHashtag[]> {
     // v9: trending is a PROVED prefix ranked page — groupBy at `hashtag` on
     // `like.byHashtagPost {at: hashtag}` (skipIfAbsent, so only tagged likes
     // exist in the index). NOTE the metric: the count is LIKES ON TAGGED
