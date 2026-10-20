@@ -56,7 +56,7 @@ export interface ProfileTabSpec {
 }
 
 const TABS: Record<ProfileTab, ProfileTabSpec> = {
-  posts: { value: 'posts', label: 'Posts', empty: { title: 'No original posts yet' } },
+  posts: { value: 'posts', label: 'Posts', empty: { title: 'No posts yet' } },
   replies: { value: 'replies', label: 'Replies', empty: { title: 'No replies yet' } },
   top: { value: 'top', label: 'Top', empty: { title: 'No liked posts yet' } },
   mentions: {

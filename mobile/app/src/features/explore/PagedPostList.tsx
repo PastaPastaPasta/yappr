@@ -13,7 +13,7 @@ import { Spinner } from '~/ui/Spinner';
 import { toast } from '~/ui/toast';
 import { useColors, type IconComponent } from '~/ui/tokens';
 
-import { LoadingRow, readErrorMessage } from './states';
+import { PostListSkeleton, readErrorMessage } from './states';
 
 /** PRD FEED-07: within 1.5 screens of the end, and at most 3 pages without the reader scrolling. */
 const END_THRESHOLD = 1.5;
@@ -165,7 +165,7 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
       />
     );
   } else if (query.isPending) {
-    emptyState = <LoadingRow label={loadingLabel} testID={`${testID}-loading`} />;
+    emptyState = <PostListSkeleton label={loadingLabel} testID={`${testID}-loading`} />;
   } else {
     emptyState = (
       <EmptyState title={empty.title} description={empty.description} icon={empty.icon} testID={`${testID}-empty`} />

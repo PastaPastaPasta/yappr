@@ -15,7 +15,7 @@ import { tw } from '~/ui/tokens';
 
 import { PagedPostList } from './PagedPostList';
 import { OfflineBanner, useOffline } from './states';
-import { TAG_WINDOWS, tagFromParam } from './tags';
+import { RANKING_WINDOWS, tagFromParam } from './tags';
 
 type TagSort = 'recent' | 'top';
 
@@ -26,7 +26,7 @@ const SORTS: readonly TabOption<TagSort>[] = [
 
 /**
  * A hashtag or cashtag page (UX_SPEC §4.17, PRD EXPL-07): Latest, and Top
- * where the contract ranks likes, with its 24h / All time window. The page
+ * where the contract ranks likes, with its Recent / All time window. The page
  * reads the tag as indexed, so on dev only posts whose first tag it is show.
  */
 export function HashtagScreen({ tagParam }: { tagParam: string | undefined }) {
@@ -66,7 +66,7 @@ export function HashtagScreen({ tagParam }: { tagParam: string | undefined }) {
     <View className={cn('gap-2 border-b px-4 py-2', tw.border)}>
       <SegmentedControl options={SORTS} value={sort} onChange={setSort} testID="hashtag-sort" />
       {windowed ? (
-        <SegmentedControl options={TAG_WINDOWS} value={rankWindow} onChange={setWindow} testID="hashtag-window" />
+        <SegmentedControl options={RANKING_WINDOWS} value={rankWindow} onChange={setWindow} testID="hashtag-window" />
       ) : null}
     </View>
   ) : undefined;

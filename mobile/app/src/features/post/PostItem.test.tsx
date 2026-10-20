@@ -17,6 +17,7 @@ import { keepHandlesWhole } from '~/ui/handle';
 import { AUTHORS, POSTS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
+import { useHiddenPrivateStore } from './hidden-private';
 import { PostItem } from './PostItem';
 import { likeWrite } from './post-writes';
 
@@ -392,6 +393,41 @@ describe('post write specs', () => {
     expect(likeWrite.matches?.(ticket({ op: 'like', target }), { post, like: true })).toBe(true);
     expect(likeWrite.matches?.(ticket({ op: 'unlike', target }), { post, like: true })).toBe(false);
     expect(likeWrite.matches?.(ticket({ op: 'like', target: { ...target, id: 'other' } }), { post, like: true })).toBe(false);
+  });
+});
+
+describe('PostItem private posts the viewer cannot read', () => {
+  afterEach(() => useHiddenPrivateStore.setState({ hide: false }));
+
+  it('offers "Hide private posts I can\'t see", which hides them from lists with Undo, never the open post', () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostItem post={POSTS.private} />
+        <PostItem post={fixturePost({ id: 'own-private', author: AUTHORS.alice, content: '', encrypted: true })} />
+      </QueryClientProvider>,
+    );
+    expect(menuIds('post-private')).toContain('hide-private');
+    // The viewer's own private posts are theirs to read.
+    expect(menuIds('own-private')).not.toContain('hide-private');
+
+    selectMenu('post-private', 'hide-private');
+    expect(useHiddenPrivateStore.getState().hide).toBe(true);
+    expect(screen.queryByTestId('post-card-post-private')).toBeNull();
+    expect(screen.getByTestId('post-card-own-private')).toBeTruthy();
+
+    act(() => useToastStore.getState().current?.action?.onPress());
+    expect(useHiddenPrivateStore.getState().hide).toBe(false);
+    expect(screen.getByTestId('post-card-post-private')).toBeTruthy();
+  });
+
+  it('still shows the open post itself', () => {
+    useHiddenPrivateStore.setState({ hide: true });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostItem post={POSTS.private} variant="detail" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId('post-card-post-private')).toBeTruthy();
   });
 });
 

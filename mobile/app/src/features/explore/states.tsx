@@ -5,6 +5,7 @@ import { SignalSlashIcon } from 'react-native-heroicons/outline';
 
 import { isTemporaryReadFailure } from '~/data/read-error';
 import { cn } from '~/lib-allowlist';
+import { PostSkeleton, RowSkeleton, Skeleton, SkeletonGroup } from '~/ui/Skeleton';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { tw, useColors } from '~/ui/tokens';
@@ -62,6 +63,57 @@ export function LoadingRow({ label, testID }: { label: string; testID?: string }
       <Text variant="subhead" tone="secondary" className="text-center">
         {label}
       </Text>
+    </View>
+  );
+}
+
+/** Rows of post skeletons, about a screen of them: the list loads in place, without a jump. */
+export function PostListSkeleton({ label, testID }: { label: string; testID?: string }) {
+  return (
+    <View accessible accessibilityLabel={label} testID={testID}>
+      {[0, 1, 2, 3].map((i) => (
+        <PostSkeleton key={i} />
+      ))}
+    </View>
+  );
+}
+
+/** A trending tag row's skeleton (`TagRow`): the rank, the tag and its count. */
+function TagSkeleton() {
+  return (
+    <SkeletonGroup className="min-h-16 flex-row items-center gap-3 px-4 py-3">
+      <View className="w-6 items-end">
+        <Skeleton width={12} />
+      </View>
+      <View className="flex-1 gap-2">
+        <Skeleton height={16} width="40%" />
+        <Skeleton width="20%" />
+      </View>
+    </SkeletonGroup>
+  );
+}
+
+/** Trending tags: rows shaped like `TagRow`. */
+export function TagListSkeleton({ label, testID }: { label: string; testID?: string }) {
+  return (
+    <View accessible accessibilityLabel={label} testID={testID}>
+      {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+        <TagSkeleton key={i} />
+      ))}
+    </View>
+  );
+}
+
+/** Ranked people: the section header, then user rows. */
+export function UserListSkeleton({ label, testID }: { label: string; testID?: string }) {
+  return (
+    <View accessible accessibilityLabel={label} testID={testID}>
+      <View className={cn('min-h-11 justify-center border-b px-4 py-2', tw.border, tw.bgSubtle)}>
+        <Skeleton width={180} />
+      </View>
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <RowSkeleton key={i} />
+      ))}
     </View>
   );
 }

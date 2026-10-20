@@ -70,7 +70,7 @@ function MethodRow({
 }
 
 /**
- * UX_SPEC §4.2: wallet first, a private key under "Other ways". The wallet
+ * UX_SPEC §4.2: wallet first, a private key under "Advanced". The wallet
  * sign-in is App Connect on networks that run it (devnet), the legacy key
  * exchange elsewhere; until the engine says which (a first launch), the
  * wallet buttons wait.
@@ -177,19 +177,22 @@ export default function SignInScreen() {
           ) : null}
         </View>
 
-        <View className="flex-row flex-wrap items-center justify-center gap-1 pt-2">
-          <Text variant="subhead" tone="secondary">
-            {copy.signin.newToDash}
-          </Text>
-          <Button
-            label={copy.signin.createIdentity}
-            variant="link"
-            size="sm"
-            className="px-1"
-            testID="sign-in-new-to-dash"
-            onPress={() => openInApp(links.identityBridge)}
-          />
-        </View>
+        {/* Without a wallet the primary button already offers it. */}
+        {walletInstalled === false ? null : (
+          <View className="flex-row flex-wrap items-center justify-center gap-1 pt-2">
+            <Text variant="subhead" tone="secondary">
+              {copy.signin.newToDash}
+            </Text>
+            <Button
+              label={copy.signin.getDashWallet}
+              variant="link"
+              size="sm"
+              className="px-1"
+              testID="sign-in-new-to-dash"
+              onPress={() => openInApp(links.getWallet)}
+            />
+          </View>
+        )}
       </SignInBody>
     </>
   );

@@ -46,16 +46,12 @@ export function countLabel(count: number, noun: 'post' | 'like' | 'follower'): s
 export const tagCountLabel = (tag: TagDTO) => countLabel(tag.count, tag.countKind === 'likes' ? 'like' : 'post');
 
 /**
- * Each ranked axis's own window on the dev cut (web `windowedRankingFor`):
- * trending tags and a tag's Top read the 24 h hashtag axis, Top posts the
- * 3-day post axis. Creators have no window.
+ * A ranked list's window switch (web `windowedRankingFor`). Trending tags and
+ * a tag's Top read the 24 h hashtag axis, Top posts the 3-day post axis;
+ * both say "Recent", as web does, rather than name the span. Creators have
+ * no window.
  */
-export const TAG_WINDOWS: readonly TabOption<RankingWindow>[] = [
-  { value: 'today', label: '24h' },
-  { value: 'all', label: 'All time' },
-];
-
-export const POST_WINDOWS: readonly TabOption<RankingWindow>[] = [
-  { value: 'today', label: '3 days' },
+export const RANKING_WINDOWS: readonly TabOption<RankingWindow>[] = [
+  { value: 'today', label: 'Recent' },
   { value: 'all', label: 'All time' },
 ];

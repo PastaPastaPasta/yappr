@@ -36,6 +36,7 @@ import {
   postWebUrl,
   sharePost,
 } from './post-navigation';
+import { HIDE_PRIVATE_LABEL, hidePrivateFromMenu, isUnreadablePrivate, useHiddenPrivateStore } from './hidden-private';
 import { readEngageStats } from './post-stats';
 import { useRepostQuoteCounts } from './repost-quote-counts';
 import { bookmarkWrite, deleteWrite, followWrite, likeWrite, repostWrite, targetOf } from './post-writes';
@@ -169,7 +170,13 @@ function repostSheet(
 const REMOVE_BOOKMARK: MenuItem = { id: 'remove-bookmark', title: 'Remove bookmark', systemImage: 'bookmark.slash' };
 
 /** The ⋯ and long-press menu (PRD ENG-08), in its order; a screen's own item (Bookmarks) after "Share…". */
-function menuItems(post: PostDTO, own: boolean, followKnown: boolean, removeBookmark: boolean): MenuItem[] {
+function menuItems(
+  post: PostDTO,
+  own: boolean,
+  followKnown: boolean,
+  removeBookmark: boolean,
+  offerHidePrivate: boolean,
+): MenuItem[] {
   const handle = post.author.username ? `@${post.author.username}` : post.author.displayName;
   const follows = post.viewer?.followsAuthor === true;
   const noun = post.kind === 'reply' ? 'reply' : 'post';
@@ -189,6 +196,7 @@ function menuItems(post: PostDTO, own: boolean, followKnown: boolean, removeBook
     { id: 'share', title: 'Share…', systemImage: 'square.and.arrow.up' },
   );
   if (removeBookmark) items.push(REMOVE_BOOKMARK);
+  if (offerHidePrivate) items.push({ id: 'hide-private', title: HIDE_PRIVATE_LABEL, systemImage: 'eye.slash' });
   if (own && !post.deleted) {
     items.push({ id: 'delete', title: `Delete ${noun}`, systemImage: 'trash', destructive: true });
   }
@@ -269,6 +277,9 @@ export const PostItem = memo(function PostItem({
 
   const own = viewerId !== null && viewerId === post.author.id;
   const detail = cardProps.variant === 'detail';
+  // Private posts the viewer can't read: out of lists once they ask (the open post still shows).
+  const hidePrivate = useHiddenPrivateStore((s) => s.hide);
+  const unreadablePrivate = isUnreadablePrivate(post, viewerId);
   const repostQuoteCounts = useRepostQuoteCounts(post, detail && capabilities?.repostsAreQuotes === true);
   // A bare repost's target comes without the viewer's follow of its author: offer no follow item then.
   const followKnown =
@@ -350,6 +361,7 @@ export const PostItem = memo(function PostItem({
         else requireAuth(openReport);
       },
       ...(onRemoveBookmark ? { 'remove-bookmark': () => onRemoveBookmark(listed) } : {}),
+      'hide-private': hidePrivateFromMenu,
     };
     const onSelect = (id: string) => menuActions[id]?.();
 
@@ -386,12 +398,27 @@ export const PostItem = memo(function PostItem({
       onVotePress: openOnWeb,
       onOpenPrivate: openOnWeb,
     };
-    const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined);
+    const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined, unreadablePrivate && !hidePrivate);
     const menu: PostCardMenu | undefined = items.length > 0 ? { items, onSelect } : undefined;
     return { actions, menu };
-  }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external, detail, onRemoveBookmark, listed]);
+  }, [
+    post,
+    own,
+    followKnown,
+    marksPending,
+    reloadMarks,
+    viewerId,
+    capabilities,
+    external,
+    detail,
+    onRemoveBookmark,
+    listed,
+    unreadablePrivate,
+    hidePrivate,
+  ]);
 
   if ((removed && !asStub) || safety.hidden) return null;
+  if (hidePrivate && unreadablePrivate && !detail && !pending) return null;
 
   if (pending) {
     return (

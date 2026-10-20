@@ -3,7 +3,6 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { config } from '~/config';
-import { engineNetworkKey } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { syncStorage } from '~/state/storage';
 
@@ -40,8 +39,6 @@ export const links = {
   /** This network's copies (devnet: under `/devnet`), so the notice on them names the network the app is on (D-013). */
   terms: `${config.webBaseUrl}/terms`,
   privacy: `${config.webBaseUrl}/privacy`,
-  /** The identity bridge, for the network this build talks to (web `identityBridgeUrl`). */
-  identityBridge: `https://bridge.thepasta.org/?network=${encodeURIComponent(config.network === 'devnet' ? engineNetworkKey : config.network)}`,
   /** Web's DASH_WALLET_DOWNLOAD_URL. */
   getWallet: 'https://www.dash.org/download/',
 };

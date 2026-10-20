@@ -11,7 +11,7 @@ import {
   WalletIcon,
 } from 'react-native-heroicons/outline';
 
-import { useSession, useSessionStore } from '~/data/session';
+import { useCapabilities, useSession, useSessionStore } from '~/data/session';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { useAccounts } from '~/features/auth/accounts';
@@ -20,14 +20,16 @@ import { copy as authCopy } from '~/features/auth/copy';
 import { truncateId } from '~/lib-allowlist';
 import { EmptyState } from '~/ui/EmptyState';
 import { Spinner } from '~/ui/Spinner';
+import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 import { colors, useColors } from '~/ui/tokens';
 
 import { copy } from './copy';
-import { formatCredits, formatDash, formatDate } from './format';
+import { formatDash, formatDate } from './format';
 import { links, openInApp } from './links';
 import { SettingsGroup, SettingsHeader, SettingsPage, SettingsRow, SettingsScroll } from './SettingsList';
+import { updateSettings, useSettings } from './settings-data';
 import { useViewerProfile } from './use-viewer-profile';
 
 const ios = Platform.OS === 'ios';
@@ -83,7 +85,7 @@ function AccountIdRow({ identityId }: { identityId: string }) {
   );
 }
 
-/** Balance in DASH (4 decimals) with the raw credits in a muted caption (SET-02). */
+/** Balance in DASH (4 decimals, SET-02). Credits are Platform's unit, not something to show people. */
 function BalanceRow({ credits }: { credits: bigint }) {
   return (
     <View
@@ -95,10 +97,28 @@ function BalanceRow({ credits }: { credits: bigint }) {
       <Text variant="bodyStrong" tabular selectable>
         {formatDash(credits)}
       </Text>
-      <Text variant="caption" tone="secondary" tabular>
-        {copy.account.credits(formatCredits(credits))}
-      </Text>
     </View>
+  );
+}
+
+/**
+ * How posts, replies and likes pay where the contract lets YAPP pay (owner finding #3): one setting
+ * here rather than a choice on every post. Without enough YAPP they pay from the balance anyway.
+ */
+function PayWithYappRow() {
+  const yappPayments = useCapabilities()?.yappPayments === true;
+  const payWith = useSettings().data?.payWith;
+  if (!yappPayments || !payWith) return null;
+  return (
+    <SwitchRow
+      label={copy.account.payWithYapp}
+      description={copy.account.payWithYappDescription}
+      value={payWith === 'yapp'}
+      onValueChange={(on) => {
+        updateSettings({ payWith: on ? 'yapp' : 'credits' }).catch(() => undefined);
+      }}
+      testID="account-pay-with-yapp"
+    />
   );
 }
 
@@ -207,6 +227,7 @@ export function AccountSettingsScreen() {
 
       <SettingsGroup title={copy.account.balance}>
         <BalanceRow credits={session.credits} />
+        <PayWithYappRow />
       </SettingsGroup>
 
       <SettingsGroup>
