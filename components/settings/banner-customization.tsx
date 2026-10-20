@@ -7,9 +7,9 @@ import { useImageUpload } from '@/hooks/use-image-upload'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { Button } from '@/components/ui/button'
 import { invalidateBannerCache } from '@/components/ui/banner-image'
+import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
+import { fieldLimits } from '@/lib/field-limits'
 import { Loader2, ImagePlus, Trash2 } from 'lucide-react'
-import { Cog6ToothIcon } from '@heroicons/react/24/outline'
-import Link from 'next/link'
 import toast from 'react-hot-toast'
 
 interface BannerCustomizationProps {
@@ -149,6 +149,23 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
 
   const hasImage = previewUrl || bannerUrl
 
+  const saveButton = hasChanges && (
+    <Button
+      onClick={handleSave}
+      disabled={saving}
+      className="w-full"
+    >
+      {saving ? (
+        <>
+          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          Saving...
+        </>
+      ) : (
+        'Save Banner'
+      )}
+    </Button>
+  )
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -159,23 +176,18 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
     )
   }
 
-  // Provider not connected state
+  // Without storage an image link still works; leaving for Settings would drop the profile edit.
   if (!isProviderConnected) {
     return (
       <div className="space-y-4">
-        <div className="aspect-[3/1] rounded-xl bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-gray-300 dark:border-gray-700 flex items-center justify-center">
-          <div className="text-center p-4">
-            <Cog6ToothIcon className="h-10 w-10 mx-auto text-gray-400 mb-3" />
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-              Connect a storage provider to upload images
-            </p>
-            <Link href="/settings">
-              <Button size="sm" variant="outline">
-                Go to Settings
-              </Button>
-            </Link>
-          </div>
-        </div>
+        <ProfileImageUpload
+          aspectRatio="banner"
+          currentUrl={bannerUrl || undefined}
+          onUpload={setBannerUrl}
+          onClear={handleClear}
+          urlLimits={fieldLimits('social', 'yapprProfile', 'bannerUri')}
+        />
+        {saveButton}
       </div>
     )
   }
@@ -277,22 +289,7 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
       )}
 
       {/* Save button - only show when there are changes */}
-      {hasChanges && (
-        <Button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full"
-        >
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            'Save Banner'
-          )}
-        </Button>
-      )}
+      {saveButton}
     </div>
   )
 }

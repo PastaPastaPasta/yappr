@@ -18,6 +18,7 @@ import { followService, dpnsService, unifiedProfileService } from '@/lib/service
 import type { UnifiedProfileDocument } from '@/lib/services/unified-profile-service'
 import { sortUsernames } from '@/lib/utils/username'
 import { cacheManager } from '@/lib/cache-manager'
+import { cn } from '@/lib/utils'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,7 +26,6 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
-import { formatNumber } from '@/lib/utils'
 import { useHydratedPages } from '@/hooks/use-hydrated-pages'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
@@ -33,7 +33,7 @@ import type { HydratedPages } from '@/lib/hydrated-pages'
 
 export type ConnectionKind = 'following' | 'followers'
 
-/** Users hydrated (profile, names, counts) per page of a connection list. */
+/** Users hydrated (profile and names) per page of a connection list. */
 const PAGE_SIZE = 50
 
 /**
@@ -55,10 +55,7 @@ interface ConnectionUser {
   username: string
   displayName: string
   bio?: string
-  hasProfile: boolean
   hasDpnsName: boolean
-  followersCount: number
-  followingCount: number
   /** Whether the viewer follows this user. */
   isFollowing: boolean
   allUsernames: string[]
@@ -67,28 +64,30 @@ interface ConnectionUser {
 const COPY: Record<ConnectionKind, {
   title: string
   noun: [one: string, many: string]
-  loadingText: string
   emptyText: string
-  emptyDescription: string
+  /** The empty-state line on your own list; someone else's list has none. */
+  ownEmptyDescription: string
   followLabel: string
 }> = {
   following: {
     title: 'Following',
-    noun: ['user', 'users'],
-    loadingText: 'Loading following list...',
+    noun: ['following', 'following'],
     emptyText: 'Not following anyone yet',
-    emptyDescription: 'Find interesting people to follow on Yappr',
+    ownEmptyDescription: "When you follow people, they'll show up here.",
     followLabel: 'Follow',
   },
   followers: {
     title: 'Followers',
     noun: ['follower', 'followers'],
-    loadingText: 'Loading followers...',
     emptyText: 'No followers yet',
-    emptyDescription: 'Share interesting content to gain followers',
+    ownEmptyDescription: "When someone follows you, they'll show up here.",
     followLabel: 'Follow back',
   },
 }
+
+const KINDS: ConnectionKind[] = ['followers', 'following']
+
+const BAR = 'bg-gray-200 animate-pulse dark:bg-gray-800'
 
 /** DPNS search is over homograph-safe names; fall back to the raw input before the SDK is up. */
 function toHomographSafe(input: string): string {
@@ -103,42 +102,28 @@ function toHomographSafe(input: string): string {
 interface Enrichment {
   id: string
   profile: UnifiedProfileDocument | undefined
-  followersCount: number
-  followingCount: number
 }
 
 /**
- * Profile and follower/following counts per identity, in `ids` order. The
- * count queries never reject (the service returns 0 on failure). `strict`
- * rejects when a profile read failed, so a cached page never shows people
- * without the profiles they have; otherwise those people are left unprofiled.
+ * The profile per identity, in `ids` order. `strict` rejects when a profile
+ * read failed, so a cached page never shows people without the profiles they
+ * have; otherwise those people are left unprofiled.
  */
 async function fetchEnrichment(ids: string[], { strict = true } = {}): Promise<Enrichment[]> {
-  const [profiles, followerCounts, followingCounts] = await Promise.all([
-    unifiedProfileService.getProfilesByIdentityIds(ids, { throwOnError: strict }),
-    followService.countFollowersBatch(ids),
-    followService.countFollowingBatch(ids),
-  ])
+  const profiles = await unifiedProfileService.getProfilesByIdentityIds(ids, { throwOnError: strict })
   const byOwner = new Map(profiles.map((p) => [p.$ownerId, p]))
-  return ids.map((id) => ({
-    id,
-    profile: byOwner.get(id),
-    followersCount: followerCounts.get(id) ?? 0,
-    followingCount: followingCounts.get(id) ?? 0,
-  }))
+  return ids.map((id) => ({ id, profile: byOwner.get(id) }))
 }
 
-function toUser({ id, profile, followersCount, followingCount }: Enrichment, usernames: string[], isFollowing: boolean): ConnectionUser {
+function toUser({ id, profile }: Enrichment, usernames: string[], isFollowing: boolean): ConnectionUser {
   const username = usernames[0] ?? null
   return {
     id,
     username: username ?? id.slice(-8),
-    displayName: profile?.displayName || username || `User ${id.slice(-8)}`,
+    // Without a profile the DPNS label is the name, as on the profile page.
+    displayName: profile?.displayName || username?.replace(/\.dash$/, '') || `User ${id.slice(-8)}`,
     bio: profile?.bio || undefined,
-    hasProfile: !!profile,
     hasDpnsName: !!username,
-    followersCount,
-    followingCount,
     isFollowing,
     allUsernames: usernames,
   }
@@ -205,20 +190,26 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     resetKey: `${kind}:${userIdToLoad}`,
   })
 
-  // The header names whoever's list this is, when it is not the viewer's own.
+  // The header names whoever's list this is.
   useEffect(() => {
-    if (!targetUserId || targetUserId === viewerId) return
+    setTargetUserName(null)
+    if (!userIdToLoad) return
     let cancelled = false
-    const fallback = `User ${targetUserId.slice(-6)}`
-    dpnsService
-      .resolveUsername(targetUserId)
-      .then((username) => { if (!cancelled) setTargetUserName(username || fallback) })
+    const fallback = `User ${userIdToLoad.slice(-6)}`
+    // The profile name, as on the profile page; usually cached from that visit.
+    Promise.all([
+      unifiedProfileService.getProfile(userIdToLoad).catch(() => null),
+      dpnsService.resolveUsername(userIdToLoad),
+    ])
+      .then(([profile, username]) => {
+        if (!cancelled) setTargetUserName(profile?.displayName || username?.replace(/\.dash$/, '') || fallback)
+      })
       .catch((error) => {
         logger.error('Failed to resolve target user name:', error)
         if (!cancelled) setTargetUserName(fallback)
       })
     return () => { cancelled = true }
-  }, [targetUserId, viewerId])
+  }, [userIdToLoad])
 
   const load = useCallback(async (forceRefresh = false) => {
     const generation = ++loadGeneration.current
@@ -355,7 +346,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
       // Search results are not cached, so a failed profile read degrades to the DPNS name.
       const enrichment = await fetchEnrichment(ids, { strict: false }).catch((error): Enrichment[] => {
         logger.error('Search: profile enrichment failed:', error)
-        return ids.map((id) => ({ id, profile: undefined, followersCount: 0, followingCount: 0 }))
+        return ids.map((id) => ({ id, profile: undefined }))
       })
       // The whole following list, not just the enriched pages.
       const followed = new Set(list.pages?.keys)
@@ -384,10 +375,11 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   }
 
   const subtitle = searchQuery
-    ? plural(searchResults.length, 'search result', 'search results')
+    ? plural(searchResults.length, 'result', 'results')
     : loading && data === null
-      ? 'Loading...'
-      : data === null ? 'Unavailable' : `${plural(total, ...copy.noun)}${complete ? '' : '+'}`
+      ? '\u00a0'
+      : data === null ? '\u00a0' : `${plural(total, ...copy.noun)}${complete ? '' : '+'}`
+  const listHref = (other: ConnectionKind) => `/${other}${targetUserId ? `?id=${targetUserId}` : ''}`
 
   const renderRow = (u: ConnectionUser) => (
     <ConnectionRow
@@ -427,23 +419,23 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   return (
     <PageShell>
           <PageHeader>
-            <div className="px-4 py-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
+            <div className="px-4 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                   {!isOwnProfile && (
                     <button
                       aria-label="Back"
                       onClick={() => router.back()}
-                      className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                      className="p-2 -ml-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
                     >
                       <ArrowLeftIcon className="h-5 w-5" />
                     </button>
                   )}
-                  <div>
-                    <h1 className="text-xl font-bold">
-                      {isOwnProfile ? copy.title : `@${targetUserName || 'User'}'s ${copy.title}`}
+                  <div className="min-w-0">
+                    <h1 className="truncate text-xl font-bold">
+                      {targetUserName ?? <span className={`inline-block h-6 w-32 rounded align-middle ${BAR}`} />}
                     </h1>
-                    <p className="text-sm text-gray-500 mt-1">{subtitle}</p>
+                    <p className="text-sm text-gray-500">{subtitle}</p>
                   </div>
                 </div>
                 {!searchQuery && (
@@ -453,6 +445,24 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
                 )}
               </div>
             </div>
+            <nav aria-label="Connections" className="flex border-b border-gray-200 dark:border-gray-800">
+              {KINDS.map((other) => (
+                <Link
+                  key={other}
+                  href={listHref(other)}
+                  replace
+                  aria-current={other === kind ? 'page' : undefined}
+                  className={cn(
+                    'flex-1 py-3 text-center text-[15px] font-medium transition-colors hover:bg-gray-50 dark:hover:bg-gray-950',
+                    other === kind ? 'text-gray-900 dark:text-white' : 'text-gray-500'
+                  )}
+                >
+                  <span className={cn('relative inline-block pb-3 -mb-3', other === kind && 'font-bold after:absolute after:inset-x-0 after:bottom-0 after:h-1 after:rounded-full after:bg-yappr-500')}>
+                    {COPY[other].title}
+                  </span>
+                </Link>
+              ))}
+            </nav>
 
             {canSearch && (
               <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
@@ -484,7 +494,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
               isSearching ? (
                 <div className="p-8 text-center">
                   <Spinner size="md" className="mx-auto mb-4" />
-                  <p className="text-gray-500">Searching for DPNS users...</p>
+                  <p className="text-gray-500">Searching…</p>
                 </div>
               ) : searchResults.length > 0 ? (
                 <div>
@@ -506,14 +516,18 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
                   </Button>
                 </div>
               )}
+              {loading && data === null ? (
+                <ConnectionSkeleton />
+              ) : !loading && data !== null && total === 0 ? (
+                <div className="px-8 py-12 text-center">
+                  <h2 className="text-xl font-bold">{copy.emptyText}</h2>
+                  {isOwnProfile && <p className="mt-1 text-gray-500">{copy.ownEmptyDescription}</p>}
+                </div>
+              ) : (
               <LoadingState
-                loading={loading && data === null}
+                loading={false}
                 error={data === null ? error : null}
-                isEmpty={!loading && data !== null && total === 0}
                 onRetry={() => load(true)}
-                loadingText={copy.loadingText}
-                emptyText={copy.emptyText}
-                emptyDescription={copy.emptyDescription}
               >
                 {!complete && (
                   <p className="px-4 py-2 text-center text-xs text-gray-500">
@@ -530,10 +544,28 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
                   />
                 )}
               </LoadingState>
+              )}
               </>
             )}
           </ErrorBoundary>
     </PageShell>
+  )
+}
+
+/** Placeholder rows shaped like loaded ones, so the list does not jump when it arrives. */
+function ConnectionSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="flex items-start gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-800">
+          <div className={`h-12 w-12 shrink-0 rounded-full ${BAR}`} />
+          <div className="flex-1 space-y-2 pt-1">
+            <div className={`h-4 w-32 rounded ${BAR}`} />
+            <div className={`h-3.5 w-24 rounded ${BAR}`} />
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -554,34 +586,39 @@ export function ConnectionRow({
   const copy = useCopy()
   const goToProfile = () => router.push(`/user?id=${user.id}`)
   const hoverUsername = user.hasDpnsName ? user.username : null
+  // Controls inside the row act on their own; a click anywhere else opens the profile.
+  const stop = (e: React.MouseEvent) => e.stopPropagation()
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
+      onClick={goToProfile}
+      className="cursor-pointer border-b border-gray-200 dark:border-gray-800 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors"
     >
       <div className="flex items-start gap-3">
         <ProfileHoverCard userId={user.id} username={hoverUsername} displayName={user.displayName}>
           <button
-            onClick={goToProfile}
-            className="h-12 w-12 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={(e) => { stop(e); goToProfile() }}
+            aria-label={user.displayName}
+            tabIndex={-1}
+            className="h-12 w-12 shrink-0 rounded-full overflow-hidden bg-white dark:bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
           >
             <UserAvatar userId={user.id} size="lg" alt={user.displayName} />
           </button>
         </ProfileHoverCard>
 
-        <div className="flex-1">
-          <div className="flex items-start justify-between">
-            <div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
               <ProfileHoverCard userId={user.id} username={hoverUsername} displayName={user.displayName}>
-                <Link href={`/user?id=${user.id}`} className="block font-semibold hover:underline">
+                <Link href={`/user?id=${user.id}`} onClick={stop} className="block truncate font-semibold hover:underline">
                   {user.displayName}
                 </Link>
               </ProfileHoverCard>
               {user.hasDpnsName ? (
                 <ProfileHoverCard userId={user.id} username={user.username} displayName={user.displayName}>
-                  <Link href={`/user?id=${user.id}`} className="block text-sm text-gray-500 hover:underline">
+                  <Link href={`/user?id=${user.id}`} onClick={stop} className="block truncate text-sm text-gray-500 hover:underline">
                     @{user.username}
                   </Link>
                 </ProfileHoverCard>
@@ -591,7 +628,7 @@ export function ConnectionRow({
                     <TooltipTrigger asChild>
                       <button
                         onClick={(e) => {
-                          e.stopPropagation()
+                          stop(e)
                           copy(user.id, 'Identity ID copied')
                         }}
                         className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 font-mono"
@@ -604,45 +641,27 @@ export function ConnectionRow({
                 </TooltipProvider>
               )}
               {user.allUsernames.length > 1 && (
-                <AlsoKnownAs primaryUsername={user.username} allUsernames={user.allUsernames} identityId={user.id} />
+                <div onClick={stop}>
+                  <AlsoKnownAs primaryUsername={user.username} allUsernames={user.allUsernames} identityId={user.id} />
+                </div>
               )}
-              {user.bio && <p className="text-sm mt-1">{user.bio}</p>}
-              <div className="flex gap-4 mt-2 text-sm text-gray-500">
-                <button onClick={() => router.push(`/followers?id=${user.id}`)} className="hover:underline">
-                  <strong className="text-gray-900 dark:text-gray-100">{formatNumber(user.followersCount)}</strong> followers
-                </button>
-                <button onClick={() => router.push(`/following?id=${user.id}`)} className="hover:underline">
-                  <strong className="text-gray-900 dark:text-gray-100">{formatNumber(user.followingCount)}</strong> following
-                </button>
-              </div>
             </div>
 
             {showActions && (
-              <div className="flex flex-col items-end gap-1 ml-4">
+              <div className="shrink-0" onClick={stop}>
                 {user.isFollowing ? (
-                  <Button variant="outline" size="sm" onClick={onToggleFollow} disabled={busy}>
+                  <Button variant="outline" size="sm" onClick={onToggleFollow} disabled={busy} className="min-w-[5.5rem] font-bold">
                     {busy ? <Spinner size="sm" className="border-gray-600" /> : 'Following'}
                   </Button>
                 ) : (
-                  <Button size="sm" onClick={onToggleFollow} disabled={busy}>
+                  <Button size="sm" onClick={onToggleFollow} disabled={busy} className="min-w-[5.5rem] font-bold">
                     {busy ? <Spinner size="sm" className="border-white" /> : followLabel}
                   </Button>
-                )}
-                {!user.hasProfile && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="text-xs text-gray-400 cursor-help">Not on Yappr yet</span>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-xs">
-                        <p>This user hasn&apos;t created a Yappr profile yet. They&apos;ll see your follow when they join!</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
                 )}
               </div>
             )}
           </div>
+          {user.bio && <p className="mt-1 break-words text-[15px]">{user.bio}</p>}
         </div>
       </div>
     </motion.div>
