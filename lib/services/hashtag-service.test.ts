@@ -35,6 +35,19 @@ describe('trending hashtags', () => {
     expect(ranked).toHaveBeenCalledTimes(1)
   })
 
+  it('does not answer a longer ranking from a shorter cached one', async () => {
+    const { hashtagService } = await import('./hashtag-service')
+    ranked.mockResolvedValue({ entries: [{ groupValue: 'dash', value: BigInt(7) }] })
+    await hashtagService.getTrendingHashtags({ limit: 12 })
+    // Search asks for 50: the cached top 12 cannot answer that.
+    await hashtagService.getTrendingHashtags({ limit: 50 })
+    expect(ranked).toHaveBeenCalledTimes(2)
+    expect(ranked.mock.calls[1][0].limit).toBe(50)
+    // ...but the top 50 answers a later top 12.
+    await hashtagService.getTrendingHashtags({ limit: 12 })
+    expect(ranked).toHaveBeenCalledTimes(2)
+  })
+
   it('shares one ranked read between the sidebar and the explore page asking together', async () => {
     const { hashtagService } = await import('./hashtag-service')
     ranked.mockResolvedValue({ entries: [{ groupValue: 'dash', value: BigInt(7) }] })
