@@ -9,13 +9,18 @@ import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
 import { tw, useColors } from '../tokens';
 import { EMBED_FRAME } from './embed-frame';
-import { pickOption, pollBallot, pollEndLabel, pollPercents, pollVotesLabel, usePollNow, usePollSelection } from './poll-ballot';
+import { pickOption, pollBallot, pollPercents, pollVotesLabel, type PollClock } from './poll-ballot';
 import type { CardPoll, Loadable } from './types';
 
 const FRAME = cn(EMBED_FRAME, 'p-3');
 
 export interface PollCardProps {
   poll: Loadable<CardPoll>;
+  /** The close, now (`usePollClock`, read by the card that also speaks it). */
+  clock: PollClock;
+  /** The options picked and not sent yet (`usePollSelection`, shared with the card's screen-reader actions). */
+  selected: number[];
+  onSelect: (selected: number[]) => void;
   /** Send the ballot: the option indexes picked, none to withdraw it (`voting: 'editable'`). */
   onVotePress?: (choices: number[]) => void;
 }
@@ -28,21 +33,17 @@ export interface PollCardProps {
  * closed poll, a final ballot, or one that could not be read shows results
  * only, with the viewer's choices marked.
  */
-export function PollCard({ poll, onVotePress }: PollCardProps) {
+export function PollCard({ poll, clock, selected, onSelect, onVotePress }: PollCardProps) {
   const ready = poll === 'loading' || poll === 'error' ? null : poll;
-  const now = usePollNow(ready?.endsAt ?? null);
-  // Shared with the post's screen-reader actions (`usePollSelection`); a ballot read or saved since resets it.
-  const [selected, setSelected] = usePollSelection(ready);
-
   if (!ready) return <PollPlaceholder state={poll === 'loading' ? 'loading' : 'error'} />;
 
   const percents = pollPercents(ready);
   const leading = Math.max(...ready.options.map((o) => o.votes));
   // Signed out (`myVotes` absent) the ballot is open too: sending it asks to sign in.
-  const { canVote, multi, saving, voted, marked, unchanged, voteLabel } = pollBallot(ready, selected, now, onVotePress !== undefined);
+  const { canVote, multi, saving, voted, marked, unchanged, voteLabel } = pollBallot(ready, selected, clock.closed, onVotePress !== undefined);
   let role: 'radio' | 'checkbox' | null = null;
   if (canVote) role = multi ? 'checkbox' : 'radio';
-  const pick = (i: number) => setSelected(pickOption(selected, i, multi));
+  const pick = (i: number) => onSelect(pickOption(selected, i, multi));
 
   const votes = pollVotesLabel(ready.totalVotes, formatNumber);
   const status = !canVote && voted ? 'You voted' : null;
@@ -72,7 +73,7 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
       </View>
       <View className="mt-2 flex-row flex-wrap items-center justify-between gap-2">
         <Text variant="caption" tone="secondary" testID="poll-status">
-          {[votes, pollEndLabel(ready.endsAt, now), status].filter(Boolean).join(' · ')}
+          {[votes, clock.endLabel, status].filter(Boolean).join(' · ')}
         </Text>
         {canVote ? (
           <View className="flex-row items-center gap-2">
