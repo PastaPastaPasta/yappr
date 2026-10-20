@@ -82,7 +82,11 @@ async function groupedAverages(sdk: Sdk, storeIds: string[]): Promise<Map<string
     if (hex) idByHex.set(hex, id);
   }
   const averages = new Map(storeIds.map((id) => [id, { count: 0, sum: 0 }]));
-  const entries = groupedCountEntries(raw).filter(([key]) => key !== '');
+  const all = groupedCountEntries(raw);
+  const entries = all.filter(([key]) => key !== '');
+  // Only a grand total with reviews in it: the grouping was not applied, which must not read as "no reviews".
+  const total = all.find(([key]) => key === '')?.[1] as AverageEntry | undefined;
+  if (entries.length === 0 && total && Number(total.count) > 0) throw new Error('storeStats: grouped average came back ungrouped');
   let matched = 0;
   for (const [key, value] of entries) {
     const id = idByHex.get(key.toLowerCase());
