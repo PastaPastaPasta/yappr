@@ -83,6 +83,14 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
 const NOTIFICATION_POLL_INTERVAL = 30000 // 30 seconds
 
 /**
+ * Every page mounts its own sidebar, so this outlives it: whose notifications
+ * the store already holds from this session, and when they were last fetched.
+ * A remount for the same account resumes polling on schedule instead of
+ * re-reading the last 7 days on every navigation.
+ */
+let notificationsFetched: { userId: string; at: number } | null = null
+
+/**
  * The display name the account chip last showed. Every page mounts its own
  * Sidebar, so without it the chip would show the @name and then swap to the
  * display name on each navigation.
@@ -171,6 +179,7 @@ export function Sidebar() {
     }
   }, [identityId])
 
+  const onNotificationsPage = pathname === '/notifications'
   // Initial notification fetch and polling
   useEffect(() => {
     // Blocks made this session belong to the account that made them.
@@ -179,6 +188,7 @@ export function Sidebar() {
       // Logout / user switch: drop the previous user's DM count. Nothing polls
       // while logged out, so a survivor would be shown until the next login.
       useNotificationStore.getState().setDmUnreadCount(0)
+      notificationsFetched = null
       return
     }
 
@@ -222,6 +232,7 @@ export function Sidebar() {
           store.addNotifications(result.notifications)
         }
         store.setLastFetchTimestamp(result.latestTimestamp)
+        notificationsFetched = { userId, at: Date.now() }
 
         // Blocks change without a new notification (following a block list,
         // a block made on another device): re-check what is already shown.
@@ -237,20 +248,25 @@ export function Sidebar() {
       }
     }
 
-    let initial = true
+    // Already loaded for this account this session (another page's sidebar):
+    // poll for what is new, and only once the interval since the last fetch is up.
+    const warm = notificationsFetched?.userId === userId && useNotificationStore.getState().hasFetchedOnce
+    let initial = !warm
+    // Opening the notifications page itself always checks for new ones.
+    const due = !warm || onNotificationsPage || Date.now() - (notificationsFetched?.at ?? 0) >= NOTIFICATION_POLL_INTERVAL
     const stopPolling = startVisibilityPolling(async () => {
       try {
         await fetchNotifications(initial)
       } finally {
         initial = false
       }
-    }, NOTIFICATION_POLL_INTERVAL, (error) => logger.error('Notification fetch failed:', error), true)
+    }, NOTIFICATION_POLL_INTERVAL, (error) => logger.error('Notification fetch failed:', error), due)
 
     return () => {
       cancelled = true
       stopPolling()
     }
-  }, [user?.identityId, dmV5])
+  }, [user?.identityId, dmV5, onNotificationsPage])
   
   // Get navigation based on auth status (use safe defaults during SSR)
   const navigation = getNavigation(isHydrated ? !!user : false, user?.identityId)
