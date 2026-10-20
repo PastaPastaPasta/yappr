@@ -109,13 +109,13 @@ interface Enrichment {
 
 /**
  * Profile and follower/following counts per identity, in `ids` order. The
- * count queries never reject (the service returns 0 on failure); a profile
- * query failure is the caller's to handle.
+ * count queries never reject (the service returns 0 on failure). `strict`
+ * rejects when a profile read failed, so a cached page never shows people
+ * without the profiles they have; otherwise those people are left unprofiled.
  */
-async function fetchEnrichment(ids: string[]): Promise<Enrichment[]> {
+async function fetchEnrichment(ids: string[], { strict = true } = {}): Promise<Enrichment[]> {
   const [profiles, followerCounts, followingCounts] = await Promise.all([
-    // A failed read rejects: it must not be cached as a page of people without profiles.
-    unifiedProfileService.getProfilesByIdentityIds(ids, { throwOnError: true }),
+    unifiedProfileService.getProfilesByIdentityIds(ids, { throwOnError: strict }),
     followService.countFollowersBatch(ids),
     followService.countFollowingBatch(ids),
   ])
@@ -352,7 +352,8 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
       }
       const ids = Array.from(namesByOwner.keys())
       // A DPNS hit is still worth showing when the profile lookup fails.
-      const enrichment = await fetchEnrichment(ids).catch((error): Enrichment[] => {
+      // Search results are not cached, so a failed profile read degrades to the DPNS name.
+      const enrichment = await fetchEnrichment(ids, { strict: false }).catch((error): Enrichment[] => {
         logger.error('Search: profile enrichment failed:', error)
         return ids.map((id) => ({ id, profile: undefined, followersCount: 0, followingCount: 0 }))
       })
