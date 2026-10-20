@@ -45,7 +45,7 @@ leave public discovery. **My posts** keeps the author's retraction path
 available without the parent. References to the blog are `deletableDocument`.
 
 Posts and comments use a one-day moderation window (D39), followed by the settled
-leader/three-approvals rule. The blog has its own elected team, independent of
+rule of two approvals including the leader (D41). The blog has its own elected team, independent of
 social and storefront. See [BLOG_V9.md](BLOG_V9.md) for the exact reference rules,
 owner indexes, moderation and Sakura proof. `/devnet` continues using blog v8.
 
