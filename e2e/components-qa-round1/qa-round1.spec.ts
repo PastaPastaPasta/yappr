@@ -317,6 +317,8 @@ test('PROFILE-EDIT-04: leaving with unsaved edits asks first', async ({ page }) 
   await expect(page.getByText('Discard changes?')).toBeVisible()
   await page.getByRole('button', { name: 'Keep editing' }).click()
   await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('Renamed')
+  // Focus goes back to Cancel, not to the page behind the dialog.
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await page.getByRole('button', { name: 'Discard', exact: true }).click()
   await expect(page.getByTestId('edit-state')).toHaveText('closed')

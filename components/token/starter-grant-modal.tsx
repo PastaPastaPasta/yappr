@@ -123,7 +123,7 @@ export function StarterGrantModal() {
         Claim your starter YAPP
       </ModalTitle>
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-        {paused ? `Every account gets ${amount.toString()} free YAPP.` : `Claim your free ${amount.toString()} YAPP to start posting.`}
+        {paused ? 'YAPP can\'t be used right now.' : 'Claim your free YAPP.'}
       </Dialog.Description>
       {needsCritical && (
         <div className="mb-4">

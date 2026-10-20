@@ -18,7 +18,8 @@ export function PostCardSkeleton() {
 /** A loading list of post cards, announced once to screen readers. */
 export function PostListSkeleton({ count = 5, label, testId }: { count?: number; label: string; testId?: string }) {
   return (
-    <div role="status" aria-label={label} data-testid={testId}>
+    <div role="status" data-testid={testId}>
+      <span className="sr-only">{label}</span>
       {Array.from({ length: count }, (_, i) => <PostCardSkeleton key={i} />)}
     </div>
   )

@@ -241,7 +241,7 @@ export function MobileBottomNav() {
                 }}
                 className="flex items-center justify-center w-full p-3 rounded-xl bg-yappr-500 text-white font-medium hover:bg-yappr-600 transition-colors"
               >
-                Sign In
+                Sign in
               </button>
             </div>
           )}

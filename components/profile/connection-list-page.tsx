@@ -408,7 +408,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
             To see someone else&apos;s {kind}, open their profile and select {copy.title}.
           </p>
           <div className="flex flex-wrap justify-center gap-3">
-            <Button onClick={openLoginPrompt}>Sign In</Button>
+            <Button onClick={openLoginPrompt}>Sign in</Button>
             <Button variant="outline" onClick={() => router.push('/explore')}>Explore Yappr</Button>
           </div>
         </section>

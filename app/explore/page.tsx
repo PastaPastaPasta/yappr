@@ -16,7 +16,7 @@ import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/explore/trending-hashtag-row'
-import { ScrollTabs } from '@/components/ui/scroll-tabs'
+import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
 import { likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
@@ -265,6 +265,7 @@ export default function ExplorePage() {
             {!searchQuery && (
               <ScrollTabs
                 ariaLabel="Explore"
+                panelId="explore-panel"
                 active={activeTab}
                 onSelect={setActiveTab}
                 tabs={[
@@ -339,6 +340,9 @@ export default function ExplorePage() {
             ) : (
               <motion.div
                 key="explore-content"
+                id="explore-panel"
+                role="tabpanel"
+                aria-labelledby={scrollTabId('explore-panel', activeTab)}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}

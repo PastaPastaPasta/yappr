@@ -1,6 +1,7 @@
 'use client'
 
 import { cn, formatNumber } from '@/lib/utils'
+import { postListingsCarryLiveMarker } from '@/lib/contract-topology'
 
 interface PlatformStatsProps {
   totalPosts: number
@@ -18,7 +19,7 @@ interface Stat {
 
 /**
  * A row of simple counts under the hero. While loading it holds the same
- * three cells so nothing moves when the numbers land; on error it steps aside
+ * cells the numbers will fill, so nothing moves when they land; on error it steps aside
  * (the posts below carry the retry).
  */
 export function PlatformStats({
@@ -35,8 +36,10 @@ export function PlatformStats({
     { label: 'Posts', value: formatNumber(totalPosts) },
     { label: 'People posting', value: `${formatNumber(authorCount)}${authorCountCapped ? '+' : ''}` },
   ]
-  if (loading || postsToday !== null) {
-    stats.push({ label: 'Posts today', value: formatNumber(postsToday ?? 0) })
+  // The cut decides up front whether a daily count exists, so the cell count
+  // is the same while loading and after. A read that failed shows a dash.
+  if (postListingsCarryLiveMarker()) {
+    stats.push({ label: 'Posts today', value: postsToday === null ? '—' : formatNumber(postsToday) })
   }
 
   return (
