@@ -5,7 +5,7 @@ import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { X, ChevronDown, ChevronLeft, Wallet, ScrollText, KeyRound } from 'lucide-react'
+import { X, ArrowLeft, ChevronDown, Wallet, ScrollText, KeyRound } from 'lucide-react'
 import type { AppConnectGrant } from 'platform-auth'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
@@ -97,7 +97,7 @@ type AdvancedSection = 'phrase' | 'key'
  *
  * App Connect builds: the Dash wallet is the main way in, a passkey added on
  * an earlier sign-in comes second, and the recovery phrase and private key
- * sit under "Advanced". The wallet request is only made once the wallet
+ * sit under "Other ways to sign in". The wallet request is only made once the wallet
  * option is chosen.
  *
  * Other builds: a passkey where one exists, then private-key sign-in.
@@ -166,7 +166,7 @@ export function LoginModal() {
         {!renewing && (
           <Button ref={walletButton} type="button" size="lg" className="w-full gap-2" onClick={() => switchView(true)}>
             <Wallet aria-hidden="true" className="w-5 h-5" />
-            Sign in with your Dash wallet
+            Sign in with Dash Wallet
           </Button>
         )}
         <PasskeySignIn onComplete={close} onRenewalChange={setRenewing} secondary />
@@ -177,7 +177,7 @@ export function LoginModal() {
           id={`${sectionId}-advanced`}
           open={showAdvanced}
           onToggle={() => setShowAdvanced((value) => !value)}
-          label="Advanced"
+          label="Other ways to sign in"
           centered
         >
           <div className="space-y-4 rounded-xl border border-gray-100 dark:border-gray-800 p-4">
@@ -218,10 +218,10 @@ export function LoginModal() {
         ref={backButton}
         type="button"
         onClick={() => switchView(false)}
-        className="mb-4 -ml-1 flex items-center gap-1 rounded-md py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
+        aria-label="Back"
+        className="absolute top-3 left-3 z-10 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
       >
-        <ChevronLeft aria-hidden="true" className="w-4 h-4" />
-        Other ways to sign in
+        <ArrowLeft aria-hidden="true" className="w-5 h-5" />
       </button>
       <AppConnectLoginPanel onGrant={signInWithGrant} onComplete={close} />
     </div>
@@ -292,9 +292,8 @@ export function LoginModal() {
               {!walletAvailable ? keyOptions : showWallet ? walletView : walletOptions}
 
               <p className="mt-5 text-xs text-center text-gray-500 dark:text-gray-400">
-                By continuing, you agree to the <ConsentLink href="/terms">Terms</ConsentLink>,{' '}
-                <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink> and{' '}
-                <ConsentLink href="/privacy">Privacy Policy</ConsentLink>.
+                By continuing you agree to the <ConsentLink href="/terms">Terms</ConsentLink> and{' '}
+                <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink>.
               </p>
 
               <p className="mt-4 border-t border-gray-100 dark:border-gray-800 pt-4 text-sm text-center text-gray-600 dark:text-gray-400">
@@ -305,7 +304,7 @@ export function LoginModal() {
                   rel="noopener noreferrer"
                   className="font-semibold text-yappr-600 dark:text-yappr-400 hover:underline underline-offset-4"
                 >
-                  Get the Dash wallet
+                  Get Dash Wallet
                   <span className="sr-only"> (opens in new tab)</span>
                 </a>
               </p>

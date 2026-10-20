@@ -189,9 +189,9 @@ test.describe('passkey vault', () => {
 
     await page.goto(appUrl('/login/'))
     const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
-    // App Connect builds keep private-key sign-in under Advanced (D38).
+    // App Connect builds keep private-key sign-in under "Other ways to sign in" (D38).
     if (WALLET_BUILD) {
-      await dialog.getByRole('button', { name: 'Advanced', exact: true }).click()
+      await dialog.getByRole('button', { name: 'Other ways to sign in' }).click()
       await dialog.getByRole('button', { name: 'Sign in with a private key' }).click()
     }
     await dialog.locator('#loginCredential').fill(KEY_WIF as string)
@@ -230,7 +230,7 @@ test.describe('passkey vault', () => {
 
     await page.goto(appUrl('/login/'))
     const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
-    await dialog.getByRole('button', { name: 'Sign in with your Dash wallet' }).click()
+    await dialog.getByRole('button', { name: 'Sign in with Dash Wallet' }).click()
     await walletApproves(dialog)
     const confirm = page.getByTestId('app-connect-confirm')
     await expect(confirm).toBeVisible({ timeout: 180_000 })

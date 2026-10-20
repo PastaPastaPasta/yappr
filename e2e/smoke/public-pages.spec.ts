@@ -62,10 +62,10 @@ test('login page shows the login affordance', async ({ page }) => {
   // is also offered on supported deployments and browsers.
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByRole('link', { name: /^Get the Dash wallet/ })).toHaveAttribute('href', 'https://www.dash.org/download/')
+  await expect(dialog.getByRole('link', { name: /^Get Dash Wallet/ })).toHaveAttribute('href', 'https://www.dash.org/download/')
   await expect(dialog.getByText(/password/i)).toHaveCount(0)
 
-  const walletButton = dialog.getByRole('button', { name: 'Sign in with your Dash wallet' })
+  const walletButton = dialog.getByRole('button', { name: 'Sign in with Dash Wallet' })
   if (!isAppConnectBuild()) {
     // Other builds: private-key sign-in is the primary path, and there is no wallet option.
     await expect(dialog.locator('#loginCredential')).toBeVisible()
@@ -76,14 +76,14 @@ test('login page shows the login affordance', async ({ page }) => {
   }
 
   // App Connect builds: the wallet first, then a passkey where offered; the
-  // recovery phrase (not yet on mainnet) and a private key sit under Advanced.
+  // recovery phrase (not yet on mainnet) and a private key sit under "Other ways to sign in".
   await expect(walletButton).toBeVisible()
   await expect(dialog.locator('#loginCredential')).toHaveCount(0)
   const phraseOption = dialog.getByRole('button', { name: 'Sign in with your recovery phrase' })
   const keyOption = dialog.getByRole('button', { name: 'Sign in with a private key' })
   await expect(phraseOption).toHaveCount(0)
   await expect(keyOption).toHaveCount(0)
-  await dialog.getByRole('button', { name: 'Advanced', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Other ways to sign in' }).click()
   if (await expectedNetwork() === 'mainnet') {
     await expect(phraseOption).toHaveCount(0)
   } else {

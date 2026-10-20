@@ -20,10 +20,10 @@ export function FeedLoginPrompt() {
       </div>
       <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">See posts from people you follow</h3>
       <p className="text-gray-500 dark:text-gray-400 text-center max-w-sm mb-6">
-        Sign in to see what the people you follow are posting.
+        Log in to view your personalized following feed and see updates from accounts you care about.
       </p>
       <Button onClick={() => openLoginPrompt()} className="px-6">
-        Sign in
+        Log in
       </Button>
     </div>
   );

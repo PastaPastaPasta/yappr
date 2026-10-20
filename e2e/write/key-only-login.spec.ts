@@ -14,9 +14,9 @@ test('a private key alone signs in without a username', async ({ page }) => {
 
   await page.goto(appUrl('/login/'))
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
-  // App Connect builds keep private-key sign-in under Advanced (D38).
+  // App Connect builds keep private-key sign-in under "Other ways to sign in" (D38).
   if (isAppConnectBuild()) {
-    await dialog.getByRole('button', { name: 'Advanced', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Other ways to sign in' }).click()
     await dialog.getByRole('button', { name: 'Sign in with a private key' }).click()
   }
 
