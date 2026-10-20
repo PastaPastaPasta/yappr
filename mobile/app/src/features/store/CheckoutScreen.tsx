@@ -2,7 +2,7 @@ import type { BuyerContact, CheckoutQuoteDTO, ShippingAddress, WriteTicket } fro
 import * as Clipboard from 'expo-clipboard';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Linking, ScrollView, View } from 'react-native';
+import { Linking, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
 import { queryKeys } from '~/data/keys';
@@ -19,7 +19,7 @@ import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
 
-import { Loading, Notice, price, Section, Totals } from './parts';
+import { FormScroll, Loading, Notice, price, Section, Totals } from './parts';
 import { placeOrderWrite } from './store-writes';
 
 type Step = 'details' | 'policies' | 'payment';
@@ -36,7 +36,6 @@ const addressComplete = (a: ShippingAddress) => Boolean(a.name.trim() && a.stree
 export function CheckoutScreen() {
   const { storeId } = useLocalSearchParams<{ storeId: string }>();
   const [step, setStep] = useState<Step>('details');
-  const [ship, setShip] = useState(false);
   const [address, setAddress] = useState<ShippingAddress>(EMPTY_ADDRESS);
   const [contact, setContact] = useState<BuyerContact>({});
   // The address the quote was last asked for: the quote follows Continue, not each keystroke.
@@ -76,7 +75,8 @@ export function CheckoutScreen() {
   if (quote.isPending && !q) return <Screen><Stack.Screen options={{ title: 'Checkout' }} /><Loading /></Screen>;
   if (!q) return <Screen><Stack.Screen options={{ title: 'Checkout' }} /><ErrorState message={quote.error?.message ?? "Checkout couldn't be loaded."} onRetry={() => quote.refetch()} retrying={quote.isRetrying} /></Screen>;
 
-  const needsAddress = ship && !q.digitalOnly;
+  // Anything to ship needs an address: the seller's zones price it (web checkout).
+  const needsAddress = !q.digitalOnly;
   const shippingReady = !needsAddress || (asked !== null && q.shipping.state === 'ok' && !quote.isFetching);
 
   const continueDetails = () => {
@@ -123,7 +123,7 @@ export function CheckoutScreen() {
   return (
     <Screen>
       <Stack.Screen options={{ title: 'Checkout' }} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID={`checkout-${step}`}>
+      <FormScroll testID={`checkout-${step}`}>
         <Text tone="secondary">{q.store.name} · Step {step === 'details' ? 1 : step === 'policies' ? 2 : 3} of 3</Text>
         {q.unavailable.length > 0 ? (
           <Notice tone="warning" text={q.unavailable.map((line) => `${line.title}: ${line.reason}`).join(' ')}>
@@ -137,11 +137,6 @@ export function CheckoutScreen() {
           <View>
             {q.digitalCount > 0 ? (
               <Notice text={`${q.digitalOnly ? 'Everything in this order is digital, so no shipping address is needed.' : `${q.digitalCount} digital item${q.digitalCount === 1 ? ' is' : 's are'} delivered online; only the rest ships.`} You'll find your downloads and codes in My orders.`} />
-            ) : null}
-            {!q.digitalOnly ? (
-              <View className="mt-4">
-                <SwitchRow label="Ship to an address" description="Turn off to arrange delivery with the seller." value={ship} onValueChange={setShip} testID="checkout-ship" />
-              </View>
             ) : null}
             {needsAddress ? (
               <Section title="Shipping address">
@@ -208,7 +203,7 @@ export function CheckoutScreen() {
           />
         ) : null}
         {back ? <Button className="mt-3" variant="ghost" size="block" label="Back" disabled={placing} onPress={back} /> : null}
-      </ScrollView>
+      </FormScroll>
       {/* Closing it says nothing about whether it unlocked: read again, and the buyer continues themselves. */}
       <UnlockSheet open={unlockOpen} onClose={() => { setUnlockOpen(false); quote.refetch().catch(() => undefined); }} />
     </Screen>
@@ -247,9 +242,16 @@ interface PaymentProps {
 function Payment(props: PaymentProps) {
   const { q, currency, paymentUri } = props;
   const limits = q.paymentFieldLimits;
+  // The coin amount at today's price (web `PaymentQRCode`), asked for in the QR code and the wallet link.
+  const coin = useEngineQuery(
+    queryKeys.store.paymentAmount(paymentUri, q.total, currency),
+    (api) => api.store.paymentAmount({ paymentUri, total: q.total, currency }),
+    { enabled: Boolean(paymentUri), staleTime: 60_000 },
+  );
+  const payUri = coin.data?.uri ?? paymentUri;
   const options = useMemo(() => q.store.paymentUris.map((payment) => ({ value: payment.uri, title: payment.label || payment.scheme.replace(/:$/, '').toUpperCase(), description: payment.uri })), [q.store.paymentUris]);
   const open = () => {
-    Linking.openURL(paymentUri).catch(() => toast.error('No wallet on this device opens this payment link. Copy it instead.'));
+    Linking.openURL(payUri).catch(() => toast.error('No wallet on this device opens this payment link. Copy it instead.'));
   };
   return (
     <View>
@@ -258,7 +260,13 @@ function Payment(props: PaymentProps) {
         <RadioGroup accessibilityLabel="Payment method" options={options} value={paymentUri} onChange={props.onPaymentUri} testID="checkout-payment-method" />
         {paymentUri ? (
           <View className="items-center gap-3 py-2">
-            <View className="rounded-lg bg-white p-3"><QRCode value={paymentUri} size={180} /></View>
+            {coin.data ? (
+              <Text variant="title" tabular testID="checkout-coin-amount">Send {coin.data.display}</Text>
+            ) : coin.isFetching ? (
+              <Text tone="secondary">Getting today&apos;s price…</Text>
+            ) : null}
+            {coin.data ? <Text variant="caption" tone="secondary">≈ {price(q.total, currency)} at today&apos;s price</Text> : null}
+            <View className="rounded-lg bg-white p-3"><QRCode value={payUri} size={180} /></View>
             <View className="flex-row gap-2">
               <Button variant="outline" size="sm" label="Open in wallet" onPress={open} />
               <Button variant="outline" size="sm" label="Copy address" onPress={() => { Clipboard.setStringAsync(paymentUri).then(() => toast.success('Payment address copied')).catch(() => undefined); }} />

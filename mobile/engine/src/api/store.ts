@@ -11,7 +11,9 @@ import { storeStatsService } from '@/lib/services/store-stats-service'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { ORDER_PAYMENT_FIELD_LIMITS, orderPaymentBudgetError } from '@/lib/storefront/storefront-contract'
 import { parseStorePolicies } from '@/lib/utils/policies'
-import { filterPaymentUris } from '@/lib/utils/payment-uri'
+import { filterPaymentUris, parsePaymentUri } from '@/lib/utils/payment-uri'
+import { cryptoPriceService } from '@/lib/services/crypto-price-service'
+import { formatCryptoAmount, fromSmallestUnit, getCryptoSymbol } from '@/lib/utils/format'
 import type { CartItem, ShippingAddress, ShippingZone, Store, StoreItem, StorePolicy, ParsedPaymentUri, BuyerContact } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
 import { badRequest, readFailure, requireViewer, viewerId } from '../dto/hydrate'
@@ -62,6 +64,52 @@ export interface CartDTO {
   stores: CartStoreDTO[]
   /** Units across every line. */
   count: number
+}
+
+/** What to send for an order total with one payment method (web `PaymentQRCode`): the coin amount and the URI that asks for it. */
+export interface PaymentAmountDTO {
+  /** In the coin's units ("0.12345678"). */
+  amount: number
+  /** "0.12345678 DASH". */
+  display: string
+  /**
+   * The URI for the QR code and "Open in wallet": with `amount=` for a
+   * BIP-21 scheme, else the store's URI unchanged.
+   */
+  uri: string
+}
+
+/** Schemes whose URIs ask for an amount with BIP-21 `amount=` in coin units. Others (EIP-681, Monero, BOLT11) encode it otherwise. */
+const BIP21_SCHEMES = new Set(['dash:', 'tdash:', 'bitcoin:', 'litecoin:', 'dogecoin:', 'bitcoincash:', 'zcash:'])
+
+/**
+ * `uri` asking for `amount` (eight decimals, as web): an amount it already
+ * carries is replaced, its other parameters kept. A scheme that is not BIP-21
+ * keeps its URI as it is.
+ */
+export function uriWithAmount(uri: string, scheme: string, amount: number): string {
+  if (!BIP21_SCHEMES.has(scheme.toLowerCase())) return uri
+  const [base, query = ''] = uri.split('?', 2)
+  const params = query.split('&').filter(param => param && param.split('=')[0].toLowerCase() !== 'amount')
+  return `${base}?${[`amount=${amount.toFixed(8)}`, ...params].join('&')}`
+}
+
+/**
+ * The coin amount for `total` (in `currency`'s smallest unit) paid with
+ * `paymentUri`, at the averaged price web uses; null when the coin has no
+ * price feed or no price could be read (the buyer then pays the fiat total).
+ */
+async function paymentAmount(input: { paymentUri: string; total: number; currency: string }): Promise<PaymentAmountDTO | null> {
+  const parsed = parsePaymentUri(input?.paymentUri ?? '')
+  if (!parsed || !(typeof input.total === 'number' && input.total > 0) || typeof input.currency !== 'string') return null
+  const symbol = getCryptoSymbol(parsed.scheme)
+  const total = fromSmallestUnit(input.total, input.currency)
+  // Priced in the coin itself (a DASH store paid in DASH): no conversion.
+  const amount = input.currency.toUpperCase() === symbol
+    ? total
+    : (await cryptoPriceService.convertToCrypto(total, input.currency, parsed.scheme).catch(() => null))?.cryptoAmount
+  if (!amount || !Number.isFinite(amount) || amount <= 0) return null
+  return { amount, display: `${formatCryptoAmount(amount, parsed.scheme)} ${symbol}`, uri: uriWithAmount(parsed.uri, parsed.scheme, amount) }
 }
 
 export interface CheckoutQuoteDTO {
@@ -326,6 +374,7 @@ export function createStoreModule(tickets: TicketStore) {
         }
       },
       checkout: checkoutQuote,
+      paymentAmount,
       ...orders.reads,
       ...orders.writes,
       ...createStoreWrites(tickets),

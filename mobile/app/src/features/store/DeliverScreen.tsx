@@ -1,7 +1,7 @@
 import type { DeliverInput } from '@engine/api';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, View } from 'react-native';
+import { Alert, Pressable, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -17,7 +17,7 @@ import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
 
-import { errorText, Loading, Notice, Section } from './parts';
+import { errorText, FormScroll, Loading, Notice, Section } from './parts';
 
 type Extra = NonNullable<DeliverInput['extras']>[string][number];
 
@@ -79,7 +79,7 @@ export function DeliverScreen() {
   return (
     <Screen>
       <Stack.Screen options={{ title: data.previousDeliveries > 0 ? 'Send again' : 'Deliver' }} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 64 }} keyboardShouldPersistTaps="handled" testID="deliver">
+      <FormScroll testID="deliver">
         <Text tone="secondary">Only this buyer can see it. It shows up in their orders.</Text>
         {data.lines.map((line) => {
           const on = chosen.includes(line.index);
@@ -138,7 +138,7 @@ export function DeliverScreen() {
           disabled={chosen.length === 0 || (data.warnings.length > 0 && !acknowledged)}
           onPress={deliver}
         />
-      </ScrollView>
+      </FormScroll>
     </Screen>
   );
 }

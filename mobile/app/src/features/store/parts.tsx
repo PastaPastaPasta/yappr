@@ -4,8 +4,8 @@ import { router, useNavigation } from 'expo-router';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as WebBrowser from 'expo-web-browser';
-import { useEffect, useState, type ReactNode } from 'react';
-import { Linking, Pressable, RefreshControl, View } from 'react-native';
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
+import { Linking, Pressable, RefreshControl, ScrollView, View, type RefreshControlProps } from 'react-native';
 
 import { formatPrice } from '~/lib-allowlist';
 import { engine } from '~/engine';
@@ -14,6 +14,7 @@ import { ReportLink } from './StoreReportScreen';
 import { Button } from '~/ui/Button';
 import { Card } from '~/ui/Card';
 import { ErrorState } from '~/ui/EmptyState';
+import { KeyboardAvoider } from '~/ui/KeyboardAvoider';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
@@ -354,6 +355,28 @@ export function ManageUnavailable({ failed, retrying, onRetry }: { failed: boole
     <Screen>
       {failed ? <ErrorState message="Your store couldn't be loaded." onRetry={onRetry} retrying={retrying} /> : <Loading />}
     </Screen>
+  );
+}
+
+/**
+ * A store form's scroll view (D-950): the focused field scrolls up above the
+ * keyboard (iOS insets; Android pads, edge to edge), and a tap on another
+ * field or button while the keyboard is up lands on it.
+ */
+export function FormScroll({ children, testID, refreshControl }: { children: ReactNode; testID?: string; refreshControl?: ReactElement<RefreshControlProps> }) {
+  return (
+    <KeyboardAvoider>
+      <ScrollView
+        refreshControl={refreshControl}
+        contentContainerStyle={{ padding: 16, paddingBottom: 64 }}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode="interactive"
+        testID={testID}
+      >
+        {children}
+      </ScrollView>
+    </KeyboardAvoider>
   );
 }
 

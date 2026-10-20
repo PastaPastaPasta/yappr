@@ -1,7 +1,7 @@
 import type { StoreReportTarget } from '@engine/api';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -16,7 +16,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { Loading } from './parts';
+import { FormScroll, Loading } from './parts';
 
 import { storeReportWrite, withdrawStoreReportWrite } from './store-writes';
 
@@ -67,7 +67,7 @@ export function StoreReportScreen() {
   return (
     <Screen>
       <Stack.Screen options={{ title: `Report ${noun}` }} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
+      <FormScroll>
         <Text tone="secondary">
           Reports go to the community&apos;s moderators and are public.
         </Text>
@@ -97,7 +97,7 @@ export function StoreReportScreen() {
             <Button size="block" label="Send report" testID="store-report-send" disabled={code === null || needsNote} loading={report.status === 'pending'} onPress={submit} />
           </View>
         )}
-      </ScrollView>
+      </FormScroll>
     </Screen>
   );
 }

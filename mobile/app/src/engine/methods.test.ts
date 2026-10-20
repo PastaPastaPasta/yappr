@@ -34,7 +34,7 @@ describe('engine method kinds', () => {
     },
   );
 
-  it.each(['store.discover', 'store.item', 'store.checkout', 'store.myOrders', 'store.sellerOrders', 'store.order', 'store.deliveryPlan', 'store.kit', 'cart.get'])(
+  it.each(['store.discover', 'store.item', 'store.checkout', 'store.paymentAmount', 'store.myOrders', 'store.sellerOrders', 'store.order', 'store.deliveryPlan', 'store.kit', 'cart.get'])(
     '%s is a storefront read',
     (path) => {
       expect(methodKind(path)).toBe('read');
