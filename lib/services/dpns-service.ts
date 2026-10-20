@@ -62,7 +62,23 @@ export function minimumContestFundCredits(protocolVersion: number | null): bigin
  * most it pays (`contestFund`, #5039); Yappr leaves it out, so the SDK reads the
  * price just before it signs. The refusals below are what remains.
  */
-export function describeDpnsRegistrationError(error: unknown): string {
+/**
+ * `registerUsername` failed before the SDK was asked to register: a check,
+ * the identity read or the signer. Nothing was sent or paid, so a retry is
+ * safe. `cause` is the original error.
+ */
+export class DpnsNotSentError extends Error {
+  readonly cause: unknown;
+  constructor(cause: unknown) {
+    super(extractErrorMessage(cause));
+    this.name = 'DpnsNotSentError';
+    this.cause = cause;
+  }
+}
+
+export function describeDpnsRegistrationError(failure: unknown): string {
+  const notSent = failure instanceof DpnsNotSentError;
+  const error = notSent ? failure.cause : failure;
   const message = extractErrorMessage(error);
   if (isContestFullError(error)) {
     return 'This name already has the most contenders a vote accepts, so it is closed to new registrations. Try a different name.';
@@ -83,7 +99,7 @@ export function describeDpnsRegistrationError(error: unknown): string {
   // Drive: "Insufficient identity <id> balance <b> required <r>". A contested
   // name needs its contest fund on top of the fees.
   // Sent, and no verdict came back: a second try would pay a second preorder.
-  if (isOutcomeUnknownError(error)) {
+  if (!notSent && isOutcomeUnknownError(error)) {
     return 'The network couldn\'t confirm this registration yet. It may have gone through, so check your names before trying again.';
   }
   if (/insufficient identity .* balance/i.test(message)) {
@@ -603,6 +619,9 @@ class DpnsService {
         return { success: true };
       }
       logger.error('Error registering username:', error);
+      // Failed before the SDK was asked to register (a check, the identity read, the signer):
+      // nothing was sent or paid. Callers that track the write can say so (DpnsNotSentError).
+      if (!sent) throw new DpnsNotSentError(error);
       throw error;
     }
   }

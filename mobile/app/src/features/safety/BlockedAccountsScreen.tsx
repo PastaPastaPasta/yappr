@@ -5,14 +5,13 @@ import { memo, useState } from 'react';
 import { Pressable, RefreshControl, View } from 'react-native';
 import { NoSymbolIcon } from 'react-native-heroicons/outline';
 
-import { config } from '~/config';
 import { cn } from '~/lib-allowlist';
 import { queryKeys } from '~/data/keys';
 import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
 import { useSession } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { errorMessage } from '~/engine/logs';
-import { openExternal, openUser } from '~/features/post/post-navigation';
+import { openUser } from '~/features/post/post-navigation';
 import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -25,9 +24,6 @@ import { monoFont, tw, useColors, useLargeText } from '~/ui/tokens';
 
 import { blockWrite, useBlockBusy, useBlockedList } from './block-state';
 import { copy } from './copy';
-
-/** Where web manages block lists (Settings → Privacy & Security). */
-const BLOCK_LISTS_URL = `${config.webBaseUrl}/settings?section=privacy`;
 
 /** One blocked account: avatar, name, handle, the public note, and "Unblock" (UX_SPEC §4.29). */
 const BlockedRow = memo(function BlockedRow({ user, viewerId }: { user: BlockedUserDTO; viewerId: string }) {
@@ -86,9 +82,10 @@ const BlockedRow = memo(function BlockedRow({ user, viewerId }: { user: BlockedU
 });
 
 /**
- * "Also hidden by 2 block lists you follow · Manage on yap.pr" (PRD SAFE-03),
- * only for someone who follows a block list (set up on web): nobody else
- * needs to hear about them. Nothing while the count is unknown.
+ * "Also hidden by 2 block lists you follow · Manage block lists" (PRD
+ * SAFE-03), only for someone who follows a block list: nobody else needs to
+ * hear about them here (Privacy & Safety always has Block lists). Nothing
+ * while the count is unknown.
  */
 function ListsNote({ enabled }: { enabled: boolean }) {
   const lists = useEngineQuery(queryKeys.blockLists, (api) => api.safety.followedBlockLists(), { enabled });
@@ -98,7 +95,7 @@ function ListsNote({ enabled }: { enabled: boolean }) {
       <Text variant="subhead" tone="secondary">
         {`${copy.blocked.listsNote(lists.data)} ·`}
       </Text>
-      <LinkText label={copy.blocked.listsLink} onPress={() => openExternal(BLOCK_LISTS_URL)} testID="blocked-lists-link" />
+      <LinkText label={copy.blocked.listsLink} onPress={() => router.push('/settings/blocked-lists')} testID="blocked-lists-link" />
     </View>
   );
 }

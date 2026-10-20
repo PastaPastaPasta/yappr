@@ -296,13 +296,18 @@ describe('Messages inbox (DM-01, DM-02)', () => {
       expect(screen.getByTestId('dm-setup-qr')).toBeTruthy();
     });
 
-    it('sends the account to yap.pr when this sign-in cannot set messaging up', async () => {
+    it('sends the account to a wallet sign-in, asking before it signs out, when this sign-in cannot set messaging up', async () => {
       fakeEngine.method('dm.setUpMessaging').mockReset().mockResolvedValueOnce({ unlocked: false, reason: 'no-key-on-identity' });
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
       await openSetup();
       fireEvent.press(screen.getByTestId('dm-setup-wallet'));
       await act(async () => {});
-      expect(screen.getByText('Open yap.pr')).toBeTruthy();
+      expect(screen.getByTestId('dm-unlock-no-key')).toHaveTextContent(/sign back in with your wallet/);
+      fireEvent.press(screen.getByTestId('dm-unlock-wallet-sign-in'));
+      expect(alert).toHaveBeenCalledWith(expect.stringMatching(/^Sign out of /), expect.any(String), expect.any(Array), expect.anything());
+      expect(fakeEngine.method('session.signOut')).not.toHaveBeenCalled();
       expect(openURL).not.toHaveBeenCalled();
+      alert.mockRestore();
     });
 
     it('asks for the key when the account turns out to have another messaging key', async () => {

@@ -1,16 +1,14 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
 import { XMarkIcon } from 'react-native-heroicons/outline';
 
-import { openExternal } from '~/features/post/post-navigation';
 import { cn } from '~/lib-allowlist';
 import { syncStorage } from '~/state/storage';
 import { Button } from '~/ui/Button';
 import { IconButton } from '~/ui/IconButton';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
-
-import { usernameRegisterUrl } from './profile-format';
 
 const dismissedKey = (identityId: string) => `yappr.usernameCard.dismissed.${identityId}`;
 
@@ -21,8 +19,8 @@ export function usernameCardDismissed(identityId: string): boolean {
 
 /**
  * "Get a username" (PRD AUTH-15, copy `username.card*`): for an account with
- * no DPNS name. DPNS registration is web-only in 1.0, so it opens yap.pr in
- * the in-app browser. Closing it is remembered for the account.
+ * no DPNS name. "Choose a username" opens the username screen. Closing it is
+ * remembered for the account.
  */
 export function UsernameCard({ identityId, className }: { identityId: string; className?: string }) {
   const [dismissed, setDismissed] = useState(() => usernameCardDismissed(identityId));
@@ -43,7 +41,7 @@ export function UsernameCard({ identityId, className }: { identityId: string; cl
             Get a username
           </Text>
           <Text variant="subhead" tone="secondary">
-            Usernames make you easy to find. Register one on yap.pr.
+            Usernames make you easy to find. Choose one in the app.
           </Text>
         </View>
         <IconButton
@@ -55,10 +53,10 @@ export function UsernameCard({ identityId, className }: { identityId: string; cl
         />
       </View>
       <Button
-        label="Open yap.pr"
+        label="Choose a username"
         size="sm"
         layoutStyle={{ alignSelf: 'flex-start', marginTop: 12 }}
-        onPress={() => openExternal(usernameRegisterUrl())}
+        onPress={() => router.push('/settings/username')}
         testID="username-card-open"
       />
     </View>

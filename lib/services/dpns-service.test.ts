@@ -17,7 +17,7 @@ vi.mock('@/lib/contract-topology', async (importOriginal) => ({
 }));
 vi.mock('./signer-service', () => ({ signerService: {} }));
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: false, reason: 'no-match' }) }));
-import { describeDpnsRegistrationError, dpnsService, formatCreditsAsDash, minimumContestFundCredits } from './dpns-service';
+import { describeDpnsRegistrationError, DpnsNotSentError, dpnsService, formatCreditsAsDash, minimumContestFundCredits } from './dpns-service';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -359,6 +359,16 @@ describe('contested DPNS registration without the contest fund', () => {
     await expect(dpnsService.registerUsername('qabetafivegus', 'B', 'wif'))
       .rejects.toThrow(/pays at least 0\.1 DASH .* has 0\.06989772 DASH/);
     expect(dpns.registerName).not.toHaveBeenCalled();
+  });
+
+  it('marks a failure before the SDK was asked to register as not sent, and words a read timeout as such', async () => {
+    dpns.isNameAvailable.mockRejectedValue(new Error('Request timeout'));
+    const error = await dpnsService.registerUsername('qabetafivegus', 'B', 'wif').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DpnsNotSentError);
+    expect((error as DpnsNotSentError).cause).toMatchObject({ message: 'Request timeout' });
+    expect(dpns.registerName).not.toHaveBeenCalled();
+    // Nothing was sent, so never "it may have gone through".
+    expect(describeDpnsRegistrationError(error)).not.toMatch(/may have gone through/);
   });
 
   it('still checks the lowest fund when the epoch cannot be read', async () => {

@@ -9,6 +9,7 @@ import { queryKeys } from '~/data/keys';
 import { useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useCapabilities } from '~/data/session';
 import { openHashtag } from '~/features/post/post-navigation';
+import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
 import { cn } from '~/lib-allowlist';
 import { ComposeFab } from '~/ui/ComposeFab';
@@ -125,6 +126,7 @@ export function ExploreScreen() {
       return;
     }
     setRefreshing(true);
+    refetchPolls();
     // Top reads its page afresh rather than the engine's minute-old copy.
     (segment === 'top' ? freshTop.during(() => top.refetch()) : active.refetch())
       .then((result) => {

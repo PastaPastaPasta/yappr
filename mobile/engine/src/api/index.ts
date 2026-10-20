@@ -3,9 +3,10 @@ import { createEngageWrites, engage } from './engage'
 import { explore } from './explore'
 import { feed } from './feed'
 import { createDmModule } from './dm'
+import { createDpnsModule } from './dpns'
 import { createGraphWrites, graph } from './graph'
 import { createNotificationsModule } from './notifications'
-import { createPostWrites, posts } from './posts'
+import { createPollWrites, createPostWrites, posts } from './posts'
 import { createProfileWrites, profiles } from './profiles'
 import { createSafetyModule } from './safety'
 import { createMobileAuthController, createSessionModule, foregroundBalanceRefresh, type SessionEvents } from './session'
@@ -50,7 +51,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     // A read whose proof names a quorum the SDK has no key for yet is retried inside lib's SDK wrapper
     // (lib/services/sdk-read-retry.ts); writes never are.
     feed,
-    posts: { ...posts, ...createPostWrites(tickets, emit) },
+    posts: { ...posts, ...createPostWrites(tickets, emit), ...createPollWrites(tickets) },
     engage: { ...engage, ...createEngageWrites(tickets) },
     profiles: { ...profiles, ...createProfileWrites(tickets) },
     session: createSessionModule({
@@ -71,6 +72,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     explore,
     safety: createSafetyModule(tickets),
     notifications: notifications.api,
+    dpns: createDpnsModule(tickets, controller),
   }
 }
 
@@ -81,6 +83,7 @@ export type { DapiEndpointDTO, DapiStatusDTO } from '../dapi-monitor'
 export type * from './dto'
 export type * from './dm'
 export type { ContentCreatedEvent, DraftDTO } from './posts'
+export type { DpnsRegistrationDTO } from './dpns'
 export type { ProfilePatchDTO } from './profiles'
 export type * from './safety'
 export type * from './notifications'

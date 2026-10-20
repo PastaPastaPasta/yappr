@@ -153,6 +153,19 @@ it('checks a message job when its conversation\'s messages are read', async () =
   expect(run).toHaveBeenCalledTimes(1);
 });
 
+it('checks a ballot job when its poll is read, after the automatic checks ran out too', async () => {
+  const run = job();
+  reconcile('ticket:t9', { run, shownIn: (ids) => ids.has('poll-1') });
+  await jest.advanceTimersByTimeAsync(200_000);
+  const automatic = run.mock.calls.length;
+  await queryClient.fetchQuery({ queryKey: queryKeys.post.poll('poll-2'), queryFn: async () => ({ id: 'poll-2' }) });
+  await jest.advanceTimersByTimeAsync(0);
+  expect(run).toHaveBeenCalledTimes(automatic);
+  await queryClient.fetchQuery({ queryKey: queryKeys.post.poll('poll-1'), queryFn: async () => ({ id: 'poll-1' }) });
+  await jest.advanceTimersByTimeAsync(0);
+  expect(run).toHaveBeenCalledTimes(automatic + 1);
+});
+
 it('never runs out while the write’s own call still runs, and starts over when a new phase begins', async () => {
   const run = job();
   reconcile('ticket:t5', { run, canExhaust: false, episode: 'running' });
