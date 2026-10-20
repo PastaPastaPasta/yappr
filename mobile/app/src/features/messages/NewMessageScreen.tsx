@@ -16,6 +16,7 @@ import { toast } from '~/ui/toast';
 import { openConversationScreen } from './dm-actions';
 import { readErrorMessage, useDmViewer } from './dm-data';
 import { DmSignedOut } from './DmStates';
+import { noMessagingYet } from './no-messaging';
 import { UserPicker } from './UserPicker';
 
 /** Closes the modal and opens the conversation on the Messages tab. */
@@ -37,15 +38,14 @@ export function CloseButton() {
   );
 }
 
-function startFailedMessage(error: unknown): string {
+/** Why a 1:1 could not start; `username` when the person was picked from the list. */
+export function startFailedMessage(error: unknown, username?: string | null): string {
   switch (errorCode(error)) {
-    case 'BAD_REQUEST': {
-      const message = errorMessage(error);
-      if (message.includes('yourself')) return "You can't message yourself";
-      // The account exists but cannot receive encrypted messages (no encryption key yet): the engine says so.
-      if (message.includes('encryption key')) return message;
-      return 'No user found with this identity ID';
-    }
+    // The account exists but has no messaging key yet (D-900).
+    case 'PEER_NO_MESSAGING':
+      return noMessagingYet(username);
+    case 'BAD_REQUEST':
+      return errorMessage(error).includes('yourself') ? "You can't message yourself" : 'No user found with this identity ID';
     case 'NO_KEY':
       return 'Unlock your messages first.';
     default:
@@ -95,7 +95,7 @@ export function NewMessageScreen() {
     };
   }, []);
 
-  const start = (peerId: string) => {
+  const start = (peerId: string, username?: string | null) => {
     if (opening) return;
     if (peerId === viewerId) {
       toast.error("You can't message yourself");
@@ -109,7 +109,7 @@ export function NewMessageScreen() {
       .catch((error: unknown) => {
         appendLog('info', 'host', `dm.startDirect failed: ${errorMessage(error)}`);
         if (!mounted.current) return;
-        toast.error(startFailedMessage(error));
+        toast.error(startFailedMessage(error, username));
         setOpening(null);
       });
   };
@@ -144,7 +144,7 @@ export function NewMessageScreen() {
         </Text>
         <UserPicker
           viewerId={viewerId}
-          onPick={(user) => start(user.id)}
+          onPick={(user) => start(user.id, user.username)}
           autoFocus={!recipient}
           initialQuery={recipient ?? ''}
         />

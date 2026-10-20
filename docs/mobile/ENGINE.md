@@ -710,7 +710,7 @@ Conversation keys are `d:…` or `g:…:…` for v5 (`ConversationView.key`, `en
 | `open` | `(key: string \| null) => Promise<void>` | `openConversation` (:376); polls every 4 s while open (`OPEN_POLL_MS`, :38) | starts a 3 s poll as `legacy-messages.tsx:342-412` |
 | `markRead` | `(key: string) => Promise<void>` | `markRead` (:397) | `markAsRead` (:569) only if `sendReadReceipts` |
 | `send` | `(key: string, text: string) => Promise<WriteTicket>` | `send` (:419), which returns `Promise<void>` and throws on failure; see §7.1 for the mapping | `sendMessage` (:66), which returns `{success, error?}` |
-| `startDirect` | `(peerId: Id) => Promise<string>` | `startDirect` (:412) | `getOrCreateConversation` (:601) |
+| `startDirect` | `(peerId: Id) => Promise<string>` | `startDirect` (:412); `PEER_NO_MESSAGING` when the person has no messaging key yet (lib's `NoEncryptionKeyError`), `BAD_REQUEST` for yourself | `getOrCreateConversation` (:601) |
 | `createGroup` | `(name: string, memberIds: Id[]) => Promise<{ key: string; failed: Id[] }>` | `createGroup` (:457); at most 100 members (`MAX_GROUP_MEMBERS`, `lib/dm/group.ts:22`) | `NOT_SUPPORTED` |
 | `renameGroup` / `addMember` / `removeMember` / `leaveGroup` / `endGroup` / `resendKeys` | `(key, …) => Promise<WriteTicket>` | :476 / :468 / :472 / :488 / :480 / :484; refused at once with `BAD_REQUEST` for a group that is gone, ended or not the caller's to manage, and `resendKeys` to someone not in the group ("They are not in this group."), so none of these becomes an unknown outcome inside lib's run | `NOT_SUPPORTED` |
 | `hide` | `(key: string) => Promise<void>` | `hide` (:433) | — |
@@ -890,6 +890,7 @@ type EngineErrorCode =
   | 'REPORT_GONE'        // safety.withdrawReport: the report is already gone
   | 'REPORT_RESOLVED'    // safety.withdrawReport (v14): the moderators resolved it, so the network keeps it
   | 'MEDIA_UNREADABLE'   // posts.publish: the image link's host refuses it (HTTP 4xx) or it is no decodable image (v10), nothing sent
+  | 'PEER_NO_MESSAGING'  // dm.startDirect (v5): the other person has no messaging key yet ("hasn't set up messaging yet")
 interface EngineErrorData {
   code: EngineErrorCode
   consensusCode: number | null            // consensusCodeOf() (error-utils.ts:52)
