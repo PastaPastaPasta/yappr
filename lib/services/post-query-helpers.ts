@@ -259,12 +259,21 @@ async function fetchAuthorPostCountsViaRanking(): Promise<Map<string, number> | 
  * is, and the scan, reached only when the ranked read fails, counts only
  * documents carrying `live` (a tombstone stays on the global timeline).
  */
-export async function fetchAuthorPostCounts(contractId: string): Promise<Map<string, number>> {
+export interface AuthorPostCounts {
+  counts: Map<string, number>;
+  /**
+   * True when the scan fallback stopped at its post cap before the end of the
+   * timeline, so the counts (and how many authors there are) may be short.
+   */
+  truncated: boolean;
+}
+
+export async function fetchAuthorPostCounts(contractId: string): Promise<AuthorPostCounts> {
   const liveOnly = postsCarryLiveMarker();
   const grouped = authorPostCountsAreRanked()
     ? await fetchAuthorPostCountsViaRanking()
     : await fetchAuthorPostCountsViaCountTree(contractId);
-  if (grouped && (grouped.size > 0 || liveOnly)) return grouped;
+  if (grouped && (grouped.size > 0 || liveOnly)) return { counts: grouped, truncated: false };
 
   const authorCounts = new Map<string, number>();
 
@@ -292,17 +301,19 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
 
       totalProcessed += documents.length;
 
-      if (documents.length < PAGE_SIZE) break;
+      if (documents.length < PAGE_SIZE) return { counts: authorCounts, truncated: false };
 
       const lastDoc = documents[documents.length - 1];
-      if (!lastDoc.$id) break;
+      if (!lastDoc.$id) return { counts: authorCounts, truncated: false };
       startAfter = lastDoc.$id as string;
     }
 
-    return authorCounts;
+    // Stopped at the cap with more of the timeline left unread.
+    return { counts: authorCounts, truncated: true };
   } catch (error) {
     logger.error('Error getting author post counts:', error);
-    return authorCounts;
+    // A scan cut short after some pages undercounts just as a capped one does.
+    return { counts: authorCounts, truncated: authorCounts.size > 0 };
   }
 }
 

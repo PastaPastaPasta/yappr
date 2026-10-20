@@ -77,7 +77,7 @@ describe('the v13 live marker', () => {
     const { helpers } = await on('v13')
     sdk.ranked.mockResolvedValue({ entries: [] })
     sdk.query.mockResolvedValue([{ $id: 'p1', $ownerId: AUTHOR, $createdAt: 1, deleted: true }])
-    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual(new Map())
+    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual({ counts: new Map(), truncated: false })
     expect(sdk.query).not.toHaveBeenCalled()
   })
 
@@ -88,7 +88,7 @@ describe('the v13 live marker', () => {
       ? { $id: `p${index}`, $ownerId: AUTHOR, $createdAt: 1_000 - index, live: true }
       : { $id: `p${index}`, $ownerId: FOLLOWED, $createdAt: 1_000 - index, deleted: true }))
     sdk.query.mockResolvedValueOnce(page).mockResolvedValueOnce([{ $id: 'last', $ownerId: AUTHOR, $createdAt: 1, live: true }])
-    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual(new Map([[AUTHOR, 51]]))
+    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual({ counts: new Map([[AUTHOR, 51]]), truncated: false })
     // The scan still pages over every document, tombstones included.
     expect(sdk.query.mock.calls[1][0].startAfter).toBe('p99')
   })
@@ -109,6 +109,27 @@ describe('the v13 live marker', () => {
     const { helpers } = await on('v12')
     sdk.ranked.mockResolvedValue({ entries: [] })
     sdk.query.mockResolvedValue([{ $id: 'p1', $ownerId: AUTHOR, $createdAt: 1 }])
-    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual(new Map([[AUTHOR, 1]]))
+    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual({ counts: new Map([[AUTHOR, 1]]), truncated: false })
+  })
+
+  it('says the scan was truncated when it stops at its post cap with timeline left', async () => {
+    const { helpers } = await on('v13')
+    sdk.ranked.mockRejectedValue(new Error('ranked read failed'))
+    let page = 0
+    sdk.query.mockImplementation(async () => Array.from({ length: 100 }, (_, index) => (
+      { $id: `p${page}-${index}`, $ownerId: index % 2 ? AUTHOR : FOLLOWED, $createdAt: 1, live: true, ...(index === 99 ? { _page: page++ } : {}) }
+    )))
+    const result = await helpers.fetchAuthorPostCounts('contract')
+    expect(sdk.query).toHaveBeenCalledTimes(100)
+    expect(result.truncated).toBe(true)
+    expect(result.counts.get(AUTHOR)).toBe(5_000)
+  })
+
+  it('says a scan cut short by a failure is truncated', async () => {
+    const { helpers } = await on('v13')
+    sdk.ranked.mockRejectedValue(new Error('ranked read failed'))
+    const page = Array.from({ length: 100 }, (_, index) => ({ $id: `p${index}`, $ownerId: AUTHOR, $createdAt: 1, live: true }))
+    sdk.query.mockResolvedValueOnce(page).mockRejectedValueOnce(new Error('DAPI timeout'))
+    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual({ counts: new Map([[AUTHOR, 100]]), truncated: true })
   })
 })

@@ -53,6 +53,7 @@ describe('web WASM recovery', () => {
   })
 
   it('accepts HTTP-decoded WASM and reads a split gzip header without losing bytes', async () => {
+    withoutBrotli()
     for (const bytes of [wasm, gzipSync(wasm)]) {
       vi.resetModules()
       const body = new ReadableStream({
@@ -69,6 +70,7 @@ describe('web WASM recovery', () => {
   })
 
   it('publishes the fallback download so the parser cannot start another one', async () => {
+    withoutBrotli()
     const window = {}
     vi.stubGlobal('window', window)
     vi.stubGlobal('caches', undefined)
@@ -130,6 +132,33 @@ describe('web WASM recovery', () => {
     expect(storage.get('yappr-sdk-wasm-skip-brotli')).toBe('/devnet/_next/static/wasm/sdk-test.wasm.br')
     const { sdkWasmUrl } = await import('./web-wasm-preload')
     expect(sdkWasmUrl('/devnet/_next/static/wasm/sdk-test.wasm.gz')).toBe('/devnet/_next/static/wasm/sdk-test.wasm.gz')
+  })
+
+  it('decodes the brotli file as brotli even when it begins with the gzip magic bytes', async () => {
+    const brotli = new Uint8Array([0x1f, 0x8b, 9, 9])
+    const decoded: string[] = []
+    const Native = globalThis.DecompressionStream
+    vi.stubGlobal('DecompressionStream', class extends Native {
+      constructor(format: CompressionFormat) {
+        decoded.push(String(format))
+        // The brotli decoder is stood in for by an identity transform yielding the WASM.
+        if (String(format) === 'brotli') {
+          super('deflate-raw')
+          return new TransformStream({ transform: (_chunk, controller) => controller.enqueue(wasm) }) as unknown as DecompressionStream
+        }
+        super(format)
+      }
+    })
+    const cache = { delete: vi.fn(), put: vi.fn().mockResolvedValue(undefined), match: vi.fn().mockResolvedValue(undefined), keys: vi.fn().mockResolvedValue([]) }
+    vi.stubGlobal('caches', { open: vi.fn().mockResolvedValue(cache) })
+    const fetch = vi.fn().mockResolvedValue(new Response(brotli))
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('window', {})
+    const { default: init } = await import('./web-wasm-sdk')
+    await expect(init()).resolves.toBe('initialized')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(decoded).toContain('brotli')
+    expect(decoded).not.toContain('gzip')
   })
 
   it('falls back to the gzip file when the brotli file arrives damaged', async () => {

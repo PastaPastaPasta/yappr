@@ -14,7 +14,7 @@ import { extractMentions, indexedTags } from '@/lib/post-helpers';
 import { tagLimitProblem } from '@/lib/compose/limits';
 import { tombstoneDocument } from './tombstone-helpers';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
-import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
+import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes, type AuthorPostCounts } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 import { mediaDocumentFields, mediaFromDocument, type MediaItemInput } from '@/lib/media/media-fields';
 
@@ -832,7 +832,7 @@ class PostService extends BaseDocumentService<Post> {
    * Falls back to scanning the timeline (see {@link postTimelineClauses}),
    * which on v2/v9 only sees English posts (language='en').
    */
-  async getAuthorPostCounts(): Promise<Map<string, number>> {
+  async getAuthorPostCounts(): Promise<AuthorPostCounts> {
     return fetchAuthorPostCounts(this.contractId);
   }
 
