@@ -60,7 +60,6 @@ function Disclosure({
   disabled?: boolean
   children: React.ReactNode
 }) {
-  const reduceMotion = useReducedMotion()
   return (
     <div>
       <button
@@ -78,20 +77,36 @@ function Disclosure({
         <ChevronDown aria-hidden="true" className={`w-4 h-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
       <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            id={id}
-            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="pt-4">{children}</div>
-          </motion.div>
-        )}
+        {open && <DisclosurePanel id={id}>{children}</DisclosurePanel>}
       </AnimatePresence>
     </div>
+  )
+}
+
+/**
+ * A disclosure's content. It clips only while it opens or closes: once open,
+ * focus rings and button shadows reach past its edges and must show.
+ */
+function DisclosurePanel({ id, children }: { id: string; children: React.ReactNode }) {
+  const reduceMotion = useReducedMotion()
+  const [moving, setMoving] = useState(true)
+  return (
+    <motion.div
+      id={id}
+      variants={{
+        closed: reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 },
+        open: { opacity: 1, height: 'auto' },
+      }}
+      initial="closed"
+      animate="open"
+      exit="closed"
+      transition={{ duration: 0.2 }}
+      onAnimationStart={() => setMoving(true)}
+      onAnimationComplete={(definition) => setMoving(definition !== 'open')}
+      className={moving ? 'overflow-hidden' : undefined}
+    >
+      <div className="pt-4">{children}</div>
+    </motion.div>
   )
 }
 
