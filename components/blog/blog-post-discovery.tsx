@@ -56,7 +56,7 @@ export function BlogPostDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
     return { items: await enrichBlogPostsWithBlogNames(page.posts, { throwOnError: true }), nextCursor: page.nextCursor }
   }, [sort])
   const { items: posts, cursor, loading, loadingMore, error, loadMore } = useCursorList(loadPage, {
-    enabled: sdkReady, loadError: 'Posts are unavailable right now. Please try again.', moreError: 'Failed to load more posts',
+    enabled: sdkReady, loadError: 'Posts are unavailable right now. Please try again.', moreError: 'Failed to load more posts', cacheKey: sort,
   })
 
   const openPost = (post: BlogPostWithAuthor) => router.push(getBlogPostUrl(post.blogId, post.slug))
@@ -83,9 +83,9 @@ export function BlogPostDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
         </p>
       ) : (
         <div className="divide-y divide-gray-200 overflow-hidden rounded-xl border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
-          {posts.map((post, index) => (
+          {posts.map((post) => (
             <div key={post.id} className="relative">
-              <BlogPostCard post={post} onClick={openPost} index={index} />
+              <BlogPostCard post={post} onClick={openPost} />
               {post.recentComments !== undefined && (
                 <span className="pointer-events-none absolute right-4 top-4 text-xs text-gray-500">
                   {post.recentComments} {post.recentComments === 1 ? 'comment' : 'comments'}

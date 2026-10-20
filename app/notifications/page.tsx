@@ -1,6 +1,5 @@
 'use client'
 
-import { motion } from 'framer-motion'
 import {
   UserPlusIcon,
   BellIcon,
@@ -312,10 +311,8 @@ function NotificationsPage() {
         ) : (
           <div className="divide-y divide-gray-200 dark:divide-gray-800">
             {filteredNotifications.map((notification) => (
-              <motion.div
+              <div
                 key={notification.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
                 onClick={() => {
                   if (!notification.read) {
                     markAsRead(notification.id)
@@ -410,7 +407,7 @@ function NotificationsPage() {
                     )
                   })()}
                 </div>
-              </motion.div>
+              </div>
             ))}
           </div>
         )}

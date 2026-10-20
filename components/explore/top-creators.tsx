@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { TrophyIcon, UsersIcon } from '@heroicons/react/24/outline'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { Spinner } from '@/components/ui/spinner'
 import { formatNumber } from '@/lib/utils'
 import type { RankedGroupCount, RankingWindow } from '@/lib/services/ranked-likes'
 import { followRankingsAvailable } from '@/lib/contract-topology'
@@ -43,6 +42,31 @@ async function hydrateRankedUsers(rankings: RankedGroupCount[][]): Promise<Ranke
         username,
       }
     })
+  )
+}
+
+/** First-load placeholder shaped like the section header plus {@link RankedUserList} rows. */
+function RankedUserListSkeleton() {
+  const bar = 'rounded bg-gray-200 dark:bg-gray-800 animate-pulse'
+  return (
+    <div aria-busy="true" aria-label="Loading creators">
+      <div className="px-4 py-2 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex h-5 items-center"><div className={`h-3.5 w-36 ${bar}`} /></div>
+      </div>
+      <div className="divide-y divide-gray-200 dark:divide-gray-800">
+        {Array.from({ length: 10 }, (_, i) => (
+          <div key={i} className="flex items-center gap-3 p-4">
+            <span className="w-6" />
+            <div className={`h-10 w-10 shrink-0 rounded-full ${bar}`} />
+            <div className="flex-1">
+              <div className="flex h-6 items-center"><div className={`h-4 w-32 ${bar}`} /></div>
+              <div className="flex h-5 items-center"><div className={`h-3 w-20 ${bar}`} /></div>
+            </div>
+            <div className={`h-3 w-12 ${bar}`} />
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -98,12 +122,10 @@ function RankedUserList({
  * Render-gated by the caller on `prefixRankingsAvailable()`.
  */
 export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {}) {
-  const [creators, setCreators] = useState<RankedUser[]>([])
-  const [mostFollowed, setMostFollowed] = useState<RankedUser[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  // Kept per window: switching back shows the last leaderboard at once.
+  const [byWindow, setByWindow] = useState<Partial<Record<RankingWindow, { creators: RankedUser[]; mostFollowed: RankedUser[] }>>>({})
 
   useEffect(() => {
-    setIsLoading(true)
     const load = async () => {
       try {
         const { topCreatorsByLikes, mostFollowedUsers } = await import('@/lib/services/ranked-likes')
@@ -113,32 +135,23 @@ export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {})
           topCreatorsByLikes(10, window),
           followRankingsAvailable() ? mostFollowedUsers(10) : Promise.resolve([]),
         ])
-        const [hydratedCreators, hydratedFollowed] = await hydrateRankedUsers([
+        const [creators, mostFollowed] = await hydrateRankedUsers([
           creatorRanking,
           followRanking,
         ])
-        setCreators(hydratedCreators)
-        setMostFollowed(hydratedFollowed)
+        setByWindow((prev) => ({ ...prev, [window]: { creators, mostFollowed } }))
       } catch (error) {
         logger.error('Failed to load creator leaderboard:', error)
-        setCreators([])
-        setMostFollowed([])
-      } finally {
-        setIsLoading(false)
+        setByWindow((prev) => (prev[window] ? prev : { ...prev, [window]: { creators: [], mostFollowed: [] } }))
       }
     }
 
     load().catch((err) => logger.error('Failed to load creator leaderboard:', err))
   }, [window])
 
-  if (isLoading) {
-    return (
-      <div className="p-8 text-center">
-        <Spinner size="md" className="mx-auto mb-4" />
-        <p className="text-gray-500">Loading top creators...</p>
-      </div>
-    )
-  }
+  const current = byWindow[window]
+  if (!current) return <RankedUserListSkeleton />
+  const { creators, mostFollowed } = current
 
   if (creators.length === 0 && mostFollowed.length === 0) {
     return (

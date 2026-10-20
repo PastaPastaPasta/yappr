@@ -3,7 +3,7 @@
 import { TrophyIcon } from '@heroicons/react/24/outline';
 import { Post } from '@/lib/types';
 import ErrorBoundary from '@/components/error-boundary';
-import { Spinner } from '@/components/ui/spinner';
+import { PostListSkeleton } from '@/components/post/post-card-skeleton';
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel';
 import { PostCard } from '@/components/post/post-card';
 import { useSettingsStore } from '@/lib/store';
@@ -40,13 +40,10 @@ export function FeedTopList({ posts, isLoading, activeTab, rankingWindow, onPost
     resetKey: `${activeTab}:${rankingWindow}`,
   });
 
-  if (isLoading || posts === null) {
-    return (
-      <div className="p-8 text-center">
-        <Spinner size="md" className="mx-auto mb-4" />
-        <p className="text-gray-500">Loading top posts...</p>
-      </div>
-    );
+  // Only a ranking with nothing to show yet gets the placeholder; a reload of
+  // one already on screen keeps it there and swaps rows in place.
+  if (posts === null) {
+    return <PostListSkeleton label="Loading top posts" />;
   }
 
   const visiblePosts = filterHiddenSensitive(posts, sensitiveContentMode, user?.identityId);

@@ -88,6 +88,8 @@ async function hydrateBlogs(blogs: Blog[], viewerId: string | undefined): Promis
 export function BlogDiscovery({ sdkReady = true, showHeader = false, initialView = 'blogs' }: { sdkReady?: boolean; showHeader?: boolean; initialView?: 'blogs' | 'posts' }) {
   const [view, setView] = useState<'blogs' | 'posts'>(initialView)
   const postsView = blogIsV7() && view === 'posts'
+  const [postsSeen, setPostsSeen] = useState(postsView)
+  if (postsView && !postsSeen) setPostsSeen(true)
 
   return (
     <div className="space-y-4">
@@ -121,7 +123,15 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false, initialView
         </div>
       )}
 
-      {postsView ? <BlogPostDiscovery sdkReady={sdkReady} /> : <BlogList sdkReady={sdkReady} />}
+      {/* Both views stay mounted once opened and are only hidden, so switching back is instant. */}
+      {(postsView || postsSeen) && (
+        <div hidden={!postsView}>
+          <BlogPostDiscovery sdkReady={sdkReady} />
+        </div>
+      )}
+      <div hidden={postsView}>
+        <BlogList sdkReady={sdkReady} />
+      </div>
     </div>
   )
 }
@@ -140,7 +150,7 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
   }, [sort, viewerId])
   // `incomplete`: before v7, `newest` sorted only the first DISCOVERY_SCAN_LIMIT blogs read.
   const { items: blogs, cursor, loading, loadingMore, error, incomplete, loadMore } = useCursorList(loadPage, {
-    enabled: sdkReady, loadError: 'Blogs are unavailable right now. Please try again.', moreError: 'Failed to load more blogs',
+    enabled: sdkReady, loadError: 'Blogs are unavailable right now. Please try again.', moreError: 'Failed to load more blogs', cacheKey: `${sort}:${viewerId ?? ''}`,
   })
 
   const filtered = useMemo(() => {
