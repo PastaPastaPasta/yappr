@@ -431,7 +431,7 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
   it('builds a dash-key: request for this app and network, and keeps the ephemeral key secret', async () => {
     const request = await session.startKeyExchange()
     const parsed = auth.parseYapprKeyExchangeUri(request.uri)
-    expect(parsed).toMatchObject({ network: 'testnet', version: 1, request: { label: 'Login to Yappr' } })
+    expect(parsed).toMatchObject({ network: 'testnet', version: 1, request: { label: 'Sign in to Yappr' } })
     expect(bs58.encode(parsed?.request.contractId ?? new Uint8Array())).toBe(YAPPR_CONTRACT_ID)
     expect(request.expiresAt.getTime() - Date.now()).toBeGreaterThan(9 * 60 * 1000)
     // Persisted only in the secure area, for resuming after the app is killed.

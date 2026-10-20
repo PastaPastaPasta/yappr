@@ -698,7 +698,7 @@
         "outcome": "not-sent",
         "retryable": true,
         "state": "failed",
-        "userMessage": "Your session has expired. Please log in again."
+        "userMessage": "Your session has expired. Please sign in again."
       }
     },
     {
@@ -712,7 +712,7 @@
         "outcome": "not-sent",
         "retryable": true,
         "state": "failed",
-        "userMessage": "Your session has expired. Please log in again."
+        "userMessage": "Your session has expired. Please sign in again."
       }
     },
     {
