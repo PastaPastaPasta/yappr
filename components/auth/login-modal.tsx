@@ -26,7 +26,7 @@ const DASH_WALLET_DOWNLOAD_URL = 'https://www.dash.org/download/'
 /** A legal page opened in a new tab, so the sign-in under way is not lost. */
 function ConsentLink({ href, children }: { href: string; children: string }) {
   return (
-    <Link href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-gray-700 dark:hover:text-gray-200">
+    <Link href={href} target="_blank" rel="noopener noreferrer" className="whitespace-nowrap underline underline-offset-2 hover:text-gray-700 dark:hover:text-gray-200">
       {children}
       <span className="sr-only"> (opens in new tab)</span>
     </Link>
