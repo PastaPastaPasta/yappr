@@ -78,7 +78,8 @@ const registerWrite: WriteSpec<RegisterVars> = {
 /** How long typing pauses before the name is checked. */
 const CHECK_DELAY_MS = 400;
 
-type CheckState = { label: string; result: DpnsAvailabilityDTO } | { label: string; failed: true };
+/** An answer, for the name and the check (`again`) it answers. */
+type CheckState = { label: string; again: number } & ({ result: DpnsAvailabilityDTO } | { failed: true });
 
 /**
  * The typed name's availability, checked as typing pauses (X/Bluesky handle
@@ -95,11 +96,11 @@ function useNameCheck(typed: string, again: number): DpnsAvailabilityDTO | 'chec
       engine.api.dpns
         .check(typed)
         .then((result) => {
-          if (current) setState({ label: typed, result });
+          if (current) setState({ label: typed, again, result });
         })
         .catch((error: unknown) => {
           appendLog('info', 'host', `Username check failed: ${errorMessage(error)}`);
-          if (current) setState({ label: typed, failed: true });
+          if (current) setState({ label: typed, again, failed: true });
         });
     }, CHECK_DELAY_MS);
     return () => {
@@ -108,7 +109,8 @@ function useNameCheck(typed: string, again: number): DpnsAvailabilityDTO | 'chec
     };
   }, [typed, again]);
   if (!typed) return null;
-  if (state?.label !== typed) return 'checking';
+  // An older answer (another name, or before a re-check) no longer holds.
+  if (state?.label !== typed || state.again !== again) return 'checking';
   return 'failed' in state ? 'failed' : state.result;
 }
 
