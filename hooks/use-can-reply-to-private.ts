@@ -65,7 +65,7 @@ export function useCanReplyToPrivate(post: Post | null | undefined, rootPostOwne
 
   let reason: string | null = null
   if (isPrivate && !user) {
-    reason = 'Log in to reply to private posts'
+    reason = 'Sign in to reply to private posts'
   } else if (!canReply) {
     reason = "Can't reply - no access to this private feed"
   }

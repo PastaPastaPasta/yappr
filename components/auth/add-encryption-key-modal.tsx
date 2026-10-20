@@ -66,8 +66,8 @@ function KeyEntryAddEncryptionKeyModal({
   // Context-specific messaging
   const contextMessages = {
     'private-feed': {
-      description: 'To use private feeds, you need an encryption key on your identity. This key is automatically recreated from your login key — unless your login key changes.',
-      backupReason: 'If your login key ever changes, this backup is the only way to recover your private feed content.',
+      description: 'To use private feeds, you need an encryption key on your identity. This key is automatically recreated from your sign-in key — unless your sign-in key changes.',
+      backupReason: 'If your sign-in key ever changes, this backup is the only way to recover your private feed content.',
       benefits: [
         'Keeps your private posts private',
         'Lets you read private feeds you follow',
@@ -81,7 +81,7 @@ function KeyEntryAddEncryptionKeyModal({
     },
     'store': {
       description: 'To receive orders, you need an encryption key on your identity. This allows buyers to securely send you their shipping details and order information.',
-      backupReason: 'If your login key ever changes, this backup is the only way to decrypt past order messages.',
+      backupReason: 'If your sign-in key ever changes, this backup is the only way to decrypt past order messages.',
       benefits: [
         'Receive encrypted shipping addresses from buyers',
         'Securely communicate order details',
@@ -94,8 +94,8 @@ function KeyEntryAddEncryptionKeyModal({
       ],
     },
     'generic': {
-      description: 'An encryption key allows you to send and receive encrypted messages on Dash Platform. This key is automatically recreated from your login key — unless your login key changes.',
-      backupReason: 'If your login key ever changes, this backup is the only way to decrypt past encrypted content.',
+      description: 'An encryption key allows you to send and receive encrypted messages on Dash Platform. This key is automatically recreated from your sign-in key — unless your sign-in key changes.',
+      backupReason: 'If your sign-in key ever changes, this backup is the only way to decrypt past encrypted content.',
       benefits: [
         'Send and receive encrypted messages',
         'Access encrypted content',
@@ -453,7 +453,7 @@ function KeyEntryAddEncryptionKeyModal({
                   <div className="text-sm text-blue-700 dark:text-blue-300">
                     <p className="font-medium">Key found on your identity</p>
                     <p className="mt-1">
-                      Enter your existing encryption key to restore access in this session. If your key was derived from your login key, it will be recovered automatically.
+                      Enter your existing encryption key to restore access in this session. If your key was derived from your sign-in key, it will be recovered automatically.
                     </p>
                   </div>
                 </div>
@@ -763,7 +763,7 @@ function KeyEntryAddEncryptionKeyModal({
               <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
                 <div className="text-sm text-gray-600 dark:text-gray-400">
                   <p>
-                    Your Master key is different from your login key.
+                    Your Master key is different from your sign-in key.
                     It was provided when you created your identity.
                   </p>
                 </div>

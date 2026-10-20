@@ -432,7 +432,7 @@ export function Sidebar() {
                   onClick={logout}
                 >
                   <ArrowRightOnRectangleIcon className="h-4 w-4" />
-                  Log out
+                  Sign out
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>

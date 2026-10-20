@@ -354,7 +354,7 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       // devnet ('d') — unlike address/WIF encoding, which keyNetwork() maps
       // to testnet on devnets.
       network: getConfiguredNetwork(),
-      label: 'Login to Yappr',
+      label: 'Sign in to Yappr',
     },
     yapprKeyExchange: {
       async getResponse(contractIdBytes, appEphemeralPubKeyHash) {

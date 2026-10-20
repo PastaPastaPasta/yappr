@@ -7,6 +7,7 @@ import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, DocumentTextIcon, Trop
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
+import { PostListSkeleton } from '@/components/post/post-card-skeleton'
 import { BlogPostCard } from '@/components/blog/blog-post-card'
 import { useRouter } from 'next/navigation'
 import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
@@ -379,10 +380,7 @@ export default function ExplorePage() {
                       <RankingWindowToggle axis="posts" value={topWindow} onChange={setTopWindow} testIdPrefix="explore-top" />
                       <div className="divide-y divide-gray-200 dark:divide-gray-800">
                         {isLoadingTop ? (
-                          <div className="p-8 text-center">
-                            <Spinner size="md" className="mx-auto mb-4" />
-                            <p className="text-gray-500">Loading top posts...</p>
-                          </div>
+                          <PostListSkeleton label="Loading top posts" testId="explore-top-loading" />
                         ) : topPosts.length === 0 ? (
                           <div className="p-8 text-center" data-testid="explore-top-empty">
                             <TrophyIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />

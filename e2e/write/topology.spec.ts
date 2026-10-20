@@ -999,7 +999,7 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
     await expect(today).toHaveText(windowLabel('posts'))
     await today.click()
     await expect(today).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByText('Loading top posts...', { exact: true })).toBeHidden({ timeout: 60_000 })
+    await expect(page.getByTestId('explore-top-loading')).toBeHidden({ timeout: 60_000 })
     // The seeded corpus also lands in the window; global top-20 need not include the
     // CI bot. Exact membership is checked on the pinned tag/profile surfaces.
     await expect(page.locator('[data-testid^="post-card-"]').first()).toBeVisible({ timeout: 60_000 })

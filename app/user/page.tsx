@@ -333,7 +333,7 @@ function UserProfileContent() {
       try {
         const { identityService } = await import('@/lib/services/identity-service')
         if (!(await identityService.getIdentity(viewerId))) {
-          toast.error('Your identity was not found on the network. Please log in again.')
+          toast.error('Your identity was not found on the network. Please sign in again.')
           await logout()
         }
       } catch (error) {
