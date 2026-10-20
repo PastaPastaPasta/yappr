@@ -219,16 +219,16 @@ function UserProfileContent() {
         const { loadUserStats } = await import('@/lib/services/social-stats-service')
 
         const statsRead = loadUserStats(userId)
-        // The stats read seeds the profile cache, so the profile follows it (and
-        // is then usually answered without a query of its own). A failed stats
-        // read still lets the profile be read; a failed profile read is null,
-        // which startEdit re-checks strictly before an owner edits from it.
-        const profileRead = statsRead
-          .catch(() => undefined)
-          .then(() => unifiedProfileService.getProfile(userId))
-          .catch(() => null)
         const postsRead = postService.getUserPosts(userId, { limit: PAGE_SIZE, forDisplay: true })
           .catch(() => ({ documents: [] as Post[], preloaded: undefined }))
+        // The stats read seeds the base profile and the posts read its
+        // extension, so the profile follows both (the header waits for both
+        // anyway) and is then usually answered from cache. A failed stats read
+        // still lets the profile be read; a failed profile read is null, which
+        // startEdit re-checks strictly before an owner edits from it.
+        const profileRead = Promise.all([statsRead.catch(() => undefined), postsRead])
+          .then(() => unifiedProfileService.getProfile(userId))
+          .catch(() => null)
 
         const loadPosts = async (): Promise<Post[]> => {
           const postsResult = await postsRead
