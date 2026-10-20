@@ -287,7 +287,7 @@ function HashtagPageContent() {
 
           {/* Latest|Top sort toggle — Top rides the v9 ranked like axes. */}
           {likesAreIndexOnly() && (
-            <div className="flex gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
               <button
                 onClick={() => setSortMode('latest')}
                 data-testid="hashtag-sort-latest"
@@ -310,10 +310,10 @@ function HashtagPageContent() {
               >
                 Top
               </button>
+              {sortMode === 'top' && (
+                <RankingWindowToggle inline axis="hashtags" value={rankingWindow} onChange={setRankingWindow} testIdPrefix="hashtag-top" />
+              )}
             </div>
-          )}
-          {sortMode === 'top' && (
-            <RankingWindowToggle axis="hashtags" value={rankingWindow} onChange={setRankingWindow} testIdPrefix="hashtag-top" />
           )}
 
           {/* Content */}

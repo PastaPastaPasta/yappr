@@ -40,7 +40,7 @@ test('explore page loads', async ({ page }) => {
   await expect(page.getByPlaceholder('Search posts and blog articles')).toBeVisible()
   // The trending panel starts in its loading state and resolves to either real
   // hashtags or the empty state — both mean the page came up.
-  await expect(page.getByRole('button', { name: /Trending/ })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Trending' })).toBeVisible()
 })
 
 for (const route of ['/store/view/', '/store/view/?id=']) {
