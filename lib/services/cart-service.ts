@@ -30,6 +30,11 @@ export interface CartItemAvailability {
   /** The cart line, with its fulfillment brought up to date when the item could be read. */
   item: CartItem;
   maxQuantity: number;
+  /**
+   * The seller tracks this line's stock, so `maxQuantity` is a count worth
+   * showing ("5 available"). Untracked, it is only the per-order cap.
+   */
+  stockTracked: boolean;
   reason?: string;
 }
 
@@ -375,21 +380,23 @@ class CartService {
         });
         const item = documents[0];
         if (!item || item.status !== 'active') {
-          return { item: cartItem, maxQuantity: 0, reason: 'Item is no longer available' };
+          return { item: cartItem, maxQuantity: 0, stockTracked: false, reason: 'Item is no longer available' };
         }
         if ((item.variants || cartItem.variantId) && !storeItemService.getLineCombination(item, cartItem)) {
-          return { item: cartItem, maxQuantity: 0, reason: 'Selected option is no longer available' };
+          return { item: cartItem, maxQuantity: 0, stockTracked: false, reason: 'Selected option is no longer available' };
         }
         const synced = withFulfillment(cartItem, item.fulfillment === 'digital' ? 'digital' : undefined);
         if (synced !== cartItem) this.syncFulfillment(synced);
         const stock = storeItemService.getStock(item, cartItem.variantId);
+        const stockTracked = Number.isFinite(stock);
         // A digital line is delivered for at most MAX_LINE_QUANTITY units: refuse more before payment.
         if (synced.fulfillment === 'digital' && cartItem.quantity > MAX_LINE_QUANTITY && stock >= cartItem.quantity) {
-          return { item: synced, maxQuantity: MAX_LINE_QUANTITY, reason: `At most ${MAX_LINE_QUANTITY} per order` };
+          return { item: synced, maxQuantity: MAX_LINE_QUANTITY, stockTracked, reason: `At most ${MAX_LINE_QUANTITY} per order` };
         }
         return {
           item: synced,
           maxQuantity: synced.fulfillment === 'digital' ? Math.min(stock, MAX_LINE_QUANTITY) : stock,
+          stockTracked,
           reason: stock < cartItem.quantity
             ? stock === 0 ? 'Out of stock' : `Only ${stock} available`
             : undefined
@@ -398,6 +405,7 @@ class CartService {
         return {
           item: cartItem,
           maxQuantity: cartItem.quantity,
+          stockTracked: false,
           reason: 'Could not check availability. Please try again.'
         };
       }
