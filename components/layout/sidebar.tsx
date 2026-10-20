@@ -1,8 +1,9 @@
 'use client'
 
 import { logger } from '@/lib/logger';
+import Image from 'next/image'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { useRoutePath } from '@/hooks/use-route-path'
 import { useState, useEffect } from 'react'
 import {
   HomeIcon,
@@ -13,6 +14,8 @@ import {
   PencilSquareIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
+  ArrowRightEndOnRectangleIcon,
+  EllipsisHorizontalCircleIcon,
   UserGroupIcon,
   UsersIcon,
   HashtagIcon,
@@ -33,7 +36,8 @@ import {
   BuildingStorefrontIcon as BuildingStorefrontIconSolid,
   BookOpenIcon as BookOpenIconSolid,
 } from '@heroicons/react/24/solid'
-import { cn, truncateId } from '@/lib/utils'
+import { cn } from '@/lib/utils'
+import { publicAsset } from '@/lib/public-asset'
 import { BetaPill } from '@/components/ui/beta-pill'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/lib/store'
@@ -49,12 +53,13 @@ import { useDmV5Badge } from '@/components/messages/use-dm-engine'
 import { startVisibilityPolling } from '@/lib/poll-scheduling'
 import { dmIsV5 } from '@/lib/constants'
 import { useLoginModal } from '@/hooks/use-login-modal'
-import { LegalLinks } from './legal-links'
+import { InlineLegalLinks, LegalLinksMenu } from './legal-links'
 
 const getNavigation = (isLoggedIn: boolean, userId?: string) => {
   if (!isLoggedIn) {
     return [
-      { name: 'Home', href: '/', icon: HomeIcon, activeIcon: HomeIconSolid },
+      // Signed out, the public timeline at /feed is home too.
+      { name: 'Home', href: '/', icon: HomeIcon, activeIcon: HomeIconSolid, alsoActiveOn: '/feed' },
       { name: 'Explore', href: '/explore', icon: HashtagIcon, activeIcon: HashtagIconSolid },
       { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, activeIcon: BuildingStorefrontIconSolid, beta: 'store' as const },
       { name: 'Blog', href: '/blog', icon: BookOpenIcon, activeIcon: BookOpenIconSolid, beta: 'blog' as const },
@@ -77,8 +82,29 @@ const getNavigation = (isLoggedIn: boolean, userId?: string) => {
 
 const NOTIFICATION_POLL_INTERVAL = 30000 // 30 seconds
 
+/** A row of the rail: icon only below `xl`, icon and label from `xl` up. */
+const NAV_ROW = cn(
+  'flex items-center justify-center gap-4 rounded-full p-3 text-xl transition-all duration-200 xl:justify-start',
+  'hover:bg-gray-100 dark:hover:bg-gray-900'
+)
+/** A label that collapses with the rail but stays the control's accessible name. */
+const NAV_LABEL = 'sr-only xl:not-sr-only'
+
+/**
+ * The brand at the top of the rail: the app icon on the narrow rail, the
+ * wordmark on the wide one. The brand workstream swaps what each renders.
+ */
+function SidebarBrand() {
+  return (
+    <>
+      <Image src={publicAsset('/icon-192.png')} alt="" width={40} height={40} className="rounded-xl xl:hidden" />
+      <span className="hidden text-2xl font-bold text-gradient xl:inline">Yappr</span>
+    </>
+  )
+}
+
 export function Sidebar() {
-  const pathname = usePathname()
+  const pathname = useRoutePath()
   const { setComposeOpen } = useAppStore()
   const { user, logout, refreshBalance } = useAuth()
   const openLoginModal = useLoginModal((s) => s.open)
@@ -98,14 +124,13 @@ export function Sidebar() {
     setIsHydrated(true)
   }, [])
 
-  // Fetch display name from profile when no DPNS username
+  // The account chip shows the profile's display name over the @name.
   const identityId = user?.identityId
-  const dpnsUsername = user?.dpnsUsername
   useEffect(() => {
     // Reset display name at start to avoid stale values
     setDisplayName(null)
 
-    if (!identityId || dpnsUsername) {
+    if (!identityId) {
       return
     }
 
@@ -131,7 +156,7 @@ export function Sidebar() {
     return () => {
       mounted = false
     }
-  }, [identityId, dpnsUsername])
+  }, [identityId])
 
   // Initial notification fetch and polling
   useEffect(() => {
@@ -217,19 +242,21 @@ export function Sidebar() {
   // Get navigation based on auth status (use safe defaults during SSR)
   const navigation = getNavigation(isHydrated ? !!user : false, user?.identityId)
   
-  // Format identity ID for display (show first 6 and last 4 chars)
-  const formatIdentityId = (id: string) => truncateId(id, 6, 4)
+  const handle = user?.dpnsUsername ? `@${user.dpnsUsername}` : null
+  const accountName = displayName || handle || 'Your account'
 
+  // Below `xl` the rail collapses to icons, leaving the centre column room
+  // beside the right sidebar (which appears at `lg`).
   return (
-    <div className="hidden md:flex h-screen w-[275px] shrink-0 flex-col px-2 sticky top-0">
+    <div className="hidden md:flex h-screen w-[88px] xl:w-[275px] shrink-0 flex-col px-2 sticky top-0">
       <div className="flex-1 space-y-1 py-4 overflow-y-auto scrollbar-hide">
-        <Link href="/welcome" className="flex items-center px-3 py-4 mb-2 group">
-          <div className="text-2xl font-bold text-gradient">Yappr</div>
+        <Link href="/welcome" aria-label="Yappr" className="flex items-center justify-center xl:justify-start px-3 py-4 mb-2 group">
+          <SidebarBrand />
         </Link>
 
         <nav className="space-y-1">
           {navigation.map((item) => {
-            const isActive = pathname === item.href
+            const isActive = pathname === item.href || ('alsoActiveOn' in item && pathname === item.alsoActiveOn)
             const Icon = isActive ? item.activeIcon : item.icon
             // Badges render only after hydration: both counts are client-only,
             // so drawing them during SSR would mismatch.
@@ -242,11 +269,8 @@ export function Sidebar() {
               <Link
                 key={item.name}
                 href={item.href}
-                className={cn(
-                  'flex items-center gap-4 px-3 py-3 text-xl rounded-full transition-all duration-200',
-                  'hover:bg-gray-100 dark:hover:bg-gray-900',
-                  isActive && 'font-bold'
-                )}
+                aria-current={isActive ? 'page' : undefined}
+                className={cn(NAV_ROW, isActive && 'font-bold')}
               >
                 <div className="relative">
                   <Icon className="h-7 w-7" />
@@ -256,8 +280,8 @@ export function Sidebar() {
                     </span>
                   )}
                 </div>
-                <span>{item.name}</span>
-                {item.beta && <BetaPill product={item.beta} />}
+                <span className={NAV_LABEL}>{item.name}</span>
+                {item.beta && <BetaPill product={item.beta} className="hidden xl:inline-flex" />}
               </Link>
             )
           })}
@@ -265,10 +289,11 @@ export function Sidebar() {
           {user && isHydrated && (
             <Link
               href="/settings"
-              className="flex items-center gap-4 px-3 py-3 text-xl rounded-full transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-900"
+              aria-current={pathname === '/settings' ? 'page' : undefined}
+              className={cn(NAV_ROW, pathname === '/settings' && 'font-bold')}
             >
               <Cog6ToothIcon className="h-7 w-7" />
-              <span>Settings</span>
+              <span className={NAV_LABEL}>Settings</span>
             </Link>
           )}
         </nav>
@@ -276,45 +301,54 @@ export function Sidebar() {
         {isHydrated && user ? (
           <Button
             onClick={() => setComposeOpen(true)}
-            className="w-full mt-8 h-12 text-base shadow-yappr-lg"
+            className="mx-auto mt-8 flex h-12 w-12 px-0 text-base shadow-yappr-lg xl:w-full xl:px-6"
             size="lg"
           >
             <PencilSquareIcon className="h-6 w-6" />
-            <span>Post</span>
+            <span className={NAV_LABEL}>Post</span>
           </Button>
         ) : isHydrated ? (
-          <div className="mt-8 space-y-3">
-            <Button
-              className="w-full h-12 text-base xl:text-lg shadow-yappr-lg"
-              size="lg"
-              onClick={openLoginModal}
-            >
-              Sign In
-            </Button>
-            <p className="text-xs text-center text-gray-500 px-4">
-              Join Yappr to share your voice on the decentralized web
-            </p>
-          </div>
+          <Button
+            className="mx-auto mt-8 flex h-12 w-12 px-0 text-base shadow-yappr-lg xl:w-full xl:px-6 xl:text-lg"
+            size="lg"
+            onClick={openLoginModal}
+          >
+            <ArrowRightEndOnRectangleIcon className="h-6 w-6 xl:hidden" />
+            <span className={NAV_LABEL}>Sign In</span>
+          </Button>
         ) : (
           // Show loading state during SSR/hydration
           <div className="mt-8">
-            <div className="w-full h-12 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
+            <div className="mx-auto h-12 w-12 xl:w-full bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
           </div>
         )}
       </div>
 
       <div className="space-y-2 flex-shrink-0 pb-4">
+        <div className="flex justify-center xl:hidden">
+          <LegalLinksMenu
+            trigger={
+              <button type="button" className="rounded-full p-3 text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-900">
+                <EllipsisHorizontalCircleIcon className="h-7 w-7" />
+              </button>
+            }
+          />
+        </div>
         {user && isHydrated && (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
-              <button data-testid="user-menu-trigger" className="flex items-center gap-3 p-3 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors w-full">
-                <UserAvatar userId={user.identityId} size="md" alt="Your avatar" />
-                <div className="flex flex-1 text-left">
+              <button
+                data-testid="user-menu-trigger"
+                aria-label={`Account menu, ${accountName}`}
+                className="flex items-center justify-center xl:justify-start gap-3 p-3 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors w-full"
+              >
+                <UserAvatar userId={user.identityId} size="md" alt="" />
+                <div className="hidden xl:flex flex-1 min-w-0 items-center text-left">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate">
-                      {user.dpnsUsername ? `@${user.dpnsUsername}` : (displayName || 'Identity')}
-                    </p>
-                    <p className="text-sm text-gray-500 truncate">{formatIdentityId(user.identityId)}</p>
+                    <p className="text-sm font-semibold truncate">{accountName}</p>
+                    {handle && accountName !== handle && (
+                      <p className="text-sm text-gray-500 truncate">{handle}</p>
+                    )}
                   </div>
                   <EllipsisHorizontalIcon className="h-5 w-5 text-gray-500 flex-shrink-0" />
                 </div>
@@ -376,7 +410,7 @@ export function Sidebar() {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         )}
-        <LegalLinks className="px-3" />
+        <InlineLegalLinks className="hidden xl:flex px-3" />
       </div>
     </div>
   )

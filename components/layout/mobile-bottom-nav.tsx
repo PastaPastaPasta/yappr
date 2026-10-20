@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { useRoutePath } from '@/hooks/use-route-path'
 import { useAuth } from '@/contexts/auth-context'
 import { useAppStore } from '@/lib/store'
 import { useNotificationStore } from '@/lib/stores/notification-store'
@@ -29,6 +29,7 @@ import {
   HomeIcon as HomeIconSolid,
   MagnifyingGlassIcon as SearchIconSolid,
   EnvelopeIcon as EnvelopeIconSolid,
+  BellIcon as BellIconSolid,
 } from '@heroicons/react/24/solid'
 import { cn } from '@/lib/utils'
 import { BetaPill } from '@/components/ui/beta-pill'
@@ -38,7 +39,7 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import { LegalLinks } from './legal-links'
 
 export function MobileBottomNav() {
-  const pathname = usePathname()
+  const pathname = useRoutePath()
   const { user, logout } = useAuth()
   const { setComposeOpen } = useAppStore()
   const openLoginModal = useLoginModal((s) => s.open)
@@ -79,7 +80,14 @@ export function MobileBottomNav() {
     setMoreMenuOpen(false)
   }, [pathname])
 
-  const navItems = [
+  const navItems: Array<{
+    name: string
+    href: string
+    icon: typeof HomeIcon
+    activeIcon: typeof HomeIcon
+    match: (path: string) => boolean
+    badge?: number
+  }> = [
     {
       name: 'Home',
       href: user ? '/feed' : '/',
@@ -94,28 +102,63 @@ export function MobileBottomNav() {
       activeIcon: SearchIconSolid,
       match: (path: string) => path === '/explore'
     },
+    // Signed in, notifications get a tab of their own, as on X and Bluesky.
+    ...(user ? [{
+      name: 'Notifications',
+      href: '/notifications',
+      icon: BellIcon,
+      activeIcon: BellIconSolid,
+      match: (path: string) => path === '/notifications',
+      badge: isHydrated ? unreadNotificationCount : 0,
+    }] : []),
     {
       name: 'Messages',
       href: '/messages',
       icon: EnvelopeIcon,
       activeIcon: EnvelopeIconSolid,
-      match: (path: string) => path.startsWith('/messages')
+      match: (path: string) => path.startsWith('/messages'),
+      badge: isHydrated && user ? unreadMessageCount : 0,
     },
   ]
 
   // More menu items - Store first for prominence, then user-specific items
-  const moreMenuItems: Array<{ name: string; href: string; icon: typeof HomeIcon; badge?: number; beta?: BetaProduct }> = [
+  const moreMenuItems: Array<{ name: string; href: string; icon: typeof HomeIcon; beta?: BetaProduct }> = [
     { name: 'Store', href: '/store', icon: BuildingStorefrontIcon, beta: 'store' },
     { name: 'Blog', href: '/blog', icon: BookOpenIcon, beta: 'blog' },
     ...(user ? [
       { name: 'Profile', href: `/user?id=${user.identityId}`, icon: UserIcon },
-      { name: 'Notifications', href: '/notifications', icon: BellIcon, badge: isHydrated && unreadNotificationCount > 0 ? unreadNotificationCount : undefined },
       { name: 'Following', href: '/following', icon: UserGroupIcon },
       { name: 'Followers', href: '/followers', icon: UsersIcon },
       { name: 'Bookmarks', href: '/bookmarks', icon: BookmarkIcon },
       { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
     ] : []),
   ]
+
+  function renderTab(item: (typeof navItems)[number]) {
+    const isActive = item.match(pathname)
+    const Icon = isActive ? item.activeIcon : item.icon
+    const badgeCount = item.badge ?? 0
+    return (
+      <Link
+        key={item.name}
+        href={item.href}
+        aria-label={badgeCount > 0 ? `${item.name}, ${badgeCount} unread` : item.name}
+        className="flex-1 flex items-center justify-center h-full"
+      >
+        <div className="relative">
+          <Icon className={cn(
+            "h-7 w-7",
+            isActive ? "text-black dark:text-white" : "text-gray-500"
+          )} />
+          {badgeCount > 0 && (
+            <span className="absolute -top-1 -right-2 min-w-[18px] h-[18px] px-1 bg-yappr-500 text-white text-[10px] font-medium rounded-full flex items-center justify-center">
+              {badgeCount > 99 ? '99+' : badgeCount}
+            </span>
+          )}
+        </div>
+      </Link>
+    )
+  }
 
   const isMoreActive = moreMenuItems.some(item => pathname === item.href || pathname.startsWith(item.href + '/')) || pathname.startsWith('/store')
 
@@ -163,14 +206,7 @@ export function MobileBottomNav() {
                       : "hover:bg-gray-100 dark:hover:bg-gray-800"
                   )}
                 >
-                  <div className="relative">
-                    <item.icon className="h-6 w-6" />
-                    {item.badge !== undefined && (
-                      <span className="absolute -top-1 -right-2 min-w-[18px] h-[18px] px-1 bg-yappr-500 text-white text-[10px] font-medium rounded-full flex items-center justify-center">
-                        {item.badge > 99 ? '99+' : item.badge}
-                      </span>
-                    )}
-                  </div>
+                  <item.icon className="h-6 w-6" />
                   <span className="text-xs mt-1 text-center">{item.name}</span>
                   {item.beta && <BetaPill product={item.beta} className="mt-1" />}
                 </Link>
@@ -216,24 +252,7 @@ export function MobileBottomNav() {
       {/* Bottom Navigation Bar */}
       <nav aria-label="Mobile navigation" className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom">
         <div className="flex items-center justify-around h-14">
-          {/* First two nav items */}
-          {navItems.slice(0, 2).map((item) => {
-            const isActive = item.match(pathname)
-            const Icon = isActive ? item.activeIcon : item.icon
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                aria-label={item.name}
-                className="flex-1 flex items-center justify-center h-full"
-              >
-                <Icon className={cn(
-                  "h-7 w-7",
-                  isActive ? "text-black dark:text-white" : "text-gray-500"
-                )} />
-              </Link>
-            )
-          })}
+          {navItems.slice(0, 2).map(renderTab)}
 
           {/* Center Post Button (FAB style) */}
           {user ? (
@@ -254,32 +273,7 @@ export function MobileBottomNav() {
             </button>
           )}
 
-          {/* Messages */}
-          {navItems.slice(2, 3).map((item) => {
-            const isActive = item.match(pathname)
-            const Icon = isActive ? item.activeIcon : item.icon
-            const badgeCount = isHydrated && user ? unreadMessageCount : 0
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                aria-label={badgeCount > 0 ? `${item.name}, ${badgeCount} unread` : item.name}
-                className="flex-1 flex items-center justify-center h-full"
-              >
-                <div className="relative">
-                  <Icon className={cn(
-                    "h-7 w-7",
-                    isActive ? "text-black dark:text-white" : "text-gray-500"
-                  )} />
-                  {badgeCount > 0 && (
-                    <span className="absolute -top-1 -right-2 min-w-[18px] h-[18px] px-1 bg-yappr-500 text-white text-[10px] font-medium rounded-full flex items-center justify-center">
-                      {badgeCount > 99 ? '99+' : badgeCount}
-                    </span>
-                  )}
-                </div>
-              </Link>
-            )
-          })}
+          {navItems.slice(2).map(renderTab)}
 
           {/* More Button */}
           <Tooltip.Provider>
@@ -297,9 +291,6 @@ export function MobileBottomNav() {
                     "h-7 w-7",
                     (moreMenuOpen || isMoreActive) ? "text-black dark:text-white" : "text-gray-500"
                   )} />
-                  {isHydrated && unreadNotificationCount > 0 && !moreMenuOpen && (
-                    <span className="absolute top-2 right-1/4 w-2 h-2 bg-yappr-500 rounded-full" />
-                  )}
                 </button>
               </Tooltip.Trigger>
               <Tooltip.Portal>

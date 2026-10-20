@@ -10,6 +10,9 @@ export type TopUser = HomepageTopUser
 
 export interface PlatformStats {
   totalPosts: number
+  authorCount: number
+  authorCountCapped: boolean
+  postsToday: number | null
   loading: boolean
   error: string | null
 }
@@ -43,6 +46,9 @@ export function useHomepageData(): HomepageData {
 
   const [platformStats, setPlatformStats] = useState<PlatformStats>({
     totalPosts: 0,
+    authorCount: 0,
+    authorCountCapped: false,
+    postsToday: null,
     loading: true,
     error: null
   })
@@ -62,7 +68,14 @@ export function useHomepageData(): HomepageData {
   const hasLoadedRef = useRef(false)
 
   const applySnapshot = useCallback((snapshot: HomepageSnapshot) => {
-    setPlatformStats({ totalPosts: snapshot.totalPosts, loading: false, error: null })
+    setPlatformStats({
+      totalPosts: snapshot.totalPosts,
+      authorCount: snapshot.authorCount,
+      authorCountCapped: snapshot.authorCountCapped,
+      postsToday: snapshot.postsToday,
+      loading: false,
+      error: null,
+    })
     setFeaturedPosts({ posts: snapshot.featuredPosts, loading: false, error: null })
     setTopUsers({ users: snapshot.topUsers, loading: false, error: null })
   }, [])
