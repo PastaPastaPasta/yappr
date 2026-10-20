@@ -41,10 +41,9 @@ function setListFollowed(userId: string, follow: boolean): () => void {
 
 /**
  * Use (or stop using) someone's block list. The row changes at once and
- * changes back if the write fails; once it lands, everything that says who
- * is hidden is read again.
+ * changes back if the write fails.
  */
-export const blockListWrite: WriteSpec<BlockListVars> = {
+const blockListWrite: WriteSpec<BlockListVars> = {
   key: ({ userId }) => `block-list:${userId}`,
   intent: ({ follow }) => follow,
   submit: (api, { userId, follow }) => api.safety.setBlockListFollowed(userId, follow),
@@ -52,8 +51,9 @@ export const blockListWrite: WriteSpec<BlockListVars> = {
   reconcile: null,
   optimistic: ({ userId, follow }) => setListFollowed(userId, follow),
   failureMessage: ({ follow }) => (follow ? copy.blockLists.followFailed : copy.blockLists.unfollowFailed),
+  // The row keeps the change (a re-read this soon could still show the old list); who is hidden is read again.
   onConfirmed: () => {
-    for (const queryKey of [queryKeys.blockLists, queryKeys.blockStatusAll, queryKeys.blockListChoices]) {
+    for (const queryKey of [queryKeys.blockLists, queryKeys.blockStatusAll]) {
       queryClient.invalidateQueries({ queryKey }).catch(() => undefined);
     }
   },

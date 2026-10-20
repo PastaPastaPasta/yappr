@@ -1,4 +1,4 @@
-import type { AccountDTO, CapabilitiesDTO, EngineInfo, SessionDTO, SettingsDTO } from '@engine/api';
+import type { AccountDTO, CapabilitiesDTO, DpnsAvailabilityDTO, EngineInfo, SessionDTO, SettingsDTO } from '@engine/api';
 import NetInfo from '@react-native-community/netinfo';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
@@ -12,7 +12,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { config } from '~/config';
 import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
-import { fakeEngine } from '~/data/testing/fake-engine';
+import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { engineSupervisor } from '~/engine';
 import { useExpiredSessions } from '~/data/session-expiry';
 import { useAccounts } from '~/features/auth/accounts';
@@ -34,6 +34,7 @@ import {
 } from './ContentSettingsScreens';
 import { copy } from './copy';
 import { SettingsScreen } from './SettingsScreen';
+import { UsernameScreen } from '~/features/profile/UsernameScreen';
 
 jest.mock('~/engine', () => {
   const fake = jest.requireActual('~/data/testing/fake-engine').engineModule;
@@ -44,7 +45,14 @@ jest.mock('~/engine', () => {
   };
 });
 jest.mock('expo-router', () => ({
-  router: { push: jest.fn(), navigate: jest.fn(), dismissAll: jest.fn(), canDismiss: jest.fn(() => true) },
+  router: {
+    push: jest.fn(),
+    navigate: jest.fn(),
+    back: jest.fn(),
+    canGoBack: jest.fn(() => true),
+    dismissAll: jest.fn(),
+    canDismiss: jest.fn(() => true),
+  },
   Stack: { Screen: () => null },
 }));
 // The sheet mock renders every sheet's content: a scrolling one passes it through too, and is recorded.
@@ -386,6 +394,8 @@ describe('Privacy & Safety (SET-04, SAFE-06, SAFE-07)', () => {
 
     fireEvent.press(byId('privacy-blocked'));
     expect(router.push).toHaveBeenCalledWith('/settings/blocked');
+    fireEvent.press(byId('privacy-block-lists'));
+    expect(router.push).toHaveBeenCalledWith('/settings/blocked-lists');
   });
 
   it('offers read receipts on legacy messages', async () => {
@@ -875,5 +885,87 @@ describe('About (SET-06, SET-07)', () => {
     expect(screen.queryByTestId(`license-text-${id}`)).toBeNull();
     fireEvent.press(byId(`license-${id}`));
     expect(byId(`license-text-${id}`)).toHaveTextContent(licenses.texts[pkg.texts[0]].slice(0, 40), { exact: false });
+  });
+});
+
+describe('Choose a username (AUTH-15)', () => {
+  const free = (label: string, extra: Partial<DpnsAvailabilityDTO> = {}): DpnsAvailabilityDTO => ({
+    label, available: true, contested: false, contestFundCredits: null, invalid: null, ...extra,
+  });
+
+  it('checks a name, registers it here, and goes back once it is confirmed', async () => {
+    fakeEngine.method('dpns.registration').mockResolvedValue('native');
+    fakeEngine.method('dpns.check').mockResolvedValue(free('newname'));
+    const pending = ticket({ op: 'dpns.register', target: { identityId: ALICE } });
+    fakeEngine.method('dpns.register').mockResolvedValue(pending);
+    renderScreen(<UsernameScreen />);
+    await settle();
+
+    expect(screen.queryByTestId('username-register')).toBeNull();
+    fireEvent.changeText(byId('username-input'), 'NewName');
+    await act(async () => fireEvent.press(byId('username-check')));
+    expect(fakeEngine.method('dpns.check')).toHaveBeenCalledWith('newname');
+    expect(byId('username-verdict')).toHaveTextContent('@newname is available');
+
+    await act(async () => fireEvent.press(byId('username-register')));
+    expect(fakeEngine.method('dpns.register')).toHaveBeenCalledWith('newname');
+    expect(byId('username-register')).toHaveTextContent('Registering…');
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed', stage: null })));
+    await settle();
+    expect(toastMessage()).toBe('@newname is yours');
+    expect(router.back).toHaveBeenCalled();
+  });
+
+  it('forgets a check once the name is edited, and never calls a failed check "taken"', async () => {
+    fakeEngine.method('dpns.registration').mockResolvedValue('native');
+    fakeEngine.method('dpns.check').mockResolvedValueOnce(free('alice', { available: false }));
+    renderScreen(<UsernameScreen />);
+    await settle();
+    fireEvent.changeText(byId('username-input'), 'alice');
+    await act(async () => fireEvent.press(byId('username-check')));
+    expect(byId('username-verdict')).toHaveTextContent('@alice is already taken');
+    fireEvent.changeText(byId('username-input'), 'alice2');
+    expect(screen.queryByTestId('username-verdict')).toBeNull();
+
+    fakeEngine.method('dpns.check').mockRejectedValueOnce(new Error('Request timeout'));
+    await act(async () => fireEvent.press(byId('username-check')));
+    expect(byId('username-check-failed')).toBeTruthy();
+    expect(screen.queryByText(/already taken/)).toBeNull();
+  });
+
+  it('says what a contested name costs before it is registered', async () => {
+    fakeEngine.method('dpns.registration').mockResolvedValue('native');
+    fakeEngine.method('dpns.check').mockResolvedValue(free('bob', { contested: true, contestFundCredits: 10_000_000_000n }));
+    renderScreen(<UsernameScreen />);
+    await settle();
+    fireEvent.changeText(byId('username-input'), 'bob');
+    await act(async () => fireEvent.press(byId('username-check')));
+    expect(byId('username-contested')).toHaveTextContent(/at least 0\.1 DASH/);
+    expect(byId('username-register')).toHaveTextContent('Register and join the vote');
+  });
+
+  it('a wallet sign-in registers in the wallet, and reads its names again', async () => {
+    fakeEngine.method('dpns.registration').mockResolvedValue('wallet');
+    fakeEngine.method('dpns.refreshUsernames').mockResolvedValue(undefined);
+    useSessionStore.setState({ session: { ...alice, username: null, method: 'app-connect' } });
+    renderScreen(<UsernameScreen />);
+    await settle();
+    expect(byId('username-wallet')).toHaveTextContent(/in your Dash wallet/);
+    expect(screen.queryByTestId('username-input')).toBeNull();
+    await act(async () => fireEvent.press(byId('username-wallet-refresh')));
+    expect(fakeEngine.method('dpns.refreshUsernames')).toHaveBeenCalled();
+    expect(toastMessage()).toBe('No username yet. It can take a minute to show up.');
+    // The name shows up: done.
+    act(() => useSessionStore.setState({ session: { ...alice, method: 'app-connect' } }));
+    await settle();
+    expect(router.back).toHaveBeenCalled();
+  });
+
+  it('asks a signed-out visitor to sign in', async () => {
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+    renderScreen(<UsernameScreen />);
+    await settle();
+    fireEvent.press(screen.getByText('Sign in'));
+    expect(router.push).toHaveBeenCalledWith('/sign-in');
   });
 });

@@ -1521,7 +1521,9 @@ describe('BlockListsScreen', () => {
     expect(screen.getByTestId(`block-list-${AUTHORS.carol.id}`)).toHaveTextContent('Saving…');
     act(() => fakeEngine.emit('write.status', advance(use, { state: 'confirmed', stage: null })));
     await settle();
+    // Kept as changed: no re-read that a lagging node could answer with the old list.
     expect(screen.getByTestId(`block-list-${AUTHORS.carol.id}`)).toHaveTextContent('Using list');
+    expect(fakeEngine.method('safety.blockListChoices')).toHaveBeenCalledTimes(1);
   });
 
   it('puts the list back with a toast when the change fails', async () => {
@@ -1556,6 +1558,8 @@ describe('BlockListsScreen', () => {
     queryClient.clear();
 
     fakeEngine.method('safety.blockListChoices').mockRejectedValue(new Error('Network down'));
+    // No retries with backoff here: the first failure shows.
+    queryClient.setQueryDefaults(queryKeys.blockListChoices, { retry: false });
     withProviders(<BlockListsScreen />);
     await settle();
     expect(screen.getByTestId('block-lists-error')).toBeTruthy();
