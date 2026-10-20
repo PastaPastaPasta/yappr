@@ -15,6 +15,7 @@ import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { KeyboardAvoider } from '~/ui/KeyboardAvoider';
+import { LinkText } from '~/ui/LinkText';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
@@ -28,16 +29,15 @@ const copy = {
   intro: "It's how people find and mention you.",
   label: 'Username',
   placeholder: 'yourname',
-  check: 'Check availability',
   checking: 'Checking…',
-  available: (name: string) => `@${name} is available`,
-  taken: (name: string) => `@${name} is already taken`,
-  checkFailed: "Couldn't check that name. Try again.",
-  contested: (fund: string) =>
-    `Names under 20 characters made only of letters, hyphens, 0 and 1 go to a masternode vote. Registering joins it and pays at least ${fund} from your balance into its fund.`,
-  register: 'Register username',
-  registerContested: 'Register and join the vote',
-  registering: 'Registering…',
+  available: 'Available',
+  taken: 'Already taken',
+  checkFailed: "Couldn't check this name.",
+  retry: 'Try again',
+  // Only where a name costs real money: short names go to a vote with a fee.
+  contested: (fund: string) => `Short names like this go to a community vote and cost ${fund}.`,
+  claim: (name: string) => (name ? `Claim @${name}` : 'Claim username'),
+  registering: 'Claiming…',
   registered: (name: string) => `@${name} is yours`,
   joinedVote: (name: string) => `You've joined the vote for @${name}. It's yours if the vote picks you.`,
   failed: "Couldn't register that username. Try again.",
@@ -75,113 +75,127 @@ const registerWrite: WriteSpec<RegisterVars> = {
   },
 };
 
-/** The name checked, the check in flight, or the check's failure; reset by any edit. */
-type Check = { label: string; result: DpnsAvailabilityDTO } | 'checking' | 'failed' | null;
+/** How long typing pauses before the name is checked. */
+const CHECK_DELAY_MS = 400;
+
+type CheckState = { label: string; result: DpnsAvailabilityDTO } | { label: string; failed: true };
+
+/**
+ * The typed name's availability, checked as typing pauses (X/Bluesky handle
+ * pickers). Null while there is nothing to say, 'checking' until the answer
+ * for exactly this name arrives; a failed read is its own state, never "taken".
+ * `again` changes to check the same name once more.
+ */
+function useNameCheck(typed: string, again: number): DpnsAvailabilityDTO | 'checking' | 'failed' | null {
+  const [state, setState] = useState<CheckState | null>(null);
+  useEffect(() => {
+    if (!typed) return undefined;
+    let current = true;
+    const timer = setTimeout(() => {
+      engine.api.dpns
+        .check(typed)
+        .then((result) => {
+          if (current) setState({ label: typed, result });
+        })
+        .catch((error: unknown) => {
+          appendLog('info', 'host', `Username check failed: ${errorMessage(error)}`);
+          if (current) setState({ label: typed, failed: true });
+        });
+    }, CHECK_DELAY_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [typed, again]);
+  if (!typed) return null;
+  if (state?.label !== typed) return 'checking';
+  return 'failed' in state ? 'failed' : state.result;
+}
 
 function NativeRegistration({ viewerId }: { viewerId: string }) {
   const [label, setLabel] = useState('');
-  const [check, setCheck] = useState<Check>(null);
+  const [again, setAgain] = useState(0);
   const write = useWrite(registerWrite);
   const registering = useLandingIntent(`dpns:${viewerId}`) !== undefined;
   const typed = label.trim().toLowerCase().replace(/^@/, '').replace(/\.dash$/, '');
-  const result = check !== null && typeof check === 'object' && check.label === typed ? check.result : null;
+  const check = useNameCheck(typed, again);
+  const result = check !== null && typeof check === 'object' ? check : null;
+  const claimable = result?.available === true;
 
-  const runCheck = () => {
-    if (!typed) return;
-    setCheck('checking');
-    engine.api.dpns
-      .check(typed)
-      .then((answer) => setCheck({ label: typed, result: answer }))
-      .catch((error: unknown) => {
-        appendLog('info', 'host', `Username check failed: ${errorMessage(error)}`);
-        setCheck('failed');
-      });
-  };
   const register = () => {
     if (!result?.available || registering) return;
     write.run({ viewerId, label: result.label, contested: result.contestFundCredits !== null }).catch(() => undefined);
   };
   // Confirmed: back to where the user came from (the toast says what happened). Refused (taken
-  // meanwhile, a contest the balance can't pay): the old verdict no longer holds, so check again.
+  // meanwhile, a contest the balance can't pay): the old answer no longer holds, so check again.
   const confirmed = write.status === 'confirmed';
   useEffect(() => {
     if (confirmed && router.canGoBack()) router.back();
   }, [confirmed]);
   const failedTicket = write.status === 'failed' ? (write.ticket?.id ?? null) : null;
-  const [clearedFor, setClearedFor] = useState<string | null>(null);
-  if (failedTicket !== null && failedTicket !== clearedFor) {
-    setClearedFor(failedTicket);
-    setCheck(null);
+  const [checkedAfter, setCheckedAfter] = useState<string | null>(null);
+  if (failedTicket !== null && failedTicket !== checkedAfter) {
+    setCheckedAfter(failedTicket);
+    setAgain((n) => n + 1);
   }
 
-  let registerLabel = copy.register;
-  if (registering) registerLabel = copy.registering;
-  else if (result !== null && result.contestFundCredits !== null) registerLabel = copy.registerContested;
-
-  let verdict = null;
-  if (check === 'failed') {
-    verdict = (
-      <Text variant="subhead" tone="error" testID="username-check-failed">
-        {copy.checkFailed}
+  let status = null;
+  if (check === 'checking') {
+    status = (
+      <Text variant="subhead" tone="secondary">
+        {copy.checking}
       </Text>
     );
-  } else if (result) {
-    const fund = result.contestFundCredits;
-    verdict = (
-      <View className="gap-2" accessibilityLiveRegion="polite" testID="username-verdict">
-        <Text variant="bodyStrong" tone={result.available ? 'primary' : 'error'}>
-          {result.invalid ?? (result.available ? copy.available(result.label) : copy.taken(result.label))}
+  } else if (check === 'failed') {
+    status = (
+      <View className="flex-row flex-wrap items-center gap-x-1">
+        <Text variant="subhead" tone="error">
+          {copy.checkFailed}
         </Text>
-        {result.available && fund !== null ? (
-          <Text variant="subhead" tone="secondary" testID="username-contested">
-            {copy.contested(formatDash(fund))}
-          </Text>
-        ) : null}
+        <LinkText label={copy.retry} onPress={() => setAgain((n) => n + 1)} testID="username-check-retry" />
       </View>
+    );
+  } else if (result) {
+    status = (
+      <Text variant="subhead" tone={claimable ? 'repost' : 'error'}>
+        {result.invalid ?? (claimable ? copy.available : copy.taken)}
+      </Text>
     );
   }
 
   return (
-    <View className="gap-4">
+    <View className="gap-3">
       <TextField
         label={copy.label}
         value={label}
-        onChangeText={(text) => {
-          setLabel(text);
-          if (check === 'failed') setCheck(null);
-        }}
+        onChangeText={setLabel}
         autoCapitalize="none"
         autoCorrect={false}
         autoComplete="off"
+        autoFocus
         maxLength={63}
         editable={!registering}
         placeholder={copy.placeholder}
-        returnKeyType="search"
-        onSubmitEditing={runCheck}
+        returnKeyType="done"
+        onSubmitEditing={register}
         testID="username-input"
       />
-      {result?.available ? null : (
-        <Button
-          label={check === 'checking' ? copy.checking : copy.check}
-          size="block"
-          variant="outline"
-          loading={check === 'checking'}
-          disabled={!typed || check === 'checking'}
-          onPress={runCheck}
-          testID="username-check"
-        />
-      )}
-      {verdict}
-      {result?.available ? (
-        <Button
-          label={registerLabel}
-          size="block"
-          loading={registering}
-          disabled={registering}
-          onPress={register}
-          testID="username-register"
-        />
+      <View className="min-h-5" accessibilityLiveRegion="polite" testID="username-status">
+        {status}
+      </View>
+      {claimable && result.contestFundCredits !== null ? (
+        <Text variant="subhead" tone="secondary" testID="username-contested">
+          {copy.contested(formatDash(result.contestFundCredits))}
+        </Text>
       ) : null}
+      <Button
+        label={registering ? copy.registering : copy.claim(claimable ? result.label : '')}
+        size="block"
+        loading={registering}
+        disabled={!claimable || registering}
+        onPress={register}
+        testID="username-register"
+      />
     </View>
   );
 }

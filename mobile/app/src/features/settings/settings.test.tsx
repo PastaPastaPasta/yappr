@@ -893,7 +893,15 @@ describe('Choose a username (AUTH-15)', () => {
     label, available: true, contested: false, contestFundCredits: null, invalid: null, ...extra,
   });
 
-  it('checks a name, registers it here, and goes back once it is confirmed', async () => {
+  /** Types a name and lets the check that runs as typing pauses answer. */
+  async function typeName(name: string) {
+    fireEvent.changeText(byId('username-input'), name);
+    const label = name.toLowerCase();
+    await waitFor(() => expect(fakeEngine.method('dpns.check')).toHaveBeenCalledWith(label), { timeout: 2000 });
+    await settle();
+  }
+
+  it('checks the name as it is typed, claims it here, and goes back once it is confirmed', async () => {
     fakeEngine.method('dpns.registration').mockResolvedValue('native');
     fakeEngine.method('dpns.check').mockResolvedValue(free('newname'));
     const pending = ticket({ op: 'dpns.register', target: { identityId: ALICE } });
@@ -901,47 +909,49 @@ describe('Choose a username (AUTH-15)', () => {
     renderScreen(<UsernameScreen />);
     await settle();
 
-    expect(screen.queryByTestId('username-register')).toBeNull();
+    // Nothing to claim yet: the button waits in place.
+    expect(byId('username-register')).toBeDisabled();
     fireEvent.changeText(byId('username-input'), 'NewName');
-    await act(async () => fireEvent.press(byId('username-check')));
-    expect(fakeEngine.method('dpns.check')).toHaveBeenCalledWith('newname');
-    expect(byId('username-verdict')).toHaveTextContent('@newname is available');
+    expect(byId('username-status')).toHaveTextContent('Checking…');
+    await typeName('NewName');
+    expect(byId('username-status')).toHaveTextContent('Available');
+    expect(byId('username-register')).toHaveTextContent('Claim @newname');
+    expect(screen.queryByTestId('username-contested')).toBeNull();
 
     await act(async () => fireEvent.press(byId('username-register')));
     expect(fakeEngine.method('dpns.register')).toHaveBeenCalledWith('newname');
-    expect(byId('username-register')).toHaveTextContent('Registering…');
+    expect(byId('username-register')).toHaveTextContent('Claiming…');
     act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed', stage: null })));
     await settle();
     expect(toastMessage()).toBe('@newname is yours');
     expect(router.back).toHaveBeenCalled();
   });
 
-  it('forgets a check once the name is edited, and never calls a failed check "taken"', async () => {
+  it('says a name is taken, and never calls a failed check "taken"', async () => {
     fakeEngine.method('dpns.registration').mockResolvedValue('native');
     fakeEngine.method('dpns.check').mockResolvedValueOnce(free('alice', { available: false }));
     renderScreen(<UsernameScreen />);
     await settle();
-    fireEvent.changeText(byId('username-input'), 'alice');
-    await act(async () => fireEvent.press(byId('username-check')));
-    expect(byId('username-verdict')).toHaveTextContent('@alice is already taken');
-    fireEvent.changeText(byId('username-input'), 'alice2');
-    expect(screen.queryByTestId('username-verdict')).toBeNull();
+    await typeName('alice');
+    expect(byId('username-status')).toHaveTextContent('Already taken');
+    expect(byId('username-register')).toBeDisabled();
 
     fakeEngine.method('dpns.check').mockRejectedValueOnce(new Error('Request timeout'));
-    await act(async () => fireEvent.press(byId('username-check')));
-    expect(byId('username-check-failed')).toBeTruthy();
-    expect(screen.queryByText(/already taken/)).toBeNull();
+    await typeName('alice2');
+    expect(byId('username-status')).toHaveTextContent(/^Couldn't check this name\./);
+    expect(screen.queryByText(/taken/)).toBeNull();
+    fakeEngine.method('dpns.check').mockResolvedValueOnce(free('alice2'));
+    fireEvent.press(byId('username-check-retry'));
+    await waitFor(() => expect(byId('username-status')).toHaveTextContent('Available'), { timeout: 2000 });
   });
 
-  it('says what a contested name costs before it is registered', async () => {
+  it('says what a contested name costs before it is claimed', async () => {
     fakeEngine.method('dpns.registration').mockResolvedValue('native');
     fakeEngine.method('dpns.check').mockResolvedValue(free('bob', { contested: true, contestFundCredits: 10_000_000_000n }));
     renderScreen(<UsernameScreen />);
     await settle();
-    fireEvent.changeText(byId('username-input'), 'bob');
-    await act(async () => fireEvent.press(byId('username-check')));
-    expect(byId('username-contested')).toHaveTextContent(/at least 0\.1 DASH/);
-    expect(byId('username-register')).toHaveTextContent('Register and join the vote');
+    await typeName('bob');
+    expect(byId('username-contested')).toHaveTextContent('Short names like this go to a community vote and cost 0.1 DASH.');
 
     // Landing only joins the vote: the name is not theirs yet.
     const pending = ticket({ op: 'dpns.register', target: { identityId: ALICE } });
@@ -952,16 +962,16 @@ describe('Choose a username (AUTH-15)', () => {
     expect(toastMessage()).toBe("You've joined the vote for @bob. It's yours if the vote picks you.");
   });
 
-  it('drops the verdict when the registration is refused, so the name is checked again', async () => {
+  it('checks the name again when the claim is refused', async () => {
     fakeEngine.method('dpns.registration').mockResolvedValue('native');
-    fakeEngine.method('dpns.check').mockResolvedValue(free('newname'));
+    fakeEngine.method('dpns.check').mockResolvedValueOnce(free('newname'));
     const pending = ticket({ op: 'dpns.register', target: { identityId: ALICE } });
     fakeEngine.method('dpns.register').mockResolvedValue(pending);
     renderScreen(<UsernameScreen />);
     await settle();
-    fireEvent.changeText(byId('username-input'), 'newname');
-    await act(async () => fireEvent.press(byId('username-check')));
+    await typeName('newname');
     await act(async () => fireEvent.press(byId('username-register')));
+    fakeEngine.method('dpns.check').mockResolvedValueOnce(free('newname', { available: false }));
     const userMessage = 'newname is already taken.';
     act(() =>
       fakeEngine.emit(
@@ -971,8 +981,8 @@ describe('Choose a username (AUTH-15)', () => {
     );
     await settle();
     expect(toastMessage()).toBe(userMessage);
-    expect(screen.queryByTestId('username-register')).toBeNull();
-    expect(byId('username-check')).toBeTruthy();
+    await waitFor(() => expect(byId('username-status')).toHaveTextContent('Already taken'), { timeout: 2000 });
+    expect(byId('username-register')).toBeDisabled();
   });
 
   it('a wallet sign-in registers in the wallet, and reads its names again', async () => {
