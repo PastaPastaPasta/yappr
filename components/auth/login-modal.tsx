@@ -62,7 +62,7 @@ function Disclosure({
       <button
         type="button"
         aria-expanded={open}
-        aria-controls={id}
+        aria-controls={open ? id : undefined}
         onClick={onToggle}
         className={`w-full flex items-center ${centered ? 'justify-center gap-1' : 'justify-between'} text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500`}
       >
@@ -116,6 +116,11 @@ export function LoginModal() {
   const walletAvailable = walletSignInAvailable()
   const phraseAvailable = walletAvailable && recoveryPhraseOffered(getConfiguredNetwork())
   const [showWallet, setShowWallet] = useState(false)
+  /** A passkey whose wallet sign-in ran out shows its own wallet renewal: the main wallet button steps aside. */
+  const [renewing, setRenewing] = useState(false)
+  const walletButton = useRef<HTMLButtonElement>(null)
+  const backButton = useRef<HTMLButtonElement>(null)
+  const switchedView = useRef(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [advanced, setAdvanced] = useState<AdvancedSection | null>(null)
   const toggleAdvanced = (section: AdvancedSection) => setAdvanced((current) => (current === section ? null : section))
@@ -124,9 +129,23 @@ export function LoginModal() {
   useEffect(() => {
     if (isOpen) return
     setShowWallet(false)
+    setRenewing(false)
     setShowAdvanced(false)
     setAdvanced(null)
+    switchedView.current = false
   }, [isOpen])
+
+  // Switching between the options and the wallet view keeps keyboard focus on the matching control.
+  useEffect(() => {
+    if (!switchedView.current) return
+    const target = showWallet ? backButton.current : walletButton.current
+    target?.focus()
+  }, [showWallet])
+
+  const switchView = (wallet: boolean) => {
+    switchedView.current = true
+    setShowWallet(wallet)
+  }
 
   const handleClose = useCallback(() => {
     close()
@@ -144,11 +163,13 @@ export function LoginModal() {
   const walletOptions = (
     <div data-testid="sign-in-options">
       <div className="flex flex-col gap-3">
-        <Button type="button" size="lg" className="w-full gap-2" onClick={() => setShowWallet(true)}>
-          <Wallet aria-hidden="true" className="w-5 h-5" />
-          Sign in with your Dash wallet
-        </Button>
-        <PasskeySignIn onComplete={close} secondary />
+        {!renewing && (
+          <Button ref={walletButton} type="button" size="lg" className="w-full gap-2" onClick={() => switchView(true)}>
+            <Wallet aria-hidden="true" className="w-5 h-5" />
+            Sign in with your Dash wallet
+          </Button>
+        )}
+        <PasskeySignIn onComplete={close} onRenewalChange={setRenewing} secondary />
       </div>
 
       <div className="mt-4">
@@ -194,8 +215,9 @@ export function LoginModal() {
   const walletView = (
     <div>
       <button
+        ref={backButton}
         type="button"
-        onClick={() => setShowWallet(false)}
+        onClick={() => switchView(false)}
         className="mb-4 -ml-1 flex items-center gap-1 rounded-md py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
       >
         <ChevronLeft aria-hidden="true" className="w-4 h-4" />
@@ -263,7 +285,7 @@ export function LoginModal() {
                 </h1>
                 </Dialog.Title>
                 <Dialog.Description className="sr-only">
-                  {walletAvailable ? 'Sign in with your Dash wallet or a passkey.' : 'Sign in with a passkey or a private key.'}
+                  Choose how to sign in.
                 </Dialog.Description>
               </div>
 

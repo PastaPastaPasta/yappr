@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { KeyIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
@@ -20,13 +20,24 @@ import { RENEW_COPY, signInErrorCopy } from './passkey-copy'
  *
  * `secondary`: an outlined button under the wallet option, with no "or"
  * divider; otherwise the main button above the private-key form.
+ * `onRenewalChange` hears when the wallet renewal shows and goes.
  */
-export function PasskeySignIn({ onComplete, secondary = false }: { onComplete: () => void; secondary?: boolean }) {
+export function PasskeySignIn({
+  onComplete,
+  onRenewalChange,
+  secondary = false,
+}: {
+  onComplete: () => void
+  onRenewalChange?: (renewing: boolean) => void
+  secondary?: boolean
+}) {
   const { loginWithPasskey, loginWithAppConnect } = useAuth()
   const offered = usePasskeysOffered()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [renewal, setRenewal] = useState<PasskeyRenewal | null>(null)
+
+  useEffect(() => onRenewalChange?.(renewal !== null), [onRenewalChange, renewal])
 
   const signIn = useCallback(() => {
     setBusy(true)
