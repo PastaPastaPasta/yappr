@@ -37,10 +37,15 @@ interface ReviewLike {
 }
 
 /** A store's or a product's reviews. */
-export function ReviewsSection({ reviews }: { reviews: readonly ReviewLike[] | undefined }) {
+export function ReviewsSection({ reviews, failed = false, onRetry }: { reviews: readonly ReviewLike[] | undefined; failed?: boolean; onRetry?: () => void }) {
   return (
     <Section title="Reviews">
-      {(reviews ?? []).length === 0 ? <Text tone="secondary">No reviews yet.</Text> : null}
+      {failed && !reviews ? (
+        <View className="flex-row items-center justify-between">
+          <Text tone="secondary">Reviews couldn&apos;t be loaded.</Text>
+          {onRetry ? <Button size="sm" variant="ghost" label="Try again" onPress={onRetry} /> : null}
+        </View>
+      ) : (reviews ?? []).length === 0 ? <Text tone="secondary">No reviews yet.</Text> : null}
       {reviews?.map((review) => (
         <View key={review.id} className="gap-1 border-b border-gray-200 py-3 dark:border-gray-800">
           <Stars rating={review.rating} />

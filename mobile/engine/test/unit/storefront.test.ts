@@ -211,12 +211,24 @@ describe('placing an order', () => {
 
   it('finds an order whose call threw after signing, and empties the cart then', async () => {
     m.order.createOrder.mockRejectedValue(new Error('Gateway timeout'))
-    m.order.getBuyerOrders.mockResolvedValue({ orders: [{ id: ORDER, storeId: STORE, createdAt: new Date() }] })
+    // The attempt's own order: the nonce it encrypted with.
+    m.order.getBuyerOrders.mockImplementation(async () => ({
+      orders: [{ id: ORDER, storeId: STORE, createdAt: new Date(), nonce: m.order.encryptOrderPayload.mock.calls[0][3] as Uint8Array }],
+    }))
     const e = engine()
     const ticket = await settled(e.tickets, await e.store.placeOrder({ storeId: STORE, shipTo: address, paymentUri: 'dash:yXdashAddress', reviewed: reviewed() }))
     expect(ticket.state).toBe('confirmed')
     expect(ticket.documents).toEqual([expect.objectContaining({ id: ORDER, type: 'storeOrder' })])
     expect(m.removeStoreItems).toHaveBeenCalledWith(STORE)
+  })
+
+  it('never takes another recent order to the same store for this attempt', async () => {
+    m.order.createOrder.mockRejectedValue(new Error('Gateway timeout'))
+    m.order.getBuyerOrders.mockResolvedValue({ orders: [{ id: id('Earlier'), storeId: STORE, createdAt: new Date(), nonce: new Uint8Array(24).fill(9) }] })
+    const e = engine()
+    const ticket = await settled(e.tickets, await e.store.placeOrder({ storeId: STORE, shipTo: address, paymentUri: 'dash:yXdashAddress', reviewed: reviewed() }))
+    expect(ticket.state).not.toBe('confirmed')
+    expect(m.removeStoreItems).not.toHaveBeenCalled()
   })
 
   it('sends nothing when the encryption fails before signing', async () => {

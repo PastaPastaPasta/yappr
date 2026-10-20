@@ -16,19 +16,21 @@ const MAX_OPTION_ID = 254;
 const combinationId = (optionIds: readonly number[]) => [...optionIds].sort((a, b) => a - b).join('.');
 
 /**
- * `variants` with an axis's options set from `names`: options keep their ids
- * by name, new ones take fresh ids, and the combinations are the full grid,
- * each keeping its price, stock and SKU when it existed before.
+ * `variants` with its axes set from the editor's rows. An option keeps its id
+ * by position (the n-th choice of the n-th option row), so renaming one keeps
+ * every combination, cart line and kit target that names it; new choices take
+ * fresh ids, never reused. Combinations are the full grid, each keeping its
+ * price, stock and SKU when it existed before.
  */
 export function withAxes(variants: ItemVariants, axes: { name: string; options: string[] }[], defaultPrice: number): ItemVariants {
   let next = variants.nextOptionId;
-  const known = new Map(variants.axes.flatMap((axis) => axis.options.map((option) => [`${axis.name.trim().toLowerCase()}|${option.name.trim().toLowerCase()}`, option.id] as const)));
   const built = axes
-    .filter((axis) => axis.name.trim() && axis.options.some((name) => name.trim()))
-    .map((axis) => ({
+    .map((axis, axisIndex) => ({ axis, before: variants.axes[axisIndex] }))
+    .filter(({ axis }) => axis.name.trim() && axis.options.some((name) => name.trim()))
+    .map(({ axis, before }) => ({
       name: axis.name.trim(),
-      options: [...new Set(axis.options.map((name) => name.trim()).filter(Boolean))].map((name) => {
-        const id = known.get(`${axis.name.trim().toLowerCase()}|${name.toLowerCase()}`);
+      options: axis.options.map((name) => name.trim()).filter(Boolean).map((name, optionIndex) => {
+        const id = before?.options[optionIndex]?.id;
         if (id !== undefined) return { id, name };
         if (next > MAX_OPTION_ID) throw new Error('This product has used up its option ids. Create a new product for more options.');
         return { id: next++, name };
@@ -53,6 +55,7 @@ export const emptyVariants = (): ItemVariants => ({ axes: [], combinations: [], 
 export function VariantEditor({ variants, currency, defaultPrice, onChange }: { variants: ItemVariants; currency: string; defaultPrice: number; onChange: (next: ItemVariants) => void }) {
   const [draft, setDraft] = useState(() => variants.axes.map((axis) => ({ name: axis.name, options: axis.options.map((option) => option.name).join(', ') })));
   const [error, setError] = useState<string | null>(null);
+  // Applied when a field is left, not per keystroke: a choice briefly erased mid-edit must not lose its combinations.
   const apply = (rows: typeof draft) => {
     setDraft(rows);
     try {
@@ -71,8 +74,8 @@ export function VariantEditor({ variants, currency, defaultPrice, onChange }: { 
     <View className="gap-3" testID="variant-editor">
       {draft.map((row, index) => (
         <Card key={index} className="gap-2 p-3">
-          <TextField label="Option name" value={row.name} placeholder="Size" onChangeText={(name) => apply(patchAt(draft, index, { name }))} testID={`variant-axis-${index}`} />
-          <TextField label="Choices, separated by commas" value={row.options} placeholder="S, M, L" onChangeText={(options) => apply(patchAt(draft, index, { options }))} testID={`variant-options-${index}`} />
+          <TextField label="Option name" value={row.name} placeholder="Size" onChangeText={(name) => setDraft(patchAt(draft, index, { name }))} onEndEditing={() => apply(draft)} testID={`variant-axis-${index}`} />
+          <TextField label="Choices, separated by commas" value={row.options} placeholder="S, M, L" onChangeText={(options) => setDraft(patchAt(draft, index, { options }))} onEndEditing={() => apply(draft)} testID={`variant-options-${index}`} />
           <Button size="sm" variant="ghost" label="Remove option" onPress={() => apply(draft.filter((_, i) => i !== index))} />
         </Card>
       ))}

@@ -4,7 +4,7 @@ import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Pressable, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
-import { useEngineQuery } from '~/data/queries';
+import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
 import { requireAuth } from '~/data/require-auth';
 import { Button } from '~/ui/Button';
 import { Card } from '~/ui/Card';
@@ -84,7 +84,10 @@ function ItemCard({ item, currency }: { item: StoreItem; currency?: string }) {
 export function StoreScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const detail = useEngineQuery(queryKeys.store.page(id), (api) => api.store.detail(id));
-  const items = useEngineQuery(queryKeys.store.items(id), (api) => api.store.items({ storeId: id, activeOnly: true, limit: 50 }), { persist: true });
+  const items = useEngineInfiniteQuery(queryKeys.store.items(id), async (api, cursor) => {
+    const page = await api.store.items({ storeId: id, activeOnly: true, limit: 50, cursor: cursor ?? undefined });
+    return { items: page.items, cursor: page.nextCursor ?? null, hasMore: page.items.length === 50 && Boolean(page.nextCursor) };
+  });
   const reviews = useEngineQuery(queryKeys.store.reviews(id), (api) => api.store.reviews(id));
   const refreshControl = useRefreshControl(() => Promise.all([detail.refetch(), items.refetch(), reviews.refetch()]));
   const value = detail.data?.store;
@@ -106,7 +109,8 @@ export function StoreScreen() {
 
   const footer = (
     <View className="px-4 pb-12">
-      <ReviewsSection reviews={reviews.data?.reviews} />
+      {items.hasNextPage ? <Button className="mt-2" variant="outline" label="Show more products" loading={items.isFetchingNextPage} onPress={() => items.fetchNextPage()} /> : null}
+      <ReviewsSection reviews={reviews.data?.reviews} failed={reviews.isError} onRetry={() => reviews.refetch()} />
       {value ? <ReportLink target={{ docType: 'store', targetId: value.id, ownerId: value.ownerId }} noun="store" /> : null}
     </View>
   );
@@ -116,13 +120,15 @@ export function StoreScreen() {
     <Screen>
       <Stack.Screen options={{ title: value?.name ?? 'Store' }} />
       <FlashList
-        data={items.data?.items ?? []}
+        data={items.items}
         keyExtractor={(item) => item.id}
         refreshControl={refreshControl}
         ListHeaderComponent={header}
         ListFooterComponent={footer}
         renderItem={({ item }) => <ItemCard item={item} currency={value?.defaultCurrency} />}
-        ListEmptyComponent={items.isPending ? <Loading /> : <Text className="px-4" tone="secondary">No products are available right now.</Text>}
+        ListEmptyComponent={items.isPending ? <Loading /> : items.isError ? (
+          <ErrorState message="Products couldn't be loaded." onRetry={() => items.refetch()} retrying={items.isRetrying} />
+        ) : <Text className="px-4" tone="secondary">No products are available right now.</Text>}
       />
     </Screen>
   );

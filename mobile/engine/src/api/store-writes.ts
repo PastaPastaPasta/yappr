@@ -141,8 +141,9 @@ function storeData(fields: StoreFields) {
     location: fields.location?.trim() || undefined,
     policies: policies?.length ? serializeStorePolicies(policies) : undefined,
     paymentUris: fields.paymentUris ? paymentUrisOf(fields.paymentUris) : undefined,
-    logoUrl: fields.logoUrl?.trim() || undefined,
-    bannerUrl: fields.bannerUrl?.trim() || undefined,
+    // Only what the editor sends: an omitted key keeps the stored value (updateStore clears a key given as undefined).
+    ...('logoUrl' in fields ? { logoUrl: fields.logoUrl?.trim() || undefined } : {}),
+    ...('bannerUrl' in fields ? { bannerUrl: fields.bannerUrl?.trim() || undefined } : {}),
     ...(category ? { category } : {}),
   }
 }
@@ -182,7 +183,8 @@ function zoneData(fields: ZoneFields) {
   return {
     name: fields.name.trim(),
     countryPattern: country && country !== '*' ? country : undefined,
-    postalPatterns: fields.postalPatterns?.map(pattern => pattern.trim()).filter(Boolean),
+    // Kept as stored unless the editor sends them (updateZone clears a key given as undefined).
+    ...('postalPatterns' in fields ? { postalPatterns: fields.postalPatterns?.map(pattern => pattern.trim()).filter(Boolean) } : {}),
     rateType: fields.rateType,
     flatRate: fields.flatRate,
     tiers: fields.tiers,
@@ -319,6 +321,13 @@ export function createStoreWrites(tickets: TicketStore) {
       for (const [index, item] of rated.entries()) {
         ctx.progress(index + 1, 1 + rated.length)
         try {
+          // A retry after a later item failed: an item review that landed already is never written twice.
+          const prior = (await itemReviewService.getItemReviews(item.itemId, { limit: 50 }).catch(() => ({ reviews: [] }))).reviews
+            .find(review => review.orderId === order.id && review.reviewerId === buyer)
+          if (prior) {
+            documents.push(storefrontDoc(STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW, prior.id, 'create', true))
+            continue
+          }
           const itemReview = await itemReviewService.createItemReview(buyer, { storeId: order.storeId, itemId: item.itemId, orderId: order.id, rating: item.rating })
           const doc = storefrontDoc(STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW, itemReview.id, 'create', wasConfirmed(itemReview))
           documents.push(doc)

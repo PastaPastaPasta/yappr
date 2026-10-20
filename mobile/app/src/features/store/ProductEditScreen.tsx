@@ -55,7 +55,11 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
   const [status, setStatus] = useState<EditableStatus>(!item || item.status === 'deleted' ? 'active' : item.status);
   const [digital, setDigital] = useState(item?.fulfillment === 'digital');
   const [zones, setZones] = useState<string[] | null>(item?.shippingZoneIds?.length ? item.shippingZoneIds : null);
-  const [withOptions, setWithOptions] = useState(Boolean(item?.variants?.combinations.length));
+  // The listing's revision when this draft was made: the save is refused if it moved since (another editor).
+  const [revision] = useState(item?.$revision);
+  // A saved options table keeps its option ids for carts, orders and kits: it can be edited, not removed here.
+  const [savedOptions] = useState(Boolean(item?.variants?.combinations.length));
+  const [withOptions, setWithOptions] = useState(savedOptions);
   const [variants, setVariants] = useState<ItemVariants>(item?.variants ?? emptyVariants());
 
   useEffect(() => {
@@ -68,7 +72,7 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
   const submit = () => {
     save.run({
       storeId: store.id,
-      ...(item ? { itemId: item.id, revision: item.$revision } : {}),
+      ...(item ? { itemId: item.id, revision } : {}),
       fields: {
         title, description, currency, status, sku,
         basePrice: amount === undefined ? undefined : toSmallestUnit(amount, currency),
@@ -77,7 +81,7 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
         imageUrls: images.split(/\s+/).filter(Boolean),
         fulfillment: digital ? 'digital' : 'shipped',
         shippingZoneIds: digital ? undefined : zones ?? undefined,
-        ...(withOptions || item?.variants ? { variants: withOptions ? variants : emptyVariants() } : {}),
+        ...(withOptions ? { variants } : {}),
       },
     }).catch(() => undefined);
   };
@@ -130,8 +134,8 @@ function ProductForm({ manage, store, item }: { manage: StoreManageDTO; store: S
         </Section>
 
         <Section title="Options">
-          <SwitchRow label="This product has options" description="Sizes, colors and the like, each with its own price and stock." value={withOptions} onValueChange={setWithOptions} testID="product-options" />
-          {withOptions ? <VariantEditor variants={variants} currency={currency} defaultPrice={amount === undefined ? 0 : toSmallestUnit(amount, currency)} onChange={setVariants} /> : null}
+          {savedOptions ? null : <SwitchRow label="This product has options" description="Sizes, colors and the like, each with its own price and stock." value={withOptions} onValueChange={setWithOptions} testID="product-options" />}
+          {withOptions ? <VariantEditor variants={variants} currency={currency} defaultPrice={amount === undefined ? variants.combinations[0]?.price ?? 0 : toSmallestUnit(amount, currency)} onChange={setVariants} /> : null}
         </Section>
 
         {save.status === 'unconfirmed' ? <Notice tone="warning" text="Saved, awaiting network confirmation." /> : null}

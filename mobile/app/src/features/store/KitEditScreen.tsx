@@ -50,7 +50,9 @@ export function KitEditScreen() {
   return <KitForm itemId={itemId} initial={loaded?.kit ?? EMPTY} revision={loaded?.revision ?? null} />;
 }
 
-function KitForm({ itemId, initial, revision }: { itemId: string; initial: KitDTO; revision: number | null }) {
+function KitForm({ itemId, initial, revision: loadedRevision }: { itemId: string; initial: KitDTO; revision: number | null }) {
+  // The revision this draft was read at, frozen with it: a refetch must never pair the old pool with a newer revision.
+  const [revision] = useState(loadedRevision);
   const [kit, setKit] = useState<KitDTO>(initial);
   const [keysText, setKeysText] = useState((initial.licenseKeys ?? []).join('\n'));
   const [saving, setSaving] = useState(false);

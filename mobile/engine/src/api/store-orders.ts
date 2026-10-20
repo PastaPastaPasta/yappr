@@ -629,11 +629,21 @@ function kitFrom(input: KitDTO, stored: ItemDeliverablePayload | undefined): Ite
  * buyer back), readiness, then the order encrypted to the seller and placed.
  * Every refusal before the write is BAD_REQUEST with web's copy.
  */
-async function placeOrder(buyer: string, input: PlaceOrderInput, ctx: { stage(): void; documents(docs: TicketDocument[]): void }) {
+/**
+ * The nonce of each order attempt this engine is placing, by ticket id: the
+ * probe recognises the attempt's own order by it (an order's nonce is random
+ * per attempt). After a restart it is gone, and the probe proves nothing.
+ */
+const orderNonces = new Map<string, Uint8Array>()
+
+const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((byte, index) => byte === b[index])
+
+async function placeOrder(buyer: string, input: PlaceOrderInput, ctx: { ticketId: string; stage(): void; documents(docs: TicketDocument[]): void }) {
   // Everything before the write sends nothing: any failure there (a read, the encryption) is not-sent and retryable.
   const prepared = await prepareOrder(buyer, input).catch((error: unknown) => {
     throw error instanceof NotSentError ? error : new NotSentError(readFailure(error))
   })
+  orderNonces.set(ctx.ticketId, prepared.nonce)
   ctx.stage()
   let created: StoreOrder
   try {
@@ -711,11 +721,11 @@ async function prepareOrder(buyer: string, input: PlaceOrderInput) {
  */
 async function orderProbe(ticket: WriteTicket, input: PlaceOrderInput | undefined, kit: ProbeKit): Promise<ProbeResult> {
   if (ticket.documents.length > 0) return kit.proveDocuments(ticket.documents)
-  if (!ticket.identityId || !input?.storeId) return { state: 'unknown', error: new Error('Nothing to check: this order named no document') }
+  const nonce = orderNonces.get(ticket.id)
+  if (!ticket.identityId || !input?.storeId || !nonce) return { state: 'unknown', error: new Error('Nothing to check: this order named no document') }
   try {
     const { orders } = await storeOrderService.getBuyerOrders(ticket.identityId, { limit: 10 })
-    const since = ticket.createdAt.getTime() - 60_000
-    const placed = orders.find(order => order.storeId === input.storeId && order.createdAt.getTime() >= since)
+    const placed = orders.find(order => order.storeId === input.storeId && sameBytes(order.nonce, nonce))
     if (!placed) return { state: 'unknown', error: new Error('The order is not visible yet') }
     cartService.removeStoreItems(input.storeId)
     return { state: 'applied', documents: [storefrontDoc(STOREFRONT_DOCUMENT_TYPES.STORE_ORDER, placed.id, 'create', true)] }
@@ -792,7 +802,7 @@ export function createOrderModule(tickets: TicketStore) {
       // Validation reads come first: none of them sends anything.
       ctx.stage('queued', true)
       try {
-        const confirmed = await placeOrder(buyer, input, { stage: () => ctx.stage('signing'), documents: docs => ctx.documents(docs) })
+        const confirmed = await placeOrder(buyer, input, { ticketId: ctx.ticket.id, stage: () => ctx.stage('signing'), documents: docs => ctx.documents(docs) })
         return { state: confirmed ? 'confirmed' : 'unconfirmed' }
       } catch (error) {
         if (error instanceof NotSentError) throw error
