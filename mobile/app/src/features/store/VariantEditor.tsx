@@ -8,6 +8,8 @@ import { Card } from '~/ui/Card';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
+import { patchAt } from './parts';
+
 /** The contract's option ids run 1–254 and are never reused (`ItemVariants.nextOptionId`). */
 const MAX_OPTION_ID = 254;
 
@@ -69,8 +71,8 @@ export function VariantEditor({ variants, currency, defaultPrice, onChange }: { 
     <View className="gap-3" testID="variant-editor">
       {draft.map((row, index) => (
         <Card key={index} className="gap-2 p-3">
-          <TextField label="Option name" value={row.name} placeholder="Size" onChangeText={(name) => apply(draft.map((r, i) => (i === index ? { ...r, name } : r)))} testID={`variant-axis-${index}`} />
-          <TextField label="Choices, separated by commas" value={row.options} placeholder="S, M, L" onChangeText={(options) => apply(draft.map((r, i) => (i === index ? { ...r, options } : r)))} testID={`variant-options-${index}`} />
+          <TextField label="Option name" value={row.name} placeholder="Size" onChangeText={(name) => apply(patchAt(draft, index, { name }))} testID={`variant-axis-${index}`} />
+          <TextField label="Choices, separated by commas" value={row.options} placeholder="S, M, L" onChangeText={(options) => apply(patchAt(draft, index, { options }))} testID={`variant-options-${index}`} />
           <Button size="sm" variant="ghost" label="Remove option" onPress={() => apply(draft.filter((_, i) => i !== index))} />
         </Card>
       ))}

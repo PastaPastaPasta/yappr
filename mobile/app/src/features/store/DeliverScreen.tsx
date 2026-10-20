@@ -17,7 +17,7 @@ import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
 
-import { Loading, Notice, Section } from './parts';
+import { errorText, Loading, Notice, Section } from './parts';
 
 type Extra = NonNullable<DeliverInput['extras']>[string][number];
 
@@ -63,7 +63,7 @@ export function DeliverScreen() {
         const cutShort = ['ENGINE_TIMEOUT', 'ENGINE_RESTARTED'].includes(errorCode(error) ?? '');
         Alert.alert(
           cutShort ? 'Still delivering?' : 'Not delivered',
-          cutShort ? 'This is taking longer than expected. The delivery may still go out: check the order before sending again.' : error instanceof Error ? error.message : "Couldn't deliver this order.",
+          cutShort ? 'This is taking longer than expected. The delivery may still go out: check the order before sending again.' : errorText(error, "Couldn't deliver this order."),
         );
         plan.refetch().catch(() => undefined);
       })

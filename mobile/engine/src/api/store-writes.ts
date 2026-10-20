@@ -205,11 +205,11 @@ function beforeSigning(error: unknown): never {
 function revisionProbe(type: string) {
   return async (ticket: WriteTicket, args: { id?: string; revision?: number } | undefined, kit: ProbeKit): Promise<ProbeResult> => {
     if (!args?.id || args.revision === undefined) return kit.proveDocuments(ticket.documents)
+    const { id, revision: editedFrom } = args
     const read = async () => {
       const sdk = await getEvoSdk()
-      const document = await sdk.documents.get(YAPPR_STOREFRONT_CONTRACT_ID, type, args.id as string) as { revision?: unknown; $revision?: unknown } | null
-      const revision = Number((document as { revision?: unknown } | null)?.revision ?? (document as { $revision?: unknown } | null)?.$revision ?? 0)
-      return revision > (args.revision as number)
+      const document = await sdk.documents.get(YAPPR_STOREFRONT_CONTRACT_ID, type, id) as { revision?: unknown; $revision?: unknown } | null
+      return Number(document?.revision ?? document?.$revision ?? 0) > editedFrom
     }
     try {
       if (await read()) return { state: 'applied' }
@@ -218,6 +218,15 @@ function revisionProbe(type: string) {
     } catch (error) {
       return { state: 'unknown', error }
     }
+  }
+}
+
+/** Input checks run before anything is signed: a refusal there is a failed ticket that sent nothing. */
+function checkedBeforeSending<T>(check: () => T): T {
+  try {
+    return check()
+  } catch (error) {
+    throw new NotSentError(error)
   }
 }
 
@@ -232,11 +241,13 @@ function created(type: string, document: { id: string } | null, ctx: { documents
 interface UpdateArgs { id?: string; revision?: number }
 
 export function createStoreWrites(tickets: TicketStore) {
+  const zoneRevisionProbe = revisionProbe(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE)
+
   tickets.register<StoreSaveInput & UpdateArgs>('store.save', {
     persistArgs: true,
     async run(input, ctx) {
       const owner = signer(ctx)
-      const data = (() => { try { return storeData(input.fields) } catch (error) { throw new NotSentError(error) } })()
+      const data = checkedBeforeSending(() => storeData(input.fields))
       if (!input.storeId) {
         if (await storeService.getByOwner(owner).catch(() => null)) throw new NotSentError(badRequest('You already have a store'))
         return created(STOREFRONT_DOCUMENT_TYPES.STORE, await storeService.createStore(owner, data).catch(beforeSigning), ctx)
@@ -255,7 +266,7 @@ export function createStoreWrites(tickets: TicketStore) {
         await storeItemService.archiveItem(input.itemId, owner, input.storeId).catch(beforeSigning)
         return { state: 'confirmed' }
       }
-      const data = (() => { try { return itemData(input.fields as ItemFields) } catch (error) { throw new NotSentError(error) } })()
+      const data = checkedBeforeSending(() => itemData(input.fields as ItemFields))
       if (!input.itemId) return created(STOREFRONT_DOCUMENT_TYPES.STORE_ITEM, await storeItemService.createItem(owner, input.storeId, data).catch(beforeSigning), ctx)
       await storeItemService.updateItem(input.itemId, owner, input.storeId, data, input.revision).catch(beforeSigning)
       return { state: 'confirmed' }
@@ -276,12 +287,12 @@ export function createStoreWrites(tickets: TicketStore) {
         if (proof.state === 'applied') return { state: 'confirmed' }
         return proof.state === 'not-applied' ? { state: 'failed', error: new Error('The zone could not be deleted') } : { state: 'unconfirmed' }
       }
-      const data = (() => { try { return zoneData(input.fields as ZoneFields) } catch (error) { throw new NotSentError(error) } })()
+      const data = checkedBeforeSending(() => zoneData(input.fields as ZoneFields))
       if (!input.zoneId) return created(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE, await shippingZoneService.createZone(owner, input.storeId, data).catch(beforeSigning), ctx)
       await shippingZoneService.updateZone(input.zoneId, owner, input.storeId, data).catch(beforeSigning)
       return { state: 'confirmed' }
     },
-    probe: async (ticket, args, kit) => (args?.delete ? kit.proveDocuments(ticket.documents) : revisionProbe(STOREFRONT_DOCUMENT_TYPES.SHIPPING_ZONE)(ticket, args, kit)),
+    probe: async (ticket, args, kit) => (args?.delete ? kit.proveDocuments(ticket.documents) : zoneRevisionProbe(ticket, args, kit)),
   })
 
   tickets.register<ReviewInput>('store.review', {

@@ -12,7 +12,7 @@ import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 
-import { Loading, price, Section, Stars, useRefreshControl } from './parts';
+import { Loading, price, ReviewsSection, Stars, useRefreshControl } from './parts';
 import { ReportLink } from './StoreReportScreen';
 
 /** Cart, orders and the seller's own store, from the directory's header. */
@@ -106,17 +106,7 @@ export function StoreScreen() {
 
   const footer = (
     <View className="px-4 pb-12">
-      <Section title="Reviews">
-        {(reviews.data?.reviews ?? []).length === 0 ? <Text tone="secondary">No reviews yet.</Text> : null}
-        {reviews.data?.reviews.map((review) => (
-          <View key={review.id} className="gap-1 border-b border-gray-200 py-3 dark:border-gray-800">
-            <Stars rating={review.rating} />
-            {review.title ? <Text variant="bodyStrong">{review.title}</Text> : null}
-            {review.content ? <Text>{review.content}</Text> : null}
-            <Text variant="caption" tone="secondary">{review.createdAt.toLocaleDateString()}</Text>
-          </View>
-        ))}
-      </Section>
+      <ReviewsSection reviews={reviews.data?.reviews} />
       {value ? <ReportLink target={{ docType: 'store', targetId: value.id, ownerId: value.ownerId }} noun="store" /> : null}
     </View>
   );

@@ -119,7 +119,7 @@ export interface StoreDetailDTO {
 
 const cap = (value: number | undefined, fallback = 20) => Math.max(1, Math.min(50, Math.trunc(value ?? fallback)))
 
-export function cartLineDTO(line: CartItem): CartLineDTO {
+function cartLineDTO(line: CartItem): CartLineDTO {
   return {
     key: cartLineKey(line),
     itemId: line.itemId,

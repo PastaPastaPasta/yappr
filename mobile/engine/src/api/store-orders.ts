@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger'
 import { STOREFRONT_DOCUMENT_TYPES, storefrontStatusIsSealed, storefrontSupportsDigital } from '@/lib/constants'
 import { sellerOrderDeliveryKey } from '@/lib/crypto/digital-delivery'
-import { cartLineKey, cartService } from '@/lib/services/cart-service'
+import { cartLineKey, cartService, getCartCurrency } from '@/lib/services/cart-service'
 import {
   deliveredFor, deliveryCompletesOrder, digitalLines, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, isSafeDeliveryUrl, kitDeliveryFitError,
   lineCoverage, lineProblems, MAX_CODE_LENGTH, MAX_DELIVERY_MESSAGE_LENGTH, normalizeLinkInput, planBlockers, planDelivery, wholeOrderProblems,
@@ -228,6 +228,9 @@ export interface DeliveredFileDTO {
 
 /** The largest delivered file the app saves (the bridge carries it whole, as base64). */
 const MAX_SAVED_FILE_BYTES = 25 * 1024 * 1024
+const FILE_TOO_LARGE_MESSAGE = 'This file is too large to save on a phone. Save it from a computer instead.'
+const UNLOCK_MESSAGE = 'Unlock your encryption key on this device first.'
+const NO_KEY_FOR_DELIVERY = 'No key on this device to decrypt the delivery'
 
 /** Encryption keys of sellers, fetched once per engine. */
 const sellerKeys = new Map<string, Uint8Array>()
@@ -306,6 +309,22 @@ async function readOrder(orderId: string): Promise<StoreOrder> {
   return order
 }
 
+/** What the buyer's and the seller's views of an order share. `key`: the viewer's encryption key on this device. */
+function orderBase(order: StoreOrder, payload: OrderPayload | null, key: Uint8Array | null, status: OrderStatusUpdate | undefined, deliveries: DeliveryDTO[]): OrderBaseDTO {
+  return {
+    id: order.id,
+    storeId: order.storeId,
+    sellerId: order.sellerId,
+    buyerId: order.buyerId,
+    createdAt: order.createdAt,
+    payload,
+    locked: !key,
+    status: statusDTO(status),
+    digital: storefrontSupportsDigital() && hasDigitalLines(payload ?? undefined),
+    deliveries,
+  }
+}
+
 /** The seller's view of a page of orders (web `/orders/seller` `loadOrdersPage`). */
 async function sellerOrders(seller: string, orders: StoreOrder[]): Promise<SellerOrderDTO[]> {
   const key = getEncryptionKeyBytes(seller)
@@ -335,7 +354,7 @@ async function sellerOrders(seller: string, orders: StoreOrder[]): Promise<Selle
     ? [new Map<string, OrderDelivery[]>(), new Map<string, SellerKit>(), new Map<string, ItemListing>()]
     : await Promise.all([
         orderDeliveryService.loadDecrypted(digitalOrders, (delivery, order) => {
-          if (!key) throw new Error('No key on this device to decrypt the delivery')
+          if (!key) throw new Error(NO_KEY_FOR_DELIVERY)
           return orderDeliveryService.decryptAsSeller(delivery, order, key)
         }).catch((error: unknown) => {
           logger.error('Failed to load order deliveries:', error)
@@ -349,21 +368,13 @@ async function sellerOrders(seller: string, orders: StoreOrder[]): Promise<Selle
 
   return orders.map(order => {
     const payload = payloads.get(order.id) ?? null
-    const digital = storefrontSupportsDigital() && hasDigitalLines(payload ?? undefined)
     const orderDeliveries = deliveries.get(order.id) ?? []
-    const uncertain = digital && (deliveriesFailed || statusesFailed)
     const status = statuses.get(order.id)
+    const base = orderBase(order, payload, key, status, orderDeliveries.map(deliveryDTO))
+    const { digital } = base
+    const uncertain = digital && (deliveriesFailed || statusesFailed)
     return {
-      id: order.id,
-      storeId: order.storeId,
-      sellerId: order.sellerId,
-      buyerId: order.buyerId,
-      createdAt: order.createdAt,
-      payload,
-      locked: !key,
-      status: statusDTO(status),
-      digital,
-      deliveries: orderDeliveries.map(deliveryDTO),
+      ...base,
       buyerName: names.get(order.buyerId) ?? null,
       paymentUrl: payload?.txid ? getPaymentVerificationUrl(payload.txid, payload.paymentUri) : null,
       uncertain,
@@ -409,7 +420,7 @@ async function buyerOrders(buyer: string, orders: StoreOrder[]): Promise<BuyerOr
       const sellerKey = keys.get(order.sellerId)
       deliveries.set(order.id, (forBuyer.get(order.id) ?? []).map(delivery => {
         try {
-          if (!key || !sellerKey) throw new Error('No key on this device to decrypt the delivery')
+          if (!key || !sellerKey) throw new Error(NO_KEY_FOR_DELIVERY)
           return deliveryDTO({ ...delivery, payload: orderDeliveryService.decryptAsBuyer(delivery, order, key, sellerKey) })
         } catch {
           return deliveryDTO(delivery)
@@ -418,23 +429,11 @@ async function buyerOrders(buyer: string, orders: StoreOrder[]): Promise<BuyerOr
     }
   }
 
-  return orders.map(order => {
-    const payload = payloads.get(order.id) ?? null
-    return {
-      id: order.id,
-      storeId: order.storeId,
-      sellerId: order.sellerId,
-      buyerId: order.buyerId,
-      createdAt: order.createdAt,
-      payload,
-      locked: !key,
-      status: statusDTO(statuses.get(order.id)),
-      digital: storefrontSupportsDigital() && hasDigitalLines(payload ?? undefined),
-      deliveries: deliveries.get(order.id) ?? [],
-      storeName: names.get(order.storeId) ?? null,
-      reviewed: reviews.has(order.id),
-    }
-  })
+  return orders.map(order => ({
+    ...orderBase(order, payloads.get(order.id) ?? null, key, statuses.get(order.id), deliveries.get(order.id) ?? []),
+    storeName: names.get(order.storeId) ?? null,
+    reviewed: reviews.has(order.id),
+  }))
 }
 
 /**
@@ -447,8 +446,6 @@ function sellerKeyOrThrow(seller: string): Uint8Array {
   if (!key) throw badRequest(UNLOCK_MESSAGE)
   return key
 }
-
-const UNLOCK_MESSAGE = 'Unlock your encryption key on this device first.'
 
 /** A refusal before a ticket's write, as the failed ticket's own sentence (classify keeps only BAD_REQUEST's). */
 const refusedBefore = (error: unknown): NotSentError =>
@@ -497,12 +494,17 @@ async function deliveryState(seller: string, orderId: string, key: Uint8Array): 
 /** Deliveries this engine sent that may not show on chain yet, per order (`withHeldDeliveries`). */
 const heldDeliveries = new Map<string, OrderDelivery[]>()
 
+function assetSummary(asset: DigitalAsset): string {
+  switch (asset.kind) {
+    case 'file': return `File: ${asset.name}`
+    case 'link': return `Link: ${asset.label}`
+    case 'code': return `Code: ${asset.label}`
+  }
+}
+
 function kitContents(kit: ItemDeliverablePayload | undefined): string[] {
   if (!kit) return []
-  return [
-    ...kit.assets.map(asset => (asset.kind === 'file' ? `File: ${asset.name}` : asset.kind === 'link' ? `Link: ${asset.label}` : `Code: ${asset.label}`)),
-    ...(kit.instructions ? ['Instructions'] : []),
-  ]
+  return [...kit.assets.map(assetSummary), ...(kit.instructions ? ['Instructions'] : [])]
 }
 
 const LINK_PROBLEM = 'Links must start with https://, http://, magnet: or ipfs://. Send any other kind of address as a code.'
@@ -601,6 +603,9 @@ function kitDTO(kit: ItemDeliverablePayload): KitDTO {
   }
 }
 
+/** The kit document's revision (null: no kit yet), as `KitReadDTO.revision` carries it and a save is checked against. */
+const kitRevision = (stored: SellerKit | undefined): number | null => (stored ? stored.deliverable.$revision ?? 0 : null)
+
 /** The kit `input` describes, keeping the stored kit's files (and their variant targets) as they are. */
 function kitFrom(input: KitDTO, stored: ItemDeliverablePayload | undefined): ItemDeliverablePayload {
   const trim = (value: string | undefined) => value?.trim() ?? ''
@@ -658,8 +663,8 @@ async function prepareOrder(buyer: string, input: PlaceOrderInput) {
   if (lines.some(line => reviewed.get(cartLineKey(line))?.digital !== (line.fulfillment === 'digital'))) throw notSent(FULFILLMENT_CHANGED_MESSAGE)
   const unavailable = availability.filter(result => result.reason)
   if (unavailable.length > 0) throw notSent(unavailable.map(result => `${result.item.title}: ${result.reason}`).join(' '))
-  const currency = lines.length > 0 ? lines[0].currency || 'USD' : 'USD'
-  if (lines.some(line => (line.currency || 'USD') !== currency)) throw notSent('Your cart mixes currencies for this store. Remove some items to continue.')
+  const currency = getCartCurrency(lines)
+  if (!currency) throw notSent('Your cart mixes currencies for this store. Remove some items to continue.')
 
   const digitalOnly = lines.every(line => line.fulfillment === 'digital')
   const shipTo = input.shipTo && !digitalOnly ? cleanAddress(input.shipTo) : undefined
@@ -718,7 +723,6 @@ async function orderProbe(ticket: WriteTicket, input: PlaceOrderInput | undefine
     return { state: 'unknown', error }
   }
 }
-
 
 /** Orders a delivery is running for in this engine: a second one for any of them waits for nothing, it is refused. */
 const delivering = new Set<string>()
@@ -809,9 +813,9 @@ export function createOrderModule(tickets: TicketStore) {
       const seller = signer(ctx)
       ctx.stage('queued', true)
       const order = await sellerOrder(seller, input.orderId).catch((error: unknown) => { throw refusedBefore(error) })
-      const hasNote = Boolean(input.trackingNumber || input.trackingCarrier || input.message)
-      const key = storefrontStatusIsSealed() && hasNote ? getEncryptionKeyBytes(seller) : null
-      if (storefrontStatusIsSealed() && hasNote && !key) throw new NotSentError(badRequest('Unlock your encryption key to add tracking or a message.'))
+      const sealedNote = storefrontStatusIsSealed() && Boolean(input.trackingNumber || input.trackingCarrier || input.message)
+      const key = sealedNote ? getEncryptionKeyBytes(seller) : null
+      if (sealedNote && !key) throw new NotSentError(badRequest('Unlock your encryption key to add tracking or a message.'))
       ctx.stage('signing')
       let update: OrderStatusUpdate
       try {
@@ -913,10 +917,10 @@ export function createOrderModule(tickets: TicketStore) {
       }
       const asset = delivery?.payload?.items[input.itemIndex]?.assets[input.assetIndex]
       if (!asset || asset.kind !== 'file') throw badRequest('This file could not be found in the delivery')
-      if (asset.size > MAX_SAVED_FILE_BYTES) throw badRequest('This file is too large to save on a phone. Save it from a computer instead.')
+      if (asset.size > MAX_SAVED_FILE_BYTES) throw badRequest(FILE_TOO_LARGE_MESSAGE)
       const blob = await fetchDecryptedFile(asset)
       // The declared size is the seller's word: the bytes decide.
-      if (blob.size > MAX_SAVED_FILE_BYTES) throw badRequest('This file is too large to save on a phone. Save it from a computer instead.')
+      if (blob.size > MAX_SAVED_FILE_BYTES) throw badRequest(FILE_TOO_LARGE_MESSAGE)
       return { name: asset.name, base64: bytesToBase64(new Uint8Array(await blob.arrayBuffer())) }
     },
 
@@ -926,7 +930,7 @@ export function createOrderModule(tickets: TicketStore) {
       const key = getEncryptionKeyBytes(seller)
       if (!key) return { locked: true }
       const stored = (await itemDeliverableService.loadKits([itemId], key).catch((error: unknown) => { throw readFailure(error) })).get(itemId)
-      return { locked: false, kit: stored ? kitDTO(stored.kit) : null, revision: stored ? stored.deliverable.$revision ?? 0 : null }
+      return { locked: false, kit: stored ? kitDTO(stored.kit) : null, revision: kitRevision(stored) }
     },
   }
 
@@ -989,7 +993,7 @@ export function createOrderModule(tickets: TicketStore) {
       const item = await storeItemService.getById(itemId).catch((error: unknown) => { throw readFailure(error) })
       if (!item || item.ownerId !== seller) throw new RpcError('This product is not yours', 'NOT_OWNER')
       const stored = (await itemDeliverableService.loadKits([itemId], key).catch((error: unknown) => { throw readFailure(error) })).get(itemId)
-      if ((stored ? stored.deliverable.$revision ?? 0 : null) !== revision) throw badRequest(KIT_MOVED)
+      if (kitRevision(stored) !== revision) throw badRequest(KIT_MOVED)
       const kit = kitFrom(input, stored?.kit)
       const fit = kitDeliveryFitError(kit)
       if (fit) throw badRequest(fit)

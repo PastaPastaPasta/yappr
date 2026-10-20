@@ -18,7 +18,7 @@ import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
 
-import { Loading, Notice, Section } from './parts';
+import { errorText, Loading, Notice, patchAt, Section } from './parts';
 
 const EMPTY: KitDTO = { instructions: '', files: [], links: [], codes: [], licenseKeys: null, deliverWhen: 'payment_confirmed' };
 
@@ -67,7 +67,7 @@ function KitForm({ itemId, initial, revision }: { itemId: string; initial: KitDT
         toast.success('Delivery content saved');
         router.back();
       })
-      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Couldn't save the delivery content."))
+      .catch((error: unknown) => toast.error(errorText(error, "Couldn't save the delivery content.")))
       .finally(() => setSaving(false));
   };
 
@@ -91,9 +91,9 @@ function KitForm({ itemId, initial, revision }: { itemId: string; initial: KitDT
         <Section title="Links" right={<Button size="sm" variant="ghost" label="Add" testID="kit-add-link" onPress={() => update({ links: [...kit.links, { label: '', url: '' }] })} />}>
           {kit.links.map((link, index) => (
             <Card key={index} className="gap-2 p-3">
-              <TextField label="Label" value={link.label} onChangeText={(label) => update({ links: kit.links.map((l, i) => (i === index ? { ...l, label } : l)) })} testID={`kit-link-label-${index}`} />
-              <TextField label="URL" value={link.url} onChangeText={(url) => update({ links: kit.links.map((l, i) => (i === index ? { ...l, url } : l)) })} autoCapitalize="none" autoCorrect={false} keyboardType="url" testID={`kit-link-url-${index}`} />
-              <TextField label="Access code (optional)" value={link.code ?? ''} onChangeText={(code) => update({ links: kit.links.map((l, i) => (i === index ? { ...l, code } : l)) })} autoCapitalize="none" autoCorrect={false} />
+              <TextField label="Label" value={link.label} onChangeText={(label) => update({ links: patchAt(kit.links, index, { label }) })} testID={`kit-link-label-${index}`} />
+              <TextField label="URL" value={link.url} onChangeText={(url) => update({ links: patchAt(kit.links, index, { url }) })} autoCapitalize="none" autoCorrect={false} keyboardType="url" testID={`kit-link-url-${index}`} />
+              <TextField label="Access code (optional)" value={link.code ?? ''} onChangeText={(code) => update({ links: patchAt(kit.links, index, { code }) })} autoCapitalize="none" autoCorrect={false} />
               <Button size="sm" variant="ghost" label="Remove link" onPress={() => update({ links: kit.links.filter((_, i) => i !== index) })} />
             </Card>
           ))}
@@ -102,8 +102,8 @@ function KitForm({ itemId, initial, revision }: { itemId: string; initial: KitDT
           <Text tone="secondary">The same code for every buyer (a password, a voucher).</Text>
           {kit.codes.map((code, index) => (
             <Card key={index} className="gap-2 p-3">
-              <TextField label="Label" value={code.label} onChangeText={(label) => update({ codes: kit.codes.map((c, i) => (i === index ? { ...c, label } : c)) })} />
-              <TextField label="Code" value={code.code} onChangeText={(value) => update({ codes: kit.codes.map((c, i) => (i === index ? { ...c, code: value } : c)) })} autoCapitalize="none" autoCorrect={false} />
+              <TextField label="Label" value={code.label} onChangeText={(label) => update({ codes: patchAt(kit.codes, index, { label }) })} />
+              <TextField label="Code" value={code.code} onChangeText={(value) => update({ codes: patchAt(kit.codes, index, { code: value }) })} autoCapitalize="none" autoCorrect={false} />
               <Button size="sm" variant="ghost" label="Remove code" onPress={() => update({ codes: kit.codes.filter((_, i) => i !== index) })} />
             </Card>
           ))}

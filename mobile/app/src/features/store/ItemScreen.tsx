@@ -17,7 +17,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 
-import { Loading, price, Section, Stars } from './parts';
+import { errorText, Loading, price, ReviewsSection, Section, Stars } from './parts';
 import { ReportLink } from './StoreReportScreen';
 
 /** The combination with exactly these options, one per axis (`variantIdOf`: ids sorted, joined with "."). */
@@ -59,7 +59,7 @@ export function ItemScreen() {
           queryClient.setQueryData(queryKeys.store.cart(), cart);
           toast.success('Added to cart', { action: { label: 'View cart', onPress: () => router.push('/cart') } });
         })
-        .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Couldn't add this to your cart."))
+        .catch((error: unknown) => toast.error(errorText(error, "Couldn't add this to your cart.")))
         .finally(() => setAdding(false));
     });
 
@@ -135,16 +135,7 @@ export function ItemScreen() {
           </View>
         )}
 
-        <Section title="Reviews">
-          {(reviews.data?.reviews ?? []).length === 0 ? <Text tone="secondary">No reviews yet.</Text> : null}
-          {reviews.data?.reviews.map((review) => (
-            <View key={review.id} className="gap-1 border-b border-gray-200 py-3 dark:border-gray-800">
-              <Stars rating={review.rating} />
-              {review.content ? <Text>{review.content}</Text> : null}
-              <Text variant="caption" tone="secondary">{review.createdAt.toLocaleDateString()}</Text>
-            </View>
-          ))}
-        </Section>
+        <ReviewsSection reviews={reviews.data?.reviews} />
         {!own ? <ReportLink target={{ docType: 'storeItem', targetId: value.id, ownerId: value.ownerId }} noun="product" /> : null}
       </ScrollView>
     </Screen>

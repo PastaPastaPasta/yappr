@@ -8,13 +8,12 @@ import { useEngineQuery } from '~/data/queries';
 import { useWrite } from '~/data/writes';
 import { Button } from '~/ui/Button';
 import { Card } from '~/ui/Card';
-import { ErrorState } from '~/ui/EmptyState';
 import { RadioGroup } from '~/ui/RadioGroup';
 import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { Loading, Notice, Section } from './parts';
+import { ManageUnavailable, Notice, patchAt, Section } from './parts';
 import { saveStoreWrite } from './store-writes';
 
 const STATUSES: { value: StoreStatus; title: string; description: string }[] = [
@@ -27,7 +26,7 @@ const STATUSES: { value: StoreStatus; title: string; description: string }[] = [
 export function StoreEditScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const manage = useEngineQuery(queryKeys.store.manage(), (api) => api.store.manage());
-  if (!manage.data) return <Screen>{manage.isError ? <ErrorState message="Your store couldn't be loaded." onRetry={() => manage.refetch()} retrying={manage.isRetrying} /> : <Loading />}</Screen>;
+  if (!manage.data) return <ManageUnavailable failed={manage.isError} retrying={manage.isRetrying} onRetry={() => manage.refetch()} />;
   return <StoreForm manage={manage.data} edit={Boolean(id)} />;
 }
 
@@ -99,8 +98,8 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
           {policies.length === 0 ? <Text tone="secondary">Returns, shipping times, refunds: buyers agree to these at checkout.</Text> : null}
           {policies.map((policy, index) => (
             <Card key={index} className="gap-2 p-3">
-              <TextField label="Policy" value={policy.name} onChangeText={(text) => setPolicies((list) => list.map((p, i) => (i === index ? { ...p, name: text } : p)))} placeholder="Return policy" />
-              <TextField label="Details" value={policy.content} onChangeText={(text) => setPolicies((list) => list.map((p, i) => (i === index ? { ...p, content: text } : p)))} multiline />
+              <TextField label="Policy" value={policy.name} onChangeText={(text) => setPolicies((list) => patchAt(list, index, { name: text }))} placeholder="Return policy" />
+              <TextField label="Details" value={policy.content} onChangeText={(text) => setPolicies((list) => patchAt(list, index, { content: text }))} multiline />
               <Button size="sm" variant="ghost" label="Remove policy" onPress={() => setPolicies((list) => list.filter((_, i) => i !== index))} />
             </Card>
           ))}

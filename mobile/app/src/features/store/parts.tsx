@@ -10,6 +10,8 @@ import { formatPrice } from '~/lib-allowlist';
 import { engine } from '~/engine';
 import { Button } from '~/ui/Button';
 import { Card } from '~/ui/Card';
+import { ErrorState } from '~/ui/EmptyState';
+import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { safeExternalUrl } from '~/ui/media-url';
@@ -17,6 +19,39 @@ import { toast } from '~/ui/toast';
 
 /** A price in its currency's smallest unit. */
 export const price = (amount: number, currency = 'USD') => formatPrice(amount, currency);
+
+/** The engine's own sentence for a refused call (it words its BAD_REQUESTs for the user), else `fallback`. */
+export const errorText = (error: unknown, fallback: string): string => (error instanceof Error ? error.message : fallback);
+
+/** `list` with the entry at `index` changed by `patch`: how the editors update one row of a list in state. */
+export function patchAt<T extends object>(list: readonly T[], index: number, patch: Partial<T>): T[] {
+  return list.map((entry, i) => (i === index ? { ...entry, ...patch } : entry));
+}
+
+interface ReviewLike {
+  id: string;
+  rating: number;
+  title?: string;
+  content?: string;
+  createdAt: Date;
+}
+
+/** A store's or a product's reviews. */
+export function ReviewsSection({ reviews }: { reviews: readonly ReviewLike[] | undefined }) {
+  return (
+    <Section title="Reviews">
+      {(reviews ?? []).length === 0 ? <Text tone="secondary">No reviews yet.</Text> : null}
+      {reviews?.map((review) => (
+        <View key={review.id} className="gap-1 border-b border-gray-200 py-3 dark:border-gray-800">
+          <Stars rating={review.rating} />
+          {review.title ? <Text variant="bodyStrong">{review.title}</Text> : null}
+          {review.content ? <Text>{review.content}</Text> : null}
+          <Text variant="caption" tone="secondary">{review.createdAt.toLocaleDateString()}</Text>
+        </View>
+      ))}
+    </Section>
+  );
+}
 
 export function Section({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
   return (
@@ -202,7 +237,7 @@ function SaveFile({ orderId, deliveryId, itemIndex, assetIndex, name, size }: { 
         target.write(file.base64, { encoding: 'base64' });
         await Sharing.shareAsync(target.uri, { dialogTitle: file.name });
       })
-      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Couldn't save this file."))
+      .catch((error: unknown) => toast.error(errorText(error, "Couldn't save this file.")))
       .finally(() => setBusy(false));
   };
   return (
@@ -246,7 +281,7 @@ export function DeliveryList({ orderId, deliveries, testID }: { orderId: string;
                 return <SaveFile key={key} orderId={orderId} deliveryId={delivery.id} itemIndex={index} assetIndex={assetIndex} name={asset.name} size={asset.size} />;
               })}
               {item.licenseKeys?.map((code, keyIndex) => (
-                <CopyRow key={`${key(delivery.id, index)}-${keyIndex}`} label={`Code ${keyIndex + 1}`} value={code} testID={`delivered-code-${keyIndex}`} />
+                <CopyRow key={`${delivery.id}-${index}-key-${keyIndex}`} label={`Code ${keyIndex + 1}`} value={code} testID={`delivered-code-${keyIndex}`} />
               ))}
               {item.instructions ? <Text tone="secondary">{item.instructions}</Text> : null}
             </View>
@@ -256,8 +291,6 @@ export function DeliveryList({ orderId, deliveries, testID }: { orderId: string;
     </View>
   );
 }
-
-const key = (deliveryId: string, index: number) => `${deliveryId}-${index}-key`;
 
 export function AddressBlock({ address }: { address: NonNullable<OrderPayload['shippingAddress']> }) {
   return (
@@ -286,5 +319,14 @@ export function Loading() {
     <View className="items-center justify-center p-8" testID="store-loading">
       <Spinner size="md" />
     </View>
+  );
+}
+
+/** What the seller's editors show until `store.manage()` has answered: a spinner, or the failure with a retry. */
+export function ManageUnavailable({ failed, retrying, onRetry }: { failed: boolean; retrying?: boolean; onRetry: () => void }) {
+  return (
+    <Screen>
+      {failed ? <ErrorState message="Your store couldn't be loaded." onRetry={onRetry} retrying={retrying} /> : <Loading />}
+    </Screen>
   );
 }

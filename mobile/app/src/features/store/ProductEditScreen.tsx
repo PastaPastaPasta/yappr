@@ -15,7 +15,7 @@ import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { Loading, Notice, Section } from './parts';
+import { ManageUnavailable, Notice, Section } from './parts';
 import { saveItemWrite } from './store-writes';
 import { AmountField, emptyVariants, VariantEditor } from './VariantEditor';
 
@@ -33,7 +33,7 @@ export function ProductEditScreen() {
   const manage = useEngineQuery(queryKeys.store.manage(), (api) => api.store.manage());
   const store = manage.data?.store ?? null;
   const item = id ? manage.data?.items.find((candidate) => candidate.id === id) ?? null : null;
-  if (!manage.data) return <Screen>{manage.isError ? <ErrorState message="Your store couldn't be loaded." onRetry={() => manage.refetch()} retrying={manage.isRetrying} /> : <Loading />}</Screen>;
+  if (!manage.data) return <ManageUnavailable failed={manage.isError} retrying={manage.isRetrying} onRetry={() => manage.refetch()} />;
   if (!store) return <Screen><ErrorState title="No store yet" message="Create your store before adding products." /></Screen>;
   if (id && !item) return <Screen><ErrorState title="Product not found" message="It may have been removed." /></Screen>;
   return <ProductForm manage={manage.data} store={store} item={item} />;

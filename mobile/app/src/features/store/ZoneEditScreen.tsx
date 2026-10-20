@@ -16,7 +16,7 @@ import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { Loading, Notice, Section } from './parts';
+import { ManageUnavailable, Notice, patchAt, Section } from './parts';
 import { saveZoneWrite } from './store-writes';
 import { AmountField } from './VariantEditor';
 
@@ -29,7 +29,7 @@ export function ZoneEditScreen() {
   const manage = useEngineQuery(queryKeys.store.manage(), (api) => api.store.manage());
   const store = manage.data?.store ?? null;
   const zone = id ? manage.data?.zones.find((candidate) => candidate.id === id) ?? null : null;
-  if (!manage.data) return <Screen>{manage.isError ? <ErrorState message="Your store couldn't be loaded." onRetry={() => manage.refetch()} retrying={manage.isRetrying} /> : <Loading />}</Screen>;
+  if (!manage.data) return <ManageUnavailable failed={manage.isError} retrying={manage.isRetrying} onRetry={() => manage.refetch()} />;
   if (!store) return <Screen><ErrorState title="No store yet" message="Create your store first." /></Screen>;
   if (id && !zone) return <Screen><ErrorState title="Zone not found" message="It may have been deleted." /></Screen>;
   return <ZoneForm store={store} zone={zone} />;
@@ -112,8 +112,8 @@ function ZoneForm({ store, zone }: { store: Store; zone: ShippingZone | null }) 
           <Text tone="secondary">Charge a share of the rate by order total: 0 % above $100 is free shipping over $100.</Text>
           {multipliers.map((m, index) => (
             <Card key={index} className="flex-row items-end gap-2 p-3">
-              <View className="flex-1"><AmountField label={`Up to (${currency}, blank: any)`} amount={m.upTo} onAmount={(upTo) => setMultipliers((list) => list.map((x, i) => (i === index ? { ...x, upTo } : x)))} /></View>
-              <View className="flex-1"><AmountField label="Percent of rate" whole amount={m.percent} onAmount={(percent) => setMultipliers((list) => list.map((x, i) => (i === index ? { ...x, percent } : x)))} /></View>
+              <View className="flex-1"><AmountField label={`Up to (${currency}, blank: any)`} amount={m.upTo} onAmount={(upTo) => setMultipliers((list) => patchAt(list, index, { upTo }))} /></View>
+              <View className="flex-1"><AmountField label="Percent of rate" whole amount={m.percent} onAmount={(percent) => setMultipliers((list) => patchAt(list, index, { percent }))} /></View>
               <Button size="sm" variant="ghost" label="Remove" onPress={() => setMultipliers((list) => list.filter((_, i) => i !== index))} />
             </Card>
           ))}

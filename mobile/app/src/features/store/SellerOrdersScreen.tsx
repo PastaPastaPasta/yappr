@@ -14,7 +14,7 @@ import { Screen } from '~/ui/Screen';
 import { toast } from '~/ui/toast';
 
 import { OrderRow } from './OrdersScreen';
-import { Loading, Notice, useRefreshControl } from './parts';
+import { errorText, Loading, Notice, useRefreshControl } from './parts';
 
 /** Web `/orders/seller`: orders placed with the viewer's store, and "Deliver all" for digital ones that are ready. */
 export function SellerOrdersScreen() {
@@ -35,7 +35,7 @@ export function SellerOrdersScreen() {
         if (result.recoveryTexts.length > 0) Alert.alert('Check these unique codes', result.recoveryTexts.join('\n\n'));
         for (const warning of result.warnings) toast.error(warning);
       })
-      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Couldn't deliver the orders."))
+      .catch((error: unknown) => toast.error(errorText(error, "Couldn't deliver the orders.")))
       .finally(() => {
         setBulk(false);
         queryClient.invalidateQueries({ queryKey: queryKeys.store.orders() }).catch(() => undefined);

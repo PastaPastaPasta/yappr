@@ -1,4 +1,4 @@
-import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID } from '@/lib/constants'
+import { YAPPR_STOREFRONT_CONTRACT_ID } from '@/lib/constants'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { identityService } from '@/lib/services/identity-service'
 import { storeService } from '@/lib/services/store-service'
@@ -93,5 +93,3 @@ export function cleanContact(contact: BuyerContact | null | undefined): BuyerCon
 export function storefrontDoc(type: string, id: string, action: TicketDocument['action'], confirmed = false): TicketDocument {
   return { contractId: YAPPR_STOREFRONT_CONTRACT_ID, type, id, action, confirmed }
 }
-
-export type StorefrontDocType = (typeof STOREFRONT_DOCUMENT_TYPES)[keyof typeof STOREFRONT_DOCUMENT_TYPES]

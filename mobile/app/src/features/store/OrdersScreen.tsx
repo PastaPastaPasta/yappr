@@ -19,7 +19,7 @@ import { DeliveryList, Loading, Notice, price, StatusPill, useRefreshControl } f
 
 type OrderDTO = BuyerOrderDTO | SellerOrderDTO;
 
-function OrderRow({ order, title }: { order: OrderDTO; title: string }) {
+export function OrderRow({ order, title }: { order: OrderDTO; title: string }) {
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={`Open order ${formatOrderId(order.id)}`} testID={`order-${order.id}`} onPress={() => router.push(`/orders/${order.id}`)}>
       <Card className="mx-4 mb-3 gap-1 p-4">
@@ -88,6 +88,3 @@ export function OrdersScreen() {
     </Screen>
   );
 }
-
-export { OrderRow };
-export type { OrderDTO };

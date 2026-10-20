@@ -15,7 +15,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 
-import { Loading, Notice, price } from './parts';
+import { errorText, Loading, Notice, price } from './parts';
 
 /** The device's cart (web `/cart`): one section per store, each checked out on its own. */
 export function CartScreen() {
@@ -26,7 +26,7 @@ export function CartScreen() {
     setBusy(line.key);
     call()
       .then((next) => queryClient.setQueryData(queryKeys.store.cart(), next))
-      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Couldn't update your cart."))
+      .catch((error: unknown) => toast.error(errorText(error, "Couldn't update your cart.")))
       .finally(() => setBusy(null));
   };
 
