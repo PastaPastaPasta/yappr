@@ -61,7 +61,9 @@ export const copy = {
     howItWorks: [
       'Only followers you approve can read your private posts',
       "People you remove can't see what you post after that",
-      'Moderators can read a private post if someone reports it',
+      // Web's wording (components/settings/private-feed-settings.tsx).
+      "Images aren't private: anyone with an image's link can see it",
+      'If someone reports a private post, moderators can read it and earlier posts in your private feed',
     ],
     enable: 'Turn on private feed',
     enabling: 'Turning on…',
