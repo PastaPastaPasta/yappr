@@ -417,10 +417,11 @@ describe('seller forms', () => {
     expect(m.items.createItem.mock.calls[0][2]).toMatchObject({ imageUrls: undefined, fulfillment: 'digital', basePrice: 250 })
   })
 
-  it('takes testnet Dash addresses as tdash: and refuses dash: for them, with the hint', async () => {
+  it("takes a wallet's dash: URI for an address of the build's network, and tdash: too", async () => {
     const e = engine()
-    await expect(e.store.saveStore({ fields: { name: 'Shop', category: 'books', paymentUris: ['dash:yLadnCajwhccmjsUS1Bm2icVv5ehdeFtxj'] } })).rejects.toMatchObject({ message: expect.stringMatching(/tdash:/) })
+    await expect(e.store.saveStore({ fields: { name: 'Shop', category: 'books', paymentUris: ['dash:yLadnCajwhccmjsUS1Bm2icVv5ehdeFtxj'] } })).resolves.toMatchObject({ op: 'store.save' })
     await expect(e.store.saveStore({ fields: { name: 'Shop', category: 'books', paymentUris: ['tdash:yLadnCajwhccmjsUS1Bm2icVv5ehdeFtxj'] } })).resolves.toMatchObject({ op: 'store.save' })
+    await expect(e.store.saveStore({ fields: { name: 'Shop', category: 'books', paymentUris: ['yLadnCajwhccmjsUS1Bm2icVv5ehdeFtxj'] } })).rejects.toMatchObject({ message: expect.stringMatching(/from your wallet/) })
   })
 
   it('never clears a saved options table (its ids live on in carts and kits)', async () => {

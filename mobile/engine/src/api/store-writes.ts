@@ -122,7 +122,7 @@ export interface StoreReportDTO {
 function paymentUrisOf(values: string[]): ParsedPaymentUri[] {
   return values.map(value => value.trim()).filter(Boolean).map(value => {
     const parsed = parsePaymentUri(value)
-    if (!parsed) throw badRequest(`"${value}" is not a payment address this store can take. Dash testnet addresses use tdash:, mainnet ones dash:.`)
+    if (!parsed) throw badRequest(`"${value}" isn't a payment address this store can take. Paste it from your wallet, with its scheme (dash: or bitcoin:).`)
     return parsed
   })
 }

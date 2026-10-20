@@ -86,7 +86,7 @@ function StoreForm({ manage, edit }: { manage: StoreManageDTO; edit: boolean }) 
           </Section>
         ) : null}
         <Section title="Payment methods" right={<Button size="sm" variant="ghost" label="Add" onPress={() => setPayments((list) => [...list, ''])} />}>
-          <Text tone="secondary">Buyers pay you directly. Enter a payment address as a URI: dash:X… (tdash:y… on testnet) or bitcoin:bc1….</Text>
+          <Text tone="secondary">Buyers pay you directly. Paste a payment address from your wallet, like dash:… or bitcoin:….</Text>
           {payments.map((uri, index) => (
             <View key={index} className="flex-row items-end gap-2">
               <View className="flex-1">
