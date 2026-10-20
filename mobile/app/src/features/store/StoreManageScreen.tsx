@@ -4,6 +4,8 @@ import { Pressable, ScrollView, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
+import { useViewerId } from '~/data/session';
+import { useLandingIntent } from '~/data/writes';
 import { UnlockSheet } from '~/features/messages/UnlockSheet';
 import { Button } from '~/ui/Button';
 import { Card } from '~/ui/Card';
@@ -12,6 +14,7 @@ import { Screen } from '~/ui/Screen';
 import { Text } from '~/ui/Text';
 
 import { Loading, Notice, price, Section, useRefreshControl } from './parts';
+import { STORE_CREATE_KEY, useConfirmingStores } from './store-writes';
 
 const STATUS_LABEL = { active: 'Open', paused: 'Paused', closed: 'Closed' } as const;
 const ITEM_STATUS = { active: 'Active', paused: 'Paused', sold_out: 'Sold out', deleted: 'Removed' } as const;
@@ -21,6 +24,10 @@ export function StoreManageScreen() {
   const manage = useEngineQuery(queryKeys.store.manage(), (api) => api.store.manage());
   const refreshControl = useRefreshControl(() => manage.refetch());
   const [unlockOpen, setUnlockOpen] = useState(false);
+  // A create that may still land: never offer a second one meanwhile.
+  const viewer = useViewerId();
+  const confirming = useConfirmingStores(({ owners }) => viewer !== null && owners.has(viewer));
+  const creating = useLandingIntent(STORE_CREATE_KEY) !== undefined || confirming;
   const data = manage.data;
 
   return (
@@ -28,6 +35,8 @@ export function StoreManageScreen() {
       <Stack.Screen options={{ title: 'My store' }} />
       {manage.isPending ? <Loading /> : !data ? (
         <ErrorState message="Your store couldn't be loaded." onRetry={() => manage.refetch()} retrying={manage.isRetrying} />
+      ) : !data.store && creating ? (
+        <EmptyState title="Creating your store" description="It will appear here in a moment." testID="store-manage-creating" />
       ) : !data.store ? (
         <EmptyState
           title="Open your store"
