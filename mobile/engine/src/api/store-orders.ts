@@ -21,6 +21,7 @@ import { storeService } from '@/lib/services/store-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { formatPrice } from '@/lib/utils/format'
+import { orderLineVariantLabel } from '@/lib/storefront/variant-codec'
 import type {
   BuyerContact, DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, OrderStatus,
   OrderStatusUpdate, ShippingAddress, Store, StoreOrder,
@@ -65,7 +66,8 @@ function orderLine(line: unknown): OrderItem | null {
     quantity: line.quantity as number,
     unitPrice: line.unitPrice,
     variantId: optionalText(line.variantId),
-    variantLabel: optionalText(line.variantLabel),
+    // Orders placed before variants had ids name theirs by key ("Blue|Large").
+    variantLabel: orderLineVariantLabel(line),
     sku: optionalText(line.sku),
     imageUrl: optionalText(line.imageUrl),
     fulfillment: line.fulfillment === 'digital' ? 'digital' : undefined,

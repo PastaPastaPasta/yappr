@@ -357,6 +357,8 @@ describe('digital delivery', () => {
     const { order } = await engine().store.order(ORDER)
     expect(order.payload?.items[0]).toEqual(expect.objectContaining({ itemTitle: 'Ebook', variantLabel: undefined, sku: undefined }))
     expect(order.payload).not.toHaveProperty('extra')
+    m.order.decryptOrderPayload.mockResolvedValue({ ...digitalPayload, items: [{ ...digitalPayload.items[0], variantKey: 'Blue|Large' }] })
+    expect((await engine().store.order(ORDER)).order.payload?.items[0].variantLabel).toBe('Blue / Large')
   })
 
   it('needs the key on this device', async () => {

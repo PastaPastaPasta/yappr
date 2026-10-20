@@ -52,7 +52,9 @@ export function addOption(variants: ItemVariants, axisIndex: number, name: strin
   if (patterns.size === 0) {
     for (const optionIds of grid(axes.map((axis, index) => (index === axisIndex ? [id] : axis.options.map((option) => option.id))))) patterns.set(combinationId(optionIds), optionIds);
   }
-  const added = [...patterns.values()].map((optionIds) => ({ id: combinationId(optionIds), optionIds, price }));
+  // A stock-tracked table tracks every combination: a new one starts at none in stock (lib's default stock).
+  const tracked = variants.combinations.some((combination) => combination.stock !== undefined);
+  const added = [...patterns.values()].map((optionIds) => ({ id: combinationId(optionIds), optionIds, price, ...(tracked ? { stock: 0 } : {}) }));
   if (variants.combinations.length + added.length > MAX_COMBINATIONS) throw new Error(`A product can offer at most ${MAX_COMBINATIONS} combinations.`);
   return { axes, combinations: [...variants.combinations, ...added], nextOptionId: id + 1 };
 }

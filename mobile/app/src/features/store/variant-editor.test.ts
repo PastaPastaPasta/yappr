@@ -22,7 +22,8 @@ describe('id-stable variant edits', () => {
     const next = addOption(colors, 0, 'Green', 700);
     expect(next.nextOptionId).toBe(4);
     expect(next.axes[0].options.at(-1)).toEqual({ id: 3, name: 'Green' });
-    expect(next.combinations).toEqual([...colors.combinations, { id: '3', optionIds: [3], price: 700 }]);
+    // The table tracks stock (Red has 3), so the new choice is tracked too, starting at none.
+    expect(next.combinations).toEqual([...colors.combinations, { id: '3', optionIds: [3], price: 700, stock: 0 }]);
   });
 
   it('never restores a combination removed elsewhere when a choice is added', () => {
