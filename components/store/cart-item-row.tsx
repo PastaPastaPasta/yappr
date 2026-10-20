@@ -64,7 +64,7 @@ export const CartItemRow = forwardRef<HTMLDivElement, CartItemRowProps>(
 
         {!isCheckingAvailability && (availability?.reason ? (
           <p className="text-sm text-red-600 mt-1">{availability.reason}</p>
-        ) : availability && Number.isFinite(availability.maxQuantity) ? (
+        ) : availability?.stockTracked ? (
           <p className="text-sm text-gray-500 mt-1">{availability.maxQuantity} available</p>
         ) : null)}
 

@@ -5,6 +5,7 @@ import { decodeLegacyVariants } from '@/lib/storefront/legacy-variants'
 import { scopedKey } from '@/lib/storage-scope'
 import { storeItemService } from './store-item-service'
 import { cartService, getCartCurrency } from './cart-service'
+import { MAX_LINE_QUANTITY } from './digital-delivery-plan'
 
 /** `value`, failing the test when it is missing. */
 function defined<T>(value: T | null | undefined): T {
@@ -175,8 +176,14 @@ describe('cart inventory', () => {
 
   it('returns a maximum for a cart already at available stock', async () => {
     respond(product())
-    expect(await cartService.getAvailability([cartItem()])).toEqual([{ item: cartItem(), maxQuantity: 2, reason: undefined }])
+    expect(await cartService.getAvailability([cartItem()])).toEqual([{ item: cartItem(), maxQuantity: 2, stockTracked: true, reason: undefined }])
     expect(await cartService.validateItems([cartItem()])).toEqual([])
+  })
+
+  it('says an untracked line has no stock count, even when capped per order (D-964)', async () => {
+    respond(product({ stockQuantity: undefined, fulfillment: 'digital' }))
+    const [line] = await cartService.getAvailability([cartItem({ fulfillment: 'digital' })])
+    expect(line).toMatchObject({ maxQuantity: MAX_LINE_QUANTITY, stockTracked: false, reason: undefined })
   })
 
   it('blocks an overstock snapshot without clamping or dropping it', async () => {

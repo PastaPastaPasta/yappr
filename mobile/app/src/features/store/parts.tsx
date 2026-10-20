@@ -1,9 +1,10 @@
 import type { DeliveryDTO, OrderPayload, OrderStatus, OrderStatusDTO } from '@engine/api';
 import * as Clipboard from 'expo-clipboard';
+import { router, useNavigation } from 'expo-router';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as WebBrowser from 'expo-web-browser';
-import { useState, type ReactNode } from 'react';
+import { useState, type ReactNode, useEffect } from 'react';
 import { Linking, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 
 import { formatPrice } from '~/lib-allowlist';
@@ -376,4 +377,22 @@ export function FormScroll({ children, testID }: { children: ReactNode; testID?:
       </ScrollView>
     </KeyboardAvoider>
   );
+}
+
+/**
+ * Leaves a form once its write is done, but only while the seller is still on
+ * it (D-970): a save that lands after they went Back or switched tabs must
+ * never pop whatever screen they are on now. `isFocused()` is read when the
+ * write lands, not when it was sent.
+ */
+export function useCloseWhenDone(done: boolean): void {
+  const navigation = useNavigation();
+  useEffect(() => {
+    if (done) closeIfStillOpen(navigation);
+  }, [done, navigation]);
+}
+
+/** Back out of this screen if it is still the one in front (see {@link useCloseWhenDone}). */
+export function closeIfStillOpen(navigation: { isFocused: () => boolean }): void {
+  if (navigation.isFocused() && router.canGoBack()) router.back();
 }

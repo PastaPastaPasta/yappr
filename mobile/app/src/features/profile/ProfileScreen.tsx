@@ -480,7 +480,7 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
           onFollow: () => requireAuth(() => toggleFollow(profileId, handle, following)),
           onMessage: () =>
             requireAuth(() => {
-              messageUser(profileId).catch((error: unknown) =>
+              messageUser(profileId, profile?.username).catch((error: unknown) =>
                 appendLog('warn', 'host', `Message from profile failed: ${errorMessage(error)}`),
               );
             }),

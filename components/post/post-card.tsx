@@ -35,6 +35,7 @@ import { authorDeletesLeaveHoles, contractTakesReports, deletesAreTombstones, mo
 import { quoteTargetOf } from '@/lib/feed/quote-targets'
 import { isBareRepost, type OwnQuote } from '@/lib/feed/quote-reposts'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
+import { shownReplyCount } from '@/lib/feed/visible-reply-counts'
 import { logger } from '@/lib/logger'
 import { categorizeError } from '@/lib/error-utils'
 import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
@@ -315,7 +316,8 @@ function PostCardView({
   const stats = {
     likes: progressiveEnrichment?.stats?.likes ?? post.likes,
     reposts: progressiveEnrichment?.stats?.reposts ?? post.reposts,
-    replies: progressiveEnrichment?.stats?.replies ?? post.replies,
+    // The proved count, or what this post's loaded thread showed (deleted replies hidden).
+    replies: shownReplyCount(post.id, progressiveEnrichment?.stats?.replies ?? post.replies),
     quotes: progressiveEnrichment?.stats?.quotes ?? post.quotes,
     views: progressiveEnrichment?.stats?.views ?? post.views,
   }

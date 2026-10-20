@@ -9,7 +9,6 @@ import { X, ArrowLeft, ChevronDown, Wallet, ScrollText, KeyRound } from 'lucide-
 import type { AppConnectGrant } from 'platform-auth'
 import { Wordmark } from '@/components/brand/brand'
 import { useAuth } from '@/contexts/auth-context'
-import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { getConfiguredNetwork } from '@/lib/constants'
 import { COMMUNITY_RULES_HREF } from '@/lib/legal'
@@ -60,7 +59,6 @@ function Disclosure({
   disabled?: boolean
   children: React.ReactNode
 }) {
-  const reduceMotion = useReducedMotion()
   return (
     <div>
       <button
@@ -78,20 +76,36 @@ function Disclosure({
         <ChevronDown aria-hidden="true" className={`w-4 h-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
       <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            id={id}
-            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="pt-4">{children}</div>
-          </motion.div>
-        )}
+        {open && <DisclosurePanel id={id}>{children}</DisclosurePanel>}
       </AnimatePresence>
     </div>
+  )
+}
+
+/**
+ * A disclosure's content. It clips only while it opens or closes: once open,
+ * focus rings and button shadows reach past its edges and must show.
+ */
+function DisclosurePanel({ id, children }: { id: string; children: React.ReactNode }) {
+  const reduceMotion = useReducedMotion()
+  const [moving, setMoving] = useState(true)
+  return (
+    <motion.div
+      id={id}
+      variants={{
+        closed: reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 },
+        open: { opacity: 1, height: 'auto' },
+      }}
+      initial="closed"
+      animate="open"
+      exit="closed"
+      transition={{ duration: 0.2 }}
+      onAnimationStart={() => setMoving(true)}
+      onAnimationComplete={(definition) => setMoving(definition !== 'open')}
+      className={moving ? 'overflow-hidden' : undefined}
+    >
+      <div className="pt-4">{children}</div>
+    </motion.div>
   )
 }
 
@@ -112,7 +126,6 @@ export function LoginModal() {
   const pathname = usePathname()
   const { isOpen, close } = useLoginModal()
   const { loginWithAppConnect } = useAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const reduceMotion = useReducedMotion()
   const sectionId = useId()
   const opener = useRef<HTMLElement | null>(null)
@@ -250,11 +263,12 @@ export function LoginModal() {
       {isOpen && (
         <Dialog.Portal forceMount>
         <Dialog.Overlay asChild>
+        {/* A plain dim, no backdrop blur: Chromium drops a backdrop blur while its layer's opacity animates, so it popped in after the fade and off before it. */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className={`fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+          className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60"
         >
           <Dialog.Content
             asChild

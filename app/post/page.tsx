@@ -22,6 +22,7 @@ import type { Post } from '@/lib/types'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { referencesMayDangle } from '@/lib/contract-topology'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
+import { countVisibleReplies, recordVisibleReplies } from '@/lib/feed/visible-reply-counts'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
 function PostDetailContent() {
@@ -93,6 +94,15 @@ function PostDetailContent() {
   const replyBlockedReason = threadRootRemoved
     ? 'The post that started this thread was removed, so nothing in it can be replied to.'
     : replyRootPending ? 'Replies open once this thread has been checked. Reload the page if this stays.' : undefined
+
+  // Once the whole thread is on screen, the count on this post's cards is what
+  // the thread shows: an author's deleted reply stays in the proved count but
+  // is hidden here, and "1 reply" over an empty thread reads as broken.
+  // Recorded during render so the card below picks it up in the same pass.
+  const countedReplies = post ? postEnrichment?.stats?.replies ?? post.replies : undefined
+  if (post && countedReplies !== undefined && !isLoadingReplies && !hasMoreReplies && !error) {
+    recordVisibleReplies(post.id, countedReplies, countVisibleReplies(replyThreads))
+  }
 
   useEffect(() => {
     resetReplyEnrichment()
@@ -261,7 +271,7 @@ function PostDetailContent() {
                 </div>
               ) : replyThreads.length === 0 ? !error && (
                 <div className="p-8 text-center">
-                  <p className="text-gray-500">{isDeleted || replyBlockedReason || (user && !canReplyToPrivate) ? 'No replies yet.' : 'No replies yet. Be the first to reply!'}</p>
+                  <p className="text-gray-500">{!user || isDeleted || replyBlockedReason || !canReplyToPrivate ? 'No replies yet.' : 'No replies yet. Be the first to reply!'}</p>
                 </div>
               ) : (
                 replyThreads.map((thread) => (

@@ -1,6 +1,6 @@
 import type { ShippingPricingConfig, ShippingZone, Store } from '@engine/api';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { useState } from 'react';
 import { Alert, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -16,7 +16,7 @@ import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 
-import { FormScroll, ManageUnavailable, Notice, patchAt, Section } from './parts';
+import { FormScroll, ManageUnavailable, Notice, patchAt, Section, useCloseWhenDone } from './parts';
 import { saveZoneWrite } from './store-writes';
 import { AmountField } from './VariantEditor';
 
@@ -59,9 +59,7 @@ function ZoneForm({ store, zone: loaded }: { store: Store; zone: ShippingZone | 
     (config?.subtotalMultipliers ?? []).map((m) => ({ upTo: m.upTo === null ? undefined : fromSmallestUnit(m.upTo, initialCurrency), percent: m.percent })),
   );
 
-  useEffect(() => {
-    if (save.status === 'confirmed' || remove.status === 'confirmed') router.back();
-  }, [save.status, remove.status]);
+  useCloseWhenDone(save.status === 'confirmed' || remove.status === 'confirmed');
 
   const submit = () => {
     const rate = weightRate ? toSmallestUnit(weightRate, currency) : 0;

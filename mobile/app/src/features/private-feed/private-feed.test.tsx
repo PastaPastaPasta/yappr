@@ -246,7 +246,9 @@ describe('Settings → Private feed', () => {
     const sent = ticket({ op: 'privateFeed.enable' });
     fakeEngine.method('privateFeed.enable').mockResolvedValue(sent);
     renderIn(<PrivateFeedScreen />);
-    expect(await screen.findByText('Moderators can read a private post if someone reports it')).toBeTruthy();
+    // Web's two caveats: images aren't private, and a report opens the feed's earlier posts to moderators (D-959).
+    expect(await screen.findByText("Images aren't private: anyone with an image's link can see it")).toBeTruthy();
+    expect(screen.getByText('If someone reports a private post, moderators can read it and earlier posts in your private feed')).toBeTruthy();
     // No implementation detail on the way in: no capacity, keys or encryption talk.
     expect(screen.queryByText(/4,096|encrypt|messaging key/)).toBeNull();
     fireEvent.press(screen.getByTestId('private-enable'));

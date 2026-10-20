@@ -102,21 +102,52 @@ jest.mock('expo-file-system', () => ({
     exists = true;
   },
 }));
-// MMKV instances persist by id, as on a device, so "relaunch" and "reinstall" can be simulated
-// (react-native-mmkv's own test mock is a fresh, empty instance on every call).
+// MMKV files persist by id, as on a device, and outlive the process (react-native-mmkv's own test
+// mock is a fresh, empty instance on every call). `__relaunch()` starts a new process: what it
+// opened is forgotten (a module loaded afresh with `jest.isolateModules` then has its own state,
+// though Jest hands it this same mock). `__uninstall()` also drops the files (Keychain items stay).
+//
+// Each file has a key. Opening one this process has not opened with another key reads it empty
+// (MMKV can't decrypt it and starts over); one already open is the instance native caches, key and
+// all; `encrypt` re-keys it. And on a device `deleteMMKV(id)` frees the native store under every
+// instance of `id` this process created, which react-native-mmkv calls again when the app becomes
+// active: deleting one the app opened crashes it (D-902), so here it throws.
 jest.mock('react-native-mmkv', () => {
   const actual = jest.requireActual('react-native-mmkv');
-  const instances = new Map();
+  const files = new Map();
+  let opened = new Set();
   return {
     ...actual,
     createMMKV: (config = {}) => {
       const id = config.id ?? 'mmkv.default';
-      if (!instances.has(id)) instances.set(id, actual.createMMKV(config));
-      return instances.get(id);
+      const key = config.encryptionKey ?? null;
+      let file = files.get(id);
+      if (!file) {
+        file = { store: actual.createMMKV(config), key };
+        file.store.encrypt = (newKey) => {
+          file.key = newKey;
+        };
+        files.set(id, file);
+      } else if (!opened.has(id) && file.key !== key) {
+        file.store.clearAll();
+        file.key = key;
+      }
+      opened.add(id);
+      return file.store;
     },
     deleteMMKV: (id) => {
-      instances.get(id)?.clearAll();
-      return instances.delete(id);
+      if (opened.has(id)) throw new Error(`deleteMMKV('${id}') frees an instance this process still holds`);
+      files.get(id)?.store.clearAll();
+      return files.delete(id);
+    },
+    __relaunch: () => {
+      opened = new Set();
+    },
+    __uninstall: () => {
+      // Emptied too: an instance a module kept across the uninstall reads what a new process would.
+      for (const file of files.values()) file.store.clearAll();
+      files.clear();
+      opened = new Set();
     },
   };
 });

@@ -809,7 +809,8 @@ export function createV5Backend(options: V5BackendOptions) {
         // As web: not before the saved conversations are known (an unloaded store would start a duplicate).
         return await readyEngine(identityId).startDirect(peerId)
       } catch (error) {
-        if (error instanceof NoEncryptionKeyError) throw new RpcError(error.message, 'BAD_REQUEST')
+        // Its own code: the screen names the person (D-900), and BAD_REQUEST stays "no such account".
+        if (error instanceof NoEncryptionKeyError) throw new RpcError(error.message, 'PEER_NO_MESSAGING')
         throw error
       }
     },

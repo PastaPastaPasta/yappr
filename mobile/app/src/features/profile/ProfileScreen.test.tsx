@@ -13,6 +13,7 @@ import { waitOutRetry, withoutRetry, withProductionRetry } from '~/data/testing/
 import { resetWriteTracking } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { resetBlockDecisions, useAuthorBlocked } from '~/features/safety/block-state';
+import { keepHandlesWhole } from '~/ui/handle';
 import { fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
@@ -178,6 +179,21 @@ describe('ProfileScreen', () => {
     expect(fakeEngine.method('graph.unfollow')).toHaveBeenCalledWith(OTHER);
     expect(screen.getByTestId('profile-follow')).toHaveAccessibleName('Follow Sigrid Dahl');
     expect(screen.getByLabelText('3 Followers')).toBeTruthy();
+  });
+
+  it("says on the profile when the person hasn't set up messaging yet, by handle (D-900)", async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(profile());
+    fakeEngine
+      .method('dm.startDirect')
+      .mockRejectedValue(Object.assign(new Error("This person hasn't set up messaging yet."), { code: 'PEER_NO_MESSAGING' }));
+    renderProfile();
+    await flush();
+
+    await act(async () => fireEvent.press(screen.getByTestId('profile-message')));
+    expect(fakeEngine.method('dm.startDirect')).toHaveBeenCalledWith(OTHER);
+    expect(useToastStore.getState().current?.message).toBe(keepHandlesWhole("@sigrid hasn't set up messaging yet."));
+    // Stays on the profile: New message would only fail the same way.
+    expect(router.push).not.toHaveBeenCalledWith(expect.objectContaining({ pathname: '/messages/new' }));
   });
 
   it('rolls the follow back when the write is refused', async () => {

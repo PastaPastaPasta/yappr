@@ -4,7 +4,6 @@ import { useRef, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
-import { useSettingsStore } from '@/lib/store'
 
 interface ModalProps {
   open: boolean
@@ -15,9 +14,10 @@ interface ModalProps {
   className?: string
   /**
    * `card` is a padded panel that fades and scales in over a plain overlay.
-   * `sheet` is an unpadded panel that also slides up, over a blurred overlay
-   * (the blur is skipped in potato mode); it is the shape of the multi-step
-   * flows such as compose and checkout.
+   * `sheet` is an unpadded panel that also slides up, over a darker overlay;
+   * it is the shape of the multi-step flows such as compose and checkout.
+   * Neither overlay blurs the page: Chromium drops a backdrop blur while its
+   * layer's opacity animates, so it popped in after the fade and off before it.
    */
   variant?: 'card' | 'sheet'
   /** Overlay classes; `sheet` compose uses this to top-align on tall screens. */
@@ -40,7 +40,6 @@ const SHEET_MOTION = {
  * `<Dialog.Title>` (or `<ModalTitle>`) inside so screen readers get a name.
  */
 export function Modal({ open, onOpenChange, children, className, variant = 'card', overlayClassName, onOpenAutoFocus, onCloseAutoFocus }: ModalProps) {
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const sheet = variant === 'sheet'
   return (
@@ -56,7 +55,6 @@ export function Modal({ open, onOpenChange, children, className, variant = 'card
                 className={cn(
                   'fixed inset-0 z-50 flex items-center justify-center px-4',
                   sheet ? 'bg-black/60' : 'bg-black/50',
-                  sheet && !potatoMode && 'backdrop-blur-sm',
                   overlayClassName
                 )}
               >
