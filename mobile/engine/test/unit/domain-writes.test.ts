@@ -1040,6 +1040,23 @@ describe('posts.publish and posts.delete', () => {
     expect(await outcome(posts.publish({ parts: [{ text: 'thought private' }], replyTo: TARGET, expectInherited: true })))
       .toMatchObject({ state: 'failed', error: { code: 'PRIVATE_FEED', outcome: 'local' } })
     expect(m.replyService.createReply).not.toHaveBeenCalled()
+
+    // A reply in someone else's private thread: lib's sentences pass through, its diagnostics get one,
+    // and a failed read is no refusal (it may be tried again).
+    m.getEncryptionSource.mockResolvedValue({ ownerId: AUTHOR, feed: 1, keyGeneration: 1, inherited: true })
+    const reply = () => outcome(posts.publish({ parts: [{ text: 'a private reply' }], replyTo: TARGET, expectInherited: true }))
+    const tooLong = 'This is too long. Use fewer characters and try again.'
+    m.prepareInheritedEncryption.mockResolvedValueOnce({ success: false, error: tooLong } as never)
+    expect(await reply()).toMatchObject({ state: 'failed', error: { code: 'PRIVATE_FEED', userMessage: tooLong } })
+    m.prepareInheritedEncryption.mockResolvedValueOnce({ success: false, error: 'Cannot encrypt reply: this private feed is gone' } as never)
+    expect(await reply()).toMatchObject({
+      state: 'failed', error: { code: 'PRIVATE_FEED', userMessage: "You can't reply privately in this thread right now." },
+    })
+    m.prepareInheritedEncryption.mockResolvedValueOnce({ success: false, error: 'fetch failed' } as never)
+    const failedRead = await reply()
+    expect(failedRead).toMatchObject({ state: 'failed', error: { outcome: 'not-sent' } })
+    expect(failedRead).not.toMatchObject({ error: { code: 'PRIVATE_FEED' } })
+    expect(m.replyService.createReply).not.toHaveBeenCalled()
   })
 
   it('replies to a loaded target, refuses a private one where the network has no private feeds, and carries v10 media hashes', async () => {

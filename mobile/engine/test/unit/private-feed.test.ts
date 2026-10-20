@@ -97,6 +97,15 @@ vi.mock('@/lib/services/identity-service', () => ({
 vi.mock('@/lib/secure-storage', async (load) => ({ ...await load<object>(), getEncryptionKeyBytes: (id: string) => chain.session.get(id) ?? null }))
 vi.mock('@/lib/app-connect/memory-keys', async (load) => ({ ...await load<object>(), hasAppConnectSession: (id: string) => chain.wallet.has(id) }))
 vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>(), getCurrentUserId: () => chain.viewer }))
+/** Stands in for lib's `renewPrivateFeed` while set (given the real one), so a test can pause the move after it. */
+const moveHooks = vi.hoisted(() => ({ renew: null as null | ((renew: (...args: unknown[]) => Promise<unknown>, ...args: unknown[]) => Promise<unknown>) }))
+vi.mock('@/lib/services/private-feed-move', async (load) => {
+  const actual = await load<{ renewPrivateFeed: (...args: unknown[]) => Promise<unknown> }>()
+  return {
+    ...actual,
+    renewPrivateFeed: (...args: unknown[]) => (moveHooks.renew ? moveHooks.renew(actual.renewPrivateFeed, ...args) : actual.renewPrivateFeed(...args)),
+  }
+})
 vi.mock('@/lib/contract-topology', async (load) => {
   const actual = await load<{ privateFeedClientSupported: () => boolean }>()
   return { ...actual, privateFeedClientSupported: () => chain.supported && actual.privateFeedClientSupported() }
@@ -335,6 +344,11 @@ describe('privateFeed: locked states and refusals', () => {
     as(O)
     const id = await privatePost(O, 'a private thread')
     expect(draftIsPrivate({ parts: [{ text: 'reply' }], replyTo: { id, kind: 'post', ownerId: O, rootPostId: null } })).toBe(true)
+    // So is a reply the host marks as one (to a private post the engine has not shown), and one compose showed as private.
+    const unseen = { id: 'unseen-private-post', kind: 'post' as const, ownerId: O, rootPostId: null }
+    expect(draftIsPrivate({ parts: [{ text: 'reply' }], replyTo: unseen })).toBe(false)
+    expect(draftIsPrivate({ parts: [{ text: 'reply' }], replyTo: unseen, replyToPrivate: true })).toBe(true)
+    expect(draftIsPrivate({ parts: [{ text: 'reply' }], replyTo: unseen, expectInherited: true })).toBe(true)
     chain.supported = false
     expect(() => validateDraft({ parts: [{ text: 'body' }], visibility: 'private' })).toThrow('not available on this network')
   })
@@ -369,5 +383,24 @@ describe('privateFeed: locked states and refusals', () => {
   it('estimates a renewal that brings older posts along', async () => {
     as(O)
     expect(await api.privateFeedReads.renewal()).toMatchObject({ followers: 0, canBringHistory: 'yes' })
+  })
+
+  it('confirms a renewal whose new feed landed though the move after it paused, and never one that did not land', async () => {
+    as(O)
+    try {
+      moveHooks.renew = async (renew, ...args) => {
+        await renew(...args)
+        return { success: false, error: 'The move paused.' }
+      }
+      expect((await settle(writes.renew({ bringHistory: false }))).state).toBe('confirmed')
+
+      // Nothing landed (a timeout opening the feed): not confirmed, and not one of the feed's refusals.
+      moveHooks.renew = async () => ({ success: false, error: 'Timed out opening your private feed' })
+      const missed = await settle(writes.renew({ bringHistory: false }))
+      expect(missed.state).not.toBe('confirmed')
+      expect(missed.error).not.toMatchObject({ code: 'PRIVATE_FEED' })
+    } finally {
+      moveHooks.renew = null
+    }
   })
 })

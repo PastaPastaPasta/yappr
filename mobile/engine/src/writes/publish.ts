@@ -336,12 +336,18 @@ function createdDocuments(outcome: PublishOutcome, plan: PostToCreate[], replyin
   return documents
 }
 
-/** `publishThread`'s refusal to reference an unconfirmed parent, as the engine code for it. */
+/** lib's sentences that are not refusals: too long for the encrypted limit, or the feed's keys could not be read. */
+const TOO_LONG = 'This is too long.'
+const UNVERIFIED = "Could not confirm your private feed's current keys"
+/** A replier's refusals from lib (`currentFeedKeys`): lower-case diagnostics, under this prefix. */
+const REPLY_REFUSAL = 'Cannot encrypt reply: '
+
 /**
  * Run lib's encryption preparation for the first part (`prepareOwnerEncryption`
  * or `prepareInheritedEncryption`, what `createPost` / `createReply` run): it
  * syncs with the chain and encrypts locally, writing nothing. Throws its
- * refusal as `PRIVATE_FEED` (or `NO_MESSAGING_KEY`), before anything is sent.
+ * refusal as `PRIVATE_FEED` (or `NO_MESSAGING_KEY`), before anything is sent;
+ * a failed read throws as any write's failure does, so it can be retried.
  */
 async function preflightEncryption(authorId: string, part: PostToCreate, inherited: EncryptionSource | null): Promise<void> {
   const { prepareInheritedEncryption, prepareOwnerEncryption } = await import('@/lib/services/private-feed-service')
@@ -350,11 +356,18 @@ async function preflightEncryption(authorId: string, part: PostToCreate, inherit
     ? await prepareInheritedEncryption(part.content, { ownerId: inherited.ownerId }, authorId, inherited.ownerId === authorId ? key : undefined)
     : await prepareOwnerEncryption(authorId, part.content, 'post', part.visibility === 'private-with-teaser' ? part.teaser : undefined, key)
   if (prepared.success) return
-  if (prepared.error.startsWith('SYNC_REQUIRED:')) throw new RpcError('Your messaging key is needed to post privately', 'NO_MESSAGING_KEY')
-  // A replier's own refusals are lib's lower-case diagnostics; the owner's are already sentences.
-  throw new RpcError(inherited && inherited.ownerId !== authorId ? "You can't reply privately in this thread right now." : prepared.error, 'PRIVATE_FEED')
+  const { error } = prepared
+  if (error.startsWith('SYNC_REQUIRED:')) throw new RpcError('Your messaging key is needed to post privately', 'NO_MESSAGING_KEY')
+  if (error.startsWith(TOO_LONG)) throw new RpcError(error, 'PRIVATE_FEED')
+  const replier = inherited !== null && inherited.ownerId !== authorId
+  // The owner's refusals are already sentences; a replier's are lib's diagnostics, so they get one.
+  if (replier && error.startsWith(REPLY_REFUSAL)) throw new RpcError("You can't reply privately in this thread right now.", 'PRIVATE_FEED')
+  if (!replier && !error.startsWith(UNVERIFIED)) throw new RpcError(error, 'PRIVATE_FEED')
+  // Neither a refusal nor a sentence lib chose (a thrown read): classified as any write's failure.
+  throw new Error(error)
 }
 
+/** `publishThread`'s refusal to reference an unconfirmed parent, as the engine code for it. */
 function failureOf(error: Error | null): unknown {
   const message = error?.message ?? 'Post creation failed'
   return message.startsWith('The post this one references has not confirmed yet')
