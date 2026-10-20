@@ -14,7 +14,6 @@ import { useSessionStore } from '~/data/session';
 import { markSessionExpired, useExpiredSessions } from '~/data/session-expiry';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { engineSupervisor } from '~/engine';
-import { useToastStore } from '~/ui/toast';
 
 import { loadSignedInAgain, useAccounts } from './accounts';
 import { useKeyExchange } from './key-exchange';
@@ -156,37 +155,67 @@ describe('private key sign-in (AUTH-08)', () => {
     expect(screen.getByText('Switch to this account')).toBeTruthy();
   });
 
-  it("signs in with the key typed when the account's own stored key is gone, instead of failing silently (D-973)", async () => {
-    useSessionStore.setState({
-      status: 'signed-out',
-      session: null,
-      accounts: [{ identityId: alice.identityId, username: 'alice', method: 'key', lastUsedAt: new Date(), active: false }],
-    });
-    fakeEngine.method('session.checkKey').mockResolvedValue({ identityId: alice.identityId, username: 'alice', keyId: 1, securityLevel: 1 });
-    // The switch restarts the engine, which comes back with nobody: the parked account's key was session-only.
-    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
-    fakeEngine.method('session.current').mockResolvedValue(null);
-    jest.mocked(engineSupervisor.restart).mockImplementation(() => {
-      fakeEngine.setStatus({ state: 'ready', epoch: 2 });
-    });
-    fakeEngine.method('session.signInWithKey').mockResolvedValue(alice);
-    render(<KeySignInScreen />);
-    fireEvent.changeText(screen.getByTestId('key-input'), KEY);
-    await act(async () => {
-      jest.advanceTimersByTime(400);
+  describe("an account on this device whose stored key is gone (D-973)", () => {
+    /** Parked, then the app relaunched: switching to it brings the engine back with nobody. */
+    const parkedWithoutKey = (securityLevel: number) => {
+      useSessionStore.setState({
+        status: 'signed-out',
+        session: null,
+        accounts: [{ identityId: alice.identityId, username: 'alice', method: 'key', lastUsedAt: new Date(), active: false }],
+      });
+      fakeEngine.method('session.checkKey').mockResolvedValue({ identityId: alice.identityId, username: 'alice', keyId: 1, securityLevel });
+      fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+      fakeEngine.method('session.current').mockResolvedValue(null);
+      jest.mocked(engineSupervisor.restart).mockImplementation(() => {
+        fakeEngine.setStatus({ state: 'ready', epoch: engineSupervisor.getStatus().epoch + 1 });
+      });
+      fakeEngine.method('session.signInWithKey').mockResolvedValue(alice);
+    };
+    const typeKeyAndSwitch = async () => {
+      render(<KeySignInScreen />);
+      fireEvent.changeText(screen.getByTestId('key-input'), KEY);
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(screen.getByText('Switch to this account')).toBeTruthy();
+      await act(async () => fireEvent.press(screen.getByTestId('key-sign-in')));
+      await act(async () => {
+        jest.advanceTimersByTime(100);
+      });
+    };
+
+    it('signs in with the CRITICAL key typed, and keeps this engine: a reload would drop that session-only key', async () => {
+      act(() => fakeEngine.setStatus({ info: { capabilities: { walletSignIn: 'app-connect' } as CapabilitiesDTO } }));
+      parkedWithoutKey(1);
+      await typeKeyAndSwitch();
+      expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(alice.identityId);
+      expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
+      expect(loadSignedInAgain).not.toHaveBeenCalled();
+      expect(mockGoBack).toHaveBeenCalled();
     });
 
-    expect(screen.getByText('Switch to this account')).toBeTruthy();
-    await act(async () => fireEvent.press(screen.getByTestId('key-sign-in')));
-    await act(async () => {
-      jest.advanceTimersByTime(100);
+    it('reloads after signing in with a HIGH key, which survives it, to load the other stored keys', async () => {
+      act(() => fakeEngine.setStatus({ info: { capabilities: { walletSignIn: 'app-connect' } as CapabilitiesDTO } }));
+      parkedWithoutKey(2);
+      await typeKeyAndSwitch();
+      expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
+      expect(loadSignedInAgain).toHaveBeenCalledWith(alice);
     });
-    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(alice.identityId);
-    expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
-    expect(loadSignedInAgain).toHaveBeenCalledWith(alice);
-    expect(mockGoBack).toHaveBeenCalled();
-    // Said on this screen or done: no "Couldn't switch accounts" behind the sheet.
-    expect(useToastStore.getState().current?.message).not.toBe("Couldn't switch accounts. Please try again.");
+
+    it('says on this screen when the switch failed for another reason, with Try again, and signs nothing in', async () => {
+      useSessionStore.setState({
+        status: 'signed-out',
+        session: null,
+        accounts: [{ identityId: alice.identityId, username: 'alice', method: 'key', lastUsedAt: new Date(), active: false }],
+      });
+      fakeEngine.method('session.checkKey').mockResolvedValue({ identityId: alice.identityId, username: 'alice', keyId: 2, securityLevel: 2 });
+      fakeEngine.method('session.switchAccount').mockRejectedValue(Object.assign(new Error('timed out'), { code: 'ENGINE_TIMEOUT' }));
+      await typeKeyAndSwitch();
+      expect(screen.getByText("Couldn't switch accounts. Please try again.")).toBeTruthy();
+      expect(screen.getByTestId('key-retry')).toBeTruthy();
+      expect(fakeEngine.method('session.signInWithKey')).not.toHaveBeenCalled();
+      expect(mockGoBack).not.toHaveBeenCalled();
+    });
   });
 
   it.each([

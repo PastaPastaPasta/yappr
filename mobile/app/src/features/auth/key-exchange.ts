@@ -2,13 +2,14 @@ import type { KeyExchangeRequestDTO, KeyExchangeResultDTO, KeyToRegister, Sessio
 import { Linking } from 'react-native';
 import { create } from 'zustand';
 
-import { useExpiredSessions } from '~/data/session-expiry';
+import { useSessionStore } from '~/data/session';
+import { isSessionExpired, useExpiredSessions } from '~/data/session-expiry';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { syncStorage } from '~/state/storage';
 
-import { finishWalletSwitch, loadSignedInAgain } from './accounts';
+import { accountName, finishWalletSwitch, loadSignedInAgain } from './accounts';
 import { copy } from './copy';
 import { isTransient, walletErrorText } from './errors';
 import { networkName } from './onboarding';
@@ -151,10 +152,13 @@ async function handleStep(
     set({ phase: { name: 'starting' }, request: null });
     const session = await finishWalletSwitch(step.identityId);
     if (stale(switchGen)) return;
+    // Back without its key (D-973): marked "Sign in again", and the next start signs it in afresh.
+    const account = useSessionStore.getState().accounts.find((a) => a.identityId === step.identityId);
+    const message = isSessionExpired(step.identityId)
+      ? copy.accounts.keyGone(accountName(account ?? { identityId: step.identityId, username: null }))
+      : copy.accounts.switchFailed;
     set({
-      phase: session
-        ? { name: 'signed-in', session }
-        : { name: 'error', title: copy.signin.failed, message: copy.accounts.switchFailed, retry: 'start' },
+      phase: session ? { name: 'signed-in', session } : { name: 'error', title: copy.signin.failed, message, retry: 'start' },
     });
     return;
   }
