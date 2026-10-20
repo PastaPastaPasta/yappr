@@ -8,6 +8,7 @@ import { FireIcon, HashtagIcon, TrophyIcon } from 'react-native-heroicons/outlin
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useCapabilities } from '~/data/session';
+import { BlogsLink } from '~/features/blog/BlogsLink';
 import { openHashtag } from '~/features/post/post-navigation';
 import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
@@ -142,6 +143,7 @@ export function ExploreScreen() {
   const header = (
     <View className={cn('gap-3 border-b px-4 pb-3', Platform.OS === 'ios' ? 'pt-1' : 'pt-3', tw.border)}>
       <SearchLauncher onPress={() => router.push('/explore/search')} />
+      <BlogsLink />
       {segments.length > 1 ? (
         <SegmentedControl
           options={segments}

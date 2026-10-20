@@ -12,7 +12,7 @@ describe.each(Object.keys(VARIANTS) as Variant[])('%s web handoffs', (variant) =
 
   it('keeps polls, private posts, stores and blogs in the selected deployment', () => {
     expect(webUrl(config, '/post', { id: ID })).toBe(`${v.webBaseUrl}/post?id=${ID}`);
-    for (const path of ['/store', '/blog', '/item', '/checkout', '/orders']) {
+    for (const path of ['/store', '/item', '/checkout', '/orders']) {
       const url = webUrl(config, path, { id: ID });
       expect(resolveLink(url, options)).toEqual({ kind: 'browser', url });
       expect(resolveLink(`${v.scheme}://${path.slice(1)}?id=${ID}`, options)).toEqual({ kind: 'browser', url });
@@ -21,7 +21,7 @@ describe.each(Object.keys(VARIANTS) as Variant[])('%s web handoffs', (variant) =
   });
 
   it('keeps root-form store and blog content links on this deployment', () => {
-    for (const path of ['/store/', '/blog/', '/blog/post/']) {
+    for (const path of ['/store/', '/item/']) {
       expect(webHandoffUrl(config, `https://yap.pr${path}?id=${ID}#read`)).toBe(`${v.webBaseUrl}${path}?id=${ID}#read`);
     }
     expect(webHandoffUrl(config, 'https://example.com/store?id=x')).toBe('https://example.com/store?id=x');
