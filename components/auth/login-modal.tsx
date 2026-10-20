@@ -5,7 +5,7 @@ import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { X, ChevronDown, Wallet } from 'lucide-react'
+import { X, ChevronDown, Wallet, ScrollText, KeyRound } from 'lucide-react'
 import type { AppConnectGrant } from 'platform-auth'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
@@ -17,6 +17,8 @@ import { AppConnectLoginPanel } from './app-connect-login-panel'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { KeyLoginForm } from './key-login-form'
 import { PasskeySignIn } from './passkey-sign-in'
+import { RecoveryPhraseForm } from './recovery-phrase-form'
+import { recoveryPhraseOffered } from '@/lib/auth/recovery-phrase'
 
 /** Where newcomers go: the wallet on mainnet, the identity bridge elsewhere. */
 const DASH_WALLET_DOWNLOAD_URL = 'https://www.dash.org/download/'
@@ -42,13 +44,68 @@ function walletSignInAvailable(): boolean {
   return isAppConnectBuild() && appConnectPins() !== null
 }
 
+type Section = 'wallet' | 'phrase' | 'key'
+
+/** One collapsible sign-in option; its content mounts only while open (the wallet request is made on opening). */
+function Disclosure({
+  id,
+  open,
+  onToggle,
+  icon,
+  label,
+  children,
+}: {
+  id: string
+  open: boolean
+  onToggle: () => void
+  icon: React.ReactNode
+  label: string
+  children: React.ReactNode
+}) {
+  const reduceMotion = useReducedMotion()
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={onToggle}
+        className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
+      >
+        <span className="flex items-center gap-2">
+          {icon}
+          {label}
+        </span>
+        <ChevronDown aria-hidden="true" className={`w-4 h-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            id={id}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="pt-4">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 /**
  * Global sign-in dialog.
  *
- * Private-key sign-in is the primary path, with the way to create an
- * identity right under it. Wallet sign-in (App Connect) sits behind a
- * collapsed option until Dash wallets ship support for it; its request is
- * only made once the option is opened.
+ * App Connect builds (D38): the Dash wallet first, then the wallet's recovery
+ * phrase, both of which unlock messaging with the key the wallet uses;
+ * private-key sign-in sits under "Advanced". Each opens on demand, one at a
+ * time, so the wallet request is only made once its option is opened.
+ *
+ * Other builds: private-key sign-in is the primary path, with the way to
+ * create an identity right under it.
  */
 export function LoginModal() {
   const router = useRouter()
@@ -57,16 +114,18 @@ export function LoginModal() {
   const { loginWithAppConnect } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const reduceMotion = useReducedMotion()
-  const walletId = useId()
+  const sectionId = useId()
   const opener = useRef<HTMLElement | null>(null)
 
   const newUser = newUserLink()
   const walletAvailable = walletSignInAvailable()
-  const [showWallet, setShowWallet] = useState(false)
+  const phraseAvailable = walletAvailable && recoveryPhraseOffered(getConfiguredNetwork())
+  const [open, setOpen] = useState<Section | null>(null)
+  const toggle = (section: Section) => setOpen((current) => (current === section ? null : section))
 
   // Reset to the primary view whenever the dialog closes.
   useEffect(() => {
-    if (!isOpen) setShowWallet(false)
+    if (!isOpen) setOpen(null)
   }, [isOpen])
 
   const handleClose = useCallback(() => {
@@ -131,7 +190,7 @@ export function LoginModal() {
                 </Dialog.Title>
                 <Dialog.Description asChild>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                  Sign in with your Dash identity&apos;s private key.
+                  {walletAvailable ? 'Sign in with your Dash wallet.' : 'Sign in with your Dash identity\'s private key.'}
                 </p>
                 </Dialog.Description>
               </div>
@@ -139,8 +198,50 @@ export function LoginModal() {
               {/* Fastest where it works: a passkey added on an earlier sign-in */}
               <PasskeySignIn onComplete={close} />
 
-              {/* Primary: private key */}
-              <KeyLoginForm onComplete={close} />
+              {walletAvailable ? (
+                <div className="space-y-4" data-testid="sign-in-options">
+                  <Disclosure
+                    id={`${sectionId}-wallet`}
+                    open={open === 'wallet'}
+                    onToggle={() => toggle('wallet')}
+                    icon={<Wallet aria-hidden="true" className="w-4 h-4" />}
+                    label="Sign in with your Dash wallet"
+                  >
+                    <p className="mb-4 text-xs text-center text-gray-500 dark:text-gray-400">
+                      Wallet sign-in is coming to the Dash wallet apps soon. If yours already supports it, scan this code with it.
+                    </p>
+                    <AppConnectLoginPanel onGrant={signInWithGrant} onComplete={close} />
+                  </Disclosure>
+                  {phraseAvailable && (
+                    <Disclosure
+                      id={`${sectionId}-phrase`}
+                      open={open === 'phrase'}
+                      onToggle={() => toggle('phrase')}
+                      icon={<ScrollText aria-hidden="true" className="w-4 h-4" />}
+                      label="Sign in with your recovery phrase"
+                    >
+                      <RecoveryPhraseForm onComplete={close} />
+                    </Disclosure>
+                  )}
+                  <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
+                    <Disclosure
+                      id={`${sectionId}-key`}
+                      open={open === 'key'}
+                      onToggle={() => toggle('key')}
+                      icon={<KeyRound aria-hidden="true" className="w-4 h-4" />}
+                      label="Advanced: sign in with a private key"
+                    >
+                      <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
+                        A private key signs you in to post and browse. To use messages, store orders and private feeds,
+                        sign in with your Dash wallet or your recovery phrase.
+                      </p>
+                      <KeyLoginForm onComplete={close} />
+                    </Disclosure>
+                  </div>
+                </div>
+              ) : (
+                <KeyLoginForm onComplete={close} />
+              )}
               <p className="mt-3 text-xs text-center text-gray-600 dark:text-gray-400">
                 By continuing, you agree to the <ConsentLink href="/terms">Terms</ConsentLink> and{' '}
                 <ConsentLink href={COMMUNITY_RULES_HREF}>Community Rules</ConsentLink> and confirm you are {MINIMUM_AGE} or
@@ -161,47 +262,6 @@ export function LoginModal() {
                   {newUser.label}
                 </a>
               </div>
-
-              {/* Secondary: wallet sign-in, for wallets that already support it */}
-              {walletAvailable && (
-                <div className="mt-5 border-t border-gray-100 dark:border-gray-800 pt-4">
-                  <button
-                    type="button"
-                    aria-expanded={showWallet}
-                    aria-controls={walletId}
-                    onClick={() => setShowWallet((v) => !v)}
-                    className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors rounded-md py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Wallet aria-hidden="true" className="w-4 h-4" />
-                      Sign in with a Dash wallet app
-                    </span>
-                    <ChevronDown
-                      aria-hidden="true"
-                      className={`w-4 h-4 transition-transform duration-200 ${showWallet ? 'rotate-180' : ''}`}
-                    />
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {showWallet && (
-                      <motion.div
-                        id={walletId}
-                        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-                        transition={{ duration: 0.2 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="pt-4">
-                          <p className="mb-4 text-xs text-center text-gray-500 dark:text-gray-400">
-                            Wallet sign-in is coming to the Dash wallet apps soon. If yours already supports it, scan this code with it.
-                          </p>
-                          <AppConnectLoginPanel onGrant={signInWithGrant} onComplete={close} />
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )}
             </div>
           </motion.div>
           </Dialog.Content>

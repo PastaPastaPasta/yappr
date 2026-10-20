@@ -12,6 +12,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+import { ensureInitialized } from '@dashevo/evo-sdk'
 import { decodeYapprContractId } from '../../../vendor/platform-auth/src/key-exchange/yappr-protocol'
 import {
   ENV_FILE_VAR,
@@ -178,6 +179,8 @@ export async function main(argv: string[]): Promise<number> {
     const config = loadConfig(envFile)
     const pool = loadPool()
     requirePoolMatchesNetwork(pool, config)
+    // Seeded personas derive their App Connect keys on the SDK's wasm (app-connect/derive.ts).
+    if (pool.mnemonic) await ensureInitialized()
     const stateNamespace = config.network === 'testnet' ? 'network-testnet' : config.devnet.devnetName
     const statePath = resolve(values['state-file'] ?? process.env[STATE_FILE_VAR] ?? defaultStatePath(stateNamespace))
     log(`${responderNetwork(config)} from ${envFile}; key-exchange contract ${config.keyExchangeContractId ?? '(unset)'}; App Connect state ${statePath}`)

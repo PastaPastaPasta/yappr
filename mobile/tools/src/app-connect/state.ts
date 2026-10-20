@@ -31,8 +31,10 @@ export interface GrantedAuthKey {
   keyId: number
   /** Position of the binding in the request that created the key. */
   bindingIndex: number
-  /** `hash256(appEphPub)` of that request (hex): with the binding index, re-derives the key. */
+  /** `hash256(appEphPub)` of that request (hex): with the binding index, re-derives a legacy-scheme key, and tells the request apart. */
   derivationTag: string
+  /** That request's `appEphPub` (hex): with the binding index, re-derives a DIP-13 key. Records before it have only the tag. */
+  appEphemeralPubKey?: string
   /** The bounds the key was registered with (what a renewal matches). */
   bounds?: AppConnectKeyBounds
 }

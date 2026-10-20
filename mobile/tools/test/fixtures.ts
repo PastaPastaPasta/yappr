@@ -5,7 +5,9 @@
 import bs58 from 'bs58'
 import * as secp256k1 from '@noble/secp256k1'
 import { bytesToHex } from '@noble/hashes/utils.js'
+import { WasmSdk } from '@dashevo/evo-sdk'
 import { parsePool, selectPersona, type Persona, type Pool } from '../src/pool'
+import { dip13Wallet, identityAuthKeyPath, type Dip13Network } from '../../../lib/crypto/dip13'
 
 export const PERSONA_IDX = 90
 export const IDENTITY_ID_BYTES = new Uint8Array(32).fill(0x42)
@@ -47,4 +49,33 @@ export function testPool(): Pool {
 
 export function testPersona(personaIdx = PERSONA_IDX): Persona {
   return selectPersona(testPool(), personaIdx)
+}
+
+/** BIP-39's public all-zero-entropy phrase: the reference wallet's pinned vectors use it. */
+export const TEST_PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+export const SEEDED_PERSONA_IDX = 96
+
+/**
+ * A pool naming TEST_PHRASE, with one persona at DIP-13 identity index
+ * `identityIndex` whose identity keys are the phrase's at `keysAtIndex` (by
+ * default the same index), key id = key index as a DashPay build registers
+ * them. evo-sdk's wasm must be initialised first.
+ */
+export function seededPool(options: { network?: string; identityIdBytes?: Uint8Array; identityIndex?: number; keysAtIndex?: number } = {}): Pool {
+  const network = options.network ?? 'testnet'
+  const dip13Network: Dip13Network = network === 'mainnet' ? 'mainnet' : 'testnet'
+  const wallet = dip13Wallet(WasmSdk, TEST_PHRASE, dip13Network)
+  const identityIndex = options.identityIndex ?? 0
+  return parsePool({
+    network,
+    identities: [{
+      personaIdx: SEEDED_PERSONA_IDX,
+      identityId: bs58.encode(options.identityIdBytes ?? new Uint8Array(32).fill(0x35)),
+      identityIndex,
+      identityKeys: LAYOUT.slice(0, 4).map((key) => {
+        const derived = wallet.derive(identityAuthKeyPath(dip13Network, options.keysAtIndex ?? identityIndex, key.keyId))
+        return { ...key, privateKeyHex: bytesToHex(derived.privateKey), publicKeyHex: bytesToHex(derived.publicKey) }
+      }),
+    }],
+  }, TEST_PHRASE)
 }

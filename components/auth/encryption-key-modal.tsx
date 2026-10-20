@@ -50,8 +50,6 @@ function KeyEntryEncryptionKeyModal() {
   const [showAddKeyModal, setShowAddKeyModal] = useState(false)
   const [showLostKeyModal, setShowLostKeyModal] = useState(false)
   const [noKeyOnIdentity, setNoKeyOnIdentity] = useState(false)
-  /** Auto-recovery found no key on the identity and went straight to adding one. */
-  const [openedForSetup, setOpenedForSetup] = useState(false)
 
   // Auto-recovery state
   const [autoRecoveryStatus, setAutoRecoveryStatus] = useState<AutoRecoveryStatus>('idle')
@@ -82,7 +80,6 @@ function KeyEntryEncryptionKeyModal() {
         if (!isModalActiveRef.current) return
         setAutoRecoveryStatus('failed')
         setAutoRecoveryMessage('')
-        setOpenedForSetup(true)
         setShowAddKeyModal(true)
         return
       }
@@ -107,6 +104,7 @@ function KeyEntryEncryptionKeyModal() {
         if (!isModalActiveRef.current) return
         setAutoRecoveryStatus('failed')
         setAutoRecoveryMessage('')
+        if (isAppConnectBuild()) setShowAddKeyModal(true)
         return
       }
 
@@ -154,6 +152,14 @@ function KeyEntryEncryptionKeyModal() {
 
       // Step 3: Neither backup nor derivation worked - show manual entry
       if (!isModalActiveRef.current) return
+      // App Connect builds (D38): the messaging key comes from the wallet or its recovery phrase,
+      // and entering one by hand is a developer option of that prompt.
+      if (isAppConnectBuild()) {
+        setAutoRecoveryStatus('failed')
+        setAutoRecoveryMessage('')
+        setShowAddKeyModal(true)
+        return
+      }
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('Auto-recovery not available. Please enter your key manually.')
     } catch (err) {
@@ -161,6 +167,8 @@ function KeyEntryEncryptionKeyModal() {
       if (!isModalActiveRef.current) return
       setAutoRecoveryStatus('failed')
       setAutoRecoveryMessage('')
+      // App Connect builds: the wallet / recovery-phrase prompt, never the bare key entry (D38).
+      if (isAppConnectBuild()) setShowAddKeyModal(true)
     }
   }, [close, user, onSuccess])
 
@@ -177,7 +185,6 @@ function KeyEntryEncryptionKeyModal() {
       setEncryptionKeyInput('')
       setError(null)
       setNoKeyOnIdentity(false)
-      setOpenedForSetup(false)
       setShowLostKeyModal(false)
       setAutoRecoveryStatus('idle')
       setAutoRecoveryMessage('')
@@ -434,8 +441,8 @@ function KeyEntryEncryptionKeyModal() {
         isOpen={showAddKeyModal}
         onClose={() => {
           setShowAddKeyModal(false)
-          // App Connect builds: someone who has no messaging key and declines setup has no key to enter either.
-          if (openedForSetup && isAppConnectBuild()) close()
+          // App Connect builds: the prompt it opened is the whole flow (it may also have handed off to a new sign-in).
+          if (isAppConnectBuild()) close()
         }}
         onSuccess={handleAddKeySuccess}
       />

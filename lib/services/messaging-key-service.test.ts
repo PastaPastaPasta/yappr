@@ -96,9 +96,19 @@ describe('messaging key setup', () => {
     const draft = s.draftMessagingKey(IDENTITY)
     mocks.addEncryptionKey.mockResolvedValueOnce({ success: false, error: 'Identity modifications require a MASTER key. You provided a HIGH key.' })
     await expect(s.addMessagingKeyWithMasterKey(draft, LOGIN_WIF)).rejects.toThrow(/MASTER/)
-    expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF)
+    expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF, undefined, { cancelled: undefined })
     mocks.addEncryptionKey.mockResolvedValueOnce({ success: false, error: 'Identity already has an encryption key' })
     await expect(s.addMessagingKeyWithMasterKey(draft, LOGIN_WIF)).rejects.toBeInstanceOf(s.MessagingAlreadySetUpError)
+  })
+
+  it('hands the identity service the caller\'s last-moment cancel check, and reports a cancelled update', async () => {
+    const s = await load()
+    s.storePrivateKey(IDENTITY, LOGIN_WIF)
+    const draft = s.draftMessagingKey(IDENTITY)
+    const cancelled = () => true
+    mocks.addEncryptionKey.mockResolvedValueOnce({ success: false, cancelled: true })
+    await expect(s.addMessagingKeyWithMasterKey(draft, LOGIN_WIF, cancelled)).rejects.toBeInstanceOf(s.MessagingSetupCancelledError)
+    expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF, undefined, { cancelled })
   })
 
   it('accepts a hex master key, signing with its WIF', async () => {
@@ -107,7 +117,7 @@ describe('messaging key setup', () => {
     const draft = s.draftMessagingKey(IDENTITY)
     mocks.addEncryptionKey.mockResolvedValueOnce({ success: true, keyId: 5 })
     await s.addMessagingKeyWithMasterKey(draft, Buffer.from(LOGIN_KEY).toString('hex'))
-    expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF)
+    expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF, undefined, { cancelled: undefined })
   })
 
   it('confirms a stored key that is the anchor key, even one not derived from the login key', async () => {

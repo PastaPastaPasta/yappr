@@ -5,7 +5,7 @@
  * uses the base Playwright `test` rather than the session-seeding fixture.
  */
 import { expect, test } from '@playwright/test'
-import { appUrl } from '../fixtures/app'
+import { appUrl, isAppConnectBuild } from '../fixtures/app'
 import { hasSeedPhrase, NO_SEED_REASON, resolveBotIdentity } from '../fixtures/auth'
 
 test('a private key alone signs in without a username', async ({ page }) => {
@@ -14,6 +14,8 @@ test('a private key alone signs in without a username', async ({ page }) => {
 
   await page.goto(appUrl('/login/'))
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
+  // App Connect builds keep private-key sign-in under Advanced (D38).
+  if (isAppConnectBuild()) await dialog.getByRole('button', { name: 'Advanced: sign in with a private key' }).click()
 
   await expect(dialog.locator('#loginIdentityInput')).toHaveValue('')
   await dialog.locator('#loginCredential').fill(bot.wif)
