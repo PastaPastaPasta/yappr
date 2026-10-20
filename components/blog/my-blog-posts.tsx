@@ -8,8 +8,12 @@ import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 
-/** Parent-independent author management, including posts from deleted blogs. */
-export function MyBlogPosts({ ownerId }: { ownerId: string }) {
+/**
+ * The author's posts whose blog is gone, so they can still be deleted. Posts in
+ * `liveBlogIds` are managed from their blog's dashboard and are left out; the
+ * section only appears once there is something to show.
+ */
+export function MyBlogPosts({ ownerId, liveBlogIds }: { ownerId: string; liveBlogIds?: ReadonlySet<string> }) {
   const [posts, setPosts] = useState<BlogPost[]>([])
   const [cursor, setCursor] = useState<string>()
   const [loading, setLoading] = useState(true)
@@ -64,18 +68,19 @@ export function MyBlogPosts({ ownerId }: { ownerId: string }) {
     }
   }
 
+  const visiblePosts = liveBlogIds ? posts.filter((post) => !liveBlogIds.has(post.blogId)) : posts
+  if (visiblePosts.length === 0 && !cursor && !error) return null
+
   return (
     <section className="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-800">
-      <h2 className="text-lg font-semibold">My posts</h2>
-      <p className="text-sm text-gray-500">Your posts stay here after you delete a blog. Deleting a post removes its text and closes its comments.</p>
-      {posts.map((post) => (
+      <h2 className="text-lg font-semibold">Posts from deleted blogs</h2>
+      {visiblePosts.map((post) => (
         <div key={post.id} className="flex items-center justify-between gap-3">
           <p className="min-w-0 truncate text-sm">{post.title}</p>
           <Button variant="outline" size="sm" disabled={loading} onClick={() => setDeleting(post)}>Delete post</Button>
         </div>
       ))}
       {loading && <p className="text-sm text-gray-500">Loading posts...</p>}
-      {!loading && !error && posts.length === 0 && <p className="text-sm text-gray-500">No posts.</p>}
       {error && <p role="alert" className="text-sm text-red-500">Could not load your posts.</p>}
       {!loading && (cursor || error) && <Button variant="outline" onClick={loadMore}>{error ? 'Try again' : 'Load more posts'}</Button>}
       <ConfirmDialog

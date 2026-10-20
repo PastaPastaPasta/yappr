@@ -15,7 +15,6 @@ import { BetaPill } from '@/components/ui/beta-pill'
 import { MobileCartFab } from '@/components/store/mobile-cart-fab'
 import { RatingStars } from '@/components/store/rating-stars'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
@@ -186,10 +185,11 @@ export default function StoreBrowsePage() {
                     size="sm"
                     variant="outline"
                     onClick={() => router.push('/orders')}
+                    aria-label="My Orders"
                     className="flex items-center gap-1"
                   >
-                    <ClipboardDocumentListIcon className="h-4 w-4" />
-                    My Orders
+                    <ClipboardDocumentListIcon className="h-4 w-4" aria-hidden="true" />
+                    <span className="hidden sm:inline">My Orders</span>
                   </Button>
                   <Button
                     size="sm"
@@ -211,8 +211,7 @@ export default function StoreBrowsePage() {
 
             {/* Sort (ranked tabs need the v2 contract's ranking trees) */}
             {storefrontIsV2() && (
-            <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-            <div className="flex gap-2" role="tablist" aria-label="Sort stores">
+            <div className="flex gap-2 px-4 pb-3" role="tablist" aria-label="Sort stores">
               {SORT_OPTIONS.map(([key, label]) => (
                 <button
                   key={key}
@@ -233,30 +232,11 @@ export default function StoreBrowsePage() {
                 </button>
               ))}
             </div>
-            {categories.length > 0 && (
-              <select
-                aria-label="Category"
-                value={category}
-                onChange={(e) => {
-                  setCategory(e.target.value)
-                  if (e.target.value) setSort('newest')
-                }}
-                className="ml-auto h-8 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
-              >
-                <option value="">All categories</option>
-                {categories.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {storeCategoryLabel(entry.id)} ({entry.value})
-                  </option>
-                ))}
-              </select>
-            )}
-            </div>
             )}
 
             {/* Search */}
-            <div className="px-4 pb-4">
-              <div className="relative">
+            <div className="flex gap-2 px-4 pb-4">
+              <div className="relative min-w-0 flex-1">
                 <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500" />
                 <input
                   type="text"
@@ -266,6 +246,25 @@ export default function StoreBrowsePage() {
                   className="w-full h-11 pl-12 pr-4 bg-gray-100 dark:bg-gray-900 rounded-full focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:bg-transparent dark:focus:bg-transparent"
                 />
               </div>
+              {/* Shown from the start (filled in when the counts land) so the search box keeps its width. */}
+              {storefrontIsV6() && (
+                <select
+                  aria-label="Category"
+                  value={category}
+                  onChange={(e) => {
+                    setCategory(e.target.value)
+                    if (e.target.value) setSort('newest')
+                  }}
+                  className="h-11 max-w-[45%] shrink-0 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                >
+                  <option value="">All categories</option>
+                  {categories.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {storeCategoryLabel(entry.id)} ({entry.value})
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           </PageHeader>
 
@@ -279,10 +278,21 @@ export default function StoreBrowsePage() {
               </p>
             )}
             {isLoading || isBlockCheckPending ? (
-              <div className="p-8 text-center">
-                <Spinner className="mx-auto mb-4" />
-                <p className="text-gray-500">Loading stores...</p>
-              </div>
+              // Sized like a store row (logo, name, two description lines, location) so the list does not jump.
+              <>
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <div key={index} className="flex gap-4 p-4 animate-pulse" aria-hidden="true">
+                    <div className="h-16 w-16 flex-shrink-0 rounded-lg bg-gray-200 dark:bg-gray-800" />
+                    <div className="flex-1">
+                      <div className="flex h-6 items-center"><div className="h-4 w-1/3 rounded bg-gray-200 dark:bg-gray-800" /></div>
+                      <div className="mt-1 flex h-5 items-center"><div className="h-3.5 w-full rounded bg-gray-200 dark:bg-gray-800" /></div>
+                      <div className="flex h-5 items-center"><div className="h-3.5 w-2/3 rounded bg-gray-200 dark:bg-gray-800" /></div>
+                      <div className="mt-1 flex h-4 items-center"><div className="h-3 w-24 rounded bg-gray-200 dark:bg-gray-800" /></div>
+                    </div>
+                  </div>
+                ))}
+                <span className="sr-only" role="status">Loading stores</span>
+              </>
             ) : loadFailed ? (
               <p className="p-8 text-center text-sm text-gray-500" role="status">
                 Stores are unavailable right now. Please try again.
@@ -298,7 +308,7 @@ export default function StoreBrowsePage() {
                     ? 'Try a different search term'
                     : allStoresHidden
                       ? 'Stores from accounts you block are hidden'
-                      : 'Be the first to create a store!'}
+                      : 'Be the first to open one.'}
                 </p>
                 {!searchQuery && user && !hasStore && (
                   <Button

@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import toast from 'react-hot-toast'
-import { declaredActionFeeFor } from '@/lib/transition-agreements'
 import { useAuth } from '@/contexts/auth-context'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
@@ -32,8 +31,6 @@ function ContractReportDialog({ target, reporterId, close }: { target: ContractR
   const [note, setNote] = useState('')
   const available = useModeratedTypeOpen('report', true, target.contract)
   const noun = documentNoun(target.docType)
-  const fee = declaredActionFeeFor(moderatedContract(target.contract).contractId, 'report', 'create')
-  const feeCredits = fee ? Number(fee.owner + fee.moderators) : 0
   const { contract, docType, targetId, ownerId } = target
   useEffect(() => {
     let cancelled = false
@@ -49,7 +46,7 @@ function ContractReportDialog({ target, reporterId, close }: { target: ContractR
     try {
       const result = await contractReportService.file(reporterId, target, reason, note)
       if (!result.success) { toast.error(categorizeError(result.error)); return }
-      toast.success(result.confirmed === false ? 'Report sent. Waiting for network confirmation.' : 'Report published for the community-elected moderators.')
+      toast.success('Report sent')
       close()
     } catch (error) { toast.error(categorizeError(error)) }
     finally { setBusy(false) }
@@ -60,14 +57,14 @@ function ContractReportDialog({ target, reporterId, close }: { target: ContractR
     try {
       const result = await contractReportService.withdraw(reporterId, contract, own.id)
       if (!result.success) { toast.error(categorizeError(result.error)); return }
-      toast.success(result.confirmed === false ? 'Withdrawal sent. Waiting for network confirmation.' : 'Report withdrawn')
+      toast.success('Report withdrawn')
       close()
     } finally { setBusy(false) }
   }
   return <Modal open onOpenChange={value => { if (!value && !busy) close() }} className="w-[440px] max-w-[90vw] max-h-[90vh] overflow-y-auto">
     <ModalTitle>{own ? `You reported this ${noun}` : `Report this ${noun}`}</ModalTitle>
     <Dialog.Description className="text-sm text-gray-500 mb-4">
-      Your report goes to on-chain moderators, elected by the community through masternode votes. These teams are independent of Yappr. Reports are public: anyone can see who reported it, the reason and the details. Reports expire after 90 days.
+      Reports go to the community&apos;s moderators. They are public, including who sent them.
     </Dialog.Description>
     {loading ? <p>Checking your reports…</p> : failed ? <p role="alert">Could not check your reports. Close this window and try again.</p> : own ? <div className="space-y-3">
       <p>You reported it for {reportReasonLabel(own.reason)}.</p>
@@ -76,7 +73,6 @@ function ContractReportDialog({ target, reporterId, close }: { target: ContractR
       {own.resolution && <p className="whitespace-pre-wrap break-words">{own.resolution}</p>}
       {own.status === null && <Button variant="outline" disabled={busy} onClick={() => withdraw().catch(error => toast.error(categorizeError(error)))}>Withdraw report</Button>}
     </div> : <div className="space-y-3">
-      {feeCredits > 0 && <p className="text-xs text-gray-500">Filing a report pays a moderation fee of {(feeCredits / 1_000_000).toLocaleString()}M credits (about {(feeCredits / 1_000_000 * 0.06).toFixed(2)}¢), plus the network fee.</p>}
       {!available && <p role="status">{POSTING_CLOSED_COPY}</p>}
       <fieldset disabled={busy} className="space-y-2">
         <legend className="font-medium mb-2">What is wrong with it?</legend>

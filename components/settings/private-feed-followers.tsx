@@ -9,7 +9,6 @@ import { UserAvatar } from '@/components/ui/avatar-image'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   UserGroupIcon,
-  LockClosedIcon,
   MagnifyingGlassIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
@@ -215,27 +214,8 @@ export function PrivateFeedFollowers() {
     )
   }
 
-  if (!hasPrivateFeed) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <UserGroupIcon className="h-5 w-5" />
-            Private Followers
-          </CardTitle>
-          <CardDescription>Manage who can access your private posts</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg text-center">
-            <LockClosedIcon className="h-8 w-8 mx-auto text-gray-400 mb-2" />
-            <p className="text-gray-500 text-sm">
-              Enable your private feed to manage followers
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
+  // Nothing to manage until the private feed is on; its own card says how to turn it on.
+  if (!hasPrivateFeed) return null
 
   return (
     <Card>

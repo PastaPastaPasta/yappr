@@ -1,7 +1,7 @@
 'use client'
 
 import { useDeletedBlogs } from '@/lib/blog/deleted-blogs'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { PlusIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { blogService, blogPostService } from '@/lib/services'
@@ -53,21 +53,21 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
     return () => { cancelled = true }
   }, [ownerId])
 
-  const visibleBlogs = blogs.filter((blog) => !deletedIds.has(blog.id))
+  const visibleBlogs = useMemo(() => blogs.filter((blog) => !deletedIds.has(blog.id)), [blogs, deletedIds])
+  const liveBlogIds = useMemo(() => new Set(visibleBlogs.map((blog) => blog.id)), [visibleBlogs])
 
   return (
     <div className="mb-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">My Blogs</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">My blogs</h2>
         <Button onClick={() => setOpenCreate(true)}>
           <PlusIcon className="mr-2 h-4 w-4" />
           Create Blog
         </Button>
       </div>
 
-      {loading ? (
-        <p className="text-sm text-gray-500">Loading blogs...</p>
-      ) : error ? (
+      {/* Nothing while loading: most people have no blog, so a placeholder would only collapse. */}
+      {loading ? null : error ? (
         <p className="text-sm text-red-500">{error}</p>
       ) : visibleBlogs.length === 0 ? null : (
         <div className="space-y-3">
@@ -85,7 +85,7 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
         </div>
       )}
 
-      {blogIsV9() && <MyBlogPosts key={ownerId} ownerId={ownerId} />}
+      {blogIsV9() && !loading && !error && <MyBlogPosts key={ownerId} ownerId={ownerId} liveBlogIds={liveBlogIds} />}
 
       <CreateBlogModal
         open={openCreate}
