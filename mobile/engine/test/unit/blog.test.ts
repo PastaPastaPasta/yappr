@@ -94,6 +94,18 @@ describe('blog reads', () => {
     expect(m.blogPostService.getPostBySlug).toHaveBeenCalledWith(BLOG, 'hello-there')
   })
 
+  it("says whether a title's own address is free before a publish", async () => {
+    m.blogPostService.getPostBySlug.mockResolvedValue(null)
+    expect(await blogReads.publishAddressFree(BLOG, 'Hello there')).toBe(true)
+    m.blogPostService.getPostBySlug.mockResolvedValue(libPost())
+    expect(await blogReads.publishAddressFree(BLOG, 'Hello there')).toBe(false)
+    m.blogPostService.getPostBySlug.mockClear()
+    expect(await blogReads.publishAddressFree(BLOG, '🎉')).toBe(false)
+    expect(m.blogPostService.getPostBySlug).not.toHaveBeenCalled()
+    m.blogPostService.getPostBySlug.mockRejectedValueOnce(new Error('timeout'))
+    await expect(blogReads.publishAddressFree(BLOG, 'Hello there')).rejects.toBeTruthy()
+  })
+
   it('lists published posts to readers and drafts to the owner', async () => {
     m.blogPostService.getPostsByBlog.mockResolvedValue([libPost(), libPost({ id: 'D'.repeat(44), publishedAt: undefined })])
     expect((await blogReads.posts(BLOG)).items).toHaveLength(2)
@@ -110,6 +122,15 @@ describe('blog writes', () => {
     await expect(writes.create({ name: 'Ok', avatar: 'http://insecure.example/a.png' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(writes.publish(BLOG, { title: 'x'.repeat(200), content: [] })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(writes.comment(POST, AUTHOR, '   ')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('skips the address pre-read for a title with no address of its own', async () => {
+    const { store, handlers, submitted, ctx } = fakeStore()
+    await createBlogWrites(store).publish(BLOG, { title: '日本語', content: [{ type: 'paragraph' }] })
+    m.blogPostService.createPost.mockResolvedValue({ id: POST, __createConfirmed: true })
+    await handlers.get('blogPost.publish')?.run(submitted[0].args, ctx())
+    expect(m.blogPostService.getPostBySlug).not.toHaveBeenCalled()
+    expect(m.blogPostService.createPost).toHaveBeenCalled()
   })
 
   it('publishes through createPost, recording the created post', async () => {
