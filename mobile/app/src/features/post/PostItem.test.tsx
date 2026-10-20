@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { ActionSheetIOS, Alert, Share, type AlertButton } from 'react-native';
+import { ActionSheetIOS, Alert, Share, Text, type AlertButton } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useRemovedPosts } from '~/data/optimistic';
@@ -17,7 +17,7 @@ import { keepHandlesWhole } from '~/ui/handle';
 import { AUTHORS, POSTS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
-import { useHiddenPrivateStore, useHideUnreadablePrivate } from './hidden-private';
+import { useFeedPosts, useHiddenPrivateStore } from './hidden-private';
 import { PostItem } from './PostItem';
 import { likeWrite } from './post-writes';
 
@@ -399,23 +399,24 @@ describe('post write specs', () => {
 describe('PostItem private posts the viewer cannot read', () => {
   afterEach(() => useHiddenPrivateStore.setState({ hide: false }));
 
-  /** A browsing list as screens wire it: it passes the setting. */
-  function List({ posts }: { posts: PostDTO[] }) {
-    const hide = useHideUnreadablePrivate();
+  /** A feed as screens wire it: its posts through `useFeedPosts`. */
+  function Feed({ posts }: { posts: PostDTO[] }) {
+    const shown = useFeedPosts(posts);
     return (
       <>
-        {posts.map((post) => (
-          <PostItem key={post.id} post={post} hideUnreadablePrivate={hide} />
+        <Text testID="feed-count">{shown.length}</Text>
+        {shown.map((post) => (
+          <PostItem key={post.id} post={post} />
         ))}
       </>
     );
   }
 
-  it('offers "Hide private posts I can\'t see", which leaves them out of lists, with Undo', () => {
+  it('offers "Hide private posts I can\'t see", which leaves them out of feeds, with Undo', () => {
     const own = fixturePost({ id: 'own-private', author: AUTHORS.alice, content: '', encrypted: true });
     render(
       <QueryClientProvider client={queryClient}>
-        <List posts={[POSTS.private, own]} />
+        <Feed posts={[POSTS.private, own]} />
       </QueryClientProvider>,
     );
     expect(menuIds('post-private')).toContain('hide-private');
@@ -426,33 +427,27 @@ describe('PostItem private posts the viewer cannot read', () => {
     expect(useHiddenPrivateStore.getState().hide).toBe(true);
     expect(screen.queryByTestId('post-card-post-private')).toBeNull();
     expect(screen.getByTestId('post-card-own-private')).toBeTruthy();
+    // Out of the list itself, so its empty state and counts see what is shown.
+    expect(screen.getByTestId('feed-count')).toHaveTextContent('1');
 
     act(() => useToastStore.getState().current?.action?.onPress());
     expect(useHiddenPrivateStore.getState().hide).toBe(false);
     expect(screen.getByTestId('post-card-post-private')).toBeTruthy();
   });
 
-  it('hides a bare repost of such a post, and leaves the menu item out once hiding is on', () => {
+  it('leaves out a bare repost of such a post, and drops the menu item once hiding is on', () => {
     useHiddenPrivateStore.setState({ hide: true });
     const repost = fixturePost({ id: 'repost', author: AUTHORS.bob, bareRepost: true, quoted: POSTS.private });
     render(
       <QueryClientProvider client={queryClient}>
-        <List posts={[repost]} />
+        <Feed posts={[repost]} />
         <PostItem post={POSTS.private} />
       </QueryClientProvider>,
     );
+    expect(screen.getByTestId('feed-count')).toHaveTextContent('0');
+    // Outside a feed (a thread, a profile, bookmarks) the post still shows.
     expect(screen.getAllByTestId('post-card-post-private')).toHaveLength(1);
     expect(menuIds('post-private')).not.toContain('hide-private');
-  });
-
-  it('keeps them where the list does not ask: the open post, threads, profiles and bookmarks', () => {
-    useHiddenPrivateStore.setState({ hide: true });
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PostItem post={POSTS.private} variant="detail" hideUnreadablePrivate />
-      </QueryClientProvider>,
-    );
-    expect(screen.getByTestId('post-card-post-private')).toBeTruthy();
   });
 });
 

@@ -10,7 +10,7 @@ import { useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useCapabilities } from '~/data/session';
 import { openHashtag } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
-import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
+import { useFeedPosts } from '~/features/post/hidden-private';
 import { cn } from '~/lib-allowlist';
 import { ComposeFab } from '~/ui/ComposeFab';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -40,6 +40,8 @@ type Row =
   | { type: 'post'; key: string; post: PostDTO }
   | { type: 'section'; key: string; title: string }
   | { type: 'user'; key: string; entry: RankedUserDTO; rank: number };
+
+const NO_POSTS: PostDTO[] = [];
 
 /** Room under the last row for the compose button. */
 const FAB_CLEARANCE = 96;
@@ -88,7 +90,6 @@ function creatorRows(entries: readonly RankedUserDTO[]): Row[] {
  * each ranked list with its window where the axis has one.
  */
 export function ExploreScreen() {
-  const hidePrivate = useHideUnreadablePrivate();
   const c = useColors();
   const capabilities = useCapabilities();
   const offline = useOffline();
@@ -120,12 +121,13 @@ export function ExploreScreen() {
     { persist: true, enabled: segment === 'creators' },
   );
   const active = segment === 'trending' ? trending : segment === 'top' ? top : creators;
+  const topPosts = useFeedPosts(top.data ?? NO_POSTS);
 
   let rows: Row[] = [];
   if (segment === 'trending') {
     rows = (trending.data ?? []).map((tag, index) => ({ type: 'tag', key: `tag:${tag.tag}`, tag, rank: index + 1 }));
   } else if (segment === 'top') {
-    rows = (top.data ?? []).map((post) => ({ type: 'post', key: `post:${post.id}`, post }));
+    rows = topPosts.map((post) => ({ type: 'post', key: `post:${post.id}`, post }));
   } else {
     rows = creatorRows(creators.data ?? []);
   }
@@ -222,7 +224,7 @@ export function ExploreScreen() {
                 />
               );
             case 'post':
-              return <PostItem post={item.post} hideUnreadablePrivate={hidePrivate} />;
+              return <PostItem post={item.post} />;
             case 'section':
               return <SectionHeader title={item.title} />;
             case 'user':

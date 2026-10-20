@@ -69,7 +69,7 @@ export const copy = {
       { value: 'show', title: 'Always show', description: 'Show NSFW posts without a warning' },
       { value: 'hide', title: 'Hide', description: 'Remove NSFW posts from your feeds' },
     ] as const satisfies readonly { value: NsfwMode; title: string; description: string }[],
-    hidePrivateDescription: 'Skip them in feeds and search instead of showing a locked card',
+    hidePrivateDescription: 'Skip them in your feeds instead of showing a locked card',
     blocked: 'Blocked accounts',
     readReceipts: 'Read receipts',
     readReceiptsDescription: "Let others see when you've read their messages",

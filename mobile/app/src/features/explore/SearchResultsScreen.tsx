@@ -6,7 +6,6 @@ import { MagnifyingGlassIcon } from 'react-native-heroicons/outline';
 
 import { openHashtag } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
-import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { Screen } from '~/ui/Screen';
 
@@ -28,7 +27,6 @@ type Row =
  * cached, so this opens on the rows it was showing.
  */
 export function SearchResultsScreen({ kind: kindParam, query }: { kind: string | undefined; query: string }) {
-  const hidePrivate = useHideUnreadablePrivate();
   const offline = useOffline();
   const recent = useRecentSearches();
   const kind = isSearchKind(kindParam) ? kindParam : 'posts';
@@ -99,7 +97,7 @@ export function SearchResultsScreen({ kind: kindParam, query }: { kind: string |
                 />
               );
             case 'post':
-              return <PostItem post={item.post} hideUnreadablePrivate={hidePrivate} />;
+              return <PostItem post={item.post} />;
           }
         }}
         ListEmptyComponent={empty}

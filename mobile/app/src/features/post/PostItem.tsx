@@ -58,12 +58,6 @@ export interface PostItemProps
    * keeps it as its only item.
    */
   onRemoveBookmark?: (post: PostDTO) => void;
-  /**
-   * Leave out a private post the viewer can't read (someone else's, still
-   * encrypted): browsing lists pass the "Hide private posts I can't see"
-   * setting. Threads, profiles and bookmarks never do.
-   */
-  hideUnreadablePrivate?: boolean;
 }
 
 /**
@@ -254,7 +248,6 @@ export const PostItem = memo(function PostItem({
   post: listed,
   removal = 'hide',
   onRemoveBookmark,
-  hideUnreadablePrivate = false,
   ...cardProps
 }: PostItemProps) {
   const { post: shownPost, marksPending, marksLoading, reloadMarks } = useShownPost(listed);
@@ -284,8 +277,7 @@ export const PostItem = memo(function PostItem({
 
   const own = viewerId !== null && viewerId === post.author.id;
   const detail = cardProps.variant === 'detail';
-  // Private posts the viewer can't read: offered in the menu, and left out of lists that ask.
-  // The provisional viewer, so the account's own private posts don't blink out while it restores.
+  // A private post the viewer can't read offers to hide them all from feeds (`useFeedPosts`).
   const hidingPrivate = useHideUnreadablePrivate();
   const unreadablePrivate = isUnreadablePrivate(post, safetyViewerId);
   const offerHidePrivate = unreadablePrivate && !hidingPrivate;
@@ -426,7 +418,6 @@ export const PostItem = memo(function PostItem({
   ]);
 
   if ((removed && !asStub) || safety.hidden) return null;
-  if (hideUnreadablePrivate && unreadablePrivate && !detail) return null;
 
   if (pending) {
     return (

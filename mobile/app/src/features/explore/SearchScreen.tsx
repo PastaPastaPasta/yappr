@@ -9,7 +9,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { openHashtag, openUser } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
-import { useHideUnreadablePrivate } from '~/features/post/hidden-private';
 import { cn } from '~/lib-allowlist';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { IconButton } from '~/ui/IconButton';
@@ -143,7 +142,6 @@ export interface SearchScreenProps {
  * settles, three of each with "See all".
  */
 export function SearchScreen({ initialQuery = '' }: SearchScreenProps) {
-  const hidePrivate = useHideUnreadablePrivate();
   const c = useColors();
   const insets = useSafeAreaInsets();
   const offline = useOffline();
@@ -301,7 +299,7 @@ export function SearchScreen({ initialQuery = '' }: SearchScreenProps) {
       case 'post':
         return (
           <View className={cn('border-b', tw.border)}>
-            <PostItem post={row.post} variant="compact" hideUnreadablePrivate={hidePrivate} />
+            <PostItem post={row.post} variant="compact" />
           </View>
         );
       case 'hint':
