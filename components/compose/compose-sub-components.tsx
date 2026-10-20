@@ -44,22 +44,42 @@ interface CharacterCounterProps {
   tooLong?: boolean
 }
 
+/** Whether the counter shows: from 100 characters left, or once the size cap bites. */
+export function showsCharacterCounter({ current, limit, sizeLimitReached = false, tooLong = false }: CharacterCounterProps): boolean {
+  return limit - current <= 100 || sizeLimitReached || tooLong
+}
+const RING_RADIUS = 8
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
+
+/**
+ * Like X: nothing until the post nears its limit, then a ring that fills and
+ * the characters left, amber in the last 20 and red past the limit.
+ */
 export function CharacterCounter({ current, limit, sizeLimitReached = false, tooLong = false }: CharacterCounterProps) {
   const remaining = limit - current
   const sizeMessage = tooLong ? 'Too long' : sizeLimitReached && remaining > 0 ? 'Character limit reached' : null
-  const color = remaining < 0 || tooLong
+  const over = remaining < 0 || tooLong
+  const tone = over
     ? 'text-red-600 dark:text-red-400'
-    : remaining <= 50 || sizeLimitReached
-    ? 'text-amber-700 dark:text-amber-400'
-    : 'text-gray-500 dark:text-gray-400'
+    : remaining <= 20 || sizeLimitReached
+    ? 'text-amber-600 dark:text-amber-400'
+    : 'text-yappr-500'
+  const filled = over || sizeLimitReached ? 1 : Math.min(current / limit, 1)
 
   return (
     <output
       aria-live="off"
-      className={`whitespace-nowrap tabular-nums ${color}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap tabular-nums ${tone}`}
       aria-label={sizeMessage ?? `${current} of ${limit} characters${remaining < 0 ? `, ${-remaining} over limit` : ''}`}
     >
-      {sizeMessage ?? <>{current} <span aria-hidden="true" className="text-gray-300 dark:text-gray-600">/</span> {limit}</>}
+      <svg aria-hidden="true" viewBox="0 0 20 20" className="h-5 w-5 -rotate-90">
+        <circle cx="10" cy="10" r={RING_RADIUS} fill="none" strokeWidth="2" className="stroke-gray-200 dark:stroke-gray-700" />
+        <circle
+          cx="10" cy="10" r={RING_RADIUS} fill="none" strokeWidth="2" stroke="currentColor" strokeLinecap="round"
+          strokeDasharray={RING_CIRCUMFERENCE} strokeDashoffset={RING_CIRCUMFERENCE * (1 - filled)}
+        />
+      </svg>
+      {sizeMessage ?? remaining}
     </output>
   )
 }
