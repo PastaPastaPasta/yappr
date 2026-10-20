@@ -503,7 +503,7 @@ export function InventoryUploadModal({
         {/* v6 charges an action fee on every new listing. */}
         {step === 'preview' && readyItems.length > 0 && listingFeeCredits !== null && (
           <p className="px-4 pb-2 text-xs text-gray-500">
-            {readyItems.length} new listing{readyItems.length !== 1 ? 's' : ''} pay about {formatCreditsAsDash(listingFeeCredits * BigInt(readyItems.length))} DASH in moderation fees, plus network fees.
+            {readyItems.length} new listing{readyItems.length !== 1 ? 's' : ''} cost about {formatCreditsAsDash(listingFeeCredits * BigInt(readyItems.length))} DASH.
           </p>
         )}
 

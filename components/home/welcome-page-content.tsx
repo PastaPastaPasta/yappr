@@ -5,7 +5,6 @@ import Image from 'next/image'
 import { publicAsset } from '@/lib/public-asset'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { motion } from 'framer-motion'
 import { ArrowRightIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { LegalLinks } from '@/components/layout/legal-links'
@@ -21,18 +20,19 @@ interface WelcomePageContentProps {
 }
 
 /**
- * The landing page: hero, platform stats, top users, featured posts. Rendered
- * at `/` (bouncing logged-in viewers to `/feed`) and at `/welcome` (never
- * bouncing, so the sidebar logo can always reach it).
+ * The landing page: hero, a row of platform counts, popular posts and top
+ * contributors. Everything on it reads without an account. Rendered at `/`
+ * (bouncing logged-in viewers to `/feed`) and at `/welcome` (never bouncing,
+ * so the sidebar logo can always reach it).
  */
 export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePageContentProps) {
   const router = useRouter()
   const { user } = useAuth()
   const openLoginModal = useLoginModal((s) => s.open)
-  const { platformStats, featuredPosts, topUsers, refresh } = useHomepageData()
+  const { platformStats, featuredPosts, topUsers, refresh } = useHomepageData({ skipSignedIn: redirectAuthenticated })
 
   // Auth state comes from local storage, so the first client render can
-  // differ from the static HTML; show a skeleton until hydrated.
+  // differ from the static HTML; hold the sign-in button's place until hydrated.
   const [isHydrated, setIsHydrated] = useState(false)
   useEffect(() => setIsHydrated(true), [])
 
@@ -40,24 +40,17 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
     if (redirectAuthenticated && user) router.push('/feed')
   }, [redirectAuthenticated, user, router])
 
-  if (!isHydrated) return <LandingSkeleton />
-
   return (
     <div className="min-h-screen flex">
       <Sidebar />
 
-      <main className="flex-1 md:max-w-[1200px] mx-auto px-4 md:px-8 overflow-x-hidden">
-        {/* Hero Section */}
-        <section className="py-8 md:py-16 text-center">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <h1 className="text-3xl md:text-5xl font-bold mb-4">
+      <main className="flex-1 min-w-0 px-4 md:px-8">
+        <div className="mx-auto max-w-[1040px]">
+          <section className="pb-8 pt-10 text-center md:pb-10 md:pt-14">
+            <h1 className="mb-4 text-3xl font-bold md:text-5xl">
               Welcome to <span className="text-gradient">Yappr</span>
             </h1>
-            <div className="flex justify-center mb-4">
+            <div className="mb-4 flex justify-center">
               <Image
                 src={publicAsset('/pbde-light.png')}
                 alt="Powered by Dash Evolution"
@@ -73,13 +66,14 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
                 className="hidden dark:block"
               />
             </div>
-            <p className="text-base md:text-xl text-gray-600 dark:text-gray-400 mb-6 md:mb-8 max-w-2xl mx-auto px-2">
-              The decentralized social platform where you own your data, your identity, and your voice.
-              Built on Dash Platform.
+            <p className="mx-auto mb-6 max-w-xl px-2 text-base text-gray-600 dark:text-gray-400 md:mb-8 md:text-xl">
+              Social media you own. Your name and your posts belong to you.
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center px-4 sm:px-0">
-              {user ? (
+            <div className="flex flex-col justify-center gap-3 px-4 sm:flex-row sm:gap-4 sm:px-0">
+              {!isHydrated ? (
+                <div className="h-12 w-full rounded-full bg-gray-200 dark:bg-gray-800 sm:w-40" aria-hidden="true" />
+              ) : user ? (
                 <Button size="lg" className="shadow-yappr-lg" asChild>
                   <Link href="/feed">
                     Go to Feed
@@ -93,89 +87,36 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
                 </Button>
               )}
               <Button size="lg" variant="outline" asChild>
-                <Link href="/feed">
-                  Explore Public Posts
-                </Link>
+                <Link href="/feed">Browse Posts</Link>
               </Button>
             </div>
-          </motion.div>
-        </section>
+          </section>
 
-        {/* Platform Stats Section */}
-        <PlatformStats
-          totalPosts={platformStats.totalPosts}
-          loading={platformStats.loading}
-          error={platformStats.error}
-          onRetry={refresh}
-        />
+          <PlatformStats
+            totalPosts={platformStats.totalPosts}
+            authorCount={platformStats.authorCount}
+            authorCountCapped={platformStats.authorCountCapped}
+            postsToday={platformStats.postsToday}
+            loading={platformStats.loading}
+            error={platformStats.error}
+          />
 
-        {/* Top Contributors Section */}
-        <TopUsersSection
-          users={topUsers.users}
-          loading={topUsers.loading}
-          error={topUsers.error}
-          onRetry={refresh}
-        />
-
-        {/* Featured Posts Section */}
-        <FeaturedPosts
-          posts={featuredPosts.posts}
-          loading={featuredPosts.loading}
-          error={featuredPosts.error}
-          onRetry={refresh}
-        />
-
-        {/* CTA Section */}
-        <section className="py-16 text-center border-t border-gray-200 dark:border-gray-800">
-          <h2 className="text-3xl font-bold mb-4">Ready to join the conversation?</h2>
-          <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
-            Create your decentralized identity and start sharing your thoughts.
-          </p>
-          {user ? (
-            <Button size="lg" className="shadow-yappr-lg" asChild>
-              <Link href="/feed">
-                Go to Feed
-                <ArrowRightIcon className="ml-2 h-5 w-5" />
-              </Link>
-            </Button>
-          ) : (
-            <Button size="lg" className="shadow-yappr-lg" onClick={openLoginModal}>
-              Create Account
-              <ArrowRightIcon className="ml-2 h-5 w-5" />
-            </Button>
-          )}
-        </section>
-
-        {/* From tablet width up the sidebar carries these links. */}
-        <footer className="md:hidden pb-8">
-          <LegalLinks />
-        </footer>
-      </main>
-    </div>
-  )
-}
-
-function LandingSkeleton() {
-  return (
-    <div className="min-h-screen flex">
-      <div className="hidden md:block fixed h-screen w-[275px] px-2 py-4 top-0">
-        <div className="h-8 w-20 bg-gray-200 dark:bg-gray-800 rounded mb-6 animate-pulse" />
-        <div className="space-y-2">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-12 bg-gray-100 dark:bg-gray-900 rounded-full animate-pulse" />
-          ))}
-        </div>
-        <div className="mt-8 h-12 bg-gray-200 dark:bg-gray-800 rounded-full animate-pulse" />
-      </div>
-
-      <main className="flex-1 md:max-w-[1200px] mx-auto px-4 md:px-8 py-8 md:py-16">
-        <div className="text-center mb-8 md:mb-16">
-          <div className="h-10 md:h-16 w-full max-w-72 md:max-w-96 bg-gray-200 dark:bg-gray-800 rounded mx-auto mb-4 animate-pulse" />
-          <div className="h-5 md:h-6 w-full max-w-[300px] md:max-w-[500px] bg-gray-100 dark:bg-gray-900 rounded mx-auto mb-6 md:mb-8 animate-pulse" />
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center px-4 sm:px-0">
-            <div className="h-12 w-full sm:w-32 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" />
-            <div className="h-12 w-full sm:w-32 bg-gray-100 dark:bg-gray-900 rounded animate-pulse" />
+          <div className="grid items-start gap-8 pb-12 lg:grid-cols-[minmax(0,1fr)_300px]">
+            <FeaturedPosts
+              posts={featuredPosts.posts}
+              loading={featuredPosts.loading}
+              error={featuredPosts.error}
+              onRetry={refresh}
+            />
+            <div className="lg:sticky lg:top-6 lg:mt-11">
+              <TopUsersSection users={topUsers.users} loading={topUsers.loading} error={topUsers.error} />
+            </div>
           </div>
+
+          {/* From tablet width up the sidebar carries these links. */}
+          <footer className="pb-8 md:hidden">
+            <LegalLinks />
+          </footer>
         </div>
       </main>
     </div>

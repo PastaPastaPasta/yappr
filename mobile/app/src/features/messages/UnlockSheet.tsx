@@ -4,12 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { router } from 'expo-router';
 import { Keyboard, View } from 'react-native';
 
-import { config } from '~/config';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { copy as authCopy } from '~/features/auth/copy';
-import { openExternal } from '~/features/post/post-navigation';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
 import { useBlockScreenCapture } from '~/ui/screen-capture';
@@ -22,6 +20,7 @@ import { tw, useColors } from '~/ui/tokens';
 
 import { readErrorMessage, refreshDm } from './dm-data';
 import { MessagingSetup } from './MessagingSetup';
+import { signOutForWallet } from './wallet-messaging';
 
 type Phase = 'recovering' | 'manual' | 'no-key' | 'setup' | 'wallet';
 
@@ -53,6 +52,10 @@ function unlocked(close: () => void): void {
   refreshDm();
   close();
 }
+
+/** No messaging key this sign-in can unlock or set up (D38): messages come from a wallet sign-in. */
+const NO_KEY_BODY = 'Messages are set up with your Dash wallet. To use them on this phone, sign out, then sign back in with your wallet.';
+const NO_KEY_ACTION = 'Sign out and use my wallet';
 
 /** WIF (51 or 52 base58 characters) or 64 hex: the formats an encryption key comes in (engine `dm.unlock`). */
 const KEY_SHAPE = /^([1-9A-HJ-NP-Za-km-z]{51,52}|[0-9a-fA-F]{64})$/;
@@ -185,15 +188,19 @@ function UnlockBody({
         </View>
       ) : null}
       {phase === 'no-key' ? (
-        <View className="gap-4 pb-2">
+        <View className="gap-4 pb-2" testID="dm-unlock-no-key">
           <Text variant="body" tone="secondary">
-            Set up messaging for this account on yap.pr, then come back to read and send messages here.
+            {NO_KEY_BODY}
           </Text>
           <Button
-            label="Open yap.pr"
+            label={NO_KEY_ACTION}
             variant="outline"
             size="block"
-            onPress={() => openExternal(`${config.webBaseUrl}/messages`)}
+            onPress={() => {
+              onClose();
+              signOutForWallet();
+            }}
+            testID="dm-unlock-wallet-sign-in"
           />
         </View>
       ) : null}

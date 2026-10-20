@@ -60,10 +60,29 @@ export const copy = {
     title: 'Blocked accounts',
     empty: "You haven't blocked anyone",
     emptyDescription: 'Accounts you block show up here.',
-    /** Only for someone who follows at least one block list (set up on web). */
+    /** Only for someone who follows at least one block list. */
     listsNote: (lists: number) => `Also hidden by ${lists} block ${lists === 1 ? 'list' : 'lists'} you follow`,
-    listsLink: 'Manage on yap.pr',
+    listsLink: 'Manage block lists',
     signIn: 'Sign in to see the accounts you blocked',
+  },
+  /** Settings → Privacy & Safety → Block lists (web's Settings → Block lists). */
+  blockLists: {
+    title: 'Block lists',
+    intro: "Follow the block list of someone you trust. Anyone they block is hidden from you too.",
+    empty: "You're not following anyone yet",
+    emptyDescription: 'People you follow show up here, so you can use their block lists.',
+    signIn: 'Sign in to use block lists',
+    follow: 'Use list',
+    following: 'Using list',
+    unfollow: 'Stop using',
+    saving: 'Saving…',
+    followA11y: (handle: string) => `Use ${handle}'s block list`,
+    unfollowA11y: (handle: string) => `Stop using ${handle}'s block list`,
+    followed: (handle: string) => `Using ${handle}'s block list`,
+    unfollowed: (handle: string) => `Stopped using ${handle}'s block list`,
+    followFailed: "Couldn't use this block list. Try again.",
+    unfollowFailed: "Couldn't stop using this block list. Try again.",
+    loading: 'Loading block lists…',
   },
   report: {
     title: (noun: ReportNoun) => `Report ${noun}`,

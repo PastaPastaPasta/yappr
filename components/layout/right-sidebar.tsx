@@ -4,7 +4,6 @@ import Image from 'next/image'
 import { publicAsset } from '@/lib/public-asset'
 import { useEffect, useState } from 'react'
 import { SearchInput } from '@/components/search/search-input'
-import { FeedStats } from './feed-stats'
 import { TrendingHashtags } from './trending-hashtags'
 
 export function RightSidebar() {
@@ -20,11 +19,9 @@ export function RightSidebar() {
   if (!visible) return null
 
   return (
-    <div className="hidden lg:block w-[350px] shrink-0 px-4 py-4 space-y-4 h-screen sticky top-0 overflow-y-auto scrollbar-hide">
+    <div className="hidden lg:block w-[300px] xl:w-[350px] shrink-0 px-4 py-4 space-y-4 h-screen sticky top-0 overflow-y-auto scrollbar-hide">
       <SearchInput />
       <TrendingHashtags />
-
-      <FeedStats />
 
       <div className="px-4 py-3 flex justify-center">
         <a

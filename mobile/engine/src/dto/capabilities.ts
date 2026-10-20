@@ -3,7 +3,7 @@ import {
   followRankingsAvailable, hasFlatThreads, hashtagsAreInline, inlineTags, likesAreIndexOnly, mediaItemLimit, postsHaveLanguage,
   prefixRankingsAvailable, profilesAreReportable, reportShape, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
 } from '@/lib/contract-topology'
-import { dmIsV5 } from '@/lib/constants'
+import { dmIsV5, pollrHasEditableBallots, pollrIsConfigured, pollrIsV3 } from '@/lib/constants'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import { reportFeeCredits } from '@/lib/reports'
@@ -19,6 +19,13 @@ export interface PlatformInfoDTO {
   ipfsGateways: { domain: string; format: 'path' | 'subdomain' }[]
   /** The DiceBear style picker: styles with labels, the default, and the seed's longest length. */
   avatarStyles: { styles: { id: string; label: string }[]; defaultStyle: string; seedMaxLength: number }
+}
+
+/** How polls take ballots (`CapabilitiesDTO.pollVoting`); v4's indexOnly ballots are read-only here. */
+export function pollVoting(): CapabilitiesDTO['pollVoting'] {
+  if (!pollrIsConfigured()) return null
+  if (pollrHasEditableBallots()) return 'editable'
+  return pollrIsV3() ? 'once' : null
 }
 
 export function platformInfo(): PlatformInfoDTO {
@@ -52,6 +59,7 @@ export function platformInfo(): PlatformInfoDTO {
       yappPayments: paymentIsChoosable('post'),
       dm: dmIsV5() ? 'v5' : 'legacy',
       walletSignIn: isAppConnectBuild() ? 'app-connect' : 'legacy',
+      pollVoting: pollVoting(),
     },
     ipfsGateways: IPFS_GATEWAYS.map(({ domain, format }) => ({ domain, format })),
     avatarStyles: {

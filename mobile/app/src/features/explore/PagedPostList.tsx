@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { RefreshControl, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 
 import { useEngineInfiniteQuery, type PullToRefresh } from '~/data/queries';
+import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
 import { useFeedPosts } from '~/features/post/hidden-private';
 import { queryClient } from '~/state/query-client';
@@ -91,6 +92,7 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
       return;
     }
     setRefreshing(true);
+    refetchPolls();
     // Back to one page, so automatic paging starts over too.
     autoPages.current = 0;
     setPaused(false);

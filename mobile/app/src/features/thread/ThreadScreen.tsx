@@ -7,6 +7,7 @@ import { DocumentMagnifyingGlassIcon } from 'react-native-heroicons/outline';
 import { usePostRemoved } from '~/data/optimistic';
 import { readErrorMessage } from '~/data/read-error';
 import { useEngineStatus } from '~/engine/hooks';
+import { refetchPolls } from '~/features/post/poll-vote';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { LinkText } from '~/ui/LinkText';
@@ -116,6 +117,7 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const refetchParent = parentQuery.refetch;
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    refetchPolls();
     Promise.all([refetch(), needsParent ? refetchParent() : null])
       .then(([result]) => {
         // A failed refresh keeps what is shown; say so rather than fail silently.

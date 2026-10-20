@@ -518,10 +518,13 @@ function landingWrite(key: string): WriteOf | undefined {
  * write as busy ("Blocking…") and holds back the opposite action.
  */
 export function useLandingIntent(key: string | undefined): unknown {
-  return useWriteTickets(() => {
-    const write = key === undefined ? undefined : landingWrite(key);
-    return write ? (write.spec.intent?.(write.vars) ?? true) : undefined;
-  });
+  return useWriteTickets(() => landingIntent(key));
+}
+
+/** {@link useLandingIntent} now, outside React (a write's follow-up). */
+export function landingIntent(key: string | undefined): unknown {
+  const write = key === undefined ? undefined : landingWrite(key);
+  return write ? (write.spec.intent?.(write.vars) ?? true) : undefined;
 }
 
 /**
@@ -725,11 +728,12 @@ function watch(ticket: WriteTicket): void {
   }
   // Its call still runs past the engine's deadline: its answer settles it, so its checks never run out.
   const running = stillRunning(ticket);
-  // What a read shows it by: the post it names or created, or (a message) its conversation.
+  // What a read shows it by: the post it names or created, (a message) its conversation, or (a ballot) its poll.
   const target = ticket.target;
   const shown = [
     target && 'id' in target ? target.id : null,
     target && 'conversationKey' in target ? target.conversationKey : null,
+    target && 'pollId' in target ? target.pollId : null,
     ...ticket.documents.map((d) => d.id),
   ];
   reconcile(key, {

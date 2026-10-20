@@ -41,9 +41,8 @@ export interface RankedBlogEntry {
 
 /** How the trending-blogs ranking is named on the configured cut, and what it says when empty. */
 export function trendingBlogsCopy(): { label: string; empty: string } {
-  return blogIsV7()
-    ? { label: 'Trending (3 days)', empty: 'No blog gained a follower in the last 3 days.' }
-    : { label: 'Trending today', empty: 'No blog gained a follower today.' };
+  // One label whatever the window (today before v7, ~3 days on v7), as elsewhere in the app.
+  return { label: 'Trending', empty: 'No blogs are trending right now.' };
 }
 
 class BlogStatsService {

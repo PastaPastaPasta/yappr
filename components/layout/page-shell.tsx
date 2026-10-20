@@ -41,17 +41,18 @@ interface PageHeaderProps {
 }
 
 /**
- * The translucent sticky bar at the top of the centre column. The blur is
- * skipped in potato mode. Children supply the row layout.
+ * The sticky bar at the top of the centre column: near-opaque with a blur, so
+ * scrolled text never reads through it, and fully opaque in potato mode (no
+ * blur). Children supply the row layout.
  */
 export function PageHeader({ children, borderless = false, className }: PageHeaderProps) {
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   return (
     <header
       className={cn(
-        'sticky top-0 z-40 bg-white/80 dark:bg-neutral-900/80',
+        'sticky top-0 z-40',
         !borderless && 'border-b border-gray-200 dark:border-gray-800',
-        !potatoMode && 'backdrop-blur-xl',
+        potatoMode ? 'bg-white dark:bg-neutral-900' : 'bg-white/95 dark:bg-neutral-900/95 backdrop-blur-xl',
         className
       )}
     >

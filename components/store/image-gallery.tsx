@@ -27,7 +27,7 @@ export function ImageGallery({ images, alt }: ImageGalleryProps) {
 
   if (images.length === 0) {
     return (
-      <div className="relative aspect-square bg-gray-100 dark:bg-gray-800">
+      <div className="relative aspect-square sm:aspect-[4/3] bg-gray-100 dark:bg-gray-800">
         <div className="w-full h-full flex items-center justify-center">
           <BuildingStorefrontIcon className="h-24 w-24 text-gray-300" />
         </div>
@@ -38,7 +38,7 @@ export function ImageGallery({ images, alt }: ImageGalleryProps) {
   return (
     <div>
       {/* Main Image */}
-      <div className="relative aspect-square bg-gray-100 dark:bg-gray-800">
+      <div className="relative aspect-square sm:aspect-[4/3] bg-gray-100 dark:bg-gray-800">
         <IpfsImage
           src={images[currentIndex]}
           alt={alt}

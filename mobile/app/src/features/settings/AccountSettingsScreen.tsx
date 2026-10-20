@@ -1,9 +1,8 @@
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Platform, RefreshControl, View } from 'react-native';
+import { RefreshControl, View } from 'react-native';
 import {
-  ArrowTopRightOnSquareIcon,
   DocumentDuplicateIcon,
   LockClosedIcon,
   UserCircleIcon,
@@ -27,12 +26,9 @@ import { colors, useColors } from '~/ui/tokens';
 
 import { copy } from './copy';
 import { formatDash, formatDate } from './format';
-import { links, openInApp } from './links';
 import { SettingsGroup, SettingsHeader, SettingsPage, SettingsRow, SettingsScroll } from './SettingsList';
 import { updateSettings, useSettings } from './settings-data';
 import { useViewerProfile } from './use-viewer-profile';
-
-const ios = Platform.OS === 'ios';
 
 /** Signed out with nobody left: Home, signed out (AUTH-11). */
 function goHome(): void {
@@ -217,10 +213,7 @@ export function AccountSettingsScreen() {
         <SettingsRow
           label={usernames.length > 0 ? copy.account.registerAnother : copy.account.register}
           link
-          chevron={false}
-          accessibilityRole="link"
-          onPress={() => openInApp(links.registerUsername)}
-          trailing={<ArrowTopRightOnSquareIcon size={16} color={ios ? colors.gray400 : colors.gray500} />}
+          onPress={() => router.push('/settings/username')}
           testID="account-register"
         />
       </SettingsGroup>

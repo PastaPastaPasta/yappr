@@ -150,10 +150,10 @@ export function BlockListSettings() {
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <UserGroupIcon className="h-5 w-5" />
-          <h3 className="font-semibold">Block Lists</h3>
+          <h3 className="font-semibold">Block lists</h3>
         </div>
         <p className="text-sm text-gray-500">
-          Follow trusted users&apos; block lists to help filter your feed
+          Also hide anyone blocked by people you trust
         </p>
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
@@ -177,16 +177,15 @@ export function BlockListSettings() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <UserGroupIcon className="h-5 w-5" />
-        <h3 className="font-semibold">Block Lists</h3>
+        <h3 className="font-semibold">Block lists</h3>
       </div>
       <p className="text-sm text-gray-500">
-        Follow trusted users&apos; block lists to help filter your feed. When enabled, anyone they block will also be hidden from your feed.
+        Also hide anyone blocked by people you trust
       </p>
 
       {followedUsers.length === 0 ? (
         <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-lg text-center">
-          <p className="text-gray-500 text-sm">You&apos;re not following anyone yet</p>
-          <p className="text-gray-400 text-xs mt-1">Follow users to see them here</p>
+          <p className="text-gray-500 text-sm">Follow people to use their block lists</p>
         </div>
       ) : (
         <>

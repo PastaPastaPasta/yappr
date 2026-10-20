@@ -8,7 +8,6 @@ import { useImageUpload } from '@/hooks/use-image-upload'
 import { useFileDrop } from '@/hooks/use-file-drop'
 import { validateHttpUrl } from '@/lib/utils'
 import { IpfsImage } from './ipfs-image'
-import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { PhotoIcon, XMarkIcon, LinkIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
@@ -30,7 +29,12 @@ export interface ProfileImageUploadProps {
   placeholder?: string
   /** Limits of the field that stores this image address. */
   urlLimits?: TextLimits
+  /** Sizes the image area alone (e.g. a small logo), leaving the paste-URL row the full width. */
+  previewClassName?: string
 }
+
+/** Shown when an upload finds no storage provider; "Paste image URL" names the link below the uploader. */
+const NO_STORAGE_MESSAGE = 'To upload images, connect storage in Settings → Storage, or use Paste image URL.'
 
 /**
  * Profile image upload component for avatars and banners.
@@ -45,8 +49,8 @@ export function ProfileImageUpload({
   label = 'Upload Image',
   placeholder = 'Click or drag to upload',
   urlLimits = { maxLength: 512, maxBytes: 512 },
+  previewClassName = '',
 }: ProfileImageUploadProps) {
-  const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { upload, isUploading, progress, error, isProviderConnected, checkProvider, clearError } = useImageUpload()
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -95,7 +99,7 @@ export function ProfileImageUpload({
       setPreviewUrl(null)
       const msg = err instanceof Error ? err.message : 'Image upload failed'
       if (msg.toLowerCase().includes('provider')) {
-        toast.error('No storage provider connected. Set one up in Settings to upload images.')
+        toast.error(NO_STORAGE_MESSAGE)
       } else {
         toast.error(msg)
       }
@@ -128,14 +132,14 @@ export function ProfileImageUpload({
   const handleClick = useCallback(() => {
     if (isUploading) return
     if (!isProviderConnected) {
-      toast.error('No storage provider connected. Set one up in Settings to upload images.', {
+      // Say where to set it up, but stay here: leaving would throw away the rest of the form.
+      toast.error(NO_STORAGE_MESSAGE, {
         duration: 5000,
       })
-      router.push('/settings')
       return
     }
     fileInputRef.current?.click()
-  }, [isUploading, isProviderConnected, router])
+  }, [isUploading, isProviderConnected])
 
   const handleUrlSubmit = useCallback(() => {
     const validated = validateHttpUrl(urlInput)
@@ -206,7 +210,7 @@ export function ProfileImageUpload({
         disabled={isUploading}
       />
 
-      <div className="relative">
+      <div className={`relative ${previewClassName}`}>
         <div
           role="button"
           tabIndex={isUploading ? -1 : 0}
@@ -240,10 +244,10 @@ export function ProfileImageUpload({
 
           {/* Empty state */}
           {!previewUrl && !currentUrl && !isUploading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="absolute inset-0 flex flex-col items-center justify-center px-2 text-center">
               <PhotoIcon className={`h-10 w-10 mb-2 ${isDragging ? 'text-yappr-500' : 'text-gray-400'}`} />
               <span className={`text-sm ${isDragging ? 'text-yappr-500' : 'text-gray-500 dark:text-gray-400'}`}>
-                {isDragging ? 'Drop image here' : isProviderConnected ? placeholder : 'Paste a URL below'}
+                {isDragging ? 'Drop image here' : placeholder}
               </span>
               {isProviderConnected && (
                 <span className="text-xs text-gray-400 mt-1">

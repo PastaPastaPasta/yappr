@@ -47,6 +47,7 @@ async function signInWithPhrase(browser: Browser, username: string): Promise<Pag
   await page.addLocatorHandler(offer, () => offer.getByRole('button', { name: 'Not now' }).dispatchEvent('click'))
   await page.goto(appUrl('/login/'))
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
+  await dialog.getByRole('button', { name: 'Other ways to sign in' }).click()
   await dialog.getByRole('button', { name: 'Sign in with your recovery phrase' }).click()
   const field = dialog.getByLabel('Recovery phrase', { exact: true })
   await field.fill(readFileSync(PHRASE_FILE as string, 'utf8').trim())

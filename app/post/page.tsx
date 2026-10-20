@@ -193,9 +193,7 @@ function PostDetailContent() {
                       className="absolute left-[30px] top-[56px] bottom-0 w-0.5 bg-gray-300 dark:bg-gray-600"
                       aria-hidden="true"
                     />
-                    <PostCard
-                      post={chainPost}
-                    />
+                    <PostCard post={chainPost} keepIfUnreadable />
                   </div>
                 ))}
               </div>
@@ -203,7 +201,7 @@ function PostDetailContent() {
 
             {/* Main post - the one being viewed */}
             <div className="border-b border-gray-200 dark:border-gray-800">
-              <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} onDelete={setDeletedPostId} replyBlockedReason={replyBlockedReason} />
+              <PostCard post={post} enrichment={postEnrichment} rootPostOwnerId={rootPostOwnerId} onDelete={setDeletedPostId} replyBlockedReason={replyBlockedReason} keepIfUnreadable />
             </div>
 
             {/* Proved YAPP tips on this post — one token-history read, detail view only */}

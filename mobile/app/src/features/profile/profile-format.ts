@@ -39,11 +39,6 @@ export function profileWebUrl(identityId: string): string {
   return webUrl(config, '/user', { id: identityId });
 }
 
-/** "Get a username" links here (PRD AUTH-15). */
-export function usernameRegisterUrl(): string {
-  return webUrl(config, '/dpns/register');
-}
-
 /** 1234 → "1.2K", as web's counts. */
 export function formatCount(count: number): string {
   return formatNumber(count);

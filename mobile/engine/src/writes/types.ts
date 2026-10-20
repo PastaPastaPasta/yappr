@@ -56,7 +56,7 @@ export interface EngineErrorData {
 export type WriteOp =
   | 'post.publish' | 'post.delete' | 'like' | 'unlike' | 'repost' | 'unrepost' | 'bookmark' | 'unbookmark'
   | 'follow' | 'unfollow' | 'block' | 'unblock' | 'report' | 'report.withdraw' | 'profile.update'
-  | 'dm.send' | 'dm.group'
+  | 'dm.send' | 'dm.group' | 'poll.vote' | 'block-list.follow' | 'block-list.unfollow' | 'dpns.register'
 
 export type WriteState = 'pending' | 'confirmed' | 'unconfirmed' | 'failed'
 
@@ -69,7 +69,7 @@ export interface TargetRef {
   rootPostId: string | null
 }
 
-export type WriteTarget = TargetRef | { identityId: string } | { conversationKey: string }
+export type WriteTarget = TargetRef | { identityId: string } | { conversationKey: string } | { pollId: string }
 
 export interface TicketDocument {
   contractId: string

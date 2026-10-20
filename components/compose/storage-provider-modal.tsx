@@ -44,9 +44,9 @@ export function StorageProviderModal({
                     className="w-full max-w-md bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <Dialog.Title className="sr-only">Connect Storage Provider</Dialog.Title>
+                    <Dialog.Title className="sr-only">Set up image uploads</Dialog.Title>
                     <Dialog.Description className="sr-only">
-                      You need to connect a storage provider to attach images to posts
+                      Connect a photo host once to add images to posts
                     </Dialog.Description>
 
                     <div className="p-6">
@@ -55,11 +55,11 @@ export function StorageProviderModal({
                       </div>
 
                       <h3 className="text-lg font-semibold text-center text-gray-900 dark:text-gray-100 mb-2">
-                        Connect a Storage Provider
+                        Set up image uploads
                       </h3>
 
                       <p className="text-sm text-center text-gray-600 dark:text-gray-400 mb-6">
-                        To attach images to your posts, you need to connect a storage provider like Storacha or Pinata. This allows your images to be stored on IPFS.
+                        Connect a photo host like Pinata or Storacha once, and you can add images to any post.
                       </p>
 
                       <div className="flex flex-col gap-3">
@@ -71,7 +71,7 @@ export function StorageProviderModal({
                               onSettingsNavigate?.()
                             }}
                           >
-                            Go to Settings
+                            Set up
                           </Link>
                         </Button>
                         <Button
@@ -79,7 +79,7 @@ export function StorageProviderModal({
                           className="w-full"
                           onClick={() => onOpenChange(false)}
                         >
-                          Cancel
+                          Not now
                         </Button>
                       </div>
                     </div>

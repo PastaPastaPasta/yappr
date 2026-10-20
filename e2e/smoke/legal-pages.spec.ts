@@ -39,15 +39,15 @@ test('legal and support copy explains the independent moderation model', async (
   await expect(body).not.toContainText('The Yappr app may not display some media')
 })
 
-test('the sign-in dialog links the terms, rules and privacy policy', async ({ page }) => {
+test('the sign-in dialog links the terms and rules', async ({ page }) => {
   await page.goto(appUrl('/login/'))
   const dialog = page.getByRole('dialog', { name: /Sign in to Yappr/ })
-  await expect(dialog.getByText(/By continuing, you agree to the/)).toBeVisible()
-  await expect(dialog).toContainText('Yappr has no centralized moderation.')
-  await expect(dialog).toContainText('18 or older')
+  await expect(dialog.getByText(/By continuing you agree to the/)).toBeVisible()
+  // Sign-in carries no age or moderation copy; the Terms say both.
+  await expect(dialog).not.toContainText('centralized moderation')
+  await expect(dialog).not.toContainText('18 or older')
   await expect(dialog.getByRole('link', { name: /^Terms/ })).toHaveAttribute('target', '_blank')
   await expect(dialog.getByRole('link', { name: /^Community Rules/ })).toHaveAttribute('href', /\/terms\/?#community-rules$/)
-  await expect(dialog.getByRole('link', { name: /^Privacy Policy/ })).toBeVisible()
 })
 
 test.describe('on a phone', () => {

@@ -60,7 +60,7 @@ export interface PostCardActions extends RichTextHandlers {
   onQuotePress?: () => void;
   onMediaPress?: (index: number) => void;
   onLinkPreviewPress?: (url: string) => void;
-  onVotePress?: () => void;
+  onVotePress?: (choices: number[]) => void;
   onOpenPrivate?: () => void;
   /** Detail only: a count in the counts row, to open that engagements tab (UX_SPEC §4.9). */
   onCountPress?: (tab: EngagementCountTab) => void;

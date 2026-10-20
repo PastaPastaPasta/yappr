@@ -16,7 +16,6 @@ import { usePrivateFeedMove } from '@/hooks/use-private-feed-move'
 import { RenewPrivateFeedDialog } from './renew-private-feed-dialog'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { useWalletSession } from '@/components/auth/wallet-encryption-key-prompt'
-import { DEFAULT_FEED_CAPS } from '@/lib/private-feed/crypto'
 
 interface PrivateFeedSettingsProps {
   /** If true, automatically open the renewal dialog when component mounts (the lost-key flow) */
@@ -423,28 +422,11 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
               </div>
             )}
 
-            {/* Stats: the current feed's stored caps */}
             {stats && (
-              <div className="grid grid-cols-3 gap-4">
-                <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
-                  <div className="flex items-center justify-center gap-1 mb-1">
-                    <UserGroupIcon className="h-4 w-4 text-gray-500" />
-                  </div>
-                  <p className="text-lg font-semibold">{stats.followerCount}</p>
-                  <p className="text-xs text-gray-500">/ {stats.treeCapacity.toLocaleString()}</p>
-                  <p className="text-xs text-gray-500">Followers</p>
-                </div>
-                <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
-                  <p className="text-lg font-semibold">{stats.keyGeneration - 1}</p>
-                  <p className="text-xs text-gray-500">/ {(stats.maxKeyGeneration - 1).toLocaleString()}</p>
-                  <p className="text-xs text-gray-500">Removals</p>
-                </div>
-                <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-lg text-center">
-                  <p className="text-lg font-semibold">{(stats.treeCapacity - stats.followerCount).toLocaleString()}</p>
-                  <p className="text-xs text-gray-500">Available</p>
-                  <p className="text-xs text-gray-500">Slots</p>
-                </div>
-              </div>
+              <p className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                <UserGroupIcon className="h-4 w-4" aria-hidden="true" />
+                {stats.followerCount.toLocaleString()} private {stats.followerCount === 1 ? 'follower' : 'followers'}
+              </p>
             )}
 
             {/* Encryption Key Status */}
@@ -498,8 +480,7 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
                 Renew
               </h4>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Give your private feed new keys, for example if you think someone saw your encryption key. Everyone who follows
-                you privately is moved over automatically.
+                Start your private feed over if you think your key was exposed. Your private followers move over automatically.
               </p>
               <Button
                 data-testid="renew-private-feed-btn"
@@ -526,19 +507,6 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
           <>
             {!showKeyInput ? (
               <>
-                <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
-                  <div className="space-y-3">
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      Create a private feed visible only to approved followers
-                    </p>
-                    <BulletList items={[
-                      'You control who can see your private posts',
-                      `Up to ${DEFAULT_FEED_CAPS.treeCapacity.toLocaleString()} private followers, with more room when you renew`,
-                      'Revoke access at any time',
-                    ]} />
-                  </div>
-                </div>
-
                 {/* Show different UI based on whether user has encryption key on identity */}
                 {hasEncryptionKeyOnIdentity === false ? (
                   <div className="space-y-3">
@@ -634,14 +602,12 @@ export function PrivateFeedSettings({ openRenew = false, onRenewOpened }: Privat
             )}
 
             <div className="pt-4 border-t">
-              <h4 className="font-medium mb-2 text-sm">How it works:</h4>
+              <h4 className="font-medium mb-2 text-sm">How it works</h4>
               <BulletList items={[
-                'Your private posts are encrypted with a unique feed key',
-                'Only approved followers can decrypt and view your private posts',
-                'Revoked followers lose access to new private posts',
-                'If someone reports a private post, the moderators can read it and the earlier posts in the same private feed',
-                'Attached images are not encrypted: anyone with an image\'s address can see it',
-                'Your encryption key is needed to manage your private feed',
+                'Only followers you approve can read your private posts',
+                'Remove someone at any time: they lose access to new private posts',
+                'Images aren\'t private: anyone with an image\'s link can see it',
+                'If someone reports a private post, moderators can read it and earlier posts in your private feed',
               ]} />
             </div>
           </>

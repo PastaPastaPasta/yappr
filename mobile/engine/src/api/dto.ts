@@ -240,6 +240,11 @@ export interface CapabilitiesDTO {
    * and group) or the legacy two-step key exchange (`session.*KeyExchange`).
    */
   walletSignIn: 'app-connect' | 'legacy'
+  /**
+   * Poll ballots: `editable` (Pollr v7/v8: changed or withdrawn until the close), `once` (v3: one
+   * immutable ballot), or null where polls are read-only (v4, or no Pollr contract).
+   */
+  pollVoting: 'editable' | 'once' | null
 }
 
 export interface EngagementCountsDTO {
@@ -269,6 +274,25 @@ export interface PollDTO {
   tallyIncludesLate: boolean
   /** Signed in: the option indexes the viewer chose; `null` when unreadable (keep the ballot closed). */
   myVotes?: number[] | null
+}
+
+/** A DPNS name check (`dpns.check`): valid and free, and whether it goes to a masternode vote. */
+export interface DpnsAvailabilityDTO {
+  /** The name as registered: lowercase, without `@` or `.dash`. */
+  label: string
+  available: boolean
+  /** Fewer than 20 characters of letters, hyphens, 0 and 1: registering joins a masternode vote. */
+  contested: boolean
+  /** Contested: the least the registration pays into the vote's fund, in credits. */
+  contestFundCredits: bigint | null
+  /** Why the name can't be registered as typed; null when it is a valid name. */
+  invalid: string | null
+}
+
+/** A followed account whose block list the viewer may follow (web's Settings → Block lists). */
+export interface BlockListChoiceDTO extends UserSummaryDTO {
+  /** The viewer follows this account's block list: whoever it blocks is hidden from them too. */
+  listFollowed: boolean
 }
 
 export interface TagDTO {
