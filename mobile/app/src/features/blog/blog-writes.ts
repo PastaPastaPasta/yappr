@@ -1,4 +1,4 @@
-import type { BlogCommentDTO, BlogFollowDTO, BlogInput, BlogPostInput, BlogReportTargetDTO, WriteTicket } from '@engine/api';
+import type { AuthorDTO, BlogCommentDTO, BlogFollowDTO, BlogInput, BlogPostInput, BlogReportTargetDTO, WriteTicket } from '@engine/api';
 
 import { queryKeys } from '~/data/keys';
 import { engine } from '~/engine';
@@ -185,9 +185,73 @@ export const deletePostWrite: WriteSpec<{ postId: string; blogId: string }> = {
   failureMessage: "Couldn't delete this post. Try again.",
 };
 
-export const commentWrite: WriteSpec<{ postId: string; postOwnerId: string; content: string }> = {
+/** A comment shown while it posts: its id until the post's comments are read back with the real one. */
+export const PENDING_COMMENT = 'pending:';
+/** A pending comment once it is confirmed, kept until the post's comments are read again. */
+const SENT_COMMENT = 'sent:';
+export const isPendingComment = (comment: BlogCommentDTO) => comment.id.startsWith(PENDING_COMMENT);
+/** Shown from this device only (pending or just sent): not yet a comment that can be deleted or reported. */
+export const isLocalComment = (comment: BlogCommentDTO) => isPendingComment(comment) || comment.id.startsWith(SENT_COMMENT);
+
+/** How long after a comment is confirmed, or its answer lost, the post's comments are read again: a lagging node may not have it yet. */
+const REREAD_AFTER_MS = 15_000;
+
+/** Reads the post's comments again a little later, which swaps a pending or sent comment for the real one, or drops it. */
+export function rereadCommentsLater(postId: string): void {
+  setTimeout(() => refetch(queryKeys.blog.comments(postId)), REREAD_AFTER_MS);
+}
+
+interface CommentVars {
+  postId: string;
+  postOwnerId: string;
+  content: string;
+  /** The writer, shown on the comment while it posts. */
+  author: AuthorDTO;
+  /** Names the comment while it posts (`PENDING_COMMENT` + it). */
+  localId: string;
+}
+
+const pendingComment = ({ postId, content, author, localId }: CommentVars): BlogCommentDTO => ({
+  id: `${PENDING_COMMENT}${localId}`,
+  ownerId: author.id,
+  author,
+  postId,
+  createdAt: new Date(),
+  content,
+});
+
+/** The comment, shown at the end of the post's cached comments (oldest first) until they are read back. */
+function showComment(vars: CommentVars): () => void {
+  const key = queryKeys.blog.comments(vars.postId);
+  const comment = pendingComment(vars);
+  const shown = queryClient.getQueryData<BlogCommentDTO[]>(key);
+  // Not again over a read that already has it, nor next to the real one once that is read.
+  const listed = shown?.some(
+    (c) => c.id === comment.id || (!isLocalComment(c) && c.ownerId === comment.ownerId && c.content === comment.content),
+  );
+  if (!listed) queryClient.setQueryData<BlogCommentDTO[]>(key, [...(shown ?? []), comment]);
+  return () => queryClient.setQueryData<BlogCommentDTO[]>(key, (current) => current?.filter((c) => c.id !== comment.id));
+}
+
+export const commentWrite: WriteSpec<CommentVars> = {
+  // Its own key, so `reapply` runs; per comment, so comments never queue behind (or replace) one another.
+  key: ({ postId, localId }) => `blogComment:new:${postId}:${localId}`,
   submit: (api, { postId, postOwnerId, content }) => api.blogs.comment(postId, postOwnerId, content),
-  onConfirmed: (_ticket, { postId }) => refetch(queryKeys.blog.comments(postId)),
+  // Shown at once, so the tap visibly did something.
+  optimistic: showComment,
+  reconcile: null,
+  reapply: (vars) => {
+    showComment(vars);
+  },
+  // Kept as sent rather than read at once, which a lagging node could answer without it; read again a little later.
+  onConfirmed: (_ticket, vars) => {
+    const id = pendingComment(vars).id;
+    queryClient.setQueryData<BlogCommentDTO[]>(queryKeys.blog.comments(vars.postId), (current) =>
+      current?.map((c) => (c.id === id ? { ...c, id: `${SENT_COMMENT}${vars.localId}` } : c)),
+    );
+    rereadCommentsLater(vars.postId);
+  },
+  onFailed: (_ticket, { postId }) => refetch(queryKeys.blog.comments(postId)),
   failureMessage: "Couldn't post your comment. Try again.",
 };
 

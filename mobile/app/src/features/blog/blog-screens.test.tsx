@@ -5,7 +5,8 @@ import type { ReactElement } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useSessionStore } from '~/data/session';
-import { fakeEngine, ticket } from '~/data/testing/fake-engine';
+import { resetWriteTracking } from '~/data/writes';
+import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 
 import { BlogPostScreen } from './BlogPostScreen';
@@ -117,6 +118,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   fakeEngine.reset();
   queryClient.clear();
+  // A comment left pending by an earlier test would queue the next one behind it (one per post at a time).
+  resetWriteTracking();
   fakeEngine.setStatus({ state: 'ready', epoch: 1 });
   useSessionStore.setState({ status: 'signed-in', session: session(AUTHOR), accounts: [] });
   fakeEngine.method('blogs.info').mockResolvedValue(INFO);
@@ -201,5 +204,92 @@ describe('post reader', () => {
     fireEvent.press(screen.getByTestId('blog-comment-send'));
     await settle();
     expect(fakeEngine.method('blogs.comment')).toHaveBeenCalledWith(POST, AUTHOR, 'Nice post');
+  });
+
+  it('shows a sent comment at once and never sends it twice (D-954)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: session(READER), accounts: [] });
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    fakeEngine.method('blogs.comment').mockResolvedValue(ticket({ op: 'blogComment.create' }));
+    renderScreen(<BlogPostScreen />);
+    await settle();
+    expect(screen.getByTestId('blog-post-scroll').props.keyboardShouldPersistTaps).toBe('handled');
+
+    fireEvent.changeText(screen.getByTestId('blog-comment-input'), 'Nice post');
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    // The tap shows at once: the field clears, the button says it is posting, the comment is listed and counted.
+    expect(screen.getByTestId('blog-comment-input').props.value).toBe('');
+    expect(screen.getByLabelText('Posting your comment')).toBeTruthy();
+    await settle();
+    expect(screen.getByText('Nice post')).toBeTruthy();
+    expect(screen.getByTestId('blog-comment-send')).toHaveTextContent('Posting…');
+    expect(screen.getByText('1 comment')).toBeTruthy();
+
+    // A second tap, and the same words again while the first is pending, send nothing.
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    fireEvent.changeText(screen.getByTestId('blog-comment-input'), 'Nice post');
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    await settle();
+    expect(fakeEngine.method('blogs.comment')).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the words back when a sent comment fails, and drops it from the list', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: session(READER), accounts: [] });
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    const sent = ticket({ op: 'blogComment.create', identityId: READER });
+    fakeEngine.method('blogs.comment').mockResolvedValue(sent);
+    renderScreen(<BlogPostScreen />);
+    await settle();
+
+    fireEvent.changeText(screen.getByTestId('blog-comment-input'), 'Nice post');
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    await settle();
+    expect(screen.getByTestId('blog-comment-input').props.value).toBe('');
+    act(() => {
+      fakeEngine.emit('write.status', advance(sent, {
+        state: 'failed',
+        retryable: true,
+        error: { code: 'NETWORK', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Network trouble.' },
+      }));
+    });
+    await settle();
+    expect(screen.getByTestId('blog-comment-input').props.value).toBe('Nice post');
+    expect(screen.queryByText('1 comment')).toBeNull();
+  });
+
+  it("doesn't send the same words again while they are still on their way", async () => {
+    useSessionStore.setState({ status: 'signed-in', session: session(READER), accounts: [] });
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    const sent = ticket({ op: 'blogComment.create', identityId: READER });
+    fakeEngine.method('blogs.comment').mockResolvedValue(sent);
+    renderScreen(<BlogPostScreen />);
+    await settle();
+
+    fireEvent.changeText(screen.getByTestId('blog-comment-input'), 'Nice post');
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    await settle();
+    // Unconfirmed and not retryable: the button is free again, but the comment may still land.
+    act(() => {
+      fakeEngine.emit('write.status', advance(sent, { state: 'unconfirmed', retryable: false }));
+    });
+    await settle();
+    fireEvent.changeText(screen.getByTestId('blog-comment-input'), ' Nice post ');
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    await settle();
+    expect(fakeEngine.method('blogs.comment')).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('1 comment')).toBeTruthy();
+  });
+
+  it('gives the words back when the comment is refused before it is sent', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: session(READER), accounts: [] });
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    fakeEngine.method('blogs.comment').mockRejectedValue(Object.assign(new Error('Comments are off'), { code: 'BAD_REQUEST' }));
+    renderScreen(<BlogPostScreen />);
+    await settle();
+
+    fireEvent.changeText(screen.getByTestId('blog-comment-input'), 'Nice post');
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    await settle();
+    expect(screen.getByTestId('blog-comment-input').props.value).toBe('Nice post');
+    expect(screen.queryByText('1 comment')).toBeNull();
   });
 });

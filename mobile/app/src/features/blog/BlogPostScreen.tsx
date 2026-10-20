@@ -96,6 +96,7 @@ export function BlogPostScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const scroll = useRef<ScrollView>(null);
   const contentY = useRef(0);
+  const scrollY = useRef(0);
   const headingY = useRef(new Map<number, number>());
 
   const info = useEngineQuery(queryKeys.blog.info, (api) => api.blogs.info(), { staleTime: Infinity });
@@ -109,6 +110,9 @@ export function BlogPostScreen() {
   const onJumpToHeading = useCallback((index: number) => {
     const y = headingY.current.get(index);
     if (y !== undefined) scroll.current?.scrollTo({ y: Math.max(0, contentY.current + y - 12), animated: true });
+  }, []);
+  const onRevealComposer = useCallback((dy: number) => {
+    scroll.current?.scrollTo({ y: scrollY.current + dy, animated: true });
   }, []);
 
   if (!blog.data || !post.data) {
@@ -212,6 +216,10 @@ export function BlogPostScreen() {
           contentContainerStyle={{ padding: 16, paddingBottom: 48, gap: 16 }}
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
+          onScroll={(e) => {
+            scrollY.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.accent} colors={[palette.accent]} />}
           testID="blog-post-scroll"
         >
@@ -263,6 +271,7 @@ export function BlogPostScreen() {
             maxLength={info.data?.limits.comment ?? 500}
             canReport={canReport}
             onReport={(target) => requireAuth(() => setReport(target))}
+            onReveal={onRevealComposer}
           />
         </ScrollView>
       </KeyboardAvoider>
