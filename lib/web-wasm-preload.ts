@@ -3,18 +3,10 @@ export const SDK_WASM_CACHE = `yappr-sdk-wasm:${process.env.NEXT_PUBLIC_BASE_PAT
 /** localStorage key holding a brotli asset URL that failed to load here. */
 export const SDK_WASM_SKIP_BROTLI = 'yappr-sdk-wasm-skip-brotli'
 
-/** The SDK asset this browser should download: the brotli file (about a
- * third smaller) where DecompressionStream reads brotli and that file has not
- * failed here before, else the gzip file. Self-contained like
- * {@link preloadSdkWasm}: it is also inlined in the head, so the storage key
- * is spelled out rather than taken from SDK_WASM_SKIP_BROTLI. */
+/** The brotli SDK file unless it has failed here before, else the gzip file.
+ * Inlined in the head like {@link preloadSdkWasm}, so the storage key is spelled out. */
 export function sdkWasmUrl(gzipUrl: string): string {
   const brotliUrl = gzipUrl.replace(/\.gz$/, '.br')
-  try {
-    new DecompressionStream('brotli' as CompressionFormat)
-  } catch {
-    return gzipUrl
-  }
   try {
     if (localStorage.getItem('yappr-sdk-wasm-skip-brotli') === brotliUrl) return gzipUrl
   } catch { /* Storage may be blocked; nothing has been remembered then. */ }
@@ -42,7 +34,11 @@ export function preloadSdkWasm(url: string, cacheName: string): Promise<Response
  * never stored, including a completed HTTP 200 containing a broken payload. */
 export async function storeSdkWasm(url: string, cacheName: string, response: Response): Promise<void> {
   const cache = await caches.open(cacheName)
-  if (await cache.match(url)) return
+  if (await cache.match(url)) {
+    // Already kept: release the copy rather than leave it buffered.
+    await response.body?.cancel()
+    return
+  }
   await cache.put(url, response)
   // Bound disk use to this version, within this deployment only.
   const keys = await cache.keys()

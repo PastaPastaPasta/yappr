@@ -5,9 +5,9 @@ const { join } = require('node:path')
 
 // Compressed files, rather than base64 inside JS: they work on static hosts
 // even when those don't compress application/wasm, and raw rc.4 exceeds
-// Pages' 25 MiB limit. The gzip file is the one every browser can decode;
-// the brotli file (about a third smaller) is for browsers whose
-// DecompressionStream reads brotli (lib/web-wasm-preload.ts picks).
+// Pages' 25 MiB limit. Browsers download the brotli file (about a third
+// smaller); where DecompressionStream lacks brotli, a small WASM decoder reads
+// it (lib/web-wasm-sdk.ts). The gzip file is the fallback.
 function sdkWasmAsset(root) {
   const raw = readFileSync(join(root, 'node_modules/@dashevo/wasm-sdk/dist/raw/wasm_sdk_bg.wasm'))
   const hash = sha256(raw)

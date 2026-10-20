@@ -26,8 +26,9 @@ export default function init(): ReturnType<typeof rawInit> {
       } catch { /* Storage is optional. The network retry still works. */ }
       try {
         if (url === gzipUrl) return await initializeResponse(await fetch(gzipUrl, { cache: 'reload' }), gzipUrl)
-        // The brotli file failed: later visits skip it, and this one takes the
-        // gzip file the ordinary way (a copy kept from an earlier visit counts).
+        // The brotli file (or its decoder) failed: later visits skip it, and this
+        // one takes the gzip file the ordinary way (a copy kept from an earlier
+        // visit counts).
         try { localStorage.setItem(SDK_WASM_SKIP_BROTLI, url) } catch { /* Storage is optional. */ }
         return await initializeResponse(await preloadSdkWasm(gzipUrl, SDK_WASM_CACHE), gzipUrl)
       } catch (error) {
@@ -39,16 +40,24 @@ export default function init(): ReturnType<typeof rawInit> {
 }
 
 async function initializeResponse(response: Response | undefined, url: string): ReturnType<typeof rawInit> {
-  const copy = response?.clone()
-  const output = await rawInit({ module_or_path: await wasmResponse(response, url.endsWith('.br')) })
-  if (copy) storeSdkWasm(url, SDK_WASM_CACHE, copy).catch(() => undefined)
+  const { wasm, keep } = await wasmResponse(response, url.endsWith('.br'))
+  let output: Awaited<ReturnType<typeof rawInit>>
+  try {
+    output = await rawInit({ module_or_path: wasm })
+  } catch (error) {
+    discard(keep.body, error)
+    throw error
+  }
+  storeSdkWasm(url, SDK_WASM_CACHE, keep).catch(() => undefined)
   return output
 }
 
-async function wasmResponse(response: Response | undefined, brotli: boolean): Promise<Response> {
+type Wasm = { wasm: Response, keep: Response }
+
+/** The WASM to initialize, and the copy to keep for later visits. */
+async function wasmResponse(response: Response | undefined, brotli: boolean): Promise<Wasm> {
   if (!response?.ok || !response.body) throw new Error('SDK download failed')
-  // Static hosts normally send the gzip file as-is. Also accept hosts that
-  // set Content-Encoding: gzip and let the browser decompress it already.
+  const copy = response.clone()
   const reader = response.body.getReader()
   const prefix: Uint8Array<ArrayBuffer>[] = []
   const magic = new Uint8Array(2)
@@ -61,7 +70,7 @@ async function wasmResponse(response: Response | undefined, brotli: boolean): Pr
     magic.set(chunk.value.subarray(0, count), read)
     read += count
   }
-  const stream = new ReadableStream<BufferSource>({
+  const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
     start(controller) { prefix.forEach(chunk => controller.enqueue(chunk)) },
     async pull(controller) {
       const chunk = await reader.read()
@@ -70,16 +79,44 @@ async function wasmResponse(response: Response | undefined, brotli: boolean): Pr
     },
     cancel(reason) { return reader.cancel(reason) },
   })
-  // WASM itself (`\0asm`) passes through: a host that set Content-Encoding,
-  // which the browser already decoded. Otherwise the .br file is brotli, known
-  // by its name (a brotli stream can begin with the gzip magic bytes), and
-  // the .gz file is gzip by its magic.
-  const wasm = magic[0] === 0x00 && magic[1] === 0x61
-  let body: ReadableStream<BufferSource> = stream
-  if (brotli) {
-    if (!wasm) body = stream.pipeThrough(new DecompressionStream('brotli' as CompressionFormat))
-  } else if (magic[0] === 0x1f && magic[1] === 0x8b) {
-    body = stream.pipeThrough(new DecompressionStream('gzip'))
+  // WASM itself (`\0asm`) passes through: decoded by the browser (a host that
+  // set Content-Encoding) or by this app on an earlier visit. Otherwise the
+  // .br file is brotli by its name (a brotli stream can begin with the gzip
+  // magic bytes) and the .gz file is gzip by its magic.
+  if (magic[0] === 0x00 && magic[1] === 0x61) return { wasm: asWasm(stream), keep: copy }
+  if (brotli) return brotliWasm(stream, copy)
+  const gzip = magic[0] === 0x1f && magic[1] === 0x8b
+  return { wasm: asWasm(gzip ? stream.pipeThrough(new DecompressionStream('gzip')) : stream), keep: copy }
+}
+
+/** Brotli through this browser's DecompressionStream, else through a small
+ * WASM decoder loaded only here (Chrome, Android). That path keeps the decoded
+ * WASM rather than the download, so later visits need no decoder. */
+async function brotliWasm(stream: ReadableStream<Uint8Array<ArrayBuffer>>, copy: Response): Promise<Wasm> {
+  try {
+    return { wasm: asWasm(stream.pipeThrough(new DecompressionStream('brotli' as CompressionFormat))), keep: copy }
+  } catch { /* No brotli in this DecompressionStream. */ }
+  let decoded: ReadableStream<Uint8Array<ArrayBuffer>>
+  try {
+    const { brotliDecoderStream } = await import('./brotli-decoder')
+    decoded = stream.pipeThrough(await brotliDecoderStream())
+  } catch (error) {
+    // Stop the brotli download before the gzip retry starts.
+    discard(stream, error)
+    discard(copy.body, error)
+    throw error
   }
+  discard(copy.body)
+  const [wasm, keep] = decoded.tee()
+  return { wasm: asWasm(wasm), keep: asWasm(keep) }
+}
+
+function asWasm(body: ReadableStream<BufferSource>): Response {
   return new Response(body, { headers: { 'Content-Type': 'application/wasm' } })
+}
+
+/** Cancels without waiting: a teed source stops only once both branches are
+ * cancelled, so awaiting one branch alone can hang. */
+function discard(stream: ReadableStream | null, reason?: unknown): void {
+  stream?.cancel(reason).catch(() => undefined)
 }

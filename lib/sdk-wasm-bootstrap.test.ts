@@ -24,8 +24,8 @@ describe('SDK WASM head bootstrap', () => {
     }
   })
 
-  it('asks for the file this browser can decode', async () => {
-    const run = async (brotli: boolean) => {
+  it('asks for the brotli file on every browser unless it has failed there before', async () => {
+    const run = async (brotli: boolean, skipped: string | null = null) => {
       const Native = globalThis.DecompressionStream
       const DS = brotli ? Native : class extends Native {
         constructor(format: CompressionFormat) {
@@ -37,13 +37,15 @@ describe('SDK WASM head bootstrap', () => {
       const window: { __yapprSdkWasm?: Promise<unknown> } = {}
       const script = sdkWasmBootstrap('', '/_next/static/wasm/sdk-x.wasm.gz', 'cache')
       new Function('location', 'window', 'caches', 'fetch', 'DecompressionStream', 'localStorage', script)(
-        { pathname: '/feed/' }, window, { open: vi.fn().mockRejectedValue(new Error('no storage')) }, fetch, DS, undefined,
+        { pathname: '/feed/' }, window, { open: vi.fn().mockRejectedValue(new Error('no storage')) }, fetch, DS, { getItem: () => skipped },
       )
       await window.__yapprSdkWasm
       return fetch.mock.calls[0][0]
     }
     expect(await run(true)).toBe('/_next/static/wasm/sdk-x.wasm.br')
-    expect(await run(false)).toBe('/_next/static/wasm/sdk-x.wasm.gz')
+    // Without brotli in DecompressionStream the app decodes it with a small WASM decoder.
+    expect(await run(false)).toBe('/_next/static/wasm/sdk-x.wasm.br')
+    expect(await run(false, '/_next/static/wasm/sdk-x.wasm.br')).toBe('/_next/static/wasm/sdk-x.wasm.gz')
   })
 
   it('escapes markup in what it embeds', () => {
