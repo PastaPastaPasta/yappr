@@ -170,7 +170,8 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
     resolveHeld();
   }, [lostAnswer, write.status, resolveHeld]);
   // A save that may still land holds the form: sending it again could publish the post twice.
-  const busy = lostAnswer || write.status === 'pending' || (write.status === 'unconfirmed' && write.ticket?.retryable !== true);
+  const [starting, setStarting] = useState(false);
+  const busy = starting || lostAnswer || write.status === 'pending' || (write.status === 'unconfirmed' && write.ticket?.retryable !== true);
   const left = useRef(false);
   const sending = useRef(false);
 
@@ -235,11 +236,15 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
     saveDraft(form);
     const done = (result?: WriteResult) => {
       sending.current = false;
+      setStarting(false);
       if (result?.status === 'unknown') setLostAnswer(true);
     };
+    // From the tap until the engine answers with a ticket the form is locked too: edits made then would not be in the write.
+    setStarting(true);
     if (post) {
       const patch = changes(post, input);
       if (Object.keys(patch).length === 0) {
+        setStarting(false);
         router.back();
         return;
       }
@@ -261,6 +266,14 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
     if (key) syncStorage.removeItem(key);
     setTouched(false);
     setForm(formOf(null, blog, null));
+  };
+
+  // A held draft whose publish can't be traced: dropping it (never sending it again) is always safe.
+  const discardHeld = () => {
+    if (viewerId) releasePublish(viewerId, blog.id, true);
+    setLostAnswer(false);
+    setHeldTicket(null);
+    discardDraft();
   };
 
   const action = post ? 'Save' : 'Publish';
@@ -294,15 +307,18 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
               {write.ticket ? (
                 <Button label="Check again" variant="outline" size="sm" onPress={() => { write.check().catch(() => undefined); }} testID="blog-editor-check" />
               ) : lostAnswer && !post ? (
-                <Button
-                  label="Check again"
-                  variant="outline"
-                  size="sm"
-                  onPress={() => {
-                    (heldTicket ? checkWrite(heldTicket) : Promise.resolve(null)).then(resolveHeld, resolveHeld);
-                  }}
-                  testID="blog-editor-check"
-                />
+                <View className="flex-row gap-2">
+                  <Button
+                    label="Check again"
+                    variant="outline"
+                    size="sm"
+                    onPress={() => {
+                      (heldTicket ? checkWrite(heldTicket) : Promise.resolve(null)).then(resolveHeld, resolveHeld);
+                    }}
+                    testID="blog-editor-check"
+                  />
+                  <Button label="Discard draft" variant="ghost" size="sm" onPress={discardHeld} testID="blog-editor-discard-held" />
+                </View>
               ) : null}
             </View>
           ) : null}

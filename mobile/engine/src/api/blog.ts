@@ -397,6 +397,25 @@ export const blogReads = {
   },
 
   /** A post by its web address (`/blog?blog=<id>&post=<slug>`). */
+  /**
+   * Whether the viewer's publish of `title` to `blogId`, sent at `since`
+   * (epoch ms), landed, by the address it takes (`generateSlug`; the slug is
+   * unique per blog, tombstones keep it). `absent`: nothing has that address,
+   * so it never landed. `unknown`: someone else's or an older post holds it
+   * (this one would then carry a suffix), so the address proves nothing. A
+   * failed read rejects.
+   */
+  async publishOutcome(blogId: string, title: string, since: number): Promise<'published' | 'absent' | 'unknown'> {
+    assertId(blogId, 'blogId')
+    const viewer = requireViewer('Your post')
+    const slug = generateSlug(String(title).trim())
+    if (!slug) return 'unknown'
+    blogPostService.clearCache()
+    const post = await read(() => blogPostService.getPostBySlug(blogId, slug))
+    if (!post) return 'absent'
+    return post.ownerId === viewer && post.createdAt.getTime() >= since - 5 * 60_000 ? 'published' : 'unknown'
+  },
+
   async postBySlug(blogId: string, slug: string): Promise<BlogPostDTO | null> {
     assertId(blogId, 'blogId')
     if (typeof slug !== 'string' || !slug || slug.length > 63) throw badRequest('slug must be a post address')

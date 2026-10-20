@@ -94,9 +94,11 @@ const publishesTo = (ticket: WriteTicket, blogId: string) => names(ticket, 'blog
 
 /**
  * What became of a held publish: its ticket while the engine still lists it
- * (`ticketId` while it may land); once the engine has let it go, the author's
- * own posts (v9) say whether it was published. Neither, it never landed. A
- * read that fails keeps it held.
+ * (`ticketId` while it may land); once the engine has let it go, the address
+ * the post takes (`blogs.publishOutcome`): a post of the author's there is it,
+ * no post there means it never landed. Anything else (someone else holds that
+ * address, a read failed) keeps it held, never guessed; the writer can still
+ * discard the draft.
  */
 export async function resolveHeldPublish(viewerId: string, blogId: string): Promise<{ state: 'held'; ticketId: string | null } | { state: 'published' | 'free' }> {
   const held = heldPublish(viewerId, blogId);
@@ -114,10 +116,10 @@ export async function resolveHeldPublish(viewerId: string, blogId: string): Prom
       }
       return { state: 'held', ticketId: ticket.id };
     }
-    const mine = await engine.api.blogs.myPosts(null);
-    const landed = mine.items.some((post) => post.blogId === blogId && post.title === held.title && new Date(post.createdAt).getTime() >= held.at - 5 * 60_000);
-    releasePublish(viewerId, blogId, landed);
-    return { state: landed ? 'published' : 'free' };
+    const outcome = await engine.api.blogs.publishOutcome(blogId, held.title, held.at);
+    if (outcome === 'unknown') return { state: 'held', ticketId: null };
+    releasePublish(viewerId, blogId, outcome === 'published');
+    return { state: outcome === 'published' ? 'published' : 'free' };
   } catch {
     return { state: 'held', ticketId: null };
   }
