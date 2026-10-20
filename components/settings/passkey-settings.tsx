@@ -146,8 +146,7 @@ export function PasskeySettings() {
           <p className="text-sm text-gray-500">You can have up to {MAX_PASSKEYS} passkeys. Remove one to add another.</p>
         )}
         <p className="text-xs text-gray-500">
-          Passkeys are an extra way in. Keep your Dash wallet or your key too: if you lose every passkey, you&apos;ll need it.
-          Names stay on this device.
+          Keep your Dash wallet or key too, in case you lose every passkey.
         </p>
       </CardContent>
       {removing && (

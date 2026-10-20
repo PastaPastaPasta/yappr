@@ -34,3 +34,12 @@ test('inserting in the middle of a full field preserves its ending', async ({ pa
   await page.keyboard.insertText('😀')
   await expect(note).toHaveValue(fullNote)
 })
+
+test('counters stay hidden until the text nears its limit', async ({ page }) => {
+  await page.goto('/limited-text.html')
+  const name = page.getByRole('textbox', { name: 'Blog name' })
+  await name.fill('a'.repeat(50))
+  await expect(page.getByText(/\/64 characters/)).toHaveCount(0)
+  await name.fill('a'.repeat(52))
+  await expect(page.getByText('52/64 characters')).toBeVisible()
+})

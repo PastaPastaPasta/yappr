@@ -119,7 +119,7 @@ export function ReviewCard({ review, index = 0, onRemoved }: ReviewCardProps) {
             {review.ordered && (
               <span
                 className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300"
-                title="The reviewer placed the order this review is attached to (consensus checks the order and its store; it does not prove payment or delivery)"
+                title="This reviewer ordered from this store"
               >
                 <CheckBadgeIcon className="h-3.5 w-3.5" aria-hidden="true" />
                 Ordered

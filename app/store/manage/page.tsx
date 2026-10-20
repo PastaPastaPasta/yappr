@@ -460,11 +460,11 @@ function StoreManagePage() {
                   <div className="flex items-start gap-3">
                     <ExclamationTriangleIcon className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-red-800 dark:text-red-200">{appConnect ? 'Set up messaging to take orders' : 'Encryption Key Required'}</p>
+                      <p className="font-semibold text-red-800 dark:text-red-200">{appConnect ? 'Set up messaging to take orders' : 'Add your encryption key to take orders'}</p>
                       <p className="text-sm text-red-700 dark:text-red-300 mt-1">
                         {appConnect
                           ? 'Buyers send their shipping details privately. Set up messaging so they can place orders.'
-                          : 'Buyers cannot place orders until you add an encryption key to your identity. This key is needed to securely receive shipping addresses and order details.'}
+                          : 'Buyers send their shipping details privately, so they can only order once your encryption key is on your account.'}
                       </p>
                     </div>
                   </div>

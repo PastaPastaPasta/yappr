@@ -5,7 +5,7 @@ import { LimitedInput, LimitedTextarea } from '@/components/ui/limited-text'
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useId } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeftIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -26,7 +26,7 @@ import { storeStatsService } from '@/lib/services/store-stats-service'
 import { STORE_CATEGORY_MAX_LENGTH, isStoreImageUrl, normalizeStoreCategory, storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import type { SocialLink, ParsedPaymentUri, StorePolicy } from '@/lib/types'
-import { IpfsImage } from '@/components/ui/ipfs-image'
+import { fieldLimits } from '@/lib/field-limits'
 
 const ONE_STORE_MESSAGE = 'You already have a store. Each account can have one store; manage it from Store > Manage.'
 
@@ -220,17 +220,6 @@ function CreateStorePage() {
           ) : (
           <form onSubmit={handleSubmit} className="p-4 space-y-6">
             {!storesOpen && <ModerationClosedNotice product="storefront" />}
-            {/* Store Icon */}
-            <div className="flex justify-center">
-              <div className="w-24 h-24 rounded-xl bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
-                {logoUrl ? (
-                  <IpfsImage src={logoUrl} alt="Store logo" className="w-full h-full object-cover rounded-xl" />
-                ) : (
-                  <BuildingStorefrontIcon className="h-12 w-12 text-gray-400" />
-                )}
-              </div>
-            </div>
-
             {error && (
               <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300 text-sm">
                 {error}
@@ -239,16 +228,16 @@ function CreateStorePage() {
 
             {/* Basic Info */}
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold">Store Information</h2>
+              <h2 className="text-lg font-semibold">Store details</h2>
 
               <div>
-                <label htmlFor={`${formId}-name`} className="block text-sm font-medium mb-1">Store Name *</label>
+                <label htmlFor={`${formId}-name`} className="block text-sm font-medium mb-1">Store name *</label>
                 <LimitedInput contract="storefront" document="store" field="name"
                   type="text"
                   id={`${formId}-name`}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Your Store Name"
+                  placeholder="Your store name"
                   required
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 />
@@ -291,48 +280,30 @@ function CreateStorePage() {
                 </div>
               )}
 
-              <div className="space-y-4">
-                <ProfileImageUpload
-                  currentUrl={logoUrl || undefined}
-                  onUpload={(ipfsUrl) => setLogoUrl(ipfsToGatewayUrl(ipfsUrl))}
-                  onClear={() => setLogoUrl('')}
-                  aspectRatio="square"
-                  label="Store Logo"
-                  placeholder="Upload logo image"
-                />
-                <details className="text-sm">
-                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700 dark:hover:text-gray-400">
-                    Or paste a URL
-                  </summary>
-                  <LimitedInput contract="storefront" document="store" field="logoUrl"
-                    type="url"
-                    value={logoUrl}
-                    onChange={(e) => setLogoUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="mt-2 w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+              <div className="flex flex-col gap-4 sm:flex-row">
+                <div className="w-full shrink-0 sm:w-56">
+                  <ProfileImageUpload
+                    previewClassName="w-28"
+                    currentUrl={logoUrl || undefined}
+                    onUpload={(url) => setLogoUrl(ipfsToGatewayUrl(url))}
+                    onClear={() => setLogoUrl('')}
+                    aspectRatio="square"
+                    label="Logo"
+                    placeholder="Add logo"
+                    urlLimits={fieldLimits('storefront', 'store', 'logoUrl')}
                   />
-                </details>
-
-                <ProfileImageUpload
-                  currentUrl={bannerUrl || undefined}
-                  onUpload={(ipfsUrl) => setBannerUrl(ipfsToGatewayUrl(ipfsUrl))}
-                  onClear={() => setBannerUrl('')}
-                  aspectRatio="banner"
-                  label="Store Banner"
-                  placeholder="Upload banner image"
-                />
-                <details className="text-sm">
-                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700 dark:hover:text-gray-400">
-                    Or paste a URL
-                  </summary>
-                  <LimitedInput contract="storefront" document="store" field="bannerUrl"
-                    type="url"
-                    value={bannerUrl}
-                    onChange={(e) => setBannerUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="mt-2 w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                </div>
+                <div className="min-w-0 flex-1">
+                  <ProfileImageUpload
+                    currentUrl={bannerUrl || undefined}
+                    onUpload={(url) => setBannerUrl(ipfsToGatewayUrl(url))}
+                    onClear={() => setBannerUrl('')}
+                    aspectRatio="banner"
+                    label="Banner"
+                    placeholder="Add banner"
+                    urlLimits={fieldLimits('storefront', 'store', 'bannerUrl')}
                   />
-                </details>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -348,7 +319,7 @@ function CreateStorePage() {
                   />
                 </div>
                 <div>
-                  <label htmlFor={`${formId}-currency`} className="block text-sm font-medium mb-1">Default Currency</label>
+                  <label htmlFor={`${formId}-currency`} className="block text-sm font-medium mb-1">Currency</label>
                   <select
                     id={`${formId}-currency`}
                     value={defaultCurrency}
@@ -367,21 +338,21 @@ function CreateStorePage() {
 
             {/* Contact Methods */}
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold">Contact Methods</h2>
+              <h2 className="text-lg font-semibold">Contact</h2>
               <SocialLinksInput
                 links={contactLinks}
                 onChange={setContactLinks}
                 maxLinks={10}
-                label="Contact Options"
-                description="How buyers can reach you"
+                label="How buyers can reach you"
+                description="Email, Signal, Telegram or any other handle."
               />
             </div>
 
             {/* Policies */}
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold">Store Policies</h2>
+              <h2 className="text-lg font-semibold">Policies</h2>
               <p className="text-sm text-gray-500">
-                Define your store policies (e.g., returns, shipping, privacy). Buyers must agree to these before checkout.
+                Returns, shipping and other terms buyers agree to at checkout.
               </p>
 
               <PoliciesEditor
@@ -403,7 +374,7 @@ function CreateStorePage() {
               </Button>
               {!isEditMode && createFeeCredits !== null && (
                 <p className="mt-2 text-center text-xs text-gray-500">
-                  Opening a store pays a one-time moderation fee of about {formatCreditsAsDash(createFeeCredits)} DASH, plus the network fee.
+                  Opening a store costs about {formatCreditsAsDash(createFeeCredits)} DASH.
                 </p>
               )}
             </div>

@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { LockClosedIcon, UserPlusIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import { UserPlusIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
@@ -218,29 +218,8 @@ export function PrivateFeedFollowRequests() {
     )
   }
 
-  if (!hasPrivateFeed) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <UserPlusIcon className="h-5 w-5" />
-            Private Feed Requests
-          </CardTitle>
-          <CardDescription>
-            Manage requests to access your private feed
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg text-center">
-            <LockClosedIcon className="h-8 w-8 mx-auto text-gray-400 mb-2" />
-            <p className="text-gray-500 text-sm">
-              Enable your private feed to receive access requests
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
+  // Nothing to manage until the private feed is on; its own card says how to turn it on.
+  if (!hasPrivateFeed) return null
 
   return (
     <Card>
