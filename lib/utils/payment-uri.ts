@@ -85,7 +85,7 @@ const PAYMENT_LABELS: Record<typeof APPROVED_PAYMENT_SCHEMES[number], string> = 
 }
 
 /** Validate an untrusted URI (or stored record) and rebuild all display metadata. */
-export function parsePaymentUri(value: unknown): ParsedPaymentUri | null {
+export function parsePaymentUri(value: unknown, network: KeyNetwork = keyNetwork()): ParsedPaymentUri | null {
   const input = typeof value === 'string' ? value
     : value && typeof value === 'object' && 'uri' in value ? value.uri : null
   if (typeof input !== 'string') return null
@@ -97,7 +97,7 @@ export function parsePaymentUri(value: unknown): ParsedPaymentUri | null {
   if (!match) return null
   const scheme = match[1].toLowerCase()
   const supported = APPROVED_PAYMENT_SCHEMES.find(candidate => candidate === scheme)
-  if (!supported || !isValidPaymentAddress(supported, match[2])) return null
+  if (!supported || !isValidPaymentAddress(supported, match[2], network)) return null
   return { scheme: supported, uri: supported + match[2], label: PAYMENT_LABELS[supported] }
 }
 
@@ -108,5 +108,51 @@ export function filterPaymentUris(value: unknown): ParsedPaymentUri[] {
     try { list = JSON.parse(list) } catch { return [] }
   }
   if (!Array.isArray(list)) return []
-  return list.map(parsePaymentUri).filter((uri): uri is ParsedPaymentUri => uri !== null)
+  return list.map((entry) => parsePaymentUri(entry)).filter((uri): uri is ParsedPaymentUri => uri !== null)
+}
+
+/** A stored payment list (JSON text or an array) as its raw entries. */
+function storedEntries(stored: unknown): unknown[] {
+  if (Array.isArray(stored)) return stored
+  if (typeof stored !== 'string') return []
+  try {
+    const list: unknown = JSON.parse(stored)
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The stored entries this build hides only because their Dash address belongs
+ * to the other network (a `dash:` mainnet address on a testnet build, or the
+ * reverse). They are valid, just not here, so no save may drop them.
+ */
+export function otherNetworkPaymentEntries(stored: unknown, network: KeyNetwork = keyNetwork()): unknown[] {
+  const other: KeyNetwork = network === 'mainnet' ? 'testnet' : 'mainnet'
+  return storedEntries(stored).filter((entry) => parsePaymentUri(entry, network) === null && parsePaymentUri(entry, other) !== null)
+}
+
+/**
+ * `next` (what the user saved) plus the stored entries hidden here for being
+ * another network's, unless `next` already names their URI. The user never saw
+ * them, so leaving them out of an edit is not removing them.
+ */
+export function keepOtherNetworkPaymentEntries<T>(next: readonly T[], stored: unknown, network: KeyNetwork = keyNetwork()): Array<T | unknown> {
+  const uriOf = (entry: unknown) => parsePaymentUri(entry, network)?.uri
+    ?? parsePaymentUri(entry, network === 'mainnet' ? 'testnet' : 'mainnet')?.uri
+  const named = new Set(next.map(uriOf).filter((uri): uri is string => uri !== undefined))
+  const kept = otherNetworkPaymentEntries(stored, network).filter((entry) => {
+    const uri = uriOf(entry)
+    if (uri === undefined || named.has(uri)) return false
+    named.add(uri)
+    return true
+  })
+  return [...next, ...kept]
+}
+
+/** For a list of URI strings (profile tips): `next` plus the stored URIs this build hides. */
+export function keepStoredOtherNetworkUris(next: readonly string[], stored: unknown, network: KeyNetwork = keyNetwork()): string[] {
+  const storedUris = storedEntries(stored).filter((entry): entry is string => typeof entry === 'string')
+  return keepOtherNetworkPaymentEntries(next, storedUris, network).filter((entry): entry is string => typeof entry === 'string')
 }

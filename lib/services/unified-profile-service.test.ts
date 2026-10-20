@@ -57,6 +57,16 @@ describe('profile replacements', () => {
     });
   });
 
+  it('keeps a stored tip for the other network when the visible tips are edited (M1)', async () => {
+    // A testnet build (the test default) hides the mainnet tip; the editor never offered it for removal.
+    const mainnetTip = 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ';
+    get.mockResolvedValue({ ...raw, paymentUris: JSON.stringify(['dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw', mainnetTip]) });
+    query.mockResolvedValue([{ ...raw, paymentUris: JSON.stringify(['dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw', mainnetTip]) }]);
+    await unifiedProfileService.updateProfile(ownerId, { paymentUris: ['dash:yVUvQLRm6SYfjT46KoozgAA5y3AaxHxSj8'] });
+    const written = JSON.parse(updateDocument.mock.calls[0][4].paymentUris as string);
+    expect(written).toEqual(['dash:yVUvQLRm6SYfjT46KoozgAA5y3AaxHxSj8', mainnetTip]);
+  });
+
   it('removes intentionally cleared optional fields instead of restoring their old values', async () => {
     const result = await unifiedProfileService.updateProfile(ownerId, {
       bio: '', location: ' ', website: '', bannerUri: '', pronouns: '', avatar: '',

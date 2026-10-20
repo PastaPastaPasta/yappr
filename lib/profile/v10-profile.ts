@@ -3,6 +3,7 @@ import { dashpayProfileExtension, profileExtensionByteCaps, profileExtensionPatt
 import { normalizeBytes } from '@/lib/bytes'
 import { extractErrorMessage, hasConsensusCode } from '@/lib/error-utils'
 import { ListLimitError } from '@/lib/typed-array-codecs'
+import { keepStoredOtherNetworkUris } from '@/lib/utils/payment-uri'
 
 /**
  * Where a profile lives, and how the v10 split maps onto the one profile
@@ -283,8 +284,10 @@ export function planV10ProfileWrite({ base, extension, patch, avatarDigest, fall
   }
   if (patch.nsfw !== undefined) nextExtension.nsfw = patch.nsfw
   for (const field of ['paymentUris', 'socialLinks'] as const) {
-    const list = patch[field]
-    if (list === undefined) continue
+    const patched = patch[field]
+    if (patched === undefined) continue
+    // Tips this build hides for being another network's were never shown, so they stay.
+    const list = field === 'paymentUris' ? keepStoredOtherNetworkUris(patched, storedExtension.paymentUris) : patched
     if (list.length > 0) nextExtension[field] = list
     else delete nextExtension[field]
   }

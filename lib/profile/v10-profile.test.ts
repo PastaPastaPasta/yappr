@@ -78,6 +78,19 @@ describe('planV10ProfileWrite', () => {
     })
   })
 
+  it('keeps a stored tip for the other network that this build never showed (M1)', async () => {
+    // A testnet build (the test default): the stored mainnet tip is hidden, so an edit cannot remove it.
+    const { planV10ProfileWrite } = await profileModule('v10')
+    const base = { $id: 'dash', displayName: 'Ava', publicMessage: 'hi' }
+    const mainnetTip = 'dash:XdZgS6gbprXuu2SpRgv2ygVL9FNqBrWAHJ'
+    const testnetTip = 'dash:yWUs17ht6ZcAw2EgZkEetnaLW9uX3aWfsw'
+    const plan = planV10ProfileWrite({
+      base, extension: { $id: 'ext', paymentUris: [testnetTip, mainnetTip] }, fallbackAvatar: recipe,
+      patch: { paymentUris: [] },
+    })
+    expect(plan.extension?.paymentUris).toEqual([mainnetTip])
+  })
+
   it('leaves an existing DashPay profile alone and only adds the extension', async () => {
     const { planV10ProfileWrite } = await profileModule('v10')
     const base = { $id: 'dash', displayName: 'Ava', publicMessage: 'hi', avatarUrl: 'https://x/a.png', avatarHash: 'AQ==', avatarFingerprint: [2] }

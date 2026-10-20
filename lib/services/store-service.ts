@@ -1,4 +1,4 @@
-import { filterPaymentUris } from '../utils/payment-uri';
+import { filterPaymentUris, keepOtherNetworkPaymentEntries } from '../utils/payment-uri';
 import { logger } from '@/lib/logger';
 /**
  * Store Service
@@ -60,6 +60,17 @@ function parseContactMethods(value: unknown): SocialLink[] | undefined {
   return undefined;
 }
 
+/**
+ * Each read store's payment list exactly as stored. The parsed `paymentUris`
+ * hides entries valid only on the other network; writes put those back.
+ */
+const storedPaymentLists = new WeakMap<Store, unknown>();
+
+/** A payment list to store: `next` plus what this build hides from `stored`. */
+function paymentListToStore(next: readonly unknown[], stored: unknown): string {
+  return JSON.stringify(keepOtherNetworkPaymentEntries(next, stored));
+}
+
 class StoreService extends BaseDocumentService<Store> {
   constructor() {
     super(STOREFRONT_DOCUMENT_TYPES.STORE, YAPPR_STOREFRONT_CONTRACT_ID);
@@ -73,16 +84,30 @@ class StoreService extends BaseDocumentService<Store> {
    */
   protected extractContentFields(doc: Store): Record<string, unknown> {
     const fields = super.extractContentFields(doc);
-    for (const key of ['paymentUris', 'contactMethods'] as const) {
-      if (fields[key] && typeof fields[key] === 'object') fields[key] = JSON.stringify(fields[key]);
-    }
+    if (Array.isArray(fields.paymentUris)) fields.paymentUris = paymentListToStore(fields.paymentUris, storedPaymentLists.get(doc));
+    if (fields.contactMethods && typeof fields.contactMethods === 'object') fields.contactMethods = JSON.stringify(fields.contactMethods);
     return fields;
+  }
+
+  /**
+   * A write that names `paymentUris` replaces the stored list, so it carries
+   * over the entries this build hides for being another network's.
+   */
+  async update(documentId: string, ownerId: string, data: Record<string, unknown>, expectedRevision?: number): Promise<Store> {
+    if ('paymentUris' in data) {
+      const current = await this.get(documentId);
+      const stored = current ? storedPaymentLists.get(current) : undefined;
+      const next = typeof data.paymentUris === 'string' ? JSON.parse(data.paymentUris) as unknown[] : [];
+      const list = keepOtherNetworkPaymentEntries(next, stored);
+      data = { ...data, paymentUris: list.length > 0 ? JSON.stringify(list) : undefined };
+    }
+    return super.update(documentId, ownerId, data, expectedRevision);
   }
 
   protected transformDocument(doc: Record<string, unknown>): Store {
     const data = (doc.data || doc) as StoreDocument;
 
-    return {
+    const store: Store = {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
@@ -99,6 +124,8 @@ class StoreService extends BaseDocumentService<Store> {
       contactMethods: parseContactMethods(data.contactMethods),
       category: data.category
     };
+    storedPaymentLists.set(store, data.paymentUris);
+    return store;
   }
 
   /**
