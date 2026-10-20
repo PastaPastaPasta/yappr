@@ -27,7 +27,7 @@ import { moderatedContract } from '@/lib/moderated-contracts'
 import { isReportResolvedError, reportStatusLabel, withdrawFailureMessage } from '@/lib/reports'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { compressContent } from '@/lib/utils/compression'
-import { generateSlug, titleSlug } from '@/lib/utils/slug'
+import { titleSlug } from '@/lib/utils/slug'
 import { blogCommentService, COMMENTS_OFF_MESSAGE } from '@/lib/services/blog-comment-service'
 import { blogFollowService } from '@/lib/services/blog-follow-service'
 import { blogPostService, PrePublishRateLimitError, type UpdateBlogPostData } from '@/lib/services/blog-post-service'
@@ -396,7 +396,20 @@ export const blogReads = {
     return readable(post) ? toPostDTO(post) : null
   },
 
-  /** A post by its web address (`/blog?blog=<id>&post=<slug>`). */
+  /**
+   * Whether a post titled `title` would land at the address its title gives
+   * (`titleSlug`): false when a post already holds it (the new one then
+   * carries a suffix) or the title gives none. Read before a publish is sent,
+   * so its outcome can later be traced by that address. A failed read rejects.
+   */
+  async publishAddressFree(blogId: string, title: string): Promise<boolean> {
+    assertId(blogId, 'blogId')
+    const slug = titleSlug(String(title).trim())
+    if (!slug) return false
+    blogPostService.clearCache()
+    return (await read(() => blogPostService.getPostBySlug(blogId, slug))) === null
+  },
+
   /**
    * Whether the viewer's publish of `title` to `blogId`, sent at `since`
    * (epoch ms), landed, by the address it takes (`titleSlug`; the slug is
@@ -417,6 +430,7 @@ export const blogReads = {
     return post.ownerId === viewer && post.createdAt.getTime() >= since - 5 * 60_000 ? 'published' : 'unknown'
   },
 
+  /** A post by its web address (`/blog?blog=<id>&post=<slug>`). */
   async postBySlug(blogId: string, slug: string): Promise<BlogPostDTO | null> {
     assertId(blogId, 'blogId')
     if (typeof slug !== 'string' || !slug || slug.length > 63) throw badRequest('slug must be a post address')
@@ -726,7 +740,9 @@ export function createBlogWrites(tickets: TicketStore) {
       const owner = signer(ctx)
       const data = postData(input)
       // lib reads the slug before it signs; read it here first, so a failed read is "not sent", never "may have landed".
-      await blogPostService.getPostBySlug(blogId, generateSlug(input.title.trim())).catch(error => { throw new NotSentError(readFailure(error)) })
+      // A title with no address of its own gets a fresh send-time one, which nothing can hold yet.
+      const slug = titleSlug(input.title.trim())
+      if (slug) await blogPostService.getPostBySlug(blogId, slug).catch(error => { throw new NotSentError(readFailure(error)) })
       const post = await notSentOnPreSend(() => blogPostService.createPost(owner, {
         ...data,
         subtitle: data.subtitle || undefined,

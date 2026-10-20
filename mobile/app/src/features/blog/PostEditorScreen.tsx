@@ -388,7 +388,8 @@ function EditorGate({ blogId, slug }: { blogId: string; slug: string | null }) {
   const loading = blog.isPending || (slug !== null && post.isPending);
   if (!viewerId) return <EmptyState icon={BookOpenIcon} title="Sign in to write" description="Sign in to write on your blog." />;
   if (loading) return <View className="items-center py-12"><Spinner /></View>;
-  if (blog.isError || (slug && post.isError)) {
+  // A failed refetch keeps what was read: only a read with nothing to show is an error.
+  if ((blog.isError && blog.data === undefined) || (slug && post.isError && post.data === undefined)) {
     return <ErrorState title="Couldn't load this post" onRetry={() => { blog.refetch().catch(() => undefined); post.refetch().catch(() => undefined); }} />;
   }
   const b = blog.data;

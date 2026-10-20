@@ -63,6 +63,8 @@ const heldKey = (viewerId: string, blogId: string) => `${draftKey(viewerId, blog
 interface HeldPublish {
   at: number;
   title: string;
+  /** The title's own address was free just before the send, so the post can be traced by it. */
+  addressFree: boolean;
 }
 
 /**
@@ -71,16 +73,28 @@ interface HeldPublish {
  * (`resolveHeldPublish`), never for a set time.
  */
 export function holdPublish(viewerId: string, blogId: string, title: string): void {
-  syncStorage.setItem(heldKey(viewerId, blogId), JSON.stringify({ at: Date.now(), title } satisfies HeldPublish));
+  writeHeld(viewerId, blogId, { at: Date.now(), title, addressFree: false });
+}
+
+function writeHeld(viewerId: string, blogId: string, held: HeldPublish): void {
+  syncStorage.setItem(heldKey(viewerId, blogId), JSON.stringify(held));
 }
 
 function heldPublish(viewerId: string, blogId: string): HeldPublish | null {
   try {
     const held = JSON.parse(syncStorage.getItem(heldKey(viewerId, blogId)) ?? 'null') as Partial<HeldPublish> | null;
-    return held && typeof held.at === 'number' && typeof held.title === 'string' ? { at: held.at, title: held.title } : null;
+    return held && typeof held.at === 'number' && typeof held.title === 'string'
+      ? { at: held.at, title: held.title, addressFree: held.addressFree === true }
+      : null;
   } catch {
     return null;
   }
+}
+
+/** Records, on the hold, whether the title's own address was free just before the send. */
+function markAddressFree(viewerId: string, blogId: string, addressFree: boolean): void {
+  const held = heldPublish(viewerId, blogId);
+  if (held) writeHeld(viewerId, blogId, { ...held, addressFree });
 }
 
 export const publishHeld = (viewerId: string, blogId: string): boolean => heldPublish(viewerId, blogId) !== null;
@@ -95,10 +109,11 @@ const publishesTo = (ticket: WriteTicket, blogId: string) => names(ticket, 'blog
 /**
  * What became of a held publish: its ticket while the engine still lists it
  * (`ticketId` while it may land); once the engine has let it go, the address
- * the post takes (`blogs.publishOutcome`): a post of the author's there is it,
- * no post there means it never landed. Anything else (someone else holds that
- * address, a read failed) keeps it held, never guessed; the writer can still
- * discard the draft.
+ * the post takes (`blogs.publishOutcome`), only when that address was free
+ * just before the send: a post of the author's there is it, no post there
+ * means it never landed. Anything else (the address was already taken, so
+ * the post landed under another one; someone else holds it; a read failed)
+ * keeps it held, never guessed; the writer can still discard the draft.
  */
 export async function resolveHeldPublish(viewerId: string, blogId: string): Promise<{ state: 'held'; ticketId: string | null } | { state: 'published' | 'free' }> {
   const held = heldPublish(viewerId, blogId);
@@ -116,6 +131,7 @@ export async function resolveHeldPublish(viewerId: string, blogId: string): Prom
       }
       return { state: 'held', ticketId: ticket.id };
     }
+    if (!held.addressFree) return { state: 'held', ticketId: null };
     const outcome = await engine.api.blogs.publishOutcome(blogId, held.title, held.at);
     if (outcome === 'unknown') return { state: 'held', ticketId: null };
     releasePublish(viewerId, blogId, outcome === 'published');
@@ -126,7 +142,11 @@ export async function resolveHeldPublish(viewerId: string, blogId: string): Prom
 }
 
 export const publishPostWrite: WriteSpec<{ viewerId: string; blogId: string; input: BlogPostInput }> = {
-  submit: (api, { blogId, input }) => api.blogs.publish(blogId, input),
+  submit: async (api, { viewerId, blogId, input }) => {
+    // Only a title whose own address is free now can be traced by it later; a failed read just leaves it untraceable.
+    markAddressFree(viewerId, blogId, await api.blogs.publishAddressFree(blogId, input.title).catch(() => false));
+    return api.blogs.publish(blogId, input);
+  },
   // A call cut short is adopted once the engine restores its ticket, so the callbacks below still run.
   matches: (ticket, { blogId }) => publishesTo(ticket, blogId),
   // Settled here, not in the editor: the writer may have left it before the publish did.
