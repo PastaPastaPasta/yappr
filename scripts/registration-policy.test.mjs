@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   balanceGate, createCostEstimate, directoryProblem, electionWindowProblems, formatCredits, keyFileProblem,
-  parseElectionWindows, registrationFee, registrationPolicy, requireNetwork, withElectionWindows,
+  parseChallengeCoolDown, parseElectionDelay, parseElectionWindows, registrationFee, registrationPolicy, requireNetwork, withChallengeCoolDown, withElectionDelay, withElectionWindows,
 } from './registration-policy.mjs';
 
 const MAKER = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A';
-const TESTNET = { network: 'testnet', maker: MAKER, interim: 'notYetUsable', electionWindows: '3600,3600' };
+const TESTNET = { network: 'testnet', maker: MAKER, interim: 'notYetUsable', electionWindows: '86400,86400', electionDelay: '86400', challengeCoolDown: '1209600' };
 const stat = (mode, { file = true, uid = 501 } = {}) => ({ isFile: () => file, isDirectory: () => !file, mode, uid });
 
 describe('requireNetwork', () => {
@@ -22,8 +22,17 @@ describe('requireNetwork', () => {
 });
 
 describe('election windows', () => {
+  it('parses a nonnegative election delay', () => {
+    expect(parseElectionDelay('86400')).toBe(86400);
+    expect(parseElectionDelay(' 604800 ')).toBe(604800);
+    expect(parseChallengeCoolDown('1209600')).toBe(1209600);
+    expect(parseChallengeCoolDown('94608000')).toBe(94608000);
+    expect(parseChallengeCoolDown('1209599')).toBeNull();
+    expect(parseElectionDelay('-1')).toBeNull();
+    expect(parseElectionDelay('1h')).toBeNull();
+  });
   it('parses <join>,<vote> seconds', () => {
-    expect(parseElectionWindows('3600,3600')).toEqual({ joinWindow: 3600, voteWindow: 3600 });
+    expect(parseElectionWindows('86400,86400')).toEqual({ joinWindow: 86400, voteWindow: 86400 });
     expect(parseElectionWindows(' 604800 , 259200 ')).toEqual({ joinWindow: 604800, voteWindow: 259200 });
     for (const bad of ['3600', '3600,', '-1,3600', '1h,1h', '3600,3600,3600', '']) expect(parseElectionWindows(bad)).toBeNull();
   });
@@ -36,14 +45,16 @@ describe('election windows', () => {
     expect(electionWindowProblems({ joinWindow: 86_400, voteWindow: 259_200 }, 'mainnet')).toEqual([]);
   });
   it('renders into an elected declaration only', () => {
-    const elected = { moderation: { banlist: true, moderators: { $type: 'elected', joinWindow: 604800, voteWindow: 259200, interim: { $type: 'contractOwner' } } } };
-    const rendered = withElectionWindows(elected, { joinWindow: 3600, voteWindow: 3600 });
-    expect(rendered.moderation.moderators).toEqual({ $type: 'elected', joinWindow: 3600, voteWindow: 3600, interim: { $type: 'contractOwner' } });
+    const elected = { moderation: { banlist: true, moderators: { $type: 'elected', joinWindow: 604800, voteWindow: 259200, seatContestable: true, interim: { $type: 'contractOwner' } } } };
+    const rendered = withElectionWindows(elected, { joinWindow: 86400, voteWindow: 86400 });
+    expect(rendered.moderation.moderators).toEqual({ $type: 'elected', joinWindow: 86400, voteWindow: 86400, seatContestable: true, interim: { $type: 'contractOwner' } });
     expect(rendered.moderation.banlist).toBe(true);
     expect(elected.moderation.moderators.joinWindow).toBe(604800);
     const appointed = { moderation: { moderators: { $type: 'appointedModerators', identities: [] } } };
     expect(withElectionWindows(appointed, { joinWindow: 1, voteWindow: 1 })).toBe(appointed);
     expect(withElectionWindows(elected, null)).toBe(elected);
+    expect(withElectionDelay(elected, 86400).moderation.moderators.electionDelay).toBe(86400);
+    expect(withChallengeCoolDown(elected, 1209600).moderation.moderators.challengeCoolDown).toBe(1209600);
   });
 });
 
@@ -54,20 +65,20 @@ describe('registrationPolicy', () => {
     expect(() => registrationPolicy({ ...TESTNET, electionWindows: null, mode: 'dry-run' })).toThrow(/--election-windows <join>,<vote> is required on testnet/);
   });
   it('answers the rendering for testnet', () => {
-    expect(registrationPolicy({ ...TESTNET, mode: 'plan' })).toEqual({ interim: 'notYetUsable', electionWindows: { joinWindow: 3600, voteWindow: 3600 }, keyId: null });
+    expect(registrationPolicy({ ...TESTNET, mode: 'plan' })).toEqual({ interim: 'notYetUsable', electionWindows: { joinWindow: 86400, voteWindow: 86400 }, electionDelay: 86400, challengeCoolDown: 1209600, keyId: null });
     expect(() => registrationPolicy({ ...TESTNET, electionWindows: '1h,1h', mode: 'plan' })).toThrow(/--election-windows takes <joinSeconds>,<voteSeconds>/);
   });
   it('keeps the files\' values on a devnet unless named', () => {
-    expect(registrationPolicy({ network: 'devnet', mode: 'live' })).toEqual({ interim: null, electionWindows: null, keyId: null });
-    expect(registrationPolicy({ network: 'devnet', mode: 'plan', interim: 'notYetUsable', electionWindows: '0,0' })).toEqual({ interim: 'notYetUsable', electionWindows: { joinWindow: 0, voteWindow: 0 }, keyId: null });
+    expect(registrationPolicy({ network: 'devnet', mode: 'live' })).toEqual({ interim: null, electionWindows: null, electionDelay: null, challengeCoolDown: null, keyId: null });
+    expect(registrationPolicy({ network: 'devnet', mode: 'plan', interim: 'notYetUsable', electionWindows: '0,0' })).toEqual({ interim: 'notYetUsable', electionWindows: { joinWindow: 0, voteWindow: 0 }, electionDelay: null, challengeCoolDown: null, keyId: null });
   });
   it('refuses an unknown or file-only interim', () => {
     expect(() => registrationPolicy({ ...TESTNET, interim: 'nobody', mode: 'plan' })).toThrow(/--interim must be one of/);
     expect(() => registrationPolicy({ ...TESTNET, interim: 'appointedModerators', mode: 'plan' })).toThrow(/needs identities/);
   });
   it('refuses testnet windows on mainnet', () => {
-    expect(() => registrationPolicy({ ...TESTNET, network: 'mainnet', mode: 'plan' })).toThrow(/joinWindow 3600 s is outside 86400/);
-    expect(registrationPolicy({ ...TESTNET, network: 'mainnet', electionWindows: '604800,259200', mode: 'plan' }).electionWindows).toEqual({ joinWindow: 604800, voteWindow: 259200 });
+    expect(() => registrationPolicy({ ...TESTNET, network: 'mainnet', electionWindows: '3600,3600', mode: 'plan' })).toThrow(/joinWindow 3600 s is outside 86400/);
+    expect(registrationPolicy({ ...TESTNET, network: 'mainnet', electionWindows: '604800,604800', electionDelay: '259200', challengeCoolDown: '2592000', mode: 'plan' }).electionWindows).toEqual({ joinWindow: 604800, voteWindow: 604800 });
   });
   it('signs off devnet only from an explicit key file and key id', () => {
     for (const mode of ['signed-dry-run', 'live']) {

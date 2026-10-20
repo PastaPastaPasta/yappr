@@ -88,7 +88,7 @@ v16 and v17 work in one build; nothing below v17 changes.
 ## Tooling
 
 - `scripts/app-connect-set.mjs`: social v17 in v16's slot, `authVault` removed (and listed with the retired files, so it cannot rejoin), sha256 pins re-taken for social, blog, pollr and storefront. `verify-appconnect.mjs --self-test` passes. **Merge order:** the passkey vault (`contracts/yappr-passkey-vault-contract.json`, branch `feat/passkey-vault`) appends its own entry; whichever lands second re-pins nothing of the other's, but must rebase the `APP_CONNECT_ENTRIES` list.
-- The registration tooling (WP1) renders every elected member's config at registration: `register-app-connect-contracts.mjs` passes social, blog and storefront through `withInterim` and `withElectionWindows`, and `registrationPolicy` refuses a testnet or mainnet run without `--interim` and `--election-windows`. Testnet registers with `--interim notYetUsable --election-windows 3600,3600` (D1); after registration, read each contract's on-chain config and confirm both.
+- The registration tooling (WP1) renders every elected member's config at registration: `register-app-connect-contracts.mjs` passes social, blog and storefront through `withInterim` and `withElectionWindows`, and `registrationPolicy` refuses a testnet or mainnet run without `--interim` and `--election-windows`. Testnet registers with `--interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600` (D1); after registration, read each contract's on-chain config and confirm all four.
 - `scripts/validate-contract-offline.mjs`, `scripts/contract-probes.mjs` and `scripts/property-constraint-cases.mjs` know the v17, blog v9, storefront v10 and pollr v8 shapes (see [Validation](#validation)).
 
 ## Validation
@@ -161,9 +161,9 @@ Blog v9, storefront v10 and pollr v8 are recorded in [NON_SOCIAL_CONTRACTS.md](N
 
 ## Registering it
 
-Testnet registers the whole set fresh from the production maker (D2) with the WP1 publisher: `--plan`, `--dry-run`, `--signed-dry-run`, then `--live --production --journal`, always with `--interim notYetUsable --election-windows 3600,3600` (D1). The interim and windows are frozen into social, blog and storefront by that run, not by these files. The charters are filed the block after registration ([TESTNET_RELEASE.md](TESTNET_RELEASE.md)).
+Testnet registers the whole set fresh from the production maker (D2) with the WP1 publisher: `--plan`, `--dry-run`, `--signed-dry-run`, then `--live --production --journal`, always with `--interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600` (D1). The interim, windows, delay and challenge cool-down are frozen into social, blog and storefront by that run, not by these files. The charters are filed after the registration block plus the D41 delay ([TESTNET_RELEASE.md](TESTNET_RELEASE.md)).
 
-The offline plan for the production maker at its next nonce (`NETWORK=testnet … --plan --maker hbGEcFcX… --start-nonce 57 --interim notYetUsable --election-windows 3600,3600`) renders all three elected members with `notYetUsable` and 3,600/3,600 s, plans APP_ID `D8benQGn…` and GROUP_ID `4MjVAxDY…` (as before the cut: both depend on the maker and nonce only), social v17 at nonce 58 (`4nYYMMs9…`), and estimates the seven creates at 264.19e9 credits (≈15,851¢; social 92.90e9, storefront 61.97e9, blog 36.99e9, pollr 17.46e9) before the passkey vault joins.
+The offline plan for the production maker at its next nonce (`NETWORK=testnet … --plan --maker hbGEcFcX… --start-nonce 57 --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600`) renders all three elected members with `notYetUsable` and 86,400/86,400 s, plans APP_ID `D8benQGn…` and GROUP_ID `4MjVAxDY…` (as before the cut: both depend on the maker and nonce only), social v17 at nonce 58 (`4nYYMMs9…`), and estimates the seven creates at 264.19e9 credits (≈15,851¢; social 92.90e9, storefront 61.97e9, blog 36.99e9, pollr 17.46e9) before the passkey vault joins.
 
 ## Private-feed client
 

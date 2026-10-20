@@ -101,6 +101,9 @@ export interface ElectionStatus {
    * team read must not render as "no team has applied yet".
    */
   failures: ElectionReadFailure[];
+  /** Proved chain times used to explain a registration delay without a ticking clock. */
+  electionOpensAtMs: number | null;
+  chainTimeMs: number | null;
 }
 
 // ---- pure mappers (unit-tested) ------------------------------------------------
@@ -355,8 +358,21 @@ class ModerationElectionService {
    */
   async getStatus(targetContractId = YAPPR_CONTRACT_ID): Promise<ElectionStatus | null> {
     const sdk = await getEvoSdk();
-    const contract = await sdk.contracts.fetch(targetContractId);
+    const fetched = sdk.contracts.fetchWithProof
+      ? await sdk.contracts.fetchWithProof(targetContractId)
+      : { data: await sdk.contracts.fetch(targetContractId), metadata: null };
+    const contract = fetched?.data;
     if (!contract) throw new Error('The election contract could not be read.');
+    const contractWithTime = contract as unknown as { createdAt?: unknown; $createdAt?: unknown };
+    const rawCreated = contractWithTime.createdAt ?? contractWithTime.$createdAt ?? contract.toJSON?.()?.$createdAt;
+    let createdAtMs = rawCreated === undefined ? null : Number(rawCreated);
+    const chainTimeMs = Number(fetched?.metadata?.timeMs ?? NaN);
+    if (!Number.isFinite(createdAtMs) && sdk.contracts.getHistoryWithProof) {
+      const history = await sdk.contracts.getHistoryWithProof({ dataContractId: targetContractId, startAtMs: 0, limit: 10 });
+      const times = [...(history.data?.keys?.() ?? [])].map(Number).filter(Number.isFinite);
+      createdAtMs = times.length > 0 ? Math.min(...times) : null;
+      history.free?.();
+    }
     let declaration: ElectedModerationDeclaration | null;
     try {
       const moderators = contract.config.moderation?.moderators;
@@ -387,7 +403,10 @@ class ModerationElectionService {
     const seatedReasons = !seated ? [] : await attempt('seatedReasons', seatedProposal
       ? this.getReasons(seatedProposal.reasonIds)
       : this.getSeatedTeamAndReasons(targetContractId).then((read) => read.reasons), [] as CharterReason[]);
-    return { declaration, targetContractId, proposals, contest: contestRead.contest, seated, seatedReasons, failures };
+    const electionOpensAtMs = declaration.electionDelaySeconds === null || createdAtMs === null || !Number.isFinite(createdAtMs)
+      ? null : createdAtMs + declaration.electionDelaySeconds * 1000;
+    return { declaration, targetContractId, proposals, contest: contestRead.contest, seated, seatedReasons, failures,
+      electionOpensAtMs, chainTimeMs: Number.isFinite(chainTimeMs) ? chainTimeMs : null };
   }
 }
 

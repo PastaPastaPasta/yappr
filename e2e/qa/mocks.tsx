@@ -38,7 +38,7 @@ const fullId = 'Hga7gpqFN123hqkNueaeKvV6GVJgvJWpyYuuCXpe6J4m'
 export const moderationElectionService = { async getStatus(): Promise<ElectionStatus> {
   const declaration = moderatedContract('social').elected()
   if (!declaration) throw new Error('Missing elected fixture declaration')
-  return { targetContractId: fullId, declaration, failures: [], seatedReasons: [],
+  return { targetContractId: fullId, declaration, failures: [], seatedReasons: [], electionOpensAtMs: null, chainTimeMs: null,
     seated: { leaderId: fullId, members: [fullId], electedCharterId: fullId, submittedCharterId: fullId },
     contest: { contenders: [{ identityId: fullId, votes: 123456 }], abstainVotes: 0, lockVotes: 0, endsAtMs: 1700000000000,
       winner: { kind: 'identity', identityId: fullId, decidedAtMs: 1700000000000 } },

@@ -34,7 +34,8 @@ export function validateManifest(input) {
   if (!identityId(input.targetContractId)) throw new Error('targetContractId must be a base58 contract id (the predicted id before registration)');
   const expected = input.expected;
   if (!expected || !identityId(expected.ownerId) || !['notYetUsable', 'contractOwner', 'noModeration'].includes(expected.interim)
-    || !['joinWindow', 'voteWindow', 'challengeCoolDown'].every((k) => Number.isSafeInteger(expected[k]) && expected[k] >= 0)) throw new Error('expected must declare ownerId, joinWindow, voteWindow, challengeCoolDown and interim');
+    || !['joinWindow', 'voteWindow', 'challengeCoolDown'].every((k) => Number.isSafeInteger(expected[k]) && expected[k] >= 0)
+    || (expected.electionDelay !== undefined && (!Number.isSafeInteger(expected.electionDelay) || expected.electionDelay < 0))) throw new Error('expected must declare ownerId, joinWindow, voteWindow, challengeCoolDown and interim; electionDelay is optional on devnet');
   const actors = [input.leader, ...(input.members ?? [])];
   if (!input.leader || !Array.isArray(input.members) || input.members.length < 2 || input.members.length > 15) throw new Error('provide a leader and 2 to 15 members; three members are recommended');
   for (const actor of actors) {
@@ -330,11 +331,51 @@ export function assertRegistered(contract, expected) {
   if (contract.ownerId.toBase58() !== expected.ownerId) throw new Error('registered owner disagrees with expected ownerId');
   for (const key of ['joinWindow', 'voteWindow', 'challengeCoolDown']) if (moderators[key] !== expected[key]) throw new Error(`registered ${key} disagrees with expected declaration`);
   if (JSON.stringify(Object.keys(moderators.moderatedDocumentTypes ?? {}).sort()) !== JSON.stringify([...expected.documentTypes].sort())) throw new Error('registered moderated document types disagree with expected declaration');
-  if ((moderators.electionDelay ?? 0) !== 0) throw new Error('registered election delay is nonzero; this immediate release filer requires no delay');
+  if ((moderators.electionDelay ?? null) !== (expected.electionDelay ?? null)) throw new Error(`registered election delay ${moderators.electionDelay ?? 'absent'} disagrees with expected ${expected.electionDelay ?? 'absent'}`);
   if (moderators.interim?.$type !== expected.interim) throw new Error('registered interim disagrees with expected declaration');
 }
 
+/** Pure timing rule: Platform opens the first charter at creation block time + delay. */
+export function electionOpensAtMs(creationTimeMs, delaySeconds) {
+  if (!Number.isFinite(Number(creationTimeMs)) || !Number.isSafeInteger(Number(delaySeconds)) || Number(delaySeconds) < 0) return null;
+  return Number(creationTimeMs) + Number(delaySeconds) * 1000;
+}
+
+function contractCreationTimeMs(contract, metadata) {
+  const value = contract?.createdAt ?? contract?.$createdAt ?? contract?.toJSON?.()?.$createdAt;
+  if (value !== undefined && Number.isFinite(Number(value))) return Number(value);
+  // rc.4 exposes no creation field; the proved registration read's block time
+  // is a conservative chain-time anchor immediately after registration.
+  return Number.isFinite(Number(metadata?.timeMs)) ? Number(metadata.timeMs) : null;
+}
+
+async function waitForElectionOpening(sdk, contract, expected) {
+  const delay = expected.electionDelay ?? 0;
+  if (delay === 0) return;
+  const targetId = expected.targetContractId ?? contract.id?.toBase58?.() ?? '';
+  const proved = await sdk.contracts.fetchWithProof(targetId);
+  const history = await sdk.contracts.getHistoryWithProof({ dataContractId: targetId, startAtMs: 0n, limit: 10 });
+  const historyTimes = [...(history.data?.keys?.() ?? [])].map(Number).filter(Number.isFinite);
+  const creationMs = historyTimes.length > 0 ? Math.min(...historyTimes) : contractCreationTimeMs(proved?.data ?? contract, proved?.metadata);
+  history.free?.();
+  if (proved?.data && proved.data !== contract) proved.data.free?.();
+  if (creationMs === null) throw new Error('could not prove the contract creation block time; refusing to file a charter');
+  while (true) {
+    const status = await sdk.system.status();
+    const chain = status.toJSON(); status.free?.();
+    const nowMs = Number(chain.time?.block);
+    const opensAtMs = electionOpensAtMs(creationMs, delay);
+    if (opensAtMs === null || nowMs >= opensAtMs) {
+      console.log(`Election charter window is open (chain block ${new Date(nowMs).toISOString()}).`);
+      return;
+    }
+    console.log(`Election charters open at ${new Date(opensAtMs).toISOString()} (chain block time; current ${new Date(nowMs).toISOString()}); waiting.`);
+    await sleep(Math.min(Math.max(opensAtMs - nowMs, 1000), 30_000));
+  }
+}
+
 async function registered(sdk, target, waitSeconds, expected) {
+  if (requireNetwork(process.env.NETWORK) !== 'devnet' && expected.electionDelay === undefined) throw new Error('testnet and mainnet charter manifests must declare electionDelay explicitly');
   const deadline = Date.now() + waitSeconds * 1000;
   do {
     const contract = await sdk.contracts.fetch(target);
@@ -465,6 +506,7 @@ async function live(sdk, manifest, options) {
       console.log('Keys and reasons proved; charter payload prepared. Proposal will be signed with the current nonce at filing. Run --live at registration.'); return;
     }
     const target = await registered(sdk, manifest.targetContractId, options.waitSeconds, manifest.expected);
+    await waitForElectionOpening(sdk, target, { ...manifest.expected, targetContractId: manifest.targetContractId });
     const seated = await sdk.moderationCharters.team(manifest.targetContractId);
     if (seated) { seated.free(); throw new Error('target already has a seated team'); }
     state.registered = { targetContractId: manifest.targetContractId, ...manifest.expected }; target.free(); save();
