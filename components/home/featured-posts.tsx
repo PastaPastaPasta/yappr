@@ -25,10 +25,10 @@ export function FeaturedPosts({ posts, loading, error, onRetry }: FeaturedPostsP
 
   return (
     <section aria-labelledby="popular-posts-heading" className="min-w-0">
-      <h2 id="popular-posts-heading" className="mb-4 text-xl font-bold">Popular posts</h2>
+      <h2 id="popular-posts-heading" className="mb-3 px-4 text-xl font-bold">Popular posts</h2>
 
       {error ? (
-        <div className="rounded-2xl border border-gray-200 py-10 text-center dark:border-gray-800">
+        <div className="mx-4 rounded-2xl border border-gray-200 py-10 text-center dark:border-gray-800">
           <p className="mb-4 text-gray-500 dark:text-gray-400">Couldn&apos;t load posts.</p>
           {onRetry && (
             <Button variant="outline" size="sm" onClick={onRetry}>
@@ -38,18 +38,16 @@ export function FeaturedPosts({ posts, loading, error, onRetry }: FeaturedPostsP
           )}
         </div>
       ) : !loading && visible.length === 0 ? (
-        <p className="rounded-2xl border border-gray-200 py-10 text-center text-gray-500 dark:border-gray-800 dark:text-gray-400">
+        <p className="mx-4 rounded-2xl border border-gray-200 py-10 text-center text-gray-500 dark:border-gray-800 dark:text-gray-400">
           No posts yet.
         </p>
       ) : (
         <>
-          {/* Full-bleed on phones, like a timeline; framed from `sm` up. The inner -mb-px tucks the last card's bottom border under the frame's. */}
-          <div className="-mx-4 overflow-hidden border-y border-gray-200 dark:border-gray-800 sm:mx-0 sm:rounded-2xl sm:border">
-            <div className="-mb-px">
-              {loading
-                ? [...Array(4)].map((_, i) => <PostCardSkeleton key={i} />)
-                : visible.map((post) => <PostCard key={post.id} post={post} />)}
-            </div>
+          {/* A timeline across the full centre column, as on the feed; each card draws its own bottom border. */}
+          <div className="border-t border-gray-200 dark:border-gray-800">
+            {loading
+              ? [...Array(4)].map((_, i) => <PostCardSkeleton key={i} />)
+              : visible.map((post) => <PostCard key={post.id} post={post} />)}
           </div>
           {!loading && (
             <div className="mt-6 text-center">

@@ -1,5 +1,6 @@
 'use client'
 
+import { useId } from 'react'
 import Link from 'next/link'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { TopUser } from '@/hooks/use-homepage-data'
@@ -27,11 +28,13 @@ function UserSkeleton() {
 
 /** The people with the most posts, as a compact "who to follow" list. Hidden when there is nothing to show. */
 export function TopUsersSection({ users, loading, error }: TopUsersSectionProps) {
+  // The landing page mounts one copy in the right rail and one under the posts; CSS shows one.
+  const headingId = useId()
   if (error || (!loading && users.length === 0)) return null
 
   return (
-    <section aria-labelledby="top-contributors-heading" className="overflow-hidden rounded-2xl bg-gray-50 dark:bg-gray-950">
-      <h2 id="top-contributors-heading" className="px-4 pb-1 pt-3 text-xl font-bold">Top contributors</h2>
+    <section aria-labelledby={headingId} className="overflow-hidden rounded-2xl bg-gray-50 dark:bg-gray-950">
+      <h2 id={headingId} className="px-4 pb-1 pt-3 text-xl font-bold">Top contributors</h2>
       <ul>
         {loading
           ? [...Array(4)].map((_, i) => <li key={i}><UserSkeleton /></li>)
