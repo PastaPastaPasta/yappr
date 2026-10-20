@@ -1,5 +1,6 @@
 // The rules a brand set (public/brand/, docs/brand/candidates/<style>/) must follow, shared by
 // scripts/brand-assets.mjs and its test. See docs/brand/README.md.
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -46,6 +47,13 @@ export function viewBox(svg) {
 export function ratioOf(svg) {
   const { width, height } = viewBox(svg);
   return Math.round((width / height) * 1000) / 1000;
+}
+
+/** A fingerprint of every SVG in the set in `dir`, which the generated files were built from. */
+export function sourceHash(dir) {
+  const hash = createHash('sha256');
+  for (const file of FILES) hash.update(`${file}\0`).update(fs.readFileSync(path.join(dir, file)));
+  return hash.digest('hex');
 }
 
 /** What's wrong with the set in `dir`, as messages (empty when it can be installed). */

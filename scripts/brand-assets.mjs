@@ -31,7 +31,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { FILES, problems, ratioOf } from './brand-set.mjs';
+import { FILES, problems, ratioOf, sourceHash } from './brand-set.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BRAND = path.join(ROOT, 'public/brand');
@@ -124,6 +124,8 @@ async function writeManifest() {
     baseline: authored.baseline,
     iconBackground,
     ratio: { wordmark: ratio('wordmark.svg'), lockup: ratio('lockup.svg'), poweredBy: ratio('powered-by.svg') },
+    // The SVGs every generated file was built from; scripts/brand-set.test.mjs fails when they change.
+    source: sourceHash(BRAND),
   };
   fs.writeFileSync(path.join(BRAND, 'brand.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`  public/brand/brand.json (${manifest.style}, icon background ${iconBackground})`);

@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { problems, ratioOf } from './brand-set.mjs'
+import { problems, ratioOf, sourceHash } from './brand-set.mjs'
 
 const ROOT = path.resolve(__dirname, '..')
 const BRAND = path.join(ROOT, 'public/brand')
@@ -18,8 +18,9 @@ describe('brand set', () => {
   })
 
   // Editing public/brand/ without `npm run brand` leaves these stale.
-  it('has brand.json and the mobile SVG module regenerated from the current files', () => {
-    const { ratio } = JSON.parse(read('brand.json'))
+  it('has every generated file built from the current SVGs', () => {
+    const { ratio, source } = JSON.parse(read('brand.json'))
+    expect(source).toBe(sourceHash(BRAND))
     expect(ratio).toEqual({
       wordmark: ratioOf(read('wordmark.svg')),
       lockup: ratioOf(read('lockup.svg')),
