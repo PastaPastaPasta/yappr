@@ -202,4 +202,44 @@ describe('post reader', () => {
     await settle();
     expect(fakeEngine.method('blogs.comment')).toHaveBeenCalledWith(POST, AUTHOR, 'Nice post');
   });
+
+  it('shows a sent comment at once and never sends it twice (D-954)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: session(READER), accounts: [] });
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    fakeEngine.method('blogs.comment').mockResolvedValue(ticket({ op: 'blogComment.create' }));
+    renderScreen(<BlogPostScreen />);
+    await settle();
+    expect(screen.getByTestId('blog-post-scroll').props.keyboardShouldPersistTaps).toBe('handled');
+
+    fireEvent.changeText(screen.getByTestId('blog-comment-input'), 'Nice post');
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    // The tap shows at once: the field clears, the button says it is posting, the comment is listed and counted.
+    expect(screen.getByTestId('blog-comment-input').props.value).toBe('');
+    expect(screen.getByLabelText('Posting your comment')).toBeTruthy();
+    await settle();
+    expect(screen.getByText('Nice post')).toBeTruthy();
+    expect(screen.getByTestId('blog-comment-send')).toHaveTextContent('Posting…');
+    expect(screen.getByText('1 comment')).toBeTruthy();
+
+    // A second tap, and the same words again while the first is pending, send nothing.
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    fireEvent.changeText(screen.getByTestId('blog-comment-input'), 'Nice post');
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    await settle();
+    expect(fakeEngine.method('blogs.comment')).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the words back when the comment is refused before it is sent', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: session(READER), accounts: [] });
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    fakeEngine.method('blogs.comment').mockRejectedValue(Object.assign(new Error('Comments are off'), { code: 'BAD_REQUEST' }));
+    renderScreen(<BlogPostScreen />);
+    await settle();
+
+    fireEvent.changeText(screen.getByTestId('blog-comment-input'), 'Nice post');
+    fireEvent.press(screen.getByTestId('blog-comment-send'));
+    await settle();
+    expect(screen.getByTestId('blog-comment-input').props.value).toBe('Nice post');
+    expect(screen.queryByText('1 comment')).toBeNull();
+  });
 });

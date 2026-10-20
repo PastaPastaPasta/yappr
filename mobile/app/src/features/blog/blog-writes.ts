@@ -1,4 +1,4 @@
-import type { BlogCommentDTO, BlogFollowDTO, BlogInput, BlogPostInput, BlogReportTargetDTO, WriteTicket } from '@engine/api';
+import type { AuthorDTO, BlogCommentDTO, BlogFollowDTO, BlogInput, BlogPostInput, BlogReportTargetDTO, WriteTicket } from '@engine/api';
 
 import { queryKeys } from '~/data/keys';
 import { engine } from '~/engine';
@@ -185,8 +185,46 @@ export const deletePostWrite: WriteSpec<{ postId: string; blogId: string }> = {
   failureMessage: "Couldn't delete this post. Try again.",
 };
 
-export const commentWrite: WriteSpec<{ postId: string; postOwnerId: string; content: string }> = {
+/** A comment shown while it posts: its id until the post's comments are read back with the real one. */
+export const PENDING_COMMENT = 'pending:';
+export const isPendingComment = (comment: BlogCommentDTO) => comment.id.startsWith(PENDING_COMMENT);
+
+interface CommentVars {
+  postId: string;
+  postOwnerId: string;
+  content: string;
+  /** The writer, shown on the comment while it posts. */
+  author: AuthorDTO;
+  /** Names the comment while it posts (`PENDING_COMMENT` + it). */
+  localId: string;
+}
+
+const pendingComment = ({ postId, content, author, localId }: CommentVars): BlogCommentDTO => ({
+  id: `${PENDING_COMMENT}${localId}`,
+  ownerId: author.id,
+  author,
+  postId,
+  createdAt: new Date(),
+  content,
+});
+
+/** The comment, shown at the end of the post's cached comments (oldest first) until they are read back. */
+function showComment(vars: CommentVars): () => void {
+  const key = queryKeys.blog.comments(vars.postId);
+  const comment = pendingComment(vars);
+  const shown = queryClient.getQueryData<BlogCommentDTO[]>(key);
+  if (!shown?.some((c) => c.id === comment.id)) queryClient.setQueryData<BlogCommentDTO[]>(key, [...(shown ?? []), comment]);
+  return () => queryClient.setQueryData<BlogCommentDTO[]>(key, (current) => current?.filter((c) => c.id !== comment.id));
+}
+
+export const commentWrite: WriteSpec<CommentVars> = {
   submit: (api, { postId, postOwnerId, content }) => api.blogs.comment(postId, postOwnerId, content),
+  // Shown at once, so the tap visibly did something; the read after confirmation swaps in the real comment.
+  optimistic: showComment,
+  reconcile: null,
+  reapply: (vars) => {
+    showComment(vars);
+  },
   onConfirmed: (_ticket, { postId }) => refetch(queryKeys.blog.comments(postId)),
   failureMessage: "Couldn't post your comment. Try again.",
 };
