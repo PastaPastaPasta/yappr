@@ -159,6 +159,7 @@ beforeAll(async () => {
     storage: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value) } },
     emit: () => undefined,
     currentIdentity: () => chain.viewer,
+    documentExists: async () => true,
     absenceRecheckMs: 0,
     autoRetryDelaysMs: [],
   })

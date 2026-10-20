@@ -9,8 +9,6 @@ import { DEFAULT_FEED_CAPS } from '@/lib/private-feed/crypto'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { followService } from '@/lib/services/follow-service'
 import { identityService } from '@/lib/services/identity-service'
-import { postService, replyToPost } from '@/lib/services/post-service'
-import { replyService } from '@/lib/services/reply-service'
 import { privateFeedFollowerService, type AccessStatus } from '@/lib/services/private-feed-follower-service'
 import { canBringHistory, estimateRenewal, renewPrivateFeed, runMove, adoptUnfinishedMove } from '@/lib/services/private-feed-move'
 import { loadMove, moveProgress } from '@/lib/services/private-feed-move-job'
@@ -22,10 +20,11 @@ import { privateFeedService, type PrivateFeedResult } from '@/lib/services/priva
 import { loadUserSummaries, readFailure, requireViewer, viewerId } from '../dto/hydrate'
 import { privatePostOf, type PrivatePostRecord } from '../dto/private-content'
 import { RpcError } from '../protocol/envelope'
-import { assertId, badRequest, relationProbe, signer, ticketIdentity } from '../writes/handler-kit'
+import { assertId, badRequest, notSent, relationProbe, signer, ticketIdentity } from '../writes/handler-kit'
 import { NotSentError, type TicketStore, type WriteHandler, type WriteResult, type WriteRunContext } from '../writes/tickets'
 import type { WriteOp, WriteTicket } from '../writes/types'
 import type { UserSummaryDTO } from './dto'
+import { readPostOrReply } from './posts'
 
 /**
  * Private feeds (social v17, docs/YAPPR_PRIVATE_FEED_SPEC.md and
@@ -172,12 +171,12 @@ async function read<T>(load: () => Promise<T>): Promise<T> {
 
 /** A private post or reply by id: the engine's copy of what it handed the host, else read again. */
 async function privatePost(id: string): Promise<PrivatePostRecord | null> {
-  const known = privatePostOf(id)
-  if (known) return known
-  const post = await postService.getPostById(id, { skipEnrichment: true })
-  if (post) return post
-  const reply = await replyService.getReplyById(id, { skipEnrichment: true })
-  return reply ? replyToPost(reply) : null
+  return privatePostOf(id) ?? readPostOrReply(id)
+}
+
+/** An identity's messaging public key, from its identity keys (lib's lookup: the anchor key on App Connect builds). */
+function identityMessagingKey(identityId: string, options?: { fresh?: boolean }): Promise<Uint8Array | null> {
+  return resolveEncryptionPublicKey(identityId, async () => (await identityService.getIdentity(identityId, options))?.publicKeys ?? null)
 }
 
 /** How many private followers the owner's own post reaches, kept briefly (web shows it under each own post). */
@@ -202,7 +201,18 @@ async function requesterKey(request: FollowRequestDocument): Promise<Uint8Array 
     const carried = normalizeBytes(request.publicKey)
     if (carried) return carried
   }
-  return resolveEncryptionPublicKey(request.$ownerId, async () => (await identityService.getIdentity(request.$ownerId, { fresh: true }))?.publicKeys ?? null)
+  return identityMessagingKey(request.$ownerId, { fresh: true })
+}
+
+/** What an access status means for a private post that did not open (web `attemptDecryption`'s last step). */
+const ACCESS_LOCK: Record<AccessStatus, PrivateLockReason> = {
+  pending: 'pending',
+  renewing: 'renewing',
+  revoked: 'revoked',
+  // Approved, and still nothing opens it: it predates what the grant reaches.
+  approved: 'history',
+  'approved-no-keys': 'history',
+  none: 'none',
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +226,8 @@ async function readPrivatePost(id: string, rootOwnerHint?: string): Promise<Priv
   const locked = (reason: PrivateLockReason, feedOwnerId: string, viewer: string | null): PrivatePostDTO => ({
     state: 'locked', reason, feedOwnerId, own: viewer === feedOwnerId, messagingKey: viewer ? messagingKeyStatus(viewer) : 'unavailable',
   })
-  if (!privateFeedClientSupported()) return locked('unsupported', fallbackOwner, viewerId())
   const viewer = viewerId()
+  if (!privateFeedClientSupported()) return locked('unsupported', fallbackOwner, viewer)
   if (!post || !privateContentOf(post)) return locked('failed', fallbackOwner, viewer)
   if (!viewer) return locked('signed-out', fallbackOwner, null)
 
@@ -231,31 +241,23 @@ async function readPrivatePost(id: string, rootOwnerHint?: string): Promise<Priv
   if (!opened) return locked('failed', fallbackOwner, viewer)
   const { outcome, feedOwnerId } = opened
   const own = viewer === feedOwnerId
+  const lock = (reason: PrivateLockReason) => locked(reason, feedOwnerId, viewer)
   if (outcome.ok) {
     return { state: 'open', text: outcome.text, feedOwnerId, own, followerCount: own ? await followerCountOf(feedOwnerId) : null }
   }
   switch (outcome.reason) {
     // The key here and still no opening: the grant was sealed to another messaging key.
-    case 'needs-key': return locked(key && !own ? 'key-changed' : 'needs-key', feedOwnerId, viewer)
-    case 'revoked': return locked('revoked', feedOwnerId, viewer)
-    case 'history-unavailable': return locked('history', feedOwnerId, viewer)
-    case 'failed': return locked('failed', feedOwnerId, viewer)
+    case 'needs-key': return lock(key && !own ? 'key-changed' : 'needs-key')
+    case 'revoked': return lock('revoked')
+    case 'history-unavailable': return lock('history')
+    case 'failed': return lock('failed')
     case 'no-access': break
   }
-  if (own) return locked('needs-key', feedOwnerId, viewer)
-  let status: AccessStatus
+  if (own) return lock('needs-key')
   try {
-    status = await privateFeedFollowerService.getAccessStatus(feedOwnerId, viewer)
+    return lock(ACCESS_LOCK[await privateFeedFollowerService.getAccessStatus(feedOwnerId, viewer)])
   } catch {
-    return locked('failed', feedOwnerId, viewer)
-  }
-  switch (status) {
-    case 'pending': return locked('pending', feedOwnerId, viewer)
-    case 'renewing': return locked('renewing', feedOwnerId, viewer)
-    case 'revoked': return locked('revoked', feedOwnerId, viewer)
-    // Approved, and still nothing opens it: it predates what the grant reaches.
-    case 'approved': case 'approved-no-keys': return locked('history', feedOwnerId, viewer)
-    case 'none': return locked('none', feedOwnerId, viewer)
+    return lock('failed')
   }
 }
 
@@ -376,11 +378,6 @@ function requireMessagingKey(identityId: string): Uint8Array {
   return key
 }
 
-/** A probe from a read of the viewer's own private-feed state (a failed read proves nothing). */
-function stateProbe<A>(present: (viewer: string, ticket: WriteTicket, args: A | undefined) => Promise<boolean>, expected = true) {
-  return relationProbe<A>(({ viewer, ticket, args }) => present(viewer, ticket, args), expected)
-}
-
 /** Whether `followerId` holds a grant in force in any of `ownerId`'s feeds. */
 async function holdsGrantInForce(ownerId: string, followerId: string): Promise<boolean> {
   for (const grant of await fetchGrantsTo(ownerId, followerId)) {
@@ -409,7 +406,7 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       ctx.stage('broadcasting')
       return fromFeedResult(await privateFeedService.enablePrivateFeed(owner, key))
     },
-    probe: stateProbe(async viewer => (await fetchCurrentFeed(viewer, { fresh: true })) !== null),
+    probe: relationProbe(async ({ viewer }) => (await fetchCurrentFeed(viewer, { fresh: true })) !== null, true),
   })
 
   register<OwnerArgs>('privateFeed.request', {
@@ -417,10 +414,7 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       const me = signer(ctx)
       // The requester's messaging public key: from the key on this device, else the identity's (web's usePrivateFeedRequest).
       const held = messagingKeyOf(me)
-      const publicKey = held
-        ? getPublicKey(held)
-        : await resolveEncryptionPublicKey(me, async () => (await identityService.getIdentity(me))?.publicKeys ?? null)
-          .catch((error: unknown) => { throw new NotSentError(error) })
+      const publicKey = held ? getPublicKey(held) : await identityMessagingKey(me).catch(notSent)
       if (!publicKey) throw new NotSentError(noMessagingKey())
       ctx.stage('broadcasting')
       // Web follows the owner first, best effort: the request goes ahead either way.
@@ -435,10 +429,10 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       if (result.error === NO_FEED) return { state: 'failed', error: new RpcError("This person doesn't have a private feed.", 'PRIVATE_FEED') }
       return { state: 'failed', error: new Error(result.error) }
     },
-    probe: stateProbe<OwnerArgs>(async (viewer, ticket) => {
+    probe: relationProbe<OwnerArgs>(async ({ viewer, ticket }) => {
       const request = await fetchFollowRequest(ticketIdentity(ticket), viewer)
       return request !== null && request.$createdAt >= ticket.createdAt.getTime() - CLOCK_SKEW_MS
-    }),
+    }, true),
   })
 
   register<OwnerArgs>('privateFeed.leave', {
@@ -449,24 +443,24 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       if (!result.success && result.error === 'No pending request found') return { state: 'confirmed' }
       return result.success ? { state: 'confirmed' } : { state: 'failed', error: new Error(result.error) }
     },
-    probe: stateProbe<OwnerArgs>(async (viewer, ticket) => (await fetchFollowRequest(ticketIdentity(ticket), viewer)) !== null, false),
+    probe: relationProbe<OwnerArgs>(async ({ viewer, ticket }) => (await fetchFollowRequest(ticketIdentity(ticket), viewer)) !== null, false),
   })
 
   register<MemberArgs>('privateFeed.approve', {
     async run({ memberId }, ctx) {
       const owner = signer(ctx)
-      const request = await fetchFollowRequest(owner, memberId).catch((error: unknown) => { throw new NotSentError(error) })
+      const request = await fetchFollowRequest(owner, memberId).catch(notSent)
       if (!request) throw new NotSentError(new RpcError('This person withdrew their request, so there is nothing to approve.', 'PRIVATE_FEED'))
-      const publicKey = await requesterKey(request).catch((error: unknown) => { throw new NotSentError(error) })
+      const publicKey = await requesterKey(request).catch(notSent)
       if (!publicKey) throw new NotSentError(new RpcError("This person hasn't set up messaging yet. You can approve them once they do.", 'PRIVATE_FEED'))
       ctx.stage('broadcasting')
       return fromFeedResult(await privateFeedService.approveFollower(owner, memberId, publicKey, messagingKeyOf(owner)))
     },
-    probe: stateProbe<MemberArgs>(async (viewer, ticket) => {
+    probe: relationProbe<MemberArgs>(async ({ viewer, ticket }) => {
       const feed = await fetchCurrentFeed(viewer, { fresh: true })
       const grant = feed ? await fetchGrant(viewer, feed.feed, ticketIdentity(ticket)) : null
       return grant !== null && !(await answeredThrough(grant)).revoked
-    }),
+    }, true),
   })
 
   register<MemberArgs>('privateFeed.revoke', {
@@ -475,7 +469,7 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       ctx.stage('broadcasting')
       return fromFeedResult(await privateFeedService.revokeFollower(owner, memberId, messagingKeyOf(owner)))
     },
-    probe: stateProbe<MemberArgs>(async (viewer, ticket) => holdsGrantInForce(viewer, ticketIdentity(ticket)), false),
+    probe: relationProbe<MemberArgs>(async ({ viewer, ticket }) => holdsGrantInForce(viewer, ticketIdentity(ticket)), false),
   })
 
   /** Progress through a follower move, as the ticket's progress (a long move reports each follower). */
@@ -493,10 +487,10 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       return fromMoveResult(await renewPrivateFeed(owner, key, { bringHistory }, moveProgressTo(ctx)))
     },
     // Renewed: a newer feed than the one it renewed exists. The move after it is its own (`privateFeed.move`).
-    probe: stateProbe<RenewArgs>(async (viewer, _ticket, args) => {
+    probe: relationProbe<RenewArgs>(async ({ viewer, args }) => {
       if (!args) throw new Error('This renewal can no longer be checked')
       return ((await fetchCurrentFeed(viewer, { fresh: true }))?.feed ?? 0) > args.fromFeed
-    }),
+    }, true),
     // One grant per follower, each its own transition: a long move reports each, but a slow one may sit a while.
     deadlineMs: null,
   })
@@ -508,7 +502,7 @@ export function createPrivateFeedWrites(tickets: TicketStore) {
       ctx.stage('broadcasting')
       return fromMoveResult(await runMove(owner, key, moveProgressTo(ctx)))
     },
-    probe: stateProbe(async viewer => loadMove(viewer) === null && (await adoptUnfinishedMove(viewer)) === 0),
+    probe: relationProbe(async ({ viewer }) => loadMove(viewer) === null && (await adoptUnfinishedMove(viewer)) === 0, true),
     deadlineMs: null,
   })
 

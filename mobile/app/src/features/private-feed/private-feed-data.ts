@@ -1,10 +1,12 @@
-import type { PostDTO, PrivatePostDTO, WriteTicket } from '@engine/api';
+import type { MessagingKeyDTO, PostDTO, PrivatePostDTO, WriteTicket } from '@engine/api';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
+import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useViewerId } from '~/data/session';
-import type { WriteSpec } from '~/data/writes';
+import { sendWrite, type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
+import { confirmAlert } from '~/ui/Dialog';
 import { toast } from '~/ui/toast';
 
 import { copy } from './copy';
@@ -18,18 +20,19 @@ import { copy } from './copy';
 /** How long a decrypted post or an access state is reused before it is read again. */
 const STALE_MS = 60_000;
 
-/**
- * A private post or reply for the viewer (`privateFeed.read`): `undefined`
- * while it loads, or for a post that isn't private. `rootOwnerHint`: who
- * started the thread, for a reply whose root is gone.
- */
-export function usePrivatePost(post: Pick<PostDTO, 'id' | 'encrypted'>, rootOwnerHint?: string) {
+/** The write keys (one write at a time per key), also what the screens watch to show a write as busy. */
+export const accessKey = (ownerId: string) => `privateFeed:${ownerId}`;
+export const memberKey = (memberId: string) => `privateFeed.member:${memberId}`;
+export const OWNER_KEY = 'privateFeed.owner';
+
+/** A private post or reply for the viewer (`privateFeed.read`); not read for a post that isn't private. */
+export function usePrivatePost(post: Pick<PostDTO, 'id' | 'encrypted'>) {
   const viewerId = useViewerId();
   const id = post.id;
   return useEngineQuery(
     // The viewer is in the key: an account switch never shows another account's decryption.
     [...queryKeys.privateFeed.post(id), viewerId ?? ''],
-    (api) => api.privateFeed.read(id, rootOwnerHint),
+    (api) => api.privateFeed.read(id),
     { enabled: post.encrypted, staleTime: STALE_MS },
   );
 }
@@ -55,6 +58,12 @@ export function usePrivateFeedOverview() {
   return useEngineQuery(queryKeys.privateFeed.overview, (api) => api.privateFeed.overview());
 }
 
+/** How to get the messaging key onto this phone, in a sentence; null when it is here. */
+export function messagingKeyText(messagingKey: MessagingKeyDTO): string | null {
+  if (messagingKey === 'ready') return null;
+  return messagingKey === 'allow-in-wallet' ? copy.messagingKey.allowInWallet : copy.messagingKey.unavailable;
+}
+
 const refresh = (queryKey: readonly unknown[]) => {
   queryClient.invalidateQueries({ queryKey }).catch(() => undefined);
 };
@@ -66,7 +75,7 @@ function refreshFeedOf(ownerId: string): void {
 }
 
 /** After a write to the viewer's own feed: its settings, lists and private posts read again. */
-export function refreshOwnFeed(): void {
+function refreshOwnFeed(): void {
   refresh(queryKeys.privateFeed.owner);
   refresh(queryKeys.privateFeed.posts);
 }
@@ -87,7 +96,7 @@ function feedFailureText(ticket: WriteTicket): string | null {
 
 /** Ask an owner for access (following them first, as web does); also how a removed follower asks again. */
 export const requestAccessWrite: WriteSpec<{ ownerId: string }> = {
-  key: ({ ownerId }) => `privateFeed:${ownerId}`,
+  key: ({ ownerId }) => accessKey(ownerId),
   submit: (api, { ownerId }) => api.privateFeed.request(ownerId),
   matches: (ticket, { ownerId }) => ticket.op === 'privateFeed.request' && aboutIdentity(ticket) === ownerId,
   onConfirmed: (_ticket, { ownerId }) => {
@@ -101,7 +110,7 @@ export const requestAccessWrite: WriteSpec<{ ownerId: string }> = {
 
 /** Withdraw a pending request, or leave a private feed (PF8). */
 export const leaveWrite: WriteSpec<{ ownerId: string; member: boolean }> = {
-  key: ({ ownerId }) => `privateFeed:${ownerId}`,
+  key: ({ ownerId }) => accessKey(ownerId),
   submit: (api, { ownerId }) => api.privateFeed.leave(ownerId),
   matches: (ticket, { ownerId }) => ticket.op === 'privateFeed.leave' && aboutIdentity(ticket) === ownerId,
   onConfirmed: (_ticket, { ownerId }) => refreshFeedOf(ownerId),
@@ -109,9 +118,26 @@ export const leaveWrite: WriteSpec<{ ownerId: string; member: boolean }> = {
   failureMessage: ({ member }) => (member ? "Couldn't leave this private feed. Try again." : "Couldn't cancel your request. Try again."),
 };
 
+/** Request access to `ownerId`'s private posts, signing in first when signed out. */
+export function requestAccess(ownerId: string): void {
+  requireAuth(() => sendWrite(requestAccessWrite, { ownerId }, copy.access.requested));
+}
+
+/** Cancel a pending request (`member: false`) or leave a private feed, after a confirmation. */
+export async function confirmLeave(ownerId: string, member: boolean): Promise<void> {
+  const confirmed = await confirmAlert({
+    title: member ? copy.access.leaveTitle : copy.access.cancelTitle,
+    message: member ? copy.access.leaveBody : copy.access.cancelBody,
+    confirmText: member ? copy.access.leave : copy.access.cancel,
+    cancelText: copy.access.keep,
+    destructive: true,
+  });
+  if (confirmed) sendWrite(leaveWrite, { ownerId, member }, member ? copy.access.left : copy.access.cancelled);
+}
+
 /** Approve a request: they can read the owner's private posts. */
 export const approveWrite: WriteSpec<{ memberId: string }> = {
-  key: ({ memberId }) => `privateFeed.member:${memberId}`,
+  key: ({ memberId }) => memberKey(memberId),
   submit: (api, { memberId }) => api.privateFeed.approve(memberId),
   matches: (ticket, { memberId }) => ticket.op === 'privateFeed.approve' && aboutIdentity(ticket) === memberId,
   onConfirmed: refreshOwnFeed,
@@ -121,7 +147,7 @@ export const approveWrite: WriteSpec<{ memberId: string }> = {
 
 /** Remove a private follower: they can't read anything posted from now on. */
 export const revokeWrite: WriteSpec<{ memberId: string }> = {
-  key: ({ memberId }) => `privateFeed.member:${memberId}`,
+  key: ({ memberId }) => memberKey(memberId),
   submit: (api, { memberId }) => api.privateFeed.revoke(memberId),
   matches: (ticket, { memberId }) => ticket.op === 'privateFeed.revoke' && aboutIdentity(ticket) === memberId,
   onConfirmed: refreshOwnFeed,
@@ -131,7 +157,7 @@ export const revokeWrite: WriteSpec<{ memberId: string }> = {
 
 /** Turn the viewer's private feed on. */
 export const enableWrite: WriteSpec<Record<string, never>> = {
-  key: () => 'privateFeed.owner',
+  key: () => OWNER_KEY,
   submit: (api) => api.privateFeed.enable(),
   matches: (ticket) => ticket.op === 'privateFeed.enable',
   onConfirmed: refreshOwnFeed,
@@ -141,7 +167,7 @@ export const enableWrite: WriteSpec<Record<string, never>> = {
 
 /** Renew the viewer's private feed: new keys and room, followers moved over. */
 export const renewWrite: WriteSpec<{ bringHistory: boolean }> = {
-  key: () => 'privateFeed.owner',
+  key: () => OWNER_KEY,
   submit: (api, vars) => api.privateFeed.renew(vars),
   matches: (ticket) => ticket.op === 'privateFeed.renew',
   onConfirmed: () => {
@@ -156,7 +182,7 @@ export const renewWrite: WriteSpec<{ bringHistory: boolean }> = {
 
 /** Continue moving followers after a renewal. */
 export const continueMoveWrite: WriteSpec<Record<string, never>> = {
-  key: () => 'privateFeed.owner',
+  key: () => OWNER_KEY,
   submit: (api) => api.privateFeed.continueMove(),
   matches: (ticket) => ticket.op === 'privateFeed.move',
   onConfirmed: refreshOwnFeed,

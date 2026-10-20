@@ -12,8 +12,8 @@ import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { textBytes } from '@/lib/text-limits'
 import { isKnownPrivate } from '../dto/private-content'
 import { RpcError } from '../protocol/envelope'
-import { assertId, assertMediaUrl, assertTarget, badRequest, characters, settleTarget, signer, socialDoc } from './handler-kit'
-import { ABSENCE_AFTER_MS, NotSentError, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
+import { assertId, assertMediaUrl, assertTarget, badRequest, characters, notSent, settleTarget, signer, socialDoc } from './handler-kit'
+import { ABSENCE_AFTER_MS, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
 import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types'
 
 /**
@@ -31,8 +31,8 @@ import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types
 const MAX_THREAD_PARTS = 10
 /** `post.mediaUrl` / `reply.mediaUrl` `maxLength` (v2 and v10), and each v13 `mediaUrls` item's, as stored (`mediaUrlForContract`). */
 const MAX_MEDIA_URL = 512
-/** `components/compose/visibility-selector.tsx` `TEASER_LIMIT`, in characters. */
-export const TEASER_LIMIT = 280
+/** `components/compose/visibility-selector.tsx` `TEASER_LIMIT`, in characters (the app's compose mirrors it). */
+const TEASER_LIMIT = 280
 
 export interface DraftDTO {
   /** 1–10 parts; a reply or a quote has exactly one. Parts without visible text are skipped, as on web. */
@@ -91,8 +91,9 @@ export function validateDraft(draft: DraftDTO): void {
     if (!privateFeedClientSupported()) throw new RpcError('Private posts are not available on this network', 'NOT_SUPPORTED')
     if (parts.filter(part => hasVisibleContent(part.text)).length > 1) throw badRequest('A private post cannot be a thread')
   }
-  const teaser = draft.visibility === 'private-with-teaser' && typeof draft.teaser === 'string' ? draft.teaser.trim() : ''
+  let teaser = ''
   if (draft.visibility === 'private-with-teaser') {
+    teaser = typeof draft.teaser === 'string' ? draft.teaser.trim() : ''
     if (!teaser) throw badRequest('A post with a teaser needs the teaser text')
     if (characters(teaser) > TEASER_LIMIT) throw badRequest(`A teaser is at most ${TEASER_LIMIT} characters`)
   }
@@ -348,12 +349,12 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>,
     if (referenced && !posted[0]) await settleTarget(ctx, referenced)
 
     // Everything before publishThread is reads and local work: a failure there sent nothing.
-    const notSent = (error: unknown): never => { throw new NotSentError(error) }
     const [replyingTo, quotingPost] = await Promise.all([loadTarget(draft.replyTo, load, 'reply'), loadTarget(draft.quote, load, 'quote')]).catch(notSent)
     const inherited = await inheritedEncryptionOf(replyingTo).catch(notSent)
     const isPrivate = isPrivateVisibility(draft) && inherited === null
     const encrypted = isPrivate || inherited !== null
-    if (encrypted) privateDrafts.add(draft)
+    // A private visibility already marks the draft private (`draftIsPrivate`); an inherited one is found only here.
+    if (inherited !== null) privateDrafts.add(draft)
     const plan = planDraft({ ...draft, mediaUrl }, posted, encrypted)
     // An encrypted post carries its image link inside the encrypted text, never as a media field.
     const media = encrypted ? [] : await mediaFields(mediaUrl).catch(notSent)

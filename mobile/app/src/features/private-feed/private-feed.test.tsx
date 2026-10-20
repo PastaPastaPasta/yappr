@@ -95,7 +95,7 @@ describe('a private post in a feed', () => {
     expect(await screen.findByText('for my followers')).toBeTruthy();
     expect(screen.queryByText('Only approved followers can see this.')).toBeNull();
     expect(screen.getByTestId(`reply-btn-${post.id}`)).toBeTruthy();
-    expect(fakeEngine.method('privateFeed.read')).toHaveBeenCalledWith(post.id, undefined);
+    expect(fakeEngine.method('privateFeed.read')).toHaveBeenCalledWith(post.id);
   });
 
   it('asks a viewer who has not asked to request access, and sends the request natively', async () => {

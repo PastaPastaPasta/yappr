@@ -8,8 +8,6 @@ import type { PrivateLockReason } from '@engine/api';
  */
 export const copy = {
   post: {
-    title: 'Private post',
-    body: 'Only approved followers can see this.',
     open: 'Private',
     followers: (n: number) => `Visible to ${n} private follower${n === 1 ? '' : 's'}`,
     reasons: {
@@ -31,7 +29,6 @@ export const copy = {
   access: {
     request: 'Request access',
     requestAgain: 'Ask again',
-    requesting: 'Requesting…',
     pending: 'Pending',
     cancel: 'Cancel request',
     cancelTitle: 'Cancel your request?',
@@ -46,11 +43,8 @@ export const copy = {
     requested: 'Access requested',
     cancelled: 'Request cancelled',
     left: 'You left this private feed',
-    /** Web shows the request only to followers; the post card's request follows first. */
-    followFirst: 'Follow them to ask for access to their private posts.',
   },
   messagingKey: {
-    title: 'Allow messaging in your wallet',
     allowInWallet: 'Private posts use your messaging key, which your Dash wallet gives Yappr. Renew in your wallet and allow messaging when it asks.',
     unavailable: 'Private posts use the messaging key from your Dash wallet. Sign in with your wallet to use them on this phone.',
     renew: 'Renew in your wallet',
@@ -58,7 +52,6 @@ export const copy = {
   },
   settings: {
     title: 'Private feed',
-    row: 'Private feed',
     intro: 'Create a private feed visible only to approved followers.',
     benefits: (capacity: number) => [
       'You control who can see your private posts',
@@ -88,7 +81,6 @@ export const copy = {
     approve: 'Approve',
     approved: (name: string) => `Approved ${name}`,
     ignore: 'Not now',
-    ignored: 'Hidden until you open this again',
     followersTitle: 'Private followers',
     followersEmpty: "Followers you approve show here. They'll see your private posts.",
     remove: 'Remove',
@@ -134,18 +126,12 @@ export const copy = {
   },
   compose: {
     visibility: { public: 'Everyone', private: 'Private followers', 'private-with-teaser': 'Private, with a public teaser' },
-    visibilityHint: {
-      public: 'Visible to everyone',
-      private: 'Only your private followers',
-      'private-with-teaser': 'The teaser is public; the rest is private',
-    },
     label: 'Who can see this',
     teaserPlaceholder: 'Teaser everyone can see',
     teaserLabel: 'Public teaser',
     setUpTitle: 'Turn on your private feed first',
     setUpBody: 'Posting privately needs a private feed. You can turn it on in Settings.',
     setUp: 'Set up private feed',
-    notNow: 'Not now',
     replyPrivate: 'Your reply is private: only people who can see this post can read it.',
     imageWarning: "Attached images aren't encrypted: anyone with the image's link can see it.",
     noDrafts: "Private posts aren't saved as drafts.",

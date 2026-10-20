@@ -77,7 +77,7 @@ const replyPages = new TtlMap<string, { documents: Reply[]; nextCursor?: string 
 const STUB_AUTHOR: AuthorDTO = { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false }
 
 /** A post, or a reply as a Post, the way web's post page looks an id up. lib answers a failed read as null too. */
-async function read(id: string): Promise<Post | null> {
+export async function readPostOrReply(id: string): Promise<Post | null> {
   const post = await postService.getPostById(id, { skipEnrichment: true })
   if (post) return post
   // Replies are a separate doctype; web's usePostDetail falls back the same way.
@@ -117,7 +117,7 @@ async function provedMissing<T>(
 
 /** `read`, with `null` kept for a post or reply proved missing; a failed read rejects. */
 async function load(id: string): Promise<Post | null> {
-  return (await read(id)) ?? provedMissing(id, ['post', 'reply'], () => read(id))
+  return (await readPostOrReply(id)) ?? provedMissing(id, ['post', 'reply'], () => readPostOrReply(id))
 }
 
 /** The most documents of each type publish's probe reads (Platform's page). */
@@ -173,7 +173,7 @@ async function loadAncestors(focus: Post): Promise<{ chain: Post[]; removed: str
   // The chain is context above the focus: an unreadable parent ends it, as on web.
   const chain: Post[] = []
   for (let parentId = focus.parentId; parentId && chain.length < MAX_ANCESTORS;) {
-    const parent = await read(parentId)
+    const parent = await readPostOrReply(parentId)
     if (!parent) break
     chain.unshift(parent)
     parentId = parent.parentId

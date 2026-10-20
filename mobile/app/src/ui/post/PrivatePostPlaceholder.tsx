@@ -14,7 +14,6 @@ export interface PrivatePostPlaceholderProps {
   children?: ReactNode;
   /** The tighter version inside a quote embed. */
   compact?: boolean;
-  testID?: string;
 }
 
 /**
@@ -22,11 +21,11 @@ export interface PrivatePostPlaceholderProps {
  * why, and what they can do about it. Purple is reserved for private
  * content (ADR E3).
  */
-export function PrivatePostPlaceholder({ message, children, compact = false, testID = 'private-post' }: PrivatePostPlaceholderProps) {
+export function PrivatePostPlaceholder({ message, children, compact = false }: PrivatePostPlaceholderProps) {
   const c = useColors();
   return (
     <View
-      testID={testID}
+      testID="private-post"
       className={cn(
         'mt-1 gap-1 rounded-xl border border-purple-200 bg-purple-50 p-3 dark:border-purple-900 dark:bg-purple-950/30',
         compact && 'p-2',

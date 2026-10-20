@@ -1,5 +1,5 @@
 import type { PrivateFeedOverviewDTO, PrivateFollowerDTO, PrivateRequestDTO } from '@engine/api';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Pressable, RefreshControl, View } from 'react-native';
 import { ArrowPathIcon, CheckCircleIcon, ExclamationTriangleIcon, LockClosedIcon } from 'react-native-heroicons/outline';
 
@@ -25,13 +25,14 @@ import {
   approveWrite,
   continueMoveWrite,
   enableWrite,
+  memberKey,
+  OWNER_KEY,
   revokeWrite,
   usePrivateFeedOverview,
 } from './private-feed-data';
 import { MessagingKeyHelp } from './PrivatePostBody';
 import { RenewSheet, type RenewReason } from './RenewSheet';
 
-const OWNER_KEY = 'privateFeed.owner';
 
 function Bullets({ items }: { items: readonly string[] }) {
   return (
@@ -51,7 +52,7 @@ function Bullets({ items }: { items: readonly string[] }) {
 }
 
 /** A padded panel inside a settings group. */
-function Panel({ children, testID }: { children: React.ReactNode; testID?: string }) {
+function Panel({ children, testID }: { children: ReactNode; testID?: string }) {
   return (
     <View className="gap-3 px-4 py-4" testID={testID}>
       {children}
@@ -79,7 +80,7 @@ function Stat({ value, label, of }: { value: number; label: string; of?: number 
 }
 
 /** A person with the owner's actions beside them: approve a request, or remove a follower. */
-function PersonRow({ person, detail, actions, testID }: { person: PrivateRequestDTO['user']; detail?: string; actions: React.ReactNode; testID: string }) {
+function PersonRow({ person, detail, actions, testID }: { person: PrivateRequestDTO['user']; detail?: string; actions: ReactNode; testID: string }) {
   const largeText = useLargeText();
   const handle = handleOf(person);
   return (
@@ -107,7 +108,7 @@ function PersonRow({ person, detail, actions, testID }: { person: PrivateRequest
 
 function RequestRow({ request, onHide }: { request: PrivateRequestDTO; onHide: (id: string) => void }) {
   const { user } = request;
-  const busy = useLandingIntent(`privateFeed.member:${user.id}`) !== undefined;
+  const busy = useLandingIntent(memberKey(user.id)) !== undefined;
   return (
     <PersonRow
       person={user}
@@ -140,7 +141,7 @@ function RequestRow({ request, onHide }: { request: PrivateRequestDTO; onHide: (
 
 function FollowerRow({ follower }: { follower: PrivateFollowerDTO }) {
   const { user } = follower;
-  const busy = useLandingIntent(`privateFeed.member:${user.id}`) !== undefined;
+  const busy = useLandingIntent(memberKey(user.id)) !== undefined;
   const remove = async () => {
     const name = handleOf(user);
     const confirmed = await confirmAlert({
@@ -215,7 +216,7 @@ function TurnOn({ overview }: { overview: Extract<PrivateFeedOverviewDTO, { enab
   );
 }
 
-function Notice({ tone, title, body, action, testID }: { tone: 'warning' | 'info'; title: string; body: string; action?: React.ReactNode; testID?: string }) {
+function Notice({ tone, title, body, action, testID }: { tone: 'warning' | 'info'; title: string; body: string; action?: ReactNode; testID?: string }) {
   const c = useColors();
   return (
     <View
@@ -236,6 +237,50 @@ function Notice({ tone, title, body, action, testID }: { tone: 'warning' | 'info
   );
 }
 
+/** A settings group listing what a read found: its error, a spinner while it loads, its empty line, or its rows. */
+function ListGroup<T>({
+  title,
+  testID,
+  read,
+  items,
+  empty,
+  renderItem,
+}: {
+  title: string;
+  testID: string;
+  read: { isError: boolean; error: Error | null; refetch: () => Promise<unknown> };
+  /** undefined while the read loads. */
+  items: readonly T[] | undefined;
+  empty: string;
+  renderItem: (item: T) => ReactNode;
+}) {
+  let content: ReactNode;
+  if (read.isError) {
+    content = <ErrorState message={readErrorMessage(read.error)} onRetry={() => read.refetch()} />;
+  } else if (items === undefined) {
+    content = (
+      <Panel>
+        <Spinner />
+      </Panel>
+    );
+  } else if (items.length === 0) {
+    content = (
+      <Panel>
+        <Text variant="subhead" tone="secondary">
+          {empty}
+        </Text>
+      </Panel>
+    );
+  } else {
+    content = items.map(renderItem);
+  }
+  return (
+    <SettingsGroup title={title} testID={testID}>
+      {content}
+    </SettingsGroup>
+  );
+}
+
 /** The feed is on: its state, requests, followers and renewing. */
 function Manage({ overview }: { overview: Extract<PrivateFeedOverviewDTO, { enabled: true }> }) {
   const c = useColors();
@@ -244,9 +289,56 @@ function Manage({ overview }: { overview: Extract<PrivateFeedOverviewDTO, { enab
   const ownerBusy = useLandingIntent(OWNER_KEY) !== undefined;
   const requests = useEngineQuery(queryKeys.privateFeed.requests, (api) => api.privateFeed.requests());
   const followers = useEngineQuery(queryKeys.privateFeed.followers, (api) => api.privateFeed.followers());
-  const shownRequests = (requests.data ?? []).filter((request) => !hidden.has(request.user.id));
+  const shownRequests = requests.data?.filter((request) => !hidden.has(request.user.id));
   const { move } = overview;
-  const renewReason: RenewReason = overview.keyRotated ? 'key-changed' : overview.nearlyFull ? 'full' : 'choice';
+  let renewReason: RenewReason = 'choice';
+  if (overview.keyRotated) renewReason = 'key-changed';
+  else if (overview.nearlyFull) renewReason = 'full';
+
+  // One notice at most: a follower move to finish comes first, then a reason to renew.
+  let notice: ReactNode = null;
+  if (move) {
+    notice = (
+      <Notice
+        tone={move.error ? 'warning' : 'info'}
+        title={copy.settings.moveTitle(move.done, move.total)}
+        body={move.error ?? copy.settings.moveBody}
+        testID="private-move"
+        action={
+          move.error || move.done >= move.total ? (
+            <Button
+              label={copy.settings.continueMove}
+              variant="outline"
+              size="sm"
+              loading={ownerBusy}
+              layoutStyle={{ alignSelf: 'flex-start' }}
+              onPress={() => sendWrite(continueMoveWrite, {})}
+              testID="private-continue-move"
+            />
+          ) : null
+        }
+      />
+    );
+  } else if (renewReason !== 'choice') {
+    const keyChanged = renewReason === 'key-changed';
+    notice = (
+      <Notice
+        tone="warning"
+        title={keyChanged ? copy.settings.keyChangedTitle : copy.settings.nearlyFullTitle}
+        body={keyChanged ? copy.settings.keyChangedBody : copy.settings.nearlyFullBody}
+        testID="private-renew-prompt"
+        action={
+          <Button
+            label={copy.settings.renew}
+            size="sm"
+            disabled={ownerBusy}
+            layoutStyle={{ alignSelf: 'flex-start' }}
+            onPress={() => setRenewOpen(true)}
+          />
+        }
+      />
+    );
+  }
 
   return (
     <>
@@ -270,85 +362,31 @@ function Manage({ overview }: { overview: Extract<PrivateFeedOverviewDTO, { enab
         </Panel>
       </SettingsGroup>
 
-      {move ? (
-        <Notice
-          tone={move.error ? 'warning' : 'info'}
-          title={copy.settings.moveTitle(move.done, move.total)}
-          body={move.error ?? copy.settings.moveBody}
-          testID="private-move"
-          action={
-            move.error || move.done >= move.total ? (
-              <Button
-                label={copy.settings.continueMove}
-                variant="outline"
-                size="sm"
-                loading={ownerBusy}
-                layoutStyle={{ alignSelf: 'flex-start' }}
-                onPress={() => sendWrite(continueMoveWrite, {})}
-                testID="private-continue-move"
-              />
-            ) : null
-          }
-        />
-      ) : overview.keyRotated || overview.nearlyFull ? (
-        <Notice
-          tone="warning"
-          title={overview.keyRotated ? copy.settings.keyChangedTitle : copy.settings.nearlyFullTitle}
-          body={overview.keyRotated ? copy.settings.keyChangedBody : copy.settings.nearlyFullBody}
-          testID="private-renew-prompt"
-          action={
-            <Button
-              label={copy.settings.renew}
-              size="sm"
-              disabled={ownerBusy}
-              layoutStyle={{ alignSelf: 'flex-start' }}
-              onPress={() => setRenewOpen(true)}
-            />
-          }
-        />
-      ) : null}
+      {notice}
 
-      <SettingsGroup title={copy.settings.requestsTitle} testID="private-requests">
-        {requests.isError ? (
-          <ErrorState message={readErrorMessage(requests.error)} onRetry={() => requests.refetch()} />
-        ) : requests.data === undefined ? (
-          <Panel>
-            <Spinner />
-          </Panel>
-        ) : shownRequests.length === 0 ? (
-          <Panel>
-            <Text variant="subhead" tone="secondary">
-              {copy.settings.requestsEmpty}
-            </Text>
-          </Panel>
-        ) : (
-          shownRequests.map((request) => (
-            <RequestRow
-              key={request.user.id}
-              request={request}
-              onHide={(id) => setHidden((current) => new Set([...current, id]))}
-            />
-          ))
+      <ListGroup
+        title={copy.settings.requestsTitle}
+        testID="private-requests"
+        read={requests}
+        items={shownRequests}
+        empty={copy.settings.requestsEmpty}
+        renderItem={(request) => (
+          <RequestRow
+            key={request.user.id}
+            request={request}
+            onHide={(id) => setHidden((current) => new Set([...current, id]))}
+          />
         )}
-      </SettingsGroup>
+      />
 
-      <SettingsGroup title={copy.settings.followersTitle} testID="private-followers">
-        {followers.isError ? (
-          <ErrorState message={readErrorMessage(followers.error)} onRetry={() => followers.refetch()} />
-        ) : followers.data === undefined ? (
-          <Panel>
-            <Spinner />
-          </Panel>
-        ) : followers.data.length === 0 ? (
-          <Panel>
-            <Text variant="subhead" tone="secondary">
-              {copy.settings.followersEmpty}
-            </Text>
-          </Panel>
-        ) : (
-          followers.data.map((follower) => <FollowerRow key={follower.user.id} follower={follower} />)
-        )}
-      </SettingsGroup>
+      <ListGroup
+        title={copy.settings.followersTitle}
+        testID="private-followers"
+        read={followers}
+        items={followers.data}
+        empty={copy.settings.followersEmpty}
+        renderItem={(follower) => <FollowerRow key={follower.user.id} follower={follower} />}
+      />
 
       <SettingsGroup title={copy.settings.renewTitle}>
         <Panel>
