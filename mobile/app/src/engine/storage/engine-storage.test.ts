@@ -1,10 +1,12 @@
 import * as SecureStore from 'expo-secure-store';
-import { deleteMMKV } from 'react-native-mmkv';
+import * as mmkv from 'react-native-mmkv';
 
 import { createEngineStorage } from './engine-storage';
 import { decodeSecureKey, encodeSecureKey, identityInKey, SECURE_CHUNK_CHARS, secureItemName } from './secure-keys';
 
 const keychain = (SecureStore as unknown as { __items: Map<string, string> }).__items;
+/** The jest.setup.js MMKV: a new process, or an uninstall (the files go, Keychain items stay). */
+const device = mmkv as unknown as { __relaunch: () => void; __uninstall: () => void };
 const ALICE = '5DbLwAxGBzUzo81VewMUwn4b5P4bpv9FNFybi25XB5Bk';
 const BOB = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
 const SERVICE = 'pr.yap.app.secrets.testnet';
@@ -148,8 +150,7 @@ describe('engine storage', () => {
     expect(secretItems()).toHaveLength(1);
 
     // Uninstall deletes app data (the MMKV files) but not Keychain items; then reinstall.
-    deleteMMKV('yappr.engine.testnet');
-    deleteMMKV('yappr.engine-index.testnet');
+    device.__uninstall();
     const wipeServices = jest.fn((services: string[]) => {
       for (const key of [...keychain.keys()]) if (services.some((s) => key.startsWith(`${s}:`))) keychain.delete(key);
     });
@@ -159,6 +160,23 @@ describe('engine storage', () => {
     expect(secretItems()).toHaveLength(0);
     expect(keychain.get('pr.yap.app.engine-keys:yappr.mmkv-key.testnet')).not.toBe(oldMmkvKey);
     expect(await fresh.snapshot(ALICE)).toEqual({ local: {}, secure: {} });
+  });
+
+  it('never deletes a store this process opened: the native store would go from under it (D-902)', async () => {
+    // Reinstalled: the Keychain still has the old copy's MMKV key, so the index is opened to look.
+    device.__uninstall();
+    const fresh = createEngineStorage('testnet', { wipeServices: jest.fn() });
+    await expect(fresh.open()).resolves.toBeUndefined();
+    await fresh.apply({ area: 'secure', seq: 1, ops: [['set', `yappr_secure_pk_${ALICE}`, 'k']] });
+    // Diagnostics' "Reset engine data", then the engine boots again in the same process.
+    await expect(fresh.reset()).resolves.toBeUndefined();
+    await expect(fresh.open()).resolves.toBeUndefined();
+    expect(await fresh.snapshot(ALICE)).toEqual({ local: {}, secure: {} });
+    // A relaunch after the reset finds the store empty and its key gone: it starts clean again.
+    device.__relaunch();
+    const next = createEngineStorage('testnet', { wipeServices: jest.fn() });
+    await expect(next.open()).resolves.toBeUndefined();
+    expect(await next.snapshot(ALICE)).toEqual({ local: {}, secure: {} });
   });
 
   it('purges every secret of an account signed out while not active', async () => {
@@ -192,7 +210,7 @@ describe('engine storage', () => {
     expect((await storage.snapshot(null)).secure).toEqual({ 'yappr:pf:b': '2' });
   });
 
-  it('reset deletes the instances, their key and every secret', async () => {
+  it('reset empties the stores and deletes their key and every secret', async () => {
     storage.apply({ area: 'local', seq: 1, ops: [['set', 'a', '1']] });
     await storage.apply({ area: 'secure', seq: 2, ops: [['set', `yappr_secure_pk_${ALICE}`, 'k']] });
     await storage.reset();

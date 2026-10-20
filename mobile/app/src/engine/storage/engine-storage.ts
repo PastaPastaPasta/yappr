@@ -106,6 +106,37 @@ export interface EngineStorageOptions {
   wipeServices?: (services: string[]) => void | Promise<void>;
 }
 
+/**
+ * The process's one instance of each store. `deleteMMKV(id)` frees the
+ * native store under every instance of `id` still alive in JS, and
+ * react-native-mmkv calls each instance it made again whenever the app
+ * becomes active (`checkContentChanged`): deleting one the app opened
+ * crashed it then (SIGSEGV, D-902). So a store this process opened is
+ * emptied and re-keyed in place, never deleted.
+ */
+const stores = new Map<string, MMKV>();
+
+function openStore(id: string, key: string): MMKV {
+  let store = stores.get(id);
+  if (!store) {
+    store = createMMKV({ id, encryptionKey: key, encryptionType: 'AES-256' });
+    stores.set(id, store);
+  }
+  return store;
+}
+
+/** The store emptied, under a new key: in place once this process opened it, else its files deleted first. */
+function freshStore(id: string, key: string): MMKV {
+  const store = stores.get(id);
+  if (!store) {
+    deleteMMKV(id);
+    return openStore(id, key);
+  }
+  store.clearAll();
+  store.encrypt(key, 'AES-256');
+  return store;
+}
+
 export function createEngineStorage(
   networkKey: string,
   { wipeServices = wipeKeychainServices }: EngineStorageOptions = {},
@@ -230,18 +261,19 @@ export function createEngineStorage(
     open() {
       opening ??= (async () => {
         let key = await SecureStore.getItemAsync(keyName, MMKV_KEY_OPTIONS);
-        if (!key || !createMMKV({ id: indexId, encryptionKey: key, encryptionType: 'AES-256' }).getBoolean(INSTALLED_KEY)) {
+        if (key && openStore(indexId, key).getBoolean(INSTALLED_KEY)) {
+          kv = openStore(instanceId, key);
+          indexStore = openStore(indexId, key);
+        } else {
           // First launch of this install. On iOS, Keychain items outlive an uninstall: any secrets
           // (and the MMKV key) found now belong to a removed copy whose index is gone, so they
           // could never be found or deleted again. Wipe them, and start clean with a new key.
           await wipeServices([secretsService]);
-          deleteMMKV(instanceId);
-          deleteMMKV(indexId);
           key = newEncryptionKey();
           await SecureStore.setItemAsync(keyName, key, MMKV_KEY_OPTIONS);
+          kv = freshStore(instanceId, key);
+          indexStore = freshStore(indexId, key);
         }
-        kv = createMMKV({ id: instanceId, encryptionKey: key, encryptionType: 'AES-256' });
-        indexStore = createMMKV({ id: indexId, encryptionKey: key, encryptionType: 'AES-256' });
         indexStore.set(INSTALLED_KEY, true);
         noteSession();
       })().catch((error: unknown) => {
@@ -301,6 +333,7 @@ export function createEngineStorage(
     async reset() {
       await tail;
       for (const bucket of Object.keys(readIndex())) await purgeBucket(bucket);
+      // Emptied, not deleted (`stores`): the next open finds no key and starts them over under a new one.
       kv?.clearAll();
       indexStore?.clearAll();
       kv = null;
@@ -308,8 +341,6 @@ export function createEngineStorage(
       opening = null;
       lastActive = null;
       epochIdentity = null;
-      deleteMMKV(instanceId);
-      deleteMMKV(indexId);
       await SecureStore.deleteItemAsync(keyName, MMKV_KEY_OPTIONS);
     },
 

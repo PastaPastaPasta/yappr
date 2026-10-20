@@ -104,19 +104,41 @@ jest.mock('expo-file-system', () => ({
 }));
 // MMKV instances persist by id, as on a device, so "relaunch" and "reinstall" can be simulated
 // (react-native-mmkv's own test mock is a fresh, empty instance on every call).
+//
+// On a device `deleteMMKV(id)` frees the native store under every instance of `id` this process
+// created, and react-native-mmkv calls each one again when the app becomes active: deleting one
+// the app has opened crashes it (D-902). So here it throws once `id` was opened in this "process";
+// `__relaunch()` starts a new one, `__uninstall()` also drops the files.
 jest.mock('react-native-mmkv', () => {
   const actual = jest.requireActual('react-native-mmkv');
-  const instances = new Map();
+  const files = new Map();
+  let opened = new Set();
   return {
     ...actual,
     createMMKV: (config = {}) => {
       const id = config.id ?? 'mmkv.default';
-      if (!instances.has(id)) instances.set(id, actual.createMMKV(config));
-      return instances.get(id);
+      if (!files.has(id)) {
+        const file = actual.createMMKV(config);
+        // The in-memory store has no encryption to change (its own `encrypt` only warns).
+        file.encrypt = () => {};
+        files.set(id, file);
+      }
+      opened.add(id);
+      return files.get(id);
     },
     deleteMMKV: (id) => {
-      instances.get(id)?.clearAll();
-      return instances.delete(id);
+      if (opened.has(id)) throw new Error(`deleteMMKV('${id}') frees an instance this process still holds`);
+      files.get(id)?.clearAll();
+      return files.delete(id);
+    },
+    __relaunch: () => {
+      opened = new Set();
+    },
+    __uninstall: () => {
+      // Emptied too: a module that kept an instance across the simulated uninstall reads what a new process would.
+      for (const file of files.values()) file.clearAll();
+      files.clear();
+      opened = new Set();
     },
   };
 });
