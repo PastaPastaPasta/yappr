@@ -1,3 +1,4 @@
+import { invalidateBlockCache } from '@/lib/caches/block-cache'
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
@@ -105,6 +106,11 @@ export function createSafetyModule(tickets: TicketStore) {
   tickets.observe(ticket => {
     if ((ticket.op === 'block' || ticket.op === 'unblock') && ticket.identityId && ticket.state !== 'pending') {
       blockLists.delete(ticket.identityId)
+    }
+    // A block-list change confirmed by its call or by a later check: lib drops its cache (followed
+    // lists, merged filter) only when its own call succeeded, so block status would answer from the old lists.
+    if ((ticket.op === 'block-list.follow' || ticket.op === 'block-list.unfollow') && ticket.identityId && ticket.state === 'confirmed') {
+      invalidateBlockCache(ticket.identityId)
     }
   })
 

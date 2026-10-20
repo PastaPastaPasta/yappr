@@ -6,7 +6,7 @@ import { getPrivateKey } from '@/lib/secure-storage'
 import { dpnsService, minimumContestFundCredits } from '@/lib/services/dpns-service'
 import { getEvoSdk } from '@/lib/services/evo-sdk-service'
 import { identityService } from '@/lib/services/identity-service'
-import { readFailure, requireViewer } from '../dto/hydrate'
+import { readFailure, requireViewer, viewerId } from '../dto/hydrate'
 import { RpcError } from '../protocol/envelope'
 import { relationProbe, signer } from '../writes/handler-kit'
 import { NotSentError, type TicketStore } from '../writes/tickets'
@@ -84,6 +84,14 @@ export function createDpnsModule(tickets: TicketStore, controller: { refreshUser
       : null
   }
 
+  // A registration confirmed by its call or by a later check: the session reads its names again
+  // (and reports the new one), as long as that account is still the one signed in.
+  tickets.observe(ticket => {
+    if (ticket.op === 'dpns.register' && ticket.state === 'confirmed' && ticket.identityId && ticket.identityId === viewerId()) {
+      controller.refreshUsername().catch(() => undefined)
+    }
+  })
+
   tickets.register<RegisterArgs>('dpns.register', {
     persistArgs: true,
     async run({ label }, ctx) {
@@ -101,7 +109,6 @@ export function createDpnsModule(tickets: TicketStore, controller: { refreshUser
       } catch (error) {
         return { state: 'failed', error }
       }
-      await controller.refreshUsername().catch(() => undefined)
       return { state: 'confirmed' }
     },
     probe: async (ticket, args, kit) => {

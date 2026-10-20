@@ -56,6 +56,7 @@ const m = vi.hoisted(() => ({
   settleReplaces: vi.fn(async () => 0),
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
   notificationService: { getInitialNotifications: vi.fn(), pollNewNotifications: vi.fn() },
+  invalidateBlockCache: vi.fn(),
 }))
 
 const FLAGS = ['repostsAreQuotes', 'deletesAreTombstones', 'contractTakesReports', 'mediaCarriesHashes', 'hashtagsAreInline', 'mentionsAreInline']
@@ -94,6 +95,7 @@ vi.mock('@/lib/services/post-service', async (load) => ({ ...await load<object>(
 vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>(), replyService: m.replyService }))
 vi.mock('@/lib/services/follow-service', () => ({ followService: m.followService }))
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
+vi.mock('@/lib/caches/block-cache', async (load) => ({ ...await load<object>(), invalidateBlockCache: m.invalidateBlockCache }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
 vi.mock('@/lib/services/moderation-election-service', () => ({ moderationElectionService: m.election }))
 vi.mock('@/lib/services/moderation-service', async (load) => ({ ...await load<object>(), moderationService: m.moderation }))
@@ -503,7 +505,10 @@ describe('graph and safety writes', () => {
     const cut = await outcome(safety.setBlockListFollowed(AUTHOR, true))
     expect(cut.state).toBe('unconfirmed')
     m.blockService.getBlockFollow.mockResolvedValue({ $id: id('Follow'), $ownerId: VIEWER, followedUserIds: [AUTHOR] })
+    m.invalidateBlockCache.mockClear()
     expect(await tickets.check(cut.id)).toMatchObject({ state: 'confirmed' })
+    // lib dropped no cache for the call that timed out: the confirmation does.
+    expect(m.invalidateBlockCache).toHaveBeenCalledWith(VIEWER)
   })
 
   it('says whether reports and posting are open, as lib reads the registered contract, and rejects an unreadable one', async () => {

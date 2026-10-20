@@ -235,9 +235,12 @@ describe('dpns', () => {
     m.dpns.registerUsername.mockRejectedValue(new Error('Request timeout'))
     const ticket = await outcome(dpns.register('newname'))
     expect(ticket.state).toBe('unconfirmed')
+    expect(m.refreshUsername).not.toHaveBeenCalled()
     m.dpns.findIdentityByName.mockResolvedValue(VIEWER)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
     expect(m.dpns.findIdentityByName).toHaveBeenCalledWith('newname')
+    // Confirmed by the check: the session reads its names again too.
+    expect(m.refreshUsername).toHaveBeenCalledTimes(1)
   })
 
   it('never offers a retry for a contested name it cannot prove, which would pay a second preorder', async () => {
