@@ -6,7 +6,7 @@ import { CheckCircleIcon, ExclamationCircleIcon } from 'react-native-heroicons/o
 import { useSessionStore } from '~/data/session';
 import { isSessionExpired, useSessionExpired } from '~/data/session-expiry';
 import { engine } from '~/engine';
-import { accountName, addAccount, loadSignedInAgain, switchAccount } from '~/features/auth/accounts';
+import { accountName, addAccount, keyIsSessionOnly, loadSignedInAgain, switchAccount } from '~/features/auth/accounts';
 import { copy } from '~/features/auth/copy';
 import { isOtherAccountSignedIn, isTransient, keyErrorText, type SignInNames } from '~/features/auth/errors';
 import { useCloseSignIn } from '~/features/auth/navigation';
@@ -25,7 +25,7 @@ const CHECK_DELAY_MS = 400;
 type Check =
   | { state: 'idle' }
   | { state: 'checking' }
-  | { state: 'found'; identityId: string; username: string | null }
+  | { state: 'found'; identityId: string; username: string | null; securityLevel: number | null }
   | { state: 'error'; message: string; transient: boolean; otherAccount: boolean };
 
 const errorState = (error: unknown, names: SignInNames = {}): Check => ({
@@ -84,7 +84,9 @@ export default function KeySignInScreen() {
       engine.api.session
         .checkKey({ key: input })
         .then((found) => {
-          if (id === checkId.current) setCheck({ state: 'found', identityId: found.identityId, username: found.username });
+          if (id === checkId.current) {
+            setCheck({ state: 'found', identityId: found.identityId, username: found.username, securityLevel: found.securityLevel });
+          }
         })
         .catch((error: unknown) => {
           if (id === checkId.current) setCheck(errorState(error));
@@ -114,13 +116,22 @@ export default function KeySignInScreen() {
     try {
       if (existing) {
         // Already on this device (parked by "Add account"): switch instead of signing in again.
-        if (await switchAccount(existing)) done();
-        return;
+        if (await switchAccount(existing, { quiet: true })) {
+          done();
+          return;
+        }
+        // Its stored key is gone (D-973: the switch marked it "Sign in again"): sign in with the key typed here.
+        if (!isSessionExpired(found.identityId)) {
+          setCheck({ state: 'error', message: copy.accounts.switchFailed, transient: true, otherAccount: false });
+          return;
+        }
       }
       // Read before signing in, which clears the mark.
       const again = isSessionExpired(found.identityId);
       const session = await engine.api.session.signInWithKey({ key: input });
-      if (again) await loadSignedInAgain(session);
+      // The reload loads the account's other stored keys, but a key this engine keeps for its page only
+      // (CRITICAL on App Connect builds) would not survive it: signed out again (D-973). This engine stays.
+      if (again && !keyIsSessionOnly(found.securityLevel)) await loadSignedInAgain(session);
       done();
     } catch (error) {
       setCheck(

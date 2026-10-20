@@ -115,11 +115,21 @@ it('reads a list that failed during the switch again once the switch settles (AU
   queryClient.clear();
 });
 
-it('reports a switch whose account did not come back', async () => {
+it('marks an account the engine came back without "Sign in again", and says so (D-973)', async () => {
+  // Its key was kept for its session only (a CRITICAL key on App Connect builds): gone after a relaunch.
   fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
   bootsAs(null);
 
   await expect(switchAccount({ identityId: 'bob', username: 'bob' })).resolves.toBe(false);
+  expect(isSessionExpired('bob')).toBe(true);
+  expect(useToastStore.getState().current?.message).toBe('Sign in again to use @bob.');
+});
+
+it('keeps a switch the engine refused, or cut short, a plain failure to try again (D-973)', async () => {
+  fakeEngine.method('session.switchAccount').mockRejectedValue(Object.assign(new Error('timed out'), { code: 'ENGINE_TIMEOUT' }));
+
+  await expect(switchAccount({ identityId: 'bob', username: 'bob' })).resolves.toBe(false);
+  expect(isSessionExpired('bob')).toBe(false);
   expect(useToastStore.getState().current?.message).toBe("Couldn't switch accounts. Please try again.");
 });
 
@@ -210,19 +220,32 @@ describe('an "Add account" the app was killed in (NEW-R-vi-001)', () => {
     expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();
   });
 
+  /** The engine refused the switch (or it was cut short): worth another launch. */
+  const refuses = () =>
+    fakeEngine.method('session.switchAccount').mockRejectedValue(Object.assign(new Error('timed out'), { code: 'ENGINE_TIMEOUT' }));
+
   it('tries again at the next launch when going back fails', async () => {
     await killedWhileAdding();
-    bootsAs(null);
+    refuses();
 
     await recoverInterruptedAdd({ resume: false });
     expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
     expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();
   });
 
+  it('stops going back to a parked account the engine came back without: marked "Sign in again" (D-973)', async () => {
+    await killedWhileAdding();
+    bootsAs(null);
+
+    await recoverInterruptedAdd({ resume: false });
+    expect(isSessionExpired('alice')).toBe(true);
+    expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+  });
+
   it('gives up after three launches whose switch back failed, instead of trying at every launch', async () => {
     await killedWhileAdding();
     for (let launch = 1; launch <= 3; launch++) {
-      bootsAs(null);
+      refuses();
       await recoverInterruptedAdd({ resume: false });
       expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledTimes(launch);
       expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();

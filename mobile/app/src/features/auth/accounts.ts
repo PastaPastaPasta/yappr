@@ -3,8 +3,8 @@ import { router } from 'expo-router';
 import { create } from 'zustand';
 
 import { onEngineEvent } from '~/data/events';
-import { accountCacheSettled, useSessionStore } from '~/data/session';
-import { clearSessionExpired, useSessionExpired } from '~/data/session-expiry';
+import { accountCacheSettled, getCapabilities, useSessionStore } from '~/data/session';
+import { clearSessionExpired, isSessionExpired, markSessionExpired, useSessionExpired } from '~/data/session-expiry';
 import { engine, engineNetworkKey, engineStorage, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { refetchFailedReads } from '~/state/query-client';
@@ -178,17 +178,42 @@ export async function switchAccount(
 /**
  * A wallet sign-in during "Add account" answered for an account already on
  * this device: the engine has prepared the switch to it (`status: 'switch'`),
- * so restart into it. Resolves with its session, or null (with a toast).
+ * so restart into it. Resolves with its session, or null: the caller says
+ * why (`isSessionExpired` once the account came back without its key).
  */
 export function finishWalletSwitch(identityId: string): Promise<SessionDTO | null> {
   const account = useSessionStore.getState().accounts.find((a) => a.identityId === identityId);
-  return runSwitch(account ?? { identityId, username: null }, async () => undefined);
+  return runSwitch(account ?? { identityId, username: null }, async () => undefined, { quiet: true });
+}
+
+/** Platform's HIGH security level: the only key typed in that App Connect builds keep (lib/auth/platform-auth-adapters). */
+const SECURITY_LEVEL_HIGH = 2;
+
+/**
+ * A private key typed in that the engine keeps for its page only: on App
+ * Connect builds anything but a HIGH key (a CRITICAL one, D-973). Any engine
+ * restart (a switch, a reload) loses it, and with it the session.
+ */
+export function keyIsSessionOnly(securityLevel: number | null | undefined): boolean {
+  return getCapabilities()?.walletSignIn === 'app-connect' && securityLevel !== SECURITY_LEVEL_HIGH;
+}
+
+/** The engine restarted, but not as the account switched to: its stored key is gone (D-973). */
+class AccountDidNotRestore extends Error {
+  constructor() {
+    super('The account did not restore');
+  }
 }
 
 /**
  * `prepare` has the engine park the current account; then restart into
  * `account`, behind the switch progress. `quiet`: no toast on failure (the
  * caller says what happens next).
+ *
+ * An account the engine restarts without (a key kept for its session only,
+ * a CRITICAL key on App Connect builds, is gone after a relaunch; a wallet
+ * that revoked it) is marked "Sign in again" (AUTH-14), so it is never
+ * offered as a switch that fails the same way again (D-973).
  */
 function runSwitch(
   account: { identityId: string; username: string | null },
@@ -200,12 +225,14 @@ function runSwitch(
     try {
       await prepare();
       const restored = await restartEngine('Switching accounts');
-      if (restored?.identityId !== account.identityId) throw new Error('The account did not restore');
+      if (restored?.identityId !== account.identityId) throw new AccountDidNotRestore();
       toast.success(copy.accounts.switched(name));
       return restored;
     } catch (error) {
       appendLog('warn', 'host', `Switching accounts failed: ${errorMessage(error)}`);
-      if (!quiet) toast.error(copy.accounts.switchFailed);
+      const keyGone = error instanceof AccountDidNotRestore;
+      if (keyGone) markSessionExpired(account.identityId);
+      if (!quiet) toast.error(keyGone ? copy.accounts.keyGone(name) : copy.accounts.switchFailed);
       return null;
     }
   });
@@ -384,7 +411,8 @@ export async function recoverInterruptedAdd({ resume }: { resume: boolean }): Pr
   // Counted before the switch, so a launch that dies during it counts too.
   rememberAdding({ ...adding, attempts: attempts + 1 });
   appendLog('info', 'host', 'Going back to the account parked by an interrupted sign-in');
-  if (await switchAccount(account)) rememberAdding(null);
+  // Back, or found without its key (marked "Sign in again", D-973): no launch can switch to it again.
+  if ((await switchAccount(account)) || isSessionExpired(account.identityId)) rememberAdding(null);
 }
 
 /**

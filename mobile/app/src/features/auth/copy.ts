@@ -176,6 +176,8 @@ export const copy = {
     adding: 'Getting ready to add an account…',
     signingOut: 'Signing out…',
     switchFailed: "Couldn't switch accounts. Please try again.",
+    /** D-973: a switch to an account whose stored key is gone (it is marked "Sign in again"). */
+    keyGone: (name: string) => `Sign in again to use ${name}.`,
     addFailed: "Couldn't start adding an account. Please try again.",
     empty: 'No accounts on this device yet.',
     signOut: 'Sign out',
