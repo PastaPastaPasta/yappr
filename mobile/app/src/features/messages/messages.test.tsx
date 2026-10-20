@@ -24,6 +24,7 @@ import { resetWriteTracking, runWrite } from '~/data/writes';
 import { blockWrite, resetBlockDecisions, useAuthorBlocked } from '~/features/safety/block-state';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
+import { keepHandlesWhole } from '~/ui/handle';
 import { largeTitleScrollView } from '~/ui/testing/large-title';
 import { RETIRE_MS } from '~/ui/native-text';
 import { hostViewAbove } from '~/ui/testing/native-parent';
@@ -35,7 +36,7 @@ import { ConversationScreen } from './ConversationScreen';
 import { GroupInfoScreen } from './GroupInfoScreen';
 import { MessageSettingsScreen } from './MessageSettingsScreen';
 import { NewGroupScreen } from './NewGroupScreen';
-import { NewMessageScreen } from './NewMessageScreen';
+import { NewMessageScreen, startFailedMessage } from './NewMessageScreen';
 import { UNAVAILABLE_MESSAGE, useMessagesBadge, usePeople } from './dm-data';
 import { ARCHIVE_UNDO_MS, archiveConversation, setBlockedInMessages } from './dm-actions';
 import { resetKeyResends } from './group-keys';
@@ -1805,11 +1806,14 @@ describe('New message (DM-05)', () => {
     expect(screen.getByTestId('picker-search')).toHaveDisplayValue(BOB_ID);
   });
 
-  it('says why when the person has no encryption key, not that nobody was found (SR-40)', async () => {
-    const reason = 'This account has no encryption key yet, so it cannot receive encrypted messages.';
-    fakeEngine.method('dm.startDirect').mockRejectedValue(Object.assign(new Error(reason), { code: 'BAD_REQUEST' }));
+  it("says the person hasn't set up messages yet, not that nobody was found (SR-40, D-900)", async () => {
+    const noMessaging = Object.assign(new Error("This person hasn't set up messaging yet."), { code: 'PEER_NO_MESSAGING' });
+    fakeEngine.method('dm.startDirect').mockRejectedValue(noMessaging);
     await renderAt(`/messages/new?with=${BOB_ID}`);
-    expect(useToastStore.getState().current?.message).toBe(reason);
+    // An id from a link: no handle to name.
+    expect(useToastStore.getState().current?.message).toBe("This person hasn't set up messages yet.");
+    // Picked from the list: by handle.
+    expect(startFailedMessage(noMessaging, 'bob')).toBe(keepHandlesWhole("@bob hasn't set up messages yet."));
   });
 
   it('says a pasted id that is not one is invalid, without looking it up or blaming the connection (QA D-L4a-007)', async () => {
