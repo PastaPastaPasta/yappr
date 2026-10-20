@@ -3,7 +3,7 @@ import type { PollDTO } from '@engine/api';
 import { queryKeys } from '~/data/keys';
 import type { WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
-import { ballotKey } from '~/ui/post/PollCard';
+import { ballotKey } from '~/ui/post/poll-ballot';
 
 export interface PollVoteVars {
   pollId: string;

@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { ChartBarIcon } from 'react-native-heroicons/outline';
 import { CheckCircleIcon } from 'react-native-heroicons/solid';
@@ -10,41 +9,10 @@ import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
 import { tw, useColors } from '../tokens';
 import { EMBED_FRAME } from './embed-frame';
+import { pickOption, pollBallot, pollEndLabel, pollPercents, pollVotesLabel, usePollNow, usePollSelection } from './poll-ballot';
 import type { CardPoll, Loadable } from './types';
 
 const FRAME = cn(EMBED_FRAME, 'p-3');
-
-/** "Ends in 2d" / "Ended" / "No end date" (UX_SPEC §5.3). */
-export function pollEndLabel(endsAt: Date | null, now = Date.now()): string {
-  if (!endsAt) return 'No end date';
-  const left = endsAt.getTime() - now;
-  if (left <= 0) return 'Ended';
-  const minutes = Math.ceil(left / 60_000);
-  if (minutes < 60) return `Ends in ${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `Ends in ${hours}h`;
-  return `Ends in ${Math.floor(hours / 24)}d`;
-}
-
-/** Whole-number shares that are 0 for an empty poll. */
-export function pollPercents(poll: CardPoll): number[] {
-  return poll.options.map((o) => (poll.totalVotes > 0 ? Math.round((o.votes / poll.totalVotes) * 100) : 0));
-}
-
-/** A ballot as one comparable string: its option indexes in order. */
-export const ballotKey = (choices: readonly number[] | null | undefined) => (choices ? [...choices].sort((a, b) => a - b).join(',') : '');
-
-/** The time now, read again every 30 s while `endsAt` is still ahead (an open poll closes on screen). */
-function useNow(endsAt: Date | null): number {
-  const [now, setNow] = useState(Date.now);
-  const open = endsAt !== null && endsAt.getTime() > now;
-  useEffect(() => {
-    if (!open) return undefined;
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, [open]);
-  return now;
-}
 
 export interface PollCardProps {
   poll: Loadable<CardPoll>;
@@ -62,40 +30,21 @@ export interface PollCardProps {
  */
 export function PollCard({ poll, onVotePress }: PollCardProps) {
   const ready = poll === 'loading' || poll === 'error' ? null : poll;
-  const now = useNow(ready?.endsAt ?? null);
-  const cast = ballotKey(ready?.myVotes);
-  const [selected, setSelected] = useState<number[]>(() => ready?.myVotes ?? []);
-  // Another poll (a feed reuses its rows), or a ballot read (or saved) since: the selection follows it.
-  const shown = `${ready?.id ?? ''}|${cast}`;
-  const [seen, setSeen] = useState(shown);
-  if (seen !== shown) {
-    setSeen(shown);
-    setSelected(ready?.myVotes ?? []);
-  }
+  const now = usePollNow(ready?.endsAt ?? null);
+  // Shared with the post's screen-reader actions (`usePollSelection`); a ballot read or saved since resets it.
+  const [selected, setSelected] = usePollSelection(ready);
 
   if (!ready) return <PollPlaceholder state={poll === 'loading' ? 'loading' : 'error'} />;
 
   const percents = pollPercents(ready);
   const leading = Math.max(...ready.options.map((o) => o.votes));
-  const closed = ready.endsAt !== null && ready.endsAt.getTime() <= now;
-  const mine = ready.myVotes ?? [];
-  const voted = mine.length > 0;
-  const saving = ready.saving === true;
   // Signed out (`myVotes` absent) the ballot is open too: sending it asks to sign in.
-  const canVote =
-    Boolean(ready.voting) && onVotePress !== undefined && !closed && ready.myVotes !== null && !(ready.voting === 'once' && voted);
-  const multi = ready.multiChoice === true;
-  const marked = canVote ? selected : mine;
-  const unchanged = ballotKey(selected) === cast;
+  const { canVote, multi, saving, voted, marked, unchanged, voteLabel } = pollBallot(ready, selected, now, onVotePress !== undefined);
   let role: 'radio' | 'checkbox' | null = null;
   if (canVote) role = multi ? 'checkbox' : 'radio';
-  let voteLabel = 'Vote';
-  if (saving) voteLabel = 'Saving…';
-  else if (voted) voteLabel = 'Change vote';
-  const pick = (i: number) =>
-    setSelected((current) => (multi ? (current.includes(i) ? current.filter((v) => v !== i) : [...current, i]) : [i]));
+  const pick = (i: number) => setSelected(pickOption(selected, i, multi));
 
-  const votes = `${formatNumber(ready.totalVotes)} ${ready.totalVotes === 1 ? 'vote' : 'votes'}`;
+  const votes = pollVotesLabel(ready.totalVotes, formatNumber);
   const status = !canVote && voted ? 'You voted' : null;
 
   return (
@@ -133,7 +82,7 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
                 size="sm"
                 variant="ghost"
                 disabled={saving}
-                onPress={() => onVotePress([])}
+                onPress={() => onVotePress?.([])}
                 testID="poll-withdraw"
               />
             ) : null}
@@ -142,7 +91,7 @@ export function PollCard({ poll, onVotePress }: PollCardProps) {
               size="sm"
               loading={saving}
               disabled={saving || selected.length === 0 || unchanged}
-              onPress={() => onVotePress(selected)}
+              onPress={() => onVotePress?.(selected)}
               testID="poll-vote"
             />
           </View>

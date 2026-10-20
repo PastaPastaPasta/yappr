@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { AccessibilityInfo } from 'react-native';
 
 import { singleAspectRatio } from './MediaGrid';
 import { displayHost } from './LinkPreviewCard';
-import { pollEndLabel, pollPercents } from './PollCard';
+import { clearPollSelections, pollEndLabel, pollPercents } from './poll-ballot';
 import { PostCard } from './PostCard';
 import { PostStub, stubText } from './PostStub';
 import { Text } from '../Text';
@@ -19,7 +20,11 @@ jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
 function setFontScale(fontScale: number) {
   mockFontScale = fontScale;
 }
-beforeEach(() => setFontScale(1));
+beforeEach(() => {
+  setFontScale(1);
+  // Unsent poll picks are kept per poll (`usePollSelection`): every test starts with none.
+  clearPollSelections();
+});
 
 // The card is one accessible element, so query its controls by test id.
 const byId = (id: string) => screen.getByTestId(id);
@@ -370,6 +375,63 @@ describe('PostCard embeds', () => {
     expect(screen.getByTestId('poll-vote')).toBeDisabled();
     expect(screen.getByTestId('poll-withdraw')).toBeDisabled();
     expect(screen.getByTestId('poll-option-1')).toBeDisabled();
+  });
+
+  describe('a poll for VoiceOver, where the card is one element (D-957)', () => {
+    const card = () => screen.getByTestId('post-card-post-poll');
+    const actionLabels = () => (card().props.accessibilityActions as { label: string }[]).map((a) => a.label);
+    const act11y = (actionName: string) => fireEvent(card(), 'accessibilityAction', { nativeEvent: { actionName } });
+
+    it('speaks the question, every option with its share, the vote count and the close', () => {
+      render(<PostCard post={POSTS.poll} poll={SAMPLE_POLL} actions={{ onVotePress: jest.fn() }} />);
+      expect(card().props.accessibilityLabel).toContain(
+        'Poll: Which tab do you open first?. Home, 62 percent. Explore, 24 percent. Messages, 14 percent. 50 votes, Ends in 2d.',
+      );
+      // Results only: nothing to vote with.
+      expect(actionLabels().filter((l) => /^(Select|Deselect|Vote|Change vote|Withdraw vote)/.test(l))).toEqual([]);
+    });
+
+    it('picks an option, announces it, then sends it with Vote, as the card does', () => {
+      const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
+      const onVotePress = jest.fn();
+      render(<PostCard post={POSTS.poll} poll={{ ...SAMPLE_POLL, voting: 'editable', myVotes: [] }} actions={{ onVotePress }} />);
+      expect(actionLabels()).toEqual(expect.arrayContaining(['Select Home', 'Select Explore', 'Select Messages']));
+      // Nothing picked yet: no Vote to send.
+      expect(actionLabels()).not.toContain('Vote');
+
+      act(() => act11y('poll-option-2'));
+      expect(announce).toHaveBeenCalledWith('Messages selected');
+      expect(card().props.accessibilityLabel).toContain('Messages, 14 percent, selected.');
+      // The card shows the same pick.
+      expect(screen.getByTestId('poll-option-2')).toHaveProp('accessibilityState', expect.objectContaining({ checked: true }));
+      expect(actionLabels()).not.toContain('Select Messages');
+      act(() => act11y('poll-vote'));
+      expect(onVotePress).toHaveBeenCalledWith([2]);
+      announce.mockRestore();
+    });
+
+    it('changes or withdraws an editable multiple-choice ballot', () => {
+      const onVotePress = jest.fn();
+      const poll = { ...SAMPLE_POLL, voting: 'editable' as const, multiChoice: true, myVotes: [1] };
+      render(<PostCard post={POSTS.poll} poll={poll} actions={{ onVotePress }} />);
+      expect(card().props.accessibilityLabel).toContain('Choose one or more. Home, 62 percent. Explore, 24 percent, your vote.');
+      expect(actionLabels()).toEqual(expect.arrayContaining(['Select Home', 'Deselect Explore', 'Withdraw vote']));
+      // The ballot as cast: nothing to change yet.
+      expect(actionLabels()).not.toContain('Change vote');
+      act(() => act11y('poll-option-0'));
+      expect(actionLabels()).toContain('Change vote');
+      act(() => act11y('poll-vote'));
+      expect(onVotePress).toHaveBeenLastCalledWith([1, 0]);
+      act(() => act11y('poll-withdraw'));
+      expect(onVotePress).toHaveBeenLastCalledWith([]);
+    });
+
+    it('marks a final ballot as the viewer\'s vote, with nothing to change', () => {
+      render(<PostCard post={POSTS.poll} poll={{ ...SAMPLE_POLL, voting: 'once', myVotes: [0] }} actions={{ onVotePress: jest.fn() }} />);
+      expect(card().props.accessibilityLabel).toContain('Home, 62 percent, your vote.');
+      expect(card().props.accessibilityLabel).toContain('50 votes, Ends in 2d, You voted.');
+      expect(actionLabels().filter((l) => /^(Select|Deselect|Vote|Change vote|Withdraw vote)/.test(l))).toEqual([]);
+    });
   });
 
   it('lays out the media grid for each count', () => {
