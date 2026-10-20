@@ -28,7 +28,7 @@ import { blogIsV7 } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { blogPostDate, formatLabels, getBlogPostUrl, isBlogPostTombstone, isPublishedBlogPost } from '@/lib/blog/content-utils'
-import type { BlogThemeConfig } from '@/lib/blog/theme-types'
+import { normalizeBlogThemeConfig, type BlogThemeConfig } from '@/lib/blog/theme-types'
 import toast from 'react-hot-toast'
 import { ModerationClosedBanner } from '@/components/moderation/moderation-closed-notice'
 import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
@@ -63,9 +63,9 @@ function BlogPageContent() {
 
   const [viewBlog, setViewBlog] = useState<Blog | null>(null)
   const [viewPost, setViewPost] = useState<BlogPost | null>(null)
-  const [viewUsername, setViewUsername] = useState<string | null>(null)
-  // Until the owner's username lookup settles, handles show a placeholder rather than a fallback.
-  const [usernamePending, setUsernamePending] = useState(true)
+  // The owner's username, tagged with whose it is so another blog's name never shows.
+  // Until the lookup for this blog's owner settles, handles show a placeholder rather than a fallback.
+  const [ownerName, setOwnerName] = useState<{ ownerId: string; username: string | null } | null>(null)
   const [loading, setLoading] = useState(Boolean(blogIdParam))
   // The post (on a post's page) loads beside the blog, not after it.
   const [postLoading, setPostLoading] = useState(Boolean(postSlugParam))
@@ -83,7 +83,7 @@ function BlogPageContent() {
         if (cancelled) return
         setViewBlog(null)
         setViewPost(null)
-        setViewUsername(null)
+        setOwnerName(null)
         setError(null)
         return
       }
@@ -107,11 +107,12 @@ function BlogPageContent() {
         }
         setViewBlog(blog)
         setLoading(false)
-        setUsernamePending(true)
-        dpnsService.resolveUsername(blog.ownerId)
-          .then((resolved) => { if (!cancelled) setViewUsername(resolved ? normalizeDpnsUsername(resolved) : null) })
-          .catch(() => undefined)
-          .finally(() => { if (!cancelled) setUsernamePending(false) })
+        // A failed lookup settles too: the handle then falls back instead of waiting forever.
+        const settleOwnerName = (username: string | null) => { if (!cancelled) setOwnerName({ ownerId: blog.ownerId, username }) }
+        dpnsService.resolveUsername(blog.ownerId).then(
+          (resolved) => settleOwnerName(resolved ? normalizeDpnsUsername(resolved) : null),
+          () => settleOwnerName(null),
+        )
 
         if (!postSlugParam) return
         const post = await postRead
@@ -232,13 +233,17 @@ function BlogPageContent() {
       if (!viewBlog) {
         return <p className="p-6 text-sm text-gray-500">Blog not found.</p>
       }
-      if (postSlugParam && (postLoading || !viewPost)) return <BlogPostSkeleton />
+      // Once the blog is known, the post's skeleton takes its theme's column width.
+      if (postSlugParam && (postLoading || !viewPost)) return <BlogPostSkeleton narrow={normalizeBlogThemeConfig(viewBlog.themeConfig).layout === 'narrow'} />
+      const nameKnown = ownerName?.ownerId === viewBlog.ownerId
+      const username = (nameKnown && ownerName.username) || ''
+      const usernamePending = !nameKnown
       if (viewPost) {
         if (isBlogPostTombstone(viewPost)) return <DeletedBlogPost blog={viewBlog} />
-        return <BlogPostView blog={viewBlog} post={viewPost} username={viewUsername || ''} usernamePending={usernamePending} />
+        return <BlogPostView blog={viewBlog} post={viewPost} username={username} usernamePending={usernamePending} />
       }
 
-      return <BlogHome blog={viewBlog} username={viewUsername || ''} usernamePending={usernamePending} />
+      return <BlogHome blog={viewBlog} username={username} usernamePending={usernamePending} />
     }
 
     if (!selectedBlog) {

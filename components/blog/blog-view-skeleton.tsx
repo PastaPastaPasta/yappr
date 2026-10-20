@@ -65,10 +65,10 @@ export function BlogHomeSkeleton() {
 }
 
 /** A blog post before it has loaded: title, author row, cover, opening paragraphs. */
-export function BlogPostSkeleton() {
+export function BlogPostSkeleton({ narrow = false }: { narrow?: boolean }) {
   return (
     <section role="status" aria-label="Loading post">
-      <div className="mx-auto max-w-5xl animate-pulse" aria-hidden="true">
+      <div className={`mx-auto ${narrow ? 'max-w-2xl' : 'max-w-5xl'} animate-pulse`} aria-hidden="true">
         <div className={`h-9 w-3/4 ${BAR}`} />
         <div className={`mt-3 h-4 w-full ${BAR}`} />
         <div className={`mt-2 h-4 w-2/3 ${BAR}`} />
@@ -79,7 +79,7 @@ export function BlogPostSkeleton() {
             <div className={`h-3 w-24 ${BAR}`} />
           </div>
         </div>
-        <div className={`mt-6 aspect-[16/9] w-full max-w-xl rounded-xl ${BAR}`} />
+        <div className={`mt-6 aspect-[16/9] w-full rounded-2xl ${BAR}`} />
         <div className="mt-6 space-y-3">
           {['w-full', 'w-11/12', 'w-full', 'w-4/5', 'w-full', 'w-3/4'].map((width, index) => <div key={index} className={`h-4 ${width} ${BAR}`} />)}
         </div>
