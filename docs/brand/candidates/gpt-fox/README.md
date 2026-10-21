@@ -4,15 +4,17 @@ One mark everywhere: the howling fox head from the browser favicon (#875) is the
 icon mark, the lockup's mark, the app tile, the adaptive icon foreground and the
 splash.
 
-The fox is a six-colour vector trace (vtracer) of a raster illustration the
-owner picked:
+The fox is a vector trace (vtracer) of a raster illustration the owner picked.
+It has six colour families, approximately:
 - orange `#fc5e02`, rust `#c03002`, ear orange `#fc891b`;
 - peach throat `#f6d2a8` with its shade `#eab27a`;
 - brown mouth and nose `#3f130d`.
 
+The trace's fills vary by a step or two within each family.
+
 The throat is a deeper peach than the source's cream, and has a thin rust edge
 below the mouth, so it keeps its outline on white. The marks, lockups and tiles
-use the trace with whole-number coordinates in its 1024-unit drawing.
+use the trace with whole-number path data in its 1024-unit drawing.
 `favicon.svg` and `favicon-16.svg` are #875's files unchanged; the 16 px one is
 hand-drawn.
 
