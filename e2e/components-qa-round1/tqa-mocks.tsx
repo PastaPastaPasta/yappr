@@ -60,6 +60,18 @@ export const postService = {
 }
 export const replyToPost = (reply: Reply) => ({ ...reply, targetKind: 'reply' as const, quotes: 0 })
 export const PostCard = ({ post }: { post: Post }) => <article data-target-kind={post.targetKind}>{post.content}<span>Post content</span></article>
+/** What a fresh by-id read of `ids` returns now: changed replies as their tombstones, removed ones absent. */
+function freshReplies(ids: string[]): Reply[] {
+  const documents = [continuation, descendant, ...(published ? [acceptedReply] : [])].filter(reply => ids.includes(reply.id))
+  return documents.flatMap(reply => {
+    if (reply.id === 'accepted' && replyChanged) {
+      if (scenario === 'confirmed-removed') return []
+      return [{ ...reply, deleted: true, content: '' }]
+    }
+    if (reply.id === 'accepted' || !ancestorChanged) return [reply]
+    return scenario === 'ancestor-removed' || scenario === 'ancestor-proof-outage' ? [] : [{ ...reply, deleted: true, content: '' }]
+  })
+}
 export const replyService = {
   getReplies: async (_rootId?: string, options?: { startAfter?: string }) => {
     reads++
@@ -83,16 +95,10 @@ export const replyService = {
     if (ancestorChanged && scenario === 'ancestor-outage' && ++changedAncestorReads === 1) throw new TypeError('Failed to fetch')
     const ids = where[0][2]
     if (replyChanged && scenario === 'confirmed-outage' && ++changedReplyReads === 1) throw new TypeError('Failed to fetch')
-    const documents = [continuation, descendant, ...(published ? [acceptedReply] : [])].filter(reply => ids.includes(reply.id))
-    return { documents: documents.flatMap(reply => {
-      if (reply.id === 'accepted' && replyChanged) {
-        if (scenario === 'confirmed-removed') return []
-        return [{ ...reply, deleted: true, content: '' }]
-      }
-      if (reply.id === 'accepted' || !ancestorChanged) return [reply]
-      return scenario === 'ancestor-removed' || scenario === 'ancestor-proof-outage' ? [] : [{ ...reply, deleted: true, content: '' }]
-    }) }
+    return { documents: freshReplies(ids) }
   },
+  // The thread's missing-parent read: the same fresh by-id answer, without the outage counters above.
+  getManyOrThrow: async (ids: string[]) => freshReplies(ids),
   getMany: async (ids: string[], options?: { throwOnError?: boolean }) => {
     if (scenario?.startsWith('reply-bookmark')) {
       replyBookmarkReads++

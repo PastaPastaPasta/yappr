@@ -18,6 +18,7 @@ import {
   replyCountFieldFor,
   replyCountNeedsRoot,
   replyLinkage,
+  replyThreadIndexPrefix,
   repostIndexFor,
   tombstonesAreHidden,
   type TargetKind,
@@ -185,11 +186,13 @@ function buildFeedPageQuery(options: CompositeFeedPageOptions): {
   // A v10 reply's children sit under its root in `repliesOf`, so the slot
   // pins `rootPostId ==` and binds `replyToReplyId`: one root per request.
   // A page spanning several threads is counted separately instead.
+  // A live-keyed `repliesOf` pins `live == true` ahead of either.
   const replyRoot = replyCountNeedsRoot(kind) ? sharedRootOf(options.sourcePosts) : null;
+  const live = replyThreadIndexPrefix();
   const replyCounts = !replyCountNeedsRoot(kind)
-    ? slot({ documentType: 'reply', kind: 'counts', bind: fromPage('$id', replyCountField) })
+    ? slot({ documentType: 'reply', kind: 'counts', ...(live.length > 0 ? { where: live } : {}), bind: fromPage('$id', replyCountField) })
     : replyRoot
-      ? slot({ documentType: 'reply', kind: 'counts', where: [[replyLinkage().root, '==', replyRoot]], bind: fromPage('$id', replyCountField) })
+      ? slot({ documentType: 'reply', kind: 'counts', where: [...live, [replyLinkage().root, '==', replyRoot]], bind: fromPage('$id', replyCountField) })
       : -1;
   const quoteCounts = quoteField
     ? slot({ documentType: 'post', kind: 'counts', bind: fromPage('$id', quoteField) })

@@ -20,7 +20,7 @@ import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
-import { referencesMayDangle } from '@/lib/contract-topology'
+import { referencesMayDangle, replyThreadsCarryLiveMarker } from '@/lib/contract-topology'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 import { countVisibleReplies, recordVisibleReplies } from '@/lib/feed/visible-reply-counts'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -99,8 +99,9 @@ function PostDetailContent() {
   // the thread shows: an author's deleted reply stays in the proved count but
   // is hidden here, and "1 reply" over an empty thread reads as broken.
   // Recorded during render so the card below picks it up in the same pass.
+  // Not needed where `repliesOf` is live-keyed: tombstones are not counted.
   const countedReplies = post ? postEnrichment?.stats?.replies ?? post.replies : undefined
-  if (post && countedReplies !== undefined && !isLoadingReplies && !hasMoreReplies && !error) {
+  if (post && countedReplies !== undefined && !replyThreadsCarryLiveMarker() && !isLoadingReplies && !hasMoreReplies && !error) {
     recordVisibleReplies(post.id, countedReplies, countVisibleReplies(replyThreads))
   }
 

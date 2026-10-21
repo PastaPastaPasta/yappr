@@ -2,8 +2,9 @@
  * Reply counts as the viewer can see them.
  *
  * A post's reply count is a proved count of its `reply` documents, and an
- * author's delete leaves a tombstone that the count keeps (v11+; no live-only
- * reply index exists to count instead). The thread hides a tombstone with
+ * author's delete leaves a tombstone that the count keeps (v11+, until the
+ * thread index is keyed on `live`: `replyThreadsCarryLiveMarker`, where the
+ * proved count is already right and nothing is recorded). The thread hides a tombstone with
  * nothing live under it, so "1 reply" could sit over an empty thread. Once a
  * post's whole thread has loaded, the detail page records how many replies it
  * actually shows; every card for that post then shows that number while the

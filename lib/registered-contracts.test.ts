@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  FEE_CHECK_FAILED, ensureRegisteredContract, markRegisteredVerified, registeredActionFee, registeredContractOf, registeredDeleteWindow, registeredOr, registeredOwnerProtected,
+  FEE_CHECK_FAILED, ensureRegisteredContract, indexLeadsOf, markRegisteredVerified, registeredActionFee, registeredContractOf, registeredDeleteWindow, registeredIndexLead, registeredOr, registeredOwnerProtected,
   registeredSettledRule, rememberRegisteredContract, trackRegisteredRefresh,
 } from './registered-contracts'
 
@@ -48,6 +48,25 @@ describe('registered contract declarations', () => {
     rememberRegisteredContract('flaky', {})
     expect(registeredOwnerProtected('flaky')).toBeUndefined()
     expect(registeredActionFee('flaky', 'post', 'create')).toBeUndefined()
+  })
+})
+
+describe('registered index shapes', () => {
+  const repliesOf = (...properties: string[]) => ({ name: 'repliesOf', properties: properties.map((property) => ({ [property]: 'asc' })), rangeCountable: true })
+
+  it('reads each index\'s first property, skipping entries it cannot read', () => {
+    expect(indexLeadsOf([repliesOf('live', 'rootPostId'), { name: 'broken' }, { properties: [{ a: 'asc' }] }, null])).toEqual(new Map([['repliesOf', 'live']]))
+    expect(indexLeadsOf(undefined)).toEqual(new Map())
+  })
+
+  it('answers the registered lead, null for an index the type lacks, and undefined for what it has not seen', () => {
+    rememberRegisteredContract('earlier-v17', { schemas: { reply: { indices: [repliesOf('rootPostId', 'replyToReplyId', '$createdAt')] } } })
+    rememberRegisteredContract('release-v17', { schemas: { reply: { indices: [repliesOf('live', 'rootPostId', 'replyToReplyId', '$createdAt')] } } })
+    expect(registeredIndexLead('earlier-v17', 'reply', 'repliesOf')).toBe('rootPostId')
+    expect(registeredIndexLead('release-v17', 'reply', 'repliesOf')).toBe('live')
+    expect(registeredIndexLead('release-v17', 'reply', 'byRoot')).toBeNull()
+    expect(registeredIndexLead('release-v17', 'post', 'repliesOf')).toBeUndefined()
+    expect(registeredIndexLead('never-seen', 'reply', 'repliesOf')).toBeUndefined()
   })
 })
 

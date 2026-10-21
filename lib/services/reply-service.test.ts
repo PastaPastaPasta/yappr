@@ -181,6 +181,74 @@ describe('v10 repliesOf reads', () => {
   })
 })
 
+describe.each([
+  { shape: 'the release (live-keyed repliesOf)', lead: 'live', live: [['live', '==', true]] },
+  { shape: 'the earlier v17 cut (/staging, /testing, sakura)', lead: 'rootPostId', live: [] },
+])('v17 repliesOf reads on $shape', ({ lead, live }) => {
+  const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
+  const hexOf = (id: string) => Array.from(bs58.decode(id), (byte) => byte.toString(16).padStart(2, '0')).join('')
+  const [ROOT_A, ROOT_B, R1, R2] = [1, 2, 3, 4].map(idOf)
+
+  async function v17Replies() {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
+    const [{ rememberRegisteredContract }, { YAPPR_CONTRACT_ID }] = await Promise.all([import('@/lib/registered-contracts'), import('@/lib/constants')])
+    const properties = [lead, ...(lead === 'live' ? ['rootPostId'] : []), 'replyToReplyId', '$createdAt'].map((property) => ({ [property]: 'asc' }))
+    rememberRegisteredContract(YAPPR_CONTRACT_ID, { schemas: { reply: { indices: [{ name: 'repliesOf', properties }] } } })
+    return (await import('./reply-service')).replyService
+  }
+
+  it('lists the thread and a reply\'s children with the registered shape\'s prefix', async () => {
+    const replies = await v17Replies()
+    query.mockResolvedValue([])
+    await replies.getReplies(ROOT_A, { skipEnrichment: true })
+    await replies.getNestedReplies([R1], { rootPostId: ROOT_A, skipEnrichment: true })
+    expect(query.mock.calls.map(([q]) => [q.where, q.orderBy])).toEqual([
+      [[...live, ['rootPostId', '==', ROOT_A]], [['replyToReplyId', 'asc'], ['$createdAt', 'asc']]],
+      [[...live, ['rootPostId', '==', ROOT_A], ['replyToReplyId', '==', R1]], [['$createdAt', 'asc']]],
+    ])
+    vi.unstubAllEnvs()
+  })
+
+  it('counts posts\' threads and replies\' children, one and grouped, with the prefix', async () => {
+    const replies = await v17Replies()
+    // A grouped count answers its first group, so no per-id fallback runs.
+    count.mockImplementation(async ({ where, groupBy }: { where: unknown[][]; groupBy?: string[] }) =>
+      (groupBy ? new Map([[hexOf((where[where.length - 1][2] as string[])[0]), 2n]]) : new Map([['', 3n]])))
+    expect(await replies.countReplies(ROOT_A, 'post')).toBe(3)
+    expect(await replies.countReplies(R1, 'reply', ROOT_A)).toBe(3)
+    await replies.countRepliesForPosts([ROOT_A, ROOT_B], 'post')
+    await replies.countRepliesForPosts([R1, R2], 'reply', new Map([[R1, ROOT_A], [R2, ROOT_A]]))
+    expect(count.mock.calls.map(([q]) => q.where)).toEqual([
+      [...live, ['rootPostId', '==', ROOT_A]],
+      [...live, ['rootPostId', '==', ROOT_A], ['replyToReplyId', '==', R1]],
+      [...live, ['rootPostId', 'in', [ROOT_A, ROOT_B]]],
+      [...live, ['rootPostId', '==', ROOT_A], ['replyToReplyId', 'in', [R1, R2]]],
+    ])
+    vi.unstubAllEnvs()
+  })
+})
+
+describe('getManyOrThrow (a thread\'s missing parents)', () => {
+  const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
+  const PARENT = idOf(9)
+  const doc = (extra: Record<string, unknown>) => ({ $id: PARENT, $ownerId: '111111111', $createdAt: 1, parentId: '222222222', parentOwnerId: '111111111', ...extra })
+
+  it('reads a cached live parent again, so a tombstone since then comes back as the tombstone', async () => {
+    query.mockResolvedValueOnce([doc({ content: 'live' })])
+    expect((await replyService.getMany([PARENT]))[0]?.deleted).toBeUndefined()
+    query.mockResolvedValueOnce([doc({ deleted: true })])
+    const [fresh] = await replyService.getManyOrThrow([PARENT])
+    expect(fresh?.deleted).toBe(true)
+    expect(query.mock.calls[1][0].where).toEqual([['$id', 'in', [PARENT]]])
+  })
+
+  it('rejects when the read fails', async () => {
+    query.mockRejectedValueOnce(new Error('DAPI unavailable'))
+    await expect(replyService.getManyOrThrow([PARENT])).rejects.toThrow('DAPI unavailable')
+  })
+})
+
 describe('v14 replies: no stored owner, two derived notification windows', () => {
   const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
   const [ME, MY_ROOT, MY_REPLY, THEIR_REPLY, STRANGER] = [1, 2, 3, 4, 5].map(idOf)

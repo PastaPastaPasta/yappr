@@ -37,7 +37,7 @@ import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { storedTags } from './post-helpers'
-import { registeredActionFee, registeredOr, settledRuleOf } from './registered-contracts'
+import { indexLeadsOf, registeredActionFee, registeredIndexLead, registeredOr, settledRuleOf } from './registered-contracts'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -737,15 +737,16 @@ export function postListingWherePrefix(): Array<['live', '==', true]> {
  * out (v17, the post rule of v13): `reply.ownerAndTime` is `[live, $ownerId,
  * $createdAt]` with `skipIfAbsent`, so a profile's Replies tab reads it with
  * `live == true` pinned first ({@link replyOwnerIndexPrefix}). The thread
- * index is live-keyed too ({@link replyThreadsCarryLiveMarker}); the
- * notification windows still hold tombstones.
+ * index is live-keyed too where the contract says so
+ * ({@link replyThreadsCarryLiveMarker}); the notification windows still hold
+ * tombstones.
  */
 export function repliesCarryLiveMarker(): boolean {
   return isAtLeast('v17')
 }
 
 /**
- * True when the thread index `repliesOf` is keyed on the `live` marker (v17):
+ * True when the thread index `repliesOf` is keyed on the `live` marker:
  * `[live, rootPostId, replyToReplyId, $createdAt]` with `skipIfAbsent:
  * ["live"]`, still rangeCountable and ranked at `rootPostId`. An author's
  * tombstone (and a moderator's removal) leaves the thread listing and the
@@ -753,13 +754,28 @@ export function repliesCarryLiveMarker(): boolean {
  * skipping index only to a read that pins its skip property, so every
  * `repliesOf` read (thread pages, children, the direct-reply null pin, counts,
  * grouped counts, composite slots, the ranked query) must start with
- * `live == true`; without it Platform refuses the query. A live reply under a
- * tombstoned parent then arrives without its parent. `skipIfAbsent` names only
- * `live`: `true` would also skip a direct reply, whose `replyToReplyId` is
- * absent (Platform refuses that, 10231).
+ * `live == true` ({@link replyThreadIndexPrefix}); without it Platform
+ * refuses the query. A live reply under a tombstoned parent then arrives
+ * without its parent, which the thread reads by id
+ * (`withMissingReplyParents`, lib/feed/deleted-reply-stubs.ts).
+ * `skipIfAbsent` names only `live`: `true` would also skip a direct reply,
+ * whose `replyToReplyId` is absent (Platform refuses that, 10231).
+ *
+ * Both shapes are called v17: only the release file is keyed on `live`, while
+ * /staging, /testing and sakura (/devnet) registered the earlier cut, where
+ * the pin is refused instead. So the answer is the REGISTERED contract's index
+ * once the SDK has recorded it (lib/registered-contracts.ts), and the
+ * committed file's before that.
  */
 export function replyThreadsCarryLiveMarker(): boolean {
-  return isAtLeast('v17')
+  if (!repliesCarryLiveMarker()) return false
+  const lead = registeredOr(registeredIndexLead(YAPPR_CONTRACT_ID, 'reply', 'repliesOf'), () => templateIndexLead('reply', 'repliesOf'))
+  return lead === 'live'
+}
+
+/** The `where` clauses every `repliesOf` read starts with: `live == true` where the index is live-keyed ({@link replyThreadsCarryLiveMarker}). */
+export function replyThreadIndexPrefix(): Array<['live', '==', true]> {
+  return replyThreadsCarryLiveMarker() ? [['live', '==', true]] : []
 }
 
 /** The `where` clauses every read of `reply.ownerAndTime` starts with: `live == true` on v17. Paired with {@link replyOwnerIndexOrderPrefix}. */
@@ -1774,6 +1790,11 @@ function devnetContract(): SocialContractJson {
 
 function devnetSchemas(): Record<string, SocialDocumentSchema> {
   return devnetContract().documentSchemas as unknown as Record<string, SocialDocumentSchema>
+}
+
+/** The committed file's first property of `docType`'s `index`, or null when the file has no such index. */
+function templateIndexLead(docType: string, index: string): string | null {
+  return indexLeadsOf(devnetSchemas()[docType]?.indices).get(index) ?? null
 }
 
 /** The block types' contract file on v13 (bare schemas, no wrapper). */

@@ -16,7 +16,7 @@ const m = vi.hoisted(() => ({
     enrichPostsBatch: vi.fn(), getPostById: vi.fn(), queryForDisplay: vi.fn(), getUserPosts: vi.fn(),
     getPostsByIds: vi.fn(), getQuotePosts: vi.fn(), fetchPostsOrReplies: vi.fn(), fetchQuotedTargets: vi.fn(), clearCache: vi.fn(),
   },
-  replyService: { getReplies: vi.fn(), getReplyById: vi.fn(), getNestedReplies: vi.fn(), getUserReplies: vi.fn(), clearCache: vi.fn() },
+  replyService: { getReplies: vi.fn(), getReplyById: vi.fn(), getNestedReplies: vi.fn(), getUserReplies: vi.fn(), getManyOrThrow: vi.fn(), clearCache: vi.fn() },
   followService: {
     getFollowers: vi.fn(), getFollowing: vi.fn(), countFollowersBatch: vi.fn(), countFollowingBatch: vi.fn(),
     getFollowStatusBatch: vi.fn(), getFollowingIdsCached: vi.fn(),
@@ -32,7 +32,7 @@ const m = vi.hoisted(() => ({
   documentExists: vi.fn(),
 }))
 
-const FLAGS = ['likesAreIndexOnly', 'repostsAreQuotes', 'hasFlatThreads', 'hashtagsAreInline', 'authorDeletesLeaveHoles', 'referencesMayDangle']
+const FLAGS = ['likesAreIndexOnly', 'repostsAreQuotes', 'hasFlatThreads', 'hashtagsAreInline', 'repliesOutliveTheirParent', 'replyThreadsCarryLiveMarker', 'referencesMayDangle']
 vi.mock('@/lib/contract-topology', async (load) => {
   const actual = await load<Record<string, unknown>>()
   return { ...actual, ...Object.fromEntries(FLAGS.map(flag => [flag, () => m.topology[flag] === true])) }
@@ -112,9 +112,10 @@ describe('graph', () => {
 
 describe('posts.thread on flat threads (v9/v10)', () => {
   beforeEach(() => {
-    m.topology = { hasFlatThreads: true, authorDeletesLeaveHoles: true }
+    m.topology = { hasFlatThreads: true, repliesOutliveTheirParent: true }
     m.postService.getPostById.mockResolvedValue(post('Root', 1))
     m.provenAbsent.mockResolvedValue(new Set())
+    m.replyService.getManyOrThrow.mockResolvedValue([])
   })
 
   it('re-reads the replies on a refresh, and reuses read pages only on a continuation', async () => {
@@ -188,6 +189,32 @@ describe('posts.thread on flat threads (v9/v10)', () => {
       [id('Gone'), 0, true], [id('Orphan'), 1, false],
     ])
     expect(thread.replies.items[0].author).toEqual({ id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false })
+    expect(m.replyService.getManyOrThrow).not.toHaveBeenCalled()
+  })
+
+  it('keeps a live reply under its author-deleted parent where repliesOf lists no tombstones', async () => {
+    m.topology = { ...m.topology, replyThreadsCarryLiveMarker: true }
+    // The live-keyed thread page has the reply but not its tombstoned parent, nor the moderator-removed one.
+    // Another author's replies (the focus author's own would join the author thread).
+    const theirs = (r: Reply): Reply => ({ ...r, author: user(id('Other')) })
+    m.replyService.getReplies.mockResolvedValue({ documents: [theirs(reply('Orphan', 5, 'Tomb')), theirs(reply('Under', 6, 'Removed'))] })
+    m.replyService.getManyOrThrow.mockResolvedValue([{ ...theirs(reply('Tomb', 4)), content: '', deleted: true }])
+    m.provenAbsent.mockResolvedValue(new Set([id('Removed')]))
+    const thread = await posts.thread(id('Root'))
+    expect(validate(threadDTO, thread)).toEqual([])
+    expect(m.replyService.getManyOrThrow).toHaveBeenCalledWith([id('Tomb'), id('Removed')])
+    expect(m.provenAbsent).toHaveBeenCalledWith('reply', [id('Removed')], { throwOnError: true })
+    expect(thread.replies.items.map(item => [item.id, item.depth, item.deleted, item.deletedStub ?? false])).toEqual([
+      [id('Tomb'), 0, true, false], [id('Orphan'), 1, false, false],
+      [id('Removed'), 0, true, true], [id('Under'), 1, false, false],
+    ])
+  })
+
+  it('rejects the page when a missing parent cannot be read, instead of dropping the replies under it', async () => {
+    m.topology = { ...m.topology, replyThreadsCarryLiveMarker: true }
+    m.replyService.getReplies.mockResolvedValue({ documents: [reply('Orphan', 5, 'Tomb')] })
+    m.replyService.getManyOrThrow.mockRejectedValue(new Error('DAPI unavailable'))
+    await expect(posts.thread(id('Root'))).rejects.toBeDefined()
   })
 })
 

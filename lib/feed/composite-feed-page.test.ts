@@ -264,6 +264,42 @@ describe('composite feed page on v10', () => {
   });
 });
 
+describe.each([
+  { shape: 'the release (live-keyed repliesOf)', properties: ['live', 'rootPostId', 'replyToReplyId', '$createdAt'], live: [['live', '==', true]] },
+  { shape: 'the earlier v17 cut', properties: ['rootPostId', 'replyToReplyId', '$createdAt'], live: [] },
+])('composite reply-count slots on v17, $shape', ({ properties, live }) => {
+  type Sub = { documentType: string; kind?: string; where?: unknown[][]; bind?: { field: string } };
+  const answer = async (query: { subQueries: Sub[] }) => ({
+    pageDocuments: [docs[0], docs[1]],
+    subResults: query.subQueries.map((sub) => sub.kind === 'counts' ? { kind: 'counts', counts: new Map() } : { kind: 'documents', documents: [] }),
+  });
+
+  beforeEach(async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17');
+    const [{ rememberRegisteredContract }, { YAPPR_CONTRACT_ID }] = await Promise.all([import('@/lib/registered-contracts'), import('@/lib/constants')]);
+    rememberRegisteredContract(YAPPR_CONTRACT_ID, { schemas: { reply: { indices: [{ name: 'repliesOf', properties: properties.map((property) => ({ [property]: 'asc' })) }] } } });
+    mocks.composite.mockImplementation(answer);
+  });
+
+  const replyCountSlot = () => (mocks.composite.mock.calls[0][0].subQueries as Sub[]).find((sub) => sub.documentType === 'reply' && sub.kind === 'counts');
+
+  it('pins a post page\'s thread counts with the shape\'s prefix', async () => {
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    await loadCompositeFeedPage({ language: 'en', limit: 2 });
+    const slot = replyCountSlot();
+    expect(slot?.bind?.field).toBe('rootPostId');
+    expect(slot?.where).toEqual(live.length > 0 ? live : undefined);
+  });
+
+  it('pins a single-thread reply page\'s child counts with the prefix and the root', async () => {
+    const { transformRawPost } = await import('./transform-raw-post');
+    const sources = [docs[0], docs[1]].map((doc) => ({ ...transformRawPost(doc), targetKind: 'reply' as const, rootPostId: 'rootA' }));
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    await loadCompositeFeedPage({ language: 'en', limit: 2, kind: 'reply', sourcePosts: sources, documentIds: sources.map((post) => post.id) });
+    expect(replyCountSlot()).toMatchObject({ where: [...live, ['rootPostId', '==', 'rootA']], bind: { field: 'replyToReplyId' } });
+  });
+});
+
 describe('composite feed page on v10 to v15: no count shares an index path with a documents lookup', () => {
   // Drive (5.0.0-beta.5) refuses the whole composite when a count sub-query and a
   // documents component read one index path ("one proof cannot serve both"). From

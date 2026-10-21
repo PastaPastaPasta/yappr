@@ -7,7 +7,9 @@ import type { ActionFeeDeclaration, DocumentAction, SettledDeletionRule } from '
  * blog v9 and storefront v10, and sakura's (/devnet), were registered before
  * D39 and D41, so they still declare a week's single-moderator window, three
  * settled approvals, the owner protected and the earlier action fees, while
- * the files say a day, two, unprotected and lower fees.
+ * the files say a day, two, unprotected and lower fees. The same contracts
+ * key `reply.repliesOf` on `rootPostId`, where the release file keys it on
+ * `live` first, so which index shape the reads must match is read here too.
  *
  * The SDK service records every contract it seeds or preloads, before the app
  * reads or writes anything, and the moderation service records the contract
@@ -25,6 +27,8 @@ interface RegisteredType {
   readonly deleteWithin: number | null
   /** The settled-deletion rule (`deleteWithin` + `deleteSettled`), or null. */
   readonly settled: SettledDeletionRule | null
+  /** Each declared index's first property, by index name. */
+  readonly indexLeads: ReadonlyMap<string, string>
 }
 
 interface RegisteredContract {
@@ -111,12 +115,30 @@ export function settledRuleOf(abilities: { delete?: unknown; deleteWithin?: unkn
   return { windowSeconds, leaderRequired: settled.leader === true, approvals: integer(settled.approvals) ?? 1 }
 }
 
+/**
+ * Pure: each index's first property, by index name, off a schema's `indices`
+ * (`[{ name, properties: [{ <property>: 'asc' }, ...] }]` in the committed
+ * files and the wasm schema alike).
+ */
+export function indexLeadsOf(indices: unknown): Map<string, string> {
+  const leads = new Map<string, string>()
+  if (!Array.isArray(indices)) return leads
+  for (const index of indices) {
+    if (!isObject(index) || typeof index.name !== 'string' || !Array.isArray(index.properties)) continue
+    const first: unknown = index.properties[0]
+    const property = isObject(first) ? Object.keys(first)[0] : undefined
+    if (property) leads.set(index.name, property)
+  }
+  return leads
+}
+
 function registeredType(schema: Record<string, unknown>): RegisteredType {
   const abilities = isObject(schema.moderatorAbilities) ? schema.moderatorAbilities : null
   return {
     actionFees: isObject(schema.actionFees) ? (schema.actionFees as RawActionFees) : undefined,
     deleteWithin: integer(abilities?.deleteWithin),
     settled: settledRuleOf(abilities),
+    indexLeads: indexLeadsOf(schema.indices),
   }
 }
 
@@ -185,6 +207,12 @@ export function registeredDeleteWindow(contractId: string, docType: string): num
 /** The registered settled-deletion rule of `docType`: null when it has none, undefined when unknown. */
 export function registeredSettledRule(contractId: string, docType: string): SettledDeletionRule | null | undefined {
   return registeredTypeOf(contractId, docType)?.settled
+}
+
+/** The registered first property of `docType`'s `index`: null when the type has no such index, undefined when unknown. */
+export function registeredIndexLead(contractId: string, docType: string, index: string): string | null | undefined {
+  const type = registeredTypeOf(contractId, docType)
+  return type ? type.indexLeads.get(index) ?? null : undefined
 }
 
 /** A registered value when the contract has been recorded (`undefined` means unknown), else the template's. */

@@ -42,3 +42,34 @@ describe('staleContractIds', () => {
     expect(staleContractIds(bundled, latest, ['d'])).toEqual([]);
   });
 });
+
+describe('the registered thread index shape the bundles seed', () => {
+  // /staging and /devnet registered the earlier v17 cut, whose repliesOf
+  // starts at rootPostId: a live pin would be refused there. Each build seeds
+  // that contract from its bundle before any read, so the gate
+  // (replyThreadsCarryLiveMarker) never falls back to the live-keyed release
+  // file. /testing still runs the v2 contract, which has no repliesOf (and no
+  // live marker, so the gate is off by topology).
+  async function leadOf(bytes: string | undefined): Promise<string | undefined> {
+    const [{ DataContract, PlatformVersion, ensureInitialized }, { registeredContractOf }] = await Promise.all([
+      import('@dashevo/evo-sdk'), import('@/lib/registered-contracts'),
+    ]);
+    await ensureInitialized();
+    expect(bytes).toBeDefined();
+    const contract = DataContract.fromBase64(bytes ?? '', false, PlatformVersion.latest());
+    return registeredContractOf(contract)?.types?.get('reply')?.indexLeads.get('repliesOf');
+  }
+
+  it('/devnet: the wasm-decoded bundled social contract keys repliesOf on rootPostId', async () => {
+    expect(await leadOf((await bundledContractsFor('devnet-sakura'))?.contracts['5sgocKC9gg3RPYdTqnmWUgpatTDd5xzsdQLe6ADk6BnP']?.bytes)).toBe('rootPostId');
+  });
+
+  it('/testing: the bundled v2 social contract has no repliesOf', async () => {
+    expect(await leadOf((await bundledContractsFor('testnet'))?.contracts['2qvaZNJJU2KQxSn7SB7eTyyWtjvGD8wx3cpVHZSPC4mn']?.bytes)).toBeUndefined();
+  });
+
+  it('/staging: the substituted staging snapshot keys repliesOf on rootPostId', async () => {
+    const snapshot = (await import('./snapshots/testnet-staging.json')).default as { contracts: Record<string, { bytes: string }> };
+    expect(await leadOf(snapshot.contracts.AbDUiaXbJML5FQGSpt5oEdx88tXK8FPRXbAt1jwK3Us9?.bytes)).toBe('rootPostId');
+  });
+});
