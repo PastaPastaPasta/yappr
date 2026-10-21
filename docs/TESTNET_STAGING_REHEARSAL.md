@@ -1,5 +1,7 @@
 # Testnet staging release rehearsal
 
+> **Retired 2026-10-21.** `/staging` now serves the production release set from `.env.testnet` (D20). `.env.staging`, `lib/contracts/snapshots/testnet-staging.json`, the `--staging` snapshot mode and the epoch `testnet-staging-20261018` were removed in the activation PR, so the commands below no longer run. The ids, costs and lessons here remain the rehearsal's record; its contracts stay on chain but no build selects them.
+
 This is the D36 rehearsal on Dash **testnet**, chain `dash-testnet-51`, using Platform 5.0.0-rc.4 / protocol 14. The production maker is excluded from all operations. Root, `/testing` and `/devnet` keep their existing resolved configuration. The rehearsal uses a separate maker, App Connect anchor, group and storage epoch; production registration remains an owner action after QA.
 
 ## Registered set

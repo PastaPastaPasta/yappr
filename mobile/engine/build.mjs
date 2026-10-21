@@ -17,9 +17,10 @@
  * It also checks mobile/engine/bundled-packages.json (committed) against the
  * bundles; --update-packages rewrites it (see BUNDLED_PACKAGES).
  *
- * Env: release variants read .env.testnet / .env.staging through the web's
- * fail-closed release validator. Devnet reads .env.devnet. Only public keys
- * are inlined; ambient overrides cannot change a variant's pins.
+ * Env: both release variants read .env.testnet through the web's fail-closed
+ * release validator (staging-testnet hands off to /staging). Devnet reads
+ * .env.devnet. Only public keys are inlined; ambient overrides cannot change a
+ * variant's pins.
  */
 import { build } from 'esbuild'
 import { createHash } from 'node:crypto'
@@ -75,21 +76,6 @@ const rootAliasPlugin = {
   setup(pluginBuild) {
     pluginBuild.onResolve({ filter: /^@\// }, args =>
       pluginBuild.resolve(`./${args.path.slice(2)}`, { kind: args.kind, resolveDir: root }))
-  },
-}
-
-// esbuild expands the dynamic snapshot import before resolution; replace its JSON load.
-const stagingSnapshotPlugin = {
-  name: 'staging-contract-snapshot',
-  setup(pluginBuild) {
-    let replaced = false
-    pluginBuild.onLoad({ filter: /[/\\]lib[/\\]contracts[/\\]bundled[/\\]testnet\.json$/ }, () => {
-      replaced = true
-      return { contents: readFileSync(path.join(root, 'lib/contracts/snapshots/testnet-staging.json'), 'utf8'), loader: 'json' }
-    })
-    pluginBuild.onEnd(() => {
-      if (!replaced) throw new Error('The staging contract snapshot was not bundled')
-    })
   },
 }
 
@@ -191,7 +177,7 @@ async function main() {
     legalComments: 'none',
     metafile: true,
     define,
-    plugins: [engineAliasPlugin(BUNDLE_ALIASES), rootAliasPlugin, ...(args.variant === 'staging-testnet' ? [stagingSnapshotPlugin] : [])],
+    plugins: [engineAliasPlugin(BUNDLE_ALIASES), rootAliasPlugin],
   })
   const buildMs = Date.now() - started
   assertInputsWatched(result.metafile)

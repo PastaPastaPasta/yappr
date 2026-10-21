@@ -1,8 +1,7 @@
 const { execSync } = require('child_process')
 const path = require('path')
-const { readFileSync } = require('fs')
 const { PHASE_PRODUCTION_BUILD } = require('next/constants')
-const { assertReleaseConfig, storageScope, assertStagingSnapshot } = require('./scripts/release-config.cjs')
+const { assertReleaseConfig, storageScope } = require('./scripts/release-config.cjs')
 const { sdkWasmAsset } = require('./scripts/sdk-wasm-asset.cjs')
 const wasmAsset = sdkWasmAsset(__dirname)
 
@@ -38,7 +37,7 @@ const nextConfig = {
     NEXT_PUBLIC_GIT_BRANCH: gitInfo.branch,
     // Subpath deployments share the origin with the root deployment, so
     // client-side storage keys are namespaced by the base path (lib/storage-scope.ts).
-    // STORAGE_EPOCH stays blank until the registered release cut-over (D21).
+    // The release (.env.testnet) sets STORAGE_EPOCH for a clean start (D21).
     NEXT_PUBLIC_STORAGE_SCOPE: storageScope(basePath, process.env.STORAGE_EPOCH),
   },
   reactStrictMode: true,
@@ -47,30 +46,6 @@ const nextConfig = {
     unoptimized: true,
   },
   webpack: (config, { isServer, webpack }) => {
-    // The rehearsal has its own snapshot; other builds retain their exact
-    // existing testnet bundle. Keep it outside the dynamic import directory.
-    if (process.env.YAPPR_STAGING_REHEARSAL === '1') {
-      if (basePath !== '/staging' || process.env.NEXT_PUBLIC_RELEASE !== '1' || process.env.NEXT_PUBLIC_NETWORK !== 'testnet') {
-        throw new Error('The staging snapshot is restricted to the testnet /staging release build')
-      }
-      const snapshotPath = path.join(__dirname, 'lib/contracts/snapshots/testnet-staging.json')
-      const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8'))
-      assertStagingSnapshot(snapshot, process.env)
-      let replaced = false
-      config.plugins.push(new webpack.NormalModuleReplacementPlugin(/(^|[/\\])testnet\.json$/, resource => {
-        if (resource.context === path.join(__dirname, 'lib/contracts/bundled')) {
-          resource.request = snapshotPath
-          replaced = true
-        }
-      }))
-      if (!isServer) config.plugins.push({
-        apply(compiler) {
-          compiler.hooks.afterCompile.tap('StagingContractSnapshot', compilation => {
-            if (!replaced) compilation.errors.push(new Error('The staging contract snapshot was not bundled'))
-          })
-        }
-      })
-    }
     // Keep Next's chunk splitting: merging every @dashevo module into one
     // chunk pulls the async WASM initializer into the eager class imports.
     // @dashevo/evo-sdk's published entry is a webpack bundle that inlines its own

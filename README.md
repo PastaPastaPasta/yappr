@@ -81,11 +81,13 @@ blocks, **DM v5**, **blog v9**, **storefront v10** and **pollr v8**. The
 passkey-vault work package adds its own member. The release is a clean start:
 no legacy contracts are registered and old data is not migrated.
 
-Today's production default still uses **social v2**, **DM v3** and the old
-feature contracts. `/devnet` uses **social v16**, **DM v5**, **blog v8**,
-**storefront v9** and **pollr v7** on Sakura beta.6, with App Connect enabled.
-Those paths stay supported until configuration cut-over; authored release
-JSONs are not a deployment record. See [the contract index](contracts/README.md),
+The release set is registered on testnet (2026-10-21) and pinned in
+`.env.testnet`, which `npm run build` uses for `/staging` and, after the
+staging→master merge, for root. Until that merge, master's root still uses
+**social v2**, **DM v3** and the old feature contracts. `/devnet` uses
+**social v16**, **DM v5**, **blog v8**, **storefront v9** and **pollr v7** on
+Sakura beta.6, with App Connect enabled. Those paths stay supported until the
+legacy cleanup; authored contract JSONs are not a deployment record. See [the contract index](contracts/README.md),
 [non-social features](docs/NON_SOCIAL_CONTRACTS.md) and
 [cut-over deferrals](docs/RELEASE_CLEANUP.md).
 

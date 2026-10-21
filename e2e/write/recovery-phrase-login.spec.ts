@@ -6,7 +6,7 @@
  * DIP-13 7' keys for the anchor, so the recipient reads it on a device that
  * never held a key.
  *
- *   E2E_ENV_FILE=.env.staging E2E_LOGIN_PROTOCOL=app-connect \
+ *   E2E_ENV_FILE=<App Connect test-set env file> E2E_LOGIN_PROTOCOL=app-connect \
  *   E2E_RECOVERY_PHRASE_FILE=<0600 file holding the phrase> \
  *   E2E_RECOVERY_PHRASE_SENDER=<username>:<identity id> E2E_RECOVERY_PHRASE_RECIPIENT=<username>:<identity id> \
  *   E2E_BASE_URL=http://localhost:<port>/staging npx playwright test e2e/write/recovery-phrase-login.spec.ts

@@ -1,4 +1,4 @@
-> **D36 rehearsal override (2026-10-18):** `/staging` temporarily serves the throwaway testnet set in `.env.staging`, built with `npm run build:staging`, and uses epoch `testnet-staging-20261018:staging`. `BASE_PATH=/staging npm run build` selects the same configuration so older master Pages workflows cannot revert it. Root, `/testing` and `/devnet` retain their existing configurations. The production cut-over instructions below apply to production; do not replace the rehearsal set until the owner's all-clear. At that point, retire these staging IDs, change `.env.staging` to the separately registered production pins with a new epoch, refresh its snapshot, and update monitoring expectations in the same reviewed PR. See [TESTNET_STAGING_REHEARSAL.md](TESTNET_STAGING_REHEARSAL.md).
+> **Activated on staging 2026-10-21 ([#784](https://github.com/PastaPastaPasta/yappr/issues/784)).** The production release set registered that day is in the checked-in `.env.testnet`, and `npm run build` builds from it. `/staging` builds the same file with `BASE_PATH=/staging` (D20), so the D36 rehearsal override is retired: `.env.staging`, its separate snapshot and the epoch `testnet-staging-20261018` are gone, and [TESTNET_STAGING_REHEARSAL.md](TESTNET_STAGING_REHEARSAL.md) keeps the rehearsal's record. Root switches when the owner merges staging into master. See the [activation record](#activation-record-2026-10-21).
 
 # Testnet configuration and cut-over
 
@@ -10,25 +10,23 @@ contract's creation block plus that delay; the charter tool reads proved chain
 time and waits before broadcasting. Mainnet uses `--election-delay 259200 --challenge-cool-down 2592000` (three days) with one-week join and
 vote windows.
 
-The preparation PR adds an opt-in release build mechanism. It does **not**
-activate the release, register contracts, change today's `build` command, change
-any hosting settings. Native testnet builds now require this release configuration;
-use `staging-testnet` for the committed rehearsal pins. `.env.testnet.template`
-is documentation, never an automatically loaded Next env file. Production,
-`/staging`, `/testing` and `/devnet` keep their current configurations.
+The release build mechanism landed first (#794); the activation PR filled
+`.env.testnet` and switched `build` to it. Native testnet builds use the same
+file. `.env.testnet.template` is the blank form for a future registration
+(for example mainnet), never an automatically loaded Next env file. `/testing`
+and `/devnet` keep their own configurations.
 
 ## Release configuration
 
-After registration, copy `.env.testnet.template` to the checked-in
-`.env.testnet`. All values are public. Never copy credentials, private journals,
-seed phrases or signing keys into it. Fill the public IDs from the registration
-journal and confirm them with proved readback, including actual contract
-versions. The release set uses social v17, storefront v10, blog v9, pollr v8,
+`.env.testnet` is checked in. All values are public. Never copy credentials,
+private journals, seed phrases or signing keys into it. Its public IDs come from
+the registration journal and were confirmed with proved readback, including
+actual contract versions. The release set uses social v17, storefront v10, blog v9, pollr v8,
 DM v5 and profile v2. The passkey-vault contract must be registered and its client
 landed before cut-over. The unified profile and system contracts are not group
 members; grant them separately.
 
-`npm run build:release` loads `.env.testnet` explicitly, replaces ambient
+`npm run build` (`npm run build:release`) loads `.env.testnet` explicitly, replaces ambient
 `NEXT_PUBLIC_*` values and `STORAGE_EPOCH` with this file's values (including
 blanks), forces `NEXT_PUBLIC_RELEASE=1`, validates, then runs `next build`. It requires Node
 20.12 or later (`util.parseEnv`); CI uses Node 22 and the IPFS Node 20 image
@@ -98,13 +96,13 @@ template covers public application configuration; `BASE_PATH`, Git metadata and
    APP_VARIANT=testnet npm run release:ios -- archive
    ```
 
-   `.env.testnet`, `.env.staging` and the shared validator are already watched
-   by mobile-engine CI. Routine CI builds `staging-testnet` and `devnet`;
-   `testnet` deliberately fails until production pins are filled. Native storage
+   `.env.testnet` and the shared validator are watched by mobile-engine CI,
+   which builds `testnet`, `staging-testnet` and `devnet`. Native storage
    derives its epoch from the same release file, with native isolation added.
-   Before cut-over, use `APP_VARIANT=staging-testnet` with committed `.env.staging`
-   and `https://yap.pr/staging` handoffs. It needs no patch or skipped engine build.
-   At cut-over the `testnet` app uses root `https://yap.pr` for every handoff and
+   `APP_VARIANT=staging-testnet` builds from the same `.env.testnet` (D20) and
+   hands off to `https://yap.pr/staging`; its native storage is keyed apart
+   from the `testnet` app's. It needs no patch or skipped engine build.
+   The `testnet` app uses root `https://yap.pr` for every handoff and
    its HTTPS App Connect callback. Confirm `/connect/` returns 200 at root,
    `/staging/connect/` and `/devnet/connect/`; inspect the exported callback
    bridge and test the app's actual approved HTTPS return on both OSes.
@@ -161,6 +159,56 @@ template covers public application configuration; `BASE_PATH`, Git metadata and
    Purge the yap.pr HTML cache, check the buildId, repeat bundle-ID checks and
    smoke/sign-in checks, then ship the rebuilt testnet mobile betas. Public
    announcement waits for the DashPay App Connect sign-in gate (D8).
+
+## Activation record (2026-10-21)
+
+The activation PR on staging followed the steps above against the set registered
+that day ([TESTNET_RELEASE.md](TESTNET_RELEASE.md#production-registration-record-2026-10-21)).
+
+1. **Pins.** `.env.testnet` holds the eight members (`id:1`), anchor, group,
+   owner, DashPay profile, DPNS, token history, maker and the YAPP id
+   `F6vpQqJb…` (`tokens.calculateId(social, 0)`), with retired ids blank and
+   `STORAGE_EPOCH=testnet-release-1`. `verify-appconnect g1–g3/a1` passed 32/0
+   at registration. Teams are not seated yet, so the contracts accept no posts
+   (`notYetUsable`) until the charters are filed and won.
+2. **Build switch.** `build` is `npm run build:release`; `build:subpath` and
+   `build:staging` (`BASE_PATH=/staging npm run build`) go through it.
+   `deploy.yml` and CI keep calling those scripts. D20 is restored: the D36
+   `.env.staging`, its separate snapshot, `scripts/build-web.mjs`, the webpack
+   snapshot substitution and the `--staging` snapshot mode are removed, and
+   monitoring reads `.env.testnet` for `/staging`. Master's older workflow
+   builds the staging checkout with `BASE_PATH=/staging npm run build`, which
+   now loads the same file.
+3. **Mobile.** `testnet` and `staging-testnet` both build from `.env.testnet`
+   (`/staging` handoffs and separate native storage for the latter), and
+   mobile-engine CI now builds all three variants. No native artifact was built
+   or shipped: signed betas ship with the web launch (D26) after the owner's
+   account and signing gates.
+4. **Defaults: not removed yet.** `/testing` still runs the legacy v2 set and
+   resolves its DM, storefront, blog, Pollr and key-exchange ids through the
+   `lib/constants.ts` defaults, and `dev` and the unit tests rely on them too.
+   The precondition for this step (complete, independent `/testing` and
+   `/devnet` envs) is not met. The release builds cannot reach the defaults:
+   the fail-closed gate requires every release value explicitly. Removing them
+   is a follow-up together with the `/testing` re-registration and WP17.
+5. **Snapshot.** `NETWORK=testnet npm run contracts:snapshot -- --prune` with
+   `CONTRACT_IDS` naming the `/testing` defaults (`J7MP…`, `2AUB…`, `7Uaq…`,
+   `9jfar…`, `GBCR…`) kept both deployments: 18 contracts, the eight release
+   members decoding identically to the registration snapshots. The pruned
+   entries are the old production social `9oDC6xdg…`, profile `FZSn…`, the
+   old vault `7RQo…`, auth vault `64RT…` and key backup `8fm…`.
+6. **Checks.** Lint, unit tests, dead code, the release build, `/staging`,
+   `/testing` and `/devnet` builds, and mobile engine typecheck, lint, tests
+   and all three bundles passed. Both release exports contain every member,
+   the group and the maker, and no `9oDC6xdg`; the legacy `/testing` ids occur
+   only in the lazily loaded snapshot chunk, apart from the standalone Pollr
+   app id `GBCR…` that `lib/poll-embed.ts` compares against (it never matches
+   the release Pollr id, so no Pollr-app links are offered). `DM_TOPOLOGY` is `v5` with the v5
+   id set and the v3 id blank, so the legacy DM page and poller are
+   unreachable.
+7. **Deploy.** Merging into staging redeploys `/staging` against the empty
+   production set, with posting closed. Root changes only with the owner's
+   staging→master merge, followed by step 8.
 
 ## Defaults deliberately retained until cut-over
 

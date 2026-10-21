@@ -195,17 +195,11 @@ describe('release build configuration', () => {
       }
     })
 
-  it.each([
-    { file: '.env.staging', basePath: '/staging', network: 'testnet', succeeds: true },
-    { file: '.env.staging', basePath: '/staging', network: 'testnet', succeeds: true, entry: 'build-web.mjs' },
-    { file: '.env.staging', basePath: '', network: 'testnet', succeeds: false },
-    { file: '.env.staging', basePath: '/staging', network: 'mainnet', succeeds: false },
-    { file: '.env.testnet', basePath: '', network: 'testnet', succeeds: true },
-  ])('isolates the rehearsal loader from other release builds: %j', ({ file, basePath, network, succeeds, entry = 'build-release.mjs' }) => {
-    const dir = mkdtempSync(join(tmpdir(), 'yappr-staging-env-'))
+  it.each(['', '/staging'])('builds root and /staging (base %j) from .env.testnet, never ambient pins', basePath => {
+    const dir = mkdtempSync(join(tmpdir(), 'yappr-release-entry-'))
     try {
       mkdirSync(join(dir, 'scripts'))
-      for (const name of ['build-web.mjs', 'build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+      for (const name of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
         copyFileSync(new URL(name, import.meta.url), join(dir, 'scripts', name))
       }
       mkdirSync(join(dir, 'node_modules/next/dist/bin'), { recursive: true })
@@ -214,29 +208,34 @@ describe('release build configuration', () => {
         const fs = require('node:fs');
         fs.mkdirSync('out');
         fs.writeFileSync('out/effective-env.json', JSON.stringify({
+          BASE_PATH: process.env.BASE_PATH,
           NEXT_PUBLIC_YAPPR_CONTRACT_ID: process.env.NEXT_PUBLIC_YAPPR_CONTRACT_ID,
-          YAPPR_STAGING_REHEARSAL: process.env.YAPPR_STAGING_REHEARSAL,
         }));
       `)
-      const configured = { ...completeEnv(), NEXT_PUBLIC_NETWORK: network }
-      writeFileSync(join(dir, file), Object.entries(configured).map(([key, value]) => `${key}=${value}`).join('\n'))
-      const result = spawnSync(process.execPath, [join(dir, 'scripts', entry), ...(entry === 'build-release.mjs' ? [file] : [])], {
-        cwd: dir, encoding: 'utf8', env: {
-          ...process.env, BASE_PATH: basePath, NEXT_PUBLIC_YAPPR_CONTRACT_ID: 'ambient-wrong-id',
-          YAPPR_STAGING_REHEARSAL: 'ambient-wrong-snapshot',
-        },
+      const configured = completeEnv()
+      writeFileSync(join(dir, '.env.testnet'), Object.entries(configured).map(([key, value]) => `${key}=${value}`).join('\n'))
+      const result = spawnSync(process.execPath, [join(dir, 'scripts/build-release.mjs')], {
+        cwd: dir, encoding: 'utf8', env: { ...process.env, BASE_PATH: basePath, NEXT_PUBLIC_YAPPR_CONTRACT_ID: 'ambient-wrong-id' },
       })
-      expect(result.status, result.stderr).toBe(succeeds ? 0 : 1)
-      if (succeeds) {
-        const effective = JSON.parse(readFileSync(join(dir, 'out/effective-env.json'), 'utf8'))
-        expect(effective.NEXT_PUBLIC_YAPPR_CONTRACT_ID).toBe(configured.NEXT_PUBLIC_YAPPR_CONTRACT_ID)
-        expect(effective.YAPPR_STAGING_REHEARSAL).toBe(file === '.env.staging' ? '1' : undefined)
-      } else {
-        expect(result.stderr).toContain('staging rehearsal requires')
-      }
+      expect(result.status, result.stderr).toBe(0)
+      const effective = JSON.parse(readFileSync(join(dir, 'out/effective-env.json'), 'utf8'))
+      expect(effective).toEqual({ BASE_PATH: basePath, NEXT_PUBLIC_YAPPR_CONTRACT_ID: configured.NEXT_PUBLIC_YAPPR_CONTRACT_ID })
+      const refused = spawnSync(process.execPath, [join(dir, 'scripts/build-release.mjs'), '.env.staging'], { cwd: dir, encoding: 'utf8' })
+      expect(refused.status).toBe(1)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('the checked-in .env.testnet is the complete registered release, and `build` uses it', () => {
+    const release = parseEnv(readFileSync(new URL('../.env.testnet', import.meta.url), 'utf8'))
+    expect(Object.keys(release).sort()).toEqual(Object.keys(template).sort())
+    expect(() => assertReleaseConfig(release)).not.toThrow()
+    expect(release.NEXT_PUBLIC_RELEASE).toBe('1')
+    expect(storageScope('/staging', release.STORAGE_EPOCH)).toBe('testnet-release-1:staging')
+    const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    expect(scripts.build).toBe('npm run build:release')
+    expect(scripts['build:staging']).toBe('BASE_PATH=/staging npm run build')
   })
 
   it.each([undefined, '', 'bad:scope'])('requires a clean-start storage epoch (%s)', epoch => {

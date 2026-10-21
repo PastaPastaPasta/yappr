@@ -33,16 +33,16 @@ Run `npm ci` at the repo root first: the bundle resolves `lib/`'s dependencies f
 | `npm run test:contract:write` | Writes on **sakura** with pool personas 90–99 (`YAPPR_SAKURA_IDENTITIES`), serial. Skips with the reason until W-SAKURA lands |
 | `npm run test:browser` | Needs `build:testnet`. Boots the bundle in WebKit and Chromium; writes timings to `$EVIDENCE_DIR` (default `test-results/`, gitignored; `RUNS=n` per configuration) |
 
-CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint, unit tests and both bundle builds on changes to `mobile/engine/**`, `lib/**`, `types/**`, `hooks/**`, `vendor/platform-auth/**`, `contracts/**`, the root manifests, `tsconfig.json`, the three variant env files and `scripts/release-config.cjs`, so a web change that breaks the engine fails on the web PR. `build.mjs` fails if the bundle ever reads a file outside those directories (`WATCHED_INPUT_DIRS`), so the filter cannot silently fall behind. The contract and browser suites need the live network and run locally for now.
+CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint, unit tests and the three bundle builds on changes to `mobile/engine/**`, `lib/**`, `types/**`, `hooks/**`, `vendor/platform-auth/**`, `contracts/**`, the root manifests, `tsconfig.json`, the variant env files (`.env.testnet`, `.env.devnet`) and `scripts/release-config.cjs`, so a web change that breaks the engine fails on the web PR. `build.mjs` fails if the bundle ever reads a file outside those directories (`WATCHED_INPUT_DIRS`), so the filter cannot silently fall behind. The contract and browser suites need the live network and run locally for now.
 
 ### Variants and env
 
-- **`testnet`** loads `.env.testnet`, forces release mode and uses the same validator as web. It fails closed until production registration fills the file.
-- **`staging-testnet`** loads committed `.env.staging`, validates release mode and uses the staging contract snapshot and `/staging` web deployment.
+- **`testnet`** loads the committed `.env.testnet` (the registered release set), forces release mode and uses the same validator as web.
+- **`staging-testnet`** loads the same `.env.testnet` (D20) and hands off to the `/staging` web deployment; the host keys its native storage apart from `testnet`'s.
 - **`devnet`** reads `.env.devnet` and uses `/devnet`.
 - **Inlining:** only `NEXT_PUBLIC_*` keys plus `NODE_ENV` are inlined. Ambient public env values cannot change variant pins.
 - **Storage:** engine keys stay unscoped (`NEXT_PUBLIC_STORAGE_SCOPE` and `NEXT_PUBLIC_BASE_PATH` are empty). The host isolates native storage by network, release epoch and web prefix, recorded separately in the manifest. Devnet retains its `devnet-<name>` namespace.
-- **Default `build`:** builds staging-testnet and devnet. Use `build:testnet` explicitly for the production beta after cut-over.
+- **Default `build`:** builds testnet, staging-testnet and devnet.
 
 ## How the wasm loads
 

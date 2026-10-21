@@ -1,14 +1,16 @@
 # Yappr data contracts
 
 The JSONs here are authored schemas, not a claim that each file is deployed.
-The current production default still uses social v2; `.env.devnet` selects
-Sakura social v16, blog v8, storefront v9, pollr v7 and DM v5. The planned
-clean-start testnet release selects social v17, blog v9, storefront v10,
-pollr v8 and DM v5, behind an App Connect anchor and group.
+The clean-start testnet release (social v17, blog v9, storefront v10, pollr v8
+and DM v5, behind an App Connect anchor and group) was registered on
+2026-10-21. `.env.testnet` pins it; `/staging` builds from it now and root
+after the staging→master merge. Until then master's root still uses social v2.
+`.env.devnet` selects Sakura social v16, blog v8, storefront v9, pollr v7 and
+DM v5.
 
-Registration ids and pinned member versions come from the deployment env and
-[release record](../docs/TESTNET_RELEASE.md). Until WP14/WP15 record registration
-and cut over configuration, do not describe the release set as live.
+Registration ids and pinned member versions come from `.env.testnet` and the
+[release record](../docs/TESTNET_RELEASE.md#production-registration-record-2026-10-21).
+Posting stays closed until the elected moderation teams are seated.
 
 ## Planned release set
 

@@ -13,9 +13,7 @@ export async function expectations(root, name) {
   await ensureInitialized();
   const pv = PlatformVersion.latest();
   const suffix = config.network === 'devnet' ? `devnet-${config.env.NEXT_PUBLIC_DEVNET_NAME}` : 'testnet';
-  const path = name === 'staging'
-    ? join(root, 'lib/contracts/snapshots/testnet-staging.json')
-    : join(root, 'lib/contracts/bundled', `${suffix}.json`);
+  const path = join(root, 'lib/contracts/bundled', `${suffix}.json`);
   const snapshots = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')).contracts : {};
   config.pins = config.pins.map(pin => {
     const snapshot = snapshots[pin.id];
