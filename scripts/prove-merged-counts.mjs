@@ -159,9 +159,11 @@
  * timeline and tag pages as v16 does, and a self-like is now refused (distinctFrom), so they need
  * the v17 adaptations before a live run. v17's `repliesOf` is `[live, rootPostId, replyToReplyId,
  * $createdAt]` with `skipIfAbsent: ["live"]` (still rangeCountable, ranked at rootPostId): every
- * r, c, t and M read of it must pin `live == true` first (`shapes.threadWhere`), or Platform
- * refuses it, and a reply tombstone leaves the thread and its counts, so M-tb8 / M-mr2 count only
- * live replies. The sakura probe of this index (reply-live-count, variant B) proved those reads.
+ * r, c, t and M read of it pins `live == true` first (`shapes.threadWhere`, and `threadPin` for an
+ * unpinned count slot or the ranked roots), gated by the declared index of the contract under
+ * proof, so an earlier-shape file reads unpinned; Platform refuses an unpinned read of the
+ * live-keyed index. A reply tombstone leaves the thread and its counts; M-tb8 / M-mr2 count live
+ * replies only. The sakura probe of this index (reply-live-count, variant B) proved those reads.
  *
  * ## Social v16 (`--contract-file contracts/yappr-social-contract-v16.json`)
  *
@@ -568,6 +570,8 @@ async function main() {
   const ownerPosts = shapes.ownerPosts;
   /** A post-count slot or ranking on `post.ownerAndTime` carries the same pin as its `where` (none before v13). */
   const livePin = shapes.ownerPostsWhere();
+  /** A `repliesOf` read with no where of its own (an unpinned count slot, the ranked roots): `live == true` where the index is live-keyed. */
+  const threadPin = shapes.threadWhere().length ? { where: shapes.threadWhere() } : {};
   const replyCounters = shapes.cut.replyAuthor;
   /** v14: a reply stores no owner; rootOwnerRecent / parentOwnerRecent derive it (`rootPostId.$ownerId`, `replyToReplyId.$ownerId`). */
   const derivedReplyOwners = !shapes.cut.storedReplyOwners;
@@ -726,24 +730,24 @@ async function main() {
   // ---- r: replies on repliesOf ----
   console.log('\n--- r. replies on repliesOf [rootPostId, replyToReplyId, $createdAt] ---');
   const ids = (r) => docsOf(r).map(idOf);
-  await attempt('r1', () => count('reply', [['rootPostId', '==', T1]]), (m) => check('r1 whole-thread count of T1 (at-chain, depth 1) = 5', total(m) === 5, JSON.stringify(countEntries(m))));
-  await attempt('r2', () => count('reply', [['rootPostId', '==', T1], ['replyToReplyId', '==', r1]]), (m) => check('r2 replies to r1 (depth 2) = 2', total(m) === 2, JSON.stringify(countEntries(m))));
-  await attempt('r2b', () => count('reply', [['rootPostId', '==', T1], ['replyToReplyId', '==', null]]), (m) => check('r2b direct replies to T1 (null pin) = 2', total(m) === 2, JSON.stringify(countEntries(m))));
-  await attempt('r3', () => sdk.documents.query(q('reply', { where: [['rootPostId', '==', T1], ['replyToReplyId', '==', null]], orderBy: [['$createdAt', 'asc']], limit: 10 })), (r) => check('r3 direct replies to T1, oldest first: r1, r2', same(ids(r), [r1, r2]), JSON.stringify(ids(r))));
-  await attempt('r3b', () => sdk.documents.query(q('reply', { where: [['rootPostId', '==', T1], ['replyToReplyId', '==', null]], orderBy: [['$createdAt', 'desc']], limit: 10 })), (r) => check('r3b the same newest first: r2, r1', same(ids(r), [r2, r1]), JSON.stringify(ids(r))));
+  await attempt('r1', () => count('reply', shapes.threadWhere([['rootPostId', '==', T1]])), (m) => check('r1 whole-thread count of T1 (at-chain, depth 1) = 5', total(m) === 5, JSON.stringify(countEntries(m))));
+  await attempt('r2', () => count('reply', shapes.threadWhere([['rootPostId', '==', T1], ['replyToReplyId', '==', r1]])), (m) => check('r2 replies to r1 (depth 2) = 2', total(m) === 2, JSON.stringify(countEntries(m))));
+  await attempt('r2b', () => count('reply', shapes.threadWhere([['rootPostId', '==', T1], ['replyToReplyId', '==', null]])), (m) => check('r2b direct replies to T1 (null pin) = 2', total(m) === 2, JSON.stringify(countEntries(m))));
+  await attempt('r3', () => sdk.documents.query(q('reply', { where: shapes.threadWhere([['rootPostId', '==', T1], ['replyToReplyId', '==', null]]), orderBy: [['$createdAt', 'asc']], limit: 10 })), (r) => check('r3 direct replies to T1, oldest first: r1, r2', same(ids(r), [r1, r2]), JSON.stringify(ids(r))));
+  await attempt('r3b', () => sdk.documents.query(q('reply', { where: shapes.threadWhere([['rootPostId', '==', T1], ['replyToReplyId', '==', null]]), orderBy: [['$createdAt', 'desc']], limit: 10 })), (r) => check('r3b the same newest first: r2, r1', same(ids(r), [r2, r1]), JSON.stringify(ids(r))));
   await attempt('r3c', async () => {
-    const first = await sdk.documents.query(q('reply', { where: [['rootPostId', '==', T1], ['replyToReplyId', '==', null]], orderBy: [['$createdAt', 'asc']], limit: 1 }));
-    const next = await sdk.documents.query(q('reply', { where: [['rootPostId', '==', T1], ['replyToReplyId', '==', null]], orderBy: [['$createdAt', 'asc']], limit: 1, startAfter: ids(first)[0] }));
+    const first = await sdk.documents.query(q('reply', { where: shapes.threadWhere([['rootPostId', '==', T1], ['replyToReplyId', '==', null]]), orderBy: [['$createdAt', 'asc']], limit: 1 }));
+    const next = await sdk.documents.query(q('reply', { where: shapes.threadWhere([['rootPostId', '==', T1], ['replyToReplyId', '==', null]]), orderBy: [['$createdAt', 'asc']], limit: 1, startAfter: ids(first)[0] }));
     return [...ids(first), ...ids(next)];
   }, (got) => check('r3c paging (limit 1 + startAfter) walks r1 then r2', same(got, [r1, r2]), JSON.stringify(got)));
-  await attempt('r4', () => sdk.documents.query(q('reply', { where: [['rootPostId', '==', T1], ['replyToReplyId', '==', r1]], orderBy: [['$createdAt', 'asc']], limit: 10 })), (r) => check('r4 children of r1, oldest first: r3, r4', same(ids(r), [r3, r4]), JSON.stringify(ids(r))));
-  await attempt('r5', () => sdk.documents.query(q('reply', { where: [['rootPostId', '==', T1]], orderBy: [['replyToReplyId', 'asc'], ['$createdAt', 'asc']], limit: 100 })), (r) => {
+  await attempt('r4', () => sdk.documents.query(q('reply', { where: shapes.threadWhere([['rootPostId', '==', T1], ['replyToReplyId', '==', r1]]), orderBy: [['$createdAt', 'asc']], limit: 10 })), (r) => check('r4 children of r1, oldest first: r3, r4', same(ids(r), [r3, r4]), JSON.stringify(ids(r))));
+  await attempt('r5', () => sdk.documents.query(q('reply', { where: shapes.threadWhere([['rootPostId', '==', T1]]), orderBy: [['replyToReplyId', 'asc'], ['$createdAt', 'asc']], limit: 100 })), (r) => {
     const got = ids(r);
     check('r5 whole thread by prefix scan: all 5, grouped by parent (direct first, under null)', got.length === 5 && same(got.slice(0, 2), [r1, r2]) && new Set(got).size === 5 && got.includes(r5), JSON.stringify(got));
   });
-  await attempt('r6', () => count('reply', [['rootPostId', 'in', [T1, T2, T3]]], ['rootPostId']), (m) => check('r6 batched thread counts: T1 5, T2 1, T3 0', sameCounts(countEntries(m), { [T1]: 5, [T2]: 1 }), JSON.stringify(countEntries(m))));
-  await attempt('r7', () => count('reply', [['rootPostId', '==', T1], ['replyToReplyId', 'in', [r1, r2, r3]]], ['replyToReplyId']), (m) => check('r7 batched per-reply counts under T1: r1 2, r3 1, r2 0', sameCounts(countEntries(m), { [r1]: 2, [r3]: 1 }), JSON.stringify(countEntries(m))));
-  await attempt('r8', () => sdk.documents.ranked(q('reply', { groupBy: 'rootPostId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), (r) => {
+  await attempt('r6', () => count('reply', shapes.threadWhere([['rootPostId', 'in', [T1, T2, T3]]]), ['rootPostId']), (m) => check('r6 batched thread counts: T1 5, T2 1, T3 0', sameCounts(countEntries(m), { [T1]: 5, [T2]: 1 }), JSON.stringify(countEntries(m))));
+  await attempt('r7', () => count('reply', shapes.threadWhere([['rootPostId', '==', T1], ['replyToReplyId', 'in', [r1, r2, r3]]]), ['replyToReplyId']), (m) => check('r7 batched per-reply counts under T1: r1 2, r3 1, r2 0', sameCounts(countEntries(m), { [r1]: 2, [r3]: 1 }), JSON.stringify(countEntries(m))));
+  await attempt('r8', () => sdk.documents.ranked(q('reply', { ...threadPin, groupBy: 'rootPostId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), (r) => {
     const got = r.entries.map((entry) => [toBase58(entry.groupValue), Number(entry.value)]);
     check('r8 ranked most-replied roots (at rootPostId): T1 5, T2 1', same(got, [[T1, 5], [T2, 1]]), JSON.stringify(got));
   });
@@ -768,7 +772,7 @@ async function main() {
     limit: 10,
     subQueries: [
       { documentType: 'post', kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field: 'quotedPostId' } },
-      { documentType: 'reply', kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field: 'rootPostId' } },
+      { documentType: 'reply', kind: 'counts', ...threadPin, bind: { source: 'page', sourceProperty: '$id', field: 'rootPostId' } },
     ],
   }), (result) => {
     const [quotes, replies] = result.subResults.map((sub) => countEntries(sub.counts));
@@ -784,7 +788,7 @@ async function main() {
     ...shapes.ownerReplies({ where: [['$ownerId', '==', B.ownerId]], orderBy: [['$createdAt', 'asc']] }),
     limit: 10,
     subQueries: [
-      { documentType: 'reply', kind: 'counts', where: [['rootPostId', '==', T1]], bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } },
+      { documentType: 'reply', kind: 'counts', where: shapes.threadWhere([['rootPostId', '==', T1]]), bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } },
       { documentType: 'post', kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field: 'quotedReplyId' } },
     ],
   }), (result) => {
@@ -814,8 +818,8 @@ async function main() {
     }
   };
   await expectMergedRootRefusal('c2x a repliesOf page with a repliesOf count slot is refused (merged root)', {
-    dataContractId: contractId, documentType: 'reply', where: [['rootPostId', '==', T1], ['replyToReplyId', '==', null]], orderBy: [['$createdAt', 'asc']], limit: 10,
-    subQueries: [{ documentType: 'reply', kind: 'counts', where: [['rootPostId', '==', T1]], bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } }],
+    dataContractId: contractId, documentType: 'reply', where: shapes.threadWhere([['rootPostId', '==', T1], ['replyToReplyId', '==', null]]), orderBy: [['$createdAt', 'asc']], limit: 10,
+    subQueries: [{ documentType: 'reply', kind: 'counts', where: shapes.threadWhere([['rootPostId', '==', T1]]), bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } }],
   });
   await expectMergedRootRefusal('c3x a post page on $ownerId with a post slot bound to $ownerId is refused (merged root)', {
     dataContractId: contractId, documentType: 'post', ...ownerPosts({ where: [['$ownerId', '==', B.ownerId]], orderBy: [['$createdAt', 'asc']] }), limit: 1,
@@ -828,7 +832,7 @@ async function main() {
     where: [['$id', 'in', [r1, r3, r4]]],
     limit: 3,
     subQueries: [
-      { documentType: 'reply', kind: 'counts', where: [['rootPostId', '==', T1]], bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } },
+      { documentType: 'reply', kind: 'counts', where: shapes.threadWhere([['rootPostId', '==', T1]]), bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } },
       { documentType: 'post', kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field: 'quotedReplyId' } },
     ],
   }), (result) => {
@@ -914,7 +918,7 @@ async function main() {
 
   // ---- t: the whole thread (reply-service getReplies on repliesOf) ----
   console.log('\n--- t. the whole thread, grouped by parent ---');
-  const thread = { where: [['rootPostId', '==', T1]], orderBy: [['replyToReplyId', 'asc'], ['$createdAt', 'asc']] };
+  const thread = { where: shapes.threadWhere([['rootPostId', '==', T1]]), orderBy: [['replyToReplyId', 'asc'], ['$createdAt', 'asc']] };
   let wholeThread = [];
   await attempt('t1', () => sdk.documents.query(q('reply', { ...thread, limit: 50 })), (r) => {
     wholeThread = ids(r);
@@ -947,7 +951,7 @@ async function main() {
     ...shapes.timelinePosts({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 }),
     subQueries: [
       { documentType: 'like', kind: 'counts', bind: fromPage('$id', 'postId') },
-      { documentType: 'reply', kind: 'counts', bind: fromPage('$id', 'rootPostId') },
+      { documentType: 'reply', kind: 'counts', ...threadPin, bind: fromPage('$id', 'rootPostId') },
       { documentType: 'post', kind: 'counts', bind: fromPage('$id', 'quotedPostId') },
       { documentType: 'post', bind: fromPage('quotedPostId', '$id') },
       { dataContractId: dpnsId, documentType: 'domain', bind: fromPage('$ownerId', 'records.identity'), limit: 100 },
@@ -980,7 +984,7 @@ async function main() {
     limit: 20,
     subQueries: [
       { documentType: 'post', kind: 'counts', bind: fromPage('$id', 'quotedPostId') },
-      { documentType: 'reply', kind: 'counts', bind: fromPage('$id', 'rootPostId') },
+      { documentType: 'reply', kind: 'counts', ...threadPin, bind: fromPage('$id', 'rootPostId') },
       { documentType: 'post', bind: fromPage('quotedPostId', '$id') },
     ],
   }), (result) => {
@@ -1671,7 +1675,7 @@ async function main() {
     check(`M-tb5 the tombstone lands (deleted, ${shapes.tagField} kept, no content; cost ${tombCost} credits)`, tombstoned.ok && tomb.deleted === true && same(shapes.storedTags(tomb), ['mproof']) && tomb.content === undefined, `${tombstoned.error ?? ''} ${JSON.stringify({ deleted: tomb.deleted, [shapes.tagField]: tomb[shapes.tagField], content: tomb.content ?? null })}`);
     refusedWith('M-tb6 a tombstone cannot be undone (40128: deleted frozen once set)', await replaceDoc(D, 'post', Pt, { content: 'back', ...shapes.tags(['mproof']) }), IMMUTABLE);
     refusedWith('M-tb7 nor refilled while flagged (10422)', await replaceDoc(D, 'post', Pt, { deleted: true, content: 'back', ...shapes.tags(['mproof']) }), BLANK);
-    await attempt('M-tb8', () => Promise.all([sdk.documents.get(contractId, 'reply', Rt), count('reply', [['rootPostId', '==', Pt]])]), ([reply, n]) => check('M-tb8 the reply under the tombstoned post stays, counted', reply !== null && total(n) === 1, JSON.stringify(countEntries(n))));
+    await attempt('M-tb8', () => Promise.all([sdk.documents.get(contractId, 'reply', Rt), count('reply', shapes.threadWhere([['rootPostId', '==', Pt]]))]), ([reply, n]) => check('M-tb8 the reply under the tombstoned post stays, counted', reply !== null && total(n) === 1, JSON.stringify(countEntries(n))));
     refusedWith('M-tb9 a reply edit without the flag is refused (40128)', await replaceDoc(D, 'reply', Rt, { content: 'edited', rootPostId: id(Pt), parentOwnerId: id(D.ownerId) }), IMMUTABLE);
     refusedWith('M-tb10 a reply tombstone that drops its thread root is refused (40128: the linkage is frozen)', await replaceDoc(D, 'reply', Rt, { deleted: true, parentOwnerId: id(D.ownerId) }), /\bcode"?\s*[=:]\s*(40128|10101)\b|immutable|required/i);
     const replyTomb = await replaceDoc(D, 'reply', Rt, { deleted: true, rootPostId: id(Pt), parentOwnerId: id(D.ownerId) });
@@ -1699,7 +1703,7 @@ async function main() {
     const moderatorA = { identity: await sdk.identities.fetch(A.ownerId), signer: A.signer };
     await attempt('M-mr1', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: Pm, reason: { text: 'M-mr proof' } }), (record) => check(`M-mr1 the interim owner removes Pm; the record keeps its ${shapes.tagField}`, same(shapes.storedTags(record?.keptFields), ['mremoved']), JSON.stringify(record?.keptFields ?? null, (k, v) => (typeof v === 'bigint' ? String(v) : v))), { idempotent: false });
     await sleep(SETTLE_MS);
-    await attempt('M-mr2', () => Promise.all([sdk.documents.get(contractId, 'post', Pm), count('like', [['postId', '==', Pm]]), sdk.documents.get(contractId, 'reply', Rm), count('reply', [['rootPostId', '==', Pm]]), sdk.documents.get(contractId, 'post', Qm), count('post', [['quotedPostId', '==', Pm]])]),
+    await attempt('M-mr2', () => Promise.all([sdk.documents.get(contractId, 'post', Pm), count('like', [['postId', '==', Pm]]), sdk.documents.get(contractId, 'reply', Rm), count('reply', shapes.threadWhere([['rootPostId', '==', Pm]])), sdk.documents.get(contractId, 'post', Qm), count('post', [['quotedPostId', '==', Pm]])]),
       ([post, likes, reply, replies, quote, quotes]) => check('M-mr2 Pm is gone, but its like (1), its reply (1) and its quote (1) stay, readable and counted', !post && total(likes) === 1 && reply !== null && total(replies) === 1 && quote !== null && total(quotes) === 1, `post ${post ? 'still fetches' : 'gone'}, likes ${total(likes)} replies ${total(replies)} quotes ${total(quotes)}`));
     await attempt('M-mr3', () => rankedRaw(...tagRankingArgs('mremoved')), (r) => check('M-mr3 the hashtag ranking (byHashtagPost, keyed by the kept hashtag) still lists the removed post at 1', entriesOf(r).some(([k, v]) => k === Pm && v === 1), JSON.stringify(entriesOf(r))));
     await likeWrite(C, 'like', { postId: id(Pm), postAuthor: id(D.ownerId), ...shapes.tags(['mremoved']) });
