@@ -18,6 +18,15 @@ export const FILES = [
   'app-icon-foreground.svg',
 ];
 
+/**
+ * A set may also have these. favicon-16.svg is the favicon snapped to the 16 px pixel grid: the
+ * 16 px image in favicon.ico is drawn from it, and the other sizes from favicon.svg.
+ */
+export const OPTIONAL_FILES = ['favicon-16.svg'];
+
+/** The files of the set in `dir`: the required ones plus whichever optional ones it has. */
+export const filesIn = (dir) => [...FILES, ...OPTIONAL_FILES.filter((file) => fs.existsSync(path.join(dir, file)))];
+
 /** The viewBox height (or exact size) each file's geometry is drawn for. */
 const SHAPES = {
   'mark.svg': [64, 64],
@@ -28,6 +37,7 @@ const SHAPES = {
   'lockup.svg': [null, 64],
   'lockup-dark.svg': [null, 64],
   'favicon.svg': [32, 32],
+  'favicon-16.svg': [32, 32],
   'app-icon.svg': [1024, 1024],
   'app-icon-foreground.svg': [1024, 1024],
 };
@@ -48,7 +58,7 @@ export function ratioOf(svg) {
 /** A fingerprint of every SVG in the set in `dir`, which the generated files were built from. */
 export function sourceHash(dir) {
   const hash = createHash('sha256');
-  for (const file of FILES) hash.update(`${file}\0`).update(fs.readFileSync(path.join(dir, file)));
+  for (const file of filesIn(dir)) hash.update(`${file}\0`).update(fs.readFileSync(path.join(dir, file)));
   return hash.digest('hex');
 }
 
@@ -59,7 +69,7 @@ export function problems(dir) {
     if (!fs.existsSync(path.join(dir, file))) found.push(`missing ${file}`);
   }
   if (found.length) return found;
-  for (const file of FILES) {
+  for (const file of filesIn(dir)) {
     const svg = fs.readFileSync(path.join(dir, file), 'utf8');
     // react-native-svg's SvgXml ignores <style>, and <text> depends on the viewer's fonts.
     if (/<(style|text|image)\b|\bclass="/.test(svg)) found.push(`${file} uses <style>, <text>, <image> or class=`);

@@ -46,6 +46,7 @@ Every set has the same files, so any set can be installed:
 | `wordmark.svg`, `wordmark-dark.svg` | Lowercase "yappr" (height 64) |
 | `lockup.svg`, `lockup-dark.svg` | Mark and wordmark side by side (height 64): sidebar, headers |
 | `favicon.svg` | The browser tab icon, drawn for 16 and 32 px |
+| `favicon-16.svg` | Optional. The favicon snapped to the 16 px grid; the 16 px image in `favicon.ico` is drawn from it |
 | `app-icon.svg` | The full-bleed 1024 app tile, subject inside the centered 680 px circle |
 | `app-icon-foreground.svg` | The tile's subject on transparency, inside a radius-300 circle (Android adaptive icon, splash) |
 | `brand.json` | `style`, and `baseline`: where the wordmark's baseline sits in its 64-unit viewBox |
