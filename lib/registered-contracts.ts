@@ -4,9 +4,9 @@ import type { ActionFeeDeclaration, DocumentAction, SettledDeletionRule } from '
  * What the app reads off a REGISTERED contract where it may differ from the
  * committed template the build bundles: a deployment registered from an
  * earlier cut of the same file keeps its own values. Sakura's (/devnet)
- * social v17, blog v9 and storefront v10 (like the retired staging
- * rehearsal's) were registered before D39 and D41, so they still declare a week's single-moderator window, three
- * settled approvals, the owner protected and the earlier action fees, while
+ * social v17, blog v9 and storefront v10, and the D36 rehearsal's that
+ * /staging-old serves, were registered before D39 and D41, so they still
+ * declare a week's single-moderator window, three settled approvals, the owner protected and the earlier action fees, while
  * the files say a day, two, unprotected and lower fees. The same contracts
  * key `reply.repliesOf` on `rootPostId`, where the release file keys it on
  * `live` first, so which index shape the reads must match is read here too.
