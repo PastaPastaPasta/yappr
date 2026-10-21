@@ -176,7 +176,7 @@ jobs:
       - name: Check export file sizes
         run: node scripts/check-export-sizes.mjs
 
-      - name: Build testnet staging rehearsal
+      - name: Build /staging (same release set, D20)
         run: |
           rm -rf .next out
           npm run build:staging

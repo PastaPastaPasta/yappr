@@ -762,8 +762,8 @@ export function repliesCarryLiveMarker(): boolean {
  * whose `replyToReplyId` is absent (Platform refuses that, 10231).
  *
  * Both shapes are called v17: only the release file is keyed on `live`, while
- * /staging, /testing and sakura (/devnet) registered the earlier cut, where
- * the pin is refused instead. So the answer is the REGISTERED contract's index
+ * sakura (/devnet) registered the earlier cut, where the pin is refused
+ * instead (/testing runs v2, with no repliesOf). So the answer is the REGISTERED contract's index
  * once the SDK has recorded it (lib/registered-contracts.ts), and the
  * committed file's before that.
  */
@@ -1982,8 +1982,8 @@ export function tokenCostFor(docType: string): TokenCostDeclaration | null {
  * agreement at all is 40132.
  *
  * The REGISTERED contract's fee wins once the SDK has recorded it
- * (lib/registered-contracts.ts): /staging and sakura (/devnet) registered
- * before D41 lowered the fees, and agreeing to the file's amount there would
+ * (lib/registered-contracts.ts): sakura (/devnet) registered before D41
+ * lowered the fees, and agreeing to the file's amount there would
  * be refused (40133).
  */
 export function declaredActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {

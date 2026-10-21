@@ -94,7 +94,7 @@ export function itemImageLimit(): number {
  */
 export function storefrontActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
   if (!storefrontIsV6()) return null
-  // The registered contract's fee once recorded: /staging's and sakura's storefront predate D41's fees.
+  // The registered contract's fee once recorded: sakura's storefront predates D41's fees.
   return registeredOr(registeredActionFee(YAPPR_STOREFRONT_CONTRACT_ID, docType, action), () => actionFeeOf(schemas[docType]?.actionFees, action))
 }
 

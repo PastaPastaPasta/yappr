@@ -18,7 +18,7 @@ and in the Play Console.
 | `APP_VARIANT` | Name | Bundle id / package | Icon badge | Network |
 | --- | --- | --- | --- | --- |
 | `devnet` | Yappr Dev | `pr.yap.app.dev` | amber "DEV" | devnet (sakura) |
-| `staging-testnet` | Yappr Staging | `pr.yap.app.staging` | blue "BETA" | testnet rehearsal |
+| `staging-testnet` | Yappr Staging | `pr.yap.app.staging` | blue "BETA" | testnet (release set, `/staging` handoffs) |
 | `testnet` | Yappr Beta | `pr.yap.app.beta` | blue "BETA" | testnet |
 | `production` | Yappr | `pr.yap.app` | none | mainnet; refused until the Rust engine (`YAPPR_ALLOW_PRODUCTION=1` overrides) |
 
@@ -26,14 +26,14 @@ Release configuration is shared with the web's fail-closed validator:
 
 | Variant | Authoritative public env | Web handoffs and wallet HTTPS return |
 | --- | --- | --- |
-| `staging-testnet` | committed `.env.staging` | `https://yap.pr/staging` |
-| `testnet` | `.env.testnet`, filled at cut-over | `https://yap.pr` |
+| `staging-testnet` | committed `.env.testnet` (D20) | `https://yap.pr/staging` |
+| `testnet` | committed `.env.testnet` | `https://yap.pr` |
 | `devnet` | committed `.env.devnet` | `https://yap.pr/devnet` |
 
 The testnet variants force `NEXT_PUBLIC_RELEASE=1` and validate every release
-pin before building. Missing or unfilled `.env.testnet` fails intentionally;
-ambient public env variables cannot supply missing pins. Staging needs no local
-patch, copied env file or skip-build flag:
+pin before building. A missing or incomplete `.env.testnet` fails intentionally;
+ambient public env variables cannot supply missing pins. Neither variant needs a
+local patch, copied env file or skip-build flag:
 
 ```bash
 # From the repository root

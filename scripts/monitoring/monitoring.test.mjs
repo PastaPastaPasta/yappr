@@ -30,15 +30,15 @@ describe('release configuration', () => {
       expect(readNetwork(root, 'testing').pins).toEqual([{ id }]);
     } finally { rmSync(root, { recursive: true }); }
   });
-  it('pins the staging rehearsal snapshot independently of production', async () => {
+  it.each(['production', 'staging'])('pins the %s release set to its committed snapshot', async name => {
     const { expectations } = await import('./manifest.mjs');
-    const config = await expectations(process.cwd(), 'staging');
+    const config = await expectations(process.cwd(), name);
     expect(config.network).toBe('testnet');
+    // Eight group members plus the DashPay profile, DPNS and token-history system contracts.
     expect(config.pins).toHaveLength(11);
-    const snapshot = JSON.parse(readFileSync(new URL('../../lib/contracts/snapshots/testnet-staging.json', import.meta.url), 'utf8'));
-    expect(new Set(Object.keys(snapshot.contracts))).toEqual(new Set(config.pins.map(pin => pin.id)));
-    expect(config.pins.every(pin => !pin.error && pin.schemaHash)).toBe(true);
-    expect(config.env.NEXT_PUBLIC_APP_CONNECT_APP_ID).toBe('AwjuEqZtXwBq5jU9tg8UnRMmXrwb3nozSgGx59ghD1c1');
+    const snapshot = JSON.parse(readFileSync(new URL('../../lib/contracts/bundled/testnet.json', import.meta.url), 'utf8'));
+    expect(config.pins.every(pin => snapshot.contracts[pin.id] && !pin.error && pin.schemaHash)).toBe(true);
+    expect(config.env.NEXT_PUBLIC_APP_CONNECT_APP_ID).toBe('D8benQGnycUTXbT8GRAaYf3GZMKVcWESiF9NyyW1Bi4e');
   });
   it('hashes schema values independently of object key order', () => {
     expect(schemaHash({ b: { z: 1, a: 2 }, a: [1, 2] })).toBe(schemaHash({ a: [1, 2], b: { a: 2, z: 1 } }));

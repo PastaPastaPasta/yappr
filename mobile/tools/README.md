@@ -322,13 +322,13 @@ for `dash-st:`.
 | `src/main.ts` | CLI and HTTP server |
 | `test/` | A full app ↔ wallet round trip with the write stubbed; `dash-st:` parse, sign and signature check; App Connect against an in-memory chain (`test/app-connect-chain.ts`) judged by the shared verifier, and the interop vectors through the responder's sealing |
 
-### Testnet staging rehearsal
+### Testnet staging rehearsal (retired)
 
-Use the protected staging persona ledger as the pool and the committed staging env file:
+The D36 rehearsal set and its `.env.staging` were retired on 2026-10-21; `/staging` now runs the production release set, where no battery or responder writes are allowed. To replay against the rehearsal contracts, restore that env file from git history into a private path and pass it with `--env-file`:
 
 ```sh
 npm --prefix mobile/tools run build
-YAPPR_SAKURA_IDENTITIES="$STAGING_PERSONA_LEDGER" node mobile/tools/test-wallet-responder.mjs --serve 127.0.0.1:8789 --env-file .env.staging
+YAPPR_SAKURA_IDENTITIES="$STAGING_PERSONA_LEDGER" node mobile/tools/test-wallet-responder.mjs --serve 127.0.0.1:8789 --env-file "$REHEARSAL_ENV_FILE"
 ```
 
 Set `STAGING_PERSONA_LEDGER` to the protected testnet ledger path. Run `--help` for the persona selection options. The pool must be tagged `testnet`. App Connect requests carry the staging APP_ID; grant state is stored in the testnet namespace. Messaging derives from the persona's CRITICAL key and the requested app anchor, matching staging provisioning.

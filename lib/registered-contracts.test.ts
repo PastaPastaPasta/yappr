@@ -4,7 +4,7 @@ import {
   registeredSettledRule, rememberRegisteredContract, trackRegisteredRefresh,
 } from './registered-contracts'
 
-/** /staging's social v17 as registered (before D39/D41), the way the wasm `DataContract` exposes it: integers as bigints. */
+/** A social v17 registered before D39/D41 (sakura, the retired staging rehearsal), the way the wasm `DataContract` exposes it: integers as bigints. */
 const STAGING_SOCIAL = {
   schemas: {
     post: {

@@ -6,8 +6,8 @@ This is the committed record of Yappr's first true release on Dash testnet. It h
 - Conventions: **D-numbers** are the owner's release decisions (section 2). **R-numbers** are backlog items from the pre-release audit. Neither is related to the D-numbers in `docs/mobile/` (those are older, mobile-only decisions).
 - **[O]** marks a step only the owner can do or approve. **[A]** marks work an agent does.
 - **Pre-cut-over cleanup:** [RELEASE_CLEANUP.md](RELEASE_CLEANUP.md) records removals and the legacy paths retained until production configuration changes. [The archive index](archive/README.md) locates historical contract and deployment evidence.
-- **Monitoring and incident response:** [MONITORING.md](MONITORING.md) describes the scheduled site/chain probes, thresholds, incident issues, and recurring operator tasks. Production-chain coverage stays pending until `.env.testnet` contains the registered release IDs.
-- **Configuration and cut-over:** [TESTNET_DEPLOY.md](TESTNET_DEPLOY.md) documents the opt-in release build, public env template, exact build switch, all web/mobile/mirror call sites, storage epoch and post-registration deployment order. The preparation mechanism leaves today's sites unchanged.
+- **Monitoring and incident response:** [MONITORING.md](MONITORING.md) describes the scheduled site/chain probes, thresholds, incident issues, and recurring operator tasks. `.env.testnet` holds the registered release IDs since the 2026-10-21 activation; production-chain coverage starts when that reaches master.
+- **Configuration and cut-over:** [TESTNET_DEPLOY.md](TESTNET_DEPLOY.md) documents the opt-in release build, public env template, exact build switch, all web/mobile/mirror call sites, storage epoch and post-registration deployment order. Since the 2026-10-21 activation, `npm run build` uses it for root and `/staging`.
 
 ## 1. Goal and scope
 
@@ -37,8 +37,8 @@ Once a contract is registered, the shape of its existing document types cannot c
 - **D3, YAPP authorities.** Manual mint, manual burn, freeze, unfreeze and destroy-frozen-funds are all set to `noOne`. YAPP supply comes only from the 100-YAPP once-per-identity claim. YAPP is non-transferable and bans already stop spending, so the owner needs none of these powers. The "Mainnet TODO" line at `lib/constants.ts:24` is removed if it concerns this.
 - **D4, sponsorship.** Unchanged: post, reply, like and like-reply cost 10, 3, 1 and 1 YAPP with gas paid by the contract owner, and no size changes are made for this purpose. Storage refunds going to the document owner is by design in rc.3. Exposure is bounded at roughly 74 to 132¢ per identity because the 100-YAPP grant cannot be topped up. The maker balance is monitored.
 - **D5, settled deletion.** Post and reply kept `leader: true, approvals: 3`; D41 lowers it to 2. The owner extended the same window and settled rule to blog posts and comments on 2026-10-17; storefront stays unchanged. Yappr's charters always elect the leader plus at least two members, so three approvals is reachable.
-- **D39, a day for one moderator (2026-10-19).** `deleteWithin` on post, reply, blog post and blog comment is 86,400 s, down from 604,800 s: one moderator removes content alone for a day after it is written, then the D5 team rule applies. Social v17 and blog v9 carry it; the registered /staging set keeps 604,800 s until it is re-cut, and the client reads each deployment's registered window.
-- **D41, moderation parameters (2026-10-19).** In social v17, blog v9 and storefront v10: `deleteSettled` is `{leader: true, approvals: 2}` (was 3; the count includes the leader, so a settled removal needs the leader and one more moderator); `ownerProtected` is false; the moderators' create fees are post 20M, reply 10M, report 20M (all three contracts), blog 500M, blog post 20M, blog comment 10M, store 500M, item 20M, store review 10M, item review 5M credits (pricing `feeMultiplier`; 1¢ ≈ 20M credits at $50/DASH). `maxAddedModerators` stays 10 and the files keep a 30-day `challengeCoolDown`. The registered /staging and sakura (/devnet) sets keep the earlier values; the client reads each deployment's registered fees, rule and protection.
+- **D39, a day for one moderator (2026-10-19).** `deleteWithin` on post, reply, blog post and blog comment is 86,400 s, down from 604,800 s: one moderator removes content alone for a day after it is written, then the D5 team rule applies. Social v17 and blog v9 carry it, and so does the production set registered on 2026-10-21. The retired D36 staging rehearsal set kept 604,800 s; the client reads each deployment's registered window.
+- **D41, moderation parameters (2026-10-19).** In social v17, blog v9 and storefront v10: `deleteSettled` is `{leader: true, approvals: 2}` (was 3; the count includes the leader, so a settled removal needs the leader and one more moderator); `ownerProtected` is false; the moderators' create fees are post 20M, reply 10M, report 20M (all three contracts), blog 500M, blog post 20M, blog comment 10M, store 500M, item 20M, store review 10M, item review 5M credits (pricing `feeMultiplier`; 1¢ ≈ 20M credits at $50/DASH). `maxAddedModerators` stays 10 and the files keep a 30-day `challengeCoolDown`; testnet registration overrides it to 1,209,600 s (14 days) with `--challenge-cool-down`, mainnet keeps 2,592,000 s. The production set registered on 2026-10-21 carries these values; the retired D36 staging rehearsal set and sakura (/devnet) keep the earlier ones; the client reads each deployment's registered fees, rule and protection.
 - **D6, self-likes.** Blocked on chain: `like.postAuthor` gets `distinctFrom: $ownerId` (and the equivalent on like-reply if it carries an author). The like button is hidden on your own posts.
 - **D7, tags.** The ASCII pattern `^[a-z0-9_]{1,61}$` stays. The client is fixed so a tag with non-ASCII characters stays plain text instead of being indexed as a truncated ASCII prefix.
 - **D10, auth vault.** The current password-era vault does not go into the set. It is replaced by a new design, likely passkey-only, registered as a member of the App Connect group in the release set. The work runs in order: a dual design by Fable and Opus, a crypto review, then implementation. Password login is removed, and passkey sign-in returns with the new vault.
@@ -151,10 +151,34 @@ Every PR goes to `staging` through the normal gates (lint, unit tests, build, de
 3. [A] Run `--plan` and record the app id and group id. **Start the maker nonce freeze.** [O] Send the app id and `https://yap.pr` to the DashPay iOS and Android brand maps.
 4. [A] Run `--dry-run` then `--signed-dry-run`. Check that the interim, windows, app id, group id and member ids match the plan.
 5. [O/A] Run `--live --journal --upto app`, read back the group (owner is the maker, no admins, name Yappr), then `--live` for the members.
-6. [A/O] **Prepare before registration and file immediately afterward**, independently for social, blog and storefront, following the charter procedure below. Prove the submitted proposal, members' joins, and elected application in that order. Tie-break priority belongs to the **elected application**, not the submitted proposal. The owner's masternode majority decides contested elections. A sole contender seats after the 1 h join window; a contested election also takes its 1 h vote window. Posting stays closed until a team actually seats.
+6. [A/O] **Prepare before registration and file immediately afterward**, independently for social, blog and storefront, following the charter procedure below. Prove the submitted proposal, members' joins, and elected application in that order. Tie-break priority belongs to the **elected application**, not the submitted proposal. The owner's masternode majority decides contested elections. A sole contender seats after the one-day (86400 s) join window; a contested election also takes its one-day (86400 s) vote window. Posting stays closed until a team actually seats.
 7. [A] Run read-only `verify-appconnect g1,g2,g3,a1` (expect 32/0) and one proved query per index family. Snapshot the contracts and end the nonce freeze. [O] Write the anchor `appInfo` (name Yappr, url `https://yap.pr`).
 
 **Gate G4.** All ids and hashes recorded in the runbook, charters seated, the journal at mode 0600 with an off-machine backup.
+
+#### Production registration record (2026-10-21)
+
+Registered from staging `815b4b2b` by the maker `hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A` (signing key id 2), with `--interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600`, between 17:08:12Z and 17:09:06Z. Network: PV14, epoch 19791, fee multiplier 1000‰. All eight creates landed on their first broadcast at the planned nonces and ids; every member is version 1. Fees are the maker's proved balance delta per create (1M credits ≈ 0.06¢).
+
+| Nonce | Entry | Id | Height | Fee (credits) | ≈¢ |
+| ---: | --- | --- | ---: | ---: | ---: |
+| 57 | app (anchor, registers the group) | `D8benQGnycUTXbT8GRAaYf3GZMKVcWESiF9NyyW1Bi4e` | 637618 | 13,095,601,790 | 785.74 |
+| 58 | social v17 | `4nYYMMs94m4asfQ2PdJ69uqugpfJ7PaQNjhJyHXSeLfb` | 637619 | 91,784,082,710 | 5,507.04 |
+| 59 | blocks | `8mUwsZeNrhxxisZyM8XHXKG8xXEdnqYRNJK1pCGvZ2MU` | 637620 | 19,112,246,100 | 1,146.73 |
+| 60 | DM v5 | `8CCeK3QZuB1LT1eVMpRoMihh4DVMhmBbtLJvXEzaLMbN` | 637621 | 22,184,978,370 | 1,331.10 |
+| 61 | blog v9 | `FEqLoioCnW88QamdCvJgAoLqD1gFv871hqfvGbYZgp8r` | 637622 | 38,427,806,340 | 2,305.67 |
+| 62 | pollr v8 | `EgGeh8Q1P9xV2mPnmgsYhsN8cDDb46wHNyzE88Bg11dK` | 637623 | 17,161,865,020 | 1,029.71 |
+| 63 | storefront v10 | `HTxaJC5hR9TZTCbY5D9JieEEYqGMmSW83uX7JE6akNre` | 637624 | 60,740,683,730 | 3,644.44 |
+| 64 | passkey vault | `7unuMBL9REWq8x8J2Hjbks2M46SxRcNs4sHGuiHWXmLN` | 637626 | 13,085,971,070 | 785.16 |
+| | **Total** | | | **275,593,235,130** | **16,535.59** |
+
+- **Group:** `4MjVAxDYjCdQqFBT48gzdvCsbVwFwtZzALEMWjns33pv`, owner the maker, no admins, named Yappr, exactly the eight members above at version 1. Read-only `verify-appconnect --only g1,g2,g3,a1` reported **32/0**.
+- **YAPP token:** `F6vpQqJbuqL4CB5mwFG1q5ngTFd9CEdzzuwLLgxuF1RN` = `tokens.calculateId(social, 0)` (activation PR readback; total supply 0).
+- **Registered moderation policy** on social, blog and storefront: `notYetUsable`, join 86400 s, vote 86400 s, election delay 86400 s, challenge cool-down 1209600 s. The first charter can be filed from creation + 86400 s: social ≥ 2026-10-22 17:08:42Z, blog ≥ 17:08:53Z, storefront ≥ 17:08:59Z (chain time). Posting stays closed until a team seats.
+- **File pins (sha256)**, equal to `APP_CONNECT_ENTRIES`: app `d3acd888…41f41`, social `77cf4308…196bf`, blocks `ba0ef67a…d3677`, DM v5 `4fe2b3f4…37c21`, blog `448fb9ea…1504c`, pollr `a77afe5f…d2347`, storefront `69daf979…f05dc`, passkey vault `14094cad…f73c5`. The registration tool proved each registered schema equal to its pinned file as rendered with the policy.
+- **Readback:** every one of the 95 indexes across the eight members answered a proved query. The decoded contracts equal the bundled `lib/contracts/bundled/testnet.json` entries the app seeds from.
+- **Maker after registration:** 1,025,528,697,060 credits (≈61,531.72¢), nonce 64. Monitoring floor 200e9 credits.
+- **Journal:** mode 0600 in a 0700 directory, all eight entries verified. **Still owner items for G4:** its off-machine backup, the anchor `appInfo` write, and the charters.
 
 ### Charter preparation, filing, and masternode votes
 
@@ -170,7 +194,7 @@ Example manifest (`social-charter.json`; repeat with the other target names and 
   "targetContractId": "<predicted-social-contract-id>",
   "expected": {
     "ownerId": "<registration-maker-id>",
-    "joinWindow": 86400, "voteWindow": 86400, "challengeCoolDown": 2592000,
+    "joinWindow": 86400, "voteWindow": 86400, "challengeCoolDown": 1209600,
     "interim": "notYetUsable",
     "documentTypes": ["post", "reply", "report", "yapprProfile"]
   },
@@ -206,7 +230,7 @@ Example manifest (`social-charter.json`; repeat with the other target names and 
      --config "$PRIVATE_RELEASE_DIR/social-charter.json" --journal "$PRIVATE_RELEASE_DIR/social-charter-journal.json"
    ```
 
-4. **Arm the prepared filer, then register the target.** Start the command below in a second terminal before the corresponding registration command. It checks the prepared state, waits up to 600 seconds for proved registration, checks the registered owner, 1h/1h windows, interim, cool-down, and moderated types against `expected`, requires no election delay, signs and submits the proposal, commits members' encrypted joins in parallel, then checks the current join phase and applies with the full elected member list. Repeat for blog and storefront, matching each id against the actual registration journal. Set `expected.documentTypes` from each target's registration plan: social uses `post`, `reply`, `report`, `yapprProfile`; blog uses `blog`, `blogPost`, `blogComment`, `report`; storefront uses `store`, `storeItem`, `storeReview`, `itemReview`, `report`. A declaration mismatch stops before proposal or deposit. The contest fund must still equal the reviewed 0.5 DASH budget. The registration batch can be stopped after an entry with `--upto`; it does not itself interleave charters.
+4. **Arm the prepared filer, then register the target.** Start the command below in a second terminal before the corresponding registration command. It checks the prepared state, waits up to 600 seconds for proved registration, checks the registered owner, 86400 s/86400 s windows, interim, cool-down, and moderated types against `expected`, requires no election delay, signs and submits the proposal, commits members' encrypted joins in parallel, then checks the current join phase and applies with the full elected member list. Repeat for blog and storefront, matching each id against the actual registration journal. Set `expected.documentTypes` from each target's registration plan: social uses `post`, `reply`, `report`, `yapprProfile`; blog uses `blog`, `blogPost`, `blogComment`, `report`; storefront uses `store`, `storeItem`, `storeReview`, `itemReview`, `report`. A declaration mismatch stops before proposal or deposit. The contest fund must still equal the reviewed 0.5 DASH budget. The registration batch can be stopped after an entry with `--upto`; it does not itself interleave charters.
 
    ```sh
    NETWORK=testnet node scripts/file-release-charters.mjs --live --production --wait-registration 600 \
@@ -228,7 +252,7 @@ For example, when preparing blog after social with shared actors, append `--prio
 
    After join closes, use the adapter's `mn-vote.mjs --target "$CONTRACT_ID" --choice "towards:$LEADER_ID" --nodes all --live` for **each** target. Use the exact poll returned by `votePollsByEndDate`, preserving its Identifier index value (`0x10`); rebuilding a Text-valued poll can address the wrong contest fund. Prove voter nonce advancement and the landed tally. Evonodes carry weight four. Each landed vote costs **2M credits (approximately 0.12¢) from the contest fund**, not an extra charge to the leader. Do not cast lock votes: moderation elections are no-locking polls. **Our masternode majority decides contested elections**; first application only wins a tie, and it is not reserved ownership.
 
-6. **Prove seating before opening the release.** After chain time crosses the deadline, read the canonical winner, `seatedCharter`, and every elected identity for all three contracts; perform a real moderated write and refresh each app gate. A sole applicant seats after join closes without needing a vote window. With `notYetUsable`, registration alone opens nothing: no application means no election clock. Protocol 14 does not implement challenges even when `seatContestable` and a 30-day cool-down are declared. `ownerProtected` protects the owner from lists; it gives no post-seat rescue authority.
+6. **Prove seating before opening the release.** After chain time crosses the deadline, read the canonical winner, `seatedCharter`, and every elected identity for all three contracts; perform a real moderated write and refresh each app gate. A sole applicant seats after join closes without needing a vote window. With `notYetUsable`, registration alone opens nothing: no application means no election clock. Protocol 14 does not implement challenges even when `seatContestable` and a cool-down (1,209,600 s on testnet) are declared. `ownerProtected` protects the owner from lists; it gives no post-seat rescue authority.
 
 ### Phase 5: Cut-over configuration PR on staging [A]
 
@@ -238,8 +262,10 @@ storage epoch. Activation remains a separate post-registration PR following
 [TESTNET_DEPLOY.md](TESTNET_DEPLOY.md). Issue [#784](https://github.com/PastaPastaPasta/yappr/issues/784)
 stays open until the built production configuration proves DM v5 is active.
 
+**Activated on staging 2026-10-21.** `.env.testnet` holds the registered set, `build` loads it for root and `/staging`, and the D36 staging rehearsal set is retired. What was done and what is left before the master merge is in the [TESTNET_DEPLOY.md activation record](TESTNET_DEPLOY.md#activation-record-2026-10-21).
+
 - A checked-in `.env.testnet` (ids are public) sourced by the `build` script itself, so every bare `npm run build` call site inherits it.
-- A fail-closed check in `next.config.js`: on testnet or mainnet the build fails if any required id, topology, login protocol, token authority or App Connect pin is unset. The testnet fallbacks are removed from `lib/constants.ts`, and `dev` sources an explicit env file.
+- A fail-closed check in `next.config.js`: on testnet or mainnet the build fails if any required id, topology, login protocol, token authority or App Connect pin is unset. The testnet fallbacks are removed from `lib/constants.ts`, and `dev` sources an explicit env file (deferred at activation: `/testing` still depends on them; see the activation record, step 4).
 - The mobile engine's testnet variant and the contract snapshot tool read `.env.testnet`; the bundled snapshot is regenerated and pruned.
 - A new root storage scope (D21), the `/staging` target (D20), and the docs (this document's results, `CLAUDE.md`, README, contracts README, `TESTING.md`, a new `TESTNET_DEPLOY.md`, stale PV13 comments).
 - Alongside it, CI and deploy hardening: devnet e2e only on pull requests, a `production_ref` dispatch input, staging-triggered production builds use the last CI-green master commit, and an `npm audit` step.
@@ -295,7 +321,7 @@ The owner signs this before Phase 7. Every line is yes or no.
 
 **Contracts and registration**
 - [ ] The full set is registered on testnet from `hbGEc…`, the journal is mode 0600 and backed up off the machine, and all ids and hashes are in the runbook.
-- [ ] The registered files match the pinned SHA-256 values, with the testnet window values (3600 s and 3600 s), and `verify-appconnect g1,g2,g3,a1` reports 32/0.
+- [ ] The registered files match the pinned SHA-256 values, with the testnet window values (86400 s and 86400 s; delay 86400 s; cool-down 1209600 s), and `verify-appconnect g1,g2,g3,a1` reports 32/0.
 - [ ] Charters for social, blog and storefront are seated, with no rival contender, and posting works.
 - [ ] No legacy contract (key exchange, old vault, key backup, DM v4) is registered or referenced.
 - [ ] The private-feed design has been reviewed by the owner (R-M5), and the new auth vault has passed its crypto review (D10).
@@ -398,7 +424,7 @@ See [SAKURA_RELEASE_REHEARSAL.md](SAKURA_RELEASE_REHEARSAL.md) for the exact dev
 
 - The eight-contract registration actually cost **275,588,573,800 credits (16,535.31¢)** on Sakura PV14. The estimate was about 279.43B credits with a 335.32B signing reserve. Re-measure the maker balance and epoch multiplier immediately before the testnet run; historical balances are not an adequate funding check.
 - A prepared proposal reached H+1 for social, but H+3 for blog and storefront. Full-member applications reached H+6, H+7 and H+8 after their proposals and joins. Treat H+1 as an operational target, record actual inclusion heights by matching saved signed transition hashes to indexer/node results, and never infer them from `observedTip`.
-- The election opens with the **earliest** eligible application, including a rival's. Derive deadlines from proved election state rather than the intended team's local submission clock. Three competing release elections each use 3600 s join + 3600 s vote; a single-contender rehearsal would not exercise the full contested path.
+- The election opens with the **earliest** eligible application, including a rival's. Derive deadlines from proved election state rather than the intended team's local submission clock. Three competing release elections each use 86400 s join + 86400 s vote; a single-contender rehearsal would not exercise the full contested path.
 - Preserve private charter-bound keys for reused identities. A pre-existing join/decryption key requires its retained private half, checked against the proved public key. When identity-update readback lags, resume the same journal to adopt its exact saved key; do not clear uncertain transitions or generate replacement nonces.
 - Keep the CI mnemonic/id pool separate from the deployment battery pool. The key/id preflight must run before broadcasts. Keep the CI fixture with no messaging key intact.
 - Run the social battery with the same `--interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600` overrides used for registration. Interim-owner moderation cases skip under that policy and after seating. Run r2 with a seated `--team-member persona:<n>` and a listed `--reason-doc`; blog/storefront batteries also need the listed reason id and must wait for seating (their moderation cases do not skip under `notYetUsable`).

@@ -5,7 +5,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 
-export const NETWORKS = { production: '.env.testnet', staging: '.env.staging', testing: '.env.testing', devnet: '.env.devnet' };
+// D20: /staging builds the staging checkout from the same release file as root.
+export const NETWORKS = { production: '.env.testnet', staging: '.env.testnet', testing: '.env.testing', devnet: '.env.devnet' };
 export const SITES = [
   { name: 'production', url: 'https://yap.pr/', network: 'production', source: 'master' },
   { name: 'testing', url: 'https://yap.pr/testing/', network: 'testing', source: 'master' },

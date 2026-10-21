@@ -160,12 +160,15 @@ hashes and registration order. The passkey vault
 joins as its own member; do not resurrect the password-era vault, key backup, key exchange or
 DM v4 for the release (D9/D10).
 
-**Keep deployment states separate.** Today's production default still selects
-social **v2**, DM **v3**, the old feature contracts and legacy login.
+**Keep deployment states separate.** The release set was registered on
+testnet on 2026-10-21; its ids are pinned in the checked-in `.env.testnet`,
+which `npm run build` loads for `/staging` (D20) and, once the owner merges
+staging into master, for root. Until that merge, master's root still selects
+social **v2**, DM **v3**, the old feature contracts and legacy login, and
+`/testing` still runs v2 through the `lib/constants.ts` defaults.
 `.env.devnet` selects Sakura **social v16**, blog **v8**, storefront **v9**,
-pollr **v7**, DM **v5** and App Connect. The authored release files are not a
-claim that the release set has been registered. WP14/WP15 record the ids and
-switch shipping builds; until then, keep paths used by either current build.
+pollr **v7**, DM **v5** and App Connect. Keep paths used by any current build
+until the legacy cleanup (WP17) removes them.
 The legacy v2 schema still has 500-character posts, a standalone profile,
 and `postHashtag`/`postMention` discovery documents.
 See [contracts/README.md](contracts/README.md),

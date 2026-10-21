@@ -787,7 +787,7 @@ describe('settled documents (v11 deleteWithin + deleteSettled)', () => {
       // It survives the team being dropped after an action: a window is fixed with its type.
       moderationService.invalidateTeam()
       expect(moderationService.isSettled('post', createdAt, createdAt + 2 * DAY_MS)).toBe(true)
-      // The /staging shape: the registered window is LONGER than the template's
+      // An earlier-registered shape: the registered window is LONGER than the template's
       // (there 604800 against the file's 86400; here two weeks against a
       // week), so a ten-day-old post is still one moderator's to remove.
       sdk.contracts.fetch.mockResolvedValue(registered(BigInt(1_209_600)))
@@ -821,7 +821,7 @@ describe('settled documents (v11 deleteWithin + deleteSettled)', () => {
       expect(await moderationService.removalRoute(MEMBER, 'post', createdAt, createdAt + 10 * DAY_MS)).toMatchObject({ route: 'team', needed: 2, leaderRequired: true })
       expect(moderationService.settledRule('reply')).toEqual({ windowSeconds: 604800, leaderRequired: true, approvals: 2 })
       expect(await moderationService.getProtectedIdentities()).toEqual(new Set([LEADER, MEMBER, APPOINTED]))
-      // /staging's set: three approvals, the owner protected.
+      // A set registered before D41: three approvals, the owner protected.
       sdk.contracts.fetch.mockResolvedValue(registered(BigInt(3), true))
       moderationService.invalidateTeam()
       expect(await moderationService.getProtectedIdentities()).toEqual(new Set([LEADER, MEMBER, APPOINTED, OWNER]))

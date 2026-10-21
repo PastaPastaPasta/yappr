@@ -104,22 +104,10 @@ function assertReleaseConfig(env) {
   }
 }
 
-// Empty until the cut-over env opts in. Preserve today's root and subpath keys.
+// Builds without an epoch (/testing, /devnet) keep their unprefixed subpath scope.
 function storageScope(basePath, epoch = '') {
   if (epoch && !STORAGE_EPOCH_PATTERN.test(epoch)) throw new Error('STORAGE_EPOCH must contain only letters, digits, _ or -')
   return [epoch, basePath.replace(/^\//, '')].filter(Boolean).join(':')
-}
-
-/** The rehearsal snapshot must contain exactly the selected release contracts. */
-function assertStagingSnapshot(snapshot, env) {
-  const pins = env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').map(pin => pin.split(':'))
-  const expectedIds = new Set([...pins.map(([id]) => id), env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID,
-    env.NEXT_PUBLIC_DPNS_CONTRACT_ID, env.NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID])
-  if (snapshot.network !== 'testnet' || Object.keys(snapshot.contracts).length !== expectedIds.size ||
-      Object.keys(snapshot.contracts).some(id => !expectedIds.has(id)) ||
-      pins.some(([id, version]) => snapshot.contracts[id]?.version !== Number(version))) {
-    throw new Error('The staging snapshot must match the exact testnet release contract pins')
-  }
 }
 
 /** Authoritative public release pins, shared by web and native builders. */
@@ -131,10 +119,10 @@ function loadReleaseEnv(file, ambient = process.env) {
     throw new Error(`Cannot load ${file}: ${error.message}\nComplete the public release configuration before building; see docs/TESTNET_DEPLOY.md.`)
   }
   const env = Object.fromEntries(Object.entries(ambient).filter(([key]) =>
-    !key.startsWith('NEXT_PUBLIC_') && key !== 'STORAGE_EPOCH' && key !== 'YAPPR_STAGING_REHEARSAL'))
+    !key.startsWith('NEXT_PUBLIC_') && key !== 'STORAGE_EPOCH'))
   Object.assign(env, configured, { NEXT_PUBLIC_RELEASE: '1' })
   assertReleaseConfig(env)
   return env
 }
 
-module.exports = { assertReleaseConfig, storageScope, loadReleaseEnv, assertStagingSnapshot }
+module.exports = { assertReleaseConfig, storageScope, loadReleaseEnv }

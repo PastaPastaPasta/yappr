@@ -55,10 +55,9 @@ function yappCostCopy(): string {
 /**
  * When a removal needs the team, from the settled-deletion rule the build's
  * contracts declare (a day on the release set, D39); empty where moderators
- * remove at any age. The /staging rehearsal set and sakura's /devnet set were
- * registered before D39 and D41, so their contracts declare other values than
- * the files they are built from: there the sentence names no window or count
- * (#822).
+ * remove at any age. Sakura's /devnet set was registered before D39 and D41,
+ * so its contracts declare other values than the files it is built from:
+ * there the sentence names no window or count (#822).
  */
 function settledRemovalCopy(): string {
   const rule = settledDeletionFor('post')
@@ -72,8 +71,8 @@ function settledRemovalCopy(): string {
   return ` Removing ${what} that is more than ${formatDuration(rule.windowSeconds)} old needs ${approversCopy(rule)} to agree.`
 }
 
-/** Deployments whose registered contracts predate the files' moderation values (the testnet rehearsal, sakura). */
-const EARLIER_REGISTERED_BASE_PATHS = ['/staging', '/devnet']
+/** Deployments whose registered contracts predate the files' moderation values (sakura). */
+const EARLIER_REGISTERED_BASE_PATHS = ['/devnet']
 
 const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
 
