@@ -202,12 +202,19 @@ describe('posts.thread on flat threads (v9/v10)', () => {
     m.provenAbsent.mockResolvedValue(new Set([id('Removed')]))
     const thread = await posts.thread(id('Root'))
     expect(validate(threadDTO, thread)).toEqual([])
-    expect(m.replyService.getMany).toHaveBeenCalledWith([id('Tomb'), id('Removed')])
-    expect(m.provenAbsent).toHaveBeenCalledWith('reply', [id('Removed')])
+    expect(m.replyService.getMany).toHaveBeenCalledWith([id('Tomb'), id('Removed')], { throwOnError: true })
+    expect(m.provenAbsent).toHaveBeenCalledWith('reply', [id('Removed')], { throwOnError: true })
     expect(thread.replies.items.map(item => [item.id, item.depth, item.deleted, item.deletedStub ?? false])).toEqual([
       [id('Tomb'), 0, true, false], [id('Orphan'), 1, false, false],
       [id('Removed'), 0, true, true], [id('Under'), 1, false, false],
     ])
+  })
+
+  it('rejects the page when a missing parent cannot be read, instead of dropping the replies under it', async () => {
+    m.topology = { ...m.topology, replyThreadsCarryLiveMarker: true }
+    m.replyService.getReplies.mockResolvedValue({ documents: [reply('Orphan', 5, 'Tomb')] })
+    m.replyService.getMany.mockRejectedValue(new Error('DAPI unavailable'))
+    await expect(posts.thread(id('Root'))).rejects.toBeDefined()
   })
 })
 

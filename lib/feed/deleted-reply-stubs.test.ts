@@ -91,6 +91,16 @@ describe('withMissingReplyParents', () => {
     expect(replies.map((x) => x.id)).toEqual(['gone', 'c1', 'c2', 'c3'])
   })
 
+  it('follows a chain of tombstoned parents of any depth, reading each once', async () => {
+    shape.liveThreads = true
+    const chain = Array.from({ length: 12 }, (_, i) => tombstone(`t${i}`, i === 0 ? undefined : `t${i - 1}`, i + 1))
+    const byId = new Map(chain.map((r) => [r.id, r]))
+    const getMany = vi.fn(async (ids: string[]) => ids.flatMap((id) => byId.get(id) ?? []))
+    const replies = await withMissingReplyParents([reply('leaf', 't11', 100)], { getMany, provenAbsent: async () => new Set<string>() })
+    expect(getMany).toHaveBeenCalledTimes(12)
+    expect(new Set(replies.map((x) => x.id))).toEqual(new Set(['leaf', ...chain.map((r) => r.id)]))
+  })
+
   it('neither reads nor proves a parent an earlier page already shows', async () => {
     shape.liveThreads = true
     const r = reads()

@@ -1,9 +1,6 @@
 import type { Reply } from '@/lib/types';
 import { replyThreadsCarryLiveMarker, repliesOutliveTheirParent } from '@/lib/contract-topology';
 
-/** Rounds of by-id parent reads, one per level of a chain of tombstoned parents. */
-const MAX_PARENT_ROUNDS = 8;
-
 /** The reads {@link withMissingReplyParents} makes; both reject when the read or proof fails. */
 export interface MissingParentReads {
   /** The replies among `ids` that exist, read by id. */
@@ -19,7 +16,8 @@ export interface MissingParentReads {
  * - Where `repliesOf` is keyed on `live` (`replyThreadsCarryLiveMarker`), an
  *   author's tombstone is not listed, so a live reply under one comes back
  *   without it. Missing parents are read by id and the tombstones among them
- *   added (a chain of them, one level per round); the thread shows each as
+ *   added (a chain of them, one level per round, until no new parent is
+ *   missing; each id is read once); the thread shows each as
  *   its "deleted" placeholder. A live parent on a later page is left to that
  *   page, as on the earlier shape.
  * - Where a reply can outlive its parent (`repliesOutliveTheirParent`), the
@@ -33,7 +31,7 @@ export async function withMissingReplyParents(replies: readonly Reply[], reads: 
   let all = [...replies];
   if (replyThreadsCarryLiveMarker()) {
     const tried = new Set<string>();
-    for (let round = 0; round < MAX_PARENT_ROUNDS; round++) {
+    for (;;) {
       const missing = unloadedReplyParents(all, loaded).filter((id) => !tried.has(id));
       if (missing.length === 0) break;
       missing.forEach((id) => tried.add(id));

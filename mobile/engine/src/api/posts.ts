@@ -229,10 +229,11 @@ async function loadFlatReplies(focus: Post, pages: number): Promise<{ replies: F
 
   // A reply whose parent the page lacks keeps its place under the parent's
   // tombstone, read by id where `repliesOf` does not list tombstones, or
-  // under a stub for a parent proved gone, as on web.
+  // under a stub for a parent proved gone, as on web. Both reads reject, so
+  // a failed one fails the page rather than dropping the replies under it.
   replies = await withMissingReplyParents(replies, {
-    getMany: ids => replyService.getMany(ids),
-    provenAbsent: ids => provenAbsent('reply', ids),
+    getMany: ids => replyService.getMany(ids, { throwOnError: true }),
+    provenAbsent: ids => provenAbsent('reply', ids, { throwOnError: true }),
   })
   const threads = assembleFlatThread({ id: focus.id, authorId: focus.author.id, isReply }, replies)
   return { replies: flattenThreads(threads), hasMore: next !== undefined }
