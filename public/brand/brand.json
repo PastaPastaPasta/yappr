@@ -1,10 +1,10 @@
 {
-  "style": "fox-badge",
+  "style": "gpt-fox",
   "baseline": 46,
-  "iconBackground": "#0369a1",
+  "iconBackground": "#171717",
   "ratio": {
     "wordmark": 2.891,
     "lockup": 4.109
   },
-  "source": "c1e2ed9f7fba11409bc815373f1e51f54e59dcb9d7f0188182648be0bf154b4d"
+  "source": "40c66d753735826fbb02867c140c7ed2bff73dd952213abe38154a446503b2b2"
 }
