@@ -210,6 +210,15 @@ that day ([TESTNET_RELEASE.md](TESTNET_RELEASE.md#production-registration-record
    production set, with posting closed. Root changes only with the owner's
    staging→master merge, followed by step 8.
 
+**Cloudflare Pages yappr: owner action before the master merge.** This PR's
+preview from the **yappr** project (commit `79b371f`) still exported the legacy
+configuration: its `yappr-contract-config` metadata named `9oDC6xdg…` and DM v3,
+and no chunk contained the release social id. The project therefore does not
+run this repository's `npm run build`, or its env overrides win. Set its build
+command to `npm run build` (Node 20.12 or later), remove the dashboard
+`NEXT_PUBLIC_*` overrides, and check a preview's metadata before merging
+staging into master.
+
 ## Defaults deliberately retained until cut-over
 
 Removing these would change today's `/testing`, `dev` and unit tests, which
