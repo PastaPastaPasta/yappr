@@ -198,10 +198,25 @@ const CONTRACT_BY_ID = new Map<string, ContractKey>(
 
 /**
  * Client shapes Drive refuses on the release cut that a builder still has to
- * fix (none today). Matched by request signature; each must still be refused,
- * so an entry has to go once its builder is fixed.
+ * fix. Matched by request signature; each must still be refused, so an entry
+ * has to go once its builder is fixed.
+ *
+ * v17's `reply.repliesOf` is `[live, rootPostId, replyToReplyId, $createdAt]`
+ * with `skipIfAbsent: ["live"]` (2026-10-21): every thread read, reply count
+ * and reply count slot must pin `live == true` first, gated by
+ * `replyThreadsCarryLiveMarker()`. The client rewrite lands separately.
  */
-const PENDING_BUILDER_FIXES: readonly { signature: string; fix: string }[] = []
+const REPLIES_OF_LIVE_PIN = 'pin `live == true` on repliesOf when replyThreadsCarryLiveMarker() (v17)'
+const PENDING_BUILDER_FIXES: readonly { signature: string; fix: string }[] = [
+  'social.reply compositeSub |  | ',
+  'social.reply compositeSub | rootPostId == | ',
+  'social.reply count | rootPostId == | ',
+  'social.reply count | rootPostId ==, replyToReplyId == | ',
+  'social.reply count | rootPostId ==, replyToReplyId in | ',
+  'social.reply count | rootPostId in | ',
+  'social.reply documents | rootPostId == | replyToReplyId asc, $createdAt asc',
+  'social.reply documents | rootPostId ==, replyToReplyId == | $createdAt asc',
+].map((signature) => ({ signature, fix: `${signature}: ${REPLIES_OF_LIVE_PIN}` }))
 
 /** Logged warnings that are not failed reads (node has no localStorage). */
 const BENIGN_LOGS: readonly RegExp[] = [/^Like notifications: the snapshot could not be saved/]

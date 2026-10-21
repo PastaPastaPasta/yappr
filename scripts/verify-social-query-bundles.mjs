@@ -8,7 +8,10 @@
  * Social v10 has no repost type: a repost is a post quoting its target with no
  * content, so it notifies through post.quotedPostOwnerRecent, sits in its
  * author's own post pages, and the quote count is the repost count. Per-reply
- * counts pin the root (repliesOf [rootPostId, replyToReplyId, $createdAt]).
+ * counts pin the root (repliesOf [rootPostId, replyToReplyId, $createdAt]). On
+ * v17 repliesOf is [live, rootPostId, replyToReplyId, $createdAt] with
+ * skipIfAbsent ["live"], so every thread read and reply count slot pins
+ * `live == true` first and a tombstoned reply is neither listed nor counted.
  *
  * Notification sources: follows, mentions (post.mentionedUserAndTime and
  * reply.mentionedUserAndTime) and follow requests are permanent and bundle;
@@ -293,7 +296,7 @@ async function threadRoot() {
   for (const doc of timeline) {
     const rootPostId = id(doc.$id);
     const direct = await sdk.documents.count({ dataContractId: social, documentTypeName: 'reply',
-      where: [['rootPostId', '==', rootPostId], ['replyToReplyId', '==', null]] });
+      where: SOCIAL.threadWhere([['rootPostId', '==', rootPostId], ['replyToReplyId', '==', null]]) });
     if (Number(direct.get('') ?? 0) > 0) return rootPostId;
   }
   return id(timeline[0].$id);
@@ -312,7 +315,7 @@ async function verifyEnrichment(kind) {
         where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
         orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 })
       : { dataContractId: social, documentTypeName: kind,
-        where: [['rootPostId', '==', root], ['replyToReplyId', '==', null]],
+        where: SOCIAL.threadWhere([['rootPostId', '==', root], ['replyToReplyId', '==', null]]),
         orderBy: [['$createdAt', 'asc']], limit: 20 };
     const page = records(await sdk.documents.query(pageQuery));
     const ids = page.map(doc => id(doc.$id));
@@ -320,7 +323,7 @@ async function verifyEnrichment(kind) {
     const likeType = kind === 'post' ? 'like' : 'likeReply';
     // [documentType, bound field, fixed where]; the quote count is the repost count.
     const countSources = [[likeType, targetField, []],
-      kind === 'post' ? ['reply', 'rootPostId', []] : ['reply', 'replyToReplyId', [['rootPostId', '==', root]]],
+      kind === 'post' ? ['reply', 'rootPostId', SOCIAL.threadWhere()] : ['reply', 'replyToReplyId', SOCIAL.threadWhere([['rootPostId', '==', root]])],
       ['post', kind === 'post' ? 'quotedPostId' : 'quotedReplyId', []]];
     const subQueries = countSources.map(([documentType, field, where]) => ({
       documentType, kind: 'counts', ...(where.length ? { where } : {}), bind: { source: 'page', sourceProperty: '$id', field },

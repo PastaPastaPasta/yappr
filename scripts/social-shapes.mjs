@@ -167,6 +167,7 @@ export function socialShapes(contract) {
     privateFeeds: declares('post', 'feed'),
     liveTimeline: indexStartsWithLive(schemas, 'post', 'timeline'),
     liveTagIndex: indexStartsWithLive(schemas, 'post', 'tagAndTime'),
+    liveThread: indexStartsWithLive(schemas, 'reply', 'repliesOf'),
   });
 
   /** The post and like property naming a post's tags: `hashtag` up to v15, the typed array `tags` on v16. */
@@ -333,6 +334,13 @@ export function socialShapes(contract) {
   const livePinned = (keyedOnLive, where) => (keyedOnLive ? [['live', '==', true], ...where] : where);
   /** A whole `{ where, orderBy, … }` query on the global `post.timeline` (`[live, $createdAt]` from v17, `[$createdAt]` before). */
   const timelinePosts = (query) => ({ ...query, where: livePinned(cut.liveTimeline, query.where ?? []) });
+  /**
+   * The `where` of a read on `reply.repliesOf` (thread pages, children, counts,
+   * composite slots, the ranked roots): `live == true` first on v17, whose
+   * index is `[live, rootPostId, replyToReplyId, $createdAt]` with
+   * `skipIfAbsent: ["live"]`, so a tombstone leaves the thread and its counts.
+   */
+  const threadWhere = (where = []) => livePinned(cut.liveThread, where);
 
   /**
    * The `where` clause pinning one tag on `post.tagAndTime` or the like tag
@@ -514,7 +522,7 @@ export function socialShapes(contract) {
 
   return Object.freeze({
     schemas, cut, post, reply, likeReply, media, mentions, mentionsOf, report, fit, tombstone, privateFields,
-    tagField, tagMax, tags, storedTags, contentTags, tagPin, taggedPosts, tagRanking, tagLikesWhere, timelinePosts,
+    tagField, tagMax, tags, storedTags, contentTags, tagPin, taggedPosts, tagRanking, tagLikesWhere, timelinePosts, threadWhere,
     ownerPostsWhere, ownerPostsOrderBy, ownerPosts, ownerReplies, contractFor, check,
     actionFee: (docType) => actionFeeOf(schemas, docType),
   });
@@ -545,6 +553,7 @@ function expectedCut(version) {
     privateFeeds: from('v17'),
     liveTimeline: from('v17'),
     liveTagIndex: from('v17'),
+    liveThread: from('v17'),
   };
 }
 const readContract = (file) => JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
@@ -750,6 +759,8 @@ function builderExpectations(shapes, version) {
       JSON.stringify(shapes.timelinePosts({ where: [['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']], limit: 20 }))
         === JSON.stringify({ where: [...(cut.liveTimeline ? [['live', '==', true]] : []), ['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']], limit: 20 })
         && JSON.stringify(shapes.timelinePosts({ orderBy: [['$createdAt', 'desc']] }).where) === JSON.stringify(cut.liveTimeline ? [['live', '==', true]] : [])],
+    ['a thread read (repliesOf) pins live == true first from v17, and is as given before',
+      JSON.stringify(shapes.threadWhere([['rootPostId', '==', 'R']])) === JSON.stringify([...(cut.liveThread ? [['live', '==', true]] : []), ['rootPostId', '==', 'R']])],
     ['a reply carries live: true from v17 and a tombstone never does',
       (shapes.reply({ rootPostId: id, parentOwnerId: id, content: 'x' }).live === true) === cut.replyLiveMarker
         && shapes.reply({ deleted: true, rootPostId: id, parentOwnerId: id }).live === undefined

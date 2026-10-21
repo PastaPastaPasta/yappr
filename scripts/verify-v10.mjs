@@ -125,7 +125,8 @@
  *
  * **v17** (`--contract-file contracts/yappr-social-contract-v17.json`,
  * docs/SOCIAL_V17.md, the testnet production cut) is supported by the live battery: `--self-test` and
- * `--dry-run` pin its schema (the live-keyed timeline, tag listing and reply owner listing, the
+ * `--dry-run` pin its schema (the live-keyed timeline, tag listing, reply owner listing and thread
+ * index `repliesOf` (`skipIfAbsent: ["live"]`, so q2's thread counts pin `live == true`), the
  * reply's `live`, the quote-triple `quoteOwner`, the four-field `private` rule and the `feed` it
  * names, no self-likes, `privateFeed` in place of `privateFeedState`, a locked YAPP) and build
  * every write through SOCIAL. Live queries and private-feed cases use the schema-selected topology.
@@ -1199,7 +1200,7 @@ async function caseX1RealDeletes(ctx) {
   expectRejected('x1a a post cannot be replaced (documentsMutable false: no editing)', replaced, NOT_MUTABLE);
 
   const quoteBefore = await countBy(sdk, contractId, 'post', 'quotedPostId', target);
-  const replyBefore = await countBy(sdk, contractId, 'reply', 'rootPostId', target);
+  const replyBefore = await countWhere(sdk, contractId, 'reply', SOCIAL.threadWhere([['rootPostId', '==', target]]));
   check('x1b before the delete the post has one quote and one reply', quoteBefore === 1 && replyBefore === 1, `quotes=${quoteBefore} replies=${replyBefore}`);
 
   // A's own quote first: an author's delete of a document others point at.
@@ -1208,10 +1209,10 @@ async function caseX1RealDeletes(ctx) {
   await settle();
   check('x1c B deletes its own post (a real delete, no tombstone)', deleted === null && (await fetchDocument(sdk, contractId, 'post', target)) === null, (deleted ?? '').slice(0, 200));
   check('x1d …and A deletes its quote: the quote count drops to 0 exactly', quoteDeleted === null && (await countBy(sdk, contractId, 'post', 'quotedPostId', target)) === 0, (quoteDeleted ?? '').slice(0, 160));
-  check('x1e the existing reply stays (its reference dangles), counted under the dead root', (await fetchDocument(sdk, contractId, 'reply', reply)) !== null && (await countBy(sdk, contractId, 'reply', 'rootPostId', target)) === 1);
+  check('x1e the existing reply stays (its reference dangles), counted under the dead root', (await fetchDocument(sdk, contractId, 'reply', reply)) !== null && (await countWhere(sdk, contractId, 'reply', SOCIAL.threadWhere([['rootPostId', '==', target]]))) === 1);
   const replyDeleted = await deleteOwn(ctx, botA, 'reply', reply);
   await settle();
-  check('x1f A deletes the reply under the deleted root (a v9 tombstone could not): the reply count drops to 0', replyDeleted === null && (await countBy(sdk, contractId, 'reply', 'rootPostId', target)) === 0, (replyDeleted ?? '').slice(0, 160));
+  check('x1f A deletes the reply under the deleted root (a v9 tombstone could not): the reply count drops to 0', replyDeleted === null && (await countWhere(sdk, contractId, 'reply', SOCIAL.threadWhere([['rootPostId', '==', target]]))) === 0, (replyDeleted ?? '').slice(0, 160));
 
   // Every new pointer at the deleted post is refused: QA D-14 in consensus.
   await expectFeedRefused(ctx, 'x1g a reply to the deleted post is refused (40120)', botA, 'reply', replyData({ content: 'x1 late reply', rootPostId: targetBytes, parentOwnerId: owner }), REFERENCE_NOT_FOUND);
@@ -1286,7 +1287,7 @@ async function caseX1Tombstones(ctx) {
   check(`x1tg it reads back as a tombstone: deleted, ${TAG_NOUN}${TAG_ARRAY ? ' in its order' : ''}, no content (and no mention)`,
     tomb.deleted === true && JSON.stringify(SOCIAL.storedTags(tomb)) === JSON.stringify(targetTags) && tomb.content === undefined && tomb.mentionedUserIds === undefined,
     describeValue({ deleted: tomb.deleted, [SOCIAL.tagField]: tomb[SOCIAL.tagField], content: tomb.content, mentionedUserIds: tomb.mentionedUserIds }));
-  check('x1th the quotes and the reply of a tombstoned post stay, counted', (await countBy(sdk, contractId, 'post', 'quotedPostId', target)) === quotesBefore && (await countBy(sdk, contractId, 'reply', 'rootPostId', target)) === 1 && (await fetchDocument(sdk, contractId, 'reply', reply)) !== null, `quotes ${quotesBefore}`);
+  check('x1th the quotes and the reply of a tombstoned post stay, counted', (await countBy(sdk, contractId, 'post', 'quotedPostId', target)) === quotesBefore && (await countWhere(sdk, contractId, 'reply', SOCIAL.threadWhere([['rootPostId', '==', target]]))) === 1 && (await fetchDocument(sdk, contractId, 'reply', reply)) !== null, `quotes ${quotesBefore}`);
   const tombRevision = BigInt((await fetchDocument(sdk, contractId, 'post', target))?.revision ?? 2);
   const again = (data) => attemptReplace(sdk, botB, { contractId, docType: 'post', id: target, revision: tombRevision, data });
   // An undo is a live post again: on v13 it carries `live`, so the refusal is the frozen flag, not the live rule.
@@ -2642,15 +2643,16 @@ async function caseQ2MergedCounts(ctx) {
   check('q2a quotes of P1 (`quotedPostId ==` on quotesOfPost) = 2', p1Quotes === 2, `quotes=${p1Quotes}`);
   const quoteGroups = await grouped('post', [['quotedPostId', 'in', targets]], 'quotedPostId');
   check('q2b batched `quotedPostId in` + groupBy: P1 2, P2 1, P3 0', nonZero(quoteGroups) === expectedGroups({ [p1]: 2, [p2]: 1 }), nonZero(quoteGroups));
-  const thread = await count('reply', [['rootPostId', '==', p1]]);
-  check('q2c the whole thread under P1 (`rootPostId ==` on repliesOf) = 3', thread === 3, `replies=${thread}`);
-  const threadGroups = await grouped('reply', [['rootPostId', 'in', targets]], 'rootPostId');
+  // v17 keys repliesOf on live first (skipIfAbsent: ["live"]): every read pins `live == true`.
+  const thread = await count('reply', SOCIAL.threadWhere([['rootPostId', '==', p1]]));
+  check(`q2c the whole thread under P1 (${SOCIAL.cut.liveThread ? '`live ==`, ' : ''}\`rootPostId ==\` on repliesOf) = 3`, thread === 3, `replies=${thread}`);
+  const threadGroups = await grouped('reply', SOCIAL.threadWhere([['rootPostId', 'in', targets]]), 'rootPostId');
   check('q2d batched `rootPostId in` + groupBy: P1 3, P2 1, P3 0', nonZero(threadGroups) === expectedGroups({ [p1]: 3, [p2]: 1 }), nonZero(threadGroups));
-  const underR1 = await count('reply', [['rootPostId', '==', p1], ['replyToReplyId', '==', r1]]);
+  const underR1 = await count('reply', SOCIAL.threadWhere([['rootPostId', '==', p1], ['replyToReplyId', '==', r1]]));
   check('q2e replies to r1 (root pinned, `replyToReplyId ==`) = 1', underR1 === 1, `replies=${underR1}`);
-  const perReply = await grouped('reply', [['rootPostId', '==', p1], ['replyToReplyId', 'in', [r1, r2]]], 'replyToReplyId');
+  const perReply = await grouped('reply', SOCIAL.threadWhere([['rootPostId', '==', p1], ['replyToReplyId', 'in', [r1, r2]]]), 'replyToReplyId');
   check('q2f batched per reply under P1 (`replyToReplyId in` + groupBy): r1 1, r2 0', nonZero(perReply) === expectedGroups({ [r1]: 1 }), nonZero(perReply));
-  const direct = await count('reply', [['rootPostId', '==', p1], ['replyToReplyId', '==', null]]);
+  const direct = await count('reply', SOCIAL.threadWhere([['rootPostId', '==', p1], ['replyToReplyId', '==', null]]));
   check('q2g direct replies to P1 (the null pin) = 2', direct === 2, `replies=${direct}`);
 
   const aPostsAfter = await count('post', ownerPosts([['$ownerId', '==', a]]));
@@ -2681,8 +2683,8 @@ async function caseQ2MergedCounts(ctx) {
 
   await checkRankedAgrees(ctx, 'q2n ranked top authors (post groupBy $ownerId) agree with A\'s post count', 'post', '$ownerId', a, aPostsAfter, ownerPosts());
   await checkRankedAgrees(ctx, 'q2o ranked most followed (follow groupBy followingId) agree with B\'s follower count', 'follow', 'followingId', b, after.followers);
-  await checkRankedAgrees(ctx, 'q2p ranked most replied roots (reply groupBy rootPostId) agree with P1\'s 3', 'reply', 'rootPostId', p1, 3);
-  check('q2 P3 stayed untouched (no quotes, no replies)', (await count('post', [['quotedPostId', '==', p3]])) === 0 && (await count('reply', [['rootPostId', '==', p3]])) === 0);
+  await checkRankedAgrees(ctx, 'q2p ranked most replied roots (reply groupBy rootPostId) agree with P1\'s 3', 'reply', 'rootPostId', p1, 3, SOCIAL.threadWhere());
+  check('q2 P3 stayed untouched (no quotes, no replies)', (await count('post', [['quotedPostId', '==', p3]])) === 0 && (await count('reply', SOCIAL.threadWhere([['rootPostId', '==', p3]]))) === 0);
 }
 
 // ---- Registry ------------------------------------------------------------------
@@ -3049,9 +3051,13 @@ function selfTest() {
   expect('the permanent notification indexes are gone (replaced by the windows)', Object.entries(retired).every(([type, names]) => names.every((n) => !index(type, n))));
   expect(`there is no postMention: a post names its mentions itself, ${MENTION_ARRAY ? 'in mentionedUserIds (v15)' : 'one optional mentionedUserId'} (n1)`,
     !schemas.postMention && (schemas.post.properties.mentionedUserIds ?? schemas.post.properties.mentionedUserId) !== undefined);
-  expect('reply repliesOf [rootPostId, replyToReplyId, $createdAt] is rangeCountable, ranked at rootPostId, and keeps direct replies (nullable replyToReplyId, no skipIfAbsent) (x1b, x1e, x1f, q2c–q2g, q2p)',
-    shape('reply', 'repliesOf') === 'rootPostId,replyToReplyId,$createdAt' && countsAt('reply', 'repliesOf', 'rootPostId')
-      && index('reply', 'repliesOf').skipIfAbsent === undefined && !schemas.reply.required.includes('replyToReplyId'));
+  // v17 keys it on live first so a tombstone leaves the thread and its counts. The skip set names
+  // live alone: `true` would also skip the optional replyToReplyId, i.e. every direct reply (10231).
+  expect(SOCIAL.cut.liveThread
+    ? 'v17: reply repliesOf [live, rootPostId, replyToReplyId, $createdAt] is rangeCountable, ranked at rootPostId, skips only an absent live (skipIfAbsent ["live"]), and keeps direct replies (nullable replyToReplyId) (x1b, x1e, x1f, q2c–q2g, q2p)'
+    : 'reply repliesOf [rootPostId, replyToReplyId, $createdAt] is rangeCountable, ranked at rootPostId, and keeps direct replies (nullable replyToReplyId, no skipIfAbsent) (x1b, x1e, x1f, q2c–q2g, q2p)',
+    shape('reply', 'repliesOf') === (SOCIAL.cut.liveThread ? 'live,rootPostId,replyToReplyId,$createdAt' : 'rootPostId,replyToReplyId,$createdAt') && countsAt('reply', 'repliesOf', 'rootPostId')
+      && JSON.stringify(index('reply', 'repliesOf').skipIfAbsent) === (SOCIAL.cut.liveThread ? '["live"]' : undefined) && !schemas.reply.required.includes('replyToReplyId'));
   expect('follow following [$ownerId, $createdAt] is rangeCountable; followers [followingId, $createdAt] too, ranked at followingId (q2j–q2m, q2o)',
     shape('follow', 'following') === '$ownerId,$createdAt' && countsAt('follow', 'following')
       && shape('follow', 'followers') === 'followingId,$createdAt' && countsAt('follow', 'followers', 'followingId'));
