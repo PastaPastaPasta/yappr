@@ -9,7 +9,7 @@
  * public/brand/ holds one set in the file layout of docs/brand/README.md (mark, wordmark, lockup,
  * favicon, app icon). This writes:
  *   public/brand/brand.json                      the set's name, aspect ratios and icon background
- *   public/favicon.ico                           16, 32 and 48 px from favicon.svg
+ *   public/favicon.ico                           16, 32 and 48 px from favicon.svg (16 from favicon-16.svg if present)
  *   public/icon-192.png, icon-512.png            rounded tiles for the web manifest
  *   public/icon-maskable-512.png                 full bleed, for Android's maskable icon
  *   public/apple-touch-icon.png                  180 px, full bleed (iOS rounds it)
@@ -31,7 +31,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { FILES, problems, ratioOf, sourceHash } from './brand-set.mjs';
+import { filesIn, problems, ratioOf, sourceHash } from './brand-set.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BRAND = path.join(ROOT, 'public/brand');
@@ -101,7 +101,7 @@ function install(style) {
   if (found.length) throw new Error(`${style} can't be installed: ${found.join('; ')}`);
   fs.rmSync(BRAND, { recursive: true, force: true });
   fs.mkdirSync(BRAND, { recursive: true });
-  for (const file of [...FILES, 'brand.json']) fs.copyFileSync(path.join(from, file), path.join(BRAND, file));
+  for (const file of [...filesIn(from), 'brand.json']) fs.copyFileSync(path.join(from, file), path.join(BRAND, file));
   console.log(`installed ${style} into public/brand/`);
 }
 
@@ -134,7 +134,9 @@ async function writeManifest() {
 
 /** An ICO holding PNG images (supported everywhere since Windows Vista). */
 async function writeIco(file, sizes) {
-  const images = await Promise.all(sizes.map((size) => render(read('favicon.svg'), size)));
+  // The 16 px image comes from the pixel-snapped twin when the set has one.
+  const hinted = fs.existsSync(path.join(BRAND, 'favicon-16.svg')) ? read('favicon-16.svg') : null;
+  const images = await Promise.all(sizes.map((size) => render(size === 16 && hinted ? hinted : read('favicon.svg'), size)));
   const header = Buffer.alloc(6 + 16 * images.length);
   header.writeUInt16LE(1, 2);
   header.writeUInt16LE(images.length, 4);

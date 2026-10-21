@@ -1,7 +1,8 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { problems, ratioOf, sourceHash } from './brand-set.mjs'
+import { filesIn, problems, ratioOf, sourceHash } from './brand-set.mjs'
 
 const ROOT = path.resolve(__dirname, '..')
 const BRAND = path.join(ROOT, 'public/brand')
@@ -15,6 +16,22 @@ describe('brand set', () => {
 
   it.each(fs.readdirSync(CANDIDATES))('candidate %s can be installed', (style) => {
     expect(problems(path.join(CANDIDATES, style))).toEqual([])
+  })
+
+  it('counts the optional 16 px favicon twin in the source hash', () => {
+    const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'brand-set-'))
+    try {
+      for (const file of fs.readdirSync(BRAND)) fs.copyFileSync(path.join(BRAND, file), path.join(copy, file))
+      expect(filesIn(copy)).toContain('favicon-16.svg')
+      expect(problems(copy)).toEqual([])
+      fs.appendFileSync(path.join(copy, 'favicon-16.svg'), '\n')
+      expect(sourceHash(copy)).not.toBe(sourceHash(BRAND))
+      fs.rmSync(path.join(copy, 'favicon-16.svg'))
+      expect(filesIn(copy)).not.toContain('favicon-16.svg')
+      expect(problems(copy)).toEqual([])
+    } finally {
+      fs.rmSync(copy, { recursive: true, force: true })
+    }
   })
 
   // Editing public/brand/ without `npm run brand` leaves these stale.
