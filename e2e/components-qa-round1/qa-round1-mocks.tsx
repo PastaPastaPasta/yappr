@@ -95,7 +95,7 @@ export const postService = {
 export const replyService = {
   getOrThrow: async () => focusedReply,
   // The live-keyed thread reads missing parents by id first; none is a tombstone here, so the proofs below decide.
-  getMany: async () => [],
+  getManyOrThrow: async () => [],
   getReplies: async () => {
     replyReads++
     if (params.get('failure') === 'replies' && replyReads === 1 || params.get('failure') === 'refresh' && replyReads === 2) {

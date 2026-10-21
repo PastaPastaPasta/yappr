@@ -232,7 +232,8 @@ async function loadFlatReplies(focus: Post, pages: number): Promise<{ replies: F
   // under a stub for a parent proved gone, as on web. Both reads reject, so
   // a failed one fails the page rather than dropping the replies under it.
   replies = await withMissingReplyParents(replies, {
-    getMany: ids => replyService.getMany(ids, { throwOnError: true }),
+    // Fresh, not cached: a parent tombstoned since it was cached must read as the tombstone.
+    getMany: ids => replyService.getManyOrThrow(ids),
     provenAbsent: ids => provenAbsent('reply', ids, { throwOnError: true }),
   })
   const threads = assembleFlatThread({ id: focus.id, authorId: focus.author.id, isReply }, replies)

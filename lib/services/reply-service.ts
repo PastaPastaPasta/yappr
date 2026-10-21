@@ -7,7 +7,7 @@ import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentByt
 import type { EncryptionOptions } from './post-service';
 import { getEvoSdk } from './evo-sdk-service';
 import { mediaDocumentFields, mediaFromDocument, type MediaItemInput } from '@/lib/media/media-fields';
-import { documentCount, groupedDocumentCount, groupIdsByRoot, mapLimit } from './pagination-utils';
+import { chunk, documentCount, groupedDocumentCount, groupIdsByRoot, MAX_IN_CLAUSE_VALUES, mapLimit } from './pagination-utils';
 import type { DocumentWhereClause } from './sdk-helpers';
 import { profileDataByOwnerId } from './post-enrichment-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
@@ -696,6 +696,18 @@ class ReplyService extends BaseDocumentService<Reply> {
     const loose = await mapLimit(unrooted, 6, (id) => this.countReplies(id, kind));
     unrooted.forEach((id, index) => result.set(id, loose[index]));
     return result;
+  }
+
+  /**
+   * These replies read from Platform, never from the cache, rejecting when a
+   * read fails: for a thread's missing parents, where a reply tombstoned
+   * since it was cached must come back as the tombstone it now is. An id
+   * with no document is just absent.
+   */
+  async getManyOrThrow(replyIds: string[]): Promise<Reply[]> {
+    const batches = chunk([...new Set(replyIds.filter(Boolean))], MAX_IN_CLAUSE_VALUES);
+    const pages = await mapLimit(batches, 2, (batch) => this.query({ where: [['$id', 'in', batch]], limit: batch.length }));
+    return pages.flatMap((page) => page.documents);
   }
 
   /**

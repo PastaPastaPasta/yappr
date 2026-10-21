@@ -229,6 +229,26 @@ describe.each([
   })
 })
 
+describe('getManyOrThrow (a thread\'s missing parents)', () => {
+  const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
+  const PARENT = idOf(9)
+  const doc = (extra: Record<string, unknown>) => ({ $id: PARENT, $ownerId: '111111111', $createdAt: 1, parentId: '222222222', parentOwnerId: '111111111', ...extra })
+
+  it('reads a cached live parent again, so a tombstone since then comes back as the tombstone', async () => {
+    query.mockResolvedValueOnce([doc({ content: 'live' })])
+    expect((await replyService.getMany([PARENT]))[0]?.deleted).toBeUndefined()
+    query.mockResolvedValueOnce([doc({ deleted: true })])
+    const [fresh] = await replyService.getManyOrThrow([PARENT])
+    expect(fresh?.deleted).toBe(true)
+    expect(query.mock.calls[1][0].where).toEqual([['$id', 'in', [PARENT]]])
+  })
+
+  it('rejects when the read fails', async () => {
+    query.mockRejectedValueOnce(new Error('DAPI unavailable'))
+    await expect(replyService.getManyOrThrow([PARENT])).rejects.toThrow('DAPI unavailable')
+  })
+})
+
 describe('v14 replies: no stored owner, two derived notification windows', () => {
   const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
   const [ME, MY_ROOT, MY_REPLY, THEIR_REPLY, STRANGER] = [1, 2, 3, 4, 5].map(idOf)

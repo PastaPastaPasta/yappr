@@ -107,7 +107,8 @@ function nestUnderReply(
  * gone. Both reads reject, so a failed one fails the page.
  */
 const missingParentReads: MissingParentReads = {
-  getMany: (ids) => replyService.getMany(ids, { throwOnError: true }),
+  // Fresh, not cached: a parent tombstoned since it was cached must read as the tombstone.
+  getMany: (ids) => replyService.getManyOrThrow(ids),
   provenAbsent: (ids) => provenAbsent('reply', ids, { throwOnError: true }),
 }
 
