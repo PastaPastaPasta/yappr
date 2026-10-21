@@ -25,6 +25,7 @@ import {
   replyOwnerIndexOrderPrefix,
   replyOwnerIndexPrefix,
   replyOwnersAreDerived,
+  replyThreadIndexPrefix,
   repliesCarryLiveMarker,
   repliesNameRootOwner,
   threadRootIdOf,
@@ -327,7 +328,10 @@ class ReplyService extends BaseDocumentService<Reply> {
    * replies (the null `replyToReplyId` branch) come first, oldest first; then
    * each reply's children, parent by parent in identifier order, oldest first
    * within a parent. A later page can therefore hold children of any branch
-   * rather than the next-oldest replies of the thread.
+   * rather than the next-oldest replies of the thread. Where `repliesOf` is
+   * keyed on `live` (`replyThreadsCarryLiveMarker`), this and every other
+   * `repliesOf` read here pins `live == true` first, and tombstones are not
+   * listed or counted.
    *
    * The page size is a real page, not a cap: `nextCursor` is returned whenever a
    * full page came back, and callers page on with `startAfter` (see
@@ -340,10 +344,13 @@ class ReplyService extends BaseDocumentService<Reply> {
   async getReplies(rootPostId: string, options: QueryOptions & PostQueryOptions = {}): Promise<DocumentResult<Reply>> {
     const { skipEnrichment, ...queryOpts } = options;
     const { root: rootField, replyToReply, nestedUnderRoot } = replyLinkage();
+    // The SDK records the registered contract before it resolves, and the
+    // live prefix is read off that record.
+    await getEvoSdk();
 
     const queryOptions: QueryOptions = nestedUnderRoot && replyToReply
       ? {
-        where: [[rootField, '==', rootPostId]],
+        where: [...replyThreadIndexPrefix(), [rootField, '==', rootPostId]],
         orderBy: [[replyToReply, 'asc'], ['$createdAt', 'asc']],
         limit: replyPageSize(),
         ...queryOpts
@@ -552,10 +559,12 @@ class ReplyService extends BaseDocumentService<Reply> {
           documents = [];
         } else {
           const rootPostId = options.rootPostId;
+          // After the SDK resolves: the live prefix reads the contract it recorded.
+          await getEvoSdk();
           documents = (await mapLimit(parentIds, 4, (parentId) => queryRawDocuments({
             dataContractId: this.contractId,
             documentTypeName: 'reply',
-            where: [[root, '==', rootPostId], [nestingField, '==', parentId]],
+            where: [...replyThreadIndexPrefix(), [root, '==', rootPostId], [nestingField, '==', parentId]],
             orderBy: [['$createdAt', 'asc']],
             limit: 100,
           }))).flat();
@@ -628,9 +637,10 @@ class ReplyService extends BaseDocumentService<Reply> {
    */
   async countReplies(parentId: string, kind: TargetKind = 'post', rootPostId?: string): Promise<number> {
     try {
+      // First the SDK, which records the contract the live prefix reads.
+      const sdk = await getEvoSdk();
       const where = await this.replyCountClauses(parentId, kind, rootPostId);
       if (!where) return 0;
-      const sdk = await getEvoSdk();
       return await documentCount(sdk, {
         dataContractId: this.contractId,
         documentTypeName: 'reply',
@@ -644,9 +654,10 @@ class ReplyService extends BaseDocumentService<Reply> {
   /** The where clauses counting one target's replies, or null when a v10 reply's root cannot be found. */
   private async replyCountClauses(parentId: string, kind: TargetKind, rootPostId?: string): Promise<DocumentWhereClause[] | null> {
     const field = replyCountFieldFor(kind);
-    if (!replyCountNeedsRoot(kind)) return [[field, '==', parentId]];
+    const live = replyThreadIndexPrefix();
+    if (!replyCountNeedsRoot(kind)) return [...live, [field, '==', parentId]];
     const root = rootPostId ?? (await this.get(parentId))?.rootPostId;
-    return root ? [[replyLinkage().root, '==', root], [field, '==', parentId]] : null;
+    return root ? [...live, [replyLinkage().root, '==', root], [field, '==', parentId]] : null;
   }
 
   /**
@@ -665,9 +676,10 @@ class ReplyService extends BaseDocumentService<Reply> {
   ): Promise<Map<string, number>> {
     const sdk = await getEvoSdk();
     const groupField = replyCountFieldFor(kind);
+    const live = replyThreadIndexPrefix();
     const base = { dataContractId: this.contractId, documentTypeName: 'reply', groupField };
     if (!replyCountNeedsRoot(kind)) {
-      return groupedDocumentCount(sdk, base, parentIds, (id) => this.countReplies(id, kind));
+      return groupedDocumentCount(sdk, { ...base, where: live }, parentIds, (id) => this.countReplies(id, kind));
     }
 
     const result = new Map<string, number>();
@@ -675,7 +687,7 @@ class ReplyService extends BaseDocumentService<Reply> {
     await mapLimit(Array.from(byRoot), 2, async ([root, ids]) => {
       const counts = await groupedDocumentCount(
         sdk,
-        { ...base, where: [[replyLinkage().root, '==', root]] },
+        { ...base, where: [...live, [replyLinkage().root, '==', root]] },
         ids,
         (id) => this.countReplies(id, kind, root)
       );

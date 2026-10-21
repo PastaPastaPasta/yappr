@@ -1,10 +1,10 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, YAPPR_CONTRACT_ID } from '@/lib/constants'
 import {
-  authorDeletesLeaveHoles, canRepost, deletesAreTombstones, hasFlatThreads, referencesMayDangle, repostsAreQuotes, targetKindOf,
+  canRepost, deletesAreTombstones, hasFlatThreads, referencesMayDangle, repostsAreQuotes, targetKindOf,
   threadRootIdOf, type TargetKind,
 } from '@/lib/contract-topology'
-import { deletedReplyStubs, unloadedReplyParents } from '@/lib/feed/deleted-reply-stubs'
+import { withMissingReplyParents } from '@/lib/feed/deleted-reply-stubs'
 import { provenAbsent } from '@/lib/feed/prove-absent'
 import { isBareRepost, quotedTargetIdOf, splitRepostsAndQuotes } from '@/lib/feed/quote-reposts'
 import { likeService } from '@/lib/services/like-service'
@@ -199,8 +199,8 @@ async function replyPage(rootId: string, startAfter: string | undefined, fresh: 
 /**
  * A flat thread's first `pages` reply pages, re-nested. A focused reply
  * deep in a long thread may sit past the loaded pages, so its subtree is
- * also fetched level by level, and replies under a proved-deleted parent
- * (v10) keep their place under a stub (`usePostDetail` `loadPost`).
+ * also fetched level by level, and replies under a missing parent keep
+ * their place under its tombstone or a stub (`usePostDetail` `loadPost`).
  */
 async function loadFlatReplies(focus: Post, pages: number): Promise<{ replies: FlatReply[]; hasMore: boolean }> {
   const rootId = threadRootIdOf(focus)
@@ -227,11 +227,13 @@ async function loadFlatReplies(focus: Post, pages: number): Promise<{ replies: F
     }
   }
 
-  if (authorDeletesLeaveHoles()) {
-    const candidates = unloadedReplyParents(replies)
-    const deleted = candidates.length > 0 ? await provenAbsent('reply', candidates) : new Set<string>()
-    replies = [...deletedReplyStubs(replies, deleted), ...replies]
-  }
+  // A reply whose parent the page lacks keeps its place under the parent's
+  // tombstone, read by id where `repliesOf` does not list tombstones, or
+  // under a stub for a parent proved gone, as on web.
+  replies = await withMissingReplyParents(replies, {
+    getMany: ids => replyService.getMany(ids),
+    provenAbsent: ids => provenAbsent('reply', ids),
+  })
   const threads = assembleFlatThread({ id: focus.id, authorId: focus.author.id, isReply }, replies)
   return { replies: flattenThreads(threads), hasMore: next !== undefined }
 }

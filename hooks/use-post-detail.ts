@@ -6,8 +6,8 @@ import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
 import { attachQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { isBareRepost, quotedTargetIdOf } from '@/lib/feed/quote-reposts'
-import { hasFlatThreads, referencesMayDangle, repliesOutliveTheirParent, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
-import { deletedReplyStubs, unloadedReplyParents } from '@/lib/feed/deleted-reply-stubs'
+import { hasFlatThreads, referencesMayDangle, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
+import { withMissingReplyParents, type MissingParentReads } from '@/lib/feed/deleted-reply-stubs'
 import { assembleFlatThread, authorThreadDepthFirst, buildReplyTree, byCreatedAtAsc, MAX_NESTED_DEPTH } from '@/lib/feed/reply-thread'
 import { provenAbsent } from '@/lib/feed/prove-absent'
 import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from '@/lib/services/pagination-utils'
@@ -101,15 +101,14 @@ function nestUnderReply(
 }
 
 /**
- * The reply ids `replies` nest under that are proved gone, where a reply
- * outlives its parent (v10: an author's delete or a moderator removal; v11: a
- * moderator removal, since authors tombstone). Empty elsewhere, and when
- * nothing is missing.
+ * What keeps the replies under a missing parent in the thread
+ * (`withMissingReplyParents`): the tombstoned parents a live-keyed
+ * `repliesOf` does not list, read by id, and stubs for the parents proved
+ * gone. Both reads reject, so a failed one fails the page.
  */
-async function deletedReplyParents(replies: Reply[]): Promise<Set<string>> {
-  if (!repliesOutliveTheirParent()) return new Set()
-  const candidates = unloadedReplyParents(replies)
-  return candidates.length > 0 ? provenAbsent('reply', candidates, { throwOnError: true }) : new Set()
+const missingParentReads: MissingParentReads = {
+  getMany: (ids) => replyService.getMany(ids, { throwOnError: true }),
+  provenAbsent: (ids) => provenAbsent('reply', ids, { throwOnError: true }),
 }
 
 /**
@@ -196,6 +195,11 @@ export function usePostDetail({
   const replyCursorRef = useRef<string | undefined>(undefined)
   // Accepted writes stay visible until a proved thread read includes them.
   const acceptedRepliesRef = useRef(new Map<string, { reply: Reply; confirmed: boolean; ancestors: Reply[] }>())
+  /** The ids of the replies on screen, for Load More to tell a missing parent from one an earlier page holds. */
+  const shownReplyIdsRef = useRef<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    shownReplyIdsRef.current = new Set(state.replies.map(reply => reply.id))
+  }, [state.replies])
   const reconcileTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const reconcileGenerationRef = useRef(0)
 
@@ -503,9 +507,8 @@ export function usePostDetail({
         }
       }
       if (hasFlatThreads()) {
-        const deletedParents = await deletedReplyParents(replies)
+        replies = await withMissingReplyParents(replies, missingParentReads)
         if (!isCurrent()) return
-        replies = [...deletedReplyStubs(replies, deletedParents), ...replies]
         replyThreads = assembleFlatThread(loadedPost, replies)
       }
 
@@ -556,8 +559,8 @@ export function usePostDetail({
       // Navigating away mid-flight would otherwise merge this thread's next page
       // into whatever post the page moved on to.
       if (threadRootIdRef.current !== rootId || loadRequestIdRef.current !== requestId) return
-      // A parent on an earlier page is present, so only deleted ones prove absent.
-      const deletedParents = await deletedReplyParents(result.documents)
+      // A parent an earlier page holds is not missing: it is neither read again nor proved.
+      const page = await withMissingReplyParents(result.documents, missingParentReads, shownReplyIdsRef.current)
       if (threadRootIdRef.current !== rootId || loadRequestIdRef.current !== requestId) return
       const fetched = new Map(result.documents.map(reply => [reply.id, reply]))
       for (const [id, entry] of acceptedRepliesRef.current) {
@@ -574,8 +577,8 @@ export function usePostDetail({
 
       setState(current => {
         if (!current.post) return current
-        const loaded = [...current.replies.filter(reply => !fetched.has(reply.id)), ...result.documents]
-        const merged = [...deletedReplyStubs(loaded, deletedParents), ...loaded]
+        const onPage = new Set(page.map(reply => reply.id))
+        const merged = [...current.replies.filter(reply => !onPage.has(reply.id)), ...page]
         return { ...current, replies: merged, replyThreads: assembleFlatThread(current.post, merged) }
       })
     } catch (err) {

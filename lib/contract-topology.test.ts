@@ -1476,6 +1476,25 @@ describe('contract topology', () => {
       }
     })
 
+    it('pins live on repliesOf only where the registered contract keys it on live: the live release file answers until one is recorded, and a registered rootPostId beats it', async () => {
+      const repliesOf = (...properties: string[]) => ({ schemas: { reply: { indices: [{ name: 'repliesOf', properties: properties.map((property) => ({ [property]: 'asc' })) }] } } })
+      const registeredAs = async (topology: string, contract: ReturnType<typeof repliesOf> | null) => {
+        const topologyApi = await topologyModule(topology)
+        if (contract) {
+          const [{ rememberRegisteredContract }, { YAPPR_CONTRACT_ID }] = await Promise.all([import('./registered-contracts'), import('./constants')])
+          rememberRegisteredContract(YAPPR_CONTRACT_ID, contract)
+        }
+        return [topologyApi.replyThreadsCarryLiveMarker(), topologyApi.replyThreadIndexPrefix()]
+      }
+      // The release (production testnet): live-keyed, recorded or not.
+      expect(await registeredAs('v17', null)).toEqual([true, [['live', '==', true]]])
+      expect(await registeredAs('v17', repliesOf('live', 'rootPostId', 'replyToReplyId', '$createdAt'))).toEqual([true, [['live', '==', true]]])
+      // /staging, /testing and sakura registered the earlier v17 cut: no pin.
+      expect(await registeredAs('v17', repliesOf('rootPostId', 'replyToReplyId', '$createdAt'))).toEqual([false, []])
+      // Before v17 a reply carries no live marker at all.
+      expect(await registeredAs('v16', repliesOf('live', 'rootPostId'))).toEqual([false, []])
+    })
+
     it('reads the live-keyed listings with live pinned, and keeps every v16 surface', async () => {
       const v17 = await topologyModule('v17')
       expect([v17.postListingsCarryLiveMarker(), v17.repliesCarryLiveMarker(), v17.replyThreadsCarryLiveMarker()]).toEqual([true, true, true])
