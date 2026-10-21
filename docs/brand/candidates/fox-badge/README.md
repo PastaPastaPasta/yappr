@@ -21,8 +21,8 @@ The monochrome mark is one black fox silhouette, including the mouth notch.
 The favicon is its own drawing, not the mark scaled down: an orange fox head in
 profile, howling, with a peach throat and a dark open mouth, on a transparent
 background. It is a vector trace (vtracer, six flat colours) of a raster
-illustration the owner chose. Its specks were removed and it was trimmed to a
-square with an even margin. Two changes keep it legible on light tab bars:
+illustration the owner chose. Its specks were removed and it was trimmed to fill
+the square with a margin of about 1 unit. Two changes keep it legible on light tab bars:
 the cream throat is deepened to peach, and a thin rust edge runs along the throat
 below the mouth. `favicon-16.svg` is a separate hand-drawn 16 px version, with
 one 2-unit square per pixel. It keeps the head, pointed ear, raised snout, peach
