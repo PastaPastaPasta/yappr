@@ -1,7 +1,8 @@
 const { execSync } = require('child_process')
 const path = require('path')
+const { readFileSync } = require('fs')
 const { PHASE_PRODUCTION_BUILD } = require('next/constants')
-const { assertReleaseConfig, storageScope } = require('./scripts/release-config.cjs')
+const { assertReleaseConfig, storageScope, assertSnapshotPins } = require('./scripts/release-config.cjs')
 const { sdkWasmAsset } = require('./scripts/sdk-wasm-asset.cjs')
 const wasmAsset = sdkWasmAsset(__dirname)
 
@@ -46,6 +47,31 @@ const nextConfig = {
     unoptimized: true,
   },
   webpack: (config, { isServer, webpack }) => {
+    // /staging-old (build:staging-old) seeds the D36 rehearsal set from its own
+    // snapshot in place of bundled/testnet.json, so threads use that set's
+    // registered index shapes. It lives outside the dynamic import directory,
+    // so no other build ships it.
+    if (process.env.YAPPR_STAGING_OLD === '1') {
+      if (basePath !== '/staging-old' || process.env.NEXT_PUBLIC_RELEASE !== '1' || process.env.NEXT_PUBLIC_NETWORK !== 'testnet') {
+        throw new Error('The /staging-old snapshot is restricted to the testnet /staging-old release build')
+      }
+      const snapshotPath = path.join(__dirname, 'lib/contracts/snapshots/testnet-staging-old.json')
+      assertSnapshotPins(JSON.parse(readFileSync(snapshotPath, 'utf8')), process.env)
+      let replaced = false
+      config.plugins.push(new webpack.NormalModuleReplacementPlugin(/(^|[/\\])testnet\.json$/, resource => {
+        if (resource.context === path.join(__dirname, 'lib/contracts/bundled')) {
+          resource.request = snapshotPath
+          replaced = true
+        }
+      }))
+      if (!isServer) config.plugins.push({
+        apply(compiler) {
+          compiler.hooks.afterCompile.tap('StagingOldContractSnapshot', compilation => {
+            if (!replaced) compilation.errors.push(new Error('The /staging-old contract snapshot was not bundled'))
+          })
+        }
+      })
+    }
     // Keep Next's chunk splitting: merging every @dashevo module into one
     // chunk pulls the async WASM initializer into the eager class imports.
     // @dashevo/evo-sdk's published entry is a webpack bundle that inlines its own

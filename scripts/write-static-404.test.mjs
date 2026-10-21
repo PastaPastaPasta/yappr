@@ -18,7 +18,7 @@ function visit(base, pathname) {
 }
 
 describe('GitHub Pages shared root 404', () => {
-  it.each(['devnet', 'testing', 'staging'])('routes /%s failures to that deployment without any runtime', (deployment) => {
+  it.each(['devnet', 'testing', 'staging', 'staging-old'])('routes /%s failures to that deployment without any runtime', (deployment) => {
     const prefix = '/' + deployment
     const root = visit('', prefix + '/does-not-exist/')
     expect(root.redirects).toEqual([prefix + '/404.html'])
@@ -32,7 +32,7 @@ describe('GitHub Pages shared root 404', () => {
     expect(destination.redirects).toEqual([])
     expect(destination.html).toContain(`href="${prefix}/explore/"`)
   })
-  it.each(['/other/', '/devnetwork/no/', '/testing-elsewhere/'])('keeps root unknown routes at root: %s', (pathname) => {
+  it.each(['/other/', '/devnetwork/no/', '/testing-elsewhere/', '/staging-older/'])('keeps root unknown routes at root: %s', (pathname) => {
     const root = visit('', pathname)
     expect(root.redirects).toEqual([])
     expect(root.html).toContain('href="/"')

@@ -182,6 +182,14 @@ jobs:
           npm run build:staging
           node scripts/check-export-sizes.mjs
 
+      # The deploy builds /staging-old with continue-on-error; catch a broken
+      # rehearsal build (env, snapshot or substitution) here instead.
+      - name: Build /staging-old (D36 rehearsal set)
+        run: |
+          rm -rf .next out
+          npm run build:staging-old
+          node scripts/check-export-sizes.mjs
+
   e2e:
     name: End-to-End
     runs-on: ubuntu-latest

@@ -227,6 +227,57 @@ describe('release build configuration', () => {
     }
   })
 
+  it.each([
+    { file: '.env.testnet', basePath: '', ambient: '1', flag: undefined },
+    { file: '.env.staging-old', basePath: '/staging-old', ambient: undefined, flag: '1' },
+    { file: '.env.staging-old', basePath: '/staging', ambient: undefined, flag: null },
+    { file: '.env.staging-old', basePath: '', ambient: undefined, flag: null },
+  ])('only build:staging-old turns on its snapshot: %j', ({ file, basePath, ambient, flag }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'yappr-staging-old-entry-'))
+    try {
+      mkdirSync(join(dir, 'scripts'))
+      for (const name of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+        copyFileSync(new URL(name, import.meta.url), join(dir, 'scripts', name))
+      }
+      mkdirSync(join(dir, 'node_modules/next/dist/bin'), { recursive: true })
+      symlinkSync(fileURLToPath(new URL('../node_modules/bs58', import.meta.url)), join(dir, 'node_modules/bs58'), 'dir')
+      writeFileSync(join(dir, 'node_modules/next/dist/bin/next'), `
+        const fs = require('node:fs');
+        fs.mkdirSync('out');
+        fs.writeFileSync('out/effective-env.json', JSON.stringify({ YAPPR_STAGING_OLD: process.env.YAPPR_STAGING_OLD }));
+      `)
+      writeFileSync(join(dir, file), Object.entries(completeEnv()).map(([key, value]) => `${key}=${value}`).join('\n'))
+      const result = spawnSync(process.execPath, [join(dir, 'scripts/build-release.mjs'), ...(file === '.env.testnet' ? [] : [file])], {
+        cwd: dir, encoding: 'utf8', env: { ...process.env, BASE_PATH: basePath, ...(ambient ? { YAPPR_STAGING_OLD: ambient } : {}) },
+      })
+      if (flag === null) {
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('BASE_PATH=/staging-old')
+      } else {
+        expect(result.status, result.stderr).toBe(0)
+        expect(JSON.parse(readFileSync(join(dir, 'out/effective-env.json'), 'utf8')).YAPPR_STAGING_OLD).toBe(flag)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the checked-in .env.staging-old pins the D36 rehearsal set, scoped apart, and matches its snapshot', () => {
+    const rehearsal = parseEnv(readFileSync(new URL('../.env.staging-old', import.meta.url), 'utf8'))
+    expect(Object.keys(rehearsal).sort()).toEqual(Object.keys(template).sort())
+    expect(() => assertReleaseConfig(rehearsal)).not.toThrow()
+    expect(rehearsal.NEXT_PUBLIC_YAPPR_CONTRACT_ID).toBe('AbDUiaXbJML5FQGSpt5oEdx88tXK8FPRXbAt1jwK3Us9')
+    expect(rehearsal.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER).toBe('At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF')
+    const release = parseEnv(readFileSync(new URL('../.env.testnet', import.meta.url), 'utf8'))
+    expect(rehearsal.STORAGE_EPOCH).not.toBe(release.STORAGE_EPOCH)
+    expect(storageScope('/staging-old', rehearsal.STORAGE_EPOCH)).toBe('testnet-staging-old-1:staging-old')
+    const snapshot = JSON.parse(readFileSync(new URL('../lib/contracts/snapshots/testnet-staging-old.json', import.meta.url), 'utf8'))
+    expect(() => releaseConfig.assertSnapshotPins(snapshot, rehearsal)).not.toThrow()
+    expect(() => releaseConfig.assertSnapshotPins(snapshot, release)).toThrow('exact contract pins')
+    const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    expect(scripts['build:staging-old']).toBe('BASE_PATH=/staging-old node scripts/build-release.mjs .env.staging-old')
+  })
+
   it('the checked-in .env.testnet is the complete registered release, and `build` uses it', () => {
     const release = parseEnv(readFileSync(new URL('../.env.testnet', import.meta.url), 'utf8'))
     expect(Object.keys(release).sort()).toEqual(Object.keys(template).sort())
