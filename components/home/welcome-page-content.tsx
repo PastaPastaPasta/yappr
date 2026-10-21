@@ -10,7 +10,7 @@ import { LegalLinks } from '@/components/layout/legal-links'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useHomepageData } from '@/hooks/use-homepage-data'
-import { PlatformStats, FeaturedPosts, TopUsersSection } from '@/components/home'
+import { PlatformStats, FeaturedPosts, TopCreators } from '@/components/home'
 import { useLoginModal } from '@/hooks/use-login-modal'
 
 interface WelcomePageContentProps {
@@ -19,10 +19,9 @@ interface WelcomePageContentProps {
 }
 
 /**
- * The landing page: hero, a row of platform counts, popular posts and top
- * contributors. It uses the app's columns: everything but the contributors
- * sits in the centre column, the contributors in the right rail (under the
- * posts below `lg`). Everything on it reads without an account. Rendered at `/`
+ * The landing page: hero, a row of platform counts, top creators and popular
+ * posts, all in the centre column; the right rail is the app's usual search
+ * and trending. Everything on it reads without an account. Rendered at `/`
  * (bouncing logged-in viewers to `/feed`) and at `/welcome` (never bouncing,
  * so the sidebar logo can always reach it).
  */
@@ -42,9 +41,7 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
   }, [redirectAuthenticated, user, router])
 
   return (
-    <PageShell
-      rightSidebar={<TopUsersSection users={topUsers.users} loading={topUsers.loading} error={topUsers.error} />}
-    >
+    <PageShell>
       <section className="px-4 pb-8 pt-10 text-center md:pb-10 md:pt-14">
         <h1 className="mb-4 text-3xl font-bold md:text-5xl">
           Welcome to <Wordmark />
@@ -89,6 +86,8 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
         />
       </div>
 
+      <TopCreators users={topUsers.users} loading={topUsers.loading} error={topUsers.error} />
+
       <div className="pb-12">
         <FeaturedPosts
           posts={featuredPosts.posts}
@@ -97,14 +96,6 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
           onRetry={refresh}
         />
       </div>
-
-      {/* The right rail carries these from `lg` up. */}
-      <TopUsersSection
-        users={topUsers.users}
-        loading={topUsers.loading}
-        error={topUsers.error}
-        className="mx-4 mb-12 lg:hidden"
-      />
 
       {/* From tablet width up the sidebar carries these links. */}
       <footer className="px-4 pb-8 md:hidden">
