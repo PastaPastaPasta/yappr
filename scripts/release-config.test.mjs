@@ -238,6 +238,18 @@ describe('release build configuration', () => {
     expect(scripts['build:staging']).toBe('BASE_PATH=/staging npm run build')
   })
 
+  it('bundles every pinned release contract at its pinned version, plus the profile and system contracts', () => {
+    const release = parseEnv(readFileSync(new URL('../.env.testnet', import.meta.url), 'utf8'))
+    const { network, contracts } = JSON.parse(readFileSync(new URL('../lib/contracts/bundled/testnet.json', import.meta.url), 'utf8'))
+    expect(network).toBe('testnet')
+    for (const [id, version] of release.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').map(pin => pin.split(':'))) {
+      expect(contracts[id]?.version, id).toBe(Number(version))
+    }
+    for (const key of ['NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID', 'NEXT_PUBLIC_DPNS_CONTRACT_ID', 'NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID']) {
+      expect(contracts, key).toHaveProperty(release[key])
+    }
+  })
+
   it.each([undefined, '', 'bad:scope'])('requires a clean-start storage epoch (%s)', epoch => {
     expect(() => assertReleaseConfig({ ...completeEnv(), STORAGE_EPOCH: epoch })).toThrow('STORAGE_EPOCH')
   })

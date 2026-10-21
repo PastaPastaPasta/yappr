@@ -25,7 +25,7 @@ const schemas = blogContract.documentSchemas as unknown as BlogSchemas
  */
 export function blogActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
   if (!blogIsV7()) return null
-  // The registered contract's fee once recorded: /staging's and sakura's blog predate D41's fees.
+  // The registered contract's fee once recorded: sakura's blog predates D41's fees.
   return registeredOr(registeredActionFee(YAPPR_BLOG_CONTRACT_ID, docType, action), () => actionFeeOf(schemas[docType]?.actionFees, action))
 }
 

@@ -83,7 +83,7 @@ template covers public application configuration; `BASE_PATH`, Git metadata and
    | Root `package.json`, `build:subpath` | Change to `BASE_PATH=/yappr npm run build` so this convenience script also inherits release config. |
    | `ipfs/entrypoint.sh`, `build_project` | Keep `npm run build --loglevel=warn`; ensure the publisher checks out the intended release master. |
    | Cloudflare Pages **yappr** | Production branch **master**, build `npm run build`, output `out`; remove stale dashboard public env overrides and rebuild the same master revision as yap.pr. Verify IDs and buildId agree. |
-   | Native `APP_VARIANT=testnet` | Already loads `.env.testnet` through the shared release loader/validator; fill the file, rebuild, and verify the emitted manifest before beta distribution. Never substitute `.env.staging` for production pins. |
+   | Native `APP_VARIANT=testnet` / `staging-testnet` | Both load `.env.testnet` through the shared release loader/validator; rebuild and verify the emitted manifest before beta distribution. |
 
    D29: do **not** edit or rebuild the archived `yappr-v1`, `yappr-v2`, `yappr-v3`
    or other versioned Pages projects, or their original env/SDK settings.
@@ -212,9 +212,11 @@ that day ([TESTNET_RELEASE.md](TESTNET_RELEASE.md#production-registration-record
 
 ## Defaults deliberately retained until cut-over
 
-Removing these now would change today's sites. The cut-over PR must remove the
-following exact fallback expressions/branches, rather than relocating them into
-another silent default:
+Removing these would change today's `/testing`, `dev` and unit tests, which
+still resolve through them. The activation PR deferred their removal (activation
+record, step 4) to the `/testing` re-registration and WP17. That follow-up must
+remove the following exact fallback expressions/branches, rather than
+relocating them into another silent default:
 
 - `lib/constants.ts`: `YAPPR_CONTRACT_ID` (`9oDC6xdg…`),
   `YAPP_TOKEN_AUTHORITY_ID` (`hbGEc…`), `YAPPR_PROFILE_CONTRACT_ID` (`FZSn…`),

@@ -811,8 +811,9 @@ class ModerationService {
    * Seconds after its last change in which one moderator removes a `kind`
    * alone, or null when there is no limit. The registered contract's value
    * once a team read has seen it, else the committed template's: a deployment
-   * registered from an earlier cut of the same file (/staging's social v17 and
-   * blog v9 carry 604800, the file 86400 since D39) keeps its own window.
+   * registered from an earlier cut of the same file (sakura's and the retired
+   * staging rehearsal's social v17 and blog v9 carry 604800, the file 86400
+   * since D39) keeps its own window.
    * Whether a type is deleted by the team at all ({@link teamDeletesSettled})
    * stays the template's, which every current build shares with its
    * registered contract.
@@ -824,7 +825,7 @@ class ModerationService {
   /**
    * How a settled `kind` is removed (window, leader, approvals), from the
    * registered contract once a team read has seen it, else the template:
-   * /staging and sakura registered three approvals, the files ask two since D41.
+   * sets registered before D41 (sakura) carry three approvals, the files two.
    */
   settledRule(kind: string): SettledDeletionRule | null {
     return registeredOr(registeredSettledRule(this.contract.contractId, kind), () => this.contract.settledDeletionFor(kind));
@@ -854,7 +855,8 @@ class ModerationService {
   async removalRoute(viewerId: string, kind: string, createdAt: Date | number, now = Date.now()): Promise<RemovalRoute> {
     // The phase is judged by the registered window, so it is read first; a
     // failed read rejects (the caller offers a retry) rather than guess from
-    // the template, which on /staging would send an open post to the team.
+    // the template, which on an earlier-registered set would send an open post
+    // to the team.
     if (registeredDeleteWindow(this.contract.contractId, kind) === undefined && this.contract.deleteWindowSeconds(kind) !== null) await this.readTeam();
     const phase = this.deletionPhaseOf(kind, createdAt, now);
     if (phase !== 'settled') return removalRouteFor(phase, null, null, viewerId);
@@ -1350,7 +1352,7 @@ class ModerationService {
   async getProtectedIdentities(): Promise<Set<string>> {
     const team = await this.getTeam();
     if (!team) return new Set();
-    // The registered declaration's protection (D41 registers it off; /staging's set keeps it on).
+    // The registered declaration's protection (D41 registers it off; earlier sets keep it on).
     const ownerProtected = registeredOr(registeredOwnerProtected(this.contract.contractId), () => this.contract.elected()?.ownerProtected === true);
     return protectedIdentities(team, ownerProtected);
   }

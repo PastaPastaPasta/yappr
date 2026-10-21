@@ -1086,8 +1086,8 @@ const registeredSchemas = new Map();
 
 /**
  * The schemas `contractId` was registered with, as the chain holds them: a
- * deployment registered from an earlier cut of a file (sakura's and /staging's
- * v17 sets predate D41's fees) declares other fees than the committed JSON,
+ * deployment registered from an earlier cut of a file (sakura's and the retired
+ * staging rehearsal's v17 sets predate D41's fees) declares other fees than the committed JSON,
  * and agreeing to the file's amount there is a paid 40133.
  */
 export async function registeredSchemasOf(sdk, contractId) {
