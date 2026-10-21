@@ -8,7 +8,7 @@ import { XMarkIcon, PlusIcon, EyeIcon, EyeSlashIcon, ExclamationTriangleIcon } f
 import { LockClosedIcon, LinkIcon } from '@heroicons/react/24/solid'
 import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
-import { useAppStore, useSettingsStore, type PostVisibility } from '@/lib/store'
+import { useAppStore, type PostVisibility } from '@/lib/store'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useComposeImage } from '@/hooks/use-compose-image'
@@ -88,7 +88,6 @@ export function ComposeModal() {
   } = useAppStore()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
@@ -396,7 +395,7 @@ export function ComposeModal() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className={`fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-6 sm:pt-20 px-3 sm:px-4 overflow-y-auto pb-12 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+                  className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-6 sm:pt-20 px-3 sm:px-4 overflow-y-auto pb-12"
                 >
                   <Dialog.Content asChild>
                     <motion.div
