@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { Sidebar } from './sidebar'
-import { RightRail, RightSidebar } from './right-sidebar'
+import { RightSidebar } from './right-sidebar'
 
 interface PageShellProps {
   children: ReactNode
@@ -11,11 +11,6 @@ interface PageShellProps {
   mainClassName?: string
   /** Hide the right column (wide-mode reading views). */
   hideRightSidebar?: boolean
-  /**
-   * Content for the right column in place of search and trending. It only
-   * shows from `lg` up, so the page must place it elsewhere on smaller screens.
-   */
-  rightSidebar?: ReactNode
 }
 
 /**
@@ -23,7 +18,7 @@ interface PageShellProps {
  * centre column, the right sidebar. Pages render their own content inside;
  * use {@link PageHeader} for the sticky title bar.
  */
-export function PageShell({ children, mainClassName, hideRightSidebar = false, rightSidebar }: PageShellProps) {
+export function PageShell({ children, mainClassName, hideRightSidebar = false }: PageShellProps) {
   return (
     <div className="min-h-screen flex">
       <Sidebar />
@@ -32,7 +27,7 @@ export function PageShell({ children, mainClassName, hideRightSidebar = false, r
           {children}
         </main>
       </div>
-      {!hideRightSidebar && (rightSidebar !== undefined ? <RightRail>{rightSidebar}</RightRail> : <RightSidebar />)}
+      {!hideRightSidebar && <RightSidebar />}
     </div>
   )
 }
