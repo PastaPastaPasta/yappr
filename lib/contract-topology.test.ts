@@ -1412,7 +1412,7 @@ describe('contract topology', () => {
       for (const docType of ['bookmark', 'follow', 'followRequest']) expect(V17[docType], docType).toEqual(V16[docType])
     })
 
-    it('keys the global timeline, the tag pages and the reply author index on the live marker', () => {
+    it('keys the global timeline, the tag pages and the reply author and thread indexes on the live marker', () => {
       expect(indexOf(V17, 'post', 'timeline')).toEqual({ name: 'timeline', properties: [{ live: 'asc' }, { $createdAt: 'asc' }], rangeCountable: true, skipIfAbsent: true })
       expect(indexOf(V17, 'post', 'tagAndTime')).toEqual({ name: 'tagAndTime', properties: [{ live: 'asc' }, { tags: 'asc' }, { $createdAt: 'asc' }], skipIfAbsent: true })
       expect(indexOf(V17, 'post', 'ownerAndTime')).toEqual(indexOf(V16, 'post', 'ownerAndTime'))
@@ -1422,8 +1422,17 @@ describe('contract topology', () => {
       expect(V17.reply.properties.live).toEqual({ type: 'boolean', const: true, position: 12 })
       expect(V17.reply.propertyConstraints?.live).toEqual(V17.post.propertyConstraints?.live)
       expect(V17.reply.immutable).toContainEqual({ property: 'live', when: { absent: 'deleted' } })
-      // Thread reads and the notification windows keep tombstones: they anchor live replies.
-      for (const name of ['repliesOf', 'rootOwnerRecent', 'parentOwnerRecent']) expect(indexOf(V17, 'reply', name), name).toEqual(indexOf(V16, 'reply', name))
+      // The thread index drops tombstones too. skipIfAbsent names only live: `true`
+      // would also skip direct replies, which have no replyToReplyId (10231).
+      expect(indexOf(V17, 'reply', 'repliesOf')).toEqual({
+        name: 'repliesOf',
+        properties: [{ live: 'asc' }, { rootPostId: 'asc' }, { replyToReplyId: 'asc' }, { $createdAt: 'asc' }],
+        rangeCountable: true,
+        rankedCountable: { at: 'rootPostId' },
+        skipIfAbsent: ['live'],
+      })
+      // The notification windows keep tombstones.
+      for (const name of ['rootOwnerRecent', 'parentOwnerRecent']) expect(indexOf(V17, 'reply', name), name).toEqual(indexOf(V16, 'reply', name))
     })
 
     it('refuses a lone quote owner, an empty reply and self-likes', () => {
@@ -1469,14 +1478,14 @@ describe('contract topology', () => {
 
     it('reads the live-keyed listings with live pinned, and keeps every v16 surface', async () => {
       const v17 = await topologyModule('v17')
-      expect([v17.postListingsCarryLiveMarker(), v17.repliesCarryLiveMarker()]).toEqual([true, true])
+      expect([v17.postListingsCarryLiveMarker(), v17.repliesCarryLiveMarker(), v17.replyThreadsCarryLiveMarker()]).toEqual([true, true, true])
       expect(v17.postListingWherePrefix()).toEqual([['live', '==', true]])
       expect([v17.replyOwnerIndexPrefix(), v17.replyOwnerIndexOrderPrefix()]).toEqual([[['live', '==', true]], [['live', 'asc']]])
       expect([v17.yappCanBeFrozen(), v17.privateFeedsAreMultiple(), v17.privateFeedClientSupported()]).toEqual([false, true, true])
       expect(v17.ownerDistinctProperties('like')).toEqual(['postAuthor'])
       expect(v17.reportShape().maxReason).toBe(31)
       const v16 = await topologyModule('v16')
-      expect([v16.postListingsCarryLiveMarker(), v16.repliesCarryLiveMarker(), v16.postListingWherePrefix(), v16.replyOwnerIndexPrefix()]).toEqual([false, false, [], []])
+      expect([v16.postListingsCarryLiveMarker(), v16.repliesCarryLiveMarker(), v16.replyThreadsCarryLiveMarker(), v16.postListingWherePrefix(), v16.replyOwnerIndexPrefix()]).toEqual([false, false, false, [], []])
       expect([v16.yappCanBeFrozen(), v16.privateFeedsAreMultiple(), v16.privateFeedClientSupported()]).toEqual([true, false, false])
       expect((await topologyModule('v2')).yappCanBeFrozen()).toBe(true)
       const surfaces = async (topology: string) => {

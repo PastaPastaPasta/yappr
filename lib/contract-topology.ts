@@ -206,8 +206,9 @@ export interface ReplyLinkage {
    * `repliesOf [rootPostId, replyToReplyId, $createdAt]`): a reply's children
    * are only reachable, listed or counted, with `rootPostId ==` pinned, and a
    * whole-thread listing comes back grouped by parent rather than by time.
-   * False on v9 (`rootAndTime` and `replyToReplyAndTime` are separate indexes)
-   * and v2.
+   * On v17 the same index has `live` in front of the root
+   * ({@link replyThreadsCarryLiveMarker}). False on v9 (`rootAndTime` and
+   * `replyToReplyAndTime` are separate indexes) and v2.
    */
   nestedUnderRoot: boolean
 }
@@ -566,7 +567,8 @@ const V16_DESCRIPTOR: ContractTopologyDescriptor = {
  * cut (docs/SOCIAL_V17.md). v16's surfaces; what changes is outside this
  * descriptor: the global `timeline` and `tagAndTime` are keyed on the `live`
  * marker ({@link postListingsCarryLiveMarker}), replies carry one too and
- * their author index is keyed on it ({@link repliesCarryLiveMarker}), a like
+ * their author and thread indexes are keyed on it ({@link repliesCarryLiveMarker},
+ * {@link replyThreadsCarryLiveMarker}), a like
  * of one's own post or reply is refused (`ownerDistinctProperties('like')`),
  * YAPP has no authority actions ({@link yappCanBeFrozen}), and private feeds
  * are several write-once `privateFeed` documents per identity
@@ -734,11 +736,29 @@ export function postListingWherePrefix(): Array<['live', '==', true]> {
  * True when every live reply carries `live: true` and its tombstone leaves it
  * out (v17, the post rule of v13): `reply.ownerAndTime` is `[live, $ownerId,
  * $createdAt]` with `skipIfAbsent`, so a profile's Replies tab reads it with
- * `live == true` pinned first ({@link replyOwnerIndexPrefix}). Thread reads
- * (`repliesOf`) and the notification windows still hold tombstones: they
- * anchor the live replies under them.
+ * `live == true` pinned first ({@link replyOwnerIndexPrefix}). The thread
+ * index is live-keyed too ({@link replyThreadsCarryLiveMarker}); the
+ * notification windows still hold tombstones.
  */
 export function repliesCarryLiveMarker(): boolean {
+  return isAtLeast('v17')
+}
+
+/**
+ * True when the thread index `repliesOf` is keyed on the `live` marker (v17):
+ * `[live, rootPostId, replyToReplyId, $createdAt]` with `skipIfAbsent:
+ * ["live"]`, still rangeCountable and ranked at `rootPostId`. An author's
+ * tombstone (and a moderator's removal) leaves the thread listing and the
+ * reply counts, so counts no longer include deleted replies. Drive serves a
+ * skipping index only to a read that pins its skip property, so every
+ * `repliesOf` read (thread pages, children, the direct-reply null pin, counts,
+ * grouped counts, composite slots, the ranked query) must start with
+ * `live == true`; without it Platform refuses the query. A live reply under a
+ * tombstoned parent then arrives without its parent. `skipIfAbsent` names only
+ * `live`: `true` would also skip a direct reply, whose `replyToReplyId` is
+ * absent (Platform refuses that, 10231).
+ */
+export function replyThreadsCarryLiveMarker(): boolean {
   return isAtLeast('v17')
 }
 
@@ -850,7 +870,8 @@ export function replyCountFieldFor(kind: TargetKind): string {
  * (v10 replies): `repliesOf` starts at `rootPostId`, so a reply's children
  * are `rootPostId == R && replyToReplyId == P` (batched: `replyToReplyId in`
  * grouped by `replyToReplyId`, one query per root). A post's count is its
- * whole thread, `rootPostId ==`, on every topology.
+ * whole thread, `rootPostId ==`, on every topology. On v17 both also pin
+ * `live == true` first ({@link replyThreadsCarryLiveMarker}).
  */
 export function replyCountNeedsRoot(kind: TargetKind): boolean {
   return kind === 'reply' && replyLinkage().nestedUnderRoot

@@ -157,7 +157,11 @@
  * `--dry-run` builds and validates the v17 throwaway contract and every fixture (a reply carries
  * `live`, the author post read pins `live == true`). The live phases still read the global
  * timeline and tag pages as v16 does, and a self-like is now refused (distinctFrom), so they need
- * the v17 adaptations before a live run.
+ * the v17 adaptations before a live run. v17's `repliesOf` is `[live, rootPostId, replyToReplyId,
+ * $createdAt]` with `skipIfAbsent: ["live"]` (still rangeCountable, ranked at rootPostId): every
+ * r, c, t and M read of it must pin `live == true` first (`shapes.threadWhere`), or Platform
+ * refuses it, and a reply tombstone leaves the thread and its counts, so M-tb8 / M-mr2 count only
+ * live replies. The sakura probe of this index (reply-live-count, variant B) proved those reads.
  *
  * ## Social v16 (`--contract-file contracts/yappr-social-contract-v16.json`)
  *

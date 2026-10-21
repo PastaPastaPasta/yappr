@@ -9,7 +9,7 @@ The same cut re-cuts three feature contracts in place: blog v9 and pollr v8 ([NO
 | # | Decision | What changes |
 | --- | --- | --- |
 | 1 | **Tombstones leave the global listings** (R-M1) | `post.timeline` is `[live, $createdAt]` and `post.tagAndTime` `[live, tags, $createdAt]`, both `skipIfAbsent`, so an author's tombstone (which drops `live`) and a moderator's removal leave them. Through v16 every retraction stayed on the global timeline and on every tag page it carried. `timeline` is also `rangeCountable`, and `post.documentsCountable` is gone: the post total is the live posts, the timeline's count at `live == true`. |
-| 2 | **Live replies** (R-S1) | `reply.live` (`const: true`, position 12) with the post's rule (`countPresent(deleted, live) == 1`) and freeze (`{property: live, when: {absent: deleted}}`); `reply.ownerAndTime` is `[live, $ownerId, $createdAt]` with `skipIfAbsent`. `repliesOf` and the two notification windows still hold tombstones: they anchor the live replies under them. |
+| 2 | **Live replies** (R-S1) | `reply.live` (`const: true`, position 12) with the post's rule (`countPresent(deleted, live) == 1`) and freeze (`{property: live, when: {absent: deleted}}`); `reply.ownerAndTime` is `[live, $ownerId, $createdAt]` with `skipIfAbsent`. `repliesOf` is live-keyed too (row 13). The two notification windows still hold tombstones. |
 | 3 | **A reply says something** (review) | `reply.notEmpty`: text, ciphertext or media, or it is a tombstone, as `post.notEmpty`. An empty reply was valid and sponsored at 3 YAPP. |
 | 4 | **No lone quote owner** (R-M2) | `quoteOwner` is `{"in": [{"countPresent": ["quotedPostId", "quotedReplyId", "quotedPostOwnerId"]}, [0, 2]]}`. With `oneQuote` it admits nothing or one quote id with its owner. A post carrying only `quotedPostOwnerId` used to enter the victim's `quotedPostOwnerRecent` window. |
 | 5 | **No self-likes** (D6) | `like.postAuthor` is `distinctFrom: $ownerId` (refused 10419 before broadcast). `likeReply` names no author, so its reference refuses one: `replyId.refersTo.where: {"$ownerId": {"notEqual": "$ownerId"}}` (40127, a paid refusal: the client hides the button). |
@@ -20,22 +20,23 @@ The same cut re-cuts three feature contracts in place: blog v9 and pollr v8 ([NO
 | 10 | **Several write-once private feeds per identity** (R-M5, PF1–PF9) | `privateFeed` replaces `privateFeedState`; grants and rekeys name their feed; caps are stored per feed and checked on chain. See [Private feeds](#private-feeds). |
 | 11 | **One moderator for a day** (D39) | `post` and `reply` `moderatorAbilities.deleteWithin` is 86,400 s (v16: 604,800 s): one moderator removes a post or reply alone for a day after its last change, then it settles and only the seated team removes it (the leader and one more member since D41, row 12). The signed size and registration fee are unchanged (both values encode at the same width). |
 | 12 | **Moderation parameters** (D41) | `post` and `reply` `deleteSettled` is `{leader: true, approvals: 2}` (v16: 3): once settled, the leader and one more member remove it. The elected declaration's `ownerProtected` is false, so the seated team can moderate the contract owner too. `actionFees.create.moderators` (pricing `feeMultiplier`): post 20,000,000, reply 10,000,000, report 20,000,000 credits (v16: 80M, 16M, 50M). `maxAddedModerators` stays 10 and `challengeCoolDown` 30 days. The signed size is unchanged. |
-| 13 | **Unchanged by decision** | Sponsorship (D4: post/reply/like/likeReply at 10/3/1/1 YAPP, `gasFeesPaidBy: 2`), follows (D17), bookmarks (D13), the tag pattern (D7), every other index, rule and fee, and the moderation declaration: the file keeps mainnet-legal election windows (join 604,800 s, vote 259,200 s) and interim `contractOwner`, and the registration renders testnet's (below). |
+| 13 | **Live thread index** (owner, 2026-10-21) | `reply.repliesOf` is `[live, rootPostId, replyToReplyId, $createdAt]` with `skipIfAbsent: ["live"]`, still `rangeCountable` and `rankedCountable {at: rootPostId}` (it was `[rootPostId, replyToReplyId, $createdAt]`). See [Live thread index](#live-thread-index). |
+| 14 | **Unchanged by decision** | Sponsorship (D4: post/reply/like/likeReply at 10/3/1/1 YAPP, `gasFeesPaidBy: 2`), follows (D17), bookmarks (D13), the tag pattern (D7), every other index, rule and fee, and the moderation declaration: the file keeps mainnet-legal election windows (join 604,800 s, vote 259,200 s) and interim `contractOwner`, and the registration renders testnet's (below). |
 
 ## The file
 
 | | Social v17 |
 | --- | --- |
 | File | `contracts/yappr-social-contract-v17.json` |
-| sha256 | `3c7e167f31f8aadd7b1ce779e62be1c2dcad89a2c1519e85c4fea2dfa8f25aa6` |
-| Signed create | **~18,019 B** by `validate-contract-offline.mjs` on the 5.0.0-rc.3 wasm-sdk, testnet and mainnet renderings alike (v16: ~16,498 B): 1,981 B under the 20,000 B budget, 2,461 B under the 20,480 B cap |
+| sha256 | `77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf` |
+| Signed create | **~18,054 B** by `validate-contract-offline.mjs` on the 5.0.0-rc.3 wasm-sdk, testnet and mainnet renderings alike (v16: ~16,498 B): 1,946 B under the 20,000 B budget, 2,426 B under the 20,480 B cap |
 | Document types | 12: `privateFeed` replaces `privateFeedState` |
 | Registration fee | 91.00e9 credits by the protocol-14 fee table (`registrationFee` in `scripts/registration-policy.mjs`), the same as v16; **91.76e9 measured on sakura** (5,506¢) |
 | Parses | Full validation on the rc.3 wasm-sdk and the node rules on the rc.3 wasm-dpp2, `--network testnet` and `--network mainnet` (`--strict-size`); registered on sakura (beta.6 nodes, whose reference validation is identical) |
 
 ## Reading the live-keyed indexes
 
-Drive serves a `skipIfAbsent` index only to a read that pins every skip property with a constraint no missing value meets (`index_admissible_for_skip_if_absent`, rs-drive `query/mod.rs`). So every read of the three re-keyed indexes pins `live == true`, and an unpinned read is refused outright (proved on sakura): the client, the scripts, the e2e fixtures, the seeder and the mobile build must move together with the contract ids.
+Drive serves a `skipIfAbsent` index only to a read that pins every skip property with a constraint no missing value meets (`index_admissible_for_skip_if_absent`, rs-drive `query/mod.rs`). So every read of the four re-keyed indexes pins `live == true`, and an unpinned read is refused outright (proved on sakura): the client, the scripts, the e2e fixtures, the seeder and the mobile build must move together with the contract ids.
 
 | Read | `where` | `orderBy` |
 | --- | --- | --- |
@@ -43,9 +44,20 @@ Drive serves a `skipIfAbsent` index only to a read that pins every skip property
 | A tag page | `live == true`, `tags contains tag`, `$createdAt > 0` | **`$createdAt desc` only**: `tags` sits between `live` and `$createdAt`, and an `orderBy` must be a contiguous run of the index, so `live asc, $createdAt desc` is refused (proved) |
 | An author's posts | unchanged: `live == true`, `$ownerId ==`, `$createdAt > 0` | `live asc, $ownerId asc, $createdAt desc` |
 | An author's replies | `live == true`, `$ownerId ==`, `$createdAt > 0` | `live asc, $ownerId asc, $createdAt desc` |
+| A thread, a reply's children, the direct replies (`replyToReplyId == null`), reply counts, grouped counts, composite count slots, ranked roots (`repliesOf`) | `live == true`, `rootPostId ==` (or `in`), then `replyToReplyId` as before | as before (`replyToReplyId asc, $createdAt asc` or `$createdAt`) |
 | Live posts in total | count `live == true` (O(1), the timeline is `rangeCountable`) | — |
 
-A whole-type count (no `where`) is refused on v17: the type keeps no count tree. Thread reads (`repliesOf`) and the reply notification windows are unchanged and still return tombstones.
+A whole-type count (no `where`) is refused on v17: the type keeps no count tree. The reply notification windows are unchanged and still return tombstones.
+
+### Live thread index
+
+Through the first v17 draft `repliesOf` kept author tombstones, so a thread's reply count included deleted replies and the thread page listed them. On 2026-10-21 the owner approved keying it on `live` too. A moderator's removal already left the index; an author's tombstone now does as well.
+
+- `skipIfAbsent` is `["live"]`, not `true`. `true` would also skip every direct reply, whose optional `replyToReplyId` is absent, and Platform refuses it (10231).
+- Measured on sakura (5.0.0-beta.6, a throwaway copy of v17 at 7d863b30, variant B of `reply-live-count`): a reply costs the same, within +0.01¢ (direct 70.5M vs 70.2M, first direct 98.8M either way, nested ±0.02¢). An author's tombstone refunds 29.4M instead of 12.1M. Registration is 91.76e9 either way; the signed create grows 35 B to ~18,054 B.
+- Counts went 11 → 8 after three tombstones, 6 after two moderator removals, 8 after the restores. Without `live == true` all ten of the client's reply reads (thread page, children, the null pin, counts, grouped counts, both composite slots, ranked) are refused; with it they are served.
+- A live reply under a tombstoned parent is still listed, without its parent: the thread view must render it as an orphan.
+- The client gates its reads by `replyThreadsCarryLiveMarker()` (`lib/contract-topology.ts`); scripts use `threadWhere` (`scripts/social-shapes.mjs`). Until the client reads pin it, `lib/contract-query-conformance.test.ts` lists them in `PENDING_BUILDER_FIXES`.
 
 **Why `[live, tags, $createdAt]` and not `[tags, live, $createdAt]`.** Two stripped contracts that differ only in this order were registered on sakura and given the same writes and reads:
 
@@ -76,6 +88,7 @@ The shapes are exactly §4 of the owner-approved design (`private-feeds-multi-de
 
 - `postListingsCarryLiveMarker()` / `postListingWherePrefix()`: `postTimelineClauses` (lib/services/document-service.ts) and `postsTaggedQuery` (lib/services/post-service.ts) pin `live == true` in `where`; `countAllPosts` counts the timeline at `live == true`.
 - `repliesCarryLiveMarker()` / `replyOwnerIndexPrefix()` / `replyOwnerIndexOrderPrefix()`: a reply create writes `live: true`, its tombstone leaves it out (unchanged tombstone path), and `getUserReplies` pins it.
+- `replyThreadsCarryLiveMarker()`: true on v17; every `repliesOf` read must pin `live == true` first ([Live thread index](#live-thread-index)). The client reads do not consume it yet.
 - `yappCanBeFrozen()`: false on v17, so the token authority's freeze/unfreeze/slash tools are hidden in Settings (they would have nothing to sign).
 - `privateFeedsAreMultiple()` / `privateFeedClientSupported()`: the private-feed client speaks v17's multi-feed shape only ([Private-feed client](#private-feed-client)), so private feeds are offered on v17 and on no earlier cut.
 - `selfLikesAreRefused(kind)`: the like button is disabled on one's own post or reply ("Can't like your own post"), and `likeService.likePost` refuses it before reading or signing (a self reply-like would be a paid 40127).
@@ -95,7 +108,7 @@ v16 and v17 work in one build; nothing below v17 changes.
 
 Run with the repo's 5.0.0-rc.3 packages:
 
-- `validate-contract-offline.mjs <file> --strict-size --network testnet` and `--network mainnet`, for social v17, blog v9, storefront v10 and pollr v8: all parse under full validation (wasm-sdk) and the node rules (wasm-dpp2), and the node-rule audit is clean. Signed creates: social 18,019 B, blog 8,852 B, storefront 18,704 B, pollr 3,568 B.
+- `validate-contract-offline.mjs <file> --strict-size --network testnet` and `--network mainnet`, for social v17, blog v9, storefront v10 and pollr v8: all parse under full validation (wasm-sdk) and the node rules (wasm-dpp2), and the node-rule audit is clean. Signed creates: social 18,054 B, blog 8,852 B, storefront 18,704 B, pollr 3,568 B.
 - `--probes` and `--constraints`: see the tooling results recorded in the PR.
 - `npx vitest run` (the topology, moderation, query and conformance specs), `npm run lint`, `npm run build`.
 
@@ -127,7 +140,7 @@ Social v17, as expected in every case:
 | live-post count on the timeline | 2, the tombstone not counted; a whole-type count is refused | — |
 | a live reply (first / second) | accepted | 129.6M (7.8¢) / 73.9M (4.4¢) |
 | a reply without `live`; an empty reply | refused 10422 `live`; 10422 `notEmpty` | 0 |
-| a reply tombstone | gone from the author's replies, kept in the thread (`repliesOf`) | refund 11.6M |
+| a reply tombstone | gone from the author's replies, kept in the thread (`repliesOf`); since 2026-10-21 it leaves the thread too ([Live thread index](#live-thread-index)) | refund 11.6M |
 | a moderator's removal, then restore, of a live reply | leaves the author's replies, then comes back | 16.5M / 67.9M |
 | a post carrying only `quotedPostOwnerId`; a quote without its owner | refused 10422 `quoteOwner` | 0 |
 | a quote with its owner | accepted | 250.8M |

@@ -1288,6 +1288,9 @@
           "name": "repliesOf",
           "properties": [
             {
+              "live": "asc"
+            },
+            {
               "rootPostId": "asc"
             },
             {
@@ -1300,7 +1303,10 @@
           "rangeCountable": true,
           "rankedCountable": {
             "at": "rootPostId"
-          }
+          },
+          "skipIfAbsent": [
+            "live"
+          ]
         },
         {
           "name": "mentionedUserAndTime",
