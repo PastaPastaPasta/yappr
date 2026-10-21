@@ -8,8 +8,10 @@ import { SdkWasmPreload } from '@/components/sdk-wasm-preload'
 import { APP_URL } from '@/lib/constants'
 import { monitoringContractConfig } from '@/lib/monitoring-contract-config'
 import { IMG_SRC, MEDIA_SRC } from '@/lib/media/media-csp'
+import brand from '@/public/brand/brand.json'
 
 const basePath = process.env.BASE_PATH || ''
+const iconVersion = brand.source.slice(0, 8)
 const description = 'Social media you own. Your identity and posts live on Dash Platform.'
 
 export const metadata: Metadata = {
@@ -19,12 +21,13 @@ export const metadata: Metadata = {
   applicationName: 'Yappr',
   manifest: `${basePath}/manifest.webmanifest`,
   icons: {
-    // Built from public/brand/ by `npm run brand` (docs/brand/README.md).
+    // Built from public/brand/ by `npm run brand` (docs/brand/README.md). The query string is the
+    // brand set's source hash, so browsers refetch the tab icon when the set changes. icon-192.png
+    // stays in the web manifest only: as a rel=icon it could be picked for the tab instead.
     icon: [
-      { url: `${basePath}/favicon.ico`, sizes: '16x16 32x32 48x48' },
-      { url: `${basePath}/icon-192.png`, type: 'image/png', sizes: '192x192' },
+      { url: `${basePath}/favicon.ico?v=${iconVersion}`, sizes: '16x16 32x32 48x48' },
       // Last: browsers that take the last usable icon get the one drawn for tab sizes.
-      { url: `${basePath}/brand/favicon.svg`, type: 'image/svg+xml' },
+      { url: `${basePath}/brand/favicon.svg?v=${iconVersion}`, type: 'image/svg+xml' },
     ],
     apple: `${basePath}/apple-touch-icon.png`,
   },
