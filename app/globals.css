@@ -66,10 +66,6 @@ html:has(> body[data-scroll-locked]) {
     display: none;
   }
 
-  .glass-effect {
-    @apply backdrop-blur-xl bg-white/80 dark:bg-neutral-900/80;
-  }
-
   .glass-border {
     @apply border border-gray-200/50 dark:border-gray-800/50;
   }

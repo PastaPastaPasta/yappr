@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { CloudArrowUpIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
-import { useSettingsStore } from '@/lib/store'
 
 interface StorageProviderModalProps {
   open: boolean
@@ -22,8 +21,6 @@ export function StorageProviderModal({
   onOpenChange,
   onSettingsNavigate,
 }: StorageProviderModalProps) {
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
-
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <AnimatePresence>
@@ -34,7 +31,7 @@ export function StorageProviderModal({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className={`fixed inset-0 bg-black/60 z-[60] flex items-center justify-center px-4 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+                className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center px-4"
               >
                 <Dialog.Content asChild>
                   <motion.div

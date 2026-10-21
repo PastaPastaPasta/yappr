@@ -18,7 +18,6 @@ import { Spinner } from '@/components/ui/spinner'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import toast from 'react-hot-toast'
-import { useSettingsStore } from '@/lib/store'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 import { canBookmark } from '@/lib/contract-topology'
 import type { BookmarkDocument } from '@/lib/services/bookmark-service'
@@ -61,7 +60,6 @@ async function hydrateBookmarks(bookmarkDocs: BookmarkDocument[]): Promise<Saved
 
 function BookmarksPage() {
   const { user } = useAuth()
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
   const [isLoading, setIsLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
   const [reload, setReload] = useState(0)
@@ -291,7 +289,7 @@ function BookmarksPage() {
                       <button
                         type="button"
                         aria-label="Bookmark options"
-                        className={`p-2 bg-white/90 dark:bg-neutral-900/90 rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
+                        className="p-2 bg-white/90 dark:bg-neutral-900/90 rounded-full shadow-lg hover:bg-gray-100 dark:hover:bg-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yappr-500 focus-visible:ring-offset-2"
                       >
                         <EllipsisHorizontalIcon className="h-5 w-5" />
                       </button>

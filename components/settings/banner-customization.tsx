@@ -254,7 +254,7 @@ export function BannerCustomization({ onSave, initialBannerUrl }: BannerCustomiz
 
         {/* Upload progress overlay */}
         {isUploading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60">
             <Loader2 className="h-10 w-10 text-white animate-spin mb-3" />
             <span className="text-white text-sm font-medium">Uploading... {progress}%</span>
           </div>

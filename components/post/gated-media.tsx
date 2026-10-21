@@ -3,7 +3,6 @@
 import { useCallback, useState } from 'react'
 import { ArrowTopRightOnSquareIcon, EyeSlashIcon, PhotoIcon, VideoCameraSlashIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
-import { useSettingsStore } from '@/lib/store'
 import { checkServedMedia } from '@/lib/media/media-fingerprint'
 import { cn } from '@/lib/utils'
 import { IpfsImage } from '@/components/ui/ipfs-image'
@@ -20,13 +19,11 @@ interface GatedMediaPlaceholderProps {
 }
 
 /**
- * Frosted stand-in for media from a non-followed author. Renders no remote
+ * Stand-in for media from a non-followed author. Renders no remote
  * content at all — the real image is only fetched after the user reveals it
  * (or disables gating in settings).
  */
 export function GatedMediaPlaceholder({ onReveal, kind, className }: GatedMediaPlaceholderProps) {
-  const potatoMode = useSettingsStore((s) => s.potatoMode)
-
   return (
     <div
       className={cn(
@@ -39,7 +36,6 @@ export function GatedMediaPlaceholder({ onReveal, kind, className }: GatedMediaP
       <div
         className={cn(
           'flex h-full w-full items-center justify-center bg-white/30 dark:bg-black/30',
-          !potatoMode && 'backdrop-blur-xl',
           kind === 'image' ? 'flex-col gap-2 p-4' : 'gap-3 px-4 py-3'
         )}
       >
