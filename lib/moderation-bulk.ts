@@ -90,6 +90,7 @@ export async function readEveryPage(
   const items: BulkItem[] = []
   const seen = new Set<string>()
   let cursor: string | undefined
+  let stalled = false
   do {
     const page = await readPage(cursor)
     for (const item of page.items) {
@@ -98,10 +99,12 @@ export async function readEveryPage(
       items.push(item)
     }
     onPage?.(items)
-    // A cursor that does not move would read the same page forever.
-    cursor = page.next && page.next !== cursor ? page.next : undefined
+    // A cursor that does not move would read the same page forever; the
+    // listing may go on past it, so it is reported as incomplete.
+    stalled = page.next !== undefined && page.next === cursor
+    cursor = page.next && !stalled ? page.next : undefined
   } while (cursor && items.length < max)
-  return { items: items.slice(0, max), truncated: cursor !== undefined || items.length > max }
+  return { items: items.slice(0, max), truncated: stalled || cursor !== undefined || items.length > max }
 }
 
 /**
@@ -109,9 +112,12 @@ export async function readEveryPage(
  * rehearsal contracts (testnet, social v18) on 2026-10-22, as the
  * moderator's balance before and after bulk-hiding three seeded posts and a
  * reply (397,423,040 credits for four). A longer document costs a little
- * more; an unhide about the same.
+ * more.
  */
 export const HIDE_FEE_CREDITS = 99_400_000
+
+/** What one unhide costs (about 3.8¢): the same four unhidden, 256,163,500 credits. */
+export const UNHIDE_FEE_CREDITS = 64_000_000
 
 /** Credits per DASH, and the DASH price the ¢ figures assume. */
 const CREDITS_PER_DASH = 100_000_000_000
@@ -228,6 +234,8 @@ const FATAL = new Set([
   'TARGET_PROTECTED',
   'FIELD_NOT_CHANGEABLE',
   'MODERATOR_FIELD',
+  // The moderator's account cannot pay for the next one either.
+  'INSUFFICIENT_CREDITS',
 ])
 
 /** Answers that may hide a change that landed: settled by reading the chain again. */

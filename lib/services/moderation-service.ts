@@ -112,7 +112,7 @@ export interface ModerationResult {
    * have happened — the caller says "check again", never "failed".
    */
   errorCode?: 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | 'DOCUMENT_GONE'
-    | 'INVALID_LABEL' | 'ALREADY_RESTRICTED' | 'NOT_RESTRICTED' | 'WRITE_PENDING' | ModerationErrorKind;
+    | 'INVALID_LABEL' | 'ALREADY_RESTRICTED' | 'NOT_RESTRICTED' | 'WRITE_PENDING' | 'INSUFFICIENT_CREDITS' | ModerationErrorKind;
 }
 
 /**
@@ -1909,6 +1909,10 @@ class ModerationService {
     }
     // Held back unsent behind an earlier write whose outcome is not known yet.
     if (msg === PENDING_WRITE_ERROR) return { success: false, error: msg, errorCode: 'WRITE_PENDING' };
+    // The broadcast was refused for the fee (the compact `IdentityInsufficientBalanceError` name, or its message).
+    if (lower.includes('insufficientbalance') || ((lower.includes('insufficient') || lower.includes('not enough')) && (lower.includes('balance') || lower.includes('credit')))) {
+      return { success: false, error: 'Your account does not have enough credits for this. Top it up and try again.', errorCode: 'INSUFFICIENT_CREDITS' };
+    }
     const kind = classifyModerationError(error) ?? (lower.includes('not a moderator') ? 'NOT_MODERATOR' : null);
     if (kind) {
       return { success: false, error: MODERATION_ERROR_MESSAGES[kind], errorCode: kind };

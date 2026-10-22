@@ -85,6 +85,8 @@ describe('paging', () => {
     const result = await readEveryPage(readPage)
     expect(readPage).toHaveBeenCalledTimes(2)
     expect(result.items.map((i) => i.id)).toEqual(['x'])
+    // Stopped by the stall, not by a last page: the listing may go on.
+    expect(result.truncated).toBe(true)
   })
 })
 
@@ -252,6 +254,13 @@ describe('runBulk', () => {
     const summary = await runBulk(items, d)
     expect(d.apply).toHaveBeenCalledTimes(1)
     expect(summary).toMatchObject({ done: 0, stopped: 'fatal', error: 'Needs your key', failures: [] })
+  })
+
+  it('stops at the first refusal for want of credits', async () => {
+    const d = deps({ apply: async () => ({ success: false, error: 'Top it up', errorCode: 'INSUFFICIENT_CREDITS' }) })
+    const summary = await runBulk(items, d)
+    expect(d.apply).toHaveBeenCalledTimes(1)
+    expect(summary).toMatchObject({ stopped: 'fatal', error: 'Top it up', failures: [] })
   })
 
   it('stops quietly when the key sheet is closed', async () => {

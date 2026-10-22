@@ -11,7 +11,7 @@ import { useModerationAuthorization } from '@/hooks/use-moderation-authorization
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
-import { bulkCostLine, closedKeySheet, idsWithin, runBulk, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary } from '@/lib/moderation-bulk'
+import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, runBulk, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
@@ -65,7 +65,7 @@ function bulkStatusLine(mode: BulkMode, state: BulkProgress | BulkSummary): stri
  * reads the chain afresh, so whatever is still showing is what is left.
  */
 export function BulkHideModal() {
-  const { user } = useAuth()
+  const { user, controller } = useAuth()
   const { isOpen, target, close } = useBulkHideModal()
   const canAuthorize = useModerationAuthorization(isOpen)
   const seatedReasons = useSeatedReasons(isOpen, 'social')
@@ -88,11 +88,6 @@ export function BulkHideModal() {
   const readRef = useRef(0)
   /** Moves on with every opening and closing: a run started under another ignores itself. */
   const openingRef = useRef(0)
-  /** Who is signed in now, for a run to notice a sign-out or a switch of account. */
-  const signedInRef = useRef<string | null>(null)
-  useEffect(() => {
-    signedInRef.current = user?.identityId ?? null
-  }, [user])
   const authorId = target?.authorId ?? ''
 
   useEffect(() => {
@@ -197,17 +192,31 @@ export function BulkHideModal() {
     if (!user || batchItems.length === 0) return
     const moderatorId = user.identityId
     // A run outlives its dialog only to finish the transition under way: once
-    // it was closed (or opened again for someone else) it updates nothing, and
-    // once its moderator signed out it signs nothing more with the held key.
+    // it was closed (or opened again for someone else) it updates nothing.
+    // It belongs to the sign-in it began in: any sign-out or sign-in since
+    // (even back into the same account) moves the session epoch, and the run
+    // signs nothing more with the key it holds.
     const opening = openingRef.current
-    const current = () => openingRef.current === opening && signedInRef.current === moderatorId
+    const epoch = controller.sessionEpoch()
+    const sameOpening = () => openingRef.current === opening
+    const sameSession = () => controller.sessionEpoch() === epoch && controller.getState().user?.identityId === moderatorId
+    const current = () => sameOpening() && sameSession()
+    /** After a run ends: false when nothing more is this run's to show (and a run whose sign-in ended closes the dialog). */
+    const stillShown = () => {
+      if (!sameOpening()) return false
+      if (sameSession()) return true
+      setRunning(false)
+      setProgress(null)
+      close()
+      return false
+    }
     stopRef.current = false
     setStopping(false)
     setRunning(true)
     setSummary(null)
     setProgress({ total: batchItems.length, done: 0, current: null, failures: [] })
     const opened = await moderationService.openBatch(moderatorId)
-    if (!current()) return
+    if (!stillShown()) return
     if ('refused' in opened) {
       setRunning(false)
       setProgress(null)
@@ -226,7 +235,7 @@ export function BulkHideModal() {
       },
       cancelled: () => stopRef.current || !current(),
     })
-    if (!current()) return
+    if (!stillShown()) return
     setSummary(result)
     setProgress(null)
     setRunning(false)
@@ -422,7 +431,7 @@ export function BulkHideModal() {
         ) : (
           <>
             {summary && <p className="text-gray-700 dark:text-gray-300 tabular-nums">{bulkStatusLine(mode, summary)}</p>}
-            <p className="text-gray-600 dark:text-gray-400">{bulkCostLine(selectedItems.length)}</p>
+            <p className="text-gray-600 dark:text-gray-400">{bulkCostLine(selectedItems.length, mode === 'hide' ? HIDE_FEE_CREDITS : UNHIDE_FEE_CREDITS)}</p>
             {failures.length > 0 && (
               <div className="mt-2 min-h-0 flex-1 flex flex-col" data-testid="bulk-hide-failures">
                 <div className="flex items-center justify-between gap-3">
