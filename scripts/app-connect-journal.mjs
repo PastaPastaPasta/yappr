@@ -4,7 +4,7 @@
  * docs/SOCIAL_V18.md), apart from the script so they can be tested. No
  * network, no keys, no wasm: `generateId` is passed in.
  */
-import { TESTNET_REGISTERED_THROUGH } from './app-connect-set.mjs';
+import { TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET } from './app-connect-set.mjs';
 
 /** What a journal records of the rendering, compared on resume (an older journal without it rendered the files' own values). */
 export const journalPolicy = (policy) => ({ interim: policy.interim, electionWindows: policy.electionWindows, electionDelay: policy.electionDelay, challengeCoolDown: policy.challengeCoolDown });
@@ -16,11 +16,22 @@ export const policyKey = (recorded) => JSON.stringify({ interim: recorded.interi
  * Why a run may not go ahead on `network`, or null. Testnet already holds the
  * set's anchor and group (2026-10-21): a run there may only append after
  * {@link TESTNET_REGISTERED_THROUGH}, so a second anchor or group can never
- * be registered by mistake.
+ * be registered by mistake. It also holds the D36 rehearsal's anchor and
+ * group ({@link TESTNET_REHEARSAL_SET}): a run appends to those only when it
+ * names them (`testnetSet` 'rehearsal') AND signs as the rehearsal maker, and
+ * the rehearsal maker never runs without naming them.
  */
-export function testnetAppendProblem(network, appendAfter) {
-  if (network !== 'testnet' || appendAfter === TESTNET_REGISTERED_THROUGH) return null;
-  return `testnet already holds the App Connect anchor and group: pass --append-after ${TESTNET_REGISTERED_THROUGH} (and --start-nonce 57)`;
+export function testnetAppendProblem(network, appendAfter, { testnetSet = null, maker = null } = {}) {
+  if (network !== 'testnet') return testnetSet === null ? null : '--testnet-set is for testnet';
+  if (testnetSet !== null && testnetSet !== 'rehearsal') return `--testnet-set takes rehearsal (got "${testnetSet}"); leave it out for the release set`;
+  if (appendAfter !== TESTNET_REGISTERED_THROUGH) {
+    const startNonce = testnetSet === 'rehearsal' ? TESTNET_REHEARSAL_SET.startNonce : 57;
+    return `testnet already holds the App Connect anchor and group: pass --append-after ${TESTNET_REGISTERED_THROUGH} (and --start-nonce ${startNonce})`;
+  }
+  const rehearsalMaker = maker === TESTNET_REHEARSAL_SET.makerId;
+  if (testnetSet === 'rehearsal' && !rehearsalMaker) return `--testnet-set rehearsal appends only from the rehearsal maker: pass --maker ${TESTNET_REHEARSAL_SET.makerId}`;
+  if (testnetSet === null && rehearsalMaker) return `${maker} is the D36 rehearsal maker: name its set with --testnet-set rehearsal`;
+  return null;
 }
 
 /** Whether an append run resumes a batch: its journal already holds one of the entries it creates. */
