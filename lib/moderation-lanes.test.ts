@@ -53,6 +53,14 @@ describe('laneVariants', () => {
     expect(isLaned([['mod', '==', null]])).toBe(true)
   })
 
+  it('leaves a read of one named restricted lane (`live == 2, mod == null`) as that one lane', () => {
+    const restricted: WhereClause[] = [['live', '==', 2], ['mod', '==', null], ['$ownerId', '==', 'A'], ['$createdAt', '>', 0]]
+    expect(laneVariants(restricted)).toEqual([restricted])
+    expect(isLaned(restricted)).toBe(false)
+    // A v17-style `live == true` beside a mod pin names no listed lane either.
+    expect(isLaned([['live', '==', true], ['mod', '==', null]])).toBe(false)
+  })
+
   it('returns copies, never the caller\'s clauses', () => {
     const where: WhereClause[] = [['mod', '==', null]]
     const lanes = laneVariants(where)

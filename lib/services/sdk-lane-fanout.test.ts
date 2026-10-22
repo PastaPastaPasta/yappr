@@ -103,6 +103,13 @@ describe('installLaneFanout, flag off', () => {
     await read(SOCIAL)
     expect(spies.query).toHaveBeenCalledTimes(6)
     spies.query.mockClear()
+    // A read naming one unlisted lane gets exactly that lane, never the others mixed in under its limit.
+    const restricted = await sdk.documents.query({
+      dataContractId: SOCIAL, documentTypeName: 'post', where: [['live', '==', 2], ['mod', '==', null], ['$createdAt', '>', 0]], orderBy: NEWEST_FIRST, limit: 10,
+    } as never)
+    expect(spies.query).toHaveBeenCalledTimes(1)
+    expect(Array.from(restricted.keys())).toEqual([STORE[1].$id])
+    spies.query.mockClear()
     // Another moderated contract, and any other contract, read the listed lane only.
     await read(BLOG)
     await read(identifier(77))

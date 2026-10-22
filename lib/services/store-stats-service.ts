@@ -10,6 +10,7 @@
 
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
+import { moderationViewAll } from '@/lib/moderation-view';
 import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID, storefrontIsV6, storefrontModPin } from '../constants';
 import type { ItemRatingSummary, StoreRatingSummary } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
@@ -117,6 +118,18 @@ function summaryFrom({ count, sum }: { count: number; sum: number }): ItemRating
   return { reviewCount: count, averageRating: count > 0 ? round1(sum / count) : 0 };
 }
 
+const allLanesKey = (key: string) => `all-lanes:${key}`;
+
+/**
+ * The cache key of an aggregate read now. Under the storefront moderator view
+ * every lane is summed in (hidden reviews count), so those reads are cached
+ * apart and never served to a read without it, even one that lands after the
+ * view changed.
+ */
+function viewKey(key: string): string {
+  return moderationViewAll('storefront') ? allLanesKey(key) : key;
+}
+
 class StoreStatsService {
   private readonly storeSummaries = new TtlMap<string, StoreRatingSummary>(SUMMARY_TTL_MS);
   private readonly itemSummaries = new TtlMap<string, ItemRatingSummary>(SUMMARY_TTL_MS);
@@ -125,11 +138,13 @@ class StoreStatsService {
   /** Drop cached aggregates touching `storeId` (call after writing a review). */
   invalidateStore(storeId: string): void {
     this.storeSummaries.delete(storeId);
+    this.storeSummaries.delete(allLanesKey(storeId));
     this.rankings.clear();
   }
 
   invalidateItem(itemId: string): void {
     this.itemSummaries.delete(itemId);
+    this.itemSummaries.delete(allLanesKey(itemId));
     this.rankings.clear();
   }
 
@@ -146,7 +161,8 @@ class StoreStatsService {
    * a failed distribution degrades to zeros rather than losing the average.
    */
   async getStoreRatingSummary(storeId: string): Promise<StoreRatingSummary> {
-    const cached = this.storeSummaries.get(storeId);
+    const key = viewKey(storeId);
+    const cached = this.storeSummaries.get(key);
     if (cached) return cached;
     const sdk = await getEvoSdk();
     const [average, distribution] = await Promise.all([
@@ -157,7 +173,7 @@ class StoreStatsService {
       }),
     ]);
     const summary: StoreRatingSummary = { ...summaryFrom(average), ratingDistribution: distribution };
-    this.storeSummaries.set(storeId, summary);
+    this.storeSummaries.set(key, summary);
     return summary;
   }
 
@@ -171,7 +187,7 @@ class StoreStatsService {
   async getStoreRatingSummaries(storeIds: string[]): Promise<Map<string, StoreRatingSummary>> {
     const result = new Map<string, StoreRatingSummary>();
     const missing = Array.from(new Set(storeIds)).filter((id) => {
-      const cached = this.storeSummaries.get(id);
+      const cached = this.storeSummaries.get(viewKey(id));
       if (cached) result.set(id, cached);
       return !cached;
     });
@@ -222,11 +238,12 @@ class StoreStatsService {
    * item's store pinned on v6 (which drops the per-item tree).
    */
   async getItemRatingSummary(itemId: string, storeId: string): Promise<ItemRatingSummary> {
-    const cached = this.itemSummaries.get(itemId);
+    const key = viewKey(itemId);
+    const cached = this.itemSummaries.get(key);
     if (cached) return cached;
     const sdk = await getEvoSdk();
     const summary = summaryFrom(await averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW, [...storePin(storeId), ['itemId', '==', itemId]]));
-    this.itemSummaries.set(itemId, summary);
+    this.itemSummaries.set(key, summary);
     return summary;
   }
 
@@ -259,7 +276,8 @@ class StoreStatsService {
     },
     throwOnError = false
   ): Promise<RankedEntry[]> {
-    const cached = this.rankings.get(key) as RankedEntry[] | undefined;
+    const cacheKey = viewKey(key);
+    const cached = this.rankings.get(cacheKey) as RankedEntry[] | undefined;
     if (cached) return cached;
     try {
       const sdk = await getEvoSdk();
@@ -276,7 +294,7 @@ class StoreStatsService {
           const value = Number(entry.value) / scale;
           return { id: entry.groupValue as string, value: query.aggregate.type === 'avg' ? round1(value) : value };
         });
-      this.rankings.set(key, entries);
+      this.rankings.set(cacheKey, entries);
       return entries;
     } catch (error) {
       // Directory callers need to distinguish an unavailable ranking from a

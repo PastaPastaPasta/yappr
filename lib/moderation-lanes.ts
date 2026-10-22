@@ -33,7 +33,11 @@ function isPin(clause: unknown, field: string): boolean {
  */
 export function laneVariants<C extends WhereClause>(where: readonly C[] | undefined): C[][] {
   const clauses = where ?? []
+  // Only the listed lane fans out. A read that names another `live` lane
+  // (`live == 2, mod == null`: one restricted lane, as the profile's
+  // Moderation tab reads it) asks for exactly that lane.
   const laned = clauses.some((clause) => isPin(clause, 'mod'))
+    && clauses.every((clause) => clause[0] !== 'live' || isPin(clause, 'live'))
   const slots: Array<{ at: number; values: readonly unknown[] }> = []
   clauses.forEach((clause, at) => {
     if (laned && (isPin(clause, 'mod') || isPin(clause, 'live'))) {

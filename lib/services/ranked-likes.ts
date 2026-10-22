@@ -44,7 +44,7 @@ import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
 import { getEvoSdk } from './evo-sdk-service';
-import { isHiddenItem, moderationViewAll, onModeratorViewChange } from '@/lib/moderation-view';
+import { isHiddenItem, moderationViewAll } from '@/lib/moderation-view';
 import { inlineTags, listingsCarryModLane, postOwnerIndexPrefix, referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
@@ -333,8 +333,6 @@ interface HydratedCacheEntry {
  * exactly as long as the page load.
  */
 const hydratedCache = new TtlMap<string, HydratedCacheEntry>(60_000);
-// A page hydrated under the moderator view keeps hidden posts; one hydrated without it drops them.
-onModeratorViewChange(() => hydratedCache.clear());
 
 /**
  * Per cache key, the latest read under way: only it may fill the key, so a
@@ -467,7 +465,10 @@ async function hydrateRankedCached(
 ): Promise<Post[]> {
   const { getCurrentUserId } = await import('./sdk-helpers');
   const currentUserId = getCurrentUserId() ?? undefined;
-  const viewerKey = `${currentUserId ?? 'anonymous'}:${cacheKey}`;
+  // Keyed by the moderator view the read starts under: a page hydrated with
+  // hidden posts kept is never served to a read without it, even one that
+  // lands after the view changed.
+  const viewerKey = `${currentUserId ?? 'anonymous'}:${moderationViewAll() ? 'all-lanes:' : ''}${cacheKey}`;
   // A forced read means the caller knows the cached page is out of date, so it
   // goes: should this read fail, nothing after it (its retry, a later
   // background read) falls back to that page.
