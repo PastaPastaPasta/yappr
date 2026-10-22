@@ -7,8 +7,10 @@ name: Deploy to GitHub Pages
 # /staging), the devnet site (the same staging commit built against
 # .env.devnet, served under /devnet) and the staging-old site (the same staging
 # commit built against the retired D36 rehearsal set in .env.staging-old,
-# served under /staging-old for QA on its seeded data). A push to either branch
-# rebuilds all five so no deploy can wipe another.
+# served under /staging-old for QA on its seeded data) and the beta site (the
+# same staging commit built against that rehearsal group's "hide, don't delete"
+# v18 members in .env.beta, served under /beta). A push to either branch
+# rebuilds all six so no deploy can wipe another.
 #
 # The production and testing sites are never built from an unchecked master
 # tip. A run that follows a master CI run builds exactly that run's commit; a
@@ -210,6 +212,19 @@ jobs:
           npm run build:staging-old
           mv out out-staging-old
 
+      # Same staging checkout and commit again, against the rehearsal group's
+      # v18 members (.env.beta) and their own snapshot, under /beta with its own
+      # STORAGE_EPOCH. continue-on-error: a QA copy must never hold back /staging.
+      - name: Build beta (staging)
+        id: beta-build
+        if: steps.staging-build.outcome == 'success'
+        continue-on-error: true
+        working-directory: staging
+        run: |
+          rm -rf .next
+          npm run build:beta
+          mv out out-beta
+
       # Same master checkout and the same commit as the production build, so no
       # second `npm ci` — but the production output has to be moved aside first
       # and .next dropped so the /testing build cannot inherit its artifacts.
@@ -245,6 +260,12 @@ jobs:
             cp -R staging/out-staging-old/. site/staging-old/
           else
             echo "::warning::staging-old build failed or was skipped — deploying without /staging-old"
+          fi
+          if [ "${{ steps.beta-build.outcome }}" = "success" ] && [ -d staging/out-beta ]; then
+            mkdir -p site/beta
+            cp -R staging/out-beta/. site/beta/
+          else
+            echo "::warning::beta build failed or was skipped — deploying without /beta"
           fi
 
       # Pages serves only site/404.html for every missing path. Generate it from

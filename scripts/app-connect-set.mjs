@@ -78,6 +78,49 @@ export const APP_CONNECT_ENTRIES = [
 export const TESTNET_REGISTERED_THROUGH = 'passkeyVault';
 
 /**
+ * Testnet's other set: the D36 staging rehearsal (docs/TESTNET_STAGING_REHEARSAL.md),
+ * with its own maker, anchor and group, registered on 2026-10-18 at maker
+ * nonces 1-8 and seeded with demo data. A run appends to it only when it names
+ * it (`--testnet-set rehearsal`), and then only with this maker, anchor nonce
+ * and group. Its eight entries, the same ones through
+ * {@link TESTNET_REGISTERED_THROUGH}, were created from earlier cuts of the
+ * same files: `registered` pins the sha256 its journal recorded for each.
+ */
+export const TESTNET_REHEARSAL_SET = {
+  makerId: 'At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF',
+  startNonce: 1n,
+  groupId: 'ePtSmVdSqxJESyegxxRGcS7CwznyWSAn2FULYow8Dks',
+  registered: {
+    app: 'd3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41',
+    social: 'b21d61f7cbfe37d5b784bae52884c9ac0db42b87a97152d2a1519c7c2f605bcf',
+    blocks: 'ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677',
+    dmV5: '4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21',
+    blog: 'a03012221e543b850d7524b27148e6b9c2b84fae3a0c291426e22de30d6dccef',
+    pollr: 'a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347',
+    storefront: '581122bbf27b76ed014c2695e6c84d4dc14a9712c9c6fb97f9f3614a4455bdca',
+    passkeyVault: '14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5',
+  },
+};
+
+/**
+ * The rehearsal set's plan (`planAppConnectSet` for its maker and anchor
+ * nonce). A registered entry whose file has changed since (social v17, blog
+ * v9, storefront v10) carries the sha256 it was created from and
+ * `earlierCut: true`, so an append proves it on chain by id, owner and
+ * membership rather than against today's file; the others are proved against
+ * their files as usual. Throws unless `startNonce` is the rehearsal anchor's
+ * and the derived group is the rehearsal's.
+ */
+export function planRehearsalSet({ startNonce, generateId }) {
+  const { makerId, groupId, registered } = TESTNET_REHEARSAL_SET;
+  if (BigInt(startNonce) !== TESTNET_REHEARSAL_SET.startNonce) throw new Error(`the rehearsal set's anchor is at maker nonce ${TESTNET_REHEARSAL_SET.startNonce}, not ${startNonce}`);
+  const plan = planAppConnectSet({ makerId, startNonce, generateId });
+  if (plan.groupId !== groupId) throw new Error(`the rehearsal anchor derives group ${plan.groupId}, not ${groupId}`);
+  const contracts = plan.contracts.map((c) => (registered[c.name] && registered[c.name] !== c.sha256 ? { ...c, sha256: registered[c.name], earlierCut: true } : c));
+  return { ...plan, anchor: contracts[0], contracts };
+}
+
+/**
  * The entries a run creates: those after `appendAfter` (the last entry the
  * group already holds), or every entry when it is null. Throws on an unknown
  * name, and when nothing would be left to create.

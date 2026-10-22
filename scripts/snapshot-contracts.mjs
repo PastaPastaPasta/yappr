@@ -17,6 +17,12 @@
  * request, for a chain that was wiped and re-cut. Re-run after registering or
  * updating a contract; the app revalidates the bundle at runtime anyway, so a
  * stale snapshot costs one extra fetch, not correctness.
+ *
+ *   NETWORK=testnet node scripts/snapshot-contracts.mjs --qa <staging-old|beta>
+ *
+ * writes a QA build's own snapshot instead (QA_BUILDS in release-config.cjs):
+ * exactly the contracts its env file names, always pruned, which is what
+ * `assertSnapshotPins` requires of it at build time.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,13 +31,20 @@ import { connectSdk, devnetName, network } from './sdk-env.mjs';
 import { readEnvFile, REPO_ROOT } from './derive-identities.mjs';
 import { DASHPAY_CONTRACT_ID, SEEDED_TOPOLOGIES } from './seed/seed-lib.mjs';
 import { snapshotContractIds, snapshotEnvFiles } from './snapshot-contract-config.mjs';
+import releaseConfig from './release-config.cjs';
 
-const prune = process.argv.includes('--prune');
+const qaAt = process.argv.indexOf('--qa');
+const qa = qaAt === -1 ? null : releaseConfig.QA_BUILDS[process.argv[qaAt + 1]];
+if (qaAt !== -1 && (!qa || network() !== 'testnet')) {
+  console.error(`--qa takes ${Object.keys(releaseConfig.QA_BUILDS).join(' or ')}, on NETWORK=testnet`);
+  process.exit(1);
+}
+const prune = qa !== null || process.argv.includes('--prune');
 const net = network();
 const key = net === 'devnet' ? `devnet-${devnetName()}` : net;
 const ids = snapshotContractIds(
-  snapshotEnvFiles(net).map(file => readEnvFile(join(REPO_ROOT, file))),
-  process.env.CONTRACT_IDS ?? '', DASHPAY_CONTRACT_ID, SEEDED_TOPOLOGIES,
+  qa ? [readEnvFile(join(REPO_ROOT, qa.envFile))] : snapshotEnvFiles(net).map(file => readEnvFile(join(REPO_ROOT, file))),
+  qa ? '' : process.env.CONTRACT_IDS ?? '', DASHPAY_CONTRACT_ID, SEEDED_TOPOLOGIES,
 );
 if (ids.length === 0) {
   console.error('No contract ids: set CONTRACT_IDS or NEXT_PUBLIC_*CONTRACT_ID in the env file.');
@@ -49,8 +62,8 @@ const missing = ids.filter(id => !fetched.get(id));
 if (missing.length) throw new Error(`Missing contracts on ${key}; snapshot unchanged: ${missing.join(', ')}`);
 
 const outDir = join(REPO_ROOT, 'lib', 'contracts', 'bundled');
-mkdirSync(outDir, { recursive: true });
-const outPath = join(outDir, `${key}.json`);
+if (!qa) mkdirSync(outDir, { recursive: true });
+const outPath = qa ? join(REPO_ROOT, qa.snapshot) : join(outDir, `${key}.json`);
 const bundle = existsSync(outPath) && !prune
   ? JSON.parse(readFileSync(outPath, 'utf8'))
   : { network: key, generatedAt: '', contracts: {} };

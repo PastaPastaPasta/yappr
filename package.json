@@ -8,6 +8,7 @@
     "build:release": "node scripts/build-release.mjs",
     "build:staging": "BASE_PATH=/staging npm run build",
     "build:staging-old": "BASE_PATH=/staging-old node scripts/build-release.mjs .env.staging-old",
+    "build:beta": "BASE_PATH=/beta node scripts/build-release.mjs .env.beta",
     "build:subpath": "BASE_PATH=/yappr npm run build",
     "build:testing": "set -a && . ./.env.testing && set +a && BASE_PATH=/testing next build && node scripts/write-static-404.mjs out /testing",
     "build:devnet": "set -a && . ./.env.devnet && set +a && BASE_PATH=/devnet next build && node scripts/write-static-404.mjs out /devnet",

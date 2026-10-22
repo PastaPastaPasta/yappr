@@ -347,13 +347,25 @@ describe('release build configuration', () => {
     }
   })
 
+  const REHEARSAL_MAKER = releaseConfig.QA_BUILDS.beta.group.owner
+  /** A complete release env as a QA build's file: the rehearsal maker's group, its topologies and unused members pinned. */
+  function qaEnv(name) {
+    const env = { ...completeEnv(), NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER: REHEARSAL_MAKER, NEXT_PUBLIC_APP_CONNECT_GROUP_ID: releaseConfig.QA_BUILDS.beta.group.id, ...releaseConfig.QA_BUILDS[name].values }
+    const unused = releaseConfig.QA_BUILDS[name].unusedMembers.map(id => `${id}:1`)
+    env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS = [env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS, ...unused].join(',')
+    return env
+  }
+
   it.each([
-    { file: '.env.testnet', basePath: '', ambient: '1', flag: undefined },
-    { file: '.env.staging-old', basePath: '/staging-old', ambient: undefined, flag: '1' },
-    { file: '.env.staging-old', basePath: '/staging', ambient: undefined, flag: null },
-    { file: '.env.staging-old', basePath: '', ambient: undefined, flag: null },
-  ])('only build:staging-old turns on its snapshot: %j', ({ file, basePath, ambient, flag }) => {
-    const dir = mkdtempSync(join(tmpdir(), 'yappr-staging-old-entry-'))
+    { file: '.env.testnet', basePath: '', ambient: 'beta', qa: undefined },
+    { file: '.env.staging-old', basePath: '/staging-old', ambient: undefined, qa: 'staging-old' },
+    { file: '.env.beta', basePath: '/beta', ambient: 'staging-old', qa: 'beta' },
+    { file: '.env.staging-old', basePath: '/staging', ambient: undefined, qa: null, error: 'BASE_PATH=/staging-old' },
+    { file: '.env.beta', basePath: '', ambient: undefined, qa: null, error: 'BASE_PATH=/beta' },
+    { file: '.env.beta', basePath: '/staging-old', ambient: undefined, qa: null, error: 'BASE_PATH=/beta' },
+    { file: '.env.testnet', basePath: '/beta', ambient: undefined, qa: null, error: 'serves only the beta QA build' },
+  ])('only a QA build\'s own entry point names it: %j', ({ file, basePath, ambient, qa, error }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'yappr-qa-build-entry-'))
     try {
       mkdirSync(join(dir, 'scripts'))
       for (const name of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
@@ -364,38 +376,76 @@ describe('release build configuration', () => {
       writeFileSync(join(dir, 'node_modules/next/dist/bin/next'), `
         const fs = require('node:fs');
         fs.mkdirSync('out');
-        fs.writeFileSync('out/effective-env.json', JSON.stringify({ YAPPR_STAGING_OLD: process.env.YAPPR_STAGING_OLD }));
+        fs.writeFileSync('out/effective-env.json', JSON.stringify({ YAPPR_QA_BUILD: process.env.YAPPR_QA_BUILD }));
       `)
-      writeFileSync(join(dir, file), Object.entries(completeEnv()).map(([key, value]) => `${key}=${value}`).join('\n'))
+      const name = file === '.env.beta' ? 'beta' : 'staging-old'
+      const configured = file === '.env.testnet' ? completeEnv() : qaEnv(name)
+      writeFileSync(join(dir, file), Object.entries(configured).map(([key, value]) => `${key}=${value}`).join('\n'))
       const result = spawnSync(process.execPath, [join(dir, 'scripts/build-release.mjs'), ...(file === '.env.testnet' ? [] : [file])], {
-        cwd: dir, encoding: 'utf8', env: { ...process.env, BASE_PATH: basePath, ...(ambient ? { YAPPR_STAGING_OLD: ambient } : {}) },
+        cwd: dir, encoding: 'utf8', env: { ...process.env, BASE_PATH: basePath, ...(ambient ? { YAPPR_QA_BUILD: ambient } : {}) },
       })
-      if (flag === null) {
+      if (qa === null) {
         expect(result.status).toBe(1)
-        expect(result.stderr).toContain('BASE_PATH=/staging-old')
+        expect(result.stderr).toContain(error)
       } else {
         expect(result.status, result.stderr).toBe(0)
-        expect(JSON.parse(readFileSync(join(dir, 'out/effective-env.json'), 'utf8')).YAPPR_STAGING_OLD).toBe(flag)
+        expect(JSON.parse(readFileSync(join(dir, 'out/effective-env.json'), 'utf8')).YAPPR_QA_BUILD).toBe(qa)
       }
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   })
 
-  it('the checked-in .env.staging-old pins the D36 rehearsal set, scoped apart, and matches its snapshot', () => {
-    const rehearsal = parseEnv(readFileSync(new URL('../.env.staging-old', import.meta.url), 'utf8'))
-    expect(Object.keys(rehearsal).sort()).toEqual(Object.keys(template).sort())
-    expect(() => assertReleaseConfig(rehearsal)).not.toThrow()
-    expect(rehearsal.NEXT_PUBLIC_YAPPR_CONTRACT_ID).toBe('AbDUiaXbJML5FQGSpt5oEdx88tXK8FPRXbAt1jwK3Us9')
-    expect(rehearsal.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER).toBe('At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF')
+  it('a QA build keeps to the rehearsal maker\'s testnet group, its own topologies and its declared unused members', () => {
+    const base = { ...qaEnv('beta'), YAPPR_QA_BUILD: 'beta', BASE_PATH: '/beta' }
+    expect(() => assertReleaseConfig(base)).not.toThrow()
+    expect(() => assertReleaseConfig({ ...base, NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER: completeEnv().NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER })).toThrow('rehearsal group')
+    expect(() => assertReleaseConfig({ ...base, NEXT_PUBLIC_APP_CONNECT_GROUP_ID: completeEnv().NEXT_PUBLIC_APP_CONNECT_GROUP_ID })).toThrow('rehearsal group')
+    expect(() => assertReleaseConfig({ ...base, NEXT_PUBLIC_NETWORK: 'mainnet' })).toThrow('testnet only')
+    expect(() => assertReleaseConfig({ ...base, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v17' })).toThrow('NEXT_PUBLIC_CONTRACT_TOPOLOGY must be v18')
+    expect(() => assertReleaseConfig({ ...base, YAPPR_QA_BUILD: 'staging' })).toThrow('YAPPR_QA_BUILD must be one of')
+    const members = base.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',')
+    expect(() => assertReleaseConfig({ ...base, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: members.slice(0, -1).join(',') })).toThrow('a member of the group the beta build does not read')
+    const unused = releaseConfig.QA_BUILDS.beta.unusedMembers[0]
+    expect(() => assertReleaseConfig({ ...base, NEXT_PUBLIC_YAPPR_CONTRACT_ID: unused })).toThrow('no contract variable may name it')
+    // A release build never accepts the QA builds' extra members.
+    const release = completeEnv()
+    expect(() => assertReleaseConfig({ ...release, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${release.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS},${unused}:1` })).toThrow('unexpected member')
+    const dir = mkdtempSync(join(tmpdir(), 'yappr-qa-load-'))
+    try {
+      const write = (name, env) => { writeFileSync(join(dir, name), Object.entries(env).map(([key, value]) => `${key}=${value}`).join('\n')); return join(dir, name) }
+      // A QA build loads only its own file, and no file may name a QA build itself.
+      expect(() => releaseConfig.loadReleaseEnv(write('.env.testnet', completeEnv()), {}, 'beta')).toThrow('the beta build loads only .env.beta')
+      expect(() => releaseConfig.loadReleaseEnv(write('.env.beta', { ...qaEnv('beta'), YAPPR_QA_BUILD: 'beta' }), { BASE_PATH: '/beta' }, 'beta')).toThrow('may not set YAPPR_QA_BUILD')
+      expect(releaseConfig.loadReleaseEnv(write('.env.beta', qaEnv('beta')), { BASE_PATH: '/beta', YAPPR_QA_BUILD: 'staging-old' }, 'beta').YAPPR_QA_BUILD).toBe('beta')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    { name: 'staging-old', social: 'AbDUiaXbJML5FQGSpt5oEdx88tXK8FPRXbAt1jwK3Us9', topology: 'v17', scope: 'testnet-staging-old-1:staging-old' },
+    { name: 'beta', social: '5Kucw9g9TsiSRXbns2mPumXKVkYW7jwVrTdjFuFhMEwU', topology: 'v18', scope: 'testnet-beta-1:beta' },
+  ])('the checked-in $name env pins its rehearsal members, scoped apart, and matches its snapshot', ({ name, social, topology, scope }) => {
+    const build = releaseConfig.QA_BUILDS[name]
+    const configured = parseEnv(readFileSync(new URL(`../${build.envFile}`, import.meta.url), 'utf8'))
+    expect(Object.keys(configured).sort()).toEqual(Object.keys(template).sort())
+    const env = { ...configured, YAPPR_QA_BUILD: name, BASE_PATH: build.basePath }
+    expect(() => assertReleaseConfig(env)).not.toThrow()
+    expect(env.NEXT_PUBLIC_YAPPR_CONTRACT_ID).toBe(social)
+    expect(env.NEXT_PUBLIC_CONTRACT_TOPOLOGY).toBe(topology)
+    expect(env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER).toBe(REHEARSAL_MAKER)
+    // Both builds pin the whole group: App Connect checks its members exactly.
+    expect(env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',')).toHaveLength(11)
     const release = parseEnv(readFileSync(new URL('../.env.testnet', import.meta.url), 'utf8'))
-    expect(rehearsal.STORAGE_EPOCH).not.toBe(release.STORAGE_EPOCH)
-    expect(storageScope('/staging-old', rehearsal.STORAGE_EPOCH)).toBe('testnet-staging-old-1:staging-old')
-    const snapshot = JSON.parse(readFileSync(new URL('../lib/contracts/snapshots/testnet-staging-old.json', import.meta.url), 'utf8'))
-    expect(() => releaseConfig.assertSnapshotPins(snapshot, rehearsal)).not.toThrow()
-    expect(() => releaseConfig.assertSnapshotPins(snapshot, release)).toThrow('exact contract pins')
+    expect(env.STORAGE_EPOCH).not.toBe(release.STORAGE_EPOCH)
+    expect(storageScope(build.basePath, env.STORAGE_EPOCH)).toBe(scope)
+    const snapshot = JSON.parse(readFileSync(new URL(`../${build.snapshot}`, import.meta.url), 'utf8'))
+    expect(() => releaseConfig.assertSnapshotPins(snapshot, env)).not.toThrow()
+    for (const unused of build.unusedMembers) expect(snapshot.contracts).not.toHaveProperty(unused)
+    expect(() => releaseConfig.assertSnapshotPins(snapshot, { ...release, BASE_PATH: '' })).toThrow('exact contract pins')
     const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-    expect(scripts['build:staging-old']).toBe('BASE_PATH=/staging-old node scripts/build-release.mjs .env.staging-old')
+    expect(scripts[`build:${name}`]).toBe(`BASE_PATH=${build.basePath} node scripts/build-release.mjs ${build.envFile}`)
   })
 
   it('the checked-in .env.testnet is the complete registered release, and `build` uses it', () => {

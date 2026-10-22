@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { APP_CONNECT_ENTRIES, TESTNET_REGISTERED_THROUGH, appConnectEnvLines, entriesToCreate, planAppConnectSet } from './app-connect-set.mjs';
+import releaseConfig from './release-config.cjs';
+import { APP_CONNECT_ENTRIES, TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET, appConnectEnvLines, entriesToCreate, planAppConnectSet, planRehearsalSet } from './app-connect-set.mjs';
 import { appendNonces, checkJournal, isResumedAppend, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
 
 const MAKER = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A';
@@ -108,5 +109,52 @@ describe('checkJournal on an append', () => {
   it('refuses another network, maker or anchor', () => {
     expect(check({ ...registeredJournal(), network: 'devnet' }, D41)).toThrow(/network is devnet/);
     expect(check({ ...registeredJournal(), startNonce: '58' }, D41)).toThrow(/startNonce is 58/);
+  });
+});
+
+describe('the D36 rehearsal set', () => {
+  const REHEARSAL = TESTNET_REHEARSAL_SET.makerId;
+  const rehearsal = planRehearsalSet({ startNonce: 1n, generateId });
+  const rehearsalCreated = entriesToCreate(rehearsal.contracts, TESTNET_REGISTERED_THROUGH);
+  const rehearsalJournal = () => {
+    const contracts = {};
+    for (const c of rehearsal.contracts.filter((entry) => !rehearsalCreated.includes(entry))) {
+      contracts[c.name] = { nonce: String(c.nonce), id: c.id, file: c.file, sha256: c.sha256, state: 'verified' };
+    }
+    return { network: 'testnet', makerId: REHEARSAL, startNonce: '1', groupId: rehearsal.groupId, interim: 'notYetUsable', electionWindows: { joinWindow: 3600, voteWindow: 3600 }, contracts };
+  };
+  const checkRehearsal = (journal, against = rehearsal) =>
+    () => checkJournal(journal, against, { path: 'j.json', policy: HOUR, appendAfter: TESTNET_REGISTERED_THROUGH, network: 'testnet', generateId });
+
+  it('is appended to only when named, from its own maker, on testnet, after the registered entries', () => {
+    const named = { testnetSet: 'rehearsal', maker: REHEARSAL };
+    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, named)).toBeNull();
+    expect(testnetAppendProblem('testnet', null, named)).toMatch(/--append-after passkeyVault \(and --start-nonce 1\)/);
+    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { testnetSet: 'rehearsal', maker: MAKER })).toMatch(/only from the rehearsal maker/);
+    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { maker: REHEARSAL })).toMatch(/--testnet-set rehearsal/);
+    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { testnetSet: 'release', maker: MAKER })).toMatch(/takes rehearsal/);
+    expect(testnetAppendProblem('devnet', null, named)).toMatch(/for testnet/);
+    // The release set's guard is unchanged.
+    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { maker: MAKER })).toBeNull();
+    expect(testnetAppendProblem('testnet', null, { maker: MAKER })).toMatch(/--start-nonce 57/);
+  });
+
+  it('plans its own anchor and group, pinning its registered entries to the cuts they were created from', () => {
+    // The QA builds' fail-closed check names the same group (scripts/release-config.cjs).
+    expect(releaseConfig.QA_BUILDS.beta.group).toEqual({ id: TESTNET_REHEARSAL_SET.groupId, owner: TESTNET_REHEARSAL_SET.makerId });
+    expect(rehearsal.groupId).toBe(TESTNET_REHEARSAL_SET.groupId);
+    expect(rehearsal.anchor).toBe(rehearsal.contracts[0]);
+    expect(Object.keys(TESTNET_REHEARSAL_SET.registered)).toEqual(rehearsal.contracts.filter((c) => !rehearsalCreated.includes(c)).map((c) => c.name));
+    expect(rehearsal.contracts.filter((c) => c.earlierCut).map((c) => c.name)).toEqual(['social', 'blog', 'storefront']);
+    expect(Object.fromEntries(rehearsal.contracts.filter((c) => !rehearsalCreated.includes(c)).map((c) => [c.name, c.sha256]))).toEqual(TESTNET_REHEARSAL_SET.registered);
+    expect(rehearsalCreated.map((c) => [c.name, c.nonce, c.earlierCut, c.sha256])).toEqual(
+      APP_CONNECT_ENTRIES.slice(-3).map((e, i) => [e.name, 9n + BigInt(i), undefined, e.sha256]));
+    expect(() => planRehearsalSet({ startNonce: 57n, generateId })).toThrow(/anchor is at maker nonce 1/);
+  });
+
+  it('resumes its own journal, which the release plan refuses', () => {
+    expect(checkRehearsal(rehearsalJournal())).not.toThrow();
+    const releasePlan = planAppConnectSet({ makerId: REHEARSAL, startNonce: 1n, generateId });
+    expect(checkRehearsal(rehearsalJournal(), releasePlan)).toThrow(/prepared from another file/);
   });
 });

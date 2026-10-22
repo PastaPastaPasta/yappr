@@ -65,6 +65,46 @@ function archiveFlagErrors(env, where) {
     .map(([key]) => `${key} must be unset or empty in a release build (${where}); it turns the build into an archival frontend, see docs/ARCHIVE_FRONTEND.md`)
 }
 
+/** The D36 rehearsal's App Connect group and its owner (TESTNET_REHEARSAL_SET in app-connect-set.mjs). */
+const REHEARSAL_GROUP = { id: 'ePtSmVdSqxJESyegxxRGcS7CwznyWSAn2FULYow8Dks', owner: 'At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF' }
+
+/**
+ * The subpath QA builds served from the staging branch on the D36 testnet
+ * rehearsal set (maker At8Xd9…, group ePtSmVdS…) instead of .env.testnet's.
+ * Each builds only from its own env file (build-release.mjs sets
+ * YAPPR_QA_BUILD to its name), only at its own base path, only on testnet,
+ * only for the rehearsal group (`group`), with its own contract snapshot in
+ * place of bundled/testnet.json (next.config.js). It differs from a release
+ * build only as listed here:
+ *   - `values`: the topologies it serves instead of RELEASE_VALUES';
+ *   - `unusedMembers`: group members it must pin, since App Connect checks the
+ *     group's members exactly, but never reads, so its snapshot leaves them out.
+ * The group holds social v17, blog v9 and storefront v10 (2026-10-18) and the
+ * "hide, don't delete" social v18, blog v10 and storefront v11 appended after
+ * them (docs/SOCIAL_V18.md): /staging-old serves the first, /beta the second.
+ */
+const REHEARSAL_V17 = ['AbDUiaXbJML5FQGSpt5oEdx88tXK8FPRXbAt1jwK3Us9', 'HAEBfyZP9ECiX8crakwRSdjvVDkeJKPbG8Zs4YaRQrRa', '9Z5W23rzbMdwPBEn9e5pKKz6rmRVAkoCYDTWaqzLpWqS']
+const REHEARSAL_V18 = ['5Kucw9g9TsiSRXbns2mPumXKVkYW7jwVrTdjFuFhMEwU', '9mMb6qGmPA8mjxkk7wdUE5aotEVpY1hJwPJZqPPdUdPc', 'THxfq5ZinV2U5gmPZ8dTwqh11sCtGF53a2a87qHErNR']
+const QA_BUILDS = {
+  'staging-old': {
+    envFile: '.env.staging-old', basePath: '/staging-old', snapshot: 'lib/contracts/snapshots/testnet-staging-old.json',
+    group: REHEARSAL_GROUP, values: {}, unusedMembers: REHEARSAL_V18,
+  },
+  'beta': {
+    envFile: '.env.beta', basePath: '/beta', snapshot: 'lib/contracts/snapshots/testnet-beta.json',
+    values: { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v18', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v10', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v11' },
+    group: REHEARSAL_GROUP, unusedMembers: REHEARSAL_V17,
+  },
+}
+
+/** The QA build `env` names (YAPPR_QA_BUILD), null for a release build; throws on an unknown name. */
+function qaBuildOf(env) {
+  const name = env.YAPPR_QA_BUILD
+  if (name === undefined || name === '') return null
+  if (!Object.hasOwn(QA_BUILDS, name)) throw new Error(`YAPPR_QA_BUILD must be one of ${Object.keys(QA_BUILDS).join(', ')} (got "${name}")`)
+  return { name, ...QA_BUILDS[name] }
+}
+
 function isIdentifier(value) {
   if (typeof value !== 'string' || value !== value.trim()) return false
   try {
@@ -77,14 +117,24 @@ function isIdentifier(value) {
 function assertReleaseConfig(env) {
   if (env.NEXT_PUBLIC_RELEASE === undefined || env.NEXT_PUBLIC_RELEASE === '0') return
   const errors = []
+  const qa = qaBuildOf(env)
   if (env.NEXT_PUBLIC_RELEASE !== '1') errors.push('NEXT_PUBLIC_RELEASE must be 0 or 1')
+  const qaPath = Object.entries(QA_BUILDS).find(([, build]) => build.basePath === env.BASE_PATH)
+  if (!qa && qaPath) errors.push(`BASE_PATH=${env.BASE_PATH} serves only the ${qaPath[0]} QA build (npm run build:${qaPath[0]})`)
+  if (qa) {
+    if (env.BASE_PATH !== qa.basePath) errors.push(`the ${qa.name} build is served only at BASE_PATH=${qa.basePath}`)
+    if (env.NEXT_PUBLIC_NETWORK !== 'testnet') errors.push(`the ${qa.name} build is testnet only`)
+    if (env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID !== qa.group.id || env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER !== qa.group.owner) {
+      errors.push(`the ${qa.name} build serves only the rehearsal group ${qa.group.id} (owner ${qa.group.owner})`)
+    }
+  }
   if (!['testnet', 'mainnet'].includes(env.NEXT_PUBLIC_NETWORK)) {
     errors.push('NEXT_PUBLIC_NETWORK must be testnet or mainnet')
   }
   for (const key of IDENTIFIER_KEYS) {
     if (!isIdentifier(env[key])) errors.push(`${key} must be a base58 identifier encoding 32 bytes`)
   }
-  for (const [key, value] of Object.entries(RELEASE_VALUES)) {
+  for (const [key, value] of Object.entries({ ...RELEASE_VALUES, ...qa?.values })) {
     if (env[key] !== value) errors.push(`${key} must be ${value}`)
   }
   for (const key of EMPTY_KEYS) {
@@ -111,6 +161,11 @@ function assertReleaseConfig(env) {
     if (isIdentifier(env[key]) && !members.has(env[key])) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS must pin ${key}`)
   }
   const expectedIds = new Set(expected.map(key => env[key]))
+  for (const id of qa?.unusedMembers ?? []) {
+    if (expectedIds.has(id)) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: ${id} is unused by the ${qa.name} build, so no contract variable may name it`)
+    else if (!members.has(id)) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS must pin ${id}, a member of the group the ${qa.name} build does not read`)
+    expectedIds.add(id)
+  }
   for (const id of members) {
     if (!expectedIds.has(id)) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS has unexpected member ${id}`)
   }
@@ -127,20 +182,25 @@ function storageScope(basePath, epoch = '') {
   return [epoch, basePath.replace(/^\//, '')].filter(Boolean).join(':')
 }
 
-/** /staging-old's snapshot must contain exactly its pinned contracts, plus the profile and system contracts. */
+/** A QA build's snapshot must contain exactly the pinned contracts it reads, plus the profile and system contracts. */
 function assertSnapshotPins(snapshot, env) {
-  const pins = env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').map(pin => pin.split(':'))
+  const unused = new Set(qaBuildOf(env)?.unusedMembers ?? [])
+  const pins = env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').map(pin => pin.split(':')).filter(([id]) => !unused.has(id))
   const expectedIds = new Set([...pins.map(([id]) => id), env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID,
     env.NEXT_PUBLIC_DPNS_CONTRACT_ID, env.NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID])
   if (snapshot.network !== 'testnet' || Object.keys(snapshot.contracts).length !== expectedIds.size ||
       Object.keys(snapshot.contracts).some(id => !expectedIds.has(id)) ||
       pins.some(([id, version]) => snapshot.contracts[id]?.version !== Number(version))) {
-    throw new Error('The /staging-old snapshot must match the exact contract pins of .env.staging-old')
+    throw new Error(`The ${env.BASE_PATH} snapshot must match the exact contract pins of its env file`)
   }
 }
 
-/** Authoritative public release pins, shared by web and native builders. */
-function loadReleaseEnv(file, ambient = process.env) {
+/**
+ * Authoritative public release pins, shared by web and native builders. A QA
+ * build names itself (`qaBuild`, a QA_BUILDS key) and must load its own file;
+ * neither the file nor the ambient environment can name one.
+ */
+function loadReleaseEnv(file, ambient = process.env, qaBuild = null) {
   let configured
   try {
     configured = parseEnv(readFileSync(file, 'utf8'))
@@ -153,8 +213,13 @@ function loadReleaseEnv(file, ambient = process.env) {
   const ambientFlags = archiveFlagErrors(ambient, 'the ambient environment')
   if (ambientFlags.length) throw new Error(`Release configuration is incomplete or malformed:\n - ${ambientFlags.join('\n - ')}`)
   const env = Object.fromEntries(Object.entries(ambient).filter(([key]) =>
-    !key.startsWith('NEXT_PUBLIC_') && key !== 'STORAGE_EPOCH' && key !== 'YAPPR_STAGING_OLD'))
+    !key.startsWith('NEXT_PUBLIC_') && key !== 'STORAGE_EPOCH' && key !== 'YAPPR_QA_BUILD'))
+  if (Object.hasOwn(configured, 'YAPPR_QA_BUILD')) throw new Error(`${file} may not set YAPPR_QA_BUILD; the build entry point names its QA build`)
   Object.assign(env, configured, { NEXT_PUBLIC_RELEASE: '1' })
+  if (qaBuild !== null) {
+    if (!Object.hasOwn(QA_BUILDS, qaBuild) || !file.endsWith(`/${QA_BUILDS[qaBuild].envFile}`)) throw new Error(`the ${qaBuild} build loads only ${QA_BUILDS[qaBuild]?.envFile ?? 'its own env file'}`)
+    env.YAPPR_QA_BUILD = qaBuild
+  }
   assertReleaseConfig(env)
   // Pin the flags to an explicit "off" in the environment `next build` inherits.
   // Next loads .env.local, .env.production and .env for any variable that is
@@ -164,4 +229,4 @@ function loadReleaseEnv(file, ambient = process.env) {
   return env
 }
 
-module.exports = { assertReleaseConfig, storageScope, loadReleaseEnv, assertSnapshotPins }
+module.exports = { assertReleaseConfig, storageScope, loadReleaseEnv, assertSnapshotPins, qaBuildOf, QA_BUILDS }

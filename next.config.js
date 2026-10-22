@@ -2,7 +2,7 @@ const { execSync } = require('child_process')
 const path = require('path')
 const { readFileSync } = require('fs')
 const { PHASE_PRODUCTION_BUILD } = require('next/constants')
-const { assertReleaseConfig, storageScope, assertSnapshotPins } = require('./scripts/release-config.cjs')
+const { assertReleaseConfig, storageScope, assertSnapshotPins, qaBuildOf } = require('./scripts/release-config.cjs')
 const { sdkWasmAsset } = require('./scripts/sdk-wasm-asset.cjs')
 const wasmAsset = sdkWasmAsset(__dirname)
 
@@ -47,15 +47,16 @@ const nextConfig = {
     unoptimized: true,
   },
   webpack: (config, { isServer, webpack }) => {
-    // /staging-old (build:staging-old) seeds the D36 rehearsal set from its own
-    // snapshot in place of bundled/testnet.json, so threads use that set's
-    // registered index shapes. It lives outside the dynamic import directory,
-    // so no other build ships it.
-    if (process.env.YAPPR_STAGING_OLD === '1') {
-      if (basePath !== '/staging-old' || process.env.NEXT_PUBLIC_RELEASE !== '1' || process.env.NEXT_PUBLIC_NETWORK !== 'testnet') {
-        throw new Error('The /staging-old snapshot is restricted to the testnet /staging-old release build')
+    // A QA build (build:staging-old, build:beta; QA_BUILDS) seeds its
+    // contract set from its own snapshot in place of bundled/testnet.json, so
+    // its reads use that set's registered index shapes. The snapshots live
+    // outside the dynamic import directory, so no other build ships them.
+    const qa = qaBuildOf(process.env)
+    if (qa) {
+      if (basePath !== qa.basePath || process.env.NEXT_PUBLIC_RELEASE !== '1' || process.env.NEXT_PUBLIC_NETWORK !== 'testnet') {
+        throw new Error(`The ${qa.name} snapshot is restricted to the testnet ${qa.basePath} release build`)
       }
-      const snapshotPath = path.join(__dirname, 'lib/contracts/snapshots/testnet-staging-old.json')
+      const snapshotPath = path.join(__dirname, qa.snapshot)
       assertSnapshotPins(JSON.parse(readFileSync(snapshotPath, 'utf8')), process.env)
       let replaced = false
       config.plugins.push(new webpack.NormalModuleReplacementPlugin(/(^|[/\\])testnet\.json$/, resource => {
@@ -66,8 +67,8 @@ const nextConfig = {
       }))
       if (!isServer) config.plugins.push({
         apply(compiler) {
-          compiler.hooks.afterCompile.tap('StagingOldContractSnapshot', compilation => {
-            if (!replaced) compilation.errors.push(new Error('The /staging-old contract snapshot was not bundled'))
+          compiler.hooks.afterCompile.tap('QaContractSnapshot', compilation => {
+            if (!replaced) compilation.errors.push(new Error(`The ${qa.basePath} contract snapshot was not bundled`))
           })
         }
       })

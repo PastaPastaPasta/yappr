@@ -29,6 +29,12 @@
  *                         entry on chain at its planned id, and that the maker's next nonce is the first
  *                         new entry's; --live resumes the set's journal (every registered entry verified
  *                         there) and records the new entries' rendering apart from the original set's.
+ *   [--testnet-set rehearsal]
+ *                         testnet: append to the D36 rehearsal set (TESTNET_REHEARSAL_SET: its maker,
+ *                         anchor nonce 1 and group) instead of the release set. Required with the
+ *                         rehearsal maker and refused with any other. Its registered entries were created
+ *                         from earlier cuts of the files, so they are proved by id, owner and membership
+ *                         and checked against the sha256 its journal recorded.
  *
  *   NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --maker <id> --start-nonce 13
  *   NETWORK=devnet node scripts/register-app-connect-contracts.mjs --dry-run
@@ -62,6 +68,11 @@
  *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --append-after passkeyVault \
  *     --journal <the 2026-10-21 journal> --maker <id> --maker-key-file <0600 file> --maker-key-id <n> \
  *     --interim notYetUsable --election-windows <join>,<vote> --election-delay <seconds> --challenge-cool-down 1209600
+ * The same members appended to the D36 rehearsal set, resuming its 2026-10-18 journal:
+ *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --testnet-set rehearsal \
+ *     --append-after passkeyVault --journal <the rehearsal journal> --maker At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF \
+ *     --maker-key-file <0600 file> --maker-key-id <n> --interim notYetUsable --election-windows 3600,3600 \
+ *     --election-delay 3600 --challenge-cool-down 1209600
  *
  * Every mode but --plan gates on the protocol version of the PROVED current
  * epoch (never a status page), and prints the cost estimate of what it would
@@ -94,7 +105,7 @@ import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
 import { checkJournal, isResumedAppend, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
-import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, entriesToCreate, planAppConnectSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
+import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, entriesToCreate, planAppConnectSet, planRehearsalSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
 import { describeErr, resolveKeyFileOwner, signerFor } from './owner-keys.mjs';
 import { auditModeration, contractSource, registrationJson, withInterim } from './register-lib.mjs';
@@ -112,6 +123,7 @@ function parseArgs(argv) {
   const args = {
     mode: null, maker: null, startNonce: null, journal: null, upto: null, retryRefused: false, appendAfter: null,
     interim: null, electionWindows: null, electionDelay: null, challengeCoolDown: null, production: false, keyFile: null, keyId: null,
+    testnetSet: null,
   };
   const value = (i, flag) => {
     const next = argv[i];
@@ -137,6 +149,7 @@ function parseArgs(argv) {
       case '--election-delay': args.electionDelay = value(++i, arg); break;
       case '--challenge-cool-down': args.challengeCoolDown = value(++i, arg); break;
       case '--production': args.production = true; break;
+      case '--testnet-set': args.testnetSet = value(++i, arg); break;
       case '--maker-key-file': args.keyFile = value(++i, arg); break;
       case '--maker-key-id': args.keyId = value(++i, arg); break;
       default: throw new Error(`Unknown argument: ${arg}`);
@@ -287,11 +300,15 @@ async function proveAppendable(handle, plan, created, { resumed = false } = {}) 
   for (const entry of plan.contracts.filter((c) => !created.includes(c))) {
     const [contract, memberships] = await Promise.all([read(() => handle.sdk.contracts.fetch(entry.id)), read(() => handle.sdk.contractGroups.forContractWithProof(entry.id))]);
     if (!contract || contract.ownerId.toBase58() !== plan.groupOwner) throw new Error(`${entry.name}: ${entry.id} is not registered by the maker; the group does not hold the entries --append-after names`);
+    if (!memberships.data.contract.includes(plan.groupId)) throw new Error(`${entry.name}: ${entry.id} is not a member of ${plan.groupId}`);
+    if (entry.earlierCut) {
+      console.log(`  ${entry.name.padEnd(13)} ${entry.id} registered from an earlier cut (sha256 ${entry.sha256.slice(0, 12)}…), a proved member (height ${memberships.metadata.height})`);
+      continue;
+    }
     const declared = contractSource(readFileSync(contractFilePath(entry.file), 'utf8'));
     if (!sameSchemas(contract.toJSON(platformVersion).documentSchemas, DataContract.fromJSON(registrationJson(declared, { id: entry.id, ownerId: plan.groupOwner }), true, platformVersion).toJSON(platformVersion).documentSchemas)) {
       throw new Error(`${entry.name}: ${entry.id} does not carry ${entry.file}'s document types`);
     }
-    if (!memberships.data.contract.includes(plan.groupId)) throw new Error(`${entry.name}: ${entry.id} is not a member of ${plan.groupId}`);
     console.log(`  ${entry.name.padEnd(13)} ${entry.id} registered, a proved member (height ${memberships.metadata.height})`);
   }
   // A resumed live run allocates its own nonces and checks each id it creates (registerLive).
@@ -582,7 +599,7 @@ async function main() {
   const policy = registrationPolicy({ ...args, network: network() });
   // Testnet already holds the set's anchor and group (2026-10-21): a run there may only append to
   // them, so a second anchor or group can never be registered by mistake.
-  const appendProblem = testnetAppendProblem(network(), args.appendAfter);
+  const appendProblem = testnetAppendProblem(network(), args.appendAfter, { testnetSet: args.testnetSet, maker: args.maker });
   if (appendProblem) throw new Error(appendProblem);
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
   const platformVersion = PlatformVersion.latest();
@@ -621,7 +638,7 @@ async function main() {
   }
   // Before the balance gate, so a key file can be proved while the maker is still being funded.
   const signing = owner ? await verifySigningKey(handle.sdk, owner) : null;
-  const planned = planAppConnectSet({ makerId: maker.id, startNonce, generateId });
+  const planned = args.testnetSet === 'rehearsal' ? planRehearsalSet({ startNonce, generateId }) : planAppConnectSet({ makerId: maker.id, startNonce, generateId });
   // The entries this run creates: all of them, or (--append-after) those the group does not hold yet.
   let plan = planned;
   let created = entriesToCreate(planned.contracts, args.appendAfter);
