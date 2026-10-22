@@ -5,16 +5,14 @@ import { DocumentTextIcon } from '@heroicons/react/24/outline'
 import { InfoPage, InfoSection, Prose, BulletList, NetworkNotice, testNetwork } from '@/components/layout/info-page'
 import { SupportEmailLink } from '@/components/layout/legal-links'
 import { LEGAL_UPDATED, MINIMUM_AGE } from '@/lib/legal'
+import { moderationHidesOnly } from '@/lib/moderated-contracts'
 import {
   declaredActionFee,
-  settledDeletionFor,
   starterGrantAmount,
   tokenCostFor,
   yappIsLocked,
   yappIsTransferable,
 } from '@/lib/contract-topology'
-import { moderatedContract } from '@/lib/moderated-contracts'
-import { formatDuration } from '@/lib/utils/format'
 
 const COMMUNITY_RULES = [
   { title: 'Nothing illegal', body: 'Don’t post, sell or link to anything that is illegal where you or the people you share it with live.' },
@@ -52,39 +50,69 @@ function yappCostCopy(): string {
   return ` ${sentences.join(' ')}`
 }
 
-/**
- * When a removal needs the team, from the settled-deletion rule the build's
- * contracts declare (a day on the release set, D39); empty where moderators
- * remove at any age. Sakura's /devnet set was registered before D39 and D41,
- * so its contracts declare other values than the files it is built from:
- * there the sentence names no window or count (#822).
- */
-function settledRemovalCopy(): string {
-  const rule = settledDeletionFor('post')
-  if (!rule) return ''
-  const blogRule = moderatedContract('blog').settledDeletionFor('blogPost')
-  const blogToo = blogRule?.windowSeconds === rule.windowSeconds && blogRule.approvals === rule.approvals && blogRule.leaderRequired === rule.leaderRequired
-  const what = blogToo ? 'a post, reply, blog post or blog comment' : 'a post or reply'
-  if (EARLIER_REGISTERED_BASE_PATHS.includes(process.env.NEXT_PUBLIC_BASE_PATH ?? '')) {
-    return ` Once ${what} is past the time in which one moderator may remove it alone, removing it needs the team’s leader and other moderators to agree.`
-  }
-  return ` Removing ${what} that is more than ${formatDuration(rule.windowSeconds)} old needs ${approversCopy(rule)} to agree.`
+/** What the elected teams can do, on a build whose moderators only hide (the v18 model). */
+function HideModeration() {
+  return (
+    <>
+      <p>
+        The social, blog and storefront contracts each have an on-chain moderation team, elected by the community through
+        masternode votes. These teams are independent of Yappr. Each team publishes a charter listing the reasons it acts on.
+        Within their contracts, moderators can:
+      </p>
+      <BulletList>
+        <li>hide posts and replies from Yappr’s feeds and threads;</li>
+        <li>hide the Yappr parts of a profile (such as the banner, website and links);</li>
+        <li>hide blogs, blog posts and comments;</li>
+        <li>hide stores, items and reviews;</li>
+        <li>warn an account;</li>
+        <li>restrict an account, so its new posts and replies stay out of Yappr’s feeds. The account can keep posting.</li>
+      </BulletList>
+      <p>
+        Moderators can’t delete or edit anything you post. Hidden content is not erased: it stays on the network, and other
+        apps and archives can still show it.
+      </p>
+      <p>
+        Moderation happens in the open. Every hide, warning and restriction is public and records a reason. A hide can be
+        undone at any time, and a restriction can be lifted for new posts.
+      </p>
+      <p>
+        Posting on the social, blog and storefront parts of Yappr opens once each has its first elected team. Yappr’s authors
+        do not handle reports or direct the elected teams.
+      </p>
+    </>
+  )
 }
 
-/** Deployments whose registered contracts predate the files' moderation values (sakura). */
-const EARLIER_REGISTERED_BASE_PATHS = ['/devnet']
-
-const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
-
-/** Who must agree to a settled removal: "the team’s leader and one more moderator" for two approvals with the leader (D41). */
-function approversCopy({ approvals, leaderRequired }: { approvals: number; leaderRequired: boolean }): string {
-  const count = (n: number, noun: string) => `${COUNT_WORDS[n] ?? n} ${noun}${n === 1 ? '' : 's'}`
-  if (!leaderRequired) return `${count(approvals, 'moderator')} of the team`
-  return approvals <= 1 ? 'the team’s leader' : `the team’s leader and ${count(approvals - 1, 'more moderator')}`
+/** What the elected teams can do on the earlier cuts (/devnet, older staging builds), whose moderators delete. */
+function RemovalModeration() {
+  return (
+    <>
+      <p>
+        The social, blog and storefront contracts each have an on-chain moderation team, elected by the community through
+        masternode votes. These teams are independent of Yappr. Each team publishes a charter, and its removals, warnings,
+        suspensions and bans must cite a reason from that charter. Within their contracts, moderators can:
+      </p>
+      <BulletList>
+        <li>remove posts, replies and the Yappr parts of a profile (such as the banner, website and links);</li>
+        <li>remove blogs, blog posts and comments;</li>
+        <li>remove stores, items and reviews;</li>
+        <li>warn, suspend or ban an account from the part of Yappr they moderate.</li>
+      </BulletList>
+      <p>
+        Moderation happens in the open. Every removal, warning, suspension or ban leaves a public record of who did it, to what,
+        and when.
+      </p>
+      <p>
+        Before a team is elected, posting and reporting may be closed under the contract’s rules. Yappr’s authors do not
+        handle reports or direct the elected teams.
+      </p>
+    </>
+  )
 }
 
 export default function TermsPage() {
   const network = testNetwork()
+  const hidesOnly = moderationHidesOnly()
   return (
     <InfoPage icon={DocumentTextIcon} title="Terms of Use" subtitle="The rules for using Yappr, in plain words" updated={LEGAL_UPDATED}>
       <NetworkNotice>
@@ -120,8 +148,10 @@ export default function TermsPage() {
 
       <InfoSection title="Who can use Yappr">
         <Prose>
-          You must be at least {MINIMUM_AGE} years old, and able to agree to these terms where you live. Don&apos;t use Yappr if the
-          law, or a ban from the community-elected moderators, says you can&apos;t.
+          You must be at least {MINIMUM_AGE} years old, and able to agree to these terms where you live.{' '}
+          {hidesOnly
+            ? 'Don’t use Yappr if the law says you can’t.'
+            : 'Don’t use Yappr if the law, or a ban from the community-elected moderators, says you can’t.'}
         </Prose>
       </InfoSection>
 
@@ -147,7 +177,7 @@ export default function TermsPage() {
       <InfoSection title="Your content">
         <Prose className="space-y-3">
           <p>
-            You own what you post. Because Dash Platform is public, anyone, using Yappr or another app, can read, display, share and
+            You own what you post.{hidesOnly && ' Only you can delete it.'} Because Dash Platform is public, anyone, using Yappr or another app, can read, display, share and
             quote it. By posting, you agree to that.
           </p>
           <p>
@@ -168,32 +198,16 @@ export default function TermsPage() {
               </li>
             ))}
           </BulletList>
-          <p>Breaking them can get your content removed and your account warned, suspended or banned.</p>
+          <p>
+            {hidesOnly
+              ? 'Breaking them can get your content hidden from Yappr’s feeds, and your account warned or restricted.'
+              : 'Breaking them can get your content removed and your account warned, suspended or banned.'}
+          </p>
         </Prose>
       </InfoSection>
 
       <InfoSection title="Moderation">
-        <Prose className="space-y-3">
-          <p>
-            The social, blog and storefront contracts each have an on-chain moderation team, elected by the community through
-            masternode votes. These teams are independent of Yappr. Each team publishes a charter, and its removals, warnings,
-            suspensions and bans must cite a reason from that charter. Within their contracts, moderators can:
-          </p>
-          <BulletList>
-            <li>remove posts, replies and the Yappr parts of a profile (such as the banner, website and links);</li>
-            <li>remove blogs, blog posts and comments;</li>
-            <li>remove stores, items and reviews;</li>
-            <li>warn, suspend or ban an account from the part of Yappr they moderate.</li>
-          </BulletList>
-          <p>
-            Moderation happens in the open. Every removal, warning, suspension or ban leaves a public record of who did it, to what,
-            and when.{settledRemovalCopy()}
-          </p>
-          <p>
-            Before a team is elected, posting and reporting may be closed under the contract’s rules. Yappr’s authors do not
-            handle reports or direct the elected teams.
-          </p>
-        </Prose>
+        <Prose className="space-y-3">{hidesOnly ? <HideModeration /> : <RemovalModeration />}</Prose>
       </InfoSection>
 
       <InfoSection title="Reporting">
@@ -226,8 +240,8 @@ export default function TermsPage() {
               tax, consumer protection, and shipping rules.
             </li>
             <li>
-              <strong>Reviews are public</strong> and tied to an order. Store moderators can remove stores, items and reviews that
-              break the Community Rules.
+              <strong>Reviews are public</strong> and tied to an order. Store moderators can {hidesOnly ? 'hide' : 'remove'} stores,
+              items and reviews that break the Community Rules.
             </li>
             {network && (
               <li>

@@ -90,3 +90,12 @@ describe('documentNoun', () => {
     expect(documentNoun('post')).toBe('post')
   })
 })
+
+describe('the moderation model the legal copy describes', () => {
+  // Every cut the repo carries lets moderators delete content (or, on v2, has
+  // no moderation at all), so the copy keeps describing removals on each.
+  it.each(['v2', 'v9', 'v16', 'v17'])('keeps the removal wording on social %s', async (topology) => {
+    const { moderationHidesOnly } = await contractsUnder({ NEXT_PUBLIC_CONTRACT_TOPOLOGY: topology })
+    expect(moderationHidesOnly()).toBe(false)
+  })
+})
