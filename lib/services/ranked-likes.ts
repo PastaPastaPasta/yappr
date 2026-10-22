@@ -44,7 +44,7 @@ import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
 import { getEvoSdk } from './evo-sdk-service';
-import { moderationViewAll, withoutHiddenItems } from '@/lib/moderation-view';
+import { isHiddenItem, moderationViewAll } from '@/lib/moderation-view';
 import { inlineTags, listingsCarryModLane, postOwnerIndexPrefix, referencesMayDangle, trendLanePin, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
@@ -122,9 +122,9 @@ export interface TopLikedPostsOptions {
 }
 
 /**
- * The lane a like trend window pins first: `postLive == 1` on v18, where both
- * windows are keyed `[$createdAt, postLive, …]` (likes of listed posts only);
- * nothing on an all-time ranking or before v18.
+ * The lane a like trend window pins first: `postLive == 1` where the like type
+ * carries `postLive` and both windows are keyed `[$createdAt, postLive, …]`
+ * (likes of listed posts only); nothing on an all-time ranking or without it.
  */
 function laneOfWindow(documentTypeName: string, windowed: WindowedRanking | null): DocumentsIndexPin[] {
   return windowed && documentTypeName === 'like' ? trendLanePin() : [];
@@ -292,11 +292,23 @@ export async function topAuthorsByPostCount(limit: number = 100): Promise<Ranked
 const MAX_RANKED_READ = 100;
 
 /**
+ * Whether a hydrated post belongs on a ranked list of this build: not hidden,
+ * and not written while its author was restricted (lane 2). The all-time
+ * rankings, and the trend windows when the like type carries no `postLive`
+ * ({@link trendLanePin}), count a restricted post's likes, so the lane is
+ * judged here after hydration. An archival build keeps both, labelled.
+ */
+function isRankable(post: Post): boolean {
+  if (isHiddenItem(post)) return false;
+  return moderationViewAll() || !post.moderation?.restricted;
+}
+
+/**
  * How many ranked ids to read for a page of `limit` posts. A v18 ranking
- * counts a hidden post's likes, so some ids come back hidden and are skipped
- * after hydration; reading a quarter more (at least 5) keeps the page full
- * without a second read. Elsewhere, and on an archival build that skips
- * nothing, it is `limit`.
+ * counts a hidden or restricted post's likes, so some ids come back unlisted
+ * and are skipped after hydration; reading a quarter more (at least 5) keeps
+ * the page full without a second read. Elsewhere, and on an archival build
+ * that skips nothing, it is `limit`.
  */
 function rankedReadLimit(limit: number): number {
   if (!listingsCarryModLane() || moderationViewAll()) return limit;
@@ -539,7 +551,7 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId: stri
   // v18: a ranking counts a hidden post's likes, so its id can be on the list:
   // this build skips it (an archival build keeps it, labelled). The list was
   // read with a little headroom for that, and is cut back to the page asked for.
-  const byId = new Map(withoutHiddenItems(page.posts).map((post) => [post.id, post]));
+  const byId = new Map(page.posts.filter(isRankable).map((post) => [post.id, post]));
   const { usernames, profiles, avatars } = page.preloaded;
   const ordered = ranked.flatMap((entry) => {
     const post = byId.get(entry.postId);

@@ -858,18 +858,15 @@ export function authorsCanBeRestricted(): boolean {
 }
 
 /**
- * True when a like copies its post's `live` lane as `postLive` (v18): the
- * reference `where` binds it to the post, and both trend windows are keyed
- * `[$createdAt, postLive, …]`, so trending reads pin `postLive == 1`. It also
- * sits last in the counters (`byPost [postId, postLive]`, ranked at `postId`,
- * and `byHashtagPost`/`byAuthorPost`): an unlike carries the post's `live` as
- * `postLive`, and "have I liked it" pins it after `postId`; counts and
- * rankings by `postId` need no lane. Both windows keep `outlivesDelete`, so an
- * unlike names no `$createdAt` and does not lower trending. A like of a
- * tombstone (no `live`) is refused.
+ * True when the configured cut's `like` type declares `postLive`, a copy of
+ * its post's `live` lane: the reference `where` binds it to the post, and both
+ * trend windows are keyed `[$createdAt, postLive, …]`, so trending reads pin
+ * `postLive == 1`. A like of a tombstone (no `live`) is refused. Read off the
+ * committed contract file, not the topology version: a v18 file without it
+ * writes likes as v17 does.
  */
 export function likesCarryPostLive(): boolean {
-  return isAtLeast('v18')
+  return isDevnetCut() && schemaOf('like')?.properties?.postLive !== undefined
 }
 
 /**
@@ -908,10 +905,12 @@ export function modLanePin(): LanePin[] {
 }
 
 /**
- * The pin both v18 like trend windows carry after the window
- * (`byTrendPost [$createdAt, postLive, postId]`, `byTrendHashtagPost
- * [$createdAt, postLive, tags, postId]`): `postLive == 1`, so trending counts
- * likes of listed posts only. Nothing before v18.
+ * The pin both like trend windows carry after the window when the committed
+ * `like` type has `postLive` (`byTrendPost [$createdAt, postLive, postId]`,
+ * `byTrendHashtagPost [$createdAt, postLive, tags, postId]`): `postLive == 1`,
+ * so trending counts likes of listed posts only. Nothing otherwise
+ * ({@link likesCarryPostLive}); the ranked readers then drop restricted posts
+ * themselves.
  */
 export function trendLanePin(): LanePin[] {
   return likesCarryPostLive() ? [['postLive', '==', 1]] : []

@@ -215,12 +215,23 @@ it('reads the Following Top all-time on v10 (per-author has no window there)', a
 });
 
 /** A hydrated post as the composite page returns it; `hidden` marks it the way `transformRawPost` does for a post with `mod` set. */
-function rankedCard(id: string, hidden = false) {
+function rankedCard(id: string, hidden = false, restricted = false) {
   return {
     id, targetKind: 'post', content: id, createdAt: new Date(0), author: fenceAuthor,
     likes: 0, replies: 0, reposts: 0, quotes: 0, views: 0,
-    ...(hidden ? { moderation: { mod: 1 } } : {}),
+    ...(hidden || restricted ? { moderation: { ...(hidden ? { mod: 1 } : {}), ...(restricted ? { restricted: true } : {}) } } : {}),
   };
+}
+
+/** The committed v18 social contract with the `like` type's `postLive` kept or dropped, as #883 drops it. */
+async function mockV18Contract(withPostLive: boolean) {
+  const { default: committed } = await import('@/contracts/yappr-social-contract-v18.json');
+  const like = committed.documentSchemas.like;
+  const properties: Record<string, unknown> = { ...like.properties };
+  if (!withPostLive) delete properties.postLive;
+  vi.doMock('@/contracts/yappr-social-contract-v18.json', () => ({
+    default: { ...committed, documentSchemas: { ...committed.documentSchemas, like: { ...like, properties } } },
+  }));
 }
 
 describe('hidden posts in a ranked list (v18)', () => {
@@ -278,6 +289,39 @@ describe('hidden posts in a ranked list (v18)', () => {
     const page = await topLikedPostsHydrated({ limit: 3 });
     expect(mocks.ranked.mock.calls[0][0].limit).toBe(3);
     expect(page.map((post) => post.id)).toEqual(['p1', 'p2', 'p3']);
+  });
+
+  describe.each([true, false])('restricted posts, when the like type has postLive: %s', (withPostLive) => {
+    const hydrateWith = (hidden: string[], restricted: string[]) => mocks.hydrate.mockImplementation(async (request: { documentIds: string[] }) => {
+      const posts = request.documentIds.map((id) => rankedCard(id, hidden.includes(id), restricted.includes(id)));
+      return { rawPosts: posts.map((post) => ({ $id: post.id })), posts, preloaded: {} };
+    });
+
+    beforeEach(async () => {
+      await mockV18Contract(withPostLive);
+    });
+    afterEach(() => {
+      vi.doUnmock('@/contracts/yappr-social-contract-v18.json');
+    });
+
+    it.each(['all', 'today'] as const)('skips hidden and restricted posts on the %s ranking', async (window) => {
+      hydrateWith(['p1'], ['p2', 'p4']);
+      const { topLikedPostsHydrated } = await import('./ranked-likes');
+
+      const page = await topLikedPostsHydrated({ limit: 3, window });
+
+      expect(page.map((post) => post.id)).toEqual(['p3', 'p5', 'p6']);
+      expect(mocks.ranked.mock.calls[0][0].limit).toBe(8);
+      const where: unknown[] = mocks.ranked.mock.calls[0][0].where ?? [];
+      expect(where.some((pin) => Array.isArray(pin) && pin[0] === 'postLive')).toBe(withPostLive && window === 'today');
+    });
+
+    it('keeps restricted posts, labelled, on an archival build', async () => {
+      vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all');
+      hydrateWith([], ['p2']);
+      const { topLikedPostsHydrated } = await import('./ranked-likes');
+      expect((await topLikedPostsHydrated({ limit: 3 })).map((post) => post.id)).toEqual(['p1', 'p2', 'p3']);
+    });
   });
 
   it('reads exactly the page asked for before v18', async () => {

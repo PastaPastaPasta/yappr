@@ -28,10 +28,30 @@ const storedPost = (fields: Record<string, unknown>) => ({
   toObject: () => ({ $id: POST, $ownerId: AUTHOR, $revision: 1, content: 'x', ...fields }),
 })
 
-async function likeService() {
+/**
+ * The committed v18 social contract with its `like` type's `postLive` kept or
+ * dropped (#883 drops it): the client follows the file, not the version.
+ */
+async function mockContract(withPostLive: boolean) {
+  const { default: committed } = await import('@/contracts/yappr-social-contract-v18.json')
+  const like = committed.documentSchemas.like
+  const properties: Record<string, unknown> = { ...like.properties }
+  if (withPostLive) properties.postLive ??= { type: 'integer' }
+  else delete properties.postLive
+  vi.doMock('@/contracts/yappr-social-contract-v18.json', () => ({
+    default: { ...committed, documentSchemas: { ...committed.documentSchemas, like: { ...like, properties } } },
+  }))
+}
+
+async function likeModule(withPostLive = true) {
   vi.resetModules()
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v18')
-  return (await import('./like-service')).likeService
+  await mockContract(withPostLive)
+  return import('./like-service')
+}
+
+async function likeService(withPostLive = true) {
+  return (await likeModule(withPostLive)).likeService
 }
 
 const created = () => mocks.createDocument.mock.calls[0][3] as Record<string, unknown>
@@ -44,6 +64,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.unstubAllEnvs()
+  vi.doUnmock('@/contracts/yappr-social-contract-v18.json')
 })
 
 describe('v18 like of a post', () => {
@@ -146,9 +167,7 @@ describe('v18 unlike of a post', () => {
 
 describe('the lane a card already knows', () => {
   it('is 1 without marks, 2 for a restricted author, and unknown for a tombstone, a reply or an older cut', async () => {
-    vi.resetModules()
-    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v18')
-    const v18 = await import('./like-service')
+    const v18 = await likeModule()
     expect(v18.knownPostLane({}, 'post')).toBe(1)
     expect(v18.knownPostLane({ moderation: { restricted: false } }, 'post')).toBe(1)
     expect(v18.knownPostLane({ moderation: { restricted: true } }, 'post')).toBe(2)
@@ -157,5 +176,42 @@ describe('the lane a card already knows', () => {
     vi.resetModules()
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
     expect((await import('./like-service')).knownPostLane({}, 'post')).toBeUndefined()
+  })
+})
+
+describe('a v18 file whose like type has no postLive', () => {
+  const likeRow = { $id: id(10), $ownerId: VIEWER, postId: POST, postAuthor: AUTHOR }
+  const info = { author: AUTHOR, tags: [] as string[] }
+
+  beforeEach(() => {
+    mocks.query.mockResolvedValue([likeRow])
+    mocks.deleteDocumentByValues.mockResolvedValue({ success: true, confirmed: true })
+  })
+
+  it('writes the like as v17 does: no postLive, no read of the post, even when the card knows a lane', async () => {
+    mocks.query.mockResolvedValue([])
+    const service = await likeService(false)
+
+    await expect(service.likePost(POST, VIEWER, AUTHOR, 'post', { ...info, live: 2 })).resolves.toBe(true)
+
+    expect(mocks.get).not.toHaveBeenCalled()
+    expect(created()).not.toHaveProperty('postLive')
+  })
+
+  it('unlikes with one delete and no lane probing, also after a refusal', async () => {
+    mocks.deleteDocumentByValues.mockResolvedValue({ success: false, error: 'mismatch (code=40127)' })
+    const service = await likeService(false)
+
+    await expect(service.unlikePost(POST, VIEWER, 'post', info)).resolves.toBe(false)
+
+    expect(mocks.get).not.toHaveBeenCalled()
+    expect(deletedTuples()).toHaveLength(1)
+    expect(deletedTuples()[0]).not.toHaveProperty('postLive')
+  })
+
+  it('knows no lane for any card', async () => {
+    const { knownPostLane } = await likeModule(false)
+    expect(knownPostLane({}, 'post')).toBeUndefined()
+    expect(knownPostLane({ moderation: { restricted: true } }, 'post')).toBeUndefined()
   })
 })

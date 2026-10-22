@@ -6,11 +6,11 @@ vi.mock('./restriction-service', () => ({ restrictionService: { isRestricted, re
 const OWNER = '11111111111111111111111111111113'
 const LANE_REFUSED = new Error('Document does not satisfy restrictedLane (code=10422)')
 
-async function createOn(topology: string, kind: 'post' | 'reply', create: (data: Record<string, unknown>) => Promise<string>) {
+async function createOn(topology: string, kind: 'post' | 'reply', create: (data: Record<string, unknown>) => Promise<string>, data: Record<string, unknown> = { content: 'hello' }) {
   vi.resetModules()
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
   const { createInLiveLane } = await import('./live-lane')
-  return createInLiveLane(kind, OWNER, { content: 'hello' }, create)
+  return createInLiveLane(kind, OWNER, data, create)
 }
 
 beforeEach(() => {
@@ -99,5 +99,54 @@ describe('createInLiveLane', () => {
     await createOn('v18', 'post', create)
 
     expect(create.mock.calls.map(([data]) => data.live)).toEqual([1, 2])
+  })
+})
+
+describe('createInLiveLane and mentions', () => {
+  const mention = new Uint8Array(32).fill(7)
+  const withMention = { content: 'hi @alice', mentionedUserIds: [mention] }
+
+  it.each(['post', 'reply'] as const)('keeps the mentions of a %s in lane 1', async (kind) => {
+    const create = vi.fn().mockResolvedValue('ok')
+    await createOn('v18', kind, create, withMention)
+    expect(create).toHaveBeenCalledExactlyOnceWith({ ...withMention, live: 1 })
+  })
+
+  it.each(['post', 'reply'] as const)('writes the %s of a restricted author with its @name as text and no mentions', async (kind) => {
+    isRestricted.mockResolvedValue(true)
+    const create = vi.fn().mockResolvedValue('ok')
+    await createOn('v18', kind, create, withMention)
+    expect(create).toHaveBeenCalledExactlyOnceWith({ content: 'hi @alice', live: 2 })
+  })
+
+  it('does not change the caller\'s data', async () => {
+    isRestricted.mockResolvedValue(true)
+    await createOn('v18', 'post', vi.fn().mockResolvedValue('ok'), withMention)
+    expect(withMention).toHaveProperty('mentionedUserIds')
+  })
+
+  it.each(['post', 'reply'] as const)('drops the mentions of a %s when the retry flips it to lane 2', async (kind) => {
+    refresh.mockResolvedValue({ state: 1 })
+    const create = vi.fn().mockRejectedValueOnce(LANE_REFUSED).mockResolvedValueOnce('ok')
+
+    await createOn('v18', kind, create, withMention)
+
+    expect(create.mock.calls.map(([data]) => data)).toEqual([
+      { ...withMention, live: 1 },
+      { content: 'hi @alice', live: 2 },
+    ])
+  })
+
+  it.each(['post', 'reply'] as const)('keeps the mentions of a %s when the retry flips it to lane 1', async (kind) => {
+    isRestricted.mockResolvedValue(true)
+    refresh.mockResolvedValue({ state: 2 })
+    const create = vi.fn().mockRejectedValueOnce(LANE_REFUSED).mockResolvedValueOnce('ok')
+
+    await createOn('v18', kind, create, withMention)
+
+    expect(create.mock.calls.map(([data]) => data)).toEqual([
+      { content: 'hi @alice', live: 2 },
+      { ...withMention, live: 1 },
+    ])
   })
 })

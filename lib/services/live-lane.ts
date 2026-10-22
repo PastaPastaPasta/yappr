@@ -1,4 +1,4 @@
-import { authorsCanBeRestricted, liveValueFor, type TargetKind } from '@/lib/contract-topology'
+import { authorsCanBeRestricted, inlineMentions, liveValueFor, type TargetKind } from '@/lib/contract-topology'
 import { isConsensusRefusal } from '@/lib/error-utils'
 import { logger } from '@/lib/logger'
 import { restrictionService } from './restriction-service'
@@ -15,6 +15,9 @@ import { restrictionService } from './restriction-service'
  * or lifted a restriction mid-session) the document is rebuilt with the
  * corrected lane and sent once more. A refusal for any other reason, or one
  * the standing does not explain, is rethrown untouched.
+ *
+ * A write in lane 2 carries no indexed mentions (`mentionedUserIds`), on the
+ * first try and on the retry alike: a restricted author cannot notify anyone.
  */
 export async function createInLiveLane<T>(
   kind: TargetKind,
@@ -24,7 +27,13 @@ export async function createInLiveLane<T>(
 ): Promise<T> {
   const write = (restricted: boolean): Promise<T> => {
     const live = liveValueFor(kind, restricted)
-    return create(live === undefined ? data : { ...data, live })
+    if (live === undefined) return create(data)
+    // A restricted author's post or reply (lane 2) names nobody: the "@name"
+    // stays in the text as plain words, and the indexed mention is not written.
+    const fields: Record<string, unknown> = { ...data, live }
+    const mentionField = inlineMentions()?.field
+    if (live === 2 && mentionField !== undefined) delete fields[mentionField]
+    return create(fields)
   }
 
   if (!authorsCanBeRestricted()) return write(false)

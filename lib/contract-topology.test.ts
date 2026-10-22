@@ -1540,6 +1540,38 @@ describe('contract topology', () => {
       expect(flags(await topologyModule('v17'))).toEqual([false, false, false])
     })
 
+    describe('likesCarryPostLive follows the committed like schema, not the version', () => {
+      const likeProperties = (change: (properties: Record<string, unknown>) => void) => {
+        const properties: Record<string, unknown> = { ...V18.like.properties }
+        change(properties)
+        return { ...socialContractV18, documentSchemas: { ...socialContractV18.documentSchemas, like: { ...V18.like, properties } } }
+      }
+      const withPostLive = () => likeProperties((properties) => { properties.postLive = { type: 'integer' } })
+      const withoutPostLive = () => likeProperties((properties) => { delete properties.postLive })
+      const topologyWith = async (contract: object) => {
+        vi.resetModules()
+        vi.doMock('@/contracts/yappr-social-contract-v18.json', () => ({ default: contract }))
+        try { return await topologyModule('v18') } finally { vi.doUnmock('@/contracts/yappr-social-contract-v18.json') }
+      }
+
+      it('pins postLive on the trend windows when the like type has it', async () => {
+        const m = await topologyWith(withPostLive())
+        expect(m.likesCarryPostLive()).toBe(true)
+        expect(m.trendLanePin()).toEqual([['postLive', '==', 1]])
+      })
+
+      it('writes likes as v17 does when the like type has no postLive', async () => {
+        const m = await topologyWith(withoutPostLive())
+        expect(m.likesCarryPostLive()).toBe(false)
+        expect(m.trendLanePin()).toEqual([])
+      })
+
+      it('is false on v17 and on v2', async () => {
+        expect((await topologyModule('v17')).likesCarryPostLive()).toBe(false)
+        expect((await topologyModule('v2')).likesCarryPostLive()).toBe(false)
+      })
+    })
+
     it('lets no moderator delete in social, blog or storefront, and keeps warnings only', async () => {
       for (const [name, schemas] of [['social', V18], ['blog', BLOG10], ['storefront', STORE11]] as const) {
         for (const [docType, schema] of Object.entries(schemas)) expect(schema.moderatorAbilities?.delete, `${name}.${docType}`).toBeUndefined()
