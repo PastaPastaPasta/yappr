@@ -15,7 +15,7 @@ import { tagLimitProblem } from '@/lib/compose/limits';
 import { tombstoneDocument } from './tombstone-helpers';
 import { createInLiveLane } from './live-lane';
 import { postModerationOf } from '@/lib/feed/post-moderation';
-import { withoutHiddenItems } from '@/lib/moderation-view';
+import { moderatorViewGeneration, withoutHiddenItems } from '@/lib/moderation-view';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes, type AuthorPostCounts } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
@@ -50,6 +50,15 @@ export interface PostStats {
  * about, so two batches may only share an in-flight request when they resolve
  * to the same doctypes.
  */
+/**
+ * An in-flight count is shared only within one moderator view: under it a
+ * count sums every lane, so a read started under the other view must never
+ * answer a caller (who would then cache it as its own).
+ */
+function viewScoped(key: string): string {
+  return `${moderatorViewGeneration()}:${key}`;
+}
+
 function batchDedupeKey(targets: readonly KindedTarget[]): string {
   return groupByInteractionSurface(targets)
     .map(({ key, ids }) => `${key}#${RequestDeduplicator.createBatchKey(ids)}`)
@@ -702,7 +711,7 @@ class PostService extends BaseDocumentService<Post> {
    * Deduplicates in-flight requests.
    */
   async countUserPosts(userId: string): Promise<number> {
-    return this.countUserPostsDeduplicator.dedupe(userId, async () => {
+    return this.countUserPostsDeduplicator.dedupe(viewScoped(userId), async () => {
       try {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
@@ -728,7 +737,7 @@ class PostService extends BaseDocumentService<Post> {
    */
   async countAllPosts(): Promise<number> {
     // Use a constant key since this counts all posts
-    return this.countAllPostsDeduplicator.dedupe('all', async () => {
+    return this.countAllPostsDeduplicator.dedupe(viewScoped('all'), async () => {
       try {
         const { getEvoSdk } = await import('./evo-sdk-service');
         const sdk = await getEvoSdk();
@@ -817,7 +826,7 @@ class PostService extends BaseDocumentService<Post> {
       return new Map<string, PostStats>();
     }
 
-    return this.statsDeduplicator.dedupe(batchDedupeKey(targets), () => fetchBatchPostStats(targets));
+    return this.statsDeduplicator.dedupe(viewScoped(batchDedupeKey(targets)), () => fetchBatchPostStats(targets));
   }
 
   /**
