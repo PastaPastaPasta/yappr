@@ -44,7 +44,7 @@ vi.mock('@/lib/moderation-charters/transitions.mjs', () => ({
   charterKeyInCreation: () => ({}),
 }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { settleCreate: settle } }))
-vi.mock('@/lib/identity-write-lock', () => ({ withIdentityWriteLock: (_o: string, _c: string, write: () => Promise<unknown>) => { locks(); return write() } }))
+vi.mock('@/lib/identity-write-lock', () => ({ withIdentityWriteLock: async (_o: string, _c: string, write: () => Promise<unknown>) => { await locks(); return write() } }))
 vi.mock('./identity-nonce', () => ({
   awaitNonce: async () => ({ current: 0n, value: nonces.next++ }),
   allocateNonce: () => 1n,
@@ -59,6 +59,7 @@ vi.mock('@/lib/retry-utils', () => ({ sleep: async () => undefined }))
 
 const { charterService } = await import('./charter-service')
 const { CHARTERS_CONTRACT_ID } = await import('@/lib/moderation-charters/rules.mjs')
+const { CharterActionError } = await import('@/lib/moderation-charters/refusals')
 
 /** A fresh page (a reload, or another tab) sharing this browser's storage. */
 async function anotherTab() {
@@ -310,6 +311,59 @@ describe('the outcome a try reports', () => {
     // The resend's lock and the final settle's: never a second round of prompts and locks.
     expect(locks).toHaveBeenCalledTimes(2)
     expect(sdk.identities.fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('join requests', () => {
+  const doc = (n: number) => ({ toObject: () => ({ $id: `j${n}`, $ownerId: `o${n}` }), id: { toBase58: () => `j${n}` }, free: () => undefined })
+  const page = (from: number, count: number) => new Map(Array.from({ length: count }, (_, i) => [`j${from + i}`, doc(from + i)]))
+
+  it('fails as a whole when a later page cannot be read, never returning the first page as the full list', async () => {
+    const read = vi.fn().mockResolvedValueOnce(page(0, 100)).mockRejectedValueOnce(new Error('offline'))
+    Object.assign(sdk, { moderationCharters: { joinRequests: read } })
+    await expect(charterService.joinRequests('p1')).rejects.toThrow('offline')
+    expect(read.mock.calls[1][0]).toMatchObject({ startAfter: 'j99' })
+  })
+
+  it('fails when the first page cannot be read', async () => {
+    Object.assign(sdk, { moderationCharters: { joinRequests: vi.fn().mockRejectedValue(new Error('offline')) } })
+    await expect(charterService.joinRequests('p1')).rejects.toThrow('offline')
+  })
+})
+
+describe('a write queued behind another', () => {
+  const proposal = { id: 'p1', leaderId: OWNER, targetContractId: 'target-q', description: '', reasonIds: [], moderatorsShare: 60, rewardSplit: null, createdAt: null }
+
+  it('signs nothing once the session is forgotten while it waited for the lock', async () => {
+    let release: () => void = () => undefined
+    // The first lock (the slot) is free; the second (the signature) waits on another tab.
+    locks.mockImplementationOnce(() => undefined).mockImplementationOnce(() => new Promise<void>((done) => { release = done }))
+    const filing = charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'])
+    await vi.waitFor(() => expect(locks).toHaveBeenCalledTimes(2))
+    charterService.forgetKeys()
+    release()
+    await expect(filing).rejects.toMatchObject({ outcome: 'cancelled' })
+    expect(builders.sign).not.toHaveBeenCalled()
+    expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled()
+    expect(stored('electedCharter', 'target-q')).toBeNull()
+  })
+
+  it('re-checks the election after the prompt and the wait, signing nothing once applications have closed', async () => {
+    const closed = vi.fn(async () => { throw new CharterActionError('Applications have closed: masternodes are voting.', 'refused') })
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], closed)).rejects.toThrow('Applications have closed')
+    expect(closed).toHaveBeenCalledTimes(1)
+    expect(builders.sign).not.toHaveBeenCalled()
+  })
+
+  it('resends an application already signed without re-checking it', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    const open = vi.fn(async () => undefined)
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], open)).rejects.toMatchObject({ outcome: 'uncertain' })
+    open.mockRejectedValue(new Error('should not be asked'))
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], open)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(builders.sign).toHaveBeenCalledTimes(1)
   })
 })
 

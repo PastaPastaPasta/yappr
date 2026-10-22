@@ -36,6 +36,9 @@ const ELECTED_CHARTER = 'electedCharter';
 const MAX_END_DATE_PAGES = 10;
 /** Vote polls per end-date page: the node's limit counts polls, not timestamps. */
 const END_DATE_PAGE_POLLS = 100;
+/** Contenders per vote-state page, and at most this many pages: the 1,000 contenders Platform allows. */
+const CONTENDER_PAGE = 100;
+const MAX_CONTENDER_PAGES = 10;
 /** Clock skew allowed past the latest end a live contest can have. */
 const END_DATE_SLACK_MS = 10 * 60 * 1000;
 const CONTEST_INDEX = 'byTargetContract';
@@ -198,9 +201,9 @@ type VoteState = Awaited<ReturnType<EvoSDK['voting']['contestedResourceVoteState
 /** What a contender's application says, read from its serialized document. */
 type ApplicationReader = (serialized: Uint8Array) => Pick<ElectionContender, 'submittedCharterId' | 'members'> | null;
 
-function toContest(state: VoteState, endsAtMs: number | null, readApplication: ApplicationReader | null = null): ElectionContest {
+function toContest(state: VoteState, endsAtMs: number | null, readApplication: ApplicationReader | null = null, laterPages: readonly VoteState[] = []): ElectionContest {
   try {
-    const contenders: ElectionContender[] = (state.contenders ?? []).map((contender: {
+    const contenders: ElectionContender[] = [state, ...laterPages].flatMap((page) => page.contenders ?? []).map((contender: {
       identityId?: unknown; voteTally?: number | undefined; serializedDocument?: Uint8Array; free?: () => void
     }) => {
       const application = contender.serializedDocument && readApplication ? readApplication(contender.serializedDocument) : null;
@@ -224,6 +227,7 @@ function toContest(state: VoteState, endsAtMs: number | null, readApplication: A
     };
   } finally {
     state.free();
+    for (const page of laterPages) page.free();
   }
 }
 
@@ -314,24 +318,35 @@ class ModerationElectionService {
    */
   async getContest(targetContractId = YAPPR_CONTRACT_ID, declaration: ElectedModerationDeclaration | null = null): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
     const sdk = await getEvoSdk();
-    const state = await sdk.voting.contestedResourceVoteState({
-      ...contestVotePoll(targetContractId),
-      resultType: 'documentsAndVoteTally',
-      includeLockedAndAbstaining: true,
-      limit: 100,
-    });
+    const poll = { ...contestVotePoll(targetContractId), resultType: 'documentsAndVoteTally' as const, limit: CONTENDER_PAGE };
+    const state = await sdk.voting.contestedResourceVoteState({ ...poll, includeLockedAndAbstaining: true });
+    // Every contender, not the first page: an application guard must see them all (Platform allows 1,000).
+    const laterPages: VoteState[] = [];
+    try {
+      for (let page = state.contenders ?? []; page.length === CONTENDER_PAGE && laterPages.length < MAX_CONTENDER_PAGES - 1;) {
+        const startAtContenderId = identifierToBase58(page[page.length - 1].identityId);
+        if (!startAtContenderId) throw new Error('a contender without an identity id');
+        const next = await sdk.voting.contestedResourceVoteState({ ...poll, startAtContenderId, startAtIncluded: false });
+        laterPages.push(next);
+        page = next.contenders ?? [];
+      }
+    } catch (error) {
+      state.free();
+      for (const page of laterPages) page.free();
+      throw error;
+    }
     let endTimeFailed = false;
     const endsAtMs = await this.contestEnd(sdk, targetContractId, declaration).catch((error: unknown) => {
       logger.warn('moderationElection: vote poll end-date read failed', error);
       endTimeFailed = true;
       return null;
     });
-    const charters = state.contenders?.some((contender: { serializedDocument?: Uint8Array }) => contender.serializedDocument)
+    const charters = [state, ...laterPages].some((page) => page.contenders?.some((contender: { serializedDocument?: Uint8Array }) => contender.serializedDocument))
       ? await sdk.contracts.fetch(MODERATION_CHARTERS_CONTRACT_ID).catch(() => undefined)
       : undefined;
     let contest: ElectionContest;
     try {
-      contest = toContest(state, endsAtMs, charters ? (serialized) => readApplication(charters, serialized) : null);
+      contest = toContest(state, endsAtMs, charters ? (serialized) => readApplication(charters, serialized) : null, laterPages);
     } finally {
       charters?.free?.();
     }

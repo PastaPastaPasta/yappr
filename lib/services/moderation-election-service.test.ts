@@ -108,6 +108,20 @@ describe('reading the contest', () => {
     expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 1099n, startTimeIncluded: true });
   });
 
+  it('reads every contender, not only the first page of 100', async () => {
+    const ids = Array.from({ length: 101 }, (_, i) => bs58.encode(new Uint8Array(32).fill(i + 10)));
+    const first = state(ids.slice(0, 100).map((identityId) => ({ identityId, voteTally: 0 })));
+    const second = state([{ identityId: ids[100], voteTally: 0 }]);
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    sdk.voting.votePollsByEndDate.mockResolvedValueOnce([entry(5000, target)]);
+    const { contest } = await moderationElectionService.getContest(target);
+    expect(contest?.contenders.map((c) => c.identityId).sort()).toEqual([...ids].sort());
+    expect(sdk.voting.contestedResourceVoteState).toHaveBeenCalledTimes(2);
+    expect(sdk.voting.contestedResourceVoteState.mock.calls[1][0]).toMatchObject({ startAtContenderId: ids[99], startAtIncluded: false, limit: 100 });
+    expect(first.free).toHaveBeenCalled();
+    expect(second.free).toHaveBeenCalled();
+  });
+
   it('counts polls, not timestamp groups, when deciding a page was full', async () => {
     // 100 polls in 50 timestamps: a full page, though it holds only 50 entries.
     const pair = (timestampMs: number) => {

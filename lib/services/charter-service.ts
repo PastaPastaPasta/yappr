@@ -598,6 +598,8 @@ class CharterService {
     fingerprint: string
     targetContractId?: string
     fund?: boolean
+    /** Re-checks, right before a new create is signed (after every prompt and wait), that it may still be filed; throws when not. */
+    beforeSigning?: () => Promise<void>
   }): Promise<string> {
     const key = `${input.ownerId}:${input.type}:${input.slot}`
     const running = this.inFlight.get(key)
@@ -614,6 +616,8 @@ class CharterService {
 
   private async fileOnce(key: string, input: Parameters<CharterService['file']>[1]): Promise<string> {
     const { ownerId, type, fingerprint, targetContractId = '', fund = false } = input
+    // Leaving the page, signing out or switching account cancels whatever this write has not yet signed.
+    const generation = this.generation
     const sdk = await getEvoSdk()
     const w = await wasmModule()
     const lock = <T>(work: () => Promise<T>) => withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, work)
@@ -692,11 +696,16 @@ class CharterService {
         const slot = await resolveSlot()
         if (slot.kind === 'landed') return slot.id
         if (slot.kind === 'pending') return send(slot.entry)
+        this.assertSameSession(generation)
+        await input.beforeSigning?.()
         const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
+        this.assertSameSession(generation)
         const privateKey = w.PrivateKey.fromWIF(fresh.signing.wif)
         let created: PendingCreate
         try {
           const signed = await signCharterCreate(w, sdk, { type, ownerId, data: fresh.data, nonce, privateKey, identityKey: fresh.signing.identityKey, fund })
+          // The builder reads the network (the contest fund): nothing signed for a forgotten session is kept or sent.
+          this.assertSameSession(generation)
           created = { signed, fingerprint, reservation: reserveNonce(ownerId, CHARTERS_CONTRACT_ID, nonce, tip, key) }
         } finally {
           privateKey.free()
@@ -855,9 +864,14 @@ class CharterService {
 
   /**
    * Files the application (`electedCharter`) for `proposal` with `members`,
-   * paying the 0.5 DASH contest deposit; resolves to its id.
+   * paying the 0.5 DASH contest deposit; resolves to its id. `stillEligible`
+   * re-checks the election (window open, no seat, not applied, balance) right
+   * before a new application is signed, after the key prompt and any wait
+   * for another tab's write; a resend of one already signed skips it.
    */
-  async fileApplication(ownerId: string, proposal: CharterProposal, targetContractId: string, members: readonly string[]): Promise<string> {
+  async fileApplication(
+    ownerId: string, proposal: CharterProposal, targetContractId: string, members: readonly string[], stillEligible?: () => Promise<void>,
+  ): Promise<string> {
     const w = await wasmModule()
     const data = {
       targetContractId: charterIdBytes(w, targetContractId),
@@ -866,7 +880,7 @@ class CharterService {
     }
     // One application per target: a changed member list waits for an earlier try to resolve.
     return this.file('application', { ownerId, type: 'electedCharter', data: async () => data, slot: targetContractId,
-      fingerprint: `${proposal.id}:${[...members].sort().join(',')}`, targetContractId, fund: true })
+      fingerprint: `${proposal.id}:${[...members].sort().join(',')}`, targetContractId, fund: true, beforeSigning: stillEligible })
   }
 
   /** Adds a member from the proposal's join requests to the seated team. */

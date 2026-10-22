@@ -113,6 +113,11 @@ describe('apply', () => {
     expect(base({ balance: LEADER_MINIMUM_CREDITS - 1n })).toBe('low-balance')
   })
 
+  it('never takes an unread join-request list for an empty team, even for a solo application', () => {
+    expect(base({ requested: null })).toBe('requests-unread')
+    expect(base({ requested: null, members: [] })).toBe('requests-unread')
+  })
+
   it('refuses a second application by the same leader, whichever proposal it ran on', () => {
     const s = status({ contest: contest([{ identityId: LEADER, votes: 0, submittedCharterId: 'p9' }], T0 + 2 * HOUR) })
     expect(base({ status: s, stage: electionStage(s, T0 + HOUR) })).toBe('already-applied')

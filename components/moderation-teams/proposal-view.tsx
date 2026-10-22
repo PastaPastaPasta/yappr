@@ -37,6 +37,7 @@ function applyBlockerText(blocker: ApplyBlocker, stage: ElectionStage): string {
     case 'unknown-members': return 'Pick members only from the people who asked to join.'
     case 'low-balance': return `Your balance is below ${LEADER_MINIMUM_TEXT}: the ${formatDash(CONTEST_FUND_CREDITS)} DASH deposit plus fees. Top up first.`
     case 'unknown': return 'The election could not be read. Refresh, then try again.'
+    case 'requests-unread': return "The join requests haven't been read yet. Wait a moment, or read them again above."
   }
 }
 
@@ -92,6 +93,7 @@ export function ProposalView({ contract, proposalId, election }: {
   const [proposal, setProposal] = useState<CharterProposal | null | undefined>(undefined)
   const [reasons, setReasons] = useState<CharterReason[] | null>(null)
   const [requests, setRequests] = useState<JoinRequest[] | null>(null)
+  const [requestsFailed, setRequestsFailed] = useState(false)
   const [messages, setMessages] = useState<Map<string, string | null> | null>(null)
   const [members, setMembers] = useState<string[]>([])
   const [message, setMessage] = useState(DEFAULT_MESSAGE)
@@ -104,9 +106,12 @@ export function ProposalView({ contract, proposalId, election }: {
   const loadRequests = useCallback(async () => {
     try {
       setRequests(await charterService.joinRequests(proposalId))
+      setRequestsFailed(false)
     } catch (readError) {
       logger.warn('Moderation teams: join requests could not be read', readError)
-      setRequests([])
+      // Unknown, never "nobody asked": an application must not go solo on a list it could not read.
+      setRequests(null)
+      setRequestsFailed(true)
     }
   }, [proposalId])
 
@@ -125,7 +130,7 @@ export function ProposalView({ contract, proposalId, election }: {
     return () => { live = false }
   }, [proposalId, loadRequests])
 
-  const requested = useMemo(() => new Set((requests ?? []).map((r) => r.ownerId)), [requests])
+  const requested = useMemo(() => (requests ? new Set(requests.map((r) => r.ownerId)) : null), [requests])
   // An application sent from this browser whose outcome is still unknown (read again after each try or clear).
   const [pendingApplication, setPendingApplication] = useState(false)
   const [confirmAbandon, setConfirmAbandon] = useState(false)
@@ -135,7 +140,8 @@ export function ProposalView({ contract, proposalId, election }: {
   useEffect(recheckPending, [recheckPending])
 
   if (proposal === undefined) return <Section><p className="text-gray-500">Loading the proposal…</p></Section>
-  if (proposal === null || (status && proposal.targetContractId !== null && proposal.targetContractId !== status.targetContractId)) {
+  // Checked against the page's own contract, whether or not the election has been read.
+  if (proposal === null || proposal.targetContractId !== declared.contractId) {
     return (
       <Section>
         <Notice tone="error">{proposal === null ? 'This proposal could not be found.' : `This proposal is not for ${declared.label}.`}</Notice>
@@ -163,6 +169,7 @@ export function ProposalView({ contract, proposalId, election }: {
     if (!me) return
     const problem = messageProblem(message)
     if (problem) throw new CharterActionError(problem, 'refused')
+    if (proposal.targetContractId !== declared.contractId) throw new CharterActionError(`This proposal is not for ${declared.label}.`, 'refused')
     await charterService.requestToJoin(me, proposal.id, message.trim() || DEFAULT_MESSAGE)
     await loadRequests()
     return 'Your request is sent. The leader decides who is on the team.'
@@ -177,15 +184,18 @@ export function ProposalView({ contract, proposalId, election }: {
     // This tab's contract, and the proposal's own target: the deposit can only go to the contest shown.
     const target = declared.contractId
     if (!target || proposal.targetContractId !== target) throw new CharterActionError(`This proposal is not for ${declared.label}.`, 'refused')
-    // Read the contest again right before the deposit is committed.
-    const fresh = statusForContract(await moderationElectionService.getStatus(target), target)
-    const freshBalance = await charterService.balance(me)
-    if (!fresh) throw new CharterActionError('The election could not be read. Refresh, then try again.', 'refused')
-    const freshStage = electionStage(fresh, Date.now() + chainOffsetMs(fresh))
-    const blocker = applyBlocker({ stage: freshStage, proposal, viewerId: me, status: fresh, members, requested, balance: freshBalance, minimumBalance: LEADER_MINIMUM_CREDITS })
-    if (blocker) throw new CharterActionError(applyBlockerText(blocker, freshStage), 'refused')
+    /** Reads the contest and balance again: before the key is asked for, and once more right before a new application is signed. */
+    const preflight = async () => {
+      const fresh = statusForContract(await moderationElectionService.getStatus(target), target)
+      const freshBalance = await charterService.balance(me)
+      if (!fresh) throw new CharterActionError('The election could not be read. Refresh, then try again.', 'refused')
+      const freshStage = electionStage(fresh, Date.now() + chainOffsetMs(fresh))
+      const blocker = applyBlocker({ stage: freshStage, proposal, viewerId: me, status: fresh, members, requested, balance: freshBalance, minimumBalance: LEADER_MINIMUM_CREDITS })
+      if (blocker) throw new CharterActionError(applyBlockerText(blocker, freshStage), 'refused')
+    }
+    await preflight()
     try {
-      await charterService.fileApplication(me, proposal, target, members)
+      await charterService.fileApplication(me, proposal, target, members, preflight)
     } finally {
       recheckPending()
     }
@@ -222,7 +232,12 @@ export function ProposalView({ contract, proposalId, election }: {
 
       <Section title="Team" testId="proposal-team">
         <p className="text-sm">Leader <IdentityName id={proposal.leaderId} /></p>
-        {requests === null ? <p className="text-sm text-gray-500">Loading join requests…</p> : requests.length === 0 ? (
+        {requests === null ? (requestsFailed ? (
+          <div className="flex flex-wrap items-center gap-2" data-testid="join-requests-unread">
+            <p className="text-sm text-gray-500">The join requests couldn&apos;t be read.</p>
+            <Button size="sm" variant="outline" onClick={() => { loadRequests().catch(() => { /* handled inside */ }) }}>Read them again</Button>
+          </div>
+        ) : <p className="text-sm text-gray-500">Loading join requests…</p>) : requests.length === 0 ? (
           <p className="text-sm text-gray-500">Nobody has asked to join yet.</p>
         ) : (
           <ul className="space-y-2" data-testid="join-requests">
@@ -291,7 +306,7 @@ export function ProposalView({ contract, proposalId, election }: {
                   First time? Yappr adds a charter key to your account, which needs your MASTER key once. It stays in this tab and is never stored.
                 </p>
               )}
-              <Button onClick={() => askToJoin()} disabled={busy !== null || messageProblem(message) !== null} data-testid="ask-to-join">Ask to join</Button>
+              <Button onClick={() => askToJoin()} disabled={busy !== null || requests === null || messageProblem(message) !== null} data-testid="ask-to-join">Ask to join</Button>
             </>
           )}
         </Section>

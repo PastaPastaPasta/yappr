@@ -91,11 +91,13 @@ export type ApplyBlocker =
   | 'unknown-members'
   | 'low-balance'
   | 'unknown'
+  | 'requests-unread'
 
 /**
  * Why the viewer cannot file the application for `proposal` with `members`
  * now, or null when they can. `requested` holds the identities with a join
- * request for the proposal; `balance` is the leader's (null while unknown).
+ * request for the proposal, null while they are not all read (an unread list
+ * is never taken for an empty team); `balance` is the leader's (null while unknown).
  */
 export function applyBlocker(input: {
   stage: ElectionStage
@@ -103,7 +105,7 @@ export function applyBlocker(input: {
   viewerId: string | null
   status: ElectionStatus
   members: readonly string[]
-  requested: ReadonlySet<string>
+  requested: ReadonlySet<string> | null
   balance: bigint | null
   minimumBalance: bigint
 }): ApplyBlocker | null {
@@ -117,6 +119,7 @@ export function applyBlocker(input: {
   // An identity contends once per contest, whichever of its proposals it ran on.
   if (status.contest?.contenders.some((contender) => contender.identityId === viewerId)) return 'already-applied'
   if (members.length > CHARTER_LIMITS.members) return 'too-many-members'
+  if (!requested) return 'requests-unread'
   if (members.some((member) => !requested.has(member) || member === proposal.leaderId)) return 'unknown-members'
   if (balance !== null && balance < minimumBalance) return 'low-balance'
   return null
