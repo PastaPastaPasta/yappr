@@ -141,7 +141,7 @@ describe('the D36 rehearsal set', () => {
 
   it('plans its own anchor and group, pinning its registered entries to the cuts they were created from', () => {
     // The QA builds' fail-closed check names the same group (scripts/release-config.cjs).
-    expect(releaseConfig.REHEARSAL_GROUP).toEqual({ id: TESTNET_REHEARSAL_SET.groupId, owner: TESTNET_REHEARSAL_SET.makerId });
+    expect(releaseConfig.QA_BUILDS.beta.group).toEqual({ id: TESTNET_REHEARSAL_SET.groupId, owner: TESTNET_REHEARSAL_SET.makerId });
     expect(rehearsal.groupId).toBe(TESTNET_REHEARSAL_SET.groupId);
     expect(rehearsal.anchor).toBe(rehearsal.contracts[0]);
     expect(Object.keys(TESTNET_REHEARSAL_SET.registered)).toEqual(rehearsal.contracts.filter((c) => !rehearsalCreated.includes(c)).map((c) => c.name));

@@ -73,7 +73,7 @@ const REHEARSAL_GROUP = { id: 'ePtSmVdSqxJESyegxxRGcS7CwznyWSAn2FULYow8Dks', own
  * rehearsal set (maker At8Xd9…, group ePtSmVdS…) instead of .env.testnet's.
  * Each builds only from its own env file (build-release.mjs sets
  * YAPPR_QA_BUILD to its name), only at its own base path, only on testnet,
- * only for the rehearsal maker's group, with its own contract snapshot in
+ * only for the rehearsal group (`group`), with its own contract snapshot in
  * place of bundled/testnet.json (next.config.js). It differs from a release
  * build only as listed here:
  *   - `values`: the topologies it serves instead of RELEASE_VALUES';
@@ -88,12 +88,12 @@ const REHEARSAL_V18 = ['5Kucw9g9TsiSRXbns2mPumXKVkYW7jwVrTdjFuFhMEwU', '9mMb6qGm
 const QA_BUILDS = {
   'staging-old': {
     envFile: '.env.staging-old', basePath: '/staging-old', snapshot: 'lib/contracts/snapshots/testnet-staging-old.json',
-    values: {}, unusedMembers: REHEARSAL_V18,
+    group: REHEARSAL_GROUP, values: {}, unusedMembers: REHEARSAL_V18,
   },
   'beta': {
     envFile: '.env.beta', basePath: '/beta', snapshot: 'lib/contracts/snapshots/testnet-beta.json',
     values: { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v18', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v10', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v11' },
-    unusedMembers: REHEARSAL_V17,
+    group: REHEARSAL_GROUP, unusedMembers: REHEARSAL_V17,
   },
 }
 
@@ -124,8 +124,8 @@ function assertReleaseConfig(env) {
   if (qa) {
     if (env.BASE_PATH !== qa.basePath) errors.push(`the ${qa.name} build is served only at BASE_PATH=${qa.basePath}`)
     if (env.NEXT_PUBLIC_NETWORK !== 'testnet') errors.push(`the ${qa.name} build is testnet only`)
-    if (env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID !== REHEARSAL_GROUP.id || env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER !== REHEARSAL_GROUP.owner) {
-      errors.push(`the ${qa.name} build serves only the rehearsal group ${REHEARSAL_GROUP.id} (owner ${REHEARSAL_GROUP.owner})`)
+    if (env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID !== qa.group.id || env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER !== qa.group.owner) {
+      errors.push(`the ${qa.name} build serves only the rehearsal group ${qa.group.id} (owner ${qa.group.owner})`)
     }
   }
   if (!['testnet', 'mainnet'].includes(env.NEXT_PUBLIC_NETWORK)) {
@@ -229,4 +229,4 @@ function loadReleaseEnv(file, ambient = process.env, qaBuild = null) {
   return env
 }
 
-module.exports = { assertReleaseConfig, storageScope, loadReleaseEnv, assertSnapshotPins, qaBuildOf, QA_BUILDS, REHEARSAL_GROUP }
+module.exports = { assertReleaseConfig, storageScope, loadReleaseEnv, assertSnapshotPins, qaBuildOf, QA_BUILDS }

@@ -347,10 +347,10 @@ describe('release build configuration', () => {
     }
   })
 
-  const REHEARSAL_MAKER = releaseConfig.REHEARSAL_GROUP.owner
+  const REHEARSAL_MAKER = releaseConfig.QA_BUILDS.beta.group.owner
   /** A complete release env as a QA build's file: the rehearsal maker's group, its topologies and unused members pinned. */
   function qaEnv(name) {
-    const env = { ...completeEnv(), NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER: REHEARSAL_MAKER, NEXT_PUBLIC_APP_CONNECT_GROUP_ID: releaseConfig.REHEARSAL_GROUP.id, ...releaseConfig.QA_BUILDS[name].values }
+    const env = { ...completeEnv(), NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER: REHEARSAL_MAKER, NEXT_PUBLIC_APP_CONNECT_GROUP_ID: releaseConfig.QA_BUILDS.beta.group.id, ...releaseConfig.QA_BUILDS[name].values }
     const unused = releaseConfig.QA_BUILDS[name].unusedMembers.map(id => `${id}:1`)
     env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS = [env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS, ...unused].join(',')
     return env
