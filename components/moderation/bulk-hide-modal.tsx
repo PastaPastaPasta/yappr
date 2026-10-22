@@ -310,7 +310,7 @@ export function BulkHideModal() {
         ))}
         <button
           type="button"
-          disabled={running || selected.size === 0}
+          disabled={running || selectedItems.length === 0}
           onClick={() => setSelected(new Set())}
           className={cn(CHIP, 'border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800')}
         >
