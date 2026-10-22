@@ -441,8 +441,9 @@ export async function withSdkSignedWrite<T>(
       result = await write();
     } catch (error) {
       clearInterval(alive);
-      // A step-up key's session ended before it signed (lib/auth/critical-key.ts): nothing was sent either.
-      if (isVerdict(error) || error instanceof CriticalKeyCancelledError) releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, false, tipOf(current)));
+      // A step-up key's session ended before it signed (lib/auth/critical-key.ts): nothing was sent, so no nonce was spent.
+      if (error instanceof CriticalKeyCancelledError) releaseNonce(ownerId, contractId, entry);
+      else if (isVerdict(error)) releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, false, tipOf(current)));
       else renewPending(ownerId, contractId, entry);
       throw error;
     }

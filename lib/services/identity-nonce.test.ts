@@ -159,7 +159,10 @@ describe('withSdkSignedWrite', () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const outcome = await runSdkWrite(async () => { throw new CriticalKeyCancelledError() })
     expect(outcome.ok).toBe(false)
-    expect(loadReservation(OWNER, CONTRACT)?.pending).toEqual([])
+    // Nothing was signed, so no nonce counts as spent: the floor stays where Platform is.
+    const reservation = loadReservation(OWNER, CONTRACT)
+    expect(reservation?.pending ?? []).toEqual([])
+    expect(reservation?.floor ?? n(100)).toBe(n(100))
   })
 
   it('releases an SDK write refused because its nonce is already present', async () => {
