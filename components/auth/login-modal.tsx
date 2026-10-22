@@ -22,6 +22,8 @@ import { recoveryPhraseOffered } from '@/lib/auth/recovery-phrase'
 
 /** Where newcomers go: an account starts in the Dash wallet. */
 const DASH_WALLET_DOWNLOAD_URL = 'https://www.dash.org/download/'
+/** Creates a testnet identity and username from the browser; offered on testnet only. */
+const DASH_BRIDGE_URL = 'https://bridge.dashhq.org/'
 
 /** A legal page opened in a new tab, so the sign-in under way is not lost. */
 function ConsentLink({ href, children }: { href: string; children: string }) {
@@ -332,6 +334,20 @@ export function LoginModal() {
                   <span className="sr-only"> (opens in new tab)</span>
                 </a>
               </p>
+              {getConfiguredNetwork() === 'testnet' && (
+                <p className="mt-2 text-sm text-center text-gray-600 dark:text-gray-400">
+                  Easy setup:{' '}
+                  <a
+                    href={DASH_BRIDGE_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-yappr-600 dark:text-yappr-400 hover:underline underline-offset-4"
+                  >
+                    bridge.dashhq.org
+                    <span className="sr-only"> (opens in new tab)</span>
+                  </a>
+                </p>
+              )}
             </div>
           </motion.div>
           </Dialog.Content>
