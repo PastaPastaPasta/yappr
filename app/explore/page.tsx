@@ -20,6 +20,7 @@ import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/exp
 import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
 import { KeptPanel } from '@/components/ui/kept-panel'
 import { PostingOpensBanner } from '@/components/moderation/posting-opens-banner'
+import { usePostingClosed } from '@/hooks/use-posting-opening'
 import { likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
@@ -34,6 +35,7 @@ type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
+  const postingClosed = usePostingClosed()
   const blogPostsOpen = useModeratedTypeOpen('blogPost', true, 'blog')
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
@@ -385,7 +387,7 @@ export default function ExplorePage() {
                     <div className="p-8 text-center">
                       <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                       <p className="text-gray-500">No trending tags yet</p>
-                      <p className="text-sm text-gray-400 mt-1">Post with #hashtags or $cashtags to see them here!</p>
+                      <p className="text-sm text-gray-400 mt-1">{postingClosed ? 'Trending tags will show up here once posting opens.' : 'Post with #hashtags or $cashtags to see them here!'}</p>
                     </div>
                   ) : (
                     trendingHashtags.map((trend, index) => <TrendingHashtagRow key={trend.hashtag} trend={trend} index={index} />)
