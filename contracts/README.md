@@ -3,10 +3,14 @@
 The JSONs here are authored schemas, not a claim that each file is deployed.
 The clean-start testnet release (social v17, blog v9, storefront v10, pollr v8
 and DM v5, behind an App Connect anchor and group) was registered on
-2026-10-21. `.env.testnet` pins it; `/staging` builds from it now and root
-after the staging→master merge. Until then master's root still uses social v2.
-`.env.devnet` selects Sakura social v16, blog v8, storefront v9, pollr v7 and
-DM v5.
+2026-10-21. The owner then abandoned its social, blog and storefront for
+"hide, don't delete" (D42–D44, [SOCIAL_V18.md](../docs/SOCIAL_V18.md)):
+**social v18, blog v10 and storefront v11** join the same group as new
+members, and the three abandoned ones stay in it, unused. `.env.testnet` pins
+the registered set until the activation PR moves it to v18; `/staging` builds
+from it now and root after the staging→master merge. Until then master's root
+still uses social v2. `.env.devnet` selects Sakura social v16, blog v8,
+storefront v9, pollr v7 and DM v5.
 
 Registration ids and pinned member versions come from `.env.testnet` and the
 [release record](../docs/TESTNET_RELEASE.md#production-registration-record-2026-10-21).
@@ -28,22 +32,34 @@ network-specific moderation configuration.
 | blog | [yappr-blog-contract.json](yappr-blog-contract.json) | `448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c` |
 | pollr | [pollr-contract.json](pollr-contract.json) | `a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347` |
 | storefront | [yappr-storefront-contract.json](yappr-storefront-contract.json) | `69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc` |
+| passkeyVault | [yappr-passkey-vault-contract.json](yappr-passkey-vault-contract.json) | `14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5` |
+| socialV18 | [yappr-social-contract-v18.json](yappr-social-contract-v18.json) | `94e477a6de447069dc263198441be408092febc9560c76ab98efb3266ae23921` |
+| blogV10 | [yappr-blog-contract-v10.json](yappr-blog-contract-v10.json) | `8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159` |
+| storefrontV11 | [yappr-storefront-contract-v11.json](yappr-storefront-contract-v11.json) | `eb35635f507d09a52c0ae6fffc23185eebaeb15cd2d8c6f67b4c05ea717b9a0e` |
 
-The passkey vault is implemented and registered by its own work package (PR
-[#786](https://github.com/PastaPastaPasta/yappr/pull/786)); its current code and
-schema are deliberately outside this cleanup. The password-era vault is not
-a release member. Consult the set manifest again after that PR lands.
+The first eight rows are registered on testnet. `social`, `blog` and
+`storefront` (v17, v9, v10) are replaced members: they keep their files and
+pins so the set stays reproducible, but no variable names them and no charter
+is filed on them. The last three are the "hide, don't delete" members,
+appended with `register-app-connect-contracts --append-after passkeyVault`.
 
-- [Social v17](../docs/SOCIAL_V17.md): release rules and live indexes.
+The password-era vault is not a release member.
+
+- [Social v18, blog v10 and storefront v11](../docs/SOCIAL_V18.md): no moderator
+  delete, the `mod` lane in every listing, the moderation logs, restriction
+  instead of bans, and the archive and log queries.
+- [Social v17](../docs/SOCIAL_V17.md): the registered, abandoned cut, and the
+  rules v18 keeps.
 - [Blog v9](../docs/BLOG_V9.md), [storefront v10](../docs/STOREFRONT_V10.md),
   [DM v5](../docs/DM_V5.md), and [non-social reference](../docs/NON_SOCIAL_CONTRACTS.md).
 - [App Connect](../docs/APP_CONNECT_CONTRACTS.md): anchor, group, registration
   prerequisites, `id:version` pins and validation.
 
 The elected social, blog and storefront contracts render `notYetUsable` for
-testnet with 3600-second join/vote windows. Moderated writes open only after
-teams are seated. Mainnet has different minimum windows. Release YAPP has
-no manual authorities: its only supply is the 100-YAPP identity claim.
+testnet; the election windows and delay are registration flags (the v17
+members took 86400 s each; v18's are the owner's call). Moderated writes open
+only after teams are seated. Mainnet has a one-day window floor. Release YAPP
+has no manual authorities: its only supply is the 100-YAPP identity claim.
 
 ## Files retained until cut-over
 
@@ -69,7 +85,9 @@ batteries and scratch schemas from git history.
 ## Validate before registering
 
 ```sh
-node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v17.json --network testnet --strict-size
+node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v18.json --network testnet --strict-size
+node scripts/validate-contract-offline.mjs --probes
+node scripts/validate-contract-offline.mjs --constraints
 node scripts/verify-appconnect.mjs --self-test
 node scripts/verify-v10.mjs --self-test
 ```
