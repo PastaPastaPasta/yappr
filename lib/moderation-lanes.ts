@@ -5,8 +5,7 @@ import bs58 from 'bs58'
  * storefront v11; docs/SOCIAL_V18.md "Reading the lanes"), as pure data.
  *
  * Every listing read the client builds pins the listed lane: `mod == null`,
- * after `live == 1` where the index has `live`, or `postLive == 1` on a like
- * trend window. An archival build (`NEXT_PUBLIC_MODERATION_VIEW=all`) reads
+ * after `live == 1` where the index has `live`. An archival build (`NEXT_PUBLIC_MODERATION_VIEW=all`) reads
  * the same request once per lane, with the same order and its own cursor,
  * and merges the pages (lib/services/sdk-lane-fanout.ts). This module finds
  * the lanes in a request and merges what they return. No SDK, no network.
@@ -19,7 +18,6 @@ export type OrderClause = [string, string]
 const LANES: Record<string, { pinned: unknown; values: readonly unknown[] }> = {
   mod: { pinned: null, values: [null, 1, 2] },
   live: { pinned: 1, values: [1, 2] },
-  postLive: { pinned: 1, values: [1, 2] },
 }
 
 function isPin(clause: unknown, field: string): boolean {
@@ -29,8 +27,8 @@ function isPin(clause: unknown, field: string): boolean {
 
 /**
  * Every lane of `where`, the request itself first. A request is laned when
- * it pins `mod == null` (then a `live == 1` beside it is a lane too) or
- * `postLive == 1`; anything else (DPNS, follows, `live == true` on v17, a
+ * it pins `mod == null` (then a `live == 1` beside it is a lane too);
+ * anything else (DPNS, follows, `live == true` on v17, a
  * moderation log read on `mod == 1`) has one lane: itself.
  */
 export function laneVariants<C extends WhereClause>(where: readonly C[] | undefined): C[][] {
@@ -38,7 +36,7 @@ export function laneVariants<C extends WhereClause>(where: readonly C[] | undefi
   const laned = clauses.some((clause) => isPin(clause, 'mod'))
   const slots: Array<{ at: number; values: readonly unknown[] }> = []
   clauses.forEach((clause, at) => {
-    if (isPin(clause, 'postLive') || (laned && (isPin(clause, 'mod') || isPin(clause, 'live')))) {
+    if (laned && (isPin(clause, 'mod') || isPin(clause, 'live'))) {
       slots.push({ at, values: LANES[clause[0]].values })
     }
   })
@@ -100,7 +98,7 @@ export function documentComparator<T>(
   orderBy: readonly OrderClause[] | undefined,
   read: (doc: T, field: string) => unknown,
 ): (a: T, b: T) => number {
-  const order = (orderBy ?? []).filter(([field]) => field !== 'mod' && field !== 'live' && field !== 'postLive')
+  const order = (orderBy ?? []).filter(([field]) => field !== 'mod' && field !== 'live')
   const lastDesc = order.length > 0 && order[order.length - 1][1] === 'desc'
   return (a, b) => {
     for (const [field, direction] of order) {

@@ -223,17 +223,6 @@ function rankedCard(id: string, hidden = false, restricted = false) {
   };
 }
 
-/** The committed v18 social contract with the `like` type's `postLive` kept or dropped, as #883 drops it. */
-async function mockV18Contract(withPostLive: boolean) {
-  const { default: committed } = await import('@/contracts/yappr-social-contract-v18.json');
-  const like = committed.documentSchemas.like;
-  const properties: Record<string, unknown> = { ...like.properties };
-  if (!withPostLive) delete properties.postLive;
-  vi.doMock('@/contracts/yappr-social-contract-v18.json', () => ({
-    default: { ...committed, documentSchemas: { ...committed.documentSchemas, like: { ...like, properties } } },
-  }));
-}
-
 describe('hidden posts in a ranked list (v18)', () => {
   const ids = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'];
 
@@ -291,17 +280,10 @@ describe('hidden posts in a ranked list (v18)', () => {
     expect(page.map((post) => post.id)).toEqual(['p1', 'p2', 'p3']);
   });
 
-  describe.each([true, false])('restricted posts, when the like type has postLive: %s', (withPostLive) => {
+  describe('restricted posts', () => {
     const hydrateWith = (hidden: string[], restricted: string[]) => mocks.hydrate.mockImplementation(async (request: { documentIds: string[] }) => {
       const posts = request.documentIds.map((id) => rankedCard(id, hidden.includes(id), restricted.includes(id)));
       return { rawPosts: posts.map((post) => ({ $id: post.id })), posts, preloaded: {} };
-    });
-
-    beforeEach(async () => {
-      await mockV18Contract(withPostLive);
-    });
-    afterEach(() => {
-      vi.doUnmock('@/contracts/yappr-social-contract-v18.json');
     });
 
     it.each(['all', 'today'] as const)('skips hidden and restricted posts on the %s ranking', async (window) => {
@@ -312,8 +294,6 @@ describe('hidden posts in a ranked list (v18)', () => {
 
       expect(page.map((post) => post.id)).toEqual(['p3', 'p5', 'p6']);
       expect(mocks.ranked.mock.calls[0][0].limit).toBe(8);
-      const where: unknown[] = mocks.ranked.mock.calls[0][0].where ?? [];
-      expect(where.some((pin) => Array.isArray(pin) && pin[0] === 'postLive')).toBe(withPostLive && window === 'today');
     });
 
     it('keeps restricted posts, labelled, on an archival build', async () => {

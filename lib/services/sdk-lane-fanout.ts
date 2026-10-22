@@ -20,7 +20,7 @@ import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils'
  * docs/ARCHIVE_FRONTEND.md), in one place for every page.
  *
  * The services build yap.pr's listed-lane reads only (`live == 1, mod ==
- * null`, `postLive == 1`). On an archival build this shadows
+ * null`). On an archival build this shadows
  * `sdk.documents.{query, count, average, ranked, composite}` so every such
  * read is sent once per lane (lib/moderation-lanes.ts) and the answers are
  * merged as if one index held every lane:

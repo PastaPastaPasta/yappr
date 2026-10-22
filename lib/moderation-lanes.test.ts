@@ -37,12 +37,6 @@ describe('laneVariants', () => {
     expect(lanes.every((lane) => lane[0][2] === 'ME')).toBe(true)
   })
 
-  it('fans a like trend window out to two lanes by postLive', () => {
-    const lanes = laneVariants<WhereClause>([['postLive', '==', 1], ['tags', 'contains', 'dash']])
-    expect(lanes.map((lane) => lane[0][2])).toEqual([1, 2])
-    expect(lanes.every((lane) => lane[1][2] === 'dash')).toBe(true)
-  })
-
   it('leaves v17 `live == true` reads, and `live == 1` without a mod pin, as one lane', () => {
     const v17: WhereClause[] = [['live', '==', true], ['$createdAt', '>', 0]]
     expect(laneVariants(v17)).toEqual([v17])

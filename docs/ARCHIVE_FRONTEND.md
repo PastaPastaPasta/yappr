@@ -23,7 +23,7 @@ Every listing on social v18, blog v10 and storefront v11 is indexed by lane. `li
 
 - **Listings.** Timelines, tag pages, an author's posts and replies, threads, mentions, blog and store listings, reviews: each read is sent once per lane, with the same order and its own cursor per lane, and the pages are merged by the listing's order (k-way merge). "Load more" pages every lane from where it stopped.
 - **Counts.** A count is the sum of its lanes. Grouped counts are summed per key. A store's average rating and its star histogram sum the lanes' totals before dividing.
-- **Rankings.** Top authors, most replied, top rated, trending posts and tags: every lane is ranked, the lists are merged, and **hidden posts are not skipped**. Trending reads both `postLive` lanes.
+- **Rankings.** Top authors, most replied, top rated, trending posts and tags: every lane is ranked, the lists are merged, and **hidden posts are not skipped**.
 - **Labels.** A hidden or restricted item is shown with a label instead of being dropped: who hid it, when, and the reason ("Hidden · Spam · by @alice · 2h ago"; "Hidden for legal reasons" for `mod == 2`), and "Restricted account" for a post written in lane `live == 2`. Items reached by id, quote, bookmark, notification or ranked list are kept and labelled too.
 - **Everything else is unchanged.** Posting, replying and the rest behave as on yap.pr. The archive does not let anyone unhide anything: only the seated team can write `mod`.
 
@@ -100,7 +100,6 @@ Reads, not fees: nothing about an archive changes what anyone pays to write. But
 | --- | --- | --- |
 | A listing or count on social posts and replies, or blog posts (`live` and `mod` lanes) | 1 | **6**: `live` {1, 2} × `mod` {null, 1, 2} |
 | A listing or count on a type with only the `mod` lane (mentions, `blog.timeline`, blog comments, every storefront listing and rating) | 1 | **3**: `mod` {null, 1, 2} |
-| A like trend window (trending posts, trending tags, top in a tag) | 1 | **2**: `postLive` {1, 2} |
 | Counts, grouped counts, averages, histograms | 1 | the same lanes; the results are summed |
 | A ranked list (top authors, most replied, top rated) | 1 | the same lanes; each lane's top N is merged |
 | The moderation log, one page | not served | one read per source: social 6 hide lanes + 2 restriction states, blog 6 + 2, storefront 8, plus the warning list (read whole, once) |

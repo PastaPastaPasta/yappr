@@ -15,8 +15,6 @@ vi.mock('../contract-topology', () => ({
   referencesMayDangle: () => false,
   // Before v18: no hidden-post headroom, so every read asks for exactly the limit.
   listingsCarryModLane: () => false,
-  // A windowed like read pins `postLive == 1` on v18 only.
-  trendLanePin: () => [],
 }));
 
 function ranking(count: number, prefix = 'post') {

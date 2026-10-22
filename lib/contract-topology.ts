@@ -858,20 +858,8 @@ export function authorsCanBeRestricted(): boolean {
 }
 
 /**
- * True when the configured cut's `like` type declares `postLive`, a copy of
- * its post's `live` lane: the reference `where` binds it to the post, and both
- * trend windows are keyed `[$createdAt, postLive, …]`, so trending reads pin
- * `postLive == 1`. A like of a tombstone (no `live`) is refused. Read off the
- * committed contract file, not the topology version: a v18 file without it
- * writes likes as v17 does.
- */
-export function likesCarryPostLive(): boolean {
-  return isDevnetCut() && schemaOf('like')?.properties?.postLive !== undefined
-}
-
-/**
  * One equality pin on a listing's lane property: `live == true` (v13–v17),
- * or v18's `live == 1` / `mod == null` / `postLive == 1`. Reads put these
+ * or v18's `live == 1` / `mod == null`. Reads put these
  * first (`mentionedUserAndTime` after its `contains`), in this order.
  */
 export type LanePin = [string, '==', boolean | number | null]
@@ -902,18 +890,6 @@ function lanePinOrder(pins: readonly LanePin[]): Array<[string, 'asc']> {
  */
 export function modLanePin(): LanePin[] {
   return listingsCarryModLane() ? [['mod', '==', null]] : []
-}
-
-/**
- * The pin both like trend windows carry after the window when the committed
- * `like` type has `postLive` (`byTrendPost [$createdAt, postLive, postId]`,
- * `byTrendHashtagPost [$createdAt, postLive, tags, postId]`): `postLive == 1`,
- * so trending counts likes of listed posts only. Nothing otherwise
- * ({@link likesCarryPostLive}); the ranked readers then drop restricted posts
- * themselves.
- */
-export function trendLanePin(): LanePin[] {
-  return likesCarryPostLive() ? [['postLive', '==', 1]] : []
 }
 
 /**
