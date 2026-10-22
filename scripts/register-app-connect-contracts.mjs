@@ -93,7 +93,7 @@ import { dirname, resolve } from 'node:path';
 import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey, StateTransition, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
-import { appendNonces, checkJournal, isResumedAppend, journalPolicy, testnetAppendProblem } from './app-connect-journal.mjs';
+import { checkJournal, isResumedAppend, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
 import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, entriesToCreate, planAppConnectSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
 import { describeErr, resolveKeyFileOwner, signerFor } from './owner-keys.mjs';
@@ -276,10 +276,10 @@ function printPlan(plan, makerSource, policy, created) {
  * An append run's read-only preconditions (`--append-after`): the group exists,
  * owned by the maker alone; every entry it already holds exists at its planned
  * id, owned by the maker, carries its pinned file's document types and is a
- * proved member; and no entry to create exists yet at the id the maker's next
- * nonces give it (printed when they are not the plan's).
+ * proved member; and no entry to create exists yet at its id (`created` is
+ * already rebased onto the maker's next nonces, {@link rebaseAppend}).
  */
-async function proveAppendable(handle, plan, created, chainNonce, { resumed = false } = {}) {
+async function proveAppendable(handle, plan, created, { resumed = false } = {}) {
   const read = (fn) => readback(handle, fn);
   const info = await read(() => handle.sdk.contractGroups.info(plan.groupId));
   if (!info || info.ownerId !== plan.groupOwner || info.adminIds.length !== 0) throw new Error(`group ${plan.groupId}: owner ${info?.ownerId}, admins ${info?.adminIds}; expected ${plan.groupOwner} alone`);
@@ -296,16 +296,8 @@ async function proveAppendable(handle, plan, created, chainNonce, { resumed = fa
   }
   // A resumed live run allocates its own nonces and checks each id it creates (registerLive).
   if (resumed) return;
-  // The maker may have spent nonces since the plan: each new entry then takes the next free one,
-  // and its id moves with it. Those are the ids a live run produces (it allocates the same way).
-  const nonces = appendNonces(created, chainNonce);
-  if (nonces[0] !== created[0].nonce) {
-    console.log(`\nNOTE: the maker is at nonce ${chainNonce}, past the plan's ${created[0].nonce - 1n}: the new entries take these ids instead:`);
-  }
-  for (const [i, entry] of created.entries()) {
-    const id = generateId(plan.groupOwner, nonces[i]);
-    if (nonces[i] !== entry.nonce) console.log(`  ${String(nonces[i]).padStart(5)}  ${entry.name.padEnd(13)}  ${id}`);
-    if (await read(() => handle.sdk.contracts.fetch(id))) throw new Error(`REFUSING: ${entry.name} ${id} already exists on chain`);
+  for (const entry of created) {
+    if (await read(() => handle.sdk.contracts.fetch(entry.id))) throw new Error(`REFUSING: ${entry.name} ${entry.id} already exists on chain`);
   }
 }
 
@@ -629,19 +621,29 @@ async function main() {
   }
   // Before the balance gate, so a key file can be proved while the maker is still being funded.
   const signing = owner ? await verifySigningKey(handle.sdk, owner) : null;
-  const plan = planAppConnectSet({ makerId: maker.id, startNonce, generateId });
+  const planned = planAppConnectSet({ makerId: maker.id, startNonce, generateId });
   // The entries this run creates: all of them, or (--append-after) those the group does not hold yet.
-  const created = entriesToCreate(plan.contracts, args.appendAfter);
+  let plan = planned;
+  let created = entriesToCreate(planned.contracts, args.appendAfter);
+  // An append the maker has spent nonces past: the new entries move to its next nonces, and every
+  // step below (the build, the estimate, the env lines) uses the ids a live run will produce.
+  // A resumed live run keeps the plan: it allocates from its journal (registerLive).
+  const resumed = isResumedAppend(created, journal);
+  if (handle && args.appendAfter !== null && !resumed) {
+    ({ plan, created } = rebaseAppend(planned, created, chainNonce, generateId));
+    const plannedFirst = planned.contracts.find((c) => c.name === created[0].name).nonce;
+    if (created[0].nonce !== plannedFirst) console.log(`NOTE: the maker is at nonce ${chainNonce}, past the plan's ${plannedFirst - 1n}: the new entries take its next nonces, and their ids move with them`);
+  }
   printPlan(plan, maker.source, policy, created);
   if (args.upto && !created.some((c) => c.name === args.upto)) throw new Error(`--upto ${args.upto}: not an entry this run creates (${created.map((c) => c.name).join(', ')})`);
   if (args.appendAfter !== null && args.mode === 'live' && !journal) throw new Error('--live --append-after resumes the set\'s own journal (every entry through the one named must be verified there); none at that path');
-  if (journal) checkJournal(journal, plan, { path: args.journal, policy, appendAfter: args.appendAfter, network: network(), generateId });
+  if (journal) checkJournal(journal, planned, { path: args.journal, policy, appendAfter: args.appendAfter, network: network(), generateId });
 
   // An append: the anchor, the group and every registered entry must be on chain as planned,
   // proved in every networked mode, a live run's included, before anything is signed.
   if (handle && args.appendAfter !== null) {
     console.log(`\nthe group already holds every entry through ${args.appendAfter} (proved):`);
-    await proveAppendable(handle, plan, created, chainNonce, { resumed: isResumedAppend(created, journal) });
+    await proveAppendable(handle, plan, created, { resumed });
   }
 
   // A fresh run: nothing of the planned set and not the group may exist yet. A resumed run

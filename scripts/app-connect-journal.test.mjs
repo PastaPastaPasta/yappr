@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { APP_CONNECT_ENTRIES, TESTNET_REGISTERED_THROUGH, entriesToCreate, planAppConnectSet } from './app-connect-set.mjs';
-import { appendNonces, checkJournal, isResumedAppend, journalPolicy, testnetAppendProblem } from './app-connect-journal.mjs';
+import { APP_CONNECT_ENTRIES, TESTNET_REGISTERED_THROUGH, appConnectEnvLines, entriesToCreate, planAppConnectSet } from './app-connect-set.mjs';
+import { appendNonces, checkJournal, isResumedAppend, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
 
 const MAKER = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A';
 /** A stand-in for DataContract.generateId: deterministic per (owner, nonce). */
@@ -43,6 +43,28 @@ describe('the maker nonce of a fresh append', () => {
     expect(appendNonces(created, 64n)).toEqual([65n, 66n, 67n]);
     expect(appendNonces(created, 66n)).toEqual([67n, 68n, 69n]);
     expect(() => appendNonces(created, 63n)).toThrow(/below 64/);
+  });
+
+  it('rebases the entries it creates, and so the env lines, onto the moved nonces; the registered prefix stays', () => {
+    const same = rebaseAppend(plan, created, 64n, generateId);
+    expect(same.plan.contracts.map((c) => c.id)).toEqual(plan.contracts.map((c) => c.id));
+    expect(appConnectEnvLines(same.plan)).toEqual(appConnectEnvLines(plan));
+
+    const moved = rebaseAppend(plan, created, 66n, generateId);
+    expect(moved.created.map((c) => [c.name, c.nonce, c.id])).toEqual([
+      ['socialV18', 67n, generateId(MAKER, 67n)], ['blogV10', 68n, generateId(MAKER, 68n)], ['storefrontV11', 69n, generateId(MAKER, 69n)],
+    ]);
+    // The registered prefix (anchor through the passkey vault) keeps its planned nonces and ids.
+    const registered = plan.contracts.filter((c) => !created.includes(c));
+    expect(moved.plan.contracts.slice(0, registered.length)).toEqual(registered);
+    expect(moved.plan.anchor).toBe(plan.anchor);
+    expect([moved.plan.appId, moved.plan.groupId]).toEqual([plan.appId, plan.groupId]);
+    // Every rebased entry is the one the run builds, so the plan, the creates and the env agree.
+    expect(moved.plan.contracts.slice(registered.length)).toEqual(moved.created);
+    const env = appConnectEnvLines(moved.plan);
+    expect(env).toContain(`NEXT_PUBLIC_YAPPR_CONTRACT_ID=${generateId(MAKER, 67n)}`);
+    expect(env).toContain(`NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID=${generateId(MAKER, 69n)}`);
+    expect(env.join('\n')).not.toContain(generateId(MAKER, 65n));
   });
 });
 

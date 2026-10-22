@@ -39,6 +39,18 @@ export function appendNonces(created, chainNonce) {
 }
 
 /**
+ * The plan an append run works from once the maker's nonce is known: each new entry at the
+ * nonce {@link appendNonces} gives it and the id that nonce makes (the ids a live run produces,
+ * since it allocates the same way). The anchor and the registered entries are left as planned.
+ * Returns the rebased plan and the rebased entries to create, in order.
+ */
+export function rebaseAppend(plan, created, chainNonce, generateId) {
+  const nonces = appendNonces(created, chainNonce);
+  const moved = new Map(created.map((entry, i) => [entry, { ...entry, nonce: nonces[i], id: generateId(plan.groupOwner, nonces[i]) }]));
+  return { plan: { ...plan, contracts: plan.contracts.map((c) => moved.get(c) ?? c) }, created: [...moved.values()] };
+}
+
+/**
  * A journal that matches the plan: same network, maker, anchor nonce, group,
  * interim and election windows; every entry from its pinned file at a
  * consistent id. For an append: every entry through `appendAfter` verified at

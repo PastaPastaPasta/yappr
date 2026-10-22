@@ -834,6 +834,12 @@ async function main() {
 
 try {
   await main();
+  // A step records every case before judging the run: any failed write or read in the state fails it.
+  const failed = [...Object.values(state?.results ?? {}), ...Object.values(state?.reads ?? {})].filter((r) => !r.pass).length;
+  if (failed > 0) {
+    console.error(`FAILED: ${failed} case(s) in ${args.state} did not hold`);
+    process.exit(1);
+  }
   process.exit(0);
 } catch (e) {
   console.error(`ERROR: ${err(e)}`);
