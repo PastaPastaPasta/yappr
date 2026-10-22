@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Post } from '@/lib/types'
 import { replyToPost } from '@/lib/services/post-service'
 import { extractYapprPostId } from '@/lib/link-preview/urls'
-import { isHiddenItem, onModeratorViewChange } from '@/lib/moderation-view'
+import { isHiddenItem } from '@/lib/moderation-view'
 
 interface UseYapprPostReferenceOptions {
   disabled?: boolean
@@ -29,11 +29,6 @@ type Reference = { post: Post } | { hidden: true }
 
 const referenceCache = new Map<string, Reference>()
 const pendingReferences = new Map<string, Promise<Reference | null>>()
-// Whether a hidden target's content may be kept moves with the moderator view.
-onModeratorViewChange(() => {
-  referenceCache.clear()
-  pendingReferences.clear()
-})
 
 /** The reference as this build may keep it: a hidden target's content is dropped at once. */
 function toReference(post: Post): Reference {

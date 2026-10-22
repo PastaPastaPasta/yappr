@@ -24,7 +24,8 @@ import type { ModeratedContractKey } from '@/lib/moderated-contracts'
  * time: a verified member of a contract's seated team who turns on "Show
  * hidden & restricted" sees that contract the way an archival build shows it.
  * Only the moderator-view store (hooks/use-moderator-view.ts) turns it on,
- * after reading the seated team off the chain; it is off for everyone else.
+ * after reading the seated team off the chain, once per page load and before
+ * the page mounts; it is off for everyone else.
  */
 
 /** True on an archival build (`NEXT_PUBLIC_MODERATION_VIEW=all`), whoever is signed in. */
@@ -32,43 +33,46 @@ export function archivalBuild(): boolean {
   return process.env.NEXT_PUBLIC_MODERATION_VIEW === 'all'
 }
 
-/** The contracts the moderator view is on for, in this tab. */
+/** The contracts the moderator view is on for, in this page load. */
 let moderatorView: ReadonlySet<ModeratedContractKey> = new Set()
-const viewChangeListeners = new Set<() => void>()
 
 /**
- * Runs `listener` whenever the moderator view's contracts change: a cache
- * that kept or dropped hidden items under the old view forgets them.
+ * Turns the moderator view on for exactly `contracts`. Only for the contracts
+ * on which the signed-in identity is a verified seated moderator
+ * ({@link moderatorViewScope}), and only while the page is held, before
+ * anything has read ({@link moderatorViewHolds}): any later change of view
+ * reloads the page instead, so no read or cache ever spans one.
  */
-export function onModeratorViewChange(listener: () => void): void {
-  viewChangeListeners.add(listener)
+export function setModeratorViewContracts(contracts: Iterable<ModeratedContractKey>): void {
+  moderatorView = new Set(contracts)
 }
 
 /**
- * Turns the moderator view on for exactly `contracts` and off for every
- * other; `[]` turns it off. Only for the contracts on which the signed-in
- * identity is a verified seated moderator ({@link moderatorViewScope}).
- * Returns true when that changed anything (the listeners have then run).
+ * True while the page must not mount: the view was turned on in this tab,
+ * and either the session is not restored yet or the identity that turned it
+ * on is signed in and its seats are still being read.
  */
-export function setModeratorViewContracts(contracts: Iterable<ModeratedContractKey>): boolean {
-  const next = new Set(contracts)
-  if (next.size === moderatorView.size && Array.from(next).every((key) => moderatorView.has(key))) return false
-  moderatorView = next
-  viewGeneration++
-  for (const listener of viewChangeListeners) listener()
-  return true
+export function moderatorViewHolds(state: {
+  /** The session was restored and its identity taken. */
+  booted: boolean
+  viewer: string | null
+  /** The identity that turned the view on in this tab. */
+  enabledFor: string | null
+  /** Whose seats have been read. */
+  seatedFor: string | null
+}): boolean {
+  if (state.enabledFor === null) return false
+  if (!state.booted) return true
+  return state.viewer === state.enabledFor && state.seatedFor !== state.viewer
 }
 
-let viewGeneration = 0
-
 /**
- * Bumped on every change of the moderator view. A cache filled by a read
- * keeps the result only if this is unchanged from the read's start: a read
- * that spans a change may have been answered under either view (the lane
- * fan-out decides per SDK call, retries included).
+ * True when the signed-in identity changing (once the page has loaded) must
+ * reload the page: the view is on now (signing out of, or switching from, a
+ * moderator session), or the identity signing in turned it on in this tab.
  */
-export function moderatorViewGeneration(): number {
-  return viewGeneration
+export function viewerChangeReloads(state: { activeContracts: number; enabledFor: string | null; nextViewer: string | null }): boolean {
+  return state.activeContracts > 0 || (state.nextViewer !== null && state.nextViewer === state.enabledFor)
 }
 
 /** The contracts the moderator view is on for now. */

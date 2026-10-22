@@ -8,10 +8,10 @@ import {
   moderationLogEnabled,
   moderationMarksOf,
   moderationViewAll,
-  moderatorViewGeneration,
+  moderatorViewHolds,
   moderatorViewScope,
-  onModeratorViewChange,
   setModeratorViewContracts,
+  viewerChangeReloads,
   withoutHiddenItems,
 } from './moderation-view'
 
@@ -134,23 +134,43 @@ describe('the moderator view', () => {
     expect(moderationLogEnabled()).toBe(false)
   })
 
-  it('moves its generation when, and only when, it changes', () => {
-    const start = moderatorViewGeneration()
-    setModeratorViewContracts([])
-    expect(moderatorViewGeneration()).toBe(start)
-    setModeratorViewContracts(['blog'])
-    setModeratorViewContracts([])
-    expect(moderatorViewGeneration()).toBe(start + 2)
+})
+
+describe('moderatorViewHolds: nothing mounts or reads before the view is applied', () => {
+  const state = (overrides: Partial<Parameters<typeof moderatorViewHolds>[0]> = {}) =>
+    ({ booted: true, viewer: 'alice', enabledFor: 'alice', seatedFor: null, ...overrides })
+
+  it('never holds a tab where the view is off', () => {
+    expect(moderatorViewHolds(state({ enabledFor: null, booted: false }))).toBe(false)
+    expect(moderatorViewHolds(state({ enabledFor: null }))).toBe(false)
   })
 
-  it('tells its listeners when, and only when, it changes', () => {
-    const listener = vi.fn()
-    onModeratorViewChange(listener)
-    expect(setModeratorViewContracts(['social'])).toBe(true)
-    expect(setModeratorViewContracts(['social'])).toBe(false)
-    expect(setModeratorViewContracts(['social', 'blog'])).toBe(true)
-    expect(setModeratorViewContracts([])).toBe(true)
-    expect(listener).toHaveBeenCalledTimes(3)
+  it('holds a tab where it is on until the session is restored and the seats are read', () => {
+    expect(moderatorViewHolds(state({ booted: false, viewer: null }))).toBe(true)
+    expect(moderatorViewHolds(state())).toBe(true)
+    expect(moderatorViewHolds(state({ seatedFor: 'alice' }))).toBe(false)
+  })
+
+  it('releases at once for anyone but the identity that turned it on', () => {
+    expect(moderatorViewHolds(state({ viewer: null }))).toBe(false)
+    expect(moderatorViewHolds(state({ viewer: 'mallory' }))).toBe(false)
+  })
+})
+
+describe('viewerChangeReloads: a change of view after load is always a reload', () => {
+  it('reloads when a moderator session with the view on signs out or switches', () => {
+    expect(viewerChangeReloads({ activeContracts: 1, enabledFor: 'alice', nextViewer: null })).toBe(true)
+    expect(viewerChangeReloads({ activeContracts: 2, enabledFor: 'alice', nextViewer: 'bob' })).toBe(true)
+  })
+
+  it('reloads when the identity that turned it on in this tab signs back in', () => {
+    expect(viewerChangeReloads({ activeContracts: 0, enabledFor: 'alice', nextViewer: 'alice' })).toBe(true)
+  })
+
+  it('leaves everyone else alone', () => {
+    expect(viewerChangeReloads({ activeContracts: 0, enabledFor: null, nextViewer: 'alice' })).toBe(false)
+    expect(viewerChangeReloads({ activeContracts: 0, enabledFor: 'alice', nextViewer: 'bob' })).toBe(false)
+    expect(viewerChangeReloads({ activeContracts: 0, enabledFor: null, nextViewer: null })).toBe(false)
   })
 })
 

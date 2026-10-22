@@ -1,10 +1,16 @@
 'use client'
 
 import { create } from 'zustand'
-import { cacheManager } from '@/lib/cache-manager'
+import { clearStoreViewCaches } from '@/lib/caches/store-view-cache'
 import { logger } from '@/lib/logger'
 import { MODERATED_CONTRACTS, moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
-import { moderatorViewScope, setModeratorViewContracts } from '@/lib/moderation-view'
+import {
+  moderatorViewContracts,
+  moderatorViewHolds,
+  moderatorViewScope,
+  setModeratorViewContracts,
+  viewerChangeReloads,
+} from '@/lib/moderation-view'
 import { moderationServiceFor } from '@/lib/services/moderation-service'
 import { scopedKey } from '@/lib/storage-scope'
 
@@ -12,34 +18,41 @@ import { scopedKey } from '@/lib/storage-scope'
  * The moderator view: "Show hidden & restricted", for verified members of a
  * contract's seated team only (lib/moderation-view.ts).
  *
- * The switch is kept per identity for this tab (sessionStorage), off by
- * default. Whatever it says, the view covers only the contracts whose seated
- * team the signed-in identity was read on, and nothing for anyone else.
- * Whenever what it covers changes, every cache that kept or dropped hidden
- * items forgets them and the page under the app shell is mounted afresh
- * (`generation`), so each listing reads again with or without every lane.
+ * The switch is kept for this tab (sessionStorage), as the identity that
+ * turned it on, off by default. The view is applied once per page load,
+ * before the page mounts: while the switch is on, the page is held until the
+ * session is restored and the identity's seats are read, and only then does
+ * anything read. Every later change (turning it on or off, signing out of or
+ * into a moderator session with it on) reloads the page. So no read or cache
+ * ever spans a change of view, and nothing has to be invalidated in place.
  */
 
-const TOGGLE_KEY = 'yappr_moderator_view'
+const TOGGLE_KEY = scopedKey('yappr_moderator_view')
 
-const toggleKey = (identityId: string) => scopedKey(`${TOGGLE_KEY}:${identityId}`)
-
-function readToggle(identityId: string | null): boolean {
-  if (!identityId || typeof window === 'undefined') return false
+/** The identity that turned the view on in this tab, or null. */
+function readEnabledFor(): string | null {
+  if (typeof window === 'undefined') return null
   try {
-    return sessionStorage.getItem(toggleKey(identityId)) === '1'
+    return sessionStorage.getItem(TOGGLE_KEY)
   } catch {
-    return false
+    return null
   }
 }
 
-function writeToggle(identityId: string, on: boolean): void {
+function writeEnabledFor(identityId: string | null): void {
   try {
-    if (on) sessionStorage.setItem(toggleKey(identityId), '1')
-    else sessionStorage.removeItem(toggleKey(identityId))
+    if (identityId) sessionStorage.setItem(TOGGLE_KEY, identityId)
+    else sessionStorage.removeItem(TOGGLE_KEY)
   } catch {
-    // Storage blocked: the switch holds until the page is reloaded.
+    // Storage blocked: the switch cannot outlive the reload, so it stays off.
   }
+}
+
+/** Starts the page over under the view now saved: the only way the view changes once the page has loaded. */
+function reloadPage(): void {
+  // Saved store views are kept per view, but an all-lane one has no business outliving the view.
+  clearStoreViewCaches()
+  window.location.reload()
 }
 
 /** How long to wait before each new try at a seat read that failed. */
@@ -75,47 +88,57 @@ async function seatedModeratorContracts(identityId: string, cancelled: () => boo
 }
 
 interface ModeratorViewState {
+  /** True once the session was restored and its identity taken. */
+  booted: boolean
   /** The signed-in identity, or null. */
   viewer: string | null
+  /** The identity that turned the view on in this tab (sessionStorage), or null. */
+  enabledFor: string | null
   /** Whose seats `seated` lists: the viewer once they have been read. */
   seatedFor: string | null
   seated: ModeratedContractKey[]
-  /** The switch, as the viewer left it in this tab. */
-  enabled: boolean
-  /** Bumped whenever the contracts the view covers change. */
-  generation: number
+  /** The signed-in identity, restored or changed. */
   setViewer: (viewer: string | null) => void
   setSeated: (identityId: string, seated: ModeratedContractKey[]) => void
   setEnabled: (on: boolean) => void
 }
 
-/** Applies a new state's scope to the reads; a change clears the caches and remounts the page. */
-function applied(state: ModeratorViewState, next: Partial<ModeratorViewState>): Partial<ModeratorViewState> {
-  const merged = { ...state, ...next }
-  if (!setModeratorViewContracts(moderatorViewScope(merged))) return next
-  cacheManager.clearAll()
-  return { ...next, generation: state.generation + 1 }
-}
-
-export const useModeratorViewStore = create<ModeratorViewState>((set) => ({
+export const useModeratorViewStore = create<ModeratorViewState>((set, get) => ({
+  booted: false,
   viewer: null,
+  enabledFor: readEnabledFor(),
   seatedFor: null,
   seated: [],
-  enabled: false,
-  generation: 0,
-  setViewer: (viewer) => set((state) => (state.viewer === viewer ? {} : applied(state, { viewer, seatedFor: null, seated: [], enabled: readToggle(viewer) }))),
-  setSeated: (identityId, seated) => set((state) => (state.viewer === identityId ? applied(state, { seatedFor: identityId, seated }) : {})),
-  setEnabled: (on) => set((state) => {
-    if (!state.viewer || state.seatedFor !== state.viewer || state.seated.length === 0) return {}
-    writeToggle(state.viewer, on)
-    return applied(state, { enabled: on })
-  }),
+  setViewer: (viewer) => {
+    const state = get()
+    if (state.booted && state.viewer === viewer) return
+    if (state.booted && viewerChangeReloads({ activeContracts: moderatorViewContracts().size, enabledFor: state.enabledFor, nextViewer: viewer })) {
+      reloadPage()
+      return
+    }
+    set({ booted: true, viewer, seatedFor: null, seated: [] })
+  },
+  setSeated: (identityId, seated) => {
+    const state = get()
+    if (state.viewer !== identityId) return
+    // The page is still held for an identity that turned the view on: apply the view before it mounts.
+    if (moderatorViewHolds(state)) {
+      setModeratorViewContracts(moderatorViewScope({ viewer: identityId, seatedFor: identityId, seated, enabled: state.enabledFor === identityId }))
+    }
+    set({ seatedFor: identityId, seated })
+  },
+  setEnabled: (on) => {
+    const state = get()
+    if (!state.viewer || state.seatedFor !== state.viewer || state.seated.length === 0) return
+    writeEnabledFor(on ? state.viewer : null)
+    reloadPage()
+  },
 }))
 
-/** Reads the signed-in identity's seats whenever it changes. */
+/** Takes the restored or changed identity and reads its seats. Call once the session restore has finished. */
 export function syncModeratorViewer(identityId: string | null): () => void {
   useModeratorViewStore.getState().setViewer(identityId)
-  if (!identityId) return () => {}
+  if (!identityId || useModeratorViewStore.getState().viewer !== identityId) return () => {}
   let cancelled = false
   seatedModeratorContracts(identityId, () => cancelled).then((seated) => {
     if (!cancelled) useModeratorViewStore.getState().setSeated(identityId, seated)
@@ -123,6 +146,11 @@ export function syncModeratorViewer(identityId: string | null): () => void {
   return () => {
     cancelled = true
   }
+}
+
+/** True while the page must wait for the moderator view to be applied. */
+export function useModeratorViewHolding(): boolean {
+  return useModeratorViewStore(moderatorViewHolds)
 }
 
 const NONE: readonly ModeratedContractKey[] = []
@@ -135,15 +163,16 @@ export function useModeratorView(): {
   active: boolean
   /** True while the signed-in identity's seats are being read. */
   checking: boolean
+  /** Saves the switch and reloads the page under it. */
   setEnabled: (on: boolean) => void
 } {
   const viewer = useModeratorViewStore((state) => state.viewer)
   const seatedFor = useModeratorViewStore((state) => state.seatedFor)
   const seated = useModeratorViewStore((state) => state.seated)
-  const enabled = useModeratorViewStore((state) => state.enabled)
+  const enabledFor = useModeratorViewStore((state) => state.enabledFor)
   const setEnabled = useModeratorViewStore((state) => state.setEnabled)
   const verified = viewer !== null && seatedFor === viewer ? seated : NONE
-  return { seated: verified, active: enabled && verified.length > 0, checking: viewer !== null && seatedFor !== viewer, setEnabled }
+  return { seated: verified, active: enabledFor === viewer && verified.length > 0, checking: viewer !== null && seatedFor !== viewer, setEnabled }
 }
 
 /** True when the viewer is a verified seated moderator of `contract`. */

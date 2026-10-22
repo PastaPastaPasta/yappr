@@ -69,22 +69,6 @@ describe('store rating summary', () => {
     expect(sdk.documents.average).toHaveBeenCalledTimes(2);
   });
 
-  it('does not cache a summary read across a moderator view change', async () => {
-    let answer: (value: Map<string, { count: bigint; sum: bigint }>) => void = () => undefined;
-    sdk.documents.average.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
-    sdk.documents.count.mockResolvedValue(new Map());
-    const inFlight = storeStatsService.getStoreRatingSummary(storeId);
-    await vi.waitFor(() => expect(sdk.documents.average).toHaveBeenCalledTimes(1));
-    // The view turns on and off again while the read runs: it may have been answered under either.
-    setModeratorViewContracts(['storefront']);
-    setModeratorViewContracts([]);
-    answer(new Map([['', { count: 1n, sum: 5n }]]));
-    await inFlight;
-    sdk.documents.average.mockResolvedValue(new Map([['', { count: 1n, sum: 5n }]]));
-    await storeStatsService.getStoreRatingSummary(storeId);
-    expect(sdk.documents.average).toHaveBeenCalledTimes(2);
-  });
-
   it('keeps summaries read under the storefront moderator view apart', async () => {
     sdk.documents.average.mockResolvedValue(new Map([['', { count: 1n, sum: 5n }]]));
     sdk.documents.count.mockResolvedValue(new Map());

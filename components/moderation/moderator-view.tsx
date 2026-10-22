@@ -14,14 +14,16 @@ import { cn } from '@/lib/utils'
 export const HIDDEN_CONTENT_HREF = '/moderation?view=hidden'
 
 /**
- * Keeps the moderator view in step with the signed-in identity: reads its
- * seats when it signs in, and turns the view off the moment it signs out or
- * changes. Renders nothing. Mounted once, in the app shell.
+ * Keeps the moderator view in step with the signed-in identity: takes it
+ * once the session is restored and reads its seats, and reloads the page
+ * when a moderator session with the view on signs out or changes (or one
+ * that turned it on signs back in). Renders nothing. Mounted once, in the app
+ * shell.
  */
 export function ModeratorViewController() {
-  const { user } = useAuth()
+  const { user, isAuthRestoring } = useAuth()
   const identityId = user?.identityId ?? null
-  useEffect(() => syncModeratorViewer(identityId), [identityId])
+  useEffect(() => (isAuthRestoring ? undefined : syncModeratorViewer(identityId)), [identityId, isAuthRestoring])
   return null
 }
 
