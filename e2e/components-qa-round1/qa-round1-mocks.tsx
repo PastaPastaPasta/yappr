@@ -153,6 +153,8 @@ export const dpnsService = { resolveUsername: async () => null, getAllUsernamesS
 const cartItem = { itemId: 'product', storeId: 'store', title: 'Digital item', fulfillment: 'digital', quantity: 1, unitPrice: 200, currency: 'USD' }
 export const cartService = { subscribe: () => noop, getItemCount: () => 0, getItemsForStore: () => [cartItem], getAvailability: async () => [{ item: cartItem, reason: null }] }
 export const getCartCurrency = () => 'USD'
+export const HIDDEN_ITEM_MESSAGE = 'This item is hidden by the moderators'
+export const HIDDEN_STORE_MESSAGE = 'This store is hidden by the moderators'
 export const savedAddressService = { getUserEncryptionPublicKey: async () => null, getDecryptedAddresses: async () => [], getDefaultAddress: () => null }
 
 export const reportModerationRefusal = () => false
