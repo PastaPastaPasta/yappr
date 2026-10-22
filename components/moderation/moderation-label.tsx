@@ -15,7 +15,7 @@ import type { ModeratedContractKey } from '@/lib/moderated-contracts'
  */
 export function useSeesHidden(contract: ModeratedContractKey = 'social'): boolean {
   const isModerator = useIsModerator(contract)
-  return moderationViewAll() || isModerator
+  return moderationViewAll(contract) || isModerator
 }
 
 interface ModerationLabelProps {

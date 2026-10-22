@@ -9,6 +9,7 @@ import {
   type TargetKind,
 } from '@/lib/contract-topology';
 import type { OwnQuote } from '@/lib/feed/quote-reposts';
+import { moderationViewAll } from '@/lib/moderation-view';
 import type { PostStats } from './post-service';
 
 export interface PostInteractionState {
@@ -44,10 +45,11 @@ function rootsOf(targets: readonly KindedTarget[]): Map<string, string> {
 /**
  * Stats and interactions are cached and deduplicated per (surface, id): a `post`
  * id and a `reply` id are drawn from the same keyspace but, on the v9 topology,
- * are answered by different doctypes.
+ * are answered by different doctypes. A count read under the moderator view
+ * sums every lane, so it is kept apart from the listed lane's.
  */
 function statsCacheKey(target: KindedTarget): string {
-  return `${target.kind}:${target.id}`;
+  return `${target.kind}:${target.id}${moderationViewAll() ? ':all-lanes' : ''}`;
 }
 
 export async function fetchPostStats(

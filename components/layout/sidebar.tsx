@@ -54,6 +54,7 @@ import { startVisibilityPolling } from '@/lib/poll-scheduling'
 import { dmIsV5 } from '@/lib/constants'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { InlineLegalLinks, LegalLinksMenu } from './legal-links'
+import { ModeratorViewMenuItems } from '@/components/moderation/moderator-view'
 
 const getNavigation = (isLoggedIn: boolean, userId?: string) => {
   if (!isLoggedIn) {
@@ -451,6 +452,7 @@ export function Sidebar() {
                 </DropdownMenu.Item>
                 <DropdownMenu.Separator className="h-px bg-gray-200 dark:bg-gray-800 my-1" />
                 <YappBalanceItem />
+                <ModeratorViewMenuItems />
                 <DropdownMenu.Item
                   className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
                   onClick={logout}

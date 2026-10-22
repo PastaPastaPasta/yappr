@@ -24,7 +24,7 @@ import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { HIDDEN_ITEM_MESSAGE, HIDDEN_STORE_MESSAGE, cartService } from '@/lib/services/cart-service'
-import { dropsHidden, isHidden, moderationViewAll } from '@/lib/moderation-view'
+import { actionsBlockedByHide, archivalBuild, isHidden } from '@/lib/moderation-view'
 import { HiddenContentStub, ModerationLabel, useSeesHidden } from '@/components/moderation/moderation-label'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
@@ -44,8 +44,8 @@ function unavailableReasonFor(item: StoreItem, store: Store | null, viewerId: st
   if (isOwnStore(store, viewerId)) return storeTakesPayment(store) ? OWN_STORE_ORDER_MESSAGE : ADD_PAYMENT_METHOD_HINT
   // Storefront v11: a listing or store the moderators hid is not sold on a
   // default build (an archival build sells it, labelled, as cart-service does).
-  if (dropsHidden(item.moderation)) return HIDDEN_ITEM_MESSAGE
-  if (dropsHidden(store?.moderation)) return HIDDEN_STORE_MESSAGE
+  if (actionsBlockedByHide(item)) return HIDDEN_ITEM_MESSAGE
+  if (actionsBlockedByHide(store)) return HIDDEN_STORE_MESSAGE
   if (item.status === 'sold_out') return 'This item is sold out'
   if (item.status !== 'active') return 'This item is no longer available'
   if (item.unreadableVariants !== undefined) return "This item can't be bought right now"
@@ -352,7 +352,7 @@ function ItemDetailContent() {
             <ModerationLabel contract="storefront" moderation={item.moderation} />
             {store && isHidden(store.moderation) && <ModerationLabel contract="storefront" moderation={store.moderation} />}
             {/* An archival build sells what the moderators hid on Yappr, and says so. */}
-            {moderationViewAll() && (isHidden(item.moderation) || isHidden(store?.moderation)) && (
+            {archivalBuild() && (isHidden(item.moderation) || isHidden(store?.moderation)) && (
               <p className="text-sm text-amber-700 dark:text-amber-400">Hidden by the moderators on Yappr</p>
             )}
 

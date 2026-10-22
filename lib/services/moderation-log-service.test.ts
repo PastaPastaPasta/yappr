@@ -13,7 +13,9 @@ vi.mock('./charter-reasons', async () => {
 })
 import {
   LOG_PAGE_SIZE,
+  ModerationLogReader,
   actionText,
+  isHiddenOrRestrictedSource,
   compareLogRows,
   logHref,
   logRequest,
@@ -77,6 +79,14 @@ describe('log reads match the read catalogue', () => {
     for (const source of logSources('social').filter((s) => s.kind !== 'warnings')) {
       expect(JSON.stringify(logRequest(source)?.where)).not.toContain('null')
     }
+  })
+
+  it('narrows to what is hidden and restricted now for the moderators\' list', () => {
+    const reader = new ModerationLogReader('social', isHiddenOrRestrictedSource)
+    expect(reader.sources.map((source) => source.id)).toEqual([
+      'post:mod1', 'post:mod2', 'reply:mod1', 'reply:mod2', 'yapprProfile:mod1', 'yapprProfile:mod2', 'restriction:state1',
+    ])
+    expect(new ModerationLogReader('social').sources.length).toBeGreaterThan(reader.sources.length)
   })
 
   it('has restrictions on social and blog only', () => {

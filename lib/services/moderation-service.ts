@@ -814,6 +814,17 @@ class ModerationService {
     }
   }
 
+  /**
+   * True when `identityId` sits on the contract's seated team (its leader or a
+   * member). False off an elected cut and while no team is seated: an owner or
+   * an interim moderator is not seated. Rejects when the team cannot be read.
+   */
+  async isSeatedMember(identityId: string | null | undefined): Promise<boolean> {
+    if (!identityId) return false;
+    const seated = await this.getSeatedTeam();
+    return seated !== null && (seated.leaderId === identityId || seated.members.includes(identityId));
+  }
+
   /** True when the author of some type the moderators remove may also delete it, so a vanished target may be their own delete. */
   private authorsMayDelete(): boolean {
     return this.contract.deletableTypes().some((type) => this.contract.authorsDelete(type));
