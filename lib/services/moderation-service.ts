@@ -1411,6 +1411,8 @@ class ModerationService {
           restrictionCreateFields(identityId, reason),
           { entropy, identityContractNonce: nonce }
         );
+        // The nonce read and the build awaited: the session must still be the one signed in before the key signs.
+        auth.assertLive();
         const transition = buildSignedCreateTransition({
           document,
           ownerId: moderatorId,
@@ -1446,6 +1448,8 @@ class ModerationService {
         // from another tab cannot land between them.
         await send(async () => {
           snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
+          // The snapshot read awaited: the session must still be the one signed in before the key signs.
+          auth.assertLive();
           return sdk.contracts.moderatorDeleteDocument({
             ...auth,
             contractId: this.contract.contractId,

@@ -39,6 +39,7 @@ import { logger } from '@/lib/logger';
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
+import { CriticalKeyCancelledError } from '@/lib/auth/critical-key';
 import { getEvoSdk } from './evo-sdk-service';
 
 /** A signed transition that may still execute. */
@@ -440,7 +441,8 @@ export async function withSdkSignedWrite<T>(
       result = await write();
     } catch (error) {
       clearInterval(alive);
-      if (isVerdict(error)) releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, false, tipOf(current)));
+      // A step-up key's session ended before it signed (lib/auth/critical-key.ts): nothing was sent either.
+      if (isVerdict(error) || error instanceof CriticalKeyCancelledError) releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, false, tipOf(current)));
       else renewPending(ownerId, contractId, entry);
       throw error;
     }
