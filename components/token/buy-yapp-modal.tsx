@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal, ModalTitle } from '@/components/ui/modal'
-import { XMarkIcon, SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { buildYapprStateTransitionUri } from 'platform-auth'
 import { Button } from '@/components/ui/button'
@@ -60,7 +60,7 @@ const WALLET_SIGN_TIMEOUT_MS = 300000
 export function BuyYappModal() {
   const { isOpen, reason, signing, close } = useBuyYappModal()
   // Opened for a wallet-login user: skip local signing (their login key is
-  // HIGH and can't spend) and the paste-a-CRITICAL-key screen, and go straight
+  // HIGH and can't spend) and the highest-security-key screen, and go straight
   // to the dash-st: QR the wallet that just logged them in can approve.
   const preferWallet = signing === 'wallet'
   const { user, refreshBalance } = useAuth()
@@ -73,10 +73,6 @@ export function BuyYappModal() {
   const [pricePerToken, setPricePerToken] = useState<bigint | null>(null)
   const [loading, setLoading] = useState(false)
   const [showCosts, setShowCosts] = useState(false)
-  // CRITICAL key the user pastes when their login key is HIGH — kept in
-  // component state only for the purchase, never persisted.
-  const [criticalKeyWif, setCriticalKeyWif] = useState('')
-  const [showKeyEntry, setShowKeyEntry] = useState(false)
   // Remote wallet signing (dash-st: QR): the unsigned purchase URI, whether
   // the silent wait for it has run out, and the YAPP balance right before the
   // QR was shown — success is detected by the balance growing by the
@@ -106,8 +102,6 @@ export function BuyYappModal() {
       setState('input')
       setError(null)
       setShowCosts(false)
-      setCriticalKeyWif('')
-      setShowKeyEntry(false)
       setWalletUri(null)
       setWalletExpired(false)
       walletBaselineRef.current = null
@@ -157,24 +151,21 @@ export function BuyYappModal() {
   const handleBuy = async () => {
     if (!user || costCredits === null) return
     setState('processing')
+    setError(null)
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
-    const enteredKey = criticalKeyWif.trim()
-    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, enteredKey || undefined)
+    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits)
     if (result.success) {
-      setCriticalKeyWif('')
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
       finishPurchase()
+    } else if (result.errorCode === 'CANCELLED') {
+      // The user closed the key sheet; nothing was sent. The key screen offers the wallet instead.
+      setState('needKey')
     } else if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
-      // Login key is HIGH but purchases must be signed with CRITICAL — ask for
-      // it. If a key was already entered, it didn't match a CRITICAL key.
-      setError(enteredKey ? 'That isn\'t your account\'s highest-security key. Check it and try again.' : null)
-      setShowKeyEntry(Boolean(enteredKey))
+      // Purchases must be signed with the CRITICAL key and none is usable here.
+      setError("That key can't approve this. Use your wallet instead.")
       setState('needKey')
     } else {
-      // Leaving the needKey flow — drop the entered key so a later retry can't
-      // silently sign with it without the user re-confirming.
-      setCriticalKeyWif('')
       // Sent, but not confirmed: no "Try Again", which could buy twice.
       setState(result.errorCode === 'UNCONFIRMED' ? 'unconfirmed' : 'error')
       setError(result.error || 'Purchase failed')
@@ -182,8 +173,8 @@ export function BuyYappModal() {
   }
 
   // Leave the dash-st: QR screen, optionally with a message. Falls back to
-  // pasting the CRITICAL key — or, for a wallet-login user who has no key to
-  // paste, back to the confirmation so they can retry in the wallet. Bumping
+  // the key screen — or, for a wallet-login user who has no key to offer,
+  // back to the confirmation so they can retry in the wallet. Bumping
   // the generation counter discards any in-flight build so a late resolve
   // can't put a stale QR back on screen.
   const exitWalletSign = useCallback((message: string | null) => {
@@ -195,7 +186,7 @@ export function BuyYappModal() {
   }, [preferWallet])
 
   /**
-   * Alternative to pasting the CRITICAL key: build the unsigned purchase
+   * Alternative to signing with the CRITICAL key here: build the unsigned purchase
    * transition and show it as a dash-st: QR for a remote wallet (e.g. Dash Evo
    * Tool) to sign and broadcast — the same channel key registration uses.
    */
@@ -404,7 +395,7 @@ export function BuyYappModal() {
                         </div>
                         {error && <p className="text-red-500 text-sm">{error}</p>}
                         <div className="flex gap-3">
-                          <Button onClick={() => { setState('input'); setError(null); setCriticalKeyWif('') }} variant="outline" className="flex-1">Back</Button>
+                          <Button onClick={() => { setState('input'); setError(null) }} variant="outline" className="flex-1">Back</Button>
                           {preferWallet ? (
                             <Button
                               onClick={startWalletSign}
@@ -436,10 +427,10 @@ export function BuyYappModal() {
                           <span className="text-gray-600 dark:text-gray-400">Buying {amountBig.toString()} YAPP</span>
                           <span className="font-medium">{costDashLabel}</span>
                         </div>
-                        {error && !showKeyEntry && <p className="text-red-500 text-sm">{error}</p>}
+                        {error && <p className="text-red-500 text-sm">{error}</p>}
                         <div className="flex gap-3">
                           <Button
-                            onClick={() => { setState('confirming'); setError(null); setCriticalKeyWif(''); setShowKeyEntry(false) }}
+                            onClick={() => { setState('confirming'); setError(null) }}
                             variant="outline"
                             className="flex-1"
                           >
@@ -453,40 +444,9 @@ export function BuyYappModal() {
                           </Button>
                         </div>
                         <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
-                          <button
-                            type="button"
-                            aria-expanded={showKeyEntry}
-                            onClick={() => setShowKeyEntry(v => !v)}
-                            className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors py-1"
-                          >
-                            <span>{showKeyEntry ? 'Hide private key entry' : 'Paste your highest-security key instead'}</span>
-                            <ChevronDownIcon aria-hidden="true" className={`w-4 h-4 transition-transform ${showKeyEntry ? 'rotate-180' : ''}`} />
-                          </button>
-                          {showKeyEntry && (
-                            <div className="space-y-3 pt-3">
-                              <p className="text-xs text-gray-500">
-                                The key signs this purchase locally and is never stored or sent anywhere.
-                              </p>
-                              <input
-                                type="password"
-                                value={criticalKeyWif}
-                                onChange={(e) => { setCriticalKeyWif(e.target.value); setError(null) }}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' && criticalKeyWif.trim()) {
-                                    e.preventDefault()
-                                    handleBuy().catch(err => logger.error('Failed to buy YAPP:', err))
-                                  }
-                                }}
-                                placeholder="Highest-security private key"
-                                autoComplete="off"
-                                className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:border-transparent"
-                              />
-                              {error && <p className="text-red-500 text-sm">{error}</p>}
-                              <Button onClick={handleBuy} disabled={!criticalKeyWif.trim()} variant="outline" className="w-full">
-                                Authorize &amp; buy with this key
-                              </Button>
-                            </div>
-                          )}
+                          <Button onClick={handleBuy} variant="outline" className="w-full">
+                            Use your highest-security key instead
+                          </Button>
                         </div>
                       </div>
                     )}

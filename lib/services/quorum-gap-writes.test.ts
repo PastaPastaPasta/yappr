@@ -187,7 +187,7 @@ describe('a YAPP tip sent without a verdict', () => {
     Object.assign(tokenService, { transfer })
     const awaitSentTip = vi.spyOn(tipHistoryService, 'awaitSentTip').mockResolvedValue({} as Awaited<ReturnType<typeof tipHistoryService.awaitSentTip>>)
 
-    const result = await tipService.sendYappTipLocal('sender', 'recipient', BigInt(10), { kind: 'post', id: '11111111111111111111111111111111' }, undefined, 'wif')
+    const result = await tipService.sendYappTipLocal('sender', 'recipient', BigInt(10), { kind: 'post', id: '11111111111111111111111111111111' })
 
     expect(transfer).toHaveBeenCalledTimes(1)
     expect(awaitSentTip).not.toHaveBeenCalled()
@@ -200,7 +200,7 @@ describe('a YAPP tip sent without a verdict', () => {
     Object.assign(tokenService, { transfer })
     const awaitSentTip = vi.spyOn(tipHistoryService, 'awaitSentTip').mockResolvedValue({} as Awaited<ReturnType<typeof tipHistoryService.awaitSentTip>>)
 
-    const result = await tipService.sendYappTipLocal('sender', 'recipient', BigInt(10), { kind: 'post', id: '11111111111111111111111111111111' }, undefined, 'wif')
+    const result = await tipService.sendYappTipLocal('sender', 'recipient', BigInt(10), { kind: 'post', id: '11111111111111111111111111111111' })
 
     expect(awaitSentTip).not.toHaveBeenCalled()
     expect(result).toMatchObject({ success: false, errorCode: 'NETWORK_ERROR' })

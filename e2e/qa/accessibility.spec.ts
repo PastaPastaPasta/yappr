@@ -131,37 +131,27 @@ for (const theme of ['light', 'dark']) {
   })
 }
 
-test('wallet moderation explains how to sign in and disables writes before submission', async ({ page }) => {
-  await page.goto('/?scenario=pot&authorization=wallet')
-  const notice = page.getByTestId('moderation-key-notice')
-  await expect(notice).toContainText("Moderation actions need your account's CRITICAL key.")
-  await expect(notice).toContainText('sign in with that key or a passkey that holds it')
-  await expect(page.getByRole('button', { name: 'Ban', exact: true })).toBeDisabled()
-  await expect(page.getByRole('button', { name: 'Unban', exact: true })).toBeDisabled()
-  await expect(page.getByRole('button', { name: 'Suspend', exact: true })).toBeDisabled()
-  await expect(page.getByRole('button', { name: 'Unsuspend', exact: true })).toBeDisabled()
-  await expect(page.getByRole('button', { name: 'Claim for the team' })).toBeDisabled()
+test('moderation tools are offered by seat alone, with no CRITICAL key notice or disabled writes', async ({ page }) => {
+  await page.goto('/?scenario=pot')
+  await expect(page.getByText(/CRITICAL key/)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Ban', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Unban', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Suspend', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Unsuspend', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Claim for the team' })).toBeEnabled()
 })
 
 for (const contract of ['blog', 'storefront']) {
-  test(`wallet ${contract} moderator menu ignores pointer clicks on disabled actions`, async ({ page }) => {
-    await page.goto(`/?scenario=moderator-menu&contract=${contract}&authorization=wallet`)
-    const initialUrl = page.url()
+  test(`${contract} moderator menu actions are enabled and open the removal dialog`, async ({ page }) => {
+    await page.goto(`/?scenario=moderator-menu&contract=${contract}`)
     await page.getByRole('button', { name: 'Moderate this item' }).click()
-    await expect(page.getByTestId('moderation-key-notice')).toBeVisible()
+    await expect(page.getByText(/CRITICAL key/)).toHaveCount(0)
     const remove = page.getByTestId('moderator-remove-offline-menu-item')
-    const author = page.getByTestId('moderator-author-offline-menu-item')
-    await expect(remove).toHaveAttribute('aria-disabled', 'true')
-    await expect(author).toHaveAttribute('aria-disabled', 'true')
-    // Real pointers still reach a disabled Radix div's custom onClick handler.
-    await remove.click({ force: true })
+    await expect(remove).not.toHaveAttribute('aria-disabled', 'true')
+    await expect(page.getByTestId('moderator-author-offline-menu-item')).not.toHaveAttribute('aria-disabled', 'true')
     await expect(page.getByTestId('removal-target')).toHaveText('none')
-    const navigation = page.waitForRequest(request => request.isNavigationRequest(), { timeout: 500 })
-      .then(() => true, () => false)
-    await author.click({ force: true })
-    expect(await navigation).toBe(false)
-    await expect(page).toHaveURL(initialUrl)
-    await expect(page.getByTestId('removal-target')).toHaveText('none')
+    await remove.click()
+    await expect(page.getByTestId('removal-target')).toHaveText('offline-menu-item')
   })
 }
 

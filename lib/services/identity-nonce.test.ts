@@ -27,6 +27,7 @@ vi.stubGlobal('localStorage', {
   removeItem: (key: string) => { storage.delete(key) },
 })
 
+import { CriticalKeyCancelledError } from '@/lib/auth/critical-key'
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
 import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
 
@@ -152,6 +153,16 @@ describe('withSdkSignedWrite', () => {
     })
     expect(refused.ok).toBe(false)
     expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
+  })
+
+  it('releases a write whose step-up key session ended before it signed: nothing was sent', async () => {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const outcome = await runSdkWrite(async () => { throw new CriticalKeyCancelledError() })
+    expect(outcome.ok).toBe(false)
+    // Nothing was signed, so no nonce counts as spent: the floor stays where Platform is.
+    const reservation = loadReservation(OWNER, CONTRACT)
+    expect(reservation?.pending ?? []).toEqual([])
+    expect(reservation?.floor ?? n(100)).toBe(n(100))
   })
 
   it('releases an SDK write refused because its nonce is already present', async () => {

@@ -115,7 +115,9 @@ export async function openDip13Wallet(phrase: string, network: Dip13Network): Pr
 }
 
 /** {@link openDip13Wallet} on statics the caller already initialised (the test wallet, whose derivations are synchronous). */
-export function dip13Wallet(sdk: Dip13Wasm, phrase: string, network: Dip13Network): Dip13Wallet {
+export function dip13Wallet(sdk: Dip13Wasm, input: string, network: Dip13Network): Dip13Wallet {
+  // BIP-39 word lookup is case-sensitive: every caller gets the phrase as a wallet reads it.
+  const phrase = normalizeRecoveryPhrase(input)
   if (!sdk.validateMnemonic(phrase, 'en')) throw new InvalidPhraseError()
   return {
     derive(path) {

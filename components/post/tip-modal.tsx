@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal, ModalTitle } from '@/components/ui/modal'
-import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon, ChevronDownIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { XMarkIcon, CurrencyDollarIcon, QrCodeIcon, WalletIcon, BookmarkIcon, SparklesIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/solid'
 import { buildYapprStateTransitionUri } from 'platform-auth'
 import { Button } from '@/components/ui/button'
@@ -147,8 +147,6 @@ export function TipModal() {
   // Whether this browser holds a CRITICAL key for the tipper. Token
   // transitions need one; without it the tip has to go out to the wallet.
   const [canSignLocally, setCanSignLocally] = useState<boolean | null>(null)
-  const [criticalKeyWif, setCriticalKeyWif] = useState('')
-  const [showKeyEntry, setShowKeyEntry] = useState(false)
 
   // Payment URI support
   // `null` while the recipient's addresses are still loading.
@@ -234,8 +232,6 @@ export function TipModal() {
       setSelectedQrPayment(null)
       setShowQrDialog(false)
       setKeySource(null)
-      setCriticalKeyWif('')
-      setShowKeyEntry(false)
       setWalletUri(null)
       setWalletExpired(false)
       setYappBalance(null)
@@ -342,28 +338,26 @@ export function TipModal() {
   const handleSendYappTip = async () => {
     if (!user || !recipientInfo) return
     setState('processing')
-    const enteredKey = criticalKeyWif.trim()
+    setError(null)
     const result = await tipService.sendYappTipLocal(
       user.identityId,
       recipientInfo.id,
       yappAmountBig,
       tipTarget,
-      noteMessage,
-      enteredKey || undefined
+      noteMessage
     )
 
-    if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
-      // The only branch that keeps the entered key: the user stays on the key
-      // screen to correct it in place.
-      setError(enteredKey ? "That isn't your account's highest-security key. Check it and try again." : null)
-      setShowKeyEntry(Boolean(enteredKey))
+    if (result.errorCode === 'CANCELLED') {
+      // The user closed the key sheet; nothing was sent. The key screen offers the wallet instead.
       setState('needKey')
       return
     }
 
-    // Leaving the key-entry flow — drop the entered key so a later action can't
-    // silently sign with it without the user re-confirming.
-    setCriticalKeyWif('')
+    if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
+      setError("That key can't approve this. Use your wallet instead.")
+      setState('needKey')
+      return
+    }
 
     if (result.success) {
       finishYappTip()
@@ -555,7 +549,6 @@ export function TipModal() {
     if (state === 'processing') return // Don't allow closing during processing
     // Clear sensitive data
     setTransferKey('')
-    setCriticalKeyWif('')
     close()
   }
 
@@ -949,15 +942,15 @@ export function TipModal() {
                     )}
 
                     {/* The login key here can't move tokens, so without this the
-                        wallet QR is the only way forward. Buy YAPP offers the
-                        same paste-a-critical-key path. */}
+                        wallet QR is the only way forward. Sending opens the
+                        key sheet, which asks for the highest-security key. */}
                     {isYapp && canSignLocally === false && (
                       <button
                         type="button"
-                        onClick={() => { setState('needKey'); setError(null); setShowKeyEntry(true) }}
+                        onClick={handleSendYappTip}
                         className="w-full text-xs text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
                       >
-                        Paste your highest-security key instead
+                        Use your highest-security key instead
                       </button>
                     )}
                   </div>
@@ -975,10 +968,10 @@ export function TipModal() {
                       <span className="text-gray-600 dark:text-gray-400">Tipping {recipientName}</span>
                       <span className="font-medium">{amountLabel}</span>
                     </div>
-                    {error && !showKeyEntry && <p className="text-red-500 text-sm">{error}</p>}
+                    {error && <p className="text-red-500 text-sm">{error}</p>}
                     <div className="flex gap-3">
                       <Button
-                        onClick={() => { setState('confirming'); setError(null); setCriticalKeyWif(''); setShowKeyEntry(false) }}
+                        onClick={() => { setState('confirming'); setError(null) }}
                         variant="outline"
                         className="flex-1"
                       >
@@ -989,37 +982,9 @@ export function TipModal() {
                       </Button>
                     </div>
                     <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
-                      <button
-                        type="button"
-                        aria-expanded={showKeyEntry}
-                        onClick={() => setShowKeyEntry(v => !v)}
-                        className="w-full flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors py-1"
-                      >
-                        <span>{showKeyEntry ? 'Hide private key entry' : 'Paste your highest-security key instead'}</span>
-                        <ChevronDownIcon aria-hidden="true" className={`w-4 h-4 transition-transform ${showKeyEntry ? 'rotate-180' : ''}`} />
-                      </button>
-                      {showKeyEntry && (
-                        <div className="space-y-3 pt-3">
-                          <p className="text-xs text-gray-500">
-                            The key signs this tip locally and is never stored or sent anywhere.
-                          </p>
-                          <input
-                            type="password"
-                            value={criticalKeyWif}
-                            onChange={(e) => { setCriticalKeyWif(e.target.value); setError(null) }}
-                            placeholder="Highest-security private key"
-                            autoComplete="off"
-                            autoCorrect="off"
-                            autoCapitalize="off"
-                            spellCheck={false}
-                            className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                          />
-                          {error && <p className="text-red-500 text-sm">{error}</p>}
-                          <Button onClick={handleSendYappTip} disabled={!criticalKeyWif.trim()} variant="outline" className="w-full">
-                            Authorize &amp; tip with this key
-                          </Button>
-                        </div>
-                      )}
+                      <Button onClick={handleSendYappTip} variant="outline" className="w-full">
+                        Use your highest-security key instead
+                      </Button>
                     </div>
                   </div>
                 )}
