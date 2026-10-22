@@ -170,7 +170,15 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // (`encryptedPayload` + `nonce`, keyed like `orderDelivery`); a store's items
 // listed by status (`storeStatusAndTime`); https/ipfs-only item images; and a
 // `report` type the storefront's moderators resolve.
-export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10'] as const
+// `v11` (docs/SOCIAL_V18.md, "hide, don't delete") is v10 whose moderators
+// never delete: store, item and review listings carry the moderator-only `mod`
+// lane (`byStatus [status, mod, $createdAt]`, `byCategory [status, mod,
+// category, $createdAt]`, `storeAndTime`/`storeStatusAndTime [storeId, mod,
+// …]`, `storeReviews`/`itemReviews [<id>, mod, $createdAt]`), the rating trees
+// are keyed `[mod, storeId(, itemId)]` and `[storeId, mod, rating]`, so a
+// hidden review leaves the averages, and every reference at a store or item is
+// a `permanentDocument` reference. Warnings only: no banlist, no suspensions.
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10', 'v11'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
@@ -198,6 +206,8 @@ export const storefrontSupportsDigital = () => storefrontIsV6()
 export const storefrontSupportsItemZones = () => storefrontTopologyAtLeast('v9')
 /** True on v10 and later: a store's items can be listed by status (`storeStatusAndTime`), and the contract takes reports. */
 export const storefrontIsV10 = () => storefrontTopologyAtLeast('v10')
+/** True on v11 and later: listings and rating trees carry the moderator-only `mod` lane, read `mod == null` by default, and moderators hide instead of deleting. */
+export const storefrontListingsCarryModLane = () => storefrontTopologyAtLeast('v11')
 /** True on v10 and later: a status update's tracking and note are sealed to the order, never plaintext. */
 export const storefrontStatusIsSealed = () => storefrontIsV10()
 /** True on v2–v5: store and item reviews cost YAPP (v6 charges an action fee instead). */
@@ -280,7 +290,15 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // `timeline` and per-blog `blogAndTime` are keyed on it, so every read of them
 // pins `live == true` and never sees a tombstone. Free text gets byte caps,
 // and the contract takes `report`s its moderators resolve.
-export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'] as const
+//
+// `v10` (docs/SOCIAL_V18.md, "hide, don't delete") is v9 whose moderators never
+// delete: `blog.timeline [mod, $createdAt]`, `blogPost.timeline` and
+// `blogAndTime [live, mod, …]`, and `blogComment.postAndTime [blogPostId, mod,
+// $createdAt]` carry the moderator-only `mod` lane, read `mod == null` by
+// default; a post's `live` is an integer lane (1 listed, 2 posted while its
+// author was restricted by the blog's `restriction` document); a comment's
+// `blogPostId` is a `permanentDocument` reference. Warnings only.
+export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10'] as const
 export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
 export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
@@ -308,6 +326,10 @@ export const blogIsV8 = () => blogTopologyAtLeast('v8')
 export const blogIsV7 = () => blogTopologyAtLeast('v7')
 /** True on v9 and later: posts carry `live`, the post listings are keyed on it, and the contract takes reports. */
 export const blogIsV9 = () => blogTopologyAtLeast('v9')
+/** True on v10 and later: blog, post and comment listings carry the moderator-only `mod` lane, read `mod == null` by default, and moderators hide instead of deleting. */
+export const blogListingsCarryModLane = () => blogTopologyAtLeast('v10')
+/** True on v10 and later: a post's `live` is 1 (listed) or 2 (its author was restricted when it was written), forced on create by the blog's `restriction` documents. */
+export const blogAuthorsCanBeRestricted = () => blogTopologyAtLeast('v10')
 /** True on v2–v6: a comment costs {@link BLOG_YAPP_TOKEN_COSTS} YAPP (v7 charges an action fee instead). */
 export const blogCommentsCostYapp = () => blogIsV2() && !blogIsV7()
 // ---- profile topology ----
@@ -518,7 +540,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

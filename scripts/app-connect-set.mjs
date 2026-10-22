@@ -40,25 +40,55 @@ export const APP_CONNECT_GROUP = {
  * registered set resumes with the new ones.
  *
  * A fresh Platform genesis starts a new set: nothing of the old group survives,
- * so a replaced member is dropped and its replacement takes its place. This is
- * the testnet release set (docs/TESTNET_RELEASE.md): social v17, blog v9,
- * pollr v8 and storefront v10 (docs/SOCIAL_V17.md), and no password-era
- * `authVault` (R-M6; the passkey vault joins as its own member). Sakura's
- * 5.0.0-beta.6 genesis registered the previous set (social v16 and the auth
- * vault, docs/SAKURA_BETA6_DEPLOY.md); a sakura rehearsal of this one is a
- * fresh registration from another maker.
+ * so a replaced member is dropped and its replacement takes its place (edit
+ * the list then; until then a fresh rehearsal registers the replaced members
+ * too, as testnet holds them).
+ *
+ * This is the testnet set (docs/TESTNET_RELEASE.md). The first eight entries,
+ * through `passkeyVault`, were registered on 2026-10-21 from the production
+ * maker at nonces 57-64: the anchor, social v17, blocks, DM v5, blog v9,
+ * pollr v8, storefront v10 and the passkey vault, with no password-era
+ * `authVault` (R-M6). The owner then abandoned social v17, blog v9 and
+ * storefront v10 for "hide, don't delete" (docs/SOCIAL_V18.md): they stay in
+ * the group for good, unused (`replacedBy`, no env key), and social v18, blog
+ * v10 and storefront v11 join after them, registered with
+ * `--append-after passkeyVault` ({@link TESTNET_REGISTERED_THROUGH}).
  */
 export const APP_CONNECT_ENTRIES = [
   { name: 'app', file: 'yappr-app-contract.json', envKey: 'NEXT_PUBLIC_APP_CONNECT_APP_ID', sha256: 'd3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41' },
-  { name: 'social', file: 'yappr-social-contract-v17.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf' },
+  { name: 'social', file: 'yappr-social-contract-v17.json', envKey: null, replacedBy: 'socialV18', sha256: '77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf' },
   { name: 'blocks', file: 'yappr-blocks-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID', sha256: 'ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677' },
   { name: 'dmV5', file: 'yappr-dm-contract-v5.json', envKey: 'NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID', sha256: '4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21' },
-  { name: 'blog', file: 'yappr-blog-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c' },
+  { name: 'blog', file: 'yappr-blog-contract.json', envKey: null, replacedBy: 'blogV10', sha256: '448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c' },
   { name: 'pollr', file: 'pollr-contract.json', envKey: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', sha256: 'a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347' },
-  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: '69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc' },
+  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: null, replacedBy: 'storefrontV11', sha256: '69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc' },
   // The passkey vault (docs/PASSKEY_VAULT.md). A member so a wallet sign-in's group key can write its own vault entries.
   { name: 'passkeyVault', file: 'yappr-passkey-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID', sha256: '14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5' },
+  // "Hide, don't delete" (docs/SOCIAL_V18.md): new members of the same group, under the same app id.
+  { name: 'socialV18', file: 'yappr-social-contract-v18.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '71e4d4b3353965cf343448e254150d0a4ff183a17384d53c437b4c6eefb6604d' },
+  { name: 'blogV10', file: 'yappr-blog-contract-v10.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159' },
+  { name: 'storefrontV11', file: 'yappr-storefront-contract-v11.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: '645a51a475a33794d713e23d9b27fd9a54531920e61c37e8e34c74b46f70b167' },
 ];
+
+/**
+ * The last entry testnet's group already holds (registered 2026-10-21 at
+ * maker nonces 57-64, docs/TESTNET_RELEASE.md). A testnet run passes it as
+ * `--append-after`, so it creates only the entries after it.
+ */
+export const TESTNET_REGISTERED_THROUGH = 'passkeyVault';
+
+/**
+ * The entries a run creates: those after `appendAfter` (the last entry the
+ * group already holds), or every entry when it is null. Throws on an unknown
+ * name, and when nothing would be left to create.
+ */
+export function entriesToCreate(entries, appendAfter) {
+  if (appendAfter === null || appendAfter === undefined) return entries;
+  const index = entries.findIndex((entry) => entry.name === appendAfter);
+  if (index === -1) throw new Error(`--append-after ${appendAfter}: not an entry (${entries.map((entry) => entry.name).join(', ')})`);
+  if (index === entries.length - 1) throw new Error(`--append-after ${appendAfter}: it is the last entry, so there is nothing to append`);
+  return entries.slice(index + 1);
+}
 
 /**
  * Contracts that are NOT registered on a PV ≥ 14 network and never join the

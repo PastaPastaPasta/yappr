@@ -22,6 +22,9 @@ import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
 import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
 import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
+import socialContractV18 from '@/contracts/yappr-social-contract-v18.json'
+import blogContractV10 from '@/contracts/yappr-blog-contract-v10.json'
+import storefrontContractV11 from '@/contracts/yappr-storefront-contract-v11.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
@@ -59,6 +62,7 @@ const V14 = socialContractV14.documentSchemas as unknown as Schemas
 const V15 = socialContractV15.documentSchemas as unknown as Schemas
 const V16 = socialContractV16.documentSchemas as unknown as Schemas
 const V17 = socialContractV17.documentSchemas as unknown as Schemas
+const V18 = socialContractV18.documentSchemas as unknown as Schemas
 const BLOCKS = blocksContract as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
 
@@ -74,7 +78,7 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
@@ -1522,6 +1526,135 @@ describe('contract topology', () => {
       const rule = (windowSeconds: number, approvals: number) => [{ windowSeconds, leaderRequired: true, approvals }, windowSeconds]
       expect(await settled('v17')).toEqual([rule(86_400, 2), rule(86_400, 2)])
       expect(await settled('v16')).toEqual([rule(604_800, 3), rule(604_800, 3)])
+    })
+  })
+  describe('v18 (hide, don\'t delete)', () => {
+    const indexOf = (schemas: Schemas, docType: string, name: string) => schemas[docType].indices?.find((entry) => entry.name === name)
+    const keys = (schemas: Schemas, docType: string, name: string) => indexOf(schemas, docType, name)?.properties.map((property) => Object.keys(property)[0])
+    const BLOG10 = blogContractV10.documentSchemas as unknown as Schemas
+    const STORE11 = storefrontContractV11.documentSchemas as unknown as Schemas
+
+    it('reports the v18 capabilities on v18 and none of them on v17', async () => {
+      const flags = (m: Awaited<ReturnType<typeof topologyModule>>) => [m.listingsCarryModLane(), m.moderatorsCannotDelete(), m.authorsCanBeRestricted()]
+      expect(flags(await topologyModule('v18'))).toEqual([true, true, true])
+      expect(flags(await topologyModule('v17'))).toEqual([false, false, false])
+    })
+
+    it('lets no moderator delete in social, blog or storefront, and keeps warnings only', async () => {
+      for (const [name, schemas] of [['social', V18], ['blog', BLOG10], ['storefront', STORE11]] as const) {
+        for (const [docType, schema] of Object.entries(schemas)) expect(schema.moderatorAbilities?.delete, `${name}.${docType}`).toBeUndefined()
+      }
+      for (const contract of [socialContractV18, blogContractV10, storefrontContractV11]) {
+        const moderation = contract.config.moderation as { banlist?: boolean; suspensions?: boolean; warnings?: boolean; moderators: { interim: { $type: string }; challengeCoolDown: number } }
+        expect([moderation.banlist, moderation.suspensions, moderation.warnings]).toEqual([undefined, undefined, true])
+        expect([moderation.moderators.interim.$type, moderation.moderators.challengeCoolDown]).toEqual(['notYetUsable', 1_209_600])
+      }
+      const v18 = await topologyModule('v18')
+      expect(v18.moderatorDeletableTypes()).toEqual([])
+      expect(v18.moderationListsKept()).toEqual(['warnings'])
+      expect(v18.settledDeletionFor('post')).toBeNull()
+    })
+
+    it('keys every listing with mod after live, before the ranked-at property, and logs every moderated type', () => {
+      expect(keys(V18, 'post', 'timeline')).toEqual(['live', 'mod', '$createdAt'])
+      expect(keys(V18, 'post', 'tagAndTime')).toEqual(['live', 'mod', 'tags', '$createdAt'])
+      expect(keys(V18, 'post', 'ownerAndTime')).toEqual(['live', 'mod', '$ownerId', '$createdAt'])
+      expect(keys(V18, 'reply', 'ownerAndTime')).toEqual(['live', 'mod', '$ownerId', '$createdAt'])
+      expect(keys(V18, 'reply', 'repliesOf')).toEqual(['live', 'mod', 'rootPostId', 'replyToReplyId', '$createdAt'])
+      expect(indexOf(V18, 'post', 'ownerAndTime')?.rankedCountable).toEqual({ at: '$ownerId' })
+      expect(indexOf(V18, 'reply', 'repliesOf')?.rankedCountable).toEqual({ at: 'rootPostId' })
+      for (const docType of ['post', 'reply']) {
+        expect(keys(V18, docType, 'mentionedUserAndTime'), docType).toEqual(['mentionedUserIds', 'mod', '$createdAt'])
+        // `true` would also skip on `mod`, dropping every unmoderated document.
+        for (const name of ['timeline', 'tagAndTime', 'ownerAndTime', 'repliesOf']) {
+          const index = indexOf(V18, docType, name)
+          if (index) expect(index.skipIfAbsent, `${docType}.${name}`).toEqual(['live'])
+        }
+      }
+      const log = { name: 'moderated', properties: [{ mod: 'asc' }, { $moderatedAt: 'asc' }], skipIfAbsent: ['mod'] }
+      for (const [schemas, docTypes] of [[V18, ['post', 'reply', 'yapprProfile']], [BLOG10, ['blog', 'blogPost', 'blogComment']], [STORE11, ['store', 'storeItem', 'storeReview', 'itemReview']]] as const) {
+        for (const docType of docTypes) {
+          expect(indexOf(schemas, docType, 'moderated'), docType).toEqual(log)
+          expect(schemas[docType].moderatorAbilities, docType).toEqual({ changeFields: ['mod', 'modLabel'] })
+          expect(schemas[docType].propertyConstraints?.modReason, docType).toEqual({ anyOf: [{ absent: 'mod' }, { present: 'modLabel' }] })
+        }
+      }
+      expect(keys(BLOG10, 'blog', 'timeline')).toEqual(['mod', '$createdAt'])
+      expect(keys(BLOG10, 'blogPost', 'timeline')).toEqual(['live', 'mod', '$createdAt'])
+      expect(keys(BLOG10, 'blogPost', 'blogAndTime')).toEqual(['live', 'mod', 'blogId', '$createdAt'])
+      expect(keys(BLOG10, 'blogComment', 'postAndTime')).toEqual(['blogPostId', 'mod', '$createdAt'])
+      expect(keys(STORE11, 'store', 'byCategory')).toEqual(['status', 'mod', 'category', '$createdAt'])
+      expect(keys(STORE11, 'storeReview', 'storeRating')).toEqual(['mod', 'storeId'])
+      expect(keys(STORE11, 'itemReview', 'storeItemRating')).toEqual(['mod', 'storeId', 'itemId'])
+    })
+
+    it('restricts by a moderator-only restriction document that forces live 2 on create only', () => {
+      for (const [schemas, docTypes] of [[V18, ['post', 'reply']], [BLOG10, ['blogPost']]] as const) {
+        expect(schemas.restriction.moderatorAbilities).toEqual({ changeFields: ['state', 'reason'] })
+        expect(indexOf(schemas, 'restriction', 'standing')).toEqual({ name: 'standing', properties: [{ target: 'asc' }, { state: 'asc' }], countable: 'countable' })
+        for (const docType of docTypes) {
+          const live = schemas[docType].properties.live as unknown as { type: string; minimum: number; maximum: number }
+          expect([live.type, live.minimum, live.maximum], docType).toEqual(['integer', 1, 2])
+          expect(schemas[docType].propertyConstraints?.restrictedLane, docType).toEqual({
+            ifThen: [{ equal: ['$revision', 1] }, { equal: ['live', { add: [1, { min: [{ countOf: ['restriction', { target: '$ownerId', state: 1 }] }, 1] }] }] }],
+          })
+          // Nobody is ever barred, so there is no retraction for a barred owner to make (10231).
+          expect(schemas[docType].retractedWhen, docType).toBeUndefined()
+        }
+      }
+      expect(STORE11.restriction).toBeUndefined()
+      // Reviews are permanent, so a hidden one can not be deleted and written again (owner, 2026-10-22).
+      for (const docType of ['storeReview', 'itemReview']) expect(STORE11[docType].canBeDeleted, docType).toBe(false)
+      for (const property of ['storeReviewId', 'itemReviewId']) expect(STORE11.report.properties[property].refersTo?.type, property).toBe('permanentDocument')
+    })
+
+    it('points every reference at a post or reply as permanentDocument, keeps the v17 like and quiets restricted authors\' mentions', () => {
+      for (const [docType, property] of [['like', 'postId'], ['likeReply', 'replyId'], ['bookmark', 'postId'], ['post', 'quotedPostId'], ['post', 'quotedReplyId'], ['reply', 'rootPostId'], ['reply', 'replyToReplyId'], ['report', 'postId'], ['report', 'replyId']]) {
+        expect(V18[docType].properties[property].refersTo?.type, `${docType}.${property}`).toBe('permanentDocument')
+      }
+      // Likes are v17's exactly but for the reference kind (owner, 2026-10-22).
+      const v17Like = structuredClone(V17.like)
+      v17Like.properties.postId.refersTo = { ...v17Like.properties.postId.refersTo, type: 'permanentDocument' }
+      expect(V18.like).toEqual(v17Like)
+      for (const docType of ['post', 'reply']) {
+        expect(V18[docType].propertyConstraints?.restrictedQuiet, docType).toEqual({ ifThen: [{ equal: ['live', 2] }, { absent: 'mentionedUserIds' }] })
+      }
+      // A hidden profile (unique per owner) cannot be deleted and written again.
+      expect(V18.yapprProfile.deleteConstraints).toEqual({ notHidden: { absent: 'mod' } })
+    })
+
+    it('carries mod and modLabel through a tombstone, and keeps every v17 surface', async () => {
+      const v18 = await topologyModule('v18')
+      expect(v18.tombstonePreservationFor('post')).toEqual({ identifiers: [], scalars: ['tags', 'mod', 'modLabel'] })
+      expect(v18.tombstonePreservationFor('reply')).toEqual({ identifiers: ['rootPostId', 'replyToReplyId'], scalars: ['mod', 'modLabel'] })
+      for (const kind of ['post', 'reply'] as const) {
+        const preserved = [...v18.tombstonePreservationFor(kind).identifiers, ...v18.tombstonePreservationFor(kind).scalars]
+        for (const field of V18[kind].moderatorAbilities?.changeFields ?? []) expect(preserved, `${kind}.${field}`).toContain(field)
+      }
+      const v17 = await topologyModule('v17')
+      expect(v18.topologyDescriptor().interactions).toEqual(v17.topologyDescriptor().interactions)
+      expect(v18.topologyDescriptor().replyLinkage).toEqual(v17.topologyDescriptor().replyLinkage)
+    })
+
+    it('fails closed in the v17-shaped listing builders until the v18 ones are wired', async () => {
+      const v18 = await topologyModule('v18')
+      for (const builder of [v18.postOwnerIndexPrefix, v18.postListingWherePrefix, v18.replyOwnerIndexPrefix, v18.replyThreadIndexPrefix, v18.postOwnerIndexOrderPrefix, v18.replyOwnerIndexOrderPrefix]) {
+        expect(() => builder(), builder.name).toThrow(/v18 listing builders are not wired yet/)
+      }
+      const v17 = await topologyModule('v17')
+      expect(v17.postListingWherePrefix()).toEqual([['live', '==', true]])
+    })
+
+    it('gates blog v10 and storefront v11 on their own topologies', async () => {
+      const constants = async (blog: string, storefront: string) => {
+        vi.resetModules()
+        vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', blog)
+        vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', storefront)
+        const m = await import('./constants')
+        return [m.blogListingsCarryModLane(), m.blogAuthorsCanBeRestricted(), m.storefrontListingsCarryModLane()]
+      }
+      expect(await constants('v10', 'v11')).toEqual([true, true, true])
+      expect(await constants('v9', 'v10')).toEqual([false, false, false])
     })
   })
 })

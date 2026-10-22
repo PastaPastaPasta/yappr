@@ -152,18 +152,27 @@ Singleton service classes handle all Dash Platform operations:
 
 ### Data Contract Structure
 
-The release set is social **v17**, blocks, **DM v5**, **blog v9**,
-**storefront v10**, and **pollr v8**, registered behind an App Connect anchor
-and permanent contract group. `scripts/app-connect-set.mjs` owns the files,
-hashes and registration order. The passkey vault
-(`contracts/yappr-passkey-vault-contract.json`, [docs/PASSKEY_VAULT.md](docs/PASSKEY_VAULT.md))
-joins as its own member; do not resurrect the password-era vault, key backup, key exchange or
-DM v4 for the release (D9/D10).
+The release set is social **v18**, blocks, **DM v5**, **blog v10**,
+**storefront v11**, **pollr v8** and the passkey vault
+(`contracts/yappr-passkey-vault-contract.json`, [docs/PASSKEY_VAULT.md](docs/PASSKEY_VAULT.md)),
+all members of one App Connect anchor's permanent contract group.
+`scripts/app-connect-set.mjs` owns the files, hashes and registration order.
+Social v18, blog v10 and storefront v11 are "hide, don't delete"
+([docs/SOCIAL_V18.md](docs/SOCIAL_V18.md)): moderators never delete, they hide
+with the moderator-only `mod` lane every listing carries (read `mod == null`),
+and they restrict authors (`live` 1 or 2) instead of banning them. Do not
+resurrect the password-era vault, key backup, key exchange or DM v4 for the
+release (D9/D10).
 
-**Keep deployment states separate.** The release set was registered on
-testnet on 2026-10-21; its ids are pinned in the checked-in `.env.testnet`,
-which `npm run build` loads for `/staging` (D20) and, once the owner merges
-staging into master, for root. Until that merge, master's root still selects
+**Keep deployment states separate.** The first release set (social v17, blog
+v9, storefront v10 and the members above) was registered on testnet on
+2026-10-21; the owner then abandoned its social, blog and storefront (D42).
+They stay in the group, unused: never file charters on them and never point a
+build at them. Social v18, blog v10 and storefront v11 join the same group
+(`register-app-connect-contracts --append-after passkeyVault`); until they are
+registered and an activation PR pins them, the checked-in `.env.testnet`
+still names v17, which `npm run build` loads for `/staging` (D20) and, once
+the owner merges staging into master, for root. Until that merge, master's root still selects
 social **v2**, DM **v3**, the old feature contracts and legacy login, and
 `/testing` still runs v2 through the `lib/constants.ts` defaults.
 `.env.devnet` selects Sakura **social v16**, blog **v8**, storefront **v9**,
@@ -189,8 +198,8 @@ notification document. Exact feature and index support goes through
 them. Never add system ownership fields to document content.
 
 Superseded topology designs and deployment experiments live in
-[docs/archive](docs/archive/README.md). Current `/devnet` v16 and release v17
-documentation remain outside that archive.
+[docs/archive](docs/archive/README.md). Current `/devnet` v16, the registered
+v17 and the release v18 documentation remain outside that archive.
 
 ### DPNS Integration
 - Usernames managed through Dash Platform Name Service

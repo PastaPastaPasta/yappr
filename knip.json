@@ -22,6 +22,7 @@
     "scripts/monitoring/manifest.mjs",
     "scripts/monitoring/run.mjs",
     "scripts/prove-merged-counts.mjs",
+    "scripts/prove-v18-moderation.mjs",
     "scripts/provision-test-identity.mjs",
     "scripts/register-app-connect-contracts.mjs",
     "scripts/register-feature-contract.mjs",
