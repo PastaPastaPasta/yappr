@@ -10,7 +10,7 @@
 
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
-import { moderationViewAll } from '@/lib/moderation-view';
+import { moderationViewAll, moderatorViewGeneration } from '@/lib/moderation-view';
 import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID, storefrontIsV6, storefrontModPin } from '../constants';
 import type { ItemRatingSummary, StoreRatingSummary } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
@@ -123,8 +123,9 @@ const allLanesKey = (key: string) => `all-lanes:${key}`;
 /**
  * The cache key of an aggregate read now. Under the storefront moderator view
  * every lane is summed in (hidden reviews count), so those reads are cached
- * apart and never served to a read without it, even one that lands after the
- * view changed.
+ * apart, and a read is cached only if the view did not change while it ran
+ * (`moderatorViewGeneration`): the fan-out decides per SDK call, after the
+ * key was taken.
  */
 function viewKey(key: string): string {
   return moderationViewAll('storefront') ? allLanesKey(key) : key;
@@ -162,6 +163,7 @@ class StoreStatsService {
    */
   async getStoreRatingSummary(storeId: string): Promise<StoreRatingSummary> {
     const key = viewKey(storeId);
+    const generation = moderatorViewGeneration();
     const cached = this.storeSummaries.get(key);
     if (cached) return cached;
     const sdk = await getEvoSdk();
@@ -173,7 +175,7 @@ class StoreStatsService {
       }),
     ]);
     const summary: StoreRatingSummary = { ...summaryFrom(average), ratingDistribution: distribution };
-    this.storeSummaries.set(key, summary);
+    if (generation === moderatorViewGeneration()) this.storeSummaries.set(key, summary);
     return summary;
   }
 
@@ -239,11 +241,12 @@ class StoreStatsService {
    */
   async getItemRatingSummary(itemId: string, storeId: string): Promise<ItemRatingSummary> {
     const key = viewKey(itemId);
+    const generation = moderatorViewGeneration();
     const cached = this.itemSummaries.get(key);
     if (cached) return cached;
     const sdk = await getEvoSdk();
     const summary = summaryFrom(await averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW, [...storePin(storeId), ['itemId', '==', itemId]]));
-    this.itemSummaries.set(key, summary);
+    if (generation === moderatorViewGeneration()) this.itemSummaries.set(key, summary);
     return summary;
   }
 
@@ -277,6 +280,7 @@ class StoreStatsService {
     throwOnError = false
   ): Promise<RankedEntry[]> {
     const cacheKey = viewKey(key);
+    const generation = moderatorViewGeneration();
     const cached = this.rankings.get(cacheKey) as RankedEntry[] | undefined;
     if (cached) return cached;
     try {
@@ -294,7 +298,7 @@ class StoreStatsService {
           const value = Number(entry.value) / scale;
           return { id: entry.groupValue as string, value: query.aggregate.type === 'avg' ? round1(value) : value };
         });
-      this.rankings.set(cacheKey, entries);
+      if (generation === moderatorViewGeneration()) this.rankings.set(cacheKey, entries);
       return entries;
     } catch (error) {
       // Directory callers need to distinguish an unavailable ranking from a

@@ -9,7 +9,7 @@ import {
   type TargetKind,
 } from '@/lib/contract-topology';
 import type { OwnQuote } from '@/lib/feed/quote-reposts';
-import { moderationViewAll } from '@/lib/moderation-view';
+import { moderationViewAll, moderatorViewGeneration } from '@/lib/moderation-view';
 import type { PostStats } from './post-service';
 
 export interface PostInteractionState {
@@ -58,6 +58,7 @@ export async function fetchPostStats(
 ): Promise<PostStats> {
   const { id: postId, kind } = target;
   const cacheKey = statsCacheKey(target);
+  const viewGeneration = moderatorViewGeneration();
   const cached = statsCache.get(cacheKey);
   if (cached) return cached;
 
@@ -91,7 +92,8 @@ export async function fetchPostStats(
       views: 0,
     };
 
-    statsCache.set(cacheKey, stats);
+    // Counts fan out per call: keep them only if the moderator view held throughout.
+    if (moderatorViewGeneration() === viewGeneration) statsCache.set(cacheKey, stats);
 
     return stats;
   } catch (error) {

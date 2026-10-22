@@ -120,6 +120,55 @@ describe('installLaneFanout, flag off', () => {
     await read(SOCIAL)
     expect(spies.query).toHaveBeenCalledTimes(1)
   })
+
+  it('reads a sibling bundle member by member, each with its own lanes, even when the first comes back empty', async () => {
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', '')
+    vi.stubEnv('NEXT_PUBLIC_YAPPR_CONTRACT_ID', SOCIAL)
+    vi.stubEnv('NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', BLOG)
+    vi.resetModules()
+    const view = await import('@/lib/moderation-view')
+    const { installLaneFanout: install } = await import('./sdk-lane-fanout')
+    const { spies, sdk } = fakeSdk()
+    install(sdk)
+    view.setModeratorViewContracts(['social'])
+    // As queryDocumentBundle sends it: a page and unbound sibling reads.
+    const owner = (seed: number): Where[] => [['live', '==', 1], ['mod', '==', null], ['$ownerId', '==', identifier(seed)]]
+    spies.query.mockImplementation(async (request: { where?: Where[]; limit?: number }) => {
+      const ownerId = request.where?.find((clause) => clause[0] === '$ownerId')?.[2]
+      const scoped = readLane(request)
+      return new Map(Array.from(scoped).filter(([, doc]) => doc.$ownerId === ownerId))
+    })
+    const result = await sdk.documents.composite({
+      dataContractId: SOCIAL, documentType: 'post', where: owner(99), orderBy: NEWEST_FIRST, limit: 10,
+      subQueries: [{ documentType: 'post', where: owner(90), orderBy: NEWEST_FIRST, limit: 10 }],
+    } as never)
+    expect(spies.composite).not.toHaveBeenCalled()
+    expect(result.pageDocuments).toEqual([])
+    // The sibling read every lane of its own: owner 90's listed, restricted and hidden posts.
+    const sibling = result.subResults[0] as unknown as { kind: string; documents: FakeDoc[] }
+    expect(sibling.kind).toBe('documents')
+    expect(sibling.documents.map((doc) => doc.$id)).toEqual([STORE[0].$id, STORE[1].$id, STORE[4].$id, STORE[6].$id])
+
+    // Each member gets its own contract's decision: a page on a contract the view is off for reads its listed lane once.
+    spies.query.mockClear()
+    await sdk.documents.composite({
+      dataContractId: BLOG, documentType: 'post', where: owner(90), orderBy: NEWEST_FIRST, limit: 3,
+      subQueries: [{ dataContractId: SOCIAL, documentType: 'post', where: owner(90), orderBy: NEWEST_FIRST, limit: 4 }],
+    } as never)
+    const calls = spies.query.mock.calls.map(([request]) => request as { dataContractId: string; limit?: number })
+    expect(calls.filter((call) => call.dataContractId === BLOG)).toHaveLength(1)
+    expect(calls.filter((call) => call.dataContractId === SOCIAL)).toHaveLength(6)
+    expect(calls.every((call) => call.limit === (call.dataContractId === BLOG ? 3 : 4))).toBe(true)
+
+    // A bundle where no member fans out goes to the SDK's composite, untouched.
+    view.setModeratorViewContracts([])
+    const bundle = {
+      dataContractId: SOCIAL, documentType: 'post', where: owner(90), orderBy: NEWEST_FIRST, limit: 3,
+      subQueries: [{ documentType: 'post', where: owner(91), orderBy: NEWEST_FIRST, limit: 3 }],
+    }
+    await sdk.documents.composite(bundle as never)
+    expect(spies.composite.mock.calls).toEqual([[bundle]])
+  })
 })
 
 describe('installLaneFanout, flag on', () => {

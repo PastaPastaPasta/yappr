@@ -8,6 +8,7 @@ import {
   moderationLogEnabled,
   moderationMarksOf,
   moderationViewAll,
+  moderatorViewGeneration,
   moderatorViewScope,
   onModeratorViewChange,
   setModeratorViewContracts,
@@ -131,6 +132,15 @@ describe('the moderator view', () => {
     setModeratorViewContracts(['social', 'blog', 'storefront'])
     expect(archivalBuild()).toBe(false)
     expect(moderationLogEnabled()).toBe(false)
+  })
+
+  it('moves its generation when, and only when, it changes', () => {
+    const start = moderatorViewGeneration()
+    setModeratorViewContracts([])
+    expect(moderatorViewGeneration()).toBe(start)
+    setModeratorViewContracts(['blog'])
+    setModeratorViewContracts([])
+    expect(moderatorViewGeneration()).toBe(start + 2)
   })
 
   it('tells its listeners when, and only when, it changes', () => {

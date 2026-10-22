@@ -211,6 +211,42 @@ function boundValues(result: { pageDocuments: unknown[]; subResults: CompositeRe
   return Array.from(values)
 }
 
+/**
+ * A composite of independent siblings (`queryDocumentBundle`): every
+ * sub-query is a documents read bound to nothing, so each member stands alone.
+ */
+function isSiblingBundle(request: CompositeQuery): boolean {
+  return request.subQueries.length > 0 && request.subQueries.every((sub) => !sub.bind && (sub.kind ?? 'documents') === 'documents')
+}
+
+/**
+ * A sibling bundle with some member that fans out: every member is read on
+ * its own, as `documents.query` would read it (each with its own contract's
+ * lanes), and the answers are returned in the composite's shape.
+ */
+async function siblingLanes(originals: Originals, request: CompositeQuery): Promise<CompositeResult> {
+  const read = async (member: { dataContractId: unknown; documentType: string; where?: unknown[]; orderBy?: unknown[]; limit?: number }) => {
+    const query = {
+      dataContractId: member.dataContractId,
+      documentTypeName: member.documentType,
+      where: member.where,
+      orderBy: member.orderBy,
+      ...(member.limit !== undefined ? { limit: member.limit } : {}),
+    } as Query
+    const variants = lanesOf(query)
+    const result = variants.length > 1 ? await queryLanes(originals.query, query, variants) : await originals.query(query)
+    return Array.from(result.values()).filter((doc) => doc !== undefined)
+  }
+  const [pageDocuments, ...siblings] = await Promise.all([
+    read({ dataContractId: request.dataContractId, documentType: request.documentType, where: request.where, orderBy: request.orderBy, limit: request.limit }),
+    ...request.subQueries.map((sub) => read({ ...sub, dataContractId: sub.dataContractId ?? request.dataContractId })),
+  ])
+  return {
+    pageDocuments,
+    subResults: siblings.map((documents) => ({ kind: 'documents', documents, missingIds: [], removed: [] })),
+  } as unknown as CompositeResult
+}
+
 async function compositeLanes(originals: Originals, query: CompositeQuery): Promise<CompositeResult> {
   let request = query
   let order: string[] | null = null
@@ -326,6 +362,12 @@ export function installLaneFanout(sdk: EvoSDK): void {
   }) as DocumentsFacade['ranked'])
 
   shadow('composite', ((request: CompositeQuery) => {
+    if (isSiblingBundle(request)) {
+      const members = [request, ...request.subQueries.map((sub) => ({ ...sub, dataContractId: sub.dataContractId ?? request.dataContractId }))]
+      return members.some((member) => lanesOf(member).length > 1)
+        ? siblingLanes(originals, request)
+        : originals.composite(request)
+    }
     const laned = fansOut(request.dataContractId)
       && (laneVariants(request.where).length > 1 || request.subQueries.some((sub) => laneVariants(sub.where).length > 1))
     return laned ? compositeLanes(originals, request) : originals.composite(request)

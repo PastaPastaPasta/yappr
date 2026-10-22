@@ -44,7 +44,7 @@ import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
 import { getEvoSdk } from './evo-sdk-service';
-import { isHiddenItem, moderationViewAll } from '@/lib/moderation-view';
+import { isHiddenItem, moderationViewAll, moderatorViewGeneration } from '@/lib/moderation-view';
 import { inlineTags, listingsCarryModLane, postOwnerIndexPrefix, referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
@@ -466,9 +466,10 @@ async function hydrateRankedCached(
   const { getCurrentUserId } = await import('./sdk-helpers');
   const currentUserId = getCurrentUserId() ?? undefined;
   // Keyed by the moderator view the read starts under, and cached only if the
-  // view is unchanged when it lands (hydration judges hidden posts by the view
-  // at its end): a page with hidden posts kept is never served without it.
+  // view did not change while it ran (hydration judges hidden posts by the view
+  // at its end, the fan-out per SDK call): a page with hidden posts kept is never served without it.
   const allLanes = moderationViewAll();
+  const viewGeneration = moderatorViewGeneration();
   const viewerKey = `${currentUserId ?? 'anonymous'}:${allLanes ? 'all-lanes:' : ''}${cacheKey}`;
   // A forced read means the caller knows the cached page is out of date, so it
   // goes: should this read fail, nothing after it (its retry, a later
@@ -489,7 +490,7 @@ async function hydrateRankedCached(
     // The page still answers this caller; it is cached only if no later read
     // of it started and none of its quote targets was forgotten meanwhile.
     const quotesForgotten = Array.from(quoteGenerations.values()).some((generation) => generation > quotesAsOf);
-    if (latestReads.get(viewerKey) === read && !quotesForgotten && moderationViewAll() === allLanes) {
+    if (latestReads.get(viewerKey) === read && !quotesForgotten && moderatorViewGeneration() === viewGeneration) {
       hydratedCache.set(viewerKey, { posts, quoteGenerations });
     }
     return posts;

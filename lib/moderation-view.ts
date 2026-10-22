@@ -54,8 +54,21 @@ export function setModeratorViewContracts(contracts: Iterable<ModeratedContractK
   const next = new Set(contracts)
   if (next.size === moderatorView.size && Array.from(next).every((key) => moderatorView.has(key))) return false
   moderatorView = next
+  viewGeneration++
   for (const listener of viewChangeListeners) listener()
   return true
+}
+
+let viewGeneration = 0
+
+/**
+ * Bumped on every change of the moderator view. A cache filled by a read
+ * keeps the result only if this is unchanged from the read's start: a read
+ * that spans a change may have been answered under either view (the lane
+ * fan-out decides per SDK call, retries included).
+ */
+export function moderatorViewGeneration(): number {
+  return viewGeneration
 }
 
 /** The contracts the moderator view is on for now. */

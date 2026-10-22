@@ -6,7 +6,7 @@ import { Post } from '@/lib/types'
 import { useSdk } from '@/contexts/sdk-context'
 import { useAuth } from '@/contexts/auth-context'
 import { loadHomepage, type HomepageSnapshot, type HomepageTopUser } from '@/lib/home/load-homepage'
-import { moderationViewAll } from '@/lib/moderation-view'
+import { moderationViewAll, moderatorViewGeneration } from '@/lib/moderation-view'
 
 export type TopUser = HomepageTopUser
 
@@ -93,6 +93,7 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
 
   const load = useCallback(async (forceRefresh = false) => {
     const allLanes = moderationViewAll()
+    const generation = moderatorViewGeneration()
     if (!forceRefresh && cache && cache.allLanes === allLanes && Date.now() - cache.timestamp < CACHE_TTL) {
       applySnapshot(cache.data)
       return
@@ -107,7 +108,7 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
       // contributors follow with the full snapshot.
       const snapshot = await loadHomepage((posts) => setFeaturedPosts({ posts, loading: false, error: null }))
       // Hidden posts are judged when the read lands: keep it only if the view did not change meanwhile.
-      if (moderationViewAll() === allLanes) cache = { data: snapshot, timestamp: Date.now(), allLanes }
+      if (moderatorViewGeneration() === generation) cache = { data: snapshot, timestamp: Date.now(), allLanes }
       applySnapshot(snapshot)
     } catch (error) {
       logger.error('Error loading homepage:', error)
