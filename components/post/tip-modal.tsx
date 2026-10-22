@@ -337,8 +337,6 @@ export function TipModal() {
 
   const handleSendYappTip = async () => {
     if (!user || !recipientInfo) return
-    // Where the user pressed the button, so closing the key sheet puts them back.
-    const previous = state
     setState('processing')
     setError(null)
     const result = await tipService.sendYappTipLocal(
@@ -350,8 +348,8 @@ export function TipModal() {
     )
 
     if (result.errorCode === 'CANCELLED') {
-      // The user closed the key sheet; nothing was sent.
-      setState(previous)
+      // The user closed the key sheet; nothing was sent. The key screen offers the wallet instead.
+      setState('needKey')
       return
     }
 

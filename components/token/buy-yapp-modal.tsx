@@ -150,8 +150,6 @@ export function BuyYappModal() {
 
   const handleBuy = async () => {
     if (!user || costCredits === null) return
-    // Where the user pressed the button, so closing the key sheet puts them back.
-    const previous = state
     setState('processing')
     setError(null)
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
@@ -161,8 +159,8 @@ export function BuyYappModal() {
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
       finishPurchase()
     } else if (result.errorCode === 'CANCELLED') {
-      // The user closed the key sheet; nothing was sent.
-      setState(previous)
+      // The user closed the key sheet; nothing was sent. The key screen offers the wallet instead.
+      setState('needKey')
     } else if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
       // Purchases must be signed with the CRITICAL key and none is usable here.
       setError("That key can't approve this. Use your wallet instead.")
