@@ -210,11 +210,16 @@
           "properties": [
             {
               "postId": "asc"
+            },
+            {
+              "postLive": "asc"
             }
           ],
           "terminal": "$ownerId",
           "rangeCountable": true,
-          "rankedCountable": true,
+          "rankedCountable": {
+            "at": "postId"
+          },
           "preallocated": true
         },
         {
@@ -225,6 +230,9 @@
             },
             {
               "postId": "asc"
+            },
+            {
+              "postLive": "asc"
             }
           ],
           "summableOffCountIndex": "byPost",
@@ -246,6 +254,9 @@
             },
             {
               "postId": "asc"
+            },
+            {
+              "postLive": "asc"
             }
           ],
           "summableOffCountIndex": "byPost",
@@ -280,7 +291,8 @@
             "range": 259200,
             "step": 86400,
             "ttl": 604800
-          }
+          },
+          "outlivesDelete": true
         },
         {
           "name": "byTrendHashtagPost",

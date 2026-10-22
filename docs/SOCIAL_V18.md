@@ -15,7 +15,7 @@ The decisions are the owner's (`DECISIONS-FINAL.md` in the release audit's `mode
 | 5 | **Permanent references** | With no moderator delete, post, reply, blog post, store and item are permanent types, so every reference into them is `permanentDocument` (Platform admits one kind per target): like, reply like, bookmark, quotes, a reply's root and parent, reports, a blog comment's post, and every storefront reference at a store or an item. `deleteKeepsFields` is gone. |
 | 6 | **Restrict, never ban** (D44) | No banlist and no suspension list; the warning list stays. A moderator-only `restriction` document (social and blog) marks an author restricted (`state` 1) or lifted (2). `live` becomes the integer lane 1 (listed) or 2 (posted while restricted), and `restrictedLane` forces it on create. See [Restriction](#restriction). |
 | 7 | **No `retractedWhen`** | It names the replace a barred owner may still make; with no banlist and no suspension list nobody is ever barred, and Platform refuses the keyword (10231). A tombstone is an ordinary replace. |
-| 8 | **Likes copy the post's lane** | `like.postLive` (1 or 2, required) is bound to the post's `live` by the reference `where`, and sits second in both trend windows: `byTrendPost [$createdAt, postLive, postId]`, `byTrendHashtagPost [$createdAt, postLive, tags, postId]`. `byTrendPost` drops `outlivesDelete`, so an unlike leaves the 72 h window. A like of a tombstone (no `live`) is refused (40127). |
+| 8 | **Likes copy the post's lane** | `like.postLive` (1 or 2, required) is bound to the post's `live` by the reference `where`, and sits second in both trend windows: `byTrendPost [$createdAt, postLive, postId]`, `byTrendHashtagPost [$createdAt, postLive, tags, postId]`. Both windows keep `outlivesDelete`, so an unlike names no `$createdAt` (see [Likes and unlikes](#likes-and-unlikes)). An indexOnly property needs a plain home besides, so `postLive` also sits last in the three counters: `byPost [postId, postLive]` (ranked at `postId`), `byHashtagPost [tags, postId, postLive]`, `byAuthorPost [postAuthor, postId, postLive]`. A like of a tombstone (no `live`) is refused (40127). |
 | 9 | **Elected, closed until seated** | Interim `notYetUsable`: post, reply, profile, report and restriction (and the blog's and storefront's moderated types) are refused until a team is seated (41200 on a post, measured). The D41 action fees stay. `challengeCoolDown` is 1,209,600 s in the files. The election windows and delay are registration flags (`--election-windows`, `--election-delay`), still the owner's choice: 24 h/24 h/24 h as v17, or 1 h/1 h/1 h. |
 | 10 | **Unchanged** | Sponsorship (D4), follows, follow requests, private feeds, YAPP (D3), self-like refusal (D6), the quote rules, byte caps, URL patterns, tags (D7), the notification windows, reports' rules and their 90-day ttl. Blocks, DM v5, pollr v8 and the passkey vault are not re-cut. |
 
@@ -24,13 +24,13 @@ The decisions are the owner's (`DECISIONS-FINAL.md` in the release audit's `mode
 | | Social v18 | Blog v10 | Storefront v11 |
 | --- | --- | --- | --- |
 | File | `contracts/yappr-social-contract-v18.json` | `contracts/yappr-blog-contract-v10.json` | `contracts/yappr-storefront-contract-v11.json` |
-| sha256 | `94e477a6de447069dc263198441be408092febc9560c76ab98efb3266ae23921` | `8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159` | `eb35635f507d09a52c0ae6fffc23185eebaeb15cd2d8c6f67b4c05ea717b9a0e` |
-| Signed create (`validate-contract-offline --strict-size`, testnet rendering) | **19,836 B** (v17: 18,054 B) | **10,773 B** (v9: 9,247 B) | **19,978 B** (v10: 18,704 B) |
+| sha256 | `4c8117d41ae4ad7bb47ed828e2a555283ac121b0adfe2e8899c085b0247a12af` | `8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159` | `eb35635f507d09a52c0ae6fffc23185eebaeb15cd2d8c6f67b4c05ea717b9a0e` |
+| Signed create (`validate-contract-offline --strict-size`, testnet rendering) | **19,917 B** (v17: 18,054 B) | **10,773 B** (v9: 9,247 B) | **19,978 B** (v10: 18,704 B) |
 | Document types | 13: `restriction` is new | 6: `restriction` is new | 11 |
-| Registration fee, sakura measured | 99.80e9 (5,988¢) | 46.44e9 (2,786¢) | 64.74e9 (3,884¢) |
-| Registration estimate, testnet | 101.09e9 (≈6,065¢) | 47.18e9 (≈2,831¢) | 66.10e9 (≈3,966¢) |
+| Registration fee, sakura measured | 99.81e9 (5,988¢) | 46.44e9 (2,786¢) | 64.74e9 (3,884¢) |
+| Registration estimate, testnet | 101.10e9 (≈6,066¢) | 47.18e9 (≈2,831¢) | 66.10e9 (≈3,966¢) |
 
-All three are under the 20,000 B budget and the 20,480 B cap. Storefront is the tightest, 22 B under the budget. The blog v9 and storefront v10 files stay as they are: they are the registered, abandoned members' sources, and their pins must keep matching.
+All three are under the 20,000 B budget and the 20,480 B cap. Storefront is the tightest, 22 B under the budget; social is 83 B under. The blog v9 and storefront v10 files stay as they are: they are the registered, abandoned members' sources, and their pins must keep matching.
 
 ## Reading the lanes
 
@@ -44,13 +44,32 @@ Drive serves a `skipIfAbsent` index only to a read that pins its skip property, 
 | A thread, a reply's children, direct replies, reply counts, grouped counts, most replied (ranked at `rootPostId`) | `live == 1`, `mod == null`, `rootPostId ==` (or `in`), then `replyToReplyId` as on v17 | as on v17 |
 | Mentions | `mentionedUserIds contains me`, `mod == null`, `$createdAt > t` | `$createdAt desc` |
 | Trending posts, trending tags, top in a tag | `postLive == 1` in the window | ranked as on v17 |
+| A post's like count, a feed page's like counts, top liked | `postId ==` (or `in`, grouped by `postId`); the lane is not needed | ranked at `postId` |
+| Have I liked it | `postId ==`, `postLive == <the post's live>`, `$ownerId == me` (`byPost` is `[postId, postLive]`) | — |
+
+### Likes and unlikes
+
+An unlike is an indexOnly delete: the client rebuilds the like from its values, and every index the like is in must be located. A non-`outlivesDelete` window would need the like's own `$createdAt`, which no client can recover, so v18's first cut (`byTrendPost` without `outlivesDelete`) refused every unlike ("requires $createdAt, but the document being deleted does not carry one", measured). Both windows now keep `outlivesDelete`, as on v17: an unlike rebuilt from the post alone (author, tags, its `live` as `postLive`) succeeds, the like counts drop, and a like again lands. The windows keep an unliked entry until it ages out, and a like again reuses it, so **an unlike does not lower trending** (as on v17; measured: the post stayed at 1 in the 72 h window through like, unlike, like again).
+
+Platform admits an indexOnly property only if some index that is neither `skipIfAbsent` nor `outlivesDelete` and names no typed array carries it, so `postLive` needs a plain home. A sakura lab (one contract, four like types against the same posts, `DdgHPY1jer1qiwpfeKjX1gB68sUbyMN8qrY5c4TbpH3g`) measured the homes:
+
+| Like shape | Unlike from the post alone | First / second / third like of a post | Lane in the hashtag trend |
+| --- | --- | ---: | --- |
+| v18 first cut (`byTrendPost` without `outlivesDelete`) | **refused** | 20.87M / 18.39M / 19.27M | yes |
+| Both windows `outlivesDelete`, `postLive` only there | does not register (no plain home) | — | — |
+| v17's `byTrendPost` + `postLive` only in the hashtag window | does not register (no plain home) | — | — |
+| Both windows `outlivesDelete` + a plain `byPostLane [postId, postLive]` | accepted | 41.10M / 26.12M / 27.09M (+20M, +7.7M) | yes |
+| **Both windows `outlivesDelete` + `postLive` last in the counters (chosen)** | **accepted** | **20.84M / 18.45M / 19.33M (+0)** | **yes** |
+| v17's like exactly (no `postLive`) | accepted | 19.50M / 18.86M / 19.74M | no |
+
+The chosen shape costs likes nothing extra in that lab, but the counters are preallocated with each post, so the extra `postLive` level raises a post's fee: see [Fees](#fees).
 | My standing before a compose | `restriction`: `target == me` | — |
 
 A hidden post's likes still count in `byPost`, `byHashtagPost` and `byAuthorPost` (accepted), and a ranked list can return a hidden post id: the client already hydrates ranked ids, and it skips any with `mod` set (DECISIONS-FINAL, Trending). Quote lists (`quotesOfPost`/`quotesOfReply`), the reply notification windows, follows and bookmarks are not laned: one read returns every lane, and the client drops hidden items when it hydrates them.
 
 ### Archive and moderation-log queries
 
-The owner's archival / "uncensored" frontend support (env flags, off on every yap.pr build) reads every lane of each listing with the same order and its own `startAfter` cursor, and k-way merges the pages. A count is the sum of its lanes. The moderation log reads the `moderated` index of each type (newest action first), the restriction log, and the warning list. These are the exact reads, from `scripts/hide-moderation-queries.mjs`: `lib/contract-query-conformance.test.ts` judges every one of them, in every lane, against the committed files, and `scripts/prove-v18-moderation.mjs catalogue` ran every one on sakura, proved (179/179). `L` is a `live` lane, `M` a `mod` lane, `S` a restriction state.
+The owner's archival / "uncensored" frontend support (env flags, off on every yap.pr build) reads every lane of each listing with the same order and its own `startAfter` cursor, and k-way merges the pages. A count is the sum of its lanes. The moderation log reads the `moderated` index of each type (newest action first), the restriction log, and the warning list. These are the exact reads, from `scripts/hide-moderation-queries.mjs`: `lib/contract-query-conformance.test.ts` judges every one of them, in every lane, against the committed files, and `scripts/prove-v18-moderation.mjs catalogue` ran every one on sakura, proved (183/183). `L` is a `live` lane, `M` a `mod` lane, `S` a restriction state.
 
 **social, listings (yap.pr reads L = 1, M = null; an archive reads every lane)**
 
@@ -90,6 +109,10 @@ The owner's archival / "uncensored" frontend support (env flags, off on every ya
 
 | Index and read | Kind | `where` | Order / group | Lanes |
 | --- | --- | --- | --- | --- |
+| like.byPost count (a post's likes) | count | `postId == P` | — | — |
+| like.byPost grouped count (a feed page's likes) | count | `postId in [P, R]` | group postId | — |
+| like.byPost (have I liked it; the post's lane pinned) | documents | `postId == P`, `postLive == 1`, `$ownerId == ME` | — | — |
+| like.byPost ranked at postId (top liked) | ranked | — | group postId | — |
 | restriction.byTarget (my standing, before a compose) | documents | `target == T` | — | — |
 
 **blog, listings (yap.pr reads L = 1, M = null; an archive reads every lane)**
@@ -214,16 +237,18 @@ Existing helpers already read the file: `moderatorDeletableTypes()` is empty and
 - **`scripts/register-app-connect-contracts.mjs --append-after <entry>`** creates only the entries after it, each joining the existing group in its own create. Platform 5.0.0-rc.4 allows that to the group's owner or an admin (`data_contract_create/state/v1`: the group must exist, `ContractGroupNotFoundError` otherwise, and `may_add_members` must hold, `IdentityNotContractGroupOwnerOrAdminError` otherwise); a wallet key bound to the group covers members added later. `--plan` builds and audits only the new creates. `--dry-run` proves the group (owner the maker, no admins), every registered member at its planned id (owner, document types, membership), that no new id exists, and that the maker's next nonce is the first new entry's. `--live` resumes the set's journal (every entry through the named one must be verified there) and records the new batch's rendering under `appends`, apart from the original set's.
 - **`scripts/hide-moderation-queries.mjs`**: the read catalogue above, shared by the conformance spec and the sakura battery.
 - **`scripts/prove-v18-moderation.mjs`**: the devnet battery (register, social, blog, storefront, catalogue, fees, elected). Its moderation cases replace the v17 batteries' removal, restore and ban cases for this cut: hide, unhide, restrict, lift, warn, and a moderator delete, ban or suspension that must be refused.
-- **Offline (Gate G1).** `validate-contract-offline.mjs --strict-size --network testnet` and `--network mainnet` pass for all three files. `--probes` adds 33 v18-set probes (348 pass in total) and `--constraints` 327 v18-set cases (all pass). One probe records a finding: a reference `where` may bind the *referenced* document's moderator-only `mod` (only a type's own `changeFields` may not be read by its references), so refusing likes, replies or orders on hidden content is possible in the grammar; it is not used, by the owner's decision, and is unproved on a node.
+- **Offline (Gate G1).** `validate-contract-offline.mjs --strict-size --network testnet` and `--network mainnet` pass for all three files. `--probes` adds 34 v18-set probes (349 pass in total) and `--constraints` 327 v18-set cases (all pass). One probe records a finding: a reference `where` may bind the *referenced* document's moderator-only `mod` (only a type's own `changeFields` may not be read by its references), so refusing likes, replies or orders on hidden content is possible in the grammar; it is not used, by the owner's decision, and is unproved on a node.
 
 ## Sakura proof
 
-Run 2026-10-22 05:36–06:00Z on devnet sakura (Platform 5.0.0-beta.6, PV14; the query, index, moderation and fee paths are byte-identical to rc.4, and rc.4 → rc.5, which testnet's nodes now report, changes none of them). Throwaway copies of the **exact** committed files, registered by the sakura maker `9RPq2Ju…` and battery bots, never the deployed /devnet set. The battery copies render the elected declaration with two appointed interim moderators (corpus:64 and corpus:65) so the cases could run at once; the `elected` copy keeps `notYetUsable` with 1 h windows and a 1 h election delay. Every write was read back, every read used the SDK's proved path (heights 36277–36336, proofs 1.1–3.7 KB).
+Run 2026-10-22 05:36–06:00Z on devnet sakura (Platform 5.0.0-beta.6, PV14; the query, index, moderation and fee paths are byte-identical to rc.4, and rc.4 → rc.5, which testnet's nodes now report, changes none of them). Throwaway copies of the **exact** committed files, registered by the sakura maker `9RPq2Ju…` and battery bots, never the deployed /devnet set. The battery copies render the elected declaration with two appointed interim moderators (corpus:64 and corpus:65) so the cases could run at once; the `elected` copy keeps `notYetUsable` with 1 h windows and a 1 h election delay. Every write was read back, every read used the SDK's proved path (heights 36277–36597, proofs 1.1–3.7 KB). The social battery and catalogue were re-run on the committed file after the like fix (08:00–08:08Z).
 
 | Copy | Id | Signed | Fee |
 | --- | --- | ---: | ---: |
-| social v18 (battery) | `GRSyjxTzDDFyibqL4TePFmw9pDPS5ueirVaXjucQMURH` | 19,862 B | 99.81e9 |
-| social v18 (`notYetUsable`, 1 h windows) | `9JKi3tZXpci2RRNDGgu2DnzW9o7ksWP6f3oGoCEni7HL` | 19,796 B | 99.80e9 |
+| social v18 (battery and catalogue) | `Eo8r3221k1JPYz6LS47Gv4dwWuqLy3dmJ1UWGiqGYHVQ` | 19,943 B | 99.81e9 |
+| social v18 (fees) | `2J4RrMS5bJJ8WU8jexPRBBRt7qTaSmWq8FADRcog9ifN` | 19,943 B | 99.81e9 |
+| social v18 (`notYetUsable`, 1 h windows; the first cut's like shape) | `9JKi3tZXpci2RRNDGgu2DnzW9o7ksWP6f3oGoCEni7HL` | 19,796 B | 99.80e9 |
+| social v18 first cut (superseded: unlike refused) | `GRSyjxTzDDFyibqL4TePFmw9pDPS5ueirVaXjucQMURH` | 19,862 B | 99.81e9 |
 | blog v10 | `HbQynvbYteGhPP3u7L75z3wJ4FDm4UHXsXpRjYma7XnQ` | 10,799 B | 46.44e9 |
 | storefront v11 | `67giuqWec4PvMwprq24kTkMhNVJFZMJTGfWx9uNMdV5N` | 20,004 B | 64.74e9 |
 | social v17 (fee baseline) | `9a4XJ7NfoCtWGvDRGFri9dhDTYNKyea67JMScDrzTWiJ` | 18,085 B | 91.76e9 |
@@ -232,8 +257,8 @@ The registrations themselves prove the shape registers: `restriction`, `countOf`
 
 | Proved | Result |
 | --- | --- |
-| Every listing, count, grouped count and rank on the default lane before, during and after hides (social 97, blog 29, storefront 45 reads) | **PASS** |
-| The whole catalogue, every lane (179 reads: social 106, blog 29, storefront 44) | **PASS**, all served and proved |
+| Every listing, count, grouped count and rank on the default lane before, during and after hides (social 103 reads and 44 writes, blog 29, storefront 45 reads) | **PASS** |
+| The whole catalogue, every lane (183 reads: social 110, blog 29, storefront 44) | **PASS**, all served and proved |
 | Hide: the post and a reply leave the timeline, tag page, author list and count, top authors, mentions, thread, both thread counts, grouped counts and most replied; they enter `mod == 1` and the `moderated` log; the post keeps its content, lane and stamps, `$revision` +1 | **PASS** |
 | Unhide by the other moderator: everything back, the log empty | **PASS** |
 | The author (a non-moderator) changing `mod`: 41101; a create, replace or self-unhide writing `mod`: 41124; a hide without a reason: 10422 `modReason` | **PASS** |
@@ -242,31 +267,33 @@ The registrations themselves prove the shape registers: `restriction`, `countOf`
 | Restriction: a non-moderator's create 41124; a moderator's accepted; a second one 40105; the restricted author's `live: 1` refused 10422, `live: 2` post and reply accepted, listed only in lane 2; `state: null` refused 10422; the lift accepted; after it `live: 2` refused and `live: 1` listed; the lane-2 post stays in lane 2 | **PASS** |
 | The `$revision` guard: a moderator hides, and the restricted author tombstones, replies written before the restriction | **PASS** |
 | Likes: `postLive` 1 on a listed post, 2 on a restricted one; the wrong lane 40127; a like of a tombstone 40127; a like of a hidden post accepted (accepted gap); trending laned 1/2 | **PASS** |
+| Unlike from the post's values alone: the count 1 → 0, a like again → 1; "have I liked it" with the lane pinned; top liked ranked at `postId`; the 72 h window keeps the entry and the like again reuses it | **PASS** |
 | Warnings: a warn accepted and read back by `moderationEntries`; a ban and a suspension refused 41100 (no such list) | **PASS** |
 | Blog: blog, post and comment hide/unhide across `blog.timeline`, `blogPost.timeline`, `blogAndTime`, comments and their (grouped) counts, and the three logs; the blog restriction lanes a restricted blogger's post | **PASS** |
 | Storefront: store, item, store review and item review hide/unhide across `byStatus`, `byCategory` and its ranking, both item listings, reviews, the average (6/2 → 5/1), the histogram, the ranked average and the four logs; an order at a hidden store is accepted | **PASS** |
 | `notYetUsable`: a post before any team is seated | **PASS**, refused 41200 |
-| Seating a sole-contender team with `file-release-charters.mjs`, then posting | pending: the charter is filed once the 1 h election delay passes (06:39Z) and seats after the 1 h join window |
+| Seating a sole-contender team with `file-release-charters.mjs` (bots:1 leading corpus:28, 24 and 23; application `Hx23kAwvkJUxtBa8RtHmENiCdjDzvPu282SmJHJFFrwz` at 06:41Z), then posting | **PASS**: seated after the 1 h join window with no vote; a post accepted (175.1M) and a seated member hid it citing a charter reason (106.8M) |
 
 The run's harness errors (byte arrays sent as plain number lists, an empty tag list on an untagged like) were fixed and re-run; they are not contract outcomes. A `yapprProfile` hide was not exercised (it needs a DashPay profile); its log read is served.
 
 ### Fees
 
-Balance deltas of the signer, 1M credits ≈ 0.06¢. Both social copies carry the D41 action fees (post 20M, reply 10M), and each writer made three warm-up posts first, so the rows compare like with like. One sample per row; earlier runs put sample noise at about ±0.3M on a post and a few M on first-in-tree writes.
+Balance deltas of the signer, 1M credits ≈ 0.06¢. Both social copies carry the D41 action fees (post 20M, reply 10M), and each writer made three warm-up posts (each liker one warm-up like) first, so the rows compare like with like. One sample per row; earlier runs put sample noise at about ±0.3M on a post and a few M on first-in-tree writes. Measured on the committed file (copy `2J4RrMS5…`).
 
 | Write | Social v17 | Social v18 | Δ |
 | --- | ---: | ---: | ---: |
-| Post, no tags | 104.05M (6.24¢) | 104.87M (6.29¢) | +0.8M (+0.8%) |
-| Post, 1 new tag | 161.55M (9.69¢) | 158.41M (9.50¢) | −3.1M |
-| Post, 4 new tags | 295.22M (17.71¢) | 296.30M (17.78¢) | +1.1M (+0.4%) |
-| Post, 1 known tag | 136.53M (8.19¢) | 136.81M (8.21¢) | +0.3M (+0.2%) |
-| Reply, first on a post | 120.28M (7.22¢) | 120.31M (7.22¢) | ≈0 |
-| Reply, second | 68.74M (4.12¢) | 68.71M (4.12¢) | ≈0 |
-| Like, untagged post | 15.50M (0.93¢) | 16.80M (1.01¢) | +1.3M |
-| Like, 1 tag | 20.81M (1.25¢) | 21.39M (1.28¢) | +0.6M |
-| Like, 4 tags | 30.50M (1.83¢) | 32.86M (1.97¢) | +2.4M |
-| Post tombstone (refund) | −48.28M | −48.29M | ≈0 |
-| Reply tombstone (refund) | −28.73M | −28.59M | ≈0 |
+| Post, no tags | 104.05M (6.24¢) | 120.05M (7.20¢) | +16.0M (+15%) |
+| Post, 1 new tag | 161.55M (9.69¢) | 181.34M (10.88¢) | +19.8M (+12%) |
+| Post, 4 new tags | 295.22M (17.71¢) | 342.60M (20.56¢) | +47.4M (+16%) |
+| Post, 1 known tag | 136.53M (8.19¢) | 160.06M (9.60¢) | +23.5M (+17%) |
+| Reply, first on a post | 120.28M (7.22¢) | 120.24M (7.21¢) | ≈0 |
+| Reply, second | 68.74M (4.12¢) | 68.62M (4.12¢) | ≈0 |
+| Like, untagged post | 15.50M (0.93¢) | 17.01M (1.02¢) | +1.5M (+10%) |
+| Like, 1 tag | 20.81M (1.25¢) | 22.81M (1.37¢) | +2.0M (+10%) |
+| Like, 4 tags | 30.50M (1.83¢) | 37.01M (2.22¢) | +6.5M (+21%) |
+| Unlike, 1 tag (refund) | −3.08M | −2.32M | +0.8M |
+| Post tombstone (refund) | −48.28M | −48.15M | ≈0 |
+| Reply tombstone (refund) | −28.73M | −28.61M | ≈0 |
 
 Moderator writes on v18 (paid by the moderator; v17's removal cost 16.5–18.7M and its restore 53–68M):
 
@@ -281,7 +308,7 @@ Moderator writes on v18 (paid by the moderator; v17's removal cost 16.5–18.7M 
 | Blog: hide post / comment / blog | 93.41M / 57.38M / 49.15M |
 | Storefront: hide review / item / item review / store | 118.47M / 82.61M / 98.24M / 92.11M |
 
-A hide re-keys every listing the document is in, count and rank trees included, so it costs 5–12¢, well above the 10–25M the plans estimated. Authors pay nothing more: the `mod` level and the `countOf` read are inside the noise.
+A hide re-keys every listing the document is in, count and rank trees included, so it costs 5–12¢, well above the 10–25M the plans estimated. Replies cost what they did on v17: the `mod` level and the `countOf` read are inside the noise (the first cut, without the like fix, measured posts within ±1% too). **Posts cost 12–17% more (+16M to +47M, 1.0–2.8¢)** and likes 10–21% more: the like counters are preallocated with each post, per tag, and now carry the `postLive` level. That is the price of a working unlike with the hashtag trend laned; within the owner's +25–50% ceiling, above the "about 0" target. The cheaper alternative is v17's like exactly (no lane: restricted authors' posts count in trending tags, and the client skips them in post lists).
 
 ## Registering it on testnet
 
@@ -297,18 +324,19 @@ prove the anchor `D8benQGn…`, the group `4MjVAxDY…` (owner the maker, no adm
 
 | Nonce | Entry | Predicted id | Estimate |
 | ---: | --- | --- | ---: |
-| 65 | social v18 | `CzXucVEss3NUrKQ9q4ZMnRhhb6zjiLxXxTNUyEkpaVCi` | 101.09e9 (≈6,065¢) |
+| 65 | social v18 | `CzXucVEss3NUrKQ9q4ZMnRhhb6zjiLxXxTNUyEkpaVCi` | 101.10e9 (≈6,066¢) |
 | 66 | blog v10 | `FTr4yygzDjbwo997hPKNaf1ebHAPfuGLvRaoXspExsPy` | 47.18e9 (≈2,831¢) |
 | 67 | storefront v11 | `HAiJRqxw5NsEM4M4CPwWp1DnwA5fca8r2LNv5WgjM49r` | 66.10e9 (≈3,966¢) |
-| | **Total** | | **214.37e9 (≈12,862¢)**; the balance gate passes |
+| | **Total** | | **214.38e9 (≈12,863¢)**; the balance gate passes |
 
-The ids hold only if the maker spends no other nonce first. The estimate does not depend on the windows (86400 or 3600 render to within 6 B). On sakura the same three cost 210.99e9. The live run is the same command with `--live --production --journal <the 2026-10-21 journal> --maker-key-file … --maker-key-id 2`; the activation PR then points `.env.testnet` at the new ids and the new YAPP token (`tokens.calculateId(socialV18, 0)`), and the charters are filed on the new targets only.
+The ids hold only if the maker spends no other nonce first. The estimate does not depend on the windows (86400 or 3600 render to within 6 B). On sakura the same three cost 211.0e9. The live run is the same command with `--live --production --journal <the 2026-10-21 journal> --maker-key-file … --maker-key-id 2`; the activation PR then points `.env.testnet` at the new ids and the new YAPP token (`tokens.calculateId(socialV18, 0)`), and the charters are filed on the new targets only.
 
 ## Accepted gaps
 
 From DECISIONS-FINAL, as built:
 
 - Likes by restricted users still count toward trending, and a hidden post's likes still count toward its tags' totals.
+- An unlike does not lower trending: both windows keep the entry (`outlivesDelete`, as on v17) until it ages out (72 h posts, 24 h tags), and a like again reuses it.
 - Likes, replies, quotes, bookmarks and orders of hidden content are accepted on chain.
 - Illegal text stays in state (media is off-chain).
 - A new identity evades a restriction, and restricted authors still spend sponsored gas.

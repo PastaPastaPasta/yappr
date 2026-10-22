@@ -60,6 +60,7 @@ const ROLES = {
   SELLER: 'corpus:79', BUYER: 'corpus:14',
 };
 
+const argValue = (flag) => { const i = process.argv.indexOf(flag); return i === -1 ? null : process.argv[i + 1]; };
 const args = (() => {
   const argv = process.argv.slice(2);
   const value = (flag) => { const i = argv.indexOf(flag); return i === -1 ? null : argv[i + 1]; };
@@ -271,14 +272,14 @@ async function replace(label, role, docType, target, data, expect = 'ok') {
 }
 
 /** A moderator's `ChangeDocumentFields`: hide, unhide, label, or a restriction's lift. */
-async function modChange(label, role, docType, target, fields, expect = 'ok') {
+async function modChange(label, role, docType, target, fields, expect = 'ok', reasonDocumentId) {
   if (done(label)) return done(label);
   const w = await who(ROLES[role] ?? role);
   const id = docId(target);
   const prev = await fetchDoc(docType, id);
   const before = await balanceOf(w.ownerId);
   let error = null;
-  try { await sdk.contracts.moderatorChangeDocumentFields({ identity: w.identity, contractId: cid(), documentTypeName: docType, documentId: id, fields, reason: { text: `v18 battery: ${label}` }, signer: w.signer }); }
+  try { await sdk.contracts.moderatorChangeDocumentFields({ identity: w.identity, contractId: cid(), documentTypeName: docType, documentId: id, fields, reason: { text: `v18 battery: ${label}`, ...(reasonDocumentId ? { reasonDocumentId } : {}) }, signer: w.signer }); }
   catch (e) { error = err(e); }
   let landed = false;
   let now = null;
@@ -298,6 +299,30 @@ async function modDelete(label, role, docType, target) {
   await sleep(3000);
   const still = (await fetchDoc(docType, id)) !== null;
   return record(label, w, { kind: 'modDelete', docType, outcome: still ? 'refused' : 'accepted', expect: 'refused', pass: still && error !== null, code: error ? codeOf(error) : null, error, id, fee: '0' });
+}
+
+/**
+ * An unlike as a fresh client sends it, knowing only the like's owner and its post: every value
+ * comes from the post document (author, tags, its `live` as `postLive`); no `$createdAt`.
+ */
+async function unlike(label, role, post, expect = 'ok') {
+  if (done(label)) return done(label);
+  const w = await who(ROLES[role] ?? role);
+  const stored = await fetchDoc('post', docId(post));
+  const lane = schemaOf('like').properties.postLive !== undefined;
+  const data = { postId: bs58.decode(docId(post)), postAuthor: bs58.decode(stored.$ownerId), ...(stored.tags ? { tags: stored.tags } : {}), ...(lane ? { postLive: stored.live } : {}) };
+  const counted = [['postId', '==', docId(post)]];
+  const before = await balanceOf(w.ownerId);
+  const countBefore = await countOf('like', counted);
+  let error = null;
+  try {
+    const { document } = buildDocument({ contractId: cid(), docType: 'like', ownerId: w.ownerId, data, id: randomIdBytes() });
+    await sdk.documents.delete({ document, identityKey: w.doc.identityKey, signer: w.signer });
+  } catch (e) { error = err(e); }
+  let gone = false;
+  for (let i = 0; i < 5 && !gone; i++) { await sleep(2500); gone = (await countOf('like', counted).catch(() => countBefore)) === countBefore - 1; }
+  const after = gone ? await settled(w.ownerId, before) : before;
+  return record(label, w, { kind: 'unlike', docType: 'like', outcome: gone ? 'accepted' : 'refused', expect, pass: (expect === 'ok') === gone, code: error ? codeOf(error) : null, error, fee: String(before - after) });
 }
 
 /** A list action (warn, or a ban/suspend the contract must refuse: it keeps no such list). */
@@ -416,8 +441,8 @@ async function socialLanes(phase, x) {
   await read(phase, 'restricted lane (live 2, mod null) timeline', 'docs', 'post', newest(LANE(2)), (a) => eq(a, x.restricted));
   await read(phase, 'moderation log post (mod 1, newest action first)', 'docs', 'post', { where: [['mod', '==', 1], ['$moderatedAt', '>', 0]], orderBy: [['$moderatedAt', 'desc']], limit: 20 }, (a) => eq(a, x.postLog));
   await read(phase, 'moderation log reply (mod 1)', 'docs', 'reply', { where: [['mod', '==', 1], ['$moderatedAt', '>', 0]], orderBy: [['$moderatedAt', 'desc']], limit: 20 }, (a) => eq(a, x.replyLog));
-  await read(phase, 'trending posts, postLive 1 (72h window)', 'ranked', 'like', { where: [['postLive', '==', 1]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [POST_WINDOW] }, (a) => eq(Object.fromEntries(a), x.trending1));
-  await read(phase, 'trending posts, postLive 2 (72h window)', 'ranked', 'like', { where: [['postLive', '==', 2]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [POST_WINDOW] }, (a) => eq(Object.fromEntries(a), x.trending2));
+  await read(phase, 'trending posts, postLive 1 (72h window)', 'ranked', 'like', { where: [['postLive', '==', 1]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [POST_WINDOW] }, (a) => eq(Object.fromEntries([...a].sort()), Object.fromEntries(Object.entries(x.trending1).sort())));
+  await read(phase, 'trending posts, postLive 2 (72h window)', 'ranked', 'like', { where: [['postLive', '==', 2]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [POST_WINDOW] }, (a) => eq(Object.fromEntries([...a].sort()), Object.fromEntries(Object.entries(x.trending2).sort())));
 }
 
 async function socialBattery() {
@@ -514,6 +539,18 @@ async function socialBattery() {
   state.reads['social/6 warnings/warning list (moderationEntries)'] = { pass: ok, answer: JSON.parse(JSON.stringify(warned, big)), proof: meta(entries) };
   save();
   log(`${ok ? 'PASS' : 'FAIL'} [social] warning list: ${JSON.stringify(warned, big).slice(0, 300)}`);
+
+  // ---- unlike: from the post's values alone, then like again; the trend window keeps the first (outlivesDelete) ----
+  const p3 = { postId: bs58.decode(docId('P3')), postAuthor: bs58.decode(A), postLive: 1 };
+  await create('like P3', 'LIKER2', 'like', p3, 'ok', likeCount('P3'));
+  await read('7 unlike', 'P3 like count before the unlike', 'count', 'like', { where: [['postId', '==', docId('P3')]] }, (a) => total(a) === 1);
+  await unlike('unlike P3 (values from the post alone)', 'LIKER2', 'P3');
+  await read('7 unlike', 'P3 like count after the unlike', 'count', 'like', { where: [['postId', '==', docId('P3')]] }, (a) => total(a) === 0);
+  await create('like P3 again', 'LIKER2', 'like', p3, 'ok', likeCount('P3'));
+  await read('7 unlike', 'P3 like count after liking again', 'count', 'like', { where: [['postId', '==', docId('P3')]] }, (a) => total(a) === 1);
+  await read('7 unlike', 'is P3 liked by the liker (byPost, the lane pinned)', 'docs', 'like', { where: [['postId', '==', docId('P3')], ['postLive', '==', 1], ['$ownerId', '==', (await who(ROLES.LIKER2)).ownerId]], limit: 1 }, (a) => a.length === 1);
+  await read('7 unlike', 'top liked posts (byPost ranked at postId)', 'ranked', 'like', { groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 }, (a) => a.some(([k, v]) => k === 'P3' && v === 1));
+  await read('7 unlike', 'trending posts keep the unliked entry, and the re-like reuses it (outlivesDelete)', 'ranked', 'like', { where: [['postLive', '==', 1]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [POST_WINDOW] }, (a) => a.some(([k, v]) => k === 'P3' && v === 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -654,6 +691,7 @@ async function fees() {
     await create('FL0', 'FEELIKER', 'like', likeData('FP0', []), 'ok', counted('FP0'));
     await create('FL1', 'FEELIKER', 'like', likeData('FP1', tagsOf(1)), 'ok', counted('FP1'));
     await create('FL4', 'FEELIKER', 'like', likeData('FP4', tagsOf(4)), 'ok', counted('FP4'));
+    await unlike('FUL', 'FEELIKER', 'FP1');
     await replace('FT', role, 'post', 'FP1b', { deleted: true, tags: tagsOf(1) });
     await replace('FTR', role, 'reply', 'FR2', { deleted: true, rootPostId: bs58.decode(docId('FP0')) });
     if (v18) {
@@ -670,7 +708,7 @@ async function fees() {
   }
   const pick = (copy, label) => Number(state.results[`${copy}/${label}`]?.fee ?? NaN);
   const rows = [['post, 0 tags', 'FP0'], ['post, 1 new tag', 'FP1'], ['post, 4 new tags', 'FP4'], ['post, 1 known tag', 'FP1b'], ['reply, first on a post', 'FR1'], ['reply, second', 'FR2'],
-    ['like, untagged', 'FL0'], ['like, 1 tag', 'FL1'], ['like, 4 tags', 'FL4'], ['post tombstone (refund)', 'FT'], ['reply tombstone (refund)', 'FTR']];
+    ['like, untagged', 'FL0'], ['like, 1 tag', 'FL1'], ['like, 4 tags', 'FL4'], ['unlike, 1 tag (refund)', 'FUL'], ['post tombstone (refund)', 'FT'], ['reply tombstone (refund)', 'FTR']];
   state.fees.table = rows.map(([what, label]) => ({ what, v17: pick('social17', label), v18: pick('social', label) }));
   state.fees.moderator = ['FH4 hide a 4-tag post', 'FU4 unhide it', 'FH0 hide an untagged post', 'FU0 unhide it', 'FHR hide a reply', 'FUR unhide it', 'FRX restrict', 'FLX lift', 'FRX2 re-restrict']
     .map((label) => ({ what: label, v18: pick('social', label) }));
@@ -683,11 +721,18 @@ async function fees() {
 // notYetUsable: closed until a team is seated
 // ---------------------------------------------------------------------------
 
+/**
+ * Before seating: a post is refused (41200). After it (`--seated-member <account>` naming one
+ * elected member, `--reason <reason document id>` one its charter lists): a post is accepted and
+ * that member hides it.
+ */
 async function elected() {
   C = 'elected';
-  const label = `post while ${state.seated ? 'seated' : 'no team is seated'} (${new Date().toISOString().slice(0, 16)})`;
-  const expect = process.argv.includes('--expect-open') ? 'ok' : 'refused';
-  await create(label, 'AUTHOR', 'post', { content: body('elected'), live: 1 }, expect);
+  const member = argValue('--seated-member');
+  const at = new Date().toISOString().slice(0, 16);
+  const label = member ? `post once the team is seated (${at})` : `post while no team is seated (${at})`;
+  await create(label, 'AUTHOR', 'post', { content: body('elected'), live: 1 }, member ? 'ok' : 'refused');
+  if (member) await modChange(`a seated member hides it (${at})`, member, 'post', label, { mod: 1, modLabel: 1 }, 'ok', argValue('--reason'));
   const contract = await retry(() => sdk.contracts.fetch(cid()));
   const declared = contract.toJSON(PlatformVersion.latest()).config.moderation.moderators;
   state.electedDeclaration = { interim: declared.interim, joinWindow: declared.joinWindow, voteWindow: declared.voteWindow, electionDelay: declared.electionDelay, challengeCoolDown: declared.challengeCoolDown };

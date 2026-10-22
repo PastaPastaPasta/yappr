@@ -875,8 +875,13 @@ export function authorsCanBeRestricted(): boolean {
 /**
  * True when a like copies its post's `live` lane as `postLive` (v18): the
  * reference `where` binds it to the post, and both trend windows are keyed
- * `[$createdAt, postLive, …]`, so trending reads pin `postLive == 1`. A like
- * of a tombstone (no `live`) is refused.
+ * `[$createdAt, postLive, …]`, so trending reads pin `postLive == 1`. It also
+ * sits last in the counters (`byPost [postId, postLive]`, ranked at `postId`,
+ * and `byHashtagPost`/`byAuthorPost`): an unlike carries the post's `live` as
+ * `postLive`, and "have I liked it" pins it after `postId`; counts and
+ * rankings by `postId` need no lane. Both windows keep `outlivesDelete`, so an
+ * unlike names no `$createdAt` and does not lower trending. A like of a
+ * tombstone (no `live`) is refused.
  */
 export function likesCarryPostLive(): boolean {
   return isAtLeast('v18')

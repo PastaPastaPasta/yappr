@@ -33,7 +33,7 @@ network-specific moderation configuration.
 | pollr | [pollr-contract.json](pollr-contract.json) | `a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347` |
 | storefront | [yappr-storefront-contract.json](yappr-storefront-contract.json) | `69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc` |
 | passkeyVault | [yappr-passkey-vault-contract.json](yappr-passkey-vault-contract.json) | `14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5` |
-| socialV18 | [yappr-social-contract-v18.json](yappr-social-contract-v18.json) | `94e477a6de447069dc263198441be408092febc9560c76ab98efb3266ae23921` |
+| socialV18 | [yappr-social-contract-v18.json](yappr-social-contract-v18.json) | `4c8117d41ae4ad7bb47ed828e2a555283ac121b0adfe2e8899c085b0247a12af` |
 | blogV10 | [yappr-blog-contract-v10.json](yappr-blog-contract-v10.json) | `8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159` |
 | storefrontV11 | [yappr-storefront-contract-v11.json](yappr-storefront-contract-v11.json) | `eb35635f507d09a52c0ae6fffc23185eebaeb15cd2d8c6f67b4c05ea717b9a0e` |
 

@@ -74,6 +74,11 @@ const SOCIAL = [
   entry('social', 'like', 'ranked', 'archive', 'like.byTrendPost (trending posts, 72h)', (v) => ({ where: [['postLive', '==', v.live]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [POST_WINDOW] }), LIVE_LANES),
   entry('social', 'like', 'ranked', 'archive', 'like.byTrendHashtagPost (trending tags, 24h)', (v) => ({ where: [['postLive', '==', v.live]], groupBy: 'tags', aggregate: { type: 'count' }, direction: 'desc', limit: 12, timeRange: [TAG_WINDOW] }), LIVE_LANES),
   entry('social', 'like', 'ranked', 'archive', 'like.byTrendHashtagPost (top in a tag, 24h)', (v) => ({ where: [['postLive', '==', v.live], ['tags', 'contains', v.tag]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [TAG_WINDOW] }), LIVE_LANES),
+  // ---- likes of one post: counted and checked without knowing the post's lane (byPost ranked at postId) ----
+  entry('social', 'like', 'count', 'default', 'like.byPost count (a post\'s likes)', (v) => ({ where: [['postId', '==', v.post]] })),
+  entry('social', 'like', 'count', 'default', 'like.byPost grouped count (a feed page\'s likes)', (v) => ({ where: [['postId', 'in', [v.post, v.reply]]], groupBy: ['postId'] })),
+  entry('social', 'like', 'documents', 'default', 'like.byPost (have I liked it; the post\'s lane pinned)', (v) => ({ where: [['postId', '==', v.post], ['postLive', '==', 1], ['$ownerId', '==', v.me]], limit: 1 })),
+  entry('social', 'like', 'ranked', 'default', 'like.byPost ranked at postId (top liked)', () => ({ groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })),
   // ---- the moderation log ----
   entry('social', 'post', 'documents', 'log', 'post.moderated (hidden posts, newest action first)', moderatedLog, LOG_LANES),
   entry('social', 'reply', 'documents', 'log', 'reply.moderated', moderatedLog, LOG_LANES),

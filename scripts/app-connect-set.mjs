@@ -65,7 +65,7 @@ export const APP_CONNECT_ENTRIES = [
   // The passkey vault (docs/PASSKEY_VAULT.md). A member so a wallet sign-in's group key can write its own vault entries.
   { name: 'passkeyVault', file: 'yappr-passkey-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID', sha256: '14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5' },
   // "Hide, don't delete" (docs/SOCIAL_V18.md): new members of the same group, under the same app id.
-  { name: 'socialV18', file: 'yappr-social-contract-v18.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '94e477a6de447069dc263198441be408092febc9560c76ab98efb3266ae23921' },
+  { name: 'socialV18', file: 'yappr-social-contract-v18.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '4c8117d41ae4ad7bb47ed828e2a555283ac121b0adfe2e8899c085b0247a12af' },
   { name: 'blogV10', file: 'yappr-blog-contract-v10.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159' },
   { name: 'storefrontV11', file: 'yappr-storefront-contract-v11.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: 'eb35635f507d09a52c0ae6fffc23185eebaeb15cd2d8c6f67b4c05ea717b9a0e' },
 ];

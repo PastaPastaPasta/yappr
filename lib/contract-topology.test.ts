@@ -1612,8 +1612,13 @@ describe('contract topology', () => {
       expect(V18.like.properties.postId.refersTo?.where).toEqual({ tags: 'tags', $ownerId: 'postAuthor', live: 'postLive' })
       expect(keys(V18, 'like', 'byTrendPost')).toEqual(['$createdAt', 'postLive', 'postId'])
       expect(keys(V18, 'like', 'byTrendHashtagPost')).toEqual(['$createdAt', 'postLive', 'tags', 'postId'])
-      expect(indexOf(V18, 'like', 'byTrendPost')).not.toHaveProperty('outlivesDelete')
-      expect(indexOf(V18, 'like', 'byTrendHashtagPost')).toHaveProperty('outlivesDelete', true)
+      // Both windows keep outlivesDelete, so an unlike names no $createdAt (a client cannot recover it);
+      // postLive's plain home is the counters, last, with byPost ranked at postId.
+      for (const name of ['byTrendPost', 'byTrendHashtagPost']) expect(indexOf(V18, 'like', name), name).toHaveProperty('outlivesDelete', true)
+      expect(keys(V18, 'like', 'byPost')).toEqual(['postId', 'postLive'])
+      expect(keys(V18, 'like', 'byHashtagPost')).toEqual(['tags', 'postId', 'postLive'])
+      expect(keys(V18, 'like', 'byAuthorPost')).toEqual(['postAuthor', 'postId', 'postLive'])
+      expect(indexOf(V18, 'like', 'byPost')?.rankedCountable).toEqual({ at: 'postId' })
     })
 
     it('carries mod and modLabel through a tombstone, and keeps every v17 surface', async () => {
