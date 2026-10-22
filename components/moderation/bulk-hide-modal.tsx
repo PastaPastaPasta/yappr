@@ -234,6 +234,7 @@ export function BulkHideModal() {
         ? batch.hide(item.kind, item.id, { label: hideLabel, reason: reasonFor(item) })
         : batch.unhide(item.kind, item.id, reasonFor(item)),
       pending: (pendingItems) => bulkHideService.pending(pendingItems, mode),
+      recheck: (item) => bulkHideService.pending([item], mode).then((read) => (read.todo.has(item.id) ? 'todo' : read.changed.has(item.id) ? 'changed' : 'done')),
       // The cards already on screen show the change as soon as it is proved.
       onDone: (item) => recordMarks(item.id, mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: Date.now() } : null),
       onProgress: (next) => {

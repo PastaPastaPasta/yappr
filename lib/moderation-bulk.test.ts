@@ -17,6 +17,7 @@ import {
   runBulk,
   type BulkApplyResult,
   type BulkChainRead,
+  type BulkChainState,
   type BulkItem,
   type BulkPage,
   type BulkProgress,
@@ -124,10 +125,11 @@ describe('runBulk', () => {
   type Apply = (item: BulkItem) => Promise<BulkApplyResult>
   /** The ids a chain read finds still to do; `changed` ones changed some other way. */
   type Pending = (items: readonly BulkItem[]) => Promise<Set<string>>
-  const deps = ({ apply, pending, changed = [], cancelled, onProgress }: {
+  const deps = ({ apply, pending, changed = [], recheck, cancelled, onProgress }: {
     apply?: Apply
     pending?: Pending
     changed?: string[]
+    recheck?: (item: BulkItem) => Promise<BulkChainState>
     cancelled?: () => boolean
     onProgress?: (progress: BulkProgress) => void
   } = {}) => {
@@ -137,6 +139,7 @@ describe('runBulk', () => {
       pending: vi.fn(async (asked: readonly BulkItem[]): Promise<BulkChainRead> => ({ todo: await todo(asked), changed: new Set(changed) })),
       onDone: vi.fn<(item: BulkItem) => void>(),
       pause: vi.fn<(ms: number) => Promise<void>>(async () => {}),
+      ...(recheck ? { recheck: vi.fn(recheck) } : {}),
       cancelled,
       onProgress,
     }
@@ -167,6 +170,38 @@ describe('runBulk', () => {
     expect(summary.done).toBe(2)
     expect(summary.failures.map((f) => f.item.id)).toEqual(['b'])
     expect(d.onDone.mock.calls.map(([i]) => i.id)).not.toContain('b')
+  })
+
+  it('reads each document again just before its transition, and leaves what changed since', async () => {
+    const states: Record<string, BulkChainState> = { a: 'todo', b: 'changed', c: 'done' }
+    const d = deps({ recheck: async (i) => states[i.id] })
+    const summary = await runBulk(items, d)
+    // b was put under legal hold since the list was read: never sent, so the hold stands.
+    expect(d.apply.mock.calls.map(([i]) => i.id)).toEqual(['a'])
+    expect(summary.done).toBe(2)
+    expect(summary.failures.map((f) => f.item.id)).toEqual(['b'])
+    // c was done by someone else: counted, not announced.
+    expect(d.onDone.mock.calls.map(([i]) => i.id)).toEqual(['a'])
+  })
+
+  it('sends nothing for a document it cannot read again, and stops after three in a row', async () => {
+    const many = Array.from({ length: 5 }, (_, n) => item(`m${n}`, n))
+    const d = deps({ recheck: async () => { throw new Error('offline') } })
+    const summary = await runBulk(many, d)
+    expect(d.apply).not.toHaveBeenCalled()
+    expect(summary.failures).toHaveLength(SAME_REFUSAL_LIMIT)
+    expect(summary.stopped).toBe('fatal')
+  })
+
+  it('counts an unconfirmed change the chain shows landed, but does not announce it', async () => {
+    let reads = 0
+    const d = deps({
+      apply: async () => ({ success: false, errorCode: 'MAYBE_APPLIED' }),
+      pending: async (asked) => new Set(reads++ === 0 ? asked.map((i) => i.id) : []),
+    })
+    const summary = await runBulk([items[0]], d)
+    expect(summary.done).toBe(1)
+    expect(d.onDone).not.toHaveBeenCalled()
   })
 
   it('sends nothing when the first read fails', async () => {

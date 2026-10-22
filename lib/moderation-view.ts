@@ -94,6 +94,13 @@ export interface RecordedMarks {
   proved: boolean
 }
 
+/** True when `read` supersedes `recorded` ({@link shownMarks}): the record can be dropped. */
+export function readSupersedes(read: ModerationMarks | undefined, recorded: RecordedMarks, readIsNew: boolean): boolean {
+  return recorded.proved
+    ? read?.moderatedAt !== undefined && read.moderatedAt > recorded.at
+    : readIsNew
+}
+
 /** Marks with the restriction flag a read may carry (`live: 2`, which no moderator change alters); a post's `PostModeration`. */
 export interface MarksWithRestriction extends ModerationMarks {
   restricted?: boolean
@@ -110,11 +117,7 @@ export interface MarksWithRestriction extends ModerationMarks {
  * The read's restriction flag is kept, since a hide or unhide never changes it.
  */
 export function shownMarks(read: MarksWithRestriction | undefined, recorded: RecordedMarks | undefined, readIsNew: boolean): MarksWithRestriction | undefined {
-  if (!recorded) return read
-  const readWins = recorded.proved
-    ? read?.moderatedAt !== undefined && read.moderatedAt > recorded.at
-    : readIsNew
-  if (readWins) return read
+  if (!recorded || readSupersedes(read, recorded, readIsNew)) return read
   const restricted = read?.restricted ? { restricted: true } : {}
   if (recorded.marks) return { ...recorded.marks, ...restricted }
   return read?.restricted ? { restricted: true } : undefined

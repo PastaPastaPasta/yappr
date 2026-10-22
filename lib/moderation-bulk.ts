@@ -204,7 +204,16 @@ export interface BulkRunDeps {
   apply: (item: BulkItem) => Promise<BulkApplyResult>
   /** Reads the chain: where each of `items` stands ({@link chainState}); an id in neither set is done. */
   pending: (items: readonly BulkItem[]) => Promise<BulkChainRead>
-  /** Each document this run's own transition put in the state asked for, proved, as it is counted (not ones found done before). */
+  /**
+   * Reads one document again just before its transition is signed, so a
+   * change since the first read (another moderator's legal hold, above all)
+   * is never overwritten. Rejects when the read fails.
+   */
+  recheck?: (item: BulkItem) => Promise<BulkChainState>
+  /**
+   * Each document whose own proved transition in this run put it in the state
+   * asked for (not ones found that way, nor ones settled by a later read).
+   */
   onDone?: (item: BulkItem) => void
   onProgress?: (progress: BulkProgress) => void
   /** Checked before each transition: true stops the run after the one under way. */
@@ -276,7 +285,13 @@ const WRITE_PENDING = 'WRITE_PENDING'
 /** The document already reads the way it was asked to (another moderator, or an earlier run). */
 const ALREADY = 'NOTHING_TO_CHANGE'
 
+/** What the check just before a transition found, as the loop reads it: nothing was sent. */
+const FOUND_DONE = 'FOUND_DONE'
+const FOUND_CHANGED = 'FOUND_CHANGED'
+const RECHECK_FAILED = 'RECHECK_FAILED'
+
 const UNCONFIRMED_ERROR = 'The network did not confirm this one. Try again.'
+const RECHECK_ERROR = 'Couldn’t check this one just before changing it, so it was left as it is. Try again.'
 const READ_ERROR = 'Couldn’t check where their posts stand right now, so nothing was changed. Try again.'
 const CHANGED_ERROR = 'This changed in the meantime (another moderator may have acted on it), so it was left as it is.'
 const FAILED_ERROR = 'That did not go through.'
@@ -289,7 +304,8 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * 1. Reads the chain first: what is already changed (an earlier run, closed
  *    halfway, or another moderator) counts as done and is not sent again.
  *    Without that read nothing is sent.
- * 2. Sends each of the rest in turn, {@link PACE_MS} apart. A proved answer
+ * 2. Sends each of the rest in turn, {@link PACE_MS} apart, each read again
+ *    just before (`recheck`), so what changed since is left as it is. A proved answer
  *    counts it done. An unconfirmed one (a gateway timeout) is set aside and
  *    the run waits a moment before the next. One held back because an earlier
  *    change is still going through is sent again after a wait.
@@ -314,12 +330,16 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
     progress.done++
     if (ours) deps.onDone?.(item)
   }
-  /** Counts what a chain read says is done or changed; returns what it says is still to do. */
-  const settle = (read: BulkChainRead, asked: readonly BulkItem[], stillError: string | null, ours: boolean): BulkItem[] => {
+  /**
+   * Counts what a chain read says is done or changed; returns what it says is
+   * still to do. Never announced: a read cannot tell this run's change from
+   * another moderator's (a legal hold reads as done for a hide).
+   */
+  const settle = (read: BulkChainRead, asked: readonly BulkItem[], stillError: string | null): BulkItem[] => {
     const still: BulkItem[] = []
     for (const item of asked) {
       if (read.changed.has(item.id)) progress.failures.push({ item, error: CHANGED_ERROR })
-      else if (!read.todo.has(item.id)) markDone(item, ours)
+      else if (!read.todo.has(item.id)) markDone(item, false)
       else if (stillError) progress.failures.push({ item, error: stillError })
       else still.push(item)
     }
@@ -328,8 +348,7 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
 
   let todo: BulkItem[]
   try {
-    // Done before this run (by another moderator, perhaps differently): counted, not announced.
-    todo = settle(await deps.pending(items), items, null, false)
+    todo = settle(await deps.pending(items), items, null)
   } catch {
     // Without the read nothing is known about where each one stands now (an
     // unhide must never clear a legal hold set since it was listed), so
@@ -352,6 +371,16 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
       if (cancelled()) return { success: false, errorCode: 'CANCELLED' }
       progress.current = item
       report()
+      if (deps.recheck) {
+        let state: BulkChainState
+        try {
+          state = await deps.recheck(item)
+        } catch {
+          return { success: false, error: RECHECK_ERROR, errorCode: RECHECK_FAILED }
+        }
+        if (state === 'done') return { success: false, errorCode: FOUND_DONE }
+        if (state === 'changed') return { success: false, error: CHANGED_ERROR, errorCode: FOUND_CHANGED }
+      }
       let result: BulkApplyResult
       try {
         result = await deps.apply(item)
@@ -372,6 +401,14 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
     if (result.success || result.errorCode === ALREADY) {
       markDone(item, true)
       streakCode = null
+      continue
+    }
+    if (result.errorCode === FOUND_DONE) {
+      markDone(item, false)
+      continue
+    }
+    if (result.errorCode === FOUND_CHANGED) {
+      progress.failures.push({ item, error: CHANGED_ERROR })
       continue
     }
     if (closedKeySheet(result.errorCode)) {
@@ -410,8 +447,7 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
     } catch {
       read = { todo: new Set(unconfirmed.map((item) => item.id)), changed: new Set() }
     }
-    // Landed after all: this run's own transitions.
-    settle(read, unconfirmed, UNCONFIRMED_ERROR, true)
+    settle(read, unconfirmed, UNCONFIRMED_ERROR)
   }
   progress.current = null
   report()
