@@ -48,7 +48,8 @@ const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
 // Signed in as the identity whose key is read (lib/auth/critical-key.ts checks it).
-vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => sdk.identities.fetch.mock.lastCall?.[0] ?? null }))
+const live = vi.hoisted(() => ({ signOutAtSigner: false, signedOut: false }))
+vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => (live.signedOut ? null : sdk.identities.fetch.mock.lastCall?.[0] ?? null) }))
 // The nonce lock reads Platform's nonce; these tests are about moderation, so it just runs the write.
 const sdkSignedWrites = vi.hoisted(() => ({ count: 0, locked: false }))
 vi.mock('./identity-nonce', () => ({
@@ -63,7 +64,7 @@ vi.mock('./identity-nonce', () => ({
   },
 }))
 vi.mock('./sdk-helpers', () => ({ identifierToBase58: (value: unknown) => String(value) }))
-vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
+vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => { if (live.signOutAtSigner) live.signedOut = true; return { signer: true } } } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))
 const walletSession = vi.hoisted(() => ({ active: false }))
 vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => walletSession.active }))
@@ -123,6 +124,8 @@ beforeEach(() => {
   }
   sdk.identities.fetch.mockResolvedValue({ id: MODERATOR, publicKeys: [] })
   walletSession.active = false
+  live.signOutAtSigner = false
+  live.signedOut = false
   moderationService.invalidateTeam()
 })
 
@@ -132,6 +135,14 @@ describe('moderation signs only with a raw key', () => {
     walletSession.active = true
     const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
     expect(result).toMatchObject({ success: false, errorCode: 'NEEDS_CRITICAL_KEY' })
+    expect(sdk.contracts.warnUser).not.toHaveBeenCalled()
+  })
+
+  it('sends nothing when the moderator signs out after the signer is built, before the write goes out', async () => {
+    topology.lists = ['banlist', 'suspensions', 'warnings']
+    live.signOutAtSigner = true
+    const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
+    expect(result).toEqual({ success: false, errorCode: 'CANCELLED' })
     expect(sdk.contracts.warnUser).not.toHaveBeenCalled()
   })
 })

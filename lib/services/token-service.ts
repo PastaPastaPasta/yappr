@@ -47,10 +47,12 @@ class UnconfirmedTokenWriteError extends Error {
  * comes back as {@link UnconfirmedTokenWriteError}; a failure before that sent
  * nothing and is rethrown as is.
  */
-async function sendTokenWrite(ownerId: string, write: () => Promise<unknown>): Promise<void> {
+async function sendTokenWrite(ownerId: string, write: () => Promise<unknown>, assertLive?: () => void): Promise<void> {
   let sent = false;
   try {
     await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, () => {
+      // Last check before a step-up key signs: the session it was given in must still be the one signed in.
+      assertLive?.();
       sent = true;
       return write();
     });
@@ -150,7 +152,7 @@ class TokenService {
 
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey } = await this.getAuthSigner(buyerId, { requireCritical: true });
+      const { signer, identityKey, assertLive } = await this.getAuthSigner(buyerId, { requireCritical: true });
 
       await sendTokenWrite(buyerId, () => sdk.tokens.directPurchase({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -160,7 +162,7 @@ class TokenService {
         maxTotalCost,
         identityKey,
         signer,
-      } as Parameters<typeof sdk.tokens.directPurchase>[0]));
+      } as Parameters<typeof sdk.tokens.directPurchase>[0]), assertLive);
 
       return { success: true };
     } catch (error) {
@@ -197,7 +199,7 @@ class TokenService {
     }
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey } = await this.getAuthSigner(senderId, { requireCritical: true });
+      const { signer, identityKey, assertLive } = await this.getAuthSigner(senderId, { requireCritical: true });
 
       await sendTokenWrite(senderId, () => sdk.tokens.transfer({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -208,7 +210,7 @@ class TokenService {
         publicNote,
         identityKey,
         signer,
-      } as Parameters<typeof sdk.tokens.transfer>[0]));
+      } as Parameters<typeof sdk.tokens.transfer>[0]), assertLive);
 
       return { success: true };
     } catch (error) {
@@ -278,7 +280,7 @@ class TokenService {
     try {
       const sdk = await getEvoSdk();
       const auth = await this.getAuthSigner(identityId, { requireCritical: true, keyRing: true });
-      const { signer, identityKey } = auth;
+      const { signer, identityKey, assertLive } = auth;
       signingKey = auth.signingKey;
       await sendTokenWrite(identityId, () => sdk.tokens.claim({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -287,7 +289,7 @@ class TokenService {
         distributionType: 'oncePerIdentity',
         identityKey,
         signer,
-      } as Parameters<typeof sdk.tokens.claim>[0]));
+      } as Parameters<typeof sdk.tokens.claim>[0]), assertLive);
       reportSigningSuccess(identityId);
       return { success: true };
     } catch (error) {
@@ -378,7 +380,7 @@ class TokenService {
   private async getAuthSigner(
     identityId: string,
     opts?: { requireCritical?: boolean; keyRing?: boolean }
-  ): Promise<{ signer: Awaited<ReturnType<typeof signerService.createSigner>>; identityKey: WasmIdentityPublicKey; signingKey?: SigningKey }> {
+  ): Promise<{ signer: Awaited<ReturnType<typeof signerService.createSigner>>; identityKey: WasmIdentityPublicKey; signingKey?: SigningKey; assertLive?: () => void }> {
     const appConnect = hasAppConnectSession(identityId);
     if (appConnect && opts?.keyRing) {
       const sdk = await getEvoSdk();
@@ -398,7 +400,7 @@ class TokenService {
       if (!identity) throw new Error('Identity not found');
       const critical = await criticalKeyFor(identityId, identity.publicKeys, 'token', sessionKey, session);
       await assertRawKeyCovers(identityId, critical.key, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
-      return signerService.createSignerFromWasmKey(critical.wif, critical.key);
+      return { ...(await signerService.createSignerFromWasmKey(critical.wif, critical.key)), assertLive: critical.assertLive };
     }
     if (appConnect) throw new Error(CRITICAL_KEY_REQUIRED);
     const { getPrivateKeyRecord } = await import('../secure-storage');

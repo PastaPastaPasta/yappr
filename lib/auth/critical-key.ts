@@ -231,16 +231,19 @@ export async function criticalKeyFor<K extends IdentityKeyLike>(
   use: CriticalKeyUse,
   sessionKey: string | null,
   session: number,
-): Promise<{ wif: string; key: K }> {
+): Promise<{ wif: string; key: K; assertLive: () => void }> {
   const stillSignedIn = () => currentIdentityId() === identityId && sessionEpoch() === session
-  if (!stillSignedIn()) throw new CriticalKeyCancelledError()
+  // For the caller to run once more right before the write goes out (after the signer is built and the
+  // write lock is held), so a sign-out meanwhile still stops it.
+  const assertLive = () => { if (!stillSignedIn()) throw new CriticalKeyCancelledError() }
+  assertLive()
   const available = availableCriticalKey(identityId, publicKeys, use, sessionKey)
-  if (available) return available
+  if (available) return { ...available, assertLive }
   if (listeners.size === 0) throw new Error(CRITICAL_KEY_REQUIRED)
   const answer = await ask(identityId, use)
   if (!answer || !stillSignedIn()) throw new CriticalKeyCancelledError()
   const result = usableFor(answer.source, use) ? matchCritical(answer.wif, publicKeys) : null
   if (!result?.ok) throw new Error(CRITICAL_KEY_REQUIRED)
   if (answer.keep) holdCriticalKey(identityId, answer.wif, answer.source)
-  return { wif: answer.wif, key: result.key }
+  return { wif: answer.wif, key: result.key, assertLive }
 }

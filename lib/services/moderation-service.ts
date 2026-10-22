@@ -515,6 +515,8 @@ interface ModeratorAuth {
   /** The CRITICAL key and its WIF, for the one moderator write built by hand (a restriction's create). */
   identityKey?: IdentityPublicKey;
   wif?: string;
+  /** Throws CriticalKeyCancelledError once the session the key was read in has ended (lib/auth/critical-key.ts). */
+  assertLive: () => void;
 }
 
 /** A restriction's create fields: the target as identifier bytes, in force (`state` 1), with the charter reason. */
@@ -1805,13 +1807,16 @@ class ModerationService {
     // answer could not be verified may hide a landed transition.
     let started = false;
     // Each transition its own reservation (a batch signs one nonce per report).
+    let auth: ModeratorAuth | undefined;
     const send: ModerationSend = (write) => withSdkSignedWrite(moderatorId, this.contract.contractId, () => {
+      // Last check before the CRITICAL key signs: the session it was read in must still be the one signed in.
+      auth?.assertLive();
       started = true;
       return write();
     });
     try {
       const sdk = await getEvoSdk();
-      const auth = await this.getCriticalSigner(moderatorId);
+      auth = await this.getCriticalSigner(moderatorId);
       await action(sdk, auth, send);
       if (moderatedIdentityId) this.standingCache.delete(moderatedIdentityId);
       return { success: true };
@@ -1846,9 +1851,9 @@ class ModerationService {
     const sdk = await getEvoSdk();
     const identity = await sdk.identities.fetch(identityId);
     if (!identity) throw new Error('Identity not found');
-    const { wif, key } = await criticalKeyFor(identityId, identity.publicKeys, 'moderation', sessionKey, session);
+    const { wif, key, assertLive } = await criticalKeyFor(identityId, identity.publicKeys, 'moderation', sessionKey, session);
     const signer = await signerService.createSigner(wif);
-    return { identity, signer, identityKey: key, wif };
+    return { identity, signer, identityKey: key, wif, assertLive };
   }
 
   private toResult(error: unknown, started = false): ModerationResult {
