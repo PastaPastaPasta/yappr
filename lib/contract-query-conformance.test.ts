@@ -696,7 +696,7 @@ describe('the spec bites', () => {
 describe('the v18 release set serves every default, archive and log read', () => {
   const models = { social: parseContract(socialV18), blog: parseContract(blogV10), storefront: parseContract(storefrontV11) }
   const values = {
-    author: ident(12), me: ident(11), post: ident(21), reply: ident(31), tag: 'dash', since: SINCE,
+    author: ident(12), me: ident(11), post: ident(21), reply: ident(31), tag: 'dash',
     blog: ident(41), blogPost: ident(42), store: ident(51), item: ident(52), target: ident(12),
   }
   type Expanded = ReturnType<typeof expandQueries>[number]

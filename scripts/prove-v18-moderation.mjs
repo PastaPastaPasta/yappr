@@ -68,7 +68,7 @@ const args = (() => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
-const err = (e) => describeErr(e).replace(/\b[c9][1-9A-HJ-NP-Za-km-z]{50,51}\b/g, '[KEY]').slice(0, 900);
+const err = (e) => describeErr(e).slice(0, 900);
 const codeOf = (s) => (String(s).match(/\b(4\d{4}|1\d{4})\b/) ?? [])[1] ?? null;
 const big = (_k, v) => (typeof v === 'bigint' ? v.toString() : v);
 const cents = (credits) => `${((Number(credits) / 1e6) * 0.06).toFixed(2)}¢`;
@@ -616,7 +616,7 @@ async function storefrontBattery() {
 async function catalogue() {
   const values = {
     author: (await who(ROLES.AUTHOR)).ownerId, me: (await who(ROLES.RESTRICTED)).ownerId,
-    post: state.docs['social/P1'], reply: state.docs['social/R1'], tag: TAG, since: 0,
+    post: state.docs['social/P1'], reply: state.docs['social/R1'], tag: TAG,
     blog: state.docs['blog/BLOG'], blogPost: state.docs['blog/BP1'], store: state.docs['storefront/STORE'], item: state.docs['storefront/ITEM1'],
     target: (await who(ROLES.RESTRICTED)).ownerId,
   };
