@@ -28,6 +28,15 @@ export type ElectionStage =
   /** A read failed, so nothing is claimed. */
   | { kind: 'unknown' }
 
+/**
+ * `status` when it is the election of `contractId`, else null: an answer read
+ * for another contract (a tab the viewer left) never stands in for this one,
+ * so nothing can be filed against the wrong target.
+ */
+export function statusForContract(status: ElectionStatus | null, contractId: string): ElectionStatus | null {
+  return status !== null && contractId !== '' && status.targetContractId === contractId ? status : null
+}
+
 /** How far chain time is from this device's clock, from a status just read (0 when it carried no chain time). */
 export function chainOffsetMs(status: Pick<ElectionStatus, 'chainTimeMs'> | null, readAtMs = Date.now()): number {
   return status?.chainTimeMs != null ? status.chainTimeMs - readAtMs : 0

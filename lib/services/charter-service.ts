@@ -38,15 +38,17 @@ import { extractErrorMessage, isAlreadyExistsError, sentWriteOutcomeUnknown } fr
 import { sleep } from '@/lib/retry-utils'
 import { CHARTERS_CONTRACT_ID, CHARTER_KEYS, isCharterKey, type RewardSplit } from '@/lib/moderation-charters/rules.mjs'
 import {
-  charterIdBytes, charterKeyInCreation, charterNonceConsumed, charterStepExists, nextCharterNonce, signCharterCreate,
-  type CharterDocumentType, type SignedCharterCreate,
+  charterIdBytes, charterKeyInCreation, charterStepExists, signCharterCreate, type CharterDocumentType, type SignedCharterCreate,
 } from '@/lib/moderation-charters/transitions.mjs'
+import { withIdentityWriteLock } from '@/lib/identity-write-lock'
 import {
   deriveCharterKey, forgetCharterKeys, heldCharterKey, holdCharterKey, keyMatches, readPrivateKeyInput, type CharterRole,
 } from '@/lib/moderation-charters/charter-keys'
 import { CHARTER_UNCERTAIN_MESSAGE, CharterActionError, charterActionError, type CharterAction } from '@/lib/moderation-charters/refusals'
 import type { CreateFees } from '@/lib/moderation-charters/costs'
 import { getEvoSdk } from './evo-sdk-service'
+import { allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce'
+import { stateTransitionService } from './state-transition-service'
 import { documentToPlainObject, identifierToBase58 } from './sdk-helpers'
 import { toProposal, toReason, type CharterProposal, type CharterReason } from './moderation-election-service'
 
@@ -88,6 +90,13 @@ async function fetchIdentity(identityId: string) {
   return identity
 }
 
+/** A signed create that may still land, with the nonce reservation that keeps others off its nonce. */
+interface PendingCreate {
+  signed: SignedCharterCreate
+  fingerprint: string
+  reservation: PendingTransition
+}
+
 type MatchResult = ReturnType<typeof matchIdentityKey<IdentityPublicKey>>
 
 /** Why a typed key can't sign charters documents, in words; null when it can. */
@@ -108,11 +117,9 @@ class CharterService {
    * target, the proposal, the reason code): at most one per slot, retried
    * byte for byte, never re-signed while it may still land.
    */
-  private pending = new Map<string, { signed: SignedCharterCreate; fingerprint: string }>()
+  private pending = new Map<string, PendingCreate>()
   /** The write each slot has under way, so a second click joins it instead of signing again. */
   private inFlight = new Map<string, Promise<string>>()
-  /** The highest charters nonce proved per identity, so a lagging read never reuses one. */
-  private nonceFloors = new Map<string, bigint>()
   /** Bumped by `forgetKeys`: a key answered for an earlier generation is never kept. */
   private generation = 0
 
@@ -446,11 +453,18 @@ class CharterService {
    * - a definite refusal drops it;
    * - an outcome without a verdict keeps it, and the next try broadcasts
    *   exactly the same bytes, never a new transition under a new nonce;
-   * - once its nonce is used up and the document is still absent, it can
-   *   never land, so it is dropped and the caller told to check and retry;
+   * - it is dropped as dead only on proof (`stateTransitionService.settleCreate`:
+   *   its nonce consumed, gap-aware, and the document proved absent at that
+   *   height or later); a read that fails or lags proves nothing. An
+   *   application lives in the contest, not in document storage, so it is
+   *   never declared dead: one per identity per contest makes resending it safe;
    * - a try with different contents while one may still land is refused,
    *   so an edit after a timeout can never file a second proposal or pay a
    *   second deposit.
+   *
+   * Nonces come from the shared coordinator (`identity-nonce.ts`) under the
+   * identity's write lock on the charters contract, like every other write
+   * this browser signs, so two tabs or two actions never share one.
    */
   private file(action: CharterAction, input: {
     ownerId: string
@@ -477,65 +491,83 @@ class CharterService {
     const { ownerId, type, data, fingerprint, targetContractId = '', fund = false } = input
     const sdk = await getEvoSdk()
     const w = await wasmModule()
-    const exists = (signed: SignedCharterCreate) => charterStepExists(w, sdk, signed, targetContractId).catch(() => false)
+    // True when proved there, false when proved absent, null when the read failed (which proves nothing).
+    const exists = (signed: SignedCharterCreate) => charterStepExists(w, sdk, signed, targetContractId).catch(() => null)
+    /** Landed, proved dead, or still unknown. */
+    const settle = async (signed: SignedCharterCreate): Promise<'landed' | 'dead' | null> => {
+      if (await exists(signed) === true) return 'landed'
+      if (type === 'electedCharter') return null
+      const outcome = await stateTransitionService.settleCreate({
+        contractId: CHARTERS_CONTRACT_ID, documentType: type, ownerId, documentId: signed.id, nonce: BigInt(signed.nonce), transition: signed.bytes,
+      })
+      return outcome === 'landed' ? 'landed' : outcome === 'not-recorded' ? 'dead' : null
+    }
+
     let entry = this.pending.get(key)
     if (entry) {
-      if (await exists(entry.signed)) return this.proved(key, entry.signed)
-      if (await charterNonceConsumed(sdk, ownerId, entry.signed.nonce).catch(() => false)) {
-        // Its nonce is used: it either landed (a lagging read) or never will.
-        if (await this.proveWithin(exists, entry.signed)) return this.proved(key, entry.signed)
-        this.pending.delete(key)
+      const outcome = await settle(entry.signed)
+      if (outcome === 'landed') return this.proved(key, entry)
+      if (outcome === 'dead') {
+        this.release(key, entry, true)
         entry = undefined
       } else if (entry.fingerprint !== fingerprint) {
         throw new CharterActionError('Your last try may still go through. Check again in a minute before changing anything.', 'uncertain')
       }
     }
-    if (!entry) {
-      const { wif, identityKey } = await this.signingKey(ownerId)
-      const nonce = await nextCharterNonce(sdk, ownerId, this.nonceFloors.get(ownerId) ?? 0n)
-      const privateKey = w.PrivateKey.fromWIF(wif)
+
+    // The key is asked for before the lock, so a prompt never holds other writes back.
+    const signing = entry ? null : await this.signingKey(ownerId)
+    const sending = await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
+      let current = entry
+      if (!current && signing) {
+        const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
+        const privateKey = w.PrivateKey.fromWIF(signing.wif)
+        try {
+          const signed = await signCharterCreate(w, sdk, { type, ownerId, data, nonce, privateKey, identityKey: signing.identityKey, fund })
+          current = { signed, fingerprint, reservation: reserveNonce(ownerId, CHARTERS_CONTRACT_ID, nonce, tip, key) }
+        } finally {
+          privateKey.free()
+        }
+        this.pending.set(key, current)
+      }
+      if (!current) throw new CharterActionError("That didn't go through. Please try again in a moment.", 'refused')
       try {
-        entry = { signed: await signCharterCreate(w, sdk, { type, ownerId, data, nonce, privateKey, identityKey, fund }), fingerprint }
-      } finally {
-        privateKey.free()
+        await sdk.stateTransitions.broadcastAndWait(w.StateTransition.fromBytes(current.signed.bytes))
+      } catch (error) {
+        // A verdict on these bytes drops them. "Already in the mempool or chain",
+        // a nonce clash (these bytes may have executed on an earlier try) and a
+        // lost connection are not verdicts: prove the document instead.
+        if (!isAlreadyExistsError(error) && !sentWriteOutcomeUnknown(error)) {
+          this.release(key, current, false)
+          throw error
+        }
+        logger.warn(`charters: ${type} ${current.signed.id} reported no verdict; checking for it`, extractErrorMessage(error))
       }
-      this.pending.set(key, entry)
+      return current
+    })
+
+    for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
+      if (await exists(sending.signed) === true) return this.proved(key, sending)
+      await sleep(PROOF_PAUSE_MS)
     }
-    const { signed } = entry
-    try {
-      await sdk.stateTransitions.broadcastAndWait(w.StateTransition.fromBytes(signed.bytes))
-    } catch (error) {
-      // A verdict on these bytes drops them. "Already in the mempool or chain",
-      // a nonce already at the tip (these bytes executed on an earlier try) and
-      // a lost connection are not verdicts: prove the document instead.
-      if (!isAlreadyExistsError(error) && !sentWriteOutcomeUnknown(error)) {
-        this.pending.delete(key)
-        throw error
-      }
-      logger.warn(`charters: ${type} ${signed.id} reported no verdict; checking for it`, extractErrorMessage(error))
-    }
-    if (await this.proveWithin(exists, signed)) return this.proved(key, signed)
-    if (await charterNonceConsumed(sdk, ownerId, signed.nonce).catch(() => false)) {
-      this.pending.delete(key)
+    const outcome = await settle(sending.signed)
+    if (outcome === 'landed') return this.proved(key, sending)
+    if (outcome === 'dead') {
+      this.release(key, sending, true)
       throw new CharterActionError("This wasn't recorded. Check, then try again.", 'refused')
     }
     throw new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
   }
 
-  /** Whether `signed` is proved within about a minute. */
-  private async proveWithin(exists: (signed: SignedCharterCreate) => Promise<boolean>, signed: SignedCharterCreate): Promise<boolean> {
-    for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
-      if (await exists(signed)) return true
-      await sleep(PROOF_PAUSE_MS)
-    }
-    return false
+  /** Drops a slot's signed create, telling the nonce coordinator whether its nonce is spent. */
+  private release(key: string, entry: PendingCreate, spent: boolean): void {
+    this.pending.delete(key)
+    releaseNonce(entry.signed.owner, CHARTERS_CONTRACT_ID, entry.reservation, spent ? BigInt(entry.signed.nonce) : undefined)
   }
 
-  private proved(key: string, signed: SignedCharterCreate): string {
-    this.pending.delete(key)
-    const nonce = BigInt(signed.nonce)
-    if (nonce > (this.nonceFloors.get(signed.owner) ?? 0n)) this.nonceFloors.set(signed.owner, nonce)
-    return signed.id
+  private proved(key: string, entry: PendingCreate): string {
+    this.release(key, entry, true)
+    return entry.signed.id
   }
 
   /**
@@ -654,17 +686,18 @@ class CharterService {
       const { wif, identityKey } = await this.signingKey(ownerId)
       const sdk = await getEvoSdk()
       const w = await wasmModule()
-      // The SDK keeps its own nonce cache; creates signed here went around it.
-      await sdk.wasm.refreshIdentityNonce(w.Identifier.fromBase58(ownerId))
-      const signer = new w.IdentitySigner()
-      const privateKey = w.PrivateKey.fromWIF(wif)
-      try {
-        signer.addKey(privateKey)
-        await sdk.documents.delete({ document: { id: documentId, ownerId, dataContractId: CHARTERS_CONTRACT_ID, documentTypeName: type }, identityKey, signer })
-      } finally {
-        signer.free()
-        privateKey.free()
-      }
+      // The SDK picks this nonce itself: the coordinator holds other writes off it.
+      await withSdkSignedWrite(ownerId, CHARTERS_CONTRACT_ID, async () => {
+        const signer = new w.IdentitySigner()
+        const privateKey = w.PrivateKey.fromWIF(wif)
+        try {
+          signer.addKey(privateKey)
+          await sdk.documents.delete({ document: { id: documentId, ownerId, dataContractId: CHARTERS_CONTRACT_ID, documentTypeName: type }, identityKey, signer })
+        } finally {
+          signer.free()
+          privateKey.free()
+        }
+      }, `${type}:${documentId}`)
     } catch (error) {
       throw charterActionError('undo-team-change', error)
     }

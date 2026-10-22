@@ -14,7 +14,7 @@ import { charterService, type JoinRequest } from '@/lib/services/charter-service
 import { CharterActionError, type CharterAction } from '@/lib/moderation-charters/refusals'
 import { CHARTERS_CONTRACT_ID, CHARTER_LIMITS, CONTEST_FUND_CREDITS, LEADER_MINIMUM_CREDITS, messageProblem, utf8Bytes } from '@/lib/moderation-charters/rules.mjs'
 import { DEPOSIT_TEXT, LEADER_MINIMUM_TEXT, applyCostLines, formatDash, joinCostLines } from '@/lib/moderation-charters/costs'
-import { applyBlocker, chainOffsetMs, electionStage, joinBlocker, proposalStanding, type ApplyBlocker, type ElectionStage } from '@/lib/moderation-charters/team-flow'
+import { applyBlocker, chainOffsetMs, electionStage, joinBlocker, statusForContract, proposalStanding, type ApplyBlocker, type ElectionStage } from '@/lib/moderation-charters/team-flow'
 import { inviteUrl, masternodeVoteUrl, teamsHref } from '@/lib/moderation-charters/links'
 import {
   CharterTerms, CostPreview, Hint, IdentityName, InviteLink, Notice, Section, StageBadge,
@@ -165,15 +165,18 @@ export function ProposalView({ contract, proposalId, election }: {
   })
 
   const fileApplication = () => runForOutcome('Filing your application…', 'application', async () => {
-    if (!me || !status) return
+    if (!me) return
+    // This tab's contract, and the proposal's own target: the deposit can only go to the contest shown.
+    const target = declared.contractId
+    if (!target || proposal.targetContractId !== target) throw new CharterActionError(`This proposal is not for ${declared.label}.`, 'refused')
     // Read the contest again right before the deposit is committed.
-    const fresh = await moderationElectionService.getStatus(status.targetContractId)
+    const fresh = statusForContract(await moderationElectionService.getStatus(target), target)
     const freshBalance = await charterService.balance(me)
     if (!fresh) throw new CharterActionError('The election could not be read. Refresh, then try again.', 'refused')
     const freshStage = electionStage(fresh, Date.now() + chainOffsetMs(fresh))
     const blocker = applyBlocker({ stage: freshStage, proposal, viewerId: me, status: fresh, members, requested, balance: freshBalance, minimumBalance: LEADER_MINIMUM_CREDITS })
     if (blocker) throw new CharterActionError(applyBlockerText(blocker, freshStage), 'refused')
-    await charterService.fileApplication(me, proposal, status.targetContractId, members)
+    await charterService.fileApplication(me, proposal, target, members)
     await refresh()
     return 'Your application is filed.'
   })

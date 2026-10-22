@@ -128,7 +128,8 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
 
   const submit = async () => {
     setTouched(true)
-    if (problems.length > 0 || !status) return
+    // The proposal is for this tab's contract, and only on that contract's own election read.
+    if (problems.length > 0 || !status || status.targetContractId !== declared.contractId) return
     const proposalId = await run(null, 'proposal', async () => {
       // Members' join messages are encrypted to the leader's charter key, so it comes first.
       if (needsKey ?? !(await charterService.hasCharterKey(me, 'leader'))) {
@@ -151,7 +152,7 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
       }
       setBusy('Filing your proposal…')
       return charterService.submitProposal(me, {
-        targetContractId: status.targetContractId,
+        targetContractId: declared.contractId,
         description,
         reasonIds,
         moderatorsShare: share,

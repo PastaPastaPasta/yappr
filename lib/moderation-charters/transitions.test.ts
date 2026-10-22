@@ -62,6 +62,16 @@ describe('signed charters creates', () => {
 })
 
 describe('charters nonces', () => {
+  it('counts a nonce behind the tip whose missing bit is still set as able to execute', async () => {
+    // Tip 137, nonce 136 still missing (bit 40), 135 filled in.
+    const sdk = { wasm: { getIdentityContractNonce: vi.fn().mockResolvedValue((1n << 40n) | 137n) } } as unknown as EvoSDK
+    expect(await charterNonceConsumed(sdk, OWNER, 136n)).toBe(false)
+    expect(await charterNonceConsumed(sdk, OWNER, 137n)).toBe(true)
+    expect(await charterNonceConsumed(sdk, OWNER, 135n)).toBe(true)
+    expect(await charterNonceConsumed(sdk, OWNER, 138n)).toBe(false)
+    expect(await charterNonceConsumed(sdk, OWNER, 100n)).toBe(true)
+  })
+
   it('takes one past the tip, ignoring the revision bits, and waits for a read behind a proved write', async () => {
     vi.useFakeTimers()
     try {

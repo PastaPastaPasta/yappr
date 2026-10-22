@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ClipboardDocumentIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -16,39 +16,45 @@ import { charterService } from '@/lib/services/charter-service'
 import type { CharterRole } from '@/lib/moderation-charters/charter-keys'
 import { costTotal, formatCost, type CostLine, type CreateFees } from '@/lib/moderation-charters/costs'
 import { charterActionError, type CharterAction } from '@/lib/moderation-charters/refusals'
-import { chainOffsetMs, type ElectionStage } from '@/lib/moderation-charters/team-flow'
+import { chainOffsetMs, statusForContract, type ElectionStage } from '@/lib/moderation-charters/team-flow'
 
 /** The election status of `contractId`, read once on mount and on `refresh()`. */
 export function useElectionStatus(contractId: string) {
   const { isReady } = useSdk()
   const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus(contractId)), [contractId])
-  const [status, setStatus] = useState<ElectionStatus | null>(null)
-  const [notElected, setNotElected] = useState(false)
+  // Every answer is kept with the contract it was read for, so a late answer for
+  // a tab the viewer already left can never stand in for the current one.
+  const [loaded, setLoaded] = useState<{ contractId: string; status: ElectionStatus | null; failed: boolean } | null>(null)
   const [loading, setLoading] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const latest = useRef(contractId)
+  latest.current = contractId
 
   const refresh = useCallback(async () => {
+    const requested = contractId
     setLoading(true)
-    setFailed(false)
     try {
       const result = await loader.load()
-      setStatus(result)
-      setNotElected(result === null)
+      if (latest.current === requested) setLoaded({ contractId: requested, status: result, failed: false })
     } catch (error) {
       logger.error('Moderation teams: election status read failed', error)
-      setFailed(true)
+      if (latest.current === requested) setLoaded((previous) => ({ contractId: requested, status: previous?.contractId === requested ? previous.status : null, failed: true }))
     } finally {
-      setLoading(false)
+      if (latest.current === requested) setLoading(false)
     }
-  }, [loader])
+  }, [contractId, loader])
 
   useEffect(() => {
-    setStatus(null)
-    setNotElected(false)
     if (isReady) refresh().catch(() => { /* reported inside */ })
   }, [isReady, refresh])
 
-  return { status, notElected, loading, failed, refresh }
+  const current = loaded?.contractId === contractId ? loaded : null
+  return {
+    status: statusForContract(current?.status ?? null, contractId),
+    notElected: current !== null && !current.failed && current.status === null,
+    loading,
+    failed: current?.failed ?? false,
+    refresh,
+  }
 }
 
 /**

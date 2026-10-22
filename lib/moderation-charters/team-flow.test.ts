@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CharterProposal, ElectionContest, ElectionStatus, SeatedTeam } from '@/lib/services/moderation-election-service'
 import { LEADER_MINIMUM_CREDITS } from './rules.mjs'
-import { applyBlocker, chainOffsetMs, electionStage, joinBlocker, proposalStanding, teamChanges } from './team-flow'
+import { applyBlocker, chainOffsetMs, electionStage, statusForContract, joinBlocker, proposalStanding, teamChanges } from './team-flow'
 
 const HOUR = 3_600_000
 const T0 = 1_800_000_000_000
@@ -52,6 +52,17 @@ describe('election stage', () => {
     expect(electionStage(status({ failures: ['seatedTeam'] }), T0 + 2 * HOUR)).toEqual({ kind: 'unknown' })
     expect(electionStage(status({ failures: ['contest'] }), T0 + 2 * HOUR)).toEqual({ kind: 'unknown' })
     expect(electionStage(status({ contest: contest([{ identityId: LEADER, votes: 0 }], null) }), T0 + 2 * HOUR)).toEqual({ kind: 'unknown' })
+  })
+})
+
+describe('the contract a status belongs to', () => {
+  it("never lets a late answer for the tab the viewer left stand in for the current contract's", () => {
+    const social = status({ targetContractId: 'social-id' })
+    expect(statusForContract(social, 'social-id')).toBe(social)
+    // Social was still loading when the viewer switched to Blogs; its answer arrives last.
+    expect(statusForContract(social, 'blog-id')).toBeNull()
+    expect(statusForContract(null, 'blog-id')).toBeNull()
+    expect(statusForContract(status({ targetContractId: '' }), '')).toBeNull()
   })
 })
 
