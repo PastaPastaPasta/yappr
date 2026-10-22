@@ -271,6 +271,25 @@ export function moderatedContract(key: ModeratedContractKey): ModeratedContract 
   return CONTRACTS[key]
 }
 
+/**
+ * True when no moderated contract of the build lets its moderators delete
+ * what people post (the v18 / blog v10 / storefront v11 model): they hide it
+ * from Yappr's feeds and restrict accounts instead, and the Terms, Privacy
+ * and About pages say so. False wherever any contract still lets moderators
+ * delete content (/devnet, /staging-old and today's release cut) and on the
+ * unmoderated legacy v2 cut; there the copy keeps describing removals.
+ * Reports are not content, so a moderator delete of a report doesn't count.
+ *
+ * Placeholder until the v18 contract work (`feat/v18-hide-moderation-contracts`)
+ * adds a topology flag for the hide model; switch to that flag when it lands.
+ */
+export function moderationHidesOnly(): boolean {
+  return SOCIAL.moderated() && MODERATED_CONTRACTS.every((key) => {
+    const contract = CONTRACTS[key]
+    return !contract.moderated() || contract.deletableTypes().every((docType) => docType === 'report')
+  })
+}
+
 /** How a moderated document type is named to people ("listing", not "storeItem"). */
 const DOCUMENT_NOUNS: Readonly<Record<string, string>> = {
   store: 'store',

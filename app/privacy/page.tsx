@@ -6,6 +6,7 @@ import { InfoPage, InfoSection, Prose, BulletList, NetworkNotice } from '@/compo
 import { SupportEmailLink } from '@/components/layout/legal-links'
 import { IPFS_GATEWAYS } from '@/lib/utils/ipfs-gateway'
 import { LEGAL_UPDATED, orderStatusPrivacyDisclosure } from '@/lib/legal'
+import { moderationHidesOnly } from '@/lib/moderated-contracts'
 import { YAPPR_DM_CONTRACT_ID, dmIsV5 } from '@/lib/constants'
 
 const PUBLIC_DATA = [
@@ -20,6 +21,7 @@ const PUBLIC_DATA = [
   'Your blogs, blog posts and comments, and the blogs you follow',
   'Your store and items, the reviews you write, and that you ordered from a store and when',
   'Standing for a moderation team, and votes in its election',
+  'What moderators do to your account or content, and the reasons they give',
   'If you add passkeys: how many you have and when you added them, and your sign-in keys, encrypted so only that passkey can open them',
   'The time of every action',
 ]
@@ -201,8 +203,10 @@ export default function PrivacyPage() {
             hashtags. It does not disappear from the network&apos;s history, or from anyone who already saw, saved or copied it.
           </p>
           <p>
-            When moderators remove something, a few details (such as when it was posted and its hashtags) stay, along with a public
-            record of the removal. Your Dash identity itself can&apos;t be deleted.
+            {moderationHidesOnly()
+              ? 'Moderators can’t delete anything. When they hide something, it stays on the network, with a public note of the hide and its reason, and stops appearing in Yappr’s feeds.'
+              : 'When moderators remove something, a few details (such as when it was posted and its hashtags) stay, along with a public record of the removal.'}{' '}
+            Your Dash identity itself can&apos;t be deleted.
           </p>
         </Prose>
       </InfoSection>
