@@ -6,8 +6,9 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { SettingsSwitch } from '@/components/settings/settings-switch'
+import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
-import { syncModeratorViewer, useModeratorView } from '@/hooks/use-moderator-view'
+import { syncModeratorViewer, useModeratorView, useModeratorViewStore } from '@/hooks/use-moderator-view'
 import { cn } from '@/lib/utils'
 
 /** Where the moderators' list of hidden content and restricted accounts lives. */
@@ -25,6 +26,23 @@ export function ModeratorViewController() {
   const identityId = user?.identityId ?? null
   useEffect(() => (isAuthRestoring ? undefined : syncModeratorViewer(identityId)), [identityId, isAuthRestoring])
   return null
+}
+
+/**
+ * What a held page shows while the moderator view is applied (the session
+ * restored and the seats read), with a way out should that take long.
+ */
+export function ModeratorViewHold() {
+  const abandonHold = useModeratorViewStore((state) => state.abandonHold)
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4" data-testid="moderator-view-hold">
+      <Spinner size="md" />
+      <p className="text-sm text-gray-500">Opening moderator view…</p>
+      <button type="button" onClick={abandonHold} className="text-sm font-medium text-yappr-600 hover:underline dark:text-yappr-400">
+        Continue without it
+      </button>
+    </div>
+  )
 }
 
 /**

@@ -39,12 +39,14 @@ function readEnabledFor(): string | null {
   }
 }
 
-function writeEnabledFor(identityId: string | null): void {
+/** Saves the switch; false when storage is blocked (it could not outlive a reload). */
+function writeEnabledFor(identityId: string | null): boolean {
   try {
     if (identityId) sessionStorage.setItem(TOGGLE_KEY, identityId)
     else sessionStorage.removeItem(TOGGLE_KEY)
+    return true
   } catch {
-    // Storage blocked: the switch cannot outlive the reload, so it stays off.
+    return false
   }
 }
 
@@ -101,6 +103,8 @@ interface ModeratorViewState {
   setViewer: (viewer: string | null) => void
   setSeated: (identityId: string, seated: ModeratedContractKey[]) => void
   setEnabled: (on: boolean) => void
+  /** Gives up on a held page: turns the switch off and reloads without the view. */
+  abandonHold: () => void
 }
 
 export const useModeratorViewStore = create<ModeratorViewState>((set, get) => ({
@@ -124,13 +128,25 @@ export const useModeratorViewStore = create<ModeratorViewState>((set, get) => ({
     // The page is still held for an identity that turned the view on: apply the view before it mounts.
     if (moderatorViewHolds(state)) {
       setModeratorViewContracts(moderatorViewScope({ viewer: identityId, seatedFor: identityId, seated, enabled: state.enabledFor === identityId }))
+      // No seat (unseated since, or unreadable): forget the switch, or every load in this tab would wait on it.
+      if (seated.length === 0 && writeEnabledFor(null)) {
+        set({ seatedFor: identityId, seated, enabledFor: null })
+        return
+      }
     }
     set({ seatedFor: identityId, seated })
   },
   setEnabled: (on) => {
     const state = get()
     if (!state.viewer || state.seatedFor !== state.viewer || state.seated.length === 0) return
-    writeEnabledFor(on ? state.viewer : null)
+    if (!writeEnabledFor(on ? state.viewer : null)) {
+      logger.warn('Moderator view: the switch cannot be saved in this browser, so it stays as it is')
+      return
+    }
+    reloadPage()
+  },
+  abandonHold: () => {
+    writeEnabledFor(null)
     reloadPage()
   },
 }))
@@ -166,13 +182,19 @@ export function useModeratorView(): {
   /** Saves the switch and reloads the page under it. */
   setEnabled: (on: boolean) => void
 } {
+  const booted = useModeratorViewStore((state) => state.booted)
   const viewer = useModeratorViewStore((state) => state.viewer)
   const seatedFor = useModeratorViewStore((state) => state.seatedFor)
   const seated = useModeratorViewStore((state) => state.seated)
   const enabledFor = useModeratorViewStore((state) => state.enabledFor)
   const setEnabled = useModeratorViewStore((state) => state.setEnabled)
   const verified = viewer !== null && seatedFor === viewer ? seated : NONE
-  return { seated: verified, active: enabledFor === viewer && verified.length > 0, checking: viewer !== null && seatedFor !== viewer, setEnabled }
+  return {
+    seated: verified,
+    active: enabledFor === viewer && verified.length > 0,
+    checking: !booted || (viewer !== null && seatedFor !== viewer),
+    setEnabled,
+  }
 }
 
 /** True when the viewer is a verified seated moderator of `contract`. */
