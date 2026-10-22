@@ -11,7 +11,7 @@ import { documentNoun, moderatedContract, type ModeratedContract, type Moderated
 import { storedTags } from '@/lib/post-helpers';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
-import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, isUnverifiedOutcomeError, type ModerationErrorKind } from '@/lib/error-utils';
+import { PENDING_WRITE_ERROR, classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, isUnverifiedOutcomeError, type ModerationErrorKind } from '@/lib/error-utils';
 import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/reports';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
@@ -112,7 +112,7 @@ export interface ModerationResult {
    * have happened — the caller says "check again", never "failed".
    */
   errorCode?: 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | 'DOCUMENT_GONE'
-    | 'INVALID_LABEL' | 'ALREADY_RESTRICTED' | 'NOT_RESTRICTED' | ModerationErrorKind;
+    | 'INVALID_LABEL' | 'ALREADY_RESTRICTED' | 'NOT_RESTRICTED' | 'WRITE_PENDING' | ModerationErrorKind;
 }
 
 /**
@@ -1907,6 +1907,8 @@ class ModerationService {
     if (lower.includes('critical key required') || (lower.includes('security level') && lower.includes('critical'))) {
       return { success: false, error: 'Moderation needs your CRITICAL key to authorize', errorCode: 'NEEDS_CRITICAL_KEY' };
     }
+    // Held back unsent behind an earlier write whose outcome is not known yet.
+    if (msg === PENDING_WRITE_ERROR) return { success: false, error: msg, errorCode: 'WRITE_PENDING' };
     const kind = classifyModerationError(error) ?? (lower.includes('not a moderator') ? 'NOT_MODERATOR' : null);
     if (kind) {
       return { success: false, error: MODERATION_ERROR_MESSAGES[kind], errorCode: kind };

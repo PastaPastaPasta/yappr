@@ -37,19 +37,17 @@ const NO_COUNTS: Record<BulkMode, number | null> = { hide: null, unhide: null }
 /** How long after a run the lists are read again, so a node a block behind does not show what just changed. */
 const SETTLE_MS = 4000
 
-const plural =(n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`
+const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`
 
-/** "Hiding 37 of 100…", then what happened. */
-export function bulkStatusLine(mode: BulkMode, progress: BulkProgress, summary: BulkSummary | null): string {
-  const verb = mode === 'hide' ? 'Hiding' : 'Unhiding'
-  const past = mode === 'hide' ? 'Hid' : 'Unhid'
-  if (!summary) {
-    const at = Math.min(progress.total, progress.done + progress.failures.length + (progress.current ? 1 : 0))
-    return `${verb} ${Math.max(at, 1).toLocaleString()} of ${progress.total.toLocaleString()}…`
+/** "Hiding 37 of 100…" during a run, then what happened. */
+function bulkStatusLine(mode: BulkMode, state: BulkProgress | BulkSummary): string {
+  if (!('stopped' in state)) {
+    const at = Math.min(state.total, state.done + state.failures.length + (state.current ? 1 : 0))
+    return `${mode === 'hide' ? 'Hiding' : 'Unhiding'} ${Math.max(at, 1).toLocaleString()} of ${state.total.toLocaleString()}…`
   }
-  const done = `${past} ${summary.done.toLocaleString()} of ${plural(summary.total, 'post')}.`
-  if (summary.stopped === 'cancelled') return `Stopped. ${done}`
-  if (summary.stopped === 'fatal') return `${done} ${summary.error ?? ''}`.trim()
+  const done = `${mode === 'hide' ? 'Hid' : 'Unhid'} ${state.done.toLocaleString()} of ${plural(state.total, 'post')}.`
+  if (state.stopped === 'cancelled') return `Stopped. ${done}`
+  if (state.stopped === 'fatal') return `${done} ${state.error ?? ''}`.trim()
   return done
 }
 
@@ -90,6 +88,11 @@ export function BulkHideModal() {
   const readRef = useRef(0)
   /** Moves on with every opening and closing: a run started under another ignores itself. */
   const openingRef = useRef(0)
+  /** Who is signed in now, for a run to notice a sign-out or a switch of account. */
+  const signedInRef = useRef<string | null>(null)
+  useEffect(() => {
+    signedInRef.current = user?.identityId ?? null
+  }, [user])
   const authorId = target?.authorId ?? ''
 
   useEffect(() => {
@@ -140,8 +143,8 @@ export function BulkHideModal() {
     if (!isOpen || !authorId) return
     const other: BulkMode = mode === 'hide' ? 'unhide' : 'hide'
     let cancelled = false
-    bulkHideService.readAll(authorId, other).then(({ items }) => {
-      if (!cancelled) setCounts((current) => ({ ...current, [other]: items.length }))
+    bulkHideService.count(authorId, other).then((count) => {
+      if (!cancelled) setCounts((current) => ({ ...current, [other]: count }))
     }).catch(() => { /* the tab shows no count */ })
     return () => {
       cancelled = true
@@ -192,16 +195,18 @@ export function BulkHideModal() {
 
   const run = async (batchItems: BulkItem[]) => {
     if (!user || batchItems.length === 0) return
+    const moderatorId = user.identityId
     // A run outlives its dialog only to finish the transition under way: once
-    // it was closed (or opened again for someone else) it updates nothing.
+    // it was closed (or opened again for someone else) it updates nothing, and
+    // once its moderator signed out it signs nothing more with the held key.
     const opening = openingRef.current
-    const current = () => openingRef.current === opening
+    const current = () => openingRef.current === opening && signedInRef.current === moderatorId
     stopRef.current = false
     setStopping(false)
     setRunning(true)
     setSummary(null)
     setProgress({ total: batchItems.length, done: 0, current: null, failures: [] })
-    const opened = await moderationService.openBatch(user.identityId)
+    const opened = await moderationService.openBatch(moderatorId)
     if (!current()) return
     if ('refused' in opened) {
       setRunning(false)
@@ -223,15 +228,18 @@ export function BulkHideModal() {
     })
     if (!current()) return
     setSummary(result)
-    setStopping(false)
-    // Read what is left from the chain: done ones drop out, failed ones stay
-    // selected. Each change came back proved, but a read can reach a node a
-    // block behind, so give the network a moment first.
-    setSelected(new Set(result.failures.map((failure) => failure.item.id)))
-    await new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
-    if (!current()) return
+    setProgress(null)
     setRunning(false)
-    setReadEpoch((epoch) => epoch + 1)
+    setStopping(false)
+    // Read what is left from the chain: done ones drop out, and what failed
+    // or was never sent stays selected. Each change came back proved, but a
+    // read can reach a node a block behind, so give the network a moment
+    // first; the list reads as loading meanwhile, so nothing stale is offered.
+    setSelected(new Set(batchItems.map((item) => item.id)))
+    readRef.current++
+    setList({ status: 'loading', count: 0 })
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
+    if (current()) setReadEpoch((epoch) => epoch + 1)
   }
 
   const start = (batchItems: BulkItem[]) => {
@@ -250,9 +258,11 @@ export function BulkHideModal() {
   const handleClose = close
 
   const verb = mode === 'hide' ? 'Hide' : 'Unhide'
-  const shown = progress ?? summary
-  const percent = shown && shown.total > 0 ? Math.round((shown.done / shown.total) * 100) : 0
-  const failures = summary?.failures ?? []
+  const percent = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
+  // Failures still to do: once the lists are read again, one that landed after all drops out.
+  const listed = new Set(items.map((item) => item.id))
+  const failures = list.status === 'ready' ? (summary?.failures ?? []).filter((failure) => listed.has(failure.item.id)) : []
+  const canRetry = canAuthorize && !running && reasonReady && failures.length > 0 && !!user
 
   return (
     <Modal open={isOpen} onOpenChange={(open) => !open && handleClose()} className="w-[560px] max-w-[94vw]">
@@ -402,21 +412,26 @@ export function BulkHideModal() {
         className={`${INPUT} mb-3`}
       />
 
-      {/* One fixed-height status area, so nothing below it moves: the cost before a run, the progress during it, the outcome and any failures after. */}
+      {/* One fixed-height status area, so nothing below it moves: the progress during a run; otherwise the last outcome, the cost of what is selected, and any failures. */}
       <div className="h-28 mb-3 text-sm flex flex-col" aria-live="polite" data-testid="bulk-hide-status">
-        {shown ? (
+        {running && progress ? (
           <>
             <p className="text-gray-700 dark:text-gray-300 tabular-nums">
-              {running && stopping ? 'Stopping after this one…' : bulkStatusLine(mode, shown, running ? null : summary)}
+              {stopping ? 'Stopping after this one…' : bulkStatusLine(mode, progress)}
             </p>
             <div className="mt-2 h-2 shrink-0 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
               <div className="h-full bg-yappr-500 transition-[width] duration-300" style={{ width: `${percent}%` }} />
             </div>
-            {failures.length > 0 && !running && (
+          </>
+        ) : (
+          <>
+            {summary && <p className="text-gray-700 dark:text-gray-300 tabular-nums">{bulkStatusLine(mode, summary)}</p>}
+            <p className="text-gray-600 dark:text-gray-400">{bulkCostLine(selectedItems.length)}</p>
+            {failures.length > 0 && (
               <div className="mt-2 min-h-0 flex-1 flex flex-col" data-testid="bulk-hide-failures">
                 <div className="flex items-center justify-between gap-3">
                   <p className="font-medium text-red-600 dark:text-red-400">{plural(failures.length, 'post')} didn&apos;t go through</p>
-                  <Button size="sm" variant="outline" disabled={!ready} onClick={() => start(failures.map((failure) => failure.item))} data-testid="bulk-hide-retry">Try again</Button>
+                  <Button size="sm" variant="outline" disabled={!canRetry} onClick={() => start(failures.map((failure) => failure.item))} data-testid="bulk-hide-retry">Try again</Button>
                 </div>
                 <ul className="mt-1 min-h-0 flex-1 overflow-y-auto text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
                   {failures.map(({ item, error }) => (
@@ -426,8 +441,6 @@ export function BulkHideModal() {
               </div>
             )}
           </>
-        ) : (
-          <p className="text-gray-600 dark:text-gray-400">{bulkCostLine(selectedItems.length)}</p>
         )}
       </div>
 

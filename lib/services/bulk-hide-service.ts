@@ -4,7 +4,8 @@ import { moderatedContract } from '@/lib/moderated-contracts'
 import { inLane, laneMod, newestFirst, readEveryPage, type BulkItem, type BulkKind, type BulkMode, type BulkPage } from '@/lib/moderation-bulk'
 import { getEvoSdk } from './evo-sdk-service'
 import { moderationService } from './moderation-service'
-import { MAX_IN_CLAUSE_VALUES } from './pagination-utils'
+import { moderationViewAll } from '@/lib/moderation-view'
+import { MAX_IN_CLAUSE_VALUES, documentCount } from './pagination-utils'
 import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers'
 
 /**
@@ -77,6 +78,26 @@ class BulkHideService {
       }
     )))
     return { items: newestFirst(posts.items, replies.items), truncated: posts.truncated || replies.truncated }
+  }
+
+  /**
+   * How many posts and replies of `authorId` are in `mode`'s lane. Posts are
+   * one count read (`post.ownerAndTime` is rangeCountable); `reply.ownerAndTime`
+   * keeps no count, so replies are read page by page. On an archive build,
+   * whose SDK sums every lane into a count (lib/services/sdk-lane-fanout.ts),
+   * posts are read page by page too.
+   */
+  async count(authorId: string, mode: BulkMode): Promise<number> {
+    const replies = readEveryPage((startAfter) => this.readPage('reply', authorId, mode, startAfter))
+    const posts = moderationViewAll()
+      ? readEveryPage((startAfter) => this.readPage('post', authorId, mode, startAfter)).then(({ items }) => items.length)
+      : getEvoSdk().then((sdk) => documentCount(sdk, {
+        dataContractId: this.contractId,
+        documentTypeName: 'post',
+        where: [['live', '==', 1], ['mod', '==', laneMod(mode)], ['$ownerId', '==', authorId]],
+      }))
+    const [postCount, { items }] = await Promise.all([posts, replies])
+    return postCount + items.length
   }
 
   /**

@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   DOCUMENTS_PER_TRANSITION,
   HIDE_FEE_CREDITS,
+  MAX_PENDING_WAITS,
   PACE_MS,
+  SAME_REFUSAL_LIMIT,
   UNCONFIRMED_BACKOFF_MS,
   bulkCostLine,
   creditsToCents,
@@ -155,7 +157,7 @@ describe('runBulk', () => {
   })
 
   it('lists a failure and goes on', async () => {
-    const d = deps({ apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'b' ? { success: false, error: 'Refused', errorCode: 'MODERATOR_FIELD' } : ok)) })
+    const d = deps({ apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'b' ? { success: false, error: 'Refused', errorCode: 'DOCUMENT_GONE' } : ok)) })
     const summary = await runBulk(items, d)
     expect(summary.done).toBe(2)
     expect(summary.failures).toEqual([{ item: items[1], error: 'Refused' }])
@@ -199,6 +201,52 @@ describe('runBulk', () => {
     const summary = await runBulk(items, d)
     expect(d.apply).toHaveBeenCalledTimes(1)
     expect(summary).toMatchObject({ done: 1, stopped: 'cancelled' })
+  })
+
+  it('sends nothing more once stopped during the wait between two transitions', async () => {
+    let stop = false
+    const d = deps({ cancelled: () => stop })
+    d.pause.mockImplementation(async () => {
+      stop = true
+    })
+    const summary = await runBulk(items, d)
+    expect(d.apply).toHaveBeenCalledTimes(1)
+    expect(summary).toMatchObject({ done: 1, stopped: 'cancelled' })
+  })
+
+  it('stops on the same refusal three times in a row, but never on gateway timeouts', async () => {
+    const many = Array.from({ length: 6 }, (_, n) => item(`m${n}`, n))
+    const refused = deps({ apply: async () => ({ success: false, error: 'Odd refusal', errorCode: 'DOCUMENT_GONE' }) })
+    const summary = await runBulk(many, refused)
+    expect(refused.apply).toHaveBeenCalledTimes(SAME_REFUSAL_LIMIT)
+    expect(summary).toMatchObject({ stopped: 'fatal', error: 'Odd refusal' })
+    expect(summary.failures).toHaveLength(SAME_REFUSAL_LIMIT)
+
+    let reads = 0
+    const timeouts = deps({
+      apply: async () => ({ success: false, errorCode: 'MAYBE_APPLIED' }),
+      pending: async (asked) => new Set(reads++ === 0 ? asked.map((i) => i.id) : []),
+    })
+    const settled = await runBulk(many, timeouts)
+    expect(timeouts.apply).toHaveBeenCalledTimes(6)
+    expect(settled).toMatchObject({ stopped: null, done: 6 })
+  })
+
+  it('sends a document again while an earlier change is still going through', async () => {
+    let calls = 0
+    const d = deps({ apply: async (i) => (i.id === 'b' && calls++ < 2 ? { success: false, errorCode: 'WRITE_PENDING' } : ok) })
+    const summary = await runBulk(items, d)
+    expect(d.apply.mock.calls.map(([i]) => i.id)).toEqual(['a', 'b', 'b', 'b', 'c'])
+    expect(summary).toMatchObject({ done: 3, failures: [] })
+    expect(d.pause.mock.calls.map(([ms]) => ms)).toContain(UNCONFIRMED_BACKOFF_MS)
+  })
+
+  it('gives up on a document held back too long, and settles it from the chain', async () => {
+    // Every read says it is still to do: it never went out.
+    const d = deps({ apply: async () => ({ success: false, errorCode: 'WRITE_PENDING' }) })
+    const summary = await runBulk([items[0]], d)
+    expect(d.apply).toHaveBeenCalledTimes(MAX_PENDING_WAITS)
+    expect(summary.failures.map((f) => f.item.id)).toEqual(['a'])
   })
 
   it('stops at once on an answer every other document would get too', async () => {

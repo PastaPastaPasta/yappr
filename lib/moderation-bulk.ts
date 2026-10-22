@@ -191,9 +191,20 @@ export interface BulkSummary extends BulkProgress {
   error?: string
 }
 
+
 /** Between two transitions, and after one the network did not confirm. */
 export const PACE_MS = 400
 export const UNCONFIRMED_BACKOFF_MS = 3000
+
+/**
+ * How often one document waits for an earlier change still going through
+ * (`WRITE_PENDING`: the nonce lock holds a write whose outcome is unknown for
+ * up to a minute) before it is listed as failed.
+ */
+export const MAX_PENDING_WAITS = 20
+
+/** The same refusal this many times in a row stops the run: every other document would get it too. */
+export const SAME_REFUSAL_LIMIT = 3
 
 /**
  * True for the answer of a moderator who closed the sheet asking for the
@@ -211,19 +222,32 @@ const FATAL = new Set([
   'NOT_MODERATOR',
   'NOT_MODERATED',
   'NOT_YET_SEATED',
+  'TEAM_NOT_SEATED',
   'ABILITY_NOT_GRANTED',
   'REASON_NOT_LISTED',
+  'INVALID_REASON_DOCUMENTS',
   'INVALID_LABEL',
   'REASON_TOO_LONG',
+  // The author is a moderator (or the protected owner): every one of their documents is refused, paid (41102).
+  'TARGET_PROTECTED',
+  'FIELD_NOT_CHANGEABLE',
+  'MODERATOR_FIELD',
 ])
 
 /** Answers that may hide a change that landed: settled by reading the chain again. */
 const UNCONFIRMED = new Set(['MAYBE_APPLIED', 'NETWORK_ERROR'])
 
+/** The gateway's timeout on a write that usually landed: common, so it never trips {@link SAME_REFUSAL_LIMIT}. */
+const TIMEOUT = 'MAYBE_APPLIED'
+
+/** An earlier change is still going through, so this one was not sent: wait, and send it again. */
+const WRITE_PENDING = 'WRITE_PENDING'
+
 /** The document already reads the way it was asked to (another moderator, or an earlier run). */
 const ALREADY = 'NOTHING_TO_CHANGE'
 
 const UNCONFIRMED_ERROR = 'The network did not confirm this one. Try again.'
+const FAILED_ERROR = 'That did not go through.'
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
@@ -234,23 +258,23 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  *    halfway, or another moderator) counts as done and is not sent again.
  * 2. Sends each of the rest in turn, {@link PACE_MS} apart. A proved answer
  *    counts it done. An unconfirmed one (a gateway timeout) is set aside and
- *    the run waits a moment before the next.
+ *    the run waits a moment before the next. One held back because an earlier
+ *    change is still going through is sent again after a wait.
  * 3. Reads the set-aside ones again: landed ones count as done, the rest fail.
  *
- * Stops after the transition under way when `cancelled()` turns true, and at
- * once on an answer every other document would get too (no key, not a
- * moderator, a reason the charter does not list). Never throws for one
- * document: its failure is listed and the run goes on.
+ * Stops before the next transition once `cancelled()` turns true (checked
+ * after every wait, so a stop never sends one more), and at once on an answer
+ * every other document would get too (no key, not a moderator, a reason the
+ * charter does not list, a protected author), or on the same refusal
+ * {@link SAME_REFUSAL_LIMIT} times in a row. A closed key sheet stops it
+ * quietly. Never throws for one document: its failure is listed and the run
+ * goes on.
  */
 export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Promise<BulkSummary> {
   const pause = deps.pause ?? sleep
+  const cancelled = () => deps.cancelled?.() ?? false
   const progress: BulkProgress = { total: items.length, done: 0, current: null, failures: [] }
   const report = () => deps.onProgress?.({ ...progress, failures: [...progress.failures] })
-  const finish = (stopped: BulkSummary['stopped'], error?: string): BulkSummary => {
-    progress.current = null
-    report()
-    return { ...progress, failures: [...progress.failures], stopped, ...(error ? { error } : {}) }
-  }
 
   let todo: BulkItem[]
   try {
@@ -267,38 +291,65 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const unconfirmed: BulkItem[] = []
   let stopped: BulkSummary['stopped'] = null
   let stopError: string | undefined
-  let sent = 0
+  /** The last refusal's code, and how many times in a row it came. */
+  let streakCode: string | null = null
+  let streakCount = 0
+  let waitMs = 0
+
+  const send = async (item: BulkItem): Promise<BulkApplyResult> => {
+    for (let waits = 0; ; waits++) {
+      if (waitMs > 0) await pause(waitMs)
+      if (cancelled()) return { success: false, errorCode: 'CANCELLED' }
+      progress.current = item
+      report()
+      let result: BulkApplyResult
+      try {
+        result = await deps.apply(item)
+      } catch (error) {
+        result = { success: false, error: error instanceof Error ? error.message : String(error), errorCode: 'NETWORK_ERROR' }
+      }
+      waitMs = PACE_MS
+      if (result.errorCode !== WRITE_PENDING) return result
+      if (waits + 1 >= MAX_PENDING_WAITS) return { ...result, errorCode: 'NETWORK_ERROR' }
+      progress.current = null
+      report()
+      waitMs = UNCONFIRMED_BACKOFF_MS
+    }
+  }
+
   for (const item of todo) {
-    if (deps.cancelled?.()) {
-      stopped = 'cancelled'
-      break
-    }
-    if (sent > 0) await pause(PACE_MS)
-    sent++
-    progress.current = item
-    report()
-    let result: BulkApplyResult
-    try {
-      result = await deps.apply(item)
-    } catch (error) {
-      result = { success: false, error: error instanceof Error ? error.message : String(error), errorCode: 'NETWORK_ERROR' }
-    }
+    const result = await send(item)
     if (result.success || result.errorCode === ALREADY) {
       progress.done++
-    } else if (closedKeySheet(result.errorCode)) {
+      streakCode = null
+      continue
+    }
+    if (closedKeySheet(result.errorCode)) {
       stopped = 'cancelled'
       break
-    } else if (result.errorCode && FATAL.has(result.errorCode)) {
+    }
+    const code = result.errorCode ?? 'UNKNOWN'
+    if (FATAL.has(code)) {
       stopped = 'fatal'
-      stopError = result.error ?? 'That did not go through.'
+      stopError = result.error ?? FAILED_ERROR
       break
-    } else if (result.errorCode && UNCONFIRMED.has(result.errorCode)) {
+    }
+    if (UNCONFIRMED.has(code)) {
       unconfirmed.push(item)
       progress.current = null
       report()
-      await pause(UNCONFIRMED_BACKOFF_MS)
+      waitMs = UNCONFIRMED_BACKOFF_MS
     } else {
-      progress.failures.push({ item, error: result.error ?? 'That did not go through.' })
+      progress.failures.push({ item, error: result.error ?? FAILED_ERROR })
+    }
+    // A gateway timeout neither counts toward a streak nor breaks one.
+    if (code === TIMEOUT) continue
+    streakCount = code === streakCode ? streakCount + 1 : 1
+    streakCode = code
+    if (streakCount >= SAME_REFUSAL_LIMIT) {
+      stopped = 'fatal'
+      stopError = result.error ?? FAILED_ERROR
+      break
     }
   }
 
@@ -314,5 +365,7 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
       else progress.done++
     }
   }
-  return finish(stopped, stopError)
+  progress.current = null
+  report()
+  return { ...progress, failures: [...progress.failures], stopped, ...(stopError ? { error: stopError } : {}) }
 }
