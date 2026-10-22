@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
-  identities: { fetch: vi.fn() },
+  identities: { fetch: vi.fn(), update: vi.fn() },
   stateTransitions: { broadcastAndWait: vi.fn() },
   documents: { delete: vi.fn() },
 }))
@@ -32,7 +32,8 @@ const sdkLocks = vi.hoisted(() => vi.fn())
 const sdkPreconditions = vi.hoisted(() => [] as Array<(() => Promise<boolean>) | undefined>)
 const keys = vi.hoisted(() => ({ match: vi.fn(), stepUp: vi.fn() }))
 
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
+const hooks = vi.hoisted(() => ({ onSdk: undefined as (() => void) | undefined, onAwaitNonce: undefined as (() => void) | undefined }))
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => { hooks.onSdk?.(); return sdk } }))
 vi.mock('@dashevo/wasm-sdk', () => ({
   PrivateKey: { fromWIF: () => ({ free: () => undefined }) },
   StateTransition: { fromBytes: () => ({}) },
@@ -49,7 +50,7 @@ vi.mock('@/lib/moderation-charters/transitions.mjs', () => ({
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { settleCreate: settle } }))
 vi.mock('@/lib/identity-write-lock', () => ({ withIdentityWriteLock: async (_o: string, _c: string, write: () => Promise<unknown>) => { await locks(); return write() } }))
 vi.mock('./identity-nonce', () => ({
-  awaitNonce: async () => ({ current: 0n, value: nonces.next++ }),
+  awaitNonce: async () => { hooks.onAwaitNonce?.(); return { current: 0n, value: nonces.next++ } },
   allocateNonce: () => 1n,
   reserveNonce: nonces.reserve,
   releaseNonce: nonces.release,
@@ -89,6 +90,8 @@ const stored = (type: string, slot: string) => {
 }
 
 beforeEach(() => {
+  hooks.onSdk = undefined
+  hooks.onAwaitNonce = undefined
   keys.match.mockReset().mockReturnValue({ ok: true, key: { keyId: 1 }, match: { keyId: 1 } })
   vi.clearAllMocks()
   storage.clear()
@@ -366,6 +369,14 @@ describe('a write queued behind another', () => {
     expect(builders.sign).not.toHaveBeenCalled()
   })
 
+  it('re-checks after waiting for an earlier transition to settle, so a window that closed meanwhile signs nothing', async () => {
+    let closed = false
+    hooks.onAwaitNonce = () => { closed = true }
+    const eligible = vi.fn(async () => { if (closed) throw new CharterActionError('Applications have closed: masternodes are voting.', 'refused') })
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], eligible)).rejects.toThrow('Applications have closed')
+    expect(builders.sign).not.toHaveBeenCalled()
+  })
+
   it('refuses with nothing sent when the re-check cannot read the election', async () => {
     const offline = vi.fn(async () => { throw new Error('Request timed out') })
     await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], offline)).rejects.toMatchObject({ outcome: 'refused' })
@@ -386,6 +397,35 @@ describe('a write queued behind another', () => {
 })
 
 describe('a session forgotten mid-write', () => {
+  it('broadcasts no stored create that was waiting for the lock', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    sdk.stateTransitions.broadcastAndWait.mockClear()
+    locks.mockClear()
+    let release: () => void = () => undefined
+    locks.mockImplementationOnce(() => new Promise<void>((done) => { release = done }))
+    const retry = charterService.submitProposal(OWNER, TERMS)
+    await vi.waitFor(() => expect(locks).toHaveBeenCalled())
+    charterService.forgetKeys()
+    release()
+    await expect(retry).rejects.toMatchObject({ outcome: 'cancelled' })
+    expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled()
+    expect(stored('submittedCharter', TERMS.targetContractId)?.signed?.nonce).toBe('1')
+  })
+
+  it('adds no charter key once the session is forgotten during the SDK setup', async () => {
+    sdk.identities.fetch.mockResolvedValue({ publicKeys: [] })
+    keys.stepUp.mockImplementationOnce(async () => {
+      // Forgotten after the prompt was answered, while the key update is being prepared.
+      hooks.onSdk = () => { hooks.onSdk = undefined; charterService.forgetKeys() }
+      return Buffer.from(new Uint8Array(32).fill(5)).toString('hex')
+    })
+    await expect(charterService.charterKey(OWNER, 'member', { create: true })).rejects.toMatchObject({ outcome: 'cancelled' })
+    expect(sdk.identities.update).not.toHaveBeenCalled()
+  })
+
   it('signs no queued team-change delete, and keeps its marker', async () => {
     const seated = { electedCharterId: 'e2', submittedCharterId: 'p1' }
     builders.exists.mockResolvedValue(true)
@@ -461,6 +501,23 @@ describe('an edited join message', () => {
 })
 
 describe('a landed marker', () => {
+  it('keeps the signed entry when the marker cannot be stored, so a retry proves it again instead of signing', async () => {
+    builders.exists.mockResolvedValue(true)
+    const realSet = storage.setItem
+    const save = vi.spyOn(storage, 'setItem').mockImplementation((key: string, value: string) => {
+      if (value.includes('"landed"')) throw new Error('QuotaExceededError')
+      realSet(key, value)
+    })
+    try {
+      await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-1')
+      expect(stored('submittedCharter', TERMS.targetContractId)?.signed?.nonce).toBe('1')
+      await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-1')
+      expect(builders.sign).toHaveBeenCalledTimes(1)
+    } finally {
+      save.mockRestore()
+    }
+  })
+
   it('answers a retry from a tab whose reads still lag once another tab proved the create landed, signing nothing', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
     builders.exists.mockResolvedValue(null)

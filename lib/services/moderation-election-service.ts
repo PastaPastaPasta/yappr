@@ -316,7 +316,9 @@ class ModerationElectionService {
    * A failed vote-state read THROWS; a failed end-time read leaves `endsAtMs`
    * null and is reported in `endTimeFailed`.
    */
-  async getContest(targetContractId = YAPPR_CONTRACT_ID, declaration: ElectedModerationDeclaration | null = null): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
+  async getContest(
+    targetContractId = YAPPR_CONTRACT_ID, declaration: ElectedModerationDeclaration | null = null, chainTimeMs: number | null = null,
+  ): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
     const sdk = await getEvoSdk();
     const poll = { ...contestVotePoll(targetContractId), resultType: 'documentsAndVoteTally' as const, limit: CONTENDER_PAGE };
     const state = await sdk.voting.contestedResourceVoteState({ ...poll, includeLockedAndAbstaining: true });
@@ -346,7 +348,7 @@ class ModerationElectionService {
       throw error;
     }
     let endTimeFailed = false;
-    const endsAtMs = await this.contestEnd(sdk, targetContractId, declaration).catch((error: unknown) => {
+    const endsAtMs = await this.contestEnd(sdk, targetContractId, declaration, chainTimeMs).catch((error: unknown) => {
       logger.warn('moderationElection: vote poll end-date read failed', error);
       endTimeFailed = true;
       return null;
@@ -379,14 +381,21 @@ class ModerationElectionService {
    * poll whose end has passed but that a stalled chain has not yet closed is
    * still this contract's contest.
    */
-  private async contestEnd(sdk: EvoSDK, targetContractId: string, declaration: ElectedModerationDeclaration | null): Promise<number | null> {
+  private async contestEnd(
+    sdk: EvoSDK, targetContractId: string, declaration: ElectedModerationDeclaration | null, chainTimeMs: number | null,
+  ): Promise<number | null> {
+    // Anchored to the proved chain time when there is one (a device clock can be off), else this device's.
+    const now = chainTimeMs ?? Date.now();
     const upper = declaration
       ? {
-        endTimeMs: Date.now() + (declaration.joinWindowSeconds + declaration.voteWindowSeconds) * 1000 + END_DATE_SLACK_MS,
+        endTimeMs: now + (declaration.joinWindowSeconds + declaration.voteWindowSeconds) * 1000 + END_DATE_SLACK_MS,
         endTimeIncluded: true,
       }
       : {};
-    let lower: { startTimeMs: bigint; startTimeIncluded: boolean } | null = null;
+    // With chain time, polls that ended more than the slack ago are skipped (they would only use up the page budget).
+    let lower: { startTimeMs: bigint; startTimeIncluded: boolean } | null = chainTimeMs === null
+      ? null
+      : { startTimeMs: BigInt(Math.max(0, Math.floor(chainTimeMs - END_DATE_SLACK_MS))), startTimeIncluded: true };
     for (let page = 0; page < MAX_END_DATE_PAGES; page++) {
       const entries = await sdk.voting.votePollsByEndDate({ ...lower, ...upper, orderAscending: true, limit: END_DATE_PAGE_POLLS });
       let first: bigint | null = null;
@@ -464,7 +473,7 @@ class ModerationElectionService {
       });
     const [proposals, contestRead, seated] = await Promise.all([
       attempt('proposals', this.getProposals(targetContractId), [] as CharterProposal[]),
-      attempt('contest', this.getContest(targetContractId, declaration), { contest: null, endTimeFailed: false }),
+      attempt('contest', this.getContest(targetContractId, declaration, Number.isFinite(chainTimeMs) ? chainTimeMs : null), { contest: null, endTimeFailed: false }),
       attempt('seatedTeam', this.getSeatedTeam(targetContractId), null as SeatedTeam | null),
     ]);
     if (contestRead.endTimeFailed) failures.push('contestEnd');

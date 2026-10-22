@@ -118,6 +118,10 @@ describe('apply', () => {
     expect(base({ requested: null, members: [] })).toBe('requests-unread')
   })
 
+  it('never pays the deposit on a balance it could not read', () => {
+    expect(base({ balance: null })).toBe('balance-unknown')
+  })
+
   it('refuses a second application by the same leader, whichever proposal it ran on', () => {
     const s = status({ contest: contest([{ identityId: LEADER, votes: 0, submittedCharterId: 'p9' }], T0 + 2 * HOUR) })
     expect(base({ status: s, stage: electionStage(s, T0 + HOUR) })).toBe('already-applied')

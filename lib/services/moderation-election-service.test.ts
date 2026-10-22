@@ -122,6 +122,23 @@ describe('reading the contest', () => {
     expect(second.free).toHaveBeenCalled();
   });
 
+  it('anchors the end-date walk to the proved chain time, not this device clock', async () => {
+    const chain = 1_790_000_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(chain - 3_600_000);
+    try {
+      sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 1 }]));
+      sdk.voting.votePollsByEndDate.mockResolvedValueOnce([entry(chain + 1000, target)]);
+      const declaration = { joinWindowSeconds: 86_400, voteWindowSeconds: 86_400 } as unknown as Parameters<typeof moderationElectionService.getContest>[1];
+      const { contest } = await moderationElectionService.getContest(target, declaration, chain);
+      expect(contest?.endsAtMs).toBe(chain + 1000);
+      expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).toMatchObject({
+        startTimeMs: BigInt(chain - 600_000), startTimeIncluded: true, endTimeMs: chain + 172_800_000 + 600_000,
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('counts polls, not timestamp groups, when deciding a page was full', async () => {
     // 100 polls in 50 timestamps: a full page, though it holds only 50 entries.
     const pair = (timestampMs: number) => {

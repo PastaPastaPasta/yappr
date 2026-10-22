@@ -92,6 +92,7 @@ export type ApplyBlocker =
   | 'low-balance'
   | 'unknown'
   | 'requests-unread'
+  | 'balance-unknown'
 
 /**
  * Why the viewer cannot file the application for `proposal` with `members`
@@ -121,7 +122,8 @@ export function applyBlocker(input: {
   if (members.length > CHARTER_LIMITS.members) return 'too-many-members'
   if (!requested) return 'requests-unread'
   if (members.some((member) => !requested.has(member) || member === proposal.leaderId)) return 'unknown-members'
-  if (balance !== null && balance < minimumBalance) return 'low-balance'
+  if (balance === null) return 'balance-unknown'
+  if (balance < minimumBalance) return 'low-balance'
   return null
 }
 

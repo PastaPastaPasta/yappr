@@ -37,6 +37,7 @@ function applyBlockerText(blocker: ApplyBlocker, stage: ElectionStage): string {
     case 'unknown-members': return 'Pick members only from the people who asked to join.'
     case 'low-balance': return `Your balance is below ${LEADER_MINIMUM_TEXT}: the ${formatDash(CONTEST_FUND_CREDITS)} DASH deposit plus fees. Top up first.`
     case 'unknown': return 'The election could not be read. Refresh, then try again.'
+    case 'balance-unknown': return "Your balance couldn't be read. Refresh, then try again."
     case 'requests-unread': return "The join requests haven't been read yet. Wait a moment, or read them again above."
   }
 }

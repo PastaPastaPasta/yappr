@@ -152,9 +152,8 @@ function markLanded(key: string, entry: PendingCreate): void {
     const marker: LandedCreate = { landed: entry.signed.id, fingerprint: entry.fingerprint, at: Date.now() }
     localStorage.setItem(PENDING_PREFIX + key, JSON.stringify(marker))
   } catch (error) {
-    // The create landed either way; without the marker a retry proves it again.
-    logger.warn('charters: a landed create could not be marked; dropping it', extractErrorMessage(error))
-    forgetPendingCreate(key, entry)
+    // The create landed either way: the signed entry stays, and a later retry proves it again.
+    logger.warn('charters: a landed create could not be marked; keeping its signed entry', extractErrorMessage(error))
   }
 }
 
@@ -512,7 +511,7 @@ class CharterService {
     const key = unlock(input)
     if (!key) throw new CharterActionError("That key doesn't fit this account.", 'refused')
     try {
-      if (!onChain) await this.addCharterKey(identityId, identity, role, readPrivateKeyInput(input), key)
+      if (!onChain) await this.addCharterKey(identityId, identity, role, readPrivateKeyInput(input), key, generation)
       this.assertSameSession(generation)
     } catch (error) {
       key.fill(0)
@@ -528,11 +527,14 @@ class CharterService {
     role: CharterRole,
     master: Uint8Array,
     charterKey: Uint8Array,
+    generation: number,
   ): Promise<void> {
     // The MASTER key's bytes are zeroed whatever throws, from the first line on.
     try {
       const sdk = await getEvoSdk()
       const w = await wasmModule()
+      // The SDK setup awaited: a session forgotten meanwhile adds no key (and pays no fee). Nothing below awaits until the update.
+      this.assertSameSession(generation)
       const { purpose, documentType } = CHARTER_KEYS[role]
       const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1
       const publicKey = secp256k1.getPublicKey(charterKey, true)
@@ -675,6 +677,8 @@ class CharterService {
 
     /** Under the lock: broadcasts the entry's signed bytes; a definite refusal drops it. */
     const send = async (entry: PendingCreate): Promise<PendingCreate> => {
+      // A resend waits for the lock too: a session forgotten meanwhile sends nothing (the bytes stay stored).
+      this.assertSameSession(generation)
       try {
         await sdk.stateTransitions.broadcastAndWait(w.StateTransition.fromBytes(entry.signed.bytes))
       } catch (error) {
@@ -708,12 +712,13 @@ class CharterService {
         if (slot.kind === 'landed') return slot.id
         if (slot.kind === 'pending') return send(slot.entry)
         this.assertSameSession(generation)
+        const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
+        // After every wait (prompts, lock, earlier transitions settling), right before the transition is built.
         await input.beforeSigning?.().catch((error: unknown) => {
           if (error instanceof CharterActionError) throw error
           logger.warn('charters: the eligibility re-check failed; nothing signed', extractErrorMessage(error))
           throw new CharterActionError("Nothing was sent: the election couldn't be read. Try again in a moment.", 'refused')
         })
-        const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
         this.assertSameSession(generation)
         const privateKey = w.PrivateKey.fromWIF(fresh.signing.wif)
         let created: PendingCreate
