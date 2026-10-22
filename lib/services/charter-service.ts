@@ -30,7 +30,8 @@ import { keyNetwork } from '@/lib/constants'
 import { matchIdentityKey } from '@/lib/crypto/keys'
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { privateKeyToWif } from '@/lib/crypto/wif'
-import { requireBytes } from '@/lib/bytes'
+import { base64ToBytes, bytesToBase64, requireBytes } from '@/lib/bytes'
+import { scopedKey } from '@/lib/storage-scope'
 import { cancelKeyStepUp, requestKeyStepUp } from '@/lib/auth/key-step-up'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { getPrivateKey } from '@/lib/secure-storage'
@@ -38,7 +39,7 @@ import { extractErrorMessage, isAlreadyExistsError, sentWriteOutcomeUnknown } fr
 import { sleep } from '@/lib/retry-utils'
 import { CHARTERS_CONTRACT_ID, CHARTER_KEYS, isCharterKey, type RewardSplit } from '@/lib/moderation-charters/rules.mjs'
 import {
-  charterIdBytes, charterKeyInCreation, charterStepExists, signCharterCreate, type CharterDocumentType, type SignedCharterCreate,
+  charterIdBytes, charterKeyInCreation, charterNonceConsumed, charterStepExists, signCharterCreate, type CharterDocumentType, type SignedCharterCreate,
 } from '@/lib/moderation-charters/transitions.mjs'
 import { withIdentityWriteLock } from '@/lib/identity-write-lock'
 import {
@@ -95,6 +96,53 @@ interface PendingCreate {
   signed: SignedCharterCreate
   fingerprint: string
   reservation: PendingTransition
+}
+
+/**
+ * Signed creates are kept in localStorage too (the signed bytes are what goes
+ * on the wire, nothing secret), so a reload or another tab resends and proves
+ * the same transition instead of signing a second one under a new nonce.
+ */
+const PENDING_PREFIX = scopedKey('yappr:charter-pending:')
+
+function savePendingCreate(key: string, entry: PendingCreate): void {
+  try {
+    const { signed, fingerprint, reservation } = entry
+    localStorage.setItem(PENDING_PREFIX + key, JSON.stringify({
+      signed: { ...signed, bytes: bytesToBase64(signed.bytes) },
+      fingerprint,
+      reservation: { id: reservation.id, nonce: String(reservation.nonce), expiresAt: reservation.expiresAt, scope: reservation.scope },
+    }))
+  } catch (error) {
+    logger.warn('charters: a signed create could not be kept for a reload', extractErrorMessage(error))
+  }
+}
+
+function loadPendingCreate(key: string): PendingCreate | undefined {
+  try {
+    const raw = localStorage.getItem(PENDING_PREFIX + key)
+    if (!raw) return undefined
+    const saved = JSON.parse(raw) as {
+      signed: Omit<SignedCharterCreate, 'bytes'> & { bytes: string }
+      fingerprint: string
+      reservation: { id: string; nonce: string; expiresAt: number | null; scope?: string }
+    }
+    return {
+      signed: { ...saved.signed, bytes: base64ToBytes(saved.signed.bytes) },
+      fingerprint: saved.fingerprint,
+      reservation: { ...saved.reservation, nonce: BigInt(saved.reservation.nonce) },
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function forgetPendingCreate(key: string): void {
+  try {
+    localStorage.removeItem(PENDING_PREFIX + key)
+  } catch {
+    // Storage blocked: nothing was kept there either.
+  }
 }
 
 type MatchResult = ReturnType<typeof matchIdentityKey<IdentityPublicKey>>
@@ -469,7 +517,8 @@ class CharterService {
   private file(action: CharterAction, input: {
     ownerId: string
     type: CharterDocumentType
-    data: Record<string, unknown>
+    /** The document's data, built only when a new create is signed (never for a resend). */
+    data: () => Promise<Record<string, unknown>>
     /** What the create is for: a second create there waits for this one. */
     slot: string
     /** What it says, to tell a retry from a changed write. */
@@ -488,7 +537,7 @@ class CharterService {
   }
 
   private async fileOnce(key: string, input: Parameters<CharterService['file']>[1]): Promise<string> {
-    const { ownerId, type, data, fingerprint, targetContractId = '', fund = false } = input
+    const { ownerId, type, fingerprint, targetContractId = '', fund = false } = input
     const sdk = await getEvoSdk()
     const w = await wasmModule()
     // True when proved there, false when proved absent, null when the read failed (which proves nothing).
@@ -496,15 +545,17 @@ class CharterService {
     /** Landed, proved dead, or still unknown. */
     const settle = async (signed: SignedCharterCreate): Promise<'landed' | 'dead' | null> => {
       if (await exists(signed) === true) return 'landed'
-      if (type === 'electedCharter') return null
+      if (type === 'electedCharter') return this.settleApplication(sdk, signed, exists)
       const outcome = await stateTransitionService.settleCreate({
         contractId: CHARTERS_CONTRACT_ID, documentType: type, ownerId, documentId: signed.id, nonce: BigInt(signed.nonce), transition: signed.bytes,
       })
       return outcome === 'landed' ? 'landed' : outcome === 'not-recorded' ? 'dead' : null
     }
 
-    let entry = this.pending.get(key)
+    // This tab's entry, or one another tab (or this page before a reload) left in storage.
+    let entry = this.pending.get(key) ?? loadPendingCreate(key)
     if (entry) {
+      this.pending.set(key, entry)
       const outcome = await settle(entry.signed)
       if (outcome === 'landed') return this.proved(key, entry)
       if (outcome === 'dead') {
@@ -515,22 +566,26 @@ class CharterService {
       }
     }
 
-    // The key is asked for before the lock, so a prompt never holds other writes back.
-    const signing = entry ? null : await this.signingKey(ownerId)
+    // The data (which may ask for a charter key) and the signing key come before the lock,
+    // so a prompt never holds other writes back.
+    const fresh = entry ? null : { data: await input.data(), signing: await this.signingKey(ownerId) }
     const sending = await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
-      let current = entry
-      if (!current && signing) {
+      // Another tab may have signed this slot while this one waited for the lock.
+      let current = entry ?? loadPendingCreate(key)
+      if (!current && fresh) {
         const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
-        const privateKey = w.PrivateKey.fromWIF(signing.wif)
+        const privateKey = w.PrivateKey.fromWIF(fresh.signing.wif)
         try {
-          const signed = await signCharterCreate(w, sdk, { type, ownerId, data, nonce, privateKey, identityKey: signing.identityKey, fund })
+          const signed = await signCharterCreate(w, sdk, { type, ownerId, data: fresh.data, nonce, privateKey, identityKey: fresh.signing.identityKey, fund })
           current = { signed, fingerprint, reservation: reserveNonce(ownerId, CHARTERS_CONTRACT_ID, nonce, tip, key) }
         } finally {
           privateKey.free()
         }
-        this.pending.set(key, current)
+        // Saved before the broadcast: a reload or another tab resends these bytes, never new ones.
+        savePendingCreate(key, current)
       }
       if (!current) throw new CharterActionError("That didn't go through. Please try again in a moment.", 'refused')
+      this.pending.set(key, current)
       try {
         await sdk.stateTransitions.broadcastAndWait(w.StateTransition.fromBytes(current.signed.bytes))
       } catch (error) {
@@ -538,7 +593,8 @@ class CharterService {
         // a nonce clash (these bytes may have executed on an earlier try) and a
         // lost connection are not verdicts: prove the document instead.
         if (!isAlreadyExistsError(error) && !sentWriteOutcomeUnknown(error)) {
-          this.release(key, current, false)
+          // Refused at execution (paid), its nonce is spent; refused at broadcast, it is not.
+          this.release(key, current, await charterNonceConsumed(sdk, ownerId, current.signed.nonce).catch(() => false))
           throw error
         }
         logger.warn(`charters: ${type} ${current.signed.id} reported no verdict; checking for it`, extractErrorMessage(error))
@@ -559,9 +615,30 @@ class CharterService {
     throw new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
   }
 
+  /**
+   * An application is in the contest, not in document storage, so it is dead
+   * only when its nonce is spent (gap-aware) and two contest reads, a few
+   * seconds apart and after that, both prove no such entry (and no seat).
+   */
+  private async settleApplication(
+    sdk: Awaited<ReturnType<typeof getEvoSdk>>,
+    signed: SignedCharterCreate,
+    exists: (signed: SignedCharterCreate) => Promise<boolean | null>,
+  ): Promise<'landed' | 'dead' | null> {
+    if (!(await charterNonceConsumed(sdk, signed.owner, signed.nonce).catch(() => false))) return null
+    for (let read = 0; read < 2; read++) {
+      if (read > 0) await sleep(PROOF_PAUSE_MS)
+      const found = await exists(signed)
+      if (found === true) return 'landed'
+      if (found !== false) return null
+    }
+    return 'dead'
+  }
+
   /** Drops a slot's signed create, telling the nonce coordinator whether its nonce is spent. */
   private release(key: string, entry: PendingCreate, spent: boolean): void {
     this.pending.delete(key)
+    forgetPendingCreate(key)
     releaseNonce(entry.signed.owner, CHARTERS_CONTRACT_ID, entry.reservation, spent ? BigInt(entry.signed.nonce) : undefined)
   }
 
@@ -578,7 +655,7 @@ class CharterService {
   async fileReason(ownerId: string, reason: { code: string; label: string; description?: string }): Promise<string> {
     const data = { code: reason.code, label: reason.label.trim(), ...(reason.description?.trim() ? { description: reason.description.trim() } : {}) }
     try {
-      return await this.file('reason', { ownerId, type: 'reason', data, slot: data.code, fingerprint: JSON.stringify(data) })
+      return await this.file('reason', { ownerId, type: 'reason', data: async () => data, slot: data.code, fingerprint: JSON.stringify(data) })
     } catch (error) {
       if (!(error instanceof CharterActionError) || error.code !== 40105) throw error
       const same = (await this.ownReasons(ownerId)).find((own) => own.code === data.code && own.label === data.label && (own.description ?? '') === (data.description ?? ''))
@@ -604,18 +681,15 @@ class CharterService {
       rewardSplit: { ...terms.rewardSplit },
     }
     const fingerprint = JSON.stringify({ ...terms, reasonIds: [...terms.reasonIds] })
-    return this.file('proposal', { ownerId, type: 'submittedCharter', data, slot: terms.targetContractId, fingerprint })
+    return this.file('proposal', { ownerId, type: 'submittedCharter', data: async () => data, slot: terms.targetContractId, fingerprint })
   }
 
   /** Asks to join a proposal's team, with a message only its leader can read; resolves to the request's id. */
   async requestToJoin(ownerId: string, submittedCharterId: string, message: string): Promise<string> {
-    // A request already signed (and maybe sent) is retried as it is: its message was encrypted then.
-    const pending = this.pending.get(`${ownerId}:joinRequest:${submittedCharterId}`)
-    let data: Record<string, unknown> = {}
-    if (!pending) {
-      const memberKey = await this.charterKey(ownerId, 'member', { create: true }).catch((error: unknown) => {
-        throw charterActionError('join', error)
-      })
+    // Built (and its charter key asked for) only when a new request is signed: a request
+    // already signed, maybe sent, is resent as it is, its message encrypted then.
+    const data = async (): Promise<Record<string, unknown>> => {
+      const memberKey = await this.charterKey(ownerId, 'member', { create: true })
       try {
         const sdk = await getEvoSdk()
         const w = await wasmModule()
@@ -625,15 +699,13 @@ class CharterService {
           const join = await sdk.moderationCharters.buildJoinRequest({ submittedCharterId, message, writer, writerEncryptionKey })
           try {
             // Keep the SDK's encryption envelope and key ids; the create derives its own system fields.
-            data = Object.fromEntries(Object.entries(join.toObject() as Record<string, unknown>).filter(([name]) => !name.startsWith('$')))
+            return Object.fromEntries(Object.entries(join.toObject() as Record<string, unknown>).filter(([name]) => !name.startsWith('$')))
           } finally {
             join.free()
           }
         } finally {
           writerEncryptionKey.free()
         }
-      } catch (error) {
-        throw charterActionError('join', error)
       } finally {
         memberKey.fill(0)
       }
@@ -653,7 +725,7 @@ class CharterService {
       members: members.map((id) => charterIdBytes(w, id)),
     }
     // One application per target: a changed member list waits for an earlier try to resolve.
-    return this.file('application', { ownerId, type: 'electedCharter', data, slot: targetContractId,
+    return this.file('application', { ownerId, type: 'electedCharter', data: async () => data, slot: targetContractId,
       fingerprint: `${proposal.id}:${[...members].sort().join(',')}`, targetContractId, fund: true })
   }
 
@@ -666,7 +738,7 @@ class CharterService {
       memberId: charterIdBytes(w, memberId),
     }
     const slot = `${seated.electedCharterId}:${memberId}`
-    return this.file('add-member', { ownerId, type: 'addedModerator', data, slot, fingerprint: slot })
+    return this.file('add-member', { ownerId, type: 'addedModerator', data: async () => data, slot, fingerprint: slot })
   }
 
   /** Takes an elected member off the seated team. */
@@ -674,7 +746,7 @@ class CharterService {
     const w = await wasmModule()
     const data = { electedCharterId: charterIdBytes(w, electedCharterId), memberId: charterIdBytes(w, memberId) }
     const slot = `${electedCharterId}:${memberId}`
-    return this.file('remove-member', { ownerId, type: 'removedModerator', data, slot, fingerprint: slot })
+    return this.file('remove-member', { ownerId, type: 'removedModerator', data: async () => data, slot, fingerprint: slot })
   }
 
   /**

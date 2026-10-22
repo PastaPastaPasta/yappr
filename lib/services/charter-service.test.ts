@@ -12,7 +12,18 @@ const sdk = vi.hoisted(() => ({
   identities: { fetch: vi.fn() },
   stateTransitions: { broadcastAndWait: vi.fn() },
 }))
-const builders = vi.hoisted(() => ({ sign: vi.fn(), exists: vi.fn() }))
+const builders = vi.hoisted(() => ({ sign: vi.fn(), exists: vi.fn(), consumed: vi.fn() }))
+const storage = vi.hoisted(() => {
+  const items = new Map<string, string>()
+  const local = {
+    getItem: (key: string) => items.get(key) ?? null,
+    setItem: (key: string, value: string) => { items.set(key, value) },
+    removeItem: (key: string) => { items.delete(key) },
+    clear: () => items.clear(),
+  }
+  Object.defineProperty(globalThis, 'localStorage', { value: local, configurable: true })
+  return local
+})
 const settle = vi.hoisted(() => vi.fn())
 const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), next: 1n }))
 
@@ -25,6 +36,7 @@ vi.mock('@dashevo/wasm-sdk', () => ({
 vi.mock('@/lib/moderation-charters/transitions.mjs', () => ({
   signCharterCreate: builders.sign,
   charterStepExists: builders.exists,
+  charterNonceConsumed: builders.consumed,
   charterIdBytes: () => new Uint8Array(32),
   charterKeyInCreation: () => ({}),
 }))
@@ -52,6 +64,8 @@ const timeout = () => Object.assign(new Error('Request timed out'), { name: 'Tim
 
 beforeEach(() => {
   vi.clearAllMocks()
+  storage.clear()
+  builders.consumed.mockResolvedValue(false)
   nonces.next = 1n
   sdk.identities.fetch.mockResolvedValue({ publicKeys: [] })
   builders.sign.mockImplementation(async (_w: unknown, _sdk: unknown, { type, ownerId, nonce }: { type: string; ownerId: string; nonce: bigint }) => (
@@ -107,6 +121,34 @@ describe('an uncertain proposal', () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 40120 }))
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code: 40120 })
     expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), { id: 'r1', nonce: 1n }, undefined)
+  })
+})
+
+describe('across a reload or another tab', () => {
+  it('resends the stored signed bytes instead of signing a second proposal under a new nonce', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    // A reload: a new page with nothing in memory.
+    vi.resetModules()
+    const { charterService: reloaded } = await import('./charter-service')
+    await expect(reloaded.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(builders.sign).toHaveBeenCalledTimes(1)
+    expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(2)
+    // Proved on the next try, the stored entry is forgotten.
+    settle.mockResolvedValue('landed')
+    await expect(reloaded.submitProposal(OWNER, TERMS)).resolves.toBe('doc-1')
+    expect(storage.getItem(`yappr:charter-pending:${OWNER}:submittedCharter:${TERMS.targetContractId}`)).toBeNull()
+  })
+})
+
+describe('a refusal', () => {
+  it('counts the nonce spent when Platform refused it at execution (paid), and unspent at broadcast', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('duplicate'), { code: 40105 }))
+    builders.consumed.mockResolvedValue(true)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code: 40105 })
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), { id: 'r1', nonce: 1n }, 1n)
   })
 })
 

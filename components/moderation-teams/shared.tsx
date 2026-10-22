@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ClipboardDocumentIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -22,24 +22,23 @@ import { chainOffsetMs, statusForContract, type ElectionStage } from '@/lib/mode
 export function useElectionStatus(contractId: string) {
   const { isReady } = useSdk()
   const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus(contractId)), [contractId])
-  // Every answer is kept with the contract it was read for, so a late answer for
-  // a tab the viewer already left can never stand in for the current one.
-  const [loaded, setLoaded] = useState<{ contractId: string; status: ElectionStatus | null; failed: boolean } | null>(null)
-  const [loading, setLoading] = useState(false)
-  const latest = useRef(contractId)
-  latest.current = contractId
+  // Every answer and every read in flight is kept by the contract it is for, so a late
+  // answer for a tab the viewer already left can never stand in for the current one.
+  const [loaded, setLoaded] = useState<Record<string, { status: ElectionStatus | null; failed: boolean }>>({})
+  const [reading, setReading] = useState<Record<string, number>>({})
 
   const refresh = useCallback(async () => {
     const requested = contractId
-    setLoading(true)
+    const count = (delta: number) => setReading((previous) => ({ ...previous, [requested]: Math.max(0, (previous[requested] ?? 0) + delta) }))
+    count(1)
     try {
       const result = await loader.load()
-      if (latest.current === requested) setLoaded({ contractId: requested, status: result, failed: false })
+      setLoaded((previous) => ({ ...previous, [requested]: { status: result, failed: false } }))
     } catch (error) {
       logger.error('Moderation teams: election status read failed', error)
-      if (latest.current === requested) setLoaded((previous) => ({ contractId: requested, status: previous?.contractId === requested ? previous.status : null, failed: true }))
+      setLoaded((previous) => ({ ...previous, [requested]: { status: previous[requested]?.status ?? null, failed: true } }))
     } finally {
-      if (latest.current === requested) setLoading(false)
+      count(-1)
     }
   }, [contractId, loader])
 
@@ -47,11 +46,11 @@ export function useElectionStatus(contractId: string) {
     if (isReady) refresh().catch(() => { /* reported inside */ })
   }, [isReady, refresh])
 
-  const current = loaded?.contractId === contractId ? loaded : null
+  const current = loaded[contractId] ?? null
   return {
     status: statusForContract(current?.status ?? null, contractId),
     notElected: current !== null && !current.failed && current.status === null,
-    loading,
+    loading: (reading[contractId] ?? 0) > 0,
     failed: current?.failed ?? false,
     refresh,
   }
