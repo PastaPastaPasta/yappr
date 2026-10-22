@@ -197,9 +197,9 @@ Example manifest (`social-charter.json`; repeat with the other target names and 
   "targetContractId": "<predicted-social-contract-id>",
   "expected": {
     "ownerId": "<registration-maker-id>",
-    "joinWindow": 86400, "voteWindow": 86400, "challengeCoolDown": 1209600,
+    "joinWindow": <join s>, "voteWindow": <vote s>, "challengeCoolDown": 1209600, "electionDelay": <delay s>,
     "interim": "notYetUsable",
-    "documentTypes": ["post", "reply", "report", "yapprProfile"]
+    "documentTypes": ["post", "reply", "report", "restriction", "yapprProfile"]
   },
   "leader": {
     "identityId": "<leader-id>",
@@ -233,7 +233,7 @@ Example manifest (`social-charter.json`; repeat with the other target names and 
      --config "$PRIVATE_RELEASE_DIR/social-charter.json" --journal "$PRIVATE_RELEASE_DIR/social-charter-journal.json"
    ```
 
-4. **Arm the prepared filer, then register the target.** Start the command below in a second terminal before the corresponding registration command. It checks the prepared state, waits up to 600 seconds for proved registration, checks the registered owner, 86400 s/86400 s windows, interim, cool-down, and moderated types against `expected`, requires no election delay, signs and submits the proposal, commits members' encrypted joins in parallel, then checks the current join phase and applies with the full elected member list. Repeat for blog and storefront, matching each id against the actual registration journal. Set `expected.documentTypes` from each target's registration plan (the v18 set, docs/SOCIAL_V18.md): social uses `post`, `reply`, `report`, `restriction`, `yapprProfile`; blog uses `blog`, `blogPost`, `blogComment`, `report`, `restriction`; storefront uses `store`, `storeItem`, `storeReview`, `itemReview`, `report`. A declaration mismatch stops before proposal or deposit. The contest fund must still equal the reviewed 0.5 DASH budget. The registration batch can be stopped after an entry with `--upto`; it does not itself interleave charters.
+4. **Arm the prepared filer, then register the target.** Start the command below in a second terminal before the corresponding registration command. It checks the prepared state, waits up to 600 seconds for proved registration, checks the registered owner, join and vote windows, election delay (which a testnet manifest must declare explicitly), interim, cool-down, and moderated types against `expected`, waits for the election to open, signs and submits the proposal, commits members' encrypted joins in parallel, then checks the current join phase and applies with the full elected member list. Repeat for blog and storefront, matching each id against the actual registration journal. Set `expected.documentTypes` from each target's registration plan (the v18 set, docs/SOCIAL_V18.md): social uses `post`, `reply`, `report`, `restriction`, `yapprProfile`; blog uses `blog`, `blogPost`, `blogComment`, `report`, `restriction`; storefront uses `store`, `storeItem`, `storeReview`, `itemReview`, `report`. A declaration mismatch stops before proposal or deposit. The contest fund must still equal the reviewed 0.5 DASH budget. The registration batch can be stopped after an entry with `--upto`; it does not itself interleave charters.
 
    ```sh
    NETWORK=testnet node scripts/file-release-charters.mjs --live --production --wait-registration 600 \

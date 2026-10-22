@@ -306,7 +306,21 @@ The ids hold only if the maker spends no other nonce first. The estimate does no
 
 ## Accepted gaps
 
-From DECISIONS-FINAL, as built: likes by restricted users still count toward trending; a hidden post's likes still count toward its tags' totals; likes, replies, quotes, bookmarks and orders of hidden content are accepted on chain; illegal text stays in state (media is off-chain); a new identity evades a restriction; restricted authors still spend sponsored gas. Also, from the cut: a profile's owner can delete it and create a new one without `mod`; a restricted author's blog comments and storefront reviews are not laned; the v17 social, v9 blog and v10 storefront stay in the group (never file charters on them, never point builds at them).
+From DECISIONS-FINAL, as built:
+
+- Likes by restricted users still count toward trending, and a hidden post's likes still count toward its tags' totals.
+- Likes, replies, quotes, bookmarks and orders of hidden content are accepted on chain.
+- Illegal text stays in state (media is off-chain).
+- A new identity evades a restriction, and restricted authors still spend sponsored gas.
+
+Also from the cut, pending the owner where marked:
+
+- **Delete and re-create drops a hide** wherever the author may delete: a hidden store or item review can be deleted and written again for the same order (the unique `orderReview`/`orderItemReview` slot frees), and goes straight back into the averages and rankings; a hidden `yapprProfile` (unique per owner) the same way; a hidden blog or blog comment can be deleted and posted anew. *(Owner decision, below.)*
+- **A restricted author's mentions still reach the person mentioned**: `mentionedUserAndTime` is `[mentionedUserIds, mod, $createdAt]`, with no `live`. *(Owner decision, below.)*
+- A restricted author's blogs (`blog.timeline [mod, $createdAt]`), blog comments and storefront writes are not laned: there is no `live` on them, so the team hides them one by one.
+- There is one moderation log per type, `[mod, $moderatedAt]` (DECISIONS-FINAL); RECONCILED's per-moderator `moderatedBy [mod, $moderatedBy, $moderatedAt]` is not in the cut, so a per-moderator view filters the log by `$moderatedBy`.
+- The v17 social, v9 blog and v10 storefront stay in the group: never file charters on them, never point builds at them.
+- **Do not select `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v18` before the client's v18 builders land.** Until then the v17-shaped listing builders (`postListingWherePrefix`, `postOwnerIndexPrefix`, `replyOwnerIndexPrefix`, `replyThreadIndexPrefix`) throw on v18 instead of sending reads every v18 index refuses.
 
 ## Owner decisions
 
@@ -314,3 +328,8 @@ From DECISIONS-FINAL, as built: likes by restricted users still count toward tre
 - **The moderator hide cost** (5–12¢ per hide, 2–8¢ per unhide), paid by the team; the pot accrues 20M per post and 10M per reply.
 - **Blocking interactions with hidden content** is possible in the grammar after all (a reference `where` on the target's `mod`); DECISIONS-FINAL says no. It is frozen into the cut either way.
 - **Restriction in storefront** (no `live` lane) and **blog comments** (no `live` lane): left unlaned.
+- **Delete and re-create of hidden content.** Prepared, not applied (sizes by `validate-contract-offline --strict-size`, testnet):
+  - (a) `canBeDeleted: false` on `storeReview` and `itemReview`, with `report.storeReviewId`/`itemReviewId` made `permanentDocument`: storefront **20,010 B**, over the 20,000 B budget (cap 20,480).
+  - (b) keep author deletion but refuse it while hidden, `deleteConstraints: {notHidden: {absent: "mod"}}` on both reviews: storefront **20,072 B**, over budget; the same rule on `yapprProfile`: social **19,883 B**.
+  - Either storefront variant fits once the property `description` strings are dropped from the file (72 of them, about 4.9 KB: 15,124 B / 15,186 B). Any change means a new sha256 and a new sakura proof of the changed file.
+- **A restricted author's mentions.** Prepared, not applied: the rule `restrictedQuiet: {ifThen: [{equal: [live, 2]}, {absent: mentionedUserIds}]}` on post and reply (free to authors; a restricted author's posts carry no mentions) puts social at **19,988 B**; with the profile rule above as well, **20,035 B**, over budget.

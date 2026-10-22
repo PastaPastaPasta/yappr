@@ -1629,6 +1629,15 @@ describe('contract topology', () => {
       expect(v18.topologyDescriptor().replyLinkage).toEqual(v17.topologyDescriptor().replyLinkage)
     })
 
+    it('fails closed in the v17-shaped listing builders until the v18 ones are wired', async () => {
+      const v18 = await topologyModule('v18')
+      for (const builder of [v18.postOwnerIndexPrefix, v18.postListingWherePrefix, v18.replyOwnerIndexPrefix, v18.replyThreadIndexPrefix, v18.postOwnerIndexOrderPrefix, v18.replyOwnerIndexOrderPrefix]) {
+        expect(() => builder(), builder.name).toThrow(/v18 listing builders are not wired yet/)
+      }
+      const v17 = await topologyModule('v17')
+      expect(v17.postListingWherePrefix()).toEqual([['live', '==', true]])
+    })
+
     it('gates blog v10 and storefront v11 on their own topologies', async () => {
       const constants = async (blog: string, storefront: string) => {
         vi.resetModules()

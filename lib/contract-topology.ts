@@ -727,6 +727,7 @@ export function postsCarryLiveMarker(): boolean {
  * true` on v13, nothing elsewhere. Paired with {@link postOwnerIndexOrderPrefix}.
  */
 export function postOwnerIndexPrefix(): Array<['live', '==', true]> {
+  failClosedOnModLanes('postOwnerIndexPrefix')
   return postsCarryLiveMarker() ? [['live', '==', true]] : []
 }
 
@@ -757,6 +758,7 @@ export function postListingsCarryLiveMarker(): boolean {
  * of its properties).
  */
 export function postListingWherePrefix(): Array<['live', '==', true]> {
+  failClosedOnModLanes('postListingWherePrefix')
   return postListingsCarryLiveMarker() ? [['live', '==', true]] : []
 }
 
@@ -803,17 +805,32 @@ export function replyThreadsCarryLiveMarker(): boolean {
 
 /** The `where` clauses every `repliesOf` read starts with: `live == true` where the index is live-keyed ({@link replyThreadsCarryLiveMarker}). */
 export function replyThreadIndexPrefix(): Array<['live', '==', true]> {
+  failClosedOnModLanes('replyThreadIndexPrefix')
   return replyThreadsCarryLiveMarker() ? [['live', '==', true]] : []
 }
 
 /** The `where` clauses every read of `reply.ownerAndTime` starts with: `live == true` on v17. Paired with {@link replyOwnerIndexOrderPrefix}. */
 export function replyOwnerIndexPrefix(): Array<['live', '==', true]> {
+  failClosedOnModLanes('replyOwnerIndexPrefix')
   return repliesCarryLiveMarker() ? [['live', '==', true]] : []
 }
 
 /** The `orderBy` entries matching {@link replyOwnerIndexPrefix}. */
 export function replyOwnerIndexOrderPrefix(): Array<['live', 'asc']> {
   return replyOwnerIndexPrefix().map(([field]): ['live', 'asc'] => [field, 'asc'])
+}
+
+/**
+ * The v17-shaped listing prefixes (`live == true`, no `mod` pin) would be
+ * refused by every v18 index ({@link listingsCarryModLane}): `live` is the
+ * integer lane 1 or 2 and each listing pins `mod == null` after it. Until the
+ * client's v18 builders land they fail closed here, so a build pointed at a
+ * v18 contract stops at its first listing read instead of querying wrongly.
+ */
+function failClosedOnModLanes(builder: string): void {
+  if (listingsCarryModLane()) {
+    throw new Error(`${builder}: the v18 listing builders are not wired yet (live == 1, mod == null; docs/SOCIAL_V18.md)`)
+  }
 }
 
 /**
