@@ -33,9 +33,9 @@ network-specific moderation configuration.
 | pollr | [pollr-contract.json](pollr-contract.json) | `a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347` |
 | storefront | [yappr-storefront-contract.json](yappr-storefront-contract.json) | `69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc` |
 | passkeyVault | [yappr-passkey-vault-contract.json](yappr-passkey-vault-contract.json) | `14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5` |
-| socialV18 | [yappr-social-contract-v18.json](yappr-social-contract-v18.json) | `4c8117d41ae4ad7bb47ed828e2a555283ac121b0adfe2e8899c085b0247a12af` |
+| socialV18 | [yappr-social-contract-v18.json](yappr-social-contract-v18.json) | `71e4d4b3353965cf343448e254150d0a4ff183a17384d53c437b4c6eefb6604d` |
 | blogV10 | [yappr-blog-contract-v10.json](yappr-blog-contract-v10.json) | `8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159` |
-| storefrontV11 | [yappr-storefront-contract-v11.json](yappr-storefront-contract-v11.json) | `eb35635f507d09a52c0ae6fffc23185eebaeb15cd2d8c6f67b4c05ea717b9a0e` |
+| storefrontV11 | [yappr-storefront-contract-v11.json](yappr-storefront-contract-v11.json) | `645a51a475a33794d713e23d9b27fd9a54531920e61c37e8e34c74b46f70b167` |
 
 The first eight rows are registered on testnet. `social`, `blog` and
 `storefront` (v17, v9, v10) are replaced members: they keep their files and

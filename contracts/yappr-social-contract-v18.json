@@ -210,16 +210,11 @@
           "properties": [
             {
               "postId": "asc"
-            },
-            {
-              "postLive": "asc"
             }
           ],
           "terminal": "$ownerId",
           "rangeCountable": true,
-          "rankedCountable": {
-            "at": "postId"
-          },
+          "rankedCountable": true,
           "preallocated": true
         },
         {
@@ -230,9 +225,6 @@
             },
             {
               "postId": "asc"
-            },
-            {
-              "postLive": "asc"
             }
           ],
           "summableOffCountIndex": "byPost",
@@ -254,9 +246,6 @@
             },
             {
               "postId": "asc"
-            },
-            {
-              "postLive": "asc"
             }
           ],
           "summableOffCountIndex": "byPost",
@@ -275,9 +264,6 @@
           "properties": [
             {
               "$createdAt": "asc"
-            },
-            {
-              "postLive": "asc"
             },
             {
               "postId": "asc"
@@ -299,9 +285,6 @@
           "properties": [
             {
               "$createdAt": "asc"
-            },
-            {
-              "postLive": "asc"
             },
             {
               "tags": "asc"
@@ -330,8 +313,7 @@
       "required": [
         "$createdAt",
         "postId",
-        "postAuthor",
-        "postLive"
+        "postAuthor"
       ],
       "properties": {
         "postId": {
@@ -342,8 +324,7 @@
             "documentType": "post",
             "where": {
               "tags": "tags",
-              "$ownerId": "postAuthor",
-              "live": "postLive"
+              "$ownerId": "postAuthor"
             }
           }
         },
@@ -363,12 +344,6 @@
           "type": "identifier",
           "position": 2,
           "distinctFrom": "$ownerId"
-        },
-        "postLive": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 2,
-          "position": 3
         }
       },
       "tokenCost": {
@@ -989,6 +964,19 @@
             },
             {
               "present": "modLabel"
+            }
+          ]
+        },
+        "restrictedQuiet": {
+          "ifThen": [
+            {
+              "equal": [
+                "live",
+                2
+              ]
+            },
+            {
+              "absent": "mentionedUserIds"
             }
           ]
         }
@@ -1798,6 +1786,19 @@
               "present": "modLabel"
             }
           ]
+        },
+        "restrictedQuiet": {
+          "ifThen": [
+            {
+              "equal": [
+                "live",
+                2
+              ]
+            },
+            {
+              "absent": "mentionedUserIds"
+            }
+          ]
         }
       },
       "canBeDeleted": false,
@@ -2312,6 +2313,11 @@
               "present": "modLabel"
             }
           ]
+        }
+      },
+      "deleteConstraints": {
+        "notHidden": {
+          "absent": "mod"
         }
       }
     }

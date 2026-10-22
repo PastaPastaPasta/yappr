@@ -1470,7 +1470,8 @@ const PROBES = [
 
   // "Hide, don't delete" (docs/SOCIAL_V18.md): social v18, blog v10 and storefront v11. No moderator
   // delete anywhere, a moderator-only `mod` lane in every listing, warnings as the only list, the
-  // moderator-only `restriction` and the `live` 1/2 lane, likes laned by `postLive`, interim notYetUsable.
+  // moderator-only `restriction` and the `live` 1/2 lane (a restricted author's writes carry no mentions),
+  // v17's likes, permanent reviews, interim notYetUsable.
   ...[[SOCIAL_V18, 'social v18'], [BLOG_V10, 'blog v10'], [STOREFRONT_V11, 'storefront v11']].flatMap(([file, name]) => [
     { label: `control: ${name} as testnet registers it (interim notYetUsable, 1209600 s cool-down)`, file, network: 'testnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' && elected(s).challengeCoolDown === 1_209_600 },
     { label: `control: ${name} as mainnet registers it`, file, network: 'mainnet', mutate: () => {}, expect: 'accepted' },
@@ -1494,8 +1495,13 @@ const PROBES = [
   { label: 'social v18: retractedWhen kept with no banlist and no suspension list (nobody is ever barred)', file: SOCIAL_V18, expect: 'wasm', node: '10231', why: /retractedWhen/i, mutate: (s) => { types(s).post.retractedWhen = { present: 'deleted' }; } },
   { label: 'social v18: a moderatedDocument reference at the now-permanent post', file: SOCIAL_V18, expect: 'audit', node: '40144', mutate: (s) => { types(s).like.properties.postId.refersTo.type = 'moderatedDocument'; } },
   { label: 'social v18: a bookmark binding its post\'s moderator-only mod in the reference where: parses (only a type\'s own changeFields may not be read by its references), so leaving hidden posts likeable and bookmarkable is the owner\'s choice (DECISIONS-FINAL), not a Platform limit; unproved on a node', file: SOCIAL_V18, expect: 'accepted', mutate: (s) => { types(s).bookmark.properties.postMod = { type: 'integer', minimum: 1, maximum: 2, position: 1 }; types(s).bookmark.properties.postId.refersTo.where = { mod: 'postMod' }; } },
-  { label: 'social v18: postLive left only in the two outlivesDelete trend windows (an indexOnly property needs a plain home, so it sits last in the counters)', file: SOCIAL_V18, expect: 'wasm', node: '10231', why: /does not appear in any index/, mutate: (s) => { for (const name of ['byPost', 'byHashtagPost', 'byAuthorPost']) namedIndex(s, 'like', name).properties = namedIndex(s, 'like', name).properties.filter((p) => !('postLive' in p)); } },
-  { label: 'social v18: byTrendPost without outlivesDelete parses, but then an unlike must name the like\'s $createdAt, which no client can recover (refused on sakura), so both windows keep it', file: SOCIAL_V18, expect: 'accepted', mutate: (s) => { delete namedIndex(s, 'like', 'byTrendPost').outlivesDelete; } },
+  { label: 'social v18: the like as committed is v17\'s (both trend windows outlivesDelete, no lane), its permanentDocument reference aside', file: SOCIAL_V18, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const like = structuredClone(types(s).like);
+    like.properties.postId.refersTo.type = 'moderatedDocument';
+    return JSON.stringify(like) === JSON.stringify(JSON.parse(readFileSync(SOCIAL_V17, 'utf8')).documentSchemas.like);
+  } },
+  { label: 'social v18: byTrendPost without outlivesDelete parses, but then an unlike must name the like\'s $createdAt, which no client can recover (refused on sakura)', file: SOCIAL_V18, expect: 'accepted', mutate: (s) => { delete namedIndex(s, 'like', 'byTrendPost').outlivesDelete; } },
+  { label: 'storefront v11: a review deletable again while the report\'s reference stays permanent', file: STOREFRONT_V11, expect: 'audit', node: '40122', why: /permanentDocument/, mutate: (s) => { delete types(s).storeReview.canBeDeleted; } },
   { label: 'social v18: the restriction count read off a unique index (no plain countable [target, state] index answers it)', file: SOCIAL_V18, expect: 'wasm', mutate: (s) => { namedIndex(s, 'restriction', 'standing').unique = true; } },
   { label: 'social v18: the restricted lane without its $revision guard (legal; the guard is the cut\'s choice, proved on sakura)', file: SOCIAL_V18, expect: 'accepted', mutate: (s) => { types(s).post.propertyConstraints.restrictedLane = types(s).post.propertyConstraints.restrictedLane.ifThen[1]; } },
   { label: 'social v18: mod in a changeFields list and also immutable', file: SOCIAL_V18, expect: 'wasm', why: /mod/, mutate: (s) => { types(s).post.immutable.push('mod'); } },
@@ -1583,12 +1589,9 @@ const WHERE_CASES = [
   ['v17: a rekey revoking an in-range leaf into the last generation', SOCIAL_V17, 'privateFeedRekey', '$ownerId', { revokedLeaf: 63, keyGeneration: 2 }, { treeCapacity: 64, maxKeyGeneration: 2 }, null],
   ['v17: a rekey revoking a leaf outside the feed (leaf 64 of 64)', SOCIAL_V17, 'privateFeedRekey', '$ownerId', { revokedLeaf: 64, keyGeneration: 2 }, { treeCapacity: 64, maxKeyGeneration: 2 }, '40127'],
   ['v17: a rekey past the feed\'s last generation (3 of at most 2)', SOCIAL_V17, 'privateFeedRekey', '$ownerId', { revokedLeaf: 0, keyGeneration: 3 }, { treeCapacity: 64, maxKeyGeneration: 2 }, '40127'],
-  // Social v18: a like copies its post's lane (`live` 1 listed, 2 restricted) as postLive, so the
-  // trend windows lane it; a tombstone has no live, so it takes no new like.
-  ['v18: a like of a listed post (postLive 1)', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice', postLive: 1 }, { $ownerId: 'alice', tags: ['dash'], live: 1 }, null],
-  ['v18: a like of a restricted author\'s post (postLive 2)', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice', postLive: 2 }, { $ownerId: 'alice', tags: ['dash'], live: 2 }, null],
-  ['v18: a like claiming the listed lane for a restricted post', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice', postLive: 1 }, { $ownerId: 'alice', tags: ['dash'], live: 2 }, '40127'],
-  ['v18: a like of a tombstone (no live to copy)', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice', postLive: 1 }, { $ownerId: 'alice', tags: ['dash'] }, '40127'],
+  // Social v18: likes are v17's (no lane); the reference is permanentDocument.
+  ['v18: a like carrying its post\'s tags', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice' }, { $ownerId: 'alice', tags: ['dash'], live: 2 }, null],
+  ['v18: a like naming someone else as the author', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'bob' }, { $ownerId: 'alice', tags: ['dash'], live: 1 }, '40127'],
 ];
 
 /**

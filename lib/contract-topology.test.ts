@@ -1535,9 +1535,9 @@ describe('contract topology', () => {
     const STORE11 = storefrontContractV11.documentSchemas as unknown as Schemas
 
     it('reports the v18 capabilities on v18 and none of them on v17', async () => {
-      const flags = (m: Awaited<ReturnType<typeof topologyModule>>) => [m.listingsCarryModLane(), m.moderatorsCannotDelete(), m.authorsCanBeRestricted(), m.likesCarryPostLive()]
-      expect(flags(await topologyModule('v18'))).toEqual([true, true, true, true])
-      expect(flags(await topologyModule('v17'))).toEqual([false, false, false, false])
+      const flags = (m: Awaited<ReturnType<typeof topologyModule>>) => [m.listingsCarryModLane(), m.moderatorsCannotDelete(), m.authorsCanBeRestricted()]
+      expect(flags(await topologyModule('v18'))).toEqual([true, true, true])
+      expect(flags(await topologyModule('v17'))).toEqual([false, false, false])
     })
 
     it('lets no moderator delete in social, blog or storefront, and keeps warnings only', async () => {
@@ -1603,22 +1603,24 @@ describe('contract topology', () => {
         }
       }
       expect(STORE11.restriction).toBeUndefined()
+      // Reviews are permanent, so a hidden one can not be deleted and written again (owner, 2026-10-22).
+      for (const docType of ['storeReview', 'itemReview']) expect(STORE11[docType].canBeDeleted, docType).toBe(false)
+      for (const property of ['storeReviewId', 'itemReviewId']) expect(STORE11.report.properties[property].refersTo?.type, property).toBe('permanentDocument')
     })
 
-    it('points every reference at a post or reply as permanentDocument, and lanes likes by their post', () => {
+    it('points every reference at a post or reply as permanentDocument, keeps the v17 like and quiets restricted authors\' mentions', () => {
       for (const [docType, property] of [['like', 'postId'], ['likeReply', 'replyId'], ['bookmark', 'postId'], ['post', 'quotedPostId'], ['post', 'quotedReplyId'], ['reply', 'rootPostId'], ['reply', 'replyToReplyId'], ['report', 'postId'], ['report', 'replyId']]) {
         expect(V18[docType].properties[property].refersTo?.type, `${docType}.${property}`).toBe('permanentDocument')
       }
-      expect(V18.like.properties.postId.refersTo?.where).toEqual({ tags: 'tags', $ownerId: 'postAuthor', live: 'postLive' })
-      expect(keys(V18, 'like', 'byTrendPost')).toEqual(['$createdAt', 'postLive', 'postId'])
-      expect(keys(V18, 'like', 'byTrendHashtagPost')).toEqual(['$createdAt', 'postLive', 'tags', 'postId'])
-      // Both windows keep outlivesDelete, so an unlike names no $createdAt (a client cannot recover it);
-      // postLive's plain home is the counters, last, with byPost ranked at postId.
-      for (const name of ['byTrendPost', 'byTrendHashtagPost']) expect(indexOf(V18, 'like', name), name).toHaveProperty('outlivesDelete', true)
-      expect(keys(V18, 'like', 'byPost')).toEqual(['postId', 'postLive'])
-      expect(keys(V18, 'like', 'byHashtagPost')).toEqual(['tags', 'postId', 'postLive'])
-      expect(keys(V18, 'like', 'byAuthorPost')).toEqual(['postAuthor', 'postId', 'postLive'])
-      expect(indexOf(V18, 'like', 'byPost')?.rankedCountable).toEqual({ at: 'postId' })
+      // Likes are v17's exactly but for the reference kind (owner, 2026-10-22).
+      const v17Like = structuredClone(V17.like)
+      v17Like.properties.postId.refersTo = { ...v17Like.properties.postId.refersTo, type: 'permanentDocument' }
+      expect(V18.like).toEqual(v17Like)
+      for (const docType of ['post', 'reply']) {
+        expect(V18[docType].propertyConstraints?.restrictedQuiet, docType).toEqual({ ifThen: [{ equal: ['live', 2] }, { absent: 'mentionedUserIds' }] })
+      }
+      // A hidden profile (unique per owner) cannot be deleted and written again.
+      expect(V18.yapprProfile.deleteConstraints).toEqual({ notHidden: { absent: 'mod' } })
     })
 
     it('carries mod and modLabel through a tombstone, and keeps every v17 surface', async () => {

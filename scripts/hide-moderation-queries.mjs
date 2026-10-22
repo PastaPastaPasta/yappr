@@ -31,8 +31,6 @@ const MOD_VALUES = [null, 1, 2];
 const LIVE_MOD_LANES = [1, 2].flatMap((live) => MOD_VALUES.map((mod) => ({ live, mod })));
 /** Every `mod` lane of a listing without `live`. */
 const MOD_LANES = MOD_VALUES.map((mod) => ({ mod }));
-/** The `live` lanes a like copies as `postLive`. */
-const LIVE_LANES = [{ live: 1 }, { live: 2 }];
 /** The moderation log's lanes: hidden and legal hold. */
 const LOG_LANES = [1, 2].map((mod) => ({ mod }));
 /** A restriction in force (1) and a lifted one (2). */
@@ -70,15 +68,14 @@ const SOCIAL = [
   entry('social', 'reply', 'count', 'archive', 'reply.repliesOf grouped count (several threads)', (v) => ({ where: [...lane(v), ['rootPostId', 'in', [v.post, v.reply]]], groupBy: ['rootPostId'] }), LIVE_MOD_LANES),
   entry('social', 'reply', 'ranked', 'archive', 'reply.repliesOf ranked at rootPostId (most replied)', (v) => ({ where: lane(v), groupBy: 'rootPostId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 }), LIVE_MOD_LANES),
   entry('social', 'reply', 'documents', 'archive', 'reply.mentionedUserAndTime (reply mentions of me)', (v) => newest([['mentionedUserIds', 'contains', v.me], ['mod', '==', v.mod]]), MOD_LANES),
-  // ---- likes: trending reads pin the post's lane (postLive), not mod (a like cannot read it) ----
-  entry('social', 'like', 'ranked', 'archive', 'like.byTrendPost (trending posts, 72h)', (v) => ({ where: [['postLive', '==', v.live]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [POST_WINDOW] }), LIVE_LANES),
-  entry('social', 'like', 'ranked', 'archive', 'like.byTrendHashtagPost (trending tags, 24h)', (v) => ({ where: [['postLive', '==', v.live]], groupBy: 'tags', aggregate: { type: 'count' }, direction: 'desc', limit: 12, timeRange: [TAG_WINDOW] }), LIVE_LANES),
-  entry('social', 'like', 'ranked', 'archive', 'like.byTrendHashtagPost (top in a tag, 24h)', (v) => ({ where: [['postLive', '==', v.live], ['tags', 'contains', v.tag]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [TAG_WINDOW] }), LIVE_LANES),
-  // ---- likes of one post: counted and checked without knowing the post's lane (byPost ranked at postId) ----
+  // ---- likes (v17's: no lane; the client skips hidden and restricted posts in ranked lists) ----
+  entry('social', 'like', 'ranked', 'default', 'like.byTrendPost (trending posts, 72h)', () => ({ groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [POST_WINDOW] })),
+  entry('social', 'like', 'ranked', 'default', 'like.byTrendHashtagPost (trending tags, 24h)', () => ({ groupBy: 'tags', aggregate: { type: 'count' }, direction: 'desc', limit: 12, timeRange: [TAG_WINDOW] })),
+  entry('social', 'like', 'ranked', 'default', 'like.byTrendHashtagPost (top in a tag, 24h)', (v) => ({ where: [['tags', 'contains', v.tag]], groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10, timeRange: [TAG_WINDOW] })),
   entry('social', 'like', 'count', 'default', 'like.byPost count (a post\'s likes)', (v) => ({ where: [['postId', '==', v.post]] })),
   entry('social', 'like', 'count', 'default', 'like.byPost grouped count (a feed page\'s likes)', (v) => ({ where: [['postId', 'in', [v.post, v.reply]]], groupBy: ['postId'] })),
-  entry('social', 'like', 'documents', 'default', 'like.byPost (have I liked it; the post\'s lane pinned)', (v) => ({ where: [['postId', '==', v.post], ['postLive', '==', 1], ['$ownerId', '==', v.me]], limit: 1 })),
-  entry('social', 'like', 'ranked', 'default', 'like.byPost ranked at postId (top liked)', () => ({ groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })),
+  entry('social', 'like', 'documents', 'default', 'like.byPost (have I liked it)', (v) => ({ where: [['postId', '==', v.post], ['$ownerId', '==', v.me]], limit: 1 })),
+  entry('social', 'like', 'ranked', 'default', 'like.byPost ranked (top liked)', () => ({ groupBy: 'postId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })),
   // ---- the moderation log ----
   entry('social', 'post', 'documents', 'log', 'post.moderated (hidden posts, newest action first)', moderatedLog, LOG_LANES),
   entry('social', 'reply', 'documents', 'log', 'reply.moderated', moderatedLog, LOG_LANES),

@@ -593,7 +593,9 @@ const V18_MODERATOR_FIELDS = ['mod', 'modLabel'] as const
  *   - `live` is an integer lane, 1 listed and 2 posted while the author was
  *     restricted, which a `restriction` document forces on create
  *     ({@link authorsCanBeRestricted}); there is no banlist and no suspension list;
- *   - a like copies its post's `live` as `postLive` ({@link likesCarryPostLive});
+ *   - likes are v17's (no lane: a restricted author's posts count in trending
+ *     like hidden ones), with a `permanentDocument` reference;
+ *   - a restricted author's post or reply carries no mentions (`restrictedQuiet`);
  *   - a tombstone carries `mod` and `modLabel` through unchanged (a write that
  *     drops one is a moderator-field change, refused 41124).
  */
@@ -869,21 +871,6 @@ export function moderatorsCannotDelete(): boolean {
  * suspension list.
  */
 export function authorsCanBeRestricted(): boolean {
-  return isAtLeast('v18')
-}
-
-/**
- * True when a like copies its post's `live` lane as `postLive` (v18): the
- * reference `where` binds it to the post, and both trend windows are keyed
- * `[$createdAt, postLive, …]`, so trending reads pin `postLive == 1`. It also
- * sits last in the counters (`byPost [postId, postLive]`, ranked at `postId`,
- * and `byHashtagPost`/`byAuthorPost`): an unlike carries the post's `live` as
- * `postLive`, and "have I liked it" pins it after `postId`; counts and
- * rankings by `postId` need no lane. Both windows keep `outlivesDelete`, so an
- * unlike names no `$createdAt` and does not lower trending. A like of a
- * tombstone (no `live`) is refused.
- */
-export function likesCarryPostLive(): boolean {
   return isAtLeast('v18')
 }
 

@@ -669,8 +669,8 @@ const restrictionCases = () => [
 ];
 DECLARED_RULES['yappr-social-contract-v18.json'] = {
   ...DECLARED_RULES['yappr-social-contract-v17.json'],
-  post: [...DECLARED_RULES['yappr-social-contract-v17.json'].post, 'restrictedLane', MOD_REASON],
-  reply: [...DECLARED_RULES['yappr-social-contract-v17.json'].reply, 'restrictedLane', MOD_REASON],
+  post: [...DECLARED_RULES['yappr-social-contract-v17.json'].post, 'restrictedLane', 'restrictedQuiet', MOD_REASON],
+  reply: [...DECLARED_RULES['yappr-social-contract-v17.json'].reply, 'restrictedLane', 'restrictedQuiet', MOD_REASON],
   yapprProfile: [MOD_REASON],
   restriction: ['moderatorsOnly'],
 };
@@ -681,6 +681,10 @@ CONSTRAINT_CASES['yappr-social-contract-v18.json'] = [
   ...modReasonCases('yapprProfile', { location: 'constraint probe' }),
   ['post: a tombstone carrying the moderator\'s mod and modLabel through', 'post', { deleted: true, mod: 1, modLabel: 2 }, null],
   ['post: the restricted lane on a create, judged only by the node (it reads a total)', 'post', { ...v13Post(), live: 2 }, null],
+  ['post: a restricted author mentioning someone (restrictedQuiet)', 'post', { ...v13Post(), live: 2, mentionedUserIds: [id()] }, 'restrictedQuiet'],
+  ['reply: a restricted author mentioning someone (restrictedQuiet)', 'reply', { ...v17Reply(), live: 2, mentionedUserIds: [id()] }, 'restrictedQuiet'],
+  ['post: a listed author mentioning someone', 'post', { ...v13Post(), live: 1, mentionedUserIds: [id()] }, null],
+  ['post: a tombstone (no live, no mentions)', 'post', { deleted: true }, null],
   ...restrictionCases(),
 ];
 DECLARED_RULES['yappr-blog-contract-v10.json'] = {
@@ -757,10 +761,17 @@ DELETE_CASES['yappr-blog-contract.json'] = [
 ];
 DELETE_CASES['yappr-storefront-contract.json'] = featureDeleteCases('storeReport', baseStoreReport);
 // The v18 set keeps every report's withdrawal rule (docs/SOCIAL_V18.md).
-DECLARED_DELETE_RULES['yappr-social-contract-v18.json'] = DECLARED_DELETE_RULES['yappr-social-contract-v17.json'];
+// Social v18 adds `notHidden` on yapprProfile: a hidden profile cannot be deleted and written again.
+DECLARED_DELETE_RULES['yappr-social-contract-v18.json'] = { ...DECLARED_DELETE_RULES['yappr-social-contract-v17.json'], yapprProfile: ['notHidden'] };
 DECLARED_DELETE_RULES['yappr-blog-contract-v10.json'] = DECLARED_DELETE_RULES['yappr-blog-contract.json'];
 DECLARED_DELETE_RULES['yappr-storefront-contract-v11.json'] = DECLARED_DELETE_RULES['yappr-storefront-contract.json'];
-DELETE_CASES['yappr-social-contract-v18.json'] = DELETE_CASES['yappr-social-contract-v17.json'];
+DELETE_CASES['yappr-social-contract-v18.json'] = [
+  ...DELETE_CASES['yappr-social-contract-v17.json'],
+  ['yapprProfile: deleting a listed profile', 'yapprProfile', { location: 'delete probe' }, null],
+  ['yapprProfile: deleting a labelled, listed profile (modLabel without mod)', 'yapprProfile', { location: 'delete probe', modLabel: 3 }, null],
+  ['yapprProfile: deleting a hidden profile (mod 1)', 'yapprProfile', { location: 'delete probe', mod: 1, modLabel: 2 }, 'notHidden'],
+  ['yapprProfile: deleting a profile under legal hold (mod 2)', 'yapprProfile', { location: 'delete probe', mod: 2, modLabel: 2 }, 'notHidden'],
+];
 DELETE_CASES['yappr-blog-contract-v10.json'] = DELETE_CASES['yappr-blog-contract.json'];
 DELETE_CASES['yappr-storefront-contract-v11.json'] = DELETE_CASES['yappr-storefront-contract.json'];
 

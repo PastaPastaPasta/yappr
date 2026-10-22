@@ -112,28 +112,24 @@
           "type": "string",
           "position": 0,
           "maxLength": 100,
-          "minLength": 1,
-          "description": "Store name"
+          "minLength": 1
         },
         "description": {
           "type": "string",
           "position": 1,
-          "maxLength": 500,
-          "description": "Store description"
+          "maxLength": 500
         },
         "logoUrl": {
           "type": "string",
           "pattern": "^(https|ipfs)://.+$",
           "position": 2,
-          "maxLength": 512,
-          "description": "URL to store logo image"
+          "maxLength": 512
         },
         "bannerUrl": {
           "type": "string",
           "pattern": "^(https|ipfs)://.+$",
           "position": 3,
-          "maxLength": 512,
-          "description": "URL to store banner image"
+          "maxLength": 512
         },
         "status": {
           "type": "string",
@@ -143,46 +139,39 @@
             "closed"
           ],
           "position": 4,
-          "description": "Store status",
           "maxLength": 6
         },
         "paymentUris": {
           "type": "string",
           "position": 5,
-          "maxLength": 2000,
-          "description": "JSON array of payment URIs (dash:, bitcoin:, etc.)"
+          "maxLength": 2000
         },
         "defaultCurrency": {
           "type": "string",
           "position": 6,
           "maxLength": 10,
-          "description": "Default currency code (USD, EUR, DASH, etc.)",
           "maxBytes": 10
         },
         "policies": {
           "type": "string",
           "position": 7,
-          "maxLength": 2000,
-          "description": "Store policies (shipping, returns, etc.)"
+          "maxLength": 2000
         },
         "location": {
           "type": "string",
           "position": 8,
-          "maxLength": 100,
-          "description": "Store location"
+          "maxLength": 100
         },
         "contactMethods": {
           "type": "string",
           "position": 9,
-          "maxLength": 1000,
-          "description": "JSON object of contact methods (email, signal, twitter, telegram)"
+          "maxLength": 1000
         },
         "category": {
           "type": "string",
           "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
           "maxLength": 20,
-          "position": 10,
-          "description": "Seller-chosen category as a lowercase slug (e.g. vintage-clothing), so stores group under one key"
+          "position": 10
         },
         "mod": {
           "type": "integer",
@@ -197,7 +186,6 @@
           "position": 12
         }
       },
-      "description": "A merchant store (one per user), listed by status and category. `closed` is the tombstone; moderators can remove it.",
       "additionalProperties": false,
       "canBeDeleted": false,
       "moderatorAbilities": {
@@ -284,7 +272,6 @@
         "storeId": {
           "type": "identifier",
           "position": 0,
-          "description": "ID of the store this item belongs to; only that store's owner may write it",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "store",
@@ -297,32 +284,27 @@
           "type": "string",
           "position": 1,
           "maxLength": 200,
-          "minLength": 1,
-          "description": "Product title"
+          "minLength": 1
         },
         "description": {
           "type": "string",
           "position": 2,
-          "maxLength": 2000,
-          "description": "Product description"
+          "maxLength": 2000
         },
         "section": {
           "type": "string",
           "position": 3,
-          "maxLength": 50,
-          "description": "Top-level category section (e.g., Toys and Games)"
+          "maxLength": 50
         },
         "category": {
           "type": "string",
           "position": 4,
-          "maxLength": 50,
-          "description": "Category within section (e.g., Table Top Games)"
+          "maxLength": 50
         },
         "subcategory": {
           "type": "string",
           "position": 5,
-          "maxLength": 50,
-          "description": "Subcategory (e.g., Catan Pieces)"
+          "maxLength": 50
         },
         "tags": {
           "type": "array",
@@ -334,8 +316,7 @@
             "minLength": 1,
             "maxLength": 64,
             "maxBytes": 128
-          },
-          "description": "Search tags: at most 32 distinct tags of up to 64 characters"
+          }
         },
         "imageUrls": {
           "type": "array",
@@ -347,21 +328,18 @@
             "maxLength": 512,
             "maxBytes": 512,
             "pattern": "^(https|ipfs)://.+$"
-          },
-          "description": "Product image URLs (https:// or ipfs://), at most 12, no duplicates"
+          }
         },
         "basePrice": {
           "type": "integer",
           "minimum": 0,
           "position": 8,
-          "description": "Price in the smallest currency unit; absent on a variant item (each combination has its own)",
           "maximum": 9007199254740991
         },
         "currency": {
           "type": "string",
           "position": 9,
           "maxLength": 10,
-          "description": "Currency code (USD, EUR, DASH, etc.)",
           "maxBytes": 10
         },
         "status": {
@@ -373,28 +351,24 @@
             "deleted"
           ],
           "position": 10,
-          "maxLength": 8,
-          "description": "Item status"
+          "maxLength": 8
         },
         "weight": {
           "type": "integer",
           "minimum": 0,
           "position": 11,
-          "description": "Weight in grams (for shipping calculation)",
           "maximum": 4294967295
         },
         "stockQuantity": {
           "type": "integer",
           "minimum": 0,
           "position": 12,
-          "description": "Available stock; absent when untracked or on a variant item",
           "maximum": 4294967295
         },
         "sku": {
           "type": "string",
           "position": 13,
-          "maxLength": 50,
-          "description": "Stock keeping unit identifier"
+          "maxLength": 50
         },
         "variants": {
           "type": "object",
@@ -541,7 +515,6 @@
             "digital"
           ],
           "position": 15,
-          "description": "`shipped` (a parcel; also what absent means) or `digital` (delivered on chain as an orderDelivery)",
           "maxLength": 7
         },
         "shippingZoneIds": {
@@ -552,8 +525,7 @@
           "uniqueItems": true,
           "items": {
             "type": "identifier"
-          },
-          "description": "The store's shipping zones this item ships under; absent = every zone of the store"
+          }
         },
         "mod": {
           "type": "integer",
@@ -568,7 +540,6 @@
           "position": 18
         }
       },
-      "description": "A product listing, optionally with a variants table. Only the store owner writes it; status `deleted` is the tombstone.",
       "additionalProperties": false,
       "canBeDeleted": false,
       "immutable": [
@@ -777,7 +748,6 @@
         "storeId": {
           "type": "identifier",
           "position": 0,
-          "description": "ID of the store this zone belongs to; only that store's owner may write it",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "store",
@@ -790,20 +760,17 @@
           "type": "string",
           "position": 1,
           "maxLength": 63,
-          "minLength": 1,
-          "description": "Zone name (e.g., Domestic, Europe, Local)"
+          "minLength": 1
         },
         "postalPatterns": {
           "type": "string",
           "position": 2,
-          "maxLength": 2000,
-          "description": "JSON array of regex patterns for postal codes"
+          "maxLength": 2000
         },
         "countryPattern": {
           "type": "string",
           "position": 3,
-          "maxLength": 200,
-          "description": "Regex pattern for country codes"
+          "maxLength": 200
         },
         "rateType": {
           "type": "string",
@@ -813,38 +780,32 @@
             "price_tiered"
           ],
           "position": 4,
-          "description": "How shipping rate is calculated",
           "maxLength": 13
         },
         "flatRate": {
           "type": "integer",
           "minimum": 0,
           "position": 5,
-          "description": "Flat shipping rate (when rateType is flat)",
           "maximum": 9007199254740991
         },
         "tiers": {
           "type": "string",
           "position": 6,
-          "maxLength": 5000,
-          "description": "JSON array of tier definitions [{min, max, rate}]"
+          "maxLength": 5000
         },
         "currency": {
           "type": "string",
           "position": 7,
           "maxLength": 10,
-          "description": "Currency for shipping rates",
           "maxBytes": 10
         },
         "priority": {
           "type": "integer",
           "minimum": 0,
           "maximum": 1000,
-          "position": 8,
-          "description": "Zone matching priority (lower = higher priority)"
+          "position": 8
         }
       },
-      "description": "A shipping zone for a store. Only the store owner can create or edit one, and storeId is frozen.",
       "additionalProperties": false,
       "immutable": [
         "storeId"
@@ -879,12 +840,10 @@
     },
     "itemDeliverable": {
       "type": "object",
-      "description": "The seller's private kit for a digital item (files, links, codes), encrypted to the seller. One per item.",
       "properties": {
         "itemId": {
           "type": "identifier",
           "position": 0,
-          "description": "ID of the digital item this kit fulfils; only that item's owner may write it",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeItem",
@@ -898,8 +857,7 @@
           "byteArray": true,
           "minItems": 1,
           "maxItems": 5120,
-          "position": 1,
-          "description": "ECIES (secp256k1 + XChaCha20-Poly1305) ciphertext of the kit, encrypted to the seller's own encryption key"
+          "position": 1
         }
       },
       "required": [
@@ -965,7 +923,6 @@
         "storeId": {
           "type": "identifier",
           "position": 0,
-          "description": "ID of the store, which must be active; its owner is copied into sellerId",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "store",
@@ -980,7 +937,6 @@
         "sellerId": {
           "type": "identifier",
           "position": 1,
-          "description": "Store owner's identity, consensus-bound to the store's $ownerId",
           "distinctFrom": "$ownerId"
         },
         "encryptedPayload": {
@@ -988,17 +944,14 @@
           "maxItems": 5120,
           "minItems": 1,
           "position": 2,
-          "byteArray": true,
-          "description": "XChaCha20-Poly1305 encrypted order data (items, address, payment info)"
+          "byteArray": true
         },
         "nonce": {
           "type": "bytes",
           "position": 3,
-          "description": "24-byte nonce for XChaCha20-Poly1305 encryption",
           "size": 24
         }
       },
-      "description": "A buyer's encrypted order. Permanent; `sellerId` is bound to the store's owner, and the buyer is $ownerId.",
       "additionalProperties": false,
       "documentsMutable": false,
       "canBeDeleted": false
@@ -1038,7 +991,6 @@
         "orderId": {
           "type": "identifier",
           "position": 0,
-          "description": "ID of the order being updated; only its seller may write this",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeOrder",
@@ -1060,7 +1012,6 @@
             "disputed"
           ],
           "position": 1,
-          "description": "Order status",
           "maxLength": 16
         },
         "encryptedPayload": {
@@ -1068,8 +1019,7 @@
           "byteArray": true,
           "minItems": 1,
           "maxItems": 2560,
-          "position": 2,
-          "description": "Tracking and note, sealed like orderDelivery"
+          "position": 2
         },
         "nonce": {
           "type": "bytes",
@@ -1077,7 +1027,6 @@
           "size": 24
         }
       },
-      "description": "One immutable status change for an order, written only by its seller; the order's documents are its history.",
       "additionalProperties": false,
       "documentsMutable": false,
       "canBeDeleted": false,
@@ -1100,12 +1049,10 @@
     },
     "orderDelivery": {
       "type": "object",
-      "description": "Digital goods a seller delivered for an order, encrypted to the order's ECDH key. Permanent; written only by the seller.",
       "properties": {
         "orderId": {
           "type": "identifier",
           "position": 0,
-          "description": "ID of the order being fulfilled; only its seller may write this",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeOrder",
@@ -1119,13 +1066,11 @@
           "byteArray": true,
           "minItems": 1,
           "maxItems": 5120,
-          "position": 1,
-          "description": "XChaCha20-Poly1305 ciphertext of the delivery, keyed from the order's buyer/seller ECDH secret"
+          "position": 1
         },
         "nonce": {
           "type": "bytes",
           "position": 2,
-          "description": "24-byte nonce for XChaCha20-Poly1305 encryption",
           "size": 24
         }
       },
@@ -1247,7 +1192,6 @@
         "storeId": {
           "type": "identifier",
           "position": 0,
-          "description": "ID of the store being reviewed",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "store"
@@ -1256,7 +1200,6 @@
         "orderId": {
           "type": "identifier",
           "position": 1,
-          "description": "ID of the completed order (proves purchase); only its buyer may review it",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeOrder",
@@ -1270,27 +1213,23 @@
         "sellerId": {
           "type": "identifier",
           "position": 2,
-          "description": "Store owner's identity, consensus-bound to the order's sellerId (for seller queries)",
           "distinctFrom": "$ownerId"
         },
         "rating": {
           "type": "integer",
           "minimum": 1,
           "maximum": 5,
-          "position": 3,
-          "description": "Star rating (1-5)"
+          "position": 3
         },
         "title": {
           "type": "string",
           "position": 4,
-          "maxLength": 100,
-          "description": "Review title"
+          "maxLength": 100
         },
         "content": {
           "type": "string",
           "position": 5,
-          "maxLength": 1000,
-          "description": "Review content"
+          "maxLength": 1000
         },
         "mod": {
           "type": "integer",
@@ -1305,7 +1244,6 @@
           "position": 7
         }
       },
-      "description": "A buyer's review of a store, one per order, bound to an order this signer placed at this store.",
       "additionalProperties": false,
       "documentsMutable": false,
       "moderatorAbilities": {
@@ -1331,12 +1269,12 @@
             }
           ]
         }
-      }
+      },
+      "canBeDeleted": false
     },
     "itemReview": {
       "type": "object",
       "documentsMutable": false,
-      "description": "A buyer's review of one item from an order, one per (order, item), written only by the order's owner.",
       "indices": [
         {
           "name": "itemReviews",
@@ -1403,7 +1341,6 @@
         "storeId": {
           "type": "identifier",
           "position": 0,
-          "description": "ID of the store the item belongs to",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "store"
@@ -1412,7 +1349,6 @@
         "itemId": {
           "type": "identifier",
           "position": 1,
-          "description": "ID of the item being reviewed; must belong to storeId",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeItem",
@@ -1424,7 +1360,6 @@
         "orderId": {
           "type": "identifier",
           "position": 2,
-          "description": "ID of the order the item was bought in; only its buyer may review it",
           "refersTo": {
             "type": "permanentDocument",
             "documentType": "storeOrder",
@@ -1438,14 +1373,12 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 5,
-          "position": 3,
-          "description": "Star rating (1-5)"
+          "position": 3
         },
         "content": {
           "type": "string",
           "maxLength": 1000,
-          "position": 4,
-          "description": "Review content"
+          "position": 4
         },
         "mod": {
           "type": "integer",
@@ -1491,7 +1424,8 @@
             }
           ]
         }
-      }
+      },
+      "canBeDeleted": false
     },
     "savedAddress": {
       "type": "object",
@@ -1516,11 +1450,9 @@
           "maxItems": 5000,
           "minItems": 1,
           "position": 0,
-          "byteArray": true,
-          "description": "ECIES encrypted JSON array of saved addresses"
+          "byteArray": true
         }
       },
-      "description": "Encrypted saved shipping addresses (one document per user)",
       "additionalProperties": false
     },
     "report": {
@@ -1625,7 +1557,7 @@
           "type": "identifier",
           "position": 2,
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "permanentDocument",
             "documentType": "storeReview",
             "where": {
               "$ownerId": "targetOwnerId"
@@ -1636,7 +1568,7 @@
           "type": "identifier",
           "position": 3,
           "refersTo": {
-            "type": "deletableDocument",
+            "type": "permanentDocument",
             "documentType": "itemReview",
             "where": {
               "$ownerId": "targetOwnerId"
