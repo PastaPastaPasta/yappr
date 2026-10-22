@@ -11,6 +11,7 @@ production state.
 - Testing: `https://yap.pr/testing/` (same master commit, test contracts)
 - Staging: `https://yap.pr/staging/` (staging branch, production contracts)
 - Staging-old: `https://yap.pr/staging-old/` (staging branch, the D36 rehearsal contracts and their seeded data; QA only, not monitored)
+- Beta: `https://yap.pr/beta/` (staging branch, a rehearsal copy of the "hide, don't delete" social v18, blog v10 and storefront v11 with seeded data; QA only, not monitored)
 
 ## 1. Architecture
 

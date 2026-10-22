@@ -4,6 +4,16 @@
 
 > **Served again at `https://yap.pr/staging-old/`.** For QA of the staging code against the rehearsal's seeded data, `npm run build:staging-old` builds the staging branch from `.env.staging-old` (the old `.env.staging` pins) with its own snapshot, `lib/contracts/snapshots/testnet-staging-old.json`, which `next.config.js` substitutes for `bundled/testnet.json` so threads use this set's `rootPostId`-keyed `repliesOf`. Its storage scope is `testnet-staging-old-1:staging-old`, so its sessions and caches never mix with `/staging` or root. `deploy.yml` builds it from staging alongside `/staging` and `/devnet`; like `/devnet`, a deploy run from master's older workflow omits it until staging is promoted (redeploy with `gh workflow run deploy.yml --ref staging`).
 
+> **`/beta`: the v18 members (2026-10-22).** Social v18, blog v10 and storefront v11 (docs/SOCIAL_V18.md) were appended to this rehearsal group from the rehearsal maker, never the production one, so the "hide, don't delete" moderation can be QA'd on testnet ahead of the production set. `register-app-connect-contracts.mjs --testnet-set rehearsal --append-after passkeyVault` (`TESTNET_REHEARSAL_SET`) resumed this set's journal with `--interim notYetUsable --election-windows 3600,3600 --election-delay 3600 --challenge-cool-down 1209600`. The maker was at nonce 10, so the new members took nonces 11–13. `npm run build:beta` builds the staging branch from `.env.beta` with its own snapshot, `lib/contracts/snapshots/testnet-beta.json`, under the storage scope `testnet-beta-1:beta`; `deploy.yml` publishes it at `/beta`. Both QA builds pin all eleven group members, since App Connect checks the group's members exactly, and each declares the three it never reads (`QA_BUILDS` in `scripts/release-config.cjs`).
+>
+> | Member | ID | Nonce | Credits | Reference ¢ |
+> |---|---|---:|---:|---:|
+> | social v18 | `5Kucw9g9TsiSRXbns2mPumXKVkYW7jwVrTdjFuFhMEwU` | 11 | 99,829,730,150 | 5,989.78 |
+> | blog v10 | `9mMb6qGmPA8mjxkk7wdUE5aotEVpY1hJwPJZqPPdUdPc` | 12 | 46,460,154,510 | 2,787.61 |
+> | storefront v11 | `THxfq5ZinV2U5gmPZ8dTwqh11sCtGF53a2a87qHErNR` | 13 | 64,628,177,930 | 3,877.69 |
+>
+> Total 210,918,062,590 credits (12,655.08¢). The v18 YAPP token is `3rcbp33oSCSZv4kw3zBFEM9mDqRJhizTdmew16P2pgQR`. The same three teams as below (personas 60–71) were filed for the new members.
+
 This is the D36 rehearsal on Dash **testnet**, chain `dash-testnet-51`, using Platform 5.0.0-rc.4 / protocol 14. The production maker is excluded from all operations. Root, `/testing` and `/devnet` keep their existing resolved configuration. The rehearsal uses a separate maker, App Connect anchor, group and storage epoch; production registration remains an owner action after QA.
 
 ## Registered set

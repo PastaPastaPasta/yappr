@@ -190,6 +190,13 @@ jobs:
           npm run build:staging-old
           node scripts/check-export-sizes.mjs
 
+      # The same for /beta, the rehearsal group's v18 members.
+      - name: Build /beta (rehearsal v18 set)
+        run: |
+          rm -rf .next out
+          npm run build:beta
+          node scripts/check-export-sizes.mjs
+
   e2e:
     name: End-to-End
     runs-on: ubuntu-latest

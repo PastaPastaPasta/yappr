@@ -15,7 +15,7 @@ export function staticNotFound(basePath = '') {
 </style></head><body><main><p>404</p><h1>This page doesn’t exist</h1><p>The link may be broken, or the page may have moved.</p><nav aria-label="Recovery"><a id="home" href="${home}">Go home</a><a id="explore" href="${home}explore/">Explore</a></nav></main>
 <script>
 (function () {
-  var match = location.pathname.match(/^\\/(devnet|testing|staging-old|staging)(?:\\/|$)/);
+  var match = location.pathname.match(/^\\/(devnet|testing|staging-old|staging|beta)(?:\\/|$)/);
   var prefix = match ? '/' + match[1] : ${JSON.stringify(basePath)};
   if (prefix !== ${JSON.stringify(basePath)} && location.pathname !== prefix + '/404.html') location.replace(prefix + '/404.html');
   if (match) {
