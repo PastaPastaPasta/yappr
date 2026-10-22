@@ -187,14 +187,28 @@ const CONTRACT_IDS = {
 
 type ContractKey = keyof typeof CONTRACT_IDS
 
-const MODELS: Record<ContractKey, ModelContract> = {
-  social: parseContract(socialV17),
-  blog: parseContract(blogContract),
-  storefront: parseContract(storefrontContract),
+type Models = Record<ContractKey, ModelContract>
+
+const SHARED_MODELS = {
   pollr: parseContract(pollrContract),
   blocks: parseContract(blocksContract),
   dmV5: parseContract(dmV5Contract),
 }
+
+/** The release sets the client's reads are judged on, with the topology env each selects. */
+const RELEASE_SETS: readonly { name: string; env: Record<string, string>; models: Models }[] = [
+  {
+    name: 'the v17 release cut',
+    env: { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v17', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v10' },
+    models: { social: parseContract(socialV17), blog: parseContract(blogContract), storefront: parseContract(storefrontContract), ...SHARED_MODELS },
+  },
+  {
+    // "Hide, don't delete" (docs/SOCIAL_V18.md): every listing pins the listed lane.
+    name: 'the v18 release set (social v18, blog v10, storefront v11)',
+    env: { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v18', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v10', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v11' },
+    models: { social: parseContract(socialV18), blog: parseContract(blogV10), storefront: parseContract(storefrontV11), ...SHARED_MODELS },
+  },
+]
 
 const CONTRACT_BY_ID = new Map<string, ContractKey>(
   (Object.entries(CONTRACT_IDS) as [ContractKey, string][]).map(([key, id]) => [id, key]),
@@ -224,10 +238,9 @@ const ORDER = ident(53)
 const POLL = ident(61)
 const SINCE = 1_700_000_000_000
 
-beforeAll(async () => {
-  vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
-  vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9')
-  vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v10')
+/** Select a release set: stub its env, reload the modules, and install the fake SDK on the fresh service. */
+async function selectReleaseSet(env: Record<string, string>): Promise<void> {
+  for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value)
   vi.stubEnv('NEXT_PUBLIC_POLLR_TOPOLOGY', 'v8')
   vi.stubEnv('NEXT_PUBLIC_DM_TOPOLOGY', 'v5')
   vi.stubEnv('NEXT_PUBLIC_YAPPR_CONTRACT_ID', CONTRACT_IDS.social)
@@ -239,7 +252,10 @@ beforeAll(async () => {
   vi.resetModules()
   const { evoSdkService } = await import('@/lib/services/evo-sdk-service')
   vi.spyOn(evoSdkService, 'getSdk').mockImplementation(async () => capture.sdk)
-})
+  capture.requests.length = 0
+  capture.failures.length = 0
+  capture.logged.length = 0
+}
 
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -618,12 +634,13 @@ function failureLine(entry: Judged): string {
   return `${head}\n    → ${entry.verdict.reason}\n    closest index: ${entry.verdict.closestIndex ?? '(none)'}`
 }
 
-describe('client query shapes on the v17 release cut', () => {
+describe.each(RELEASE_SETS)('client query shapes on $name', ({ env, models: MODELS }) => {
   const judged: Judged[] = []
   const skippedContracts = new Set<string>()
   const silentReaders: string[] = []
 
   beforeAll(async () => {
+    await selectReleaseSet(env)
     for (const reader of await readers()) {
       const before = capture.requests.length
       await capture.drive(reader.name, reader.run)

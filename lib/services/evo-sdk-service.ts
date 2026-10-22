@@ -10,6 +10,7 @@ import { SDK_FACADES } from './sdk-facades';
 import { DAPI_REQUEST_TIMEOUT_MS, installDapiPathShim } from './dapi-path-shim';
 import { observeSdkFailures } from './sdk-failure-observer';
 import { installReadRetry } from './sdk-read-retry';
+import { installLaneFanout } from './sdk-lane-fanout';
 
 export interface EvoSdkConfig {
   network: AppNetwork;
@@ -191,6 +192,9 @@ class EvoSdkService {
       // Shadow the facade methods so the query inspector can observe every
       // DAPI call (pass-through no-op while the inspector is disabled).
       instrumentSdk(this.sdk);
+      // An archival build reads every moderation lane of a listing (no-op on
+      // yap.pr). Inside the inspector's shadows, so each lane read is listed.
+      installLaneFanout(this.sdk);
 
       logger.debug('EvoSdkService: Connecting to network...');
       await this.sdk.connect();

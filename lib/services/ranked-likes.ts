@@ -44,7 +44,7 @@ import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
 import { getEvoSdk } from './evo-sdk-service';
-import { inlineTags, postOwnerIndexPrefix, referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
+import { inlineTags, postOwnerIndexPrefix, referencesMayDangle, trendLanePin, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
  * Which slice of time a ranking covers. `'all'` is the all-time axis;
@@ -121,6 +121,15 @@ export interface TopLikedPostsOptions {
 }
 
 /**
+ * The lane a like trend window pins first: `postLive == 1` on v18, where both
+ * windows are keyed `[$createdAt, postLive, …]` (likes of listed posts only);
+ * nothing on an all-time ranking or before v18.
+ */
+function laneOfWindow(documentTypeName: string, windowed: WindowedRanking | null): DocumentsIndexPin[] {
+  return windowed && documentTypeName === 'like' ? trendLanePin() : [];
+}
+
+/**
  * The top posts by like count — global, per-hashtag, or per-author depending on
  * which pin is supplied (at most one; the axes are separate indexes).
  * Zero-count groups (preallocated like trees of never-liked posts) are
@@ -136,16 +145,14 @@ export async function topLikedPosts(options: TopLikedPostsOptions = {}): Promise
 
   try {
     const sdk = await getEvoSdk();
-    const where: DocumentsIndexPin[] | undefined =
-      hashtag !== undefined
-        ? [tagPin(hashtag)]
-        : postAuthor !== undefined
-          ? [['postAuthor', '==', postAuthor]]
-          : undefined;
-
     // The windowed per-tag top lives on the `beat` companion on v9; every
     // other window, and all of v10's, is on `like` itself.
     const documentTypeName = windowed?.docType ?? 'like';
+    const pins: DocumentsIndexPin[] = [
+      ...laneOfWindow(documentTypeName, windowed),
+      ...(hashtag !== undefined ? [tagPin(hashtag)] : postAuthor !== undefined ? [['postAuthor', '==', postAuthor] as DocumentsIndexPin] : []),
+    ];
+    const where = pins.length > 0 ? pins : undefined;
 
     const result = await sdk.documents.ranked({
       dataContractId: YAPPR_CONTRACT_ID,
@@ -205,6 +212,7 @@ async function rankedGroupCounts(
 ): Promise<RankedGroupCount[]> {
   try {
     const sdk = await getEvoSdk();
+    const where = [...laneOfWindow(documentTypeName, windowed), ...pins];
     const result = await sdk.documents.ranked({
       dataContractId: YAPPR_CONTRACT_ID,
       documentTypeName,
@@ -212,7 +220,7 @@ async function rankedGroupCounts(
       aggregate: { type: 'count' },
       direction: 'desc',
       limit,
-      ...(pins.length > 0 ? { where: pins } : {}),
+      ...(where.length > 0 ? { where } : {}),
       ...windowClause(windowed),
     });
 

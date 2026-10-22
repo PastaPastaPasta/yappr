@@ -6,7 +6,7 @@ import type { DocumentWhereOperator } from '@dashevo/wasm-sdk';
 import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes, type QueryDocumentsOptions } from './sdk-helpers';
 import { dpnsService } from './dpns-service';
 import { paginateFetchAll } from './pagination-utils';
-import { inlineMentions, mentionDocTypes, mentionsAreInline, type TargetKind } from '../contract-topology';
+import { inlineMentions, mentionDocTypes, modLanePin, mentionsAreInline, type TargetKind } from '../contract-topology';
 import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
 import type { Post } from '../../types';
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
@@ -35,7 +35,8 @@ export interface PostMentionDocument {
 export function mentionsOfUserQuery(userId: string, since: number, direction: 'asc' | 'desc'): Required<Pick<QueryDocumentsOptions, 'where' | 'orderBy'>> {
   const after: [string, DocumentWhereOperator, number] = ['$createdAt', '>', since];
   if (inlineMentions()?.isArray) {
-    return { where: [['mentionedUserIds', 'contains', userId], after], orderBy: [['$createdAt', direction]] };
+    // v18: `[mentionedUserIds, mod, $createdAt]`, the listed lane pinned after the element.
+    return { where: [['mentionedUserIds', 'contains', userId], ...modLanePin(), after], orderBy: [['$createdAt', direction]] };
   }
   return { where: [['mentionedUserId', '==', userId], after], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', direction]] };
 }

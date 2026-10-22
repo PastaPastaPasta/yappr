@@ -728,14 +728,13 @@ export function postsCarryLiveMarker(): boolean {
  * The `where` clauses every read of `post.ownerAndTime` starts with: `live ==
  * true` on v13, nothing elsewhere. Paired with {@link postOwnerIndexOrderPrefix}.
  */
-export function postOwnerIndexPrefix(): Array<['live', '==', true]> {
-  failClosedOnModLanes('postOwnerIndexPrefix')
-  return postsCarryLiveMarker() ? [['live', '==', true]] : []
+export function postOwnerIndexPrefix(): LanePin[] {
+  return listedLane(postsCarryLiveMarker())
 }
 
 /** The `orderBy` entries matching {@link postOwnerIndexPrefix}. */
-export function postOwnerIndexOrderPrefix(): Array<['live', 'asc']> {
-  return postOwnerIndexPrefix().map(([field]): ['live', 'asc'] => [field, 'asc'])
+export function postOwnerIndexOrderPrefix(): Array<[string, 'asc']> {
+  return lanePinOrder(postOwnerIndexPrefix())
 }
 
 /**
@@ -759,9 +758,8 @@ export function postListingsCarryLiveMarker(): boolean {
  * names `$createdAt` alone (an orderBy over an index must be a contiguous run
  * of its properties).
  */
-export function postListingWherePrefix(): Array<['live', '==', true]> {
-  failClosedOnModLanes('postListingWherePrefix')
-  return postListingsCarryLiveMarker() ? [['live', '==', true]] : []
+export function postListingWherePrefix(): LanePin[] {
+  return listedLane(postListingsCarryLiveMarker())
 }
 
 /**
@@ -805,34 +803,19 @@ export function replyThreadsCarryLiveMarker(): boolean {
   return lead === 'live'
 }
 
-/** The `where` clauses every `repliesOf` read starts with: `live == true` where the index is live-keyed ({@link replyThreadsCarryLiveMarker}). */
-export function replyThreadIndexPrefix(): Array<['live', '==', true]> {
-  failClosedOnModLanes('replyThreadIndexPrefix')
-  return replyThreadsCarryLiveMarker() ? [['live', '==', true]] : []
+/** The `where` clauses every `repliesOf` read starts with: `live == true` where the index is live-keyed ({@link replyThreadsCarryLiveMarker}), the listed lane on v18. */
+export function replyThreadIndexPrefix(): LanePin[] {
+  return listedLane(replyThreadsCarryLiveMarker())
 }
 
-/** The `where` clauses every read of `reply.ownerAndTime` starts with: `live == true` on v17. Paired with {@link replyOwnerIndexOrderPrefix}. */
-export function replyOwnerIndexPrefix(): Array<['live', '==', true]> {
-  failClosedOnModLanes('replyOwnerIndexPrefix')
-  return repliesCarryLiveMarker() ? [['live', '==', true]] : []
+/** The `where` clauses every read of `reply.ownerAndTime` starts with: `live == true` on v17, the listed lane on v18. Paired with {@link replyOwnerIndexOrderPrefix}. */
+export function replyOwnerIndexPrefix(): LanePin[] {
+  return listedLane(repliesCarryLiveMarker())
 }
 
 /** The `orderBy` entries matching {@link replyOwnerIndexPrefix}. */
-export function replyOwnerIndexOrderPrefix(): Array<['live', 'asc']> {
-  return replyOwnerIndexPrefix().map(([field]): ['live', 'asc'] => [field, 'asc'])
-}
-
-/**
- * The v17-shaped listing prefixes (`live == true`, no `mod` pin) would be
- * refused by every v18 index ({@link listingsCarryModLane}): `live` is the
- * integer lane 1 or 2 and each listing pins `mod == null` after it. Until the
- * client's v18 builders land they fail closed here, so a build pointed at a
- * v18 contract stops at its first listing read instead of querying wrongly.
- */
-function failClosedOnModLanes(builder: string): void {
-  if (listingsCarryModLane()) {
-    throw new Error(`${builder}: the v18 listing builders are not wired yet (live == 1, mod == null; docs/SOCIAL_V18.md)`)
-  }
+export function replyOwnerIndexOrderPrefix(): Array<[string, 'asc']> {
+  return lanePinOrder(replyOwnerIndexPrefix())
 }
 
 /**
@@ -872,6 +855,83 @@ export function moderatorsCannotDelete(): boolean {
  */
 export function authorsCanBeRestricted(): boolean {
   return isAtLeast('v18')
+}
+
+/**
+ * True when a like copies its post's `live` lane as `postLive` (v18): the
+ * reference `where` binds it to the post, and both trend windows are keyed
+ * `[$createdAt, postLive, …]`, so trending reads pin `postLive == 1`. It also
+ * sits last in the counters (`byPost [postId, postLive]`, ranked at `postId`,
+ * and `byHashtagPost`/`byAuthorPost`): an unlike carries the post's `live` as
+ * `postLive`, and "have I liked it" pins it after `postId`; counts and
+ * rankings by `postId` need no lane. Both windows keep `outlivesDelete`, so an
+ * unlike names no `$createdAt` and does not lower trending. A like of a
+ * tombstone (no `live`) is refused.
+ */
+export function likesCarryPostLive(): boolean {
+  return isAtLeast('v18')
+}
+
+/**
+ * One equality pin on a listing's lane property: `live == true` (v13–v17),
+ * or v18's `live == 1` / `mod == null` / `postLive == 1`. Reads put these
+ * first (`mentionedUserAndTime` after its `contains`), in this order.
+ */
+export type LanePin = [string, '==', boolean | number | null]
+
+/** v18's listed lane, what yap.pr reads: written while its author was not restricted (`live == 1`) and not hidden (`mod == null`). */
+const V18_LISTED_LANE: readonly LanePin[] = [['live', '==', 1], ['mod', '==', null]]
+
+/**
+ * The lane pins a live-keyed listing starts with: v18's listed lane
+ * (`live == 1`, `mod == null`, docs/SOCIAL_V18.md "Reading the lanes"),
+ * `live == true` on a live-keyed index before v18, nothing otherwise. An
+ * archive build fans the default lane out to every lane at the SDK
+ * (lib/services/sdk-lane-fanout.ts); the services only ever build this one.
+ */
+function listedLane(liveKeyed: boolean): LanePin[] {
+  if (!liveKeyed) return []
+  return listingsCarryModLane() ? V18_LISTED_LANE.map((pin): LanePin => [...pin]) : [['live', '==', true]]
+}
+
+/** The `orderBy` entries matching a lane prefix: each pinned property, ascending. */
+function lanePinOrder(pins: readonly LanePin[]): Array<[string, 'asc']> {
+  return pins.map(([field]): [string, 'asc'] => [field, 'asc'])
+}
+
+/**
+ * The pin a v18 listing without `live` carries after its leading property:
+ * `mod == null` (both `mentionedUserAndTime`), nothing before v18.
+ */
+export function modLanePin(): LanePin[] {
+  return listingsCarryModLane() ? [['mod', '==', null]] : []
+}
+
+/**
+ * The pin both v18 like trend windows carry after the window
+ * (`byTrendPost [$createdAt, postLive, postId]`, `byTrendHashtagPost
+ * [$createdAt, postLive, tags, postId]`): `postLive == 1`, so trending counts
+ * likes of listed posts only. Nothing before v18.
+ */
+export function trendLanePin(): LanePin[] {
+  return likesCarryPostLive() ? [['postLive', '==', 1]] : []
+}
+
+/**
+ * The `live` a new post or reply is written with: v18's lane (2 while the
+ * author has a restriction in force, 1 otherwise; the contract refuses the
+ * other), `true` on v13–v17's marker, and `undefined` where there is none.
+ */
+export function liveValueFor(kind: TargetKind, restricted: boolean): true | 1 | 2 | undefined {
+  const carries = kind === 'post' ? postsCarryLiveMarker() : repliesCarryLiveMarker()
+  if (!carries) return undefined
+  if (authorsCanBeRestricted()) return restricted ? 2 : 1
+  return true
+}
+
+/** Whether a stored document is live (not an author's tombstone): `live` is `true` (v13–v17) or a v18 lane (1 or 2). */
+export function isLiveMarker(value: unknown): boolean {
+  return value === true || value === 1 || value === 2
 }
 
 /**
@@ -2313,11 +2373,13 @@ export function blockFollowsAreTyped(): boolean {
  * type): one report per reporter and target, the target's author agreed by
  * consensus (40127) and never the reporter (10419). Its reporter may withdraw
  * it. On v9 the moderators dismiss it by deleting it; on v10 they resolve it
- * ({@link reportsAreResolved}). Off a moderated topology nobody would read a
- * report, so none can be filed.
+ * ({@link reportsAreResolved}); on v18 they can only resolve it. Off a
+ * moderated topology nobody would read a report, so none can be filed.
  */
 export function contractTakesReports(): boolean {
-  return contractIsModerated() && moderatorsMayDelete(devnetSchemas().report)
+  const report = devnetSchemas().report
+  // v18's moderators never delete: they resolve a report through its fields alone.
+  return contractIsModerated() && (moderatorsMayDelete(report) || (report?.moderatorAbilities?.changeFields?.length ?? 0) > 0)
 }
 
 /**

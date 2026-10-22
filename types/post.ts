@@ -1,6 +1,18 @@
 import type { TargetKind } from '@/lib/contract-topology'
 import type { OwnQuote } from '@/lib/feed/quote-reposts'
+import type { ModerationMarks } from '@/lib/moderation-view'
 import type { User } from './user'
+
+/**
+ * What the moderators did to a document (social v18, blog v10, storefront
+ * v11): hidden (`mod`), with the charter reason, the member who did it and
+ * when, and whether its author was restricted when they wrote it (`live: 2`).
+ * Absent when neither applies.
+ */
+export interface PostModeration extends ModerationMarks {
+  /** Written while its author was restricted (`live: 2`): not listed on yap.pr. */
+  restricted?: boolean
+}
 
 export interface Media {
   id: string
@@ -118,6 +130,8 @@ export interface Post {
   keyGeneration?: number         // Revocation key generation at post creation
   nonce?: Uint8Array             // Random nonce for encryption
   feed?: number                  // Which of the author's private feeds encrypted it (social v17)
+  /** v18: hidden by the moderators or written while restricted; see {@link PostModeration}. */
+  moderation?: PostModeration
 }
 
 /** A reply to a post or another reply */
@@ -151,6 +165,8 @@ export interface Reply {
   nonce?: Uint8Array
   /** The feed that encrypted it: the root owner's for a reply in a private thread, else the replier's own */
   feed?: number
+  /** v18: hidden by the moderators or written while restricted (see Post.moderation). */
+  moderation?: PostModeration
 }
 
 /** Reply thread structure for threaded post display */
