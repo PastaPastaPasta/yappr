@@ -60,7 +60,8 @@ export function TeamAdmin({ seated, requests, maxAdded, onChanged }: {
     requested: requests.map((r) => r.ownerId),
     maxAddedModerators: maxAdded,
   })
-  const recordOf = (list: TeamRecord[], memberId: string) => list.find((r) => r.memberId === memberId)?.id ?? ''
+  const changeOf = (list: TeamRecord[], memberId: string) => (
+    { documentId: list.find((r) => r.memberId === memberId)?.id ?? '', electedCharterId: seated.electedCharterId, memberId })
 
   const act = (label: string, action: CharterAction, work: () => Promise<unknown>) => run(label, action, async () => {
     await work()
@@ -93,7 +94,7 @@ export function TeamAdmin({ seated, requests, maxAdded, onChanged }: {
             <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act('Taking the member off…', 'remove-member', () => charterService.removeMember(me, seated.electedCharterId, id))}>Take off</Button>,
             'elected'))}
           {changes.added.map((id) => row(id,
-            <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act('Taking the member off…', 'undo-team-change', () => charterService.undoTeamChange(me, 'addedModerator', recordOf(records.additions, id)))}>Take off</Button>,
+            <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act('Taking the member off…', 'undo-team-change', () => charterService.undoTeamChange(me, 'addedModerator', changeOf(records.additions, id)))}>Take off</Button>,
             'added'))}
           {changes.removable.length + changes.added.length === 0 && <li className="text-sm text-gray-500">Only you.</li>}
         </ul>
@@ -103,7 +104,7 @@ export function TeamAdmin({ seated, requests, maxAdded, onChanged }: {
           <h4 className="font-semibold text-sm mb-1">Taken off</h4>
           <ul className="space-y-1">
             {changes.restorable.map((id) => row(id,
-              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act('Putting the member back…', 'undo-team-change', () => charterService.undoTeamChange(me, 'removedModerator', recordOf(records.removals, id)))}>Put back</Button>))}
+              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act('Putting the member back…', 'undo-team-change', () => charterService.undoTeamChange(me, 'removedModerator', changeOf(records.removals, id)))}>Put back</Button>))}
           </ul>
         </div>
       )}

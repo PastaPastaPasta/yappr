@@ -129,11 +129,49 @@ function savePendingCreate(key: string, entry: PendingCreate): boolean {
 }
 
 /**
- * The slot's stored create, or null when there is none. A stored value that
- * cannot be read may still be a transition that lands, so it never reads as
- * "none": the write stops as uncertain instead of signing another.
+ * What a slot holds for a while once its create is proved landed, in place of
+ * the signed create: a retry from any tab, whose own read may still lag,
+ * answers from it (filed, or filed in an earlier version) and signs nothing.
  */
-function loadPendingCreate(key: string): PendingCreate | null {
+interface LandedCreate {
+  landed: string
+  fingerprint: string
+  at: number
+}
+
+const LANDED_KEPT_MS = 15 * 60_000
+
+type StoredSlot = PendingCreate | LandedCreate
+
+const isLanded = (stored: StoredSlot): stored is LandedCreate => 'landed' in stored
+
+/** Replaces the slot's stored create with its landed marker, only while storage still holds `entry`. */
+function markLanded(key: string, entry: PendingCreate): void {
+  try {
+    if (storedReservationId(key) !== entry.reservation.id) return
+    const marker: LandedCreate = { landed: entry.signed.id, fingerprint: entry.fingerprint, at: Date.now() }
+    localStorage.setItem(PENDING_PREFIX + key, JSON.stringify(marker))
+  } catch (error) {
+    // The create landed either way; without the marker a retry proves it again.
+    logger.warn('charters: a landed create could not be marked; dropping it', extractErrorMessage(error))
+    forgetPendingCreate(key, entry)
+  }
+}
+
+/** The reservation id of the signed create the slot holds now, if any (throws when storage or the value can't be read). */
+function storedReservationId(key: string): unknown {
+  const raw = localStorage.getItem(PENDING_PREFIX + key)
+  return raw === null ? undefined : (JSON.parse(raw) as { reservation?: { id?: unknown } }).reservation?.id
+}
+
+/**
+ * What the slot holds: a signed create, a recent landed marker, or null for
+ * nothing (an expired marker is dropped when `dropExpired`, which only a
+ * caller under the write lock asks for). A stored value that cannot be read
+ * may still be a transition that lands, so it never reads as "none": the
+ * write stops as uncertain instead of signing another.
+ */
+function loadSlot(key: string, { dropExpired }: { dropExpired: boolean }): StoredSlot | null {
   let raw: string | null
   try {
     raw = localStorage.getItem(PENDING_PREFIX + key)
@@ -147,6 +185,13 @@ function loadPendingCreate(key: string): PendingCreate | null {
       signed: Omit<SignedCharterCreate, 'bytes'> & { bytes: string }
       fingerprint: string
       reservation: { id: string; nonce: string; expiresAt: number | null; scope?: string }
+    } | LandedCreate
+    if ('landed' in saved) {
+      if (typeof saved.landed !== 'string' || typeof saved.fingerprint !== 'string' || typeof saved.at !== 'number') throw new Error('unexpected shape')
+      const age = Date.now() - saved.at
+      if (age >= 0 && age < LANDED_KEPT_MS) return saved
+      if (dropExpired) localStorage.removeItem(PENDING_PREFIX + key)
+      return null
     }
     if (typeof saved.signed?.id !== 'string' || typeof saved.signed.nonce !== 'string' || typeof saved.signed.bytes !== 'string'
       || typeof saved.fingerprint !== 'string' || typeof saved.reservation?.id !== 'string') throw new Error('unexpected shape')
@@ -164,10 +209,7 @@ function loadPendingCreate(key: string): PendingCreate | null {
 /** Removes the slot's stored create only while it is still `entry` (another tab may have replaced it). */
 function forgetPendingCreate(key: string, entry: PendingCreate): void {
   try {
-    const raw = localStorage.getItem(PENDING_PREFIX + key)
-    if (raw !== null && (JSON.parse(raw) as { reservation?: { id?: unknown } }).reservation?.id === entry.reservation.id) {
-      localStorage.removeItem(PENDING_PREFIX + key)
-    }
+    if (storedReservationId(key) === entry.reservation.id) localStorage.removeItem(PENDING_PREFIX + key)
   } catch {
     // Storage blocked or the value unreadable: leave it, the next write stops on it.
   }
@@ -527,6 +569,8 @@ class CharterService {
    * - it is dropped as dead only on proof (`stateTransitionService.settleCreate`:
    *   its nonce consumed, gap-aware, and the document proved absent at that
    *   height or later); a read that fails or lags proves nothing;
+   * - proved landed, it becomes a landed marker for 15 minutes, so a retry
+   *   from a tab whose reads still lag is answered from it and signs nothing;
    * - an application (with its 0.5 DASH deposit) lives in the contest, not in
    *   document storage, and is NEVER declared dead here: it stays uncertain
    *   until it shows in the contest or the seat. Only the leader's deliberate
@@ -594,8 +638,12 @@ class CharterService {
      */
     type Slot = { kind: 'landed'; id: string } | { kind: 'dead'; entry: PendingCreate } | { kind: 'empty' } | { kind: 'pending'; entry: PendingCreate }
     const resolveSlot = async (): Promise<Slot> => {
-      const stored = loadPendingCreate(key)
+      const stored = loadSlot(key, { dropExpired: true })
       if (!stored) return { kind: 'empty' }
+      if (isLanded(stored)) {
+        if (stored.fingerprint !== fingerprint) throw new CharterActionError(EARLIER_VERSION_FILED, 'refused')
+        return { kind: 'landed', id: stored.landed }
+      }
       const outcome = await settle(stored.signed)
       if (outcome === 'landed') {
         const id = this.proved(ownerId, key, stored)
@@ -669,7 +717,11 @@ class CharterService {
       if (await exists(proving.signed) === true) return lock(async () => this.proved(ownerId, key, proving))
       await sleep(PROOF_PAUSE_MS)
     }
-    const last = await lock(resolveSlot)
+    // The slot may now hold another tab's newer create: its verdict is not this one's unless this one is proved.
+    const last = await lock(resolveSlot).catch(async (error: unknown) => {
+      if (await exists(proving.signed) === true) return { kind: 'landed', id: proving.signed.id } as const
+      throw error
+    })
     if (last.kind === 'landed') return last.id
     // "Wasn't recorded" only when this very call proved this very create dead.
     if (last.kind === 'dead' && last.entry.reservation.id === proving.reservation.id) {
@@ -689,7 +741,8 @@ class CharterService {
    */
   hasPendingApplication(ownerId: string, targetContractId: string): boolean {
     try {
-      return loadPendingCreate(`${ownerId}:electedCharter:${targetContractId}`) !== null
+      const stored = loadSlot(`${ownerId}:electedCharter:${targetContractId}`, { dropExpired: false })
+      return stored !== null && !isLanded(stored)
     } catch {
       // Unreadable: it may still go through, which is what this asks.
       return true
@@ -705,9 +758,9 @@ class CharterService {
   async abandonApplication(ownerId: string, targetContractId: string): Promise<void> {
     const key = `${ownerId}:electedCharter:${targetContractId}`
     await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
-      let stored: PendingCreate | null = null
+      let stored: StoredSlot | null = null
       try {
-        stored = loadPendingCreate(key)
+        stored = loadSlot(key, { dropExpired: true })
       } catch {
         // Unreadable: drop the raw value below all the same.
       }
@@ -716,8 +769,8 @@ class CharterService {
       } catch {
         // Storage blocked: nothing was stored there.
       }
-      // Its nonce may still execute: kept as spent so no new create takes it.
-      if (stored) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
+      // Its nonce may still execute: counting it spent raises the floor past it (the safe direction), so nothing new reuses it.
+      if (stored && !isLanded(stored)) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
     })
   }
 
@@ -727,8 +780,10 @@ class CharterService {
     releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, spent ? BigInt(entry.signed.nonce) : undefined)
   }
 
+  /** A create proved landed: its slot keeps a landed marker for a while (see {@link LandedCreate}), its nonce is spent. */
   private proved(ownerId: string, key: string, entry: PendingCreate): string {
-    this.release(ownerId, key, entry, true)
+    markLanded(key, entry)
+    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, BigInt(entry.signed.nonce))
     return entry.signed.id
   }
 
@@ -836,9 +891,12 @@ class CharterService {
 
   /**
    * Deletes a team change: an addition (takes that member off) or a removal
-   * (puts that elected member back).
+   * (puts that elected member back). Its slot's landed marker goes with it,
+   * so the same change made again is signed, not answered from the marker.
    */
-  async undoTeamChange(ownerId: string, type: 'addedModerator' | 'removedModerator', documentId: string): Promise<void> {
+  async undoTeamChange(ownerId: string, type: 'addedModerator' | 'removedModerator', change: { documentId: string; electedCharterId: string; memberId: string }): Promise<void> {
+    const { documentId } = change
+    const key = `${ownerId}:${type}:${change.electedCharterId}:${change.memberId}`
     try {
       const { wif, identityKey } = await this.signingKey(ownerId)
       const sdk = await getEvoSdk()
@@ -857,6 +915,16 @@ class CharterService {
       }, `${type}:${documentId}`)
     } catch (error) {
       throw charterActionError('undo-team-change', error)
+    } finally {
+      // Whatever the delete's outcome: a stale "filed" is worse than a refused duplicate.
+      await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
+        try {
+          const stored = loadSlot(key, { dropExpired: true })
+          if (stored && isLanded(stored) && stored.landed === documentId) localStorage.removeItem(PENDING_PREFIX + key)
+        } catch {
+          // Storage blocked or unreadable: nothing of ours to drop.
+        }
+      })
     }
   }
 }

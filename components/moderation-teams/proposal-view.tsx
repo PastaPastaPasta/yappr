@@ -98,7 +98,7 @@ export function ProposalView({ contract, proposalId, election }: {
   const [confirmed, setConfirmed] = useState(false)
   const [done, setDone] = useState<string | null>(null)
   const { balance, needsKey: needsMemberKey } = useAccountReadiness(me, 'member', done)
-  const { busy, error, run } = useCharterRun()
+  const { busy, error, setError, run } = useCharterRun()
   const fees = useCreateFees({ descriptionBytes: 600, reasons: 3, members: Math.max(members.length, 1) })
 
   const loadRequests = useCallback(async () => {
@@ -127,12 +127,12 @@ export function ProposalView({ contract, proposalId, election }: {
 
   const requested = useMemo(() => new Set((requests ?? []).map((r) => r.ownerId)), [requests])
   // An application sent from this browser whose outcome is still unknown (read again after each try or clear).
-  const [pendingCheck, setPendingCheck] = useState(0)
+  const [pendingApplication, setPendingApplication] = useState(false)
   const [confirmAbandon, setConfirmAbandon] = useState(false)
-  const pendingApplication = useMemo(
-    () => (me && declared.contractId && pendingCheck >= 0 ? charterService.hasPendingApplication(me, declared.contractId) : false),
-    [me, declared.contractId, pendingCheck],
-  )
+  const recheckPending = useCallback(() => {
+    setPendingApplication(!!me && !!declared.contractId && charterService.hasPendingApplication(me, declared.contractId))
+  }, [me, declared.contractId])
+  useEffect(recheckPending, [recheckPending])
 
   if (proposal === undefined) return <Section><p className="text-gray-500">Loading the proposal…</p></Section>
   if (proposal === null || (status && proposal.targetContractId !== null && proposal.targetContractId !== status.targetContractId)) {
@@ -187,7 +187,7 @@ export function ProposalView({ contract, proposalId, election }: {
     try {
       await charterService.fileApplication(me, proposal, target, members)
     } finally {
-      setPendingCheck((n) => n + 1)
+      recheckPending()
     }
     await refresh()
     return 'Your application is filed.'
@@ -196,7 +196,10 @@ export function ProposalView({ contract, proposalId, election }: {
   const abandonApplication = () => {
     if (!me || !declared.contractId) return
     charterService.abandonApplication(me, declared.contractId)
-      .then(() => setPendingCheck((n) => n + 1))
+      .then(() => {
+        setError(null)
+        recheckPending()
+      })
       .catch((abandonError: unknown) => logger.warn('Moderation teams: the application could not be cleared', abandonError))
   }
 
@@ -319,12 +322,12 @@ export function ProposalView({ contract, proposalId, election }: {
               {pendingApplication && (
                 <Notice tone="warn" testId="application-uncertain">
                   <p>
-                    An application you sent from this browser may still go through. Check the election before applying again: refresh,
+                    An application for {declared.label} you sent from this browser may still go through. Check the election before applying again: refresh,
                     and look for your team under Applications.
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => { refresh().catch(() => { /* reported inside */ }); setPendingCheck((n) => n + 1) }}>Check the election</Button>
-                    <Button size="sm" variant="outline" onClick={() => setConfirmAbandon(true)} data-testid="abandon-application">Clear and start over</Button>
+                    <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => { refresh().catch(() => { /* reported inside */ }); recheckPending() }}>Check the election</Button>
+                    <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setConfirmAbandon(true)} data-testid="abandon-application">Clear and start over</Button>
                   </div>
                 </Notice>
               )}
