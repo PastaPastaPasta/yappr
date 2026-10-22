@@ -16,8 +16,6 @@ import { HiddenContentStub, ModerationLabel } from '@/components/moderation/mode
 import { isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { cn } from '@/lib/utils'
 import { useAppStore, useSettingsStore } from '@/lib/store'
-import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
-import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useRelativeTime } from '@/hooks/use-relative-time'
@@ -419,7 +417,6 @@ function PostCardView({
   const hides = moderationService.hidesInsteadOfDeleting()
   const canModerate = isModerator && !isOwnPost && !protectedIds.has(post.author.id)
     && (hides ? moderationService.canHide(targetKind) : moderatorDeletableTypes().includes(targetKind))
-  const canAuthorize = useModerationAuthorization(canModerate)
   const { open: openModeratorHideModal } = useModeratorHideModal()
   const { open: openBulkHide } = useBulkHideModal()
   const authorRestrictedRead = useAuthorRestricted('social', post.author.id, canModerate && hides && menuPrimed && moderationService.canRestrict())
@@ -758,15 +755,13 @@ function PostCardView({
                         Report {isReply ? 'reply' : 'post'}
                       </DropdownMenu.Item>
                     )}
-                    {canModerate && <ModerationKeyNotice authorized={canAuthorize} />}
                     {canModerate && hides && (
                       <>
                         <DropdownMenu.Item
-                          disabled={!canAuthorize}
                           data-testid={`moderator-${hiddenByModerators ? 'unhide' : 'hide'}-${post.id}`}
                           onClick={(e) => {
                             e.stopPropagation()
-                            if (canAuthorize) openHideAction(hiddenByModerators ? 'unhide' : 'hide')
+                            openHideAction(hiddenByModerators ? 'unhide' : 'hide')
                           }}
                           className={cn(CARD_MENU_ITEM, 'flex items-center gap-2', !hiddenByModerators && 'text-red-500')}
                         >
@@ -776,12 +771,12 @@ function PostCardView({
                         {/* Holds its place while the author's standing is read, so nothing shifts under the pointer. */}
                         {moderationService.canRestrict() && (
                           <DropdownMenu.Item
-                            disabled={!canAuthorize || authorRestricted === null}
+                            disabled={authorRestricted === null}
                             aria-busy={authorRestricted === null}
                             data-testid={`moderator-${authorRestricted ? 'lift' : 'restrict'}-${post.id}`}
                             onClick={(e) => {
                               e.stopPropagation()
-                              if (canAuthorize && authorRestricted !== null) openHideAction(authorRestricted ? 'lift' : 'restrict')
+                              if (authorRestricted !== null) openHideAction(authorRestricted ? 'lift' : 'restrict')
                             }}
                             className={cn(CARD_MENU_ITEM, 'flex items-center gap-2', authorRestricted === false && 'text-red-500', authorRestricted === null && 'opacity-50')}
                           >
@@ -791,11 +786,10 @@ function PostCardView({
                         )}
                         {bulkHideAvailable() && (
                           <DropdownMenu.Item
-                            disabled={!canAuthorize}
                             data-testid={`moderator-bulk-hide-${post.id}`}
                             onClick={(e) => {
                               e.stopPropagation()
-                              if (canAuthorize) openBulkHide({ authorId: post.author.id, ...(usernameState ? { authorName: `@${usernameState}` } : {}) })
+                              openBulkHide({ authorId: post.author.id, ...(usernameState ? { authorName: `@${usernameState}` } : {}) })
                             }}
                             className={cn(CARD_MENU_ITEM, 'flex items-center gap-2')}
                           >
@@ -805,11 +799,10 @@ function PostCardView({
                         )}
                         {moderationService.canWarn() && (
                           <DropdownMenu.Item
-                            disabled={!canAuthorize}
                             data-testid={`moderator-warn-${post.id}`}
                             onClick={(e) => {
                               e.stopPropagation()
-                              if (canAuthorize) router.push(`/settings?${new URLSearchParams({ section: 'moderation', contract: 'social', author: post.author.id, cite: `${targetKind}:${post.id}` }).toString()}`)
+                              router.push(`/settings?${new URLSearchParams({ section: 'moderation', contract: 'social', author: post.author.id, cite: `${targetKind}:${post.id}` }).toString()}`)
                             }}
                             className={cn(CARD_MENU_ITEM, 'flex items-center gap-2')}
                           >
@@ -821,11 +814,9 @@ function PostCardView({
                     )}
                     {canModerate && !hides && (
                       <DropdownMenu.Item
-                        disabled={!canAuthorize}
                         data-testid={`moderator-remove-${post.id}`}
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (!canAuthorize) return
                           openModeratorRemoveModal(postRemovalTarget(post), () => {
                             setLocallyRemoved(true)
                             onDelete?.(post.id)

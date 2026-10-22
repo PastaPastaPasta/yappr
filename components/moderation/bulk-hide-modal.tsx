@@ -7,10 +7,8 @@ import toast from 'react-hot-toast'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
-import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { useRecentModeration } from '@/hooks/use-recent-moderation'
-import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
 import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, runBulk, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
@@ -69,7 +67,6 @@ export function BulkHideModal() {
   const { user, controller } = useAuth()
   const { isOpen, target, close } = useBulkHideModal()
   const recordMarks = useRecentModeration((state) => state.record)
-  const canAuthorize = useModerationAuthorization(isOpen)
   const seatedReasons = useSeatedReasons(isOpen, 'social')
   const [mode, setMode] = useState<BulkMode>('hide')
   const [list, setList] = useState<ListState>({ status: 'loading', count: 0 })
@@ -165,7 +162,8 @@ export function BulkHideModal() {
   const reasonReady = !seatedReasons.loading && !seatedReasons.failed
     && (mode === 'unhide' || chosen !== null)
     && (!seatedReasons.required || charterReasonId !== '')
-  const canRun = canAuthorize && !running && reasonReady && !!user
+  // No key check here: the CRITICAL key is asked for once, when a run starts (moderationService.openBatch).
+  const canRun = !running && reasonReady && !!user
 
   const switchMode = (next: BulkMode) => {
     if (running || next === mode) return
@@ -287,7 +285,6 @@ export function BulkHideModal() {
           ? 'Pick the posts and replies to hide. They leave feeds, search and the profile for everyone. Nothing is deleted, and any moderator can unhide them.'
           : 'Pick the hidden posts and replies to show again.'}
       </Dialog.Description>
-      <ModerationKeyNotice authorized={canAuthorize} />
 
       <div role="tablist" aria-label="Which posts" className="flex gap-1 mb-3 p-1 rounded-lg bg-gray-100 dark:bg-neutral-800">
         {(['hide', 'unhide'] as const).map((tab) => (

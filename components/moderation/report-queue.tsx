@@ -8,8 +8,6 @@ import toast from 'react-hot-toast'
 import { CheckCircleIcon, ExclamationTriangleIcon, EyeSlashIcon, FlagIcon, LockOpenIcon, NoSymbolIcon, ShieldExclamationIcon, TrashIcon, UserIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
-import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { postRemovalTarget, useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
 import { postHideTarget, useModeratorHideModal } from '@/hooks/use-moderator-hide-modal'
@@ -38,7 +36,7 @@ import type { TargetKind } from '@/lib/contract-topology'
 import { openReportedContent } from '@/lib/services/report-box-service'
 import type { Post } from '@/lib/types'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { moderationService, type ModerationResult } from '@/lib/services/moderation-service'
+import { moderationService } from '@/lib/services/moderation-service'
 import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
 import { reportService, type ReportCursor } from '@/lib/services/report-service'
@@ -167,7 +165,6 @@ interface ReportQueueProps {
  */
 export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProps) {
   const { user } = useAuth()
-  const canAuthorize = useModerationAuthorization()
   const { open: openModeratorRemoveModal } = useModeratorRemoveModal()
   const { open: openModeratorHideModal } = useModeratorHideModal()
   const resolving = moderationService.canResolveReports()
@@ -355,7 +352,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
    * protected reporters' reports are left.
    */
   const dismiss = async (group: ReportedTarget) => {
-    if (!canAuthorize || !user || dismissing || loading) return
+    if (!user || dismissing || loading) return
     if (!charterReasonReady(resolving ? 'purges' : 'dismissals')) return
     const key = keyOf(group)
     const state = targets.get(key)?.state
@@ -385,6 +382,37 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     setDismissing({ key, verb, done: 0, total })
     const step = () => setDismissing((progress) => (progress ? { ...progress, done: progress.done + 1 } : progress))
     const gone: string[] = []
+    // The moderation transitions go first: a moderator who closes the key sheet
+    // leaves nothing behind, and their own reports are withdrawn only once the
+    // rest went through.
+    if (dismissable.length > 0) {
+      const result = await moderationService.dismissReports(user.identityId, dismissable.map((report) => report.id), {
+        text: resolving
+          ? 'Report purged'
+          : state === 'removed'
+            ? `Report handled: the ${noun} was removed`
+            : state === 'tombstoned' ? `Report handled: its author deleted the ${noun}` : 'Report reviewed: no action taken',
+        documents: citedDocuments(group),
+        ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
+      }, step)
+      gone.push(...result.dismissed)
+      if (result.errorCode === 'CANCELLED') {
+        setDismissing(null)
+        return
+      }
+      if (result.errorCode === 'MAYBE_APPLIED') {
+        setDismissing(null)
+        dropReports(gone)
+        toast(`${gone.length} of ${total} reports ${done}; the network did not confirm the next in time. Reload the queue before retrying.`, { duration: 8000 })
+        return
+      }
+      if (!result.success) {
+        setDismissing(null)
+        dropReports(gone)
+        toast.error(`${gone.length > 0 ? `${gone.length} of ${total} reports ${done}. ` : ''}${result.error || (resolving ? 'Purge failed' : 'Dismissal failed')}`)
+        return
+      }
+    }
     for (const report of own) {
       const withdrawn = await reportService.withdrawReport(user.identityId, report.id)
       if (!withdrawn.success && !isReportGoneError(withdrawn.error)) {
@@ -396,28 +424,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
       gone.push(report.id)
       step()
     }
-    const result: ModerationResult & { dismissed: string[] } = dismissable.length === 0
-      ? { success: true, dismissed: [] }
-      : await moderationService.dismissReports(user.identityId, dismissable.map((report) => report.id), {
-        text: resolving
-          ? 'Report purged'
-          : state === 'removed'
-            ? `Report handled: the ${noun} was removed`
-            : state === 'tombstoned' ? `Report handled: its author deleted the ${noun}` : 'Report reviewed: no action taken',
-        documents: citedDocuments(group),
-        ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
-      }, step)
     setDismissing(null)
-    gone.push(...result.dismissed)
     dropReports(gone)
-    if (result.errorCode === 'MAYBE_APPLIED') {
-      toast(`${gone.length} of ${total} reports ${done}; the network did not confirm the next in time. Reload the queue before retrying.`, { duration: 8000 })
-      return
-    }
-    if (!result.success) {
-      toast.error(`${gone.length > 0 ? `${gone.length} of ${total} reports ${done}. ` : ''}${result.error || (resolving ? 'Purge failed' : 'Dismissal failed')}`)
-      return
-    }
     toast.success(`${reportsNoun(total)} ${done}.${keptNote}`, { duration: kept > 0 ? 8000 : 4000 })
   }
 
@@ -436,7 +444,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
    * ones already reading exactly this way are skipped.
    */
   const resolve = async (group: ReportedTarget, form: ResolveForm) => {
-    if (!canAuthorize || !user || dismissing || loading) return
+    if (!user || dismissing || loading) return
     const { status } = form
     const problem = resolutionInputProblem(status, form.note)
     if (problem || status === null) {
@@ -468,6 +476,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
       ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
     }, step)
     setDismissing(null)
+    // The moderator closed the key sheet: nothing was signed.
+    if (result.errorCode === 'CANCELLED') return
     const resolvedIds = new Set(result.resolved)
     const byOthers = new Set(result.alreadyResolved)
     const goneIds = new Set(result.gone)
@@ -559,7 +569,6 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <ModerationKeyNotice authorized={canAuthorize} />
         {views.length > 0 && (
           <div role="tablist" aria-label="Which reports" className="flex flex-wrap gap-1">
             {views.map(({ label, view: option }) => (
@@ -685,7 +694,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                 </details>
                 {form && (
                   <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2" data-testid={`report-resolve-form-${group.targetId}`}>
-                    <fieldset disabled={!canAuthorize || dismissing !== null}>
+                    <fieldset disabled={dismissing !== null}>
                       <legend className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">How were these reports resolved?</legend>
                       {differ?.statusesDiffer && (
                         <p className="text-xs text-amber-700 dark:text-amber-400 mb-1">These reports were resolved differently. The outcome chosen here applies to all of them.</p>
@@ -714,7 +723,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                       id={`report-resolution-${key}`}
                       value={form.note}
                       rows={2}
-                      disabled={!canAuthorize || dismissing !== null}
+                      disabled={dismissing !== null}
                       onChange={(e) => setResolveForm({ ...form, note: e.target.value })}
                       className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     />
@@ -726,7 +735,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                     <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
-                        disabled={!canAuthorize || dismissing !== null || resolutionInputProblem(form.status, form.note) !== null}
+                        disabled={dismissing !== null || resolutionInputProblem(form.status, form.note) !== null}
                         onClick={() => { resolve(group, form).catch(() => { /* reported inside */ }) }}
                         className="gap-1"
                       >
@@ -742,22 +751,22 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                     <>
                       {target?.state === 'live' && group.kind !== 'profile' && !protectedIds.has(group.targetOwnerId) && moderationService.canHide(group.kind) && (
                         isHidden(target.post.moderation) ? (
-                          <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => moderate(group, target.post, 'unhide')} className="gap-1">
+                          <Button variant="outline" size="sm" disabled={dismissing !== null} onClick={() => moderate(group, target.post, 'unhide')} className="gap-1">
                             <EyeSlashIcon className="h-4 w-4" /> Unhide {noun}
                           </Button>
                         ) : (
-                          <Button variant="destructive" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => moderate(group, target.post, 'hide')} className="gap-1">
+                          <Button variant="destructive" size="sm" disabled={dismissing !== null} onClick={() => moderate(group, target.post, 'hide')} className="gap-1">
                             <EyeSlashIcon className="h-4 w-4" /> Hide {noun}
                           </Button>
                         )
                       )}
                       {target !== undefined && !protectedIds.has(group.targetOwnerId) && moderationService.canRestrict() && (
-                        <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => restrictAuthor(group)} className="gap-1">
+                        <Button variant="outline" size="sm" disabled={dismissing !== null} onClick={() => restrictAuthor(group)} className="gap-1">
                           <NoSymbolIcon className="h-4 w-4" /> Restrict the author
                         </Button>
                       )}
                       {!protectedIds.has(group.targetOwnerId) && moderationService.canWarn() && (
-                        <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
+                        <Button variant="outline" size="sm" disabled={dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
                           <UserIcon className="h-4 w-4" /> Warn the author
                         </Button>
                       )}
@@ -765,13 +774,13 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                   ) : (
                     <>
                       {target?.state === 'live' && !protectedIds.has(group.targetOwnerId) && (
-                        <Button variant="destructive" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => remove(group, target.post)} className="gap-1">
+                        <Button variant="destructive" size="sm" disabled={dismissing !== null} onClick={() => remove(group, target.post)} className="gap-1">
                           <ShieldExclamationIcon className="h-4 w-4" /> Remove {noun}
                         </Button>
                       )}
                       {/* A protected author (a moderator, or an ownerProtected owner) is moderated by nobody: 41102, paid. */}
                       {!protectedIds.has(group.targetOwnerId) && (
-                        <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
+                        <Button variant="outline" size="sm" disabled={dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
                           <UserIcon className="h-4 w-4" /> Warn, suspend or ban the author
                         </Button>
                       )}
@@ -780,7 +789,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                   {resolving ? (
                     <>
                       {!form && (
-                        <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null || loading || target === undefined} onClick={() => openResolveForm(group)} className="gap-1">
+                        <Button variant="outline" size="sm" disabled={dismissing !== null || loading || target === undefined} onClick={() => openResolveForm(group)} className="gap-1">
                           <CheckCircleIcon className="h-4 w-4" /> {viewingOpen ? 'Resolve reports' : 'Change resolution'}
                         </Button>
                       )}
@@ -788,7 +797,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                         variant="ghost"
                         size="sm"
                         title="Delete these reports outright, for spam reports: no record is kept and their reporters see nothing"
-                        disabled={!canAuthorize || dismissing !== null || loading || target === undefined || target.state === 'unknown'}
+                        disabled={dismissing !== null || loading || target === undefined || target.state === 'unknown'}
                         onClick={() => { dismiss(group).catch(() => { /* reported inside */ }) }}
                         className="gap-1"
                       >
@@ -797,7 +806,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                       </Button>}
                     </>
                   ) : (
-                    <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null || loading || target === undefined || target.state === 'unknown'} onClick={() => { dismiss(group).catch(() => { /* reported inside */ }) }} className="gap-1">
+                    <Button variant="outline" size="sm" disabled={dismissing !== null || loading || target === undefined || target.state === 'unknown'} onClick={() => { dismiss(group).catch(() => { /* reported inside */ }) }} className="gap-1">
                       <CheckCircleIcon className="h-4 w-4" />
                       {busy && dismissing
                         ? `Dismissing ${dismissing.done} of ${dismissing.total}…`

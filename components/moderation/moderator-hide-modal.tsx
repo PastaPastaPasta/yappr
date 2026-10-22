@@ -7,10 +7,8 @@ import toast from 'react-hot-toast'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
-import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
 import { useModeratorHideModal, type ModeratorHideAction, type ModeratorHideOutcome, type ModeratorHideTarget } from '@/hooks/use-moderator-hide-modal'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
-import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { labelOptions, type LabelOption } from '@/lib/moderation-labels'
 import { forgetModeratedReads } from '@/lib/moderation-refresh'
 import { moderationServiceFor, type ModerationReasonInput, type ModerationResult } from '@/lib/services/moderation-service'
@@ -83,7 +81,6 @@ export function hideModalCopy(target: Pick<ModeratorHideTarget, 'action' | 'noun
 export function ModeratorHideModal() {
   const { user } = useAuth()
   const { isOpen, target, onDone, close } = useModeratorHideModal()
-  const canAuthorize = useModerationAuthorization(isOpen)
   const contract = target?.contract ?? 'social'
   const seatedReasons = useSeatedReasons(isOpen, contract)
   const [label, setLabel] = useState<number | null>(null)
@@ -112,7 +109,7 @@ export function ModeratorHideModal() {
   const needsLabel = labelled(action)
   const chosen = options.find((option) => option.label === label) ?? null
   const charterReasonId = needsLabel ? chosen?.reasonDocumentId ?? '' : reasonDocumentId
-  const ready = canAuthorize && !busy && !seatedReasons.loading && !seatedReasons.failed
+  const ready = !busy && !seatedReasons.loading && !seatedReasons.failed
     && (!needsLabel || chosen !== null)
     && (!seatedReasons.required || charterReasonId !== '')
 
@@ -162,6 +159,8 @@ export function ModeratorHideModal() {
         break
     }
     setBusy(false)
+    // The moderator closed the key sheet: nothing was signed, so the dialog stays open.
+    if (result.errorCode === 'CANCELLED') return
     if (result.errorCode === 'MAYBE_APPLIED') {
       // The DAPI gateway often times out on a write that landed: show it as
       // done, drop the reads that could contradict it, and say to look again.
@@ -196,7 +195,6 @@ export function ModeratorHideModal() {
         {copy.title}
       </ModalTitle>
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">{copy.body}</Dialog.Description>
-      <ModerationKeyNotice authorized={canAuthorize} />
       {target.preview && (
         <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
           <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">{target.preview}</p>

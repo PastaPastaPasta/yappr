@@ -4,13 +4,11 @@ import { Document, PlatformVersion } from '@dashevo/wasm-sdk';
 import type { EvoSDK, Identity, IdentityPublicKey, IdentitySigner } from '@dashevo/evo-sdk';
 import { nextIdentityContractNonce } from '@/lib/document-id';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
-import { keyNetwork } from '@/lib/constants';
 import { authorDeletesLeaveHoles, moderatorsCannotDelete, settledDeletionFor, type ElectedModerationDeclaration, type SettledDeletionRule } from '@/lib/contract-topology';
 import { registeredDeleteWindow, registeredOr, registeredOwnerProtected, registeredSettledRule, rememberRegisteredContract } from '@/lib/registered-contracts';
 import { documentNoun, moderatedContract, type ModeratedContract, type ModeratedContractKey } from '@/lib/moderated-contracts';
 import { storedTags } from '@/lib/post-helpers';
-import { matchIdentityKey } from '@/lib/crypto/keys';
-import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
+import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, criticalKeyFor, criticalKeySession } from '@/lib/auth/critical-key';
 import { PENDING_WRITE_ERROR, classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, isUnverifiedOutcomeError, type ModerationErrorKind } from '@/lib/error-utils';
 import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/reports';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
@@ -111,7 +109,8 @@ export interface ModerationResult {
    * DAPI gateway 504s even when a transition lands), so the action may well
    * have happened — the caller says "check again", never "failed".
    */
-  errorCode?: 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | 'DOCUMENT_GONE'
+  /** `CANCELLED`: the moderator closed the sheet asking for the CRITICAL key; nothing was signed (say nothing). */
+  errorCode?: 'CANCELLED' | 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | 'DOCUMENT_GONE'
     | 'INVALID_LABEL' | 'ALREADY_RESTRICTED' | 'NOT_RESTRICTED' | 'WRITE_PENDING' | 'INSUFFICIENT_CREDITS' | ModerationErrorKind;
 }
 
@@ -522,6 +521,8 @@ interface ModeratorAuth {
   /** The CRITICAL key and its WIF, for the one moderator write built by hand (a restriction's create). */
   identityKey?: IdentityPublicKey;
   wif?: string;
+  /** Throws CriticalKeyCancelledError once the session the key was read in has ended (lib/auth/critical-key.ts). */
+  assertLive: () => void;
 }
 
 /** A restriction's create fields: the target as identifier bytes, in force (`state` 1), with the charter reason. */
@@ -1433,7 +1434,7 @@ class ModerationService {
    */
   private createRestriction(moderatorId: string, identityId: string, reason: number): Promise<ModerationResult> {
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      if (!auth.wif || !auth.identityKey) throw new Error('critical key required');
+      if (!auth.wif || !auth.identityKey) throw new Error(CRITICAL_KEY_REQUIRED);
       const { wif, identityKey } = auth;
       await send(async () => {
         const [{ documentBuilderService }, { buildSignedCreateTransition }, { PrivateKey }] = await Promise.all([
@@ -1450,6 +1451,8 @@ class ModerationService {
           restrictionCreateFields(identityId, reason),
           { entropy, identityContractNonce: nonce }
         );
+        // The nonce read and the build awaited: the session must still be the one signed in before the key signs.
+        auth.assertLive();
         const transition = buildSignedCreateTransition({
           document,
           ownerId: moderatorId,
@@ -1485,6 +1488,8 @@ class ModerationService {
         // from another tab cannot land between them.
         await send(async () => {
           snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
+          // The snapshot read awaited: the session must still be the one signed in before the key signs.
+          auth.assertLive();
           return sdk.contracts.moderatorDeleteDocument({
             ...auth,
             contractId: this.contract.contractId,
@@ -1847,13 +1852,17 @@ class ModerationService {
     // answer could not be verified may hide a landed transition.
     let started = false;
     // Each transition its own reservation (a batch signs one nonce per report).
+    let auth: ModeratorAuth | undefined;
     const send: ModerationSend = (write) => withSdkSignedWrite(moderatorId, this.contract.contractId, () => {
+      // Last check before the CRITICAL key signs: the session it was read in must still be the one signed in.
+      auth?.assertLive();
       started = true;
       return write();
     });
     try {
       const sdk = await getEvoSdk();
-      const auth = heldAuth ?? await this.getCriticalSigner(moderatorId);
+      // A batch's held signer still answers to its session: `assertLive` refuses it once that ended.
+      auth = heldAuth ?? await this.getCriticalSigner(moderatorId);
       await action(sdk, auth, send);
       if (moderatedIdentityId) this.standingCache.delete(moderatedIdentityId);
       return { success: true };
@@ -1872,39 +1881,34 @@ class ModerationService {
   /**
    * The moderating identity and an IdentitySigner holding its CRITICAL
    * authentication key: the only key a moderation transition may be signed
-   * with. A HIGH login key answers NEEDS_CRITICAL_KEY without broadcasting.
+   * with. A session that signs with a CRITICAL key uses it; any other (a
+   * wallet's key ring, a HIGH key) is asked for the key now, after the action
+   * was confirmed and before anything is signed (lib/auth/critical-key.ts).
+   * Closing that sheet throws CriticalKeyCancelledError (CANCELLED); where no
+   * sheet can ask, NEEDS_CRITICAL_KEY.
    */
   private async getCriticalSigner(identityId: string): Promise<ModeratorAuth> {
-    // A wallet (App Connect) session holds no key that may moderate, and it
-    // must not reach past its grant to a raw key left in storage either:
-    // moderating takes a raw-key sign-in.
+    // A wallet (App Connect) session must not reach past its grant to a raw key left in storage.
     const { hasAppConnectSession } = await import('@/lib/auth/signing-keys');
-    if (hasAppConnectSession(identityId)) throw new Error('critical key required');
     const { getPrivateKey } = await import('../secure-storage');
-    const wif = getPrivateKey(identityId)?.trim();
-    if (!wif) {
-      const { promptForAuthKey } = await import('../auth-utils');
-      promptForAuthKey();
-      throw new Error('Private key not found — please re-authenticate');
-    }
+    // The session the key is read in: a sign-out or switch while the identity is fetched stops the action.
+    const session = criticalKeySession();
+    const sessionKey = hasAppConnectSession(identityId) ? null : getPrivateKey(identityId)?.trim() || null;
     const sdk = await getEvoSdk();
     const identity = await sdk.identities.fetch(identityId);
     if (!identity) throw new Error('Identity not found');
-    const match = matchIdentityKey(wif, identity.publicKeys, {
-      network: keyNetwork(),
-      purpose: KeyPurpose.AUTHENTICATION,
-      allowedSecurityLevels: [SecurityLevel.CRITICAL],
-    });
-    if (!match.ok) throw new Error('critical key required');
+    const { wif, key, assertLive } = await criticalKeyFor(identityId, identity.publicKeys, 'moderation', sessionKey, session);
     const signer = await signerService.createSigner(wif);
-    return { identity, signer, identityKey: match.key, wif };
+    return { identity, signer, identityKey: key, wif, assertLive };
   }
 
   private toResult(error: unknown, started = false): ModerationResult {
+    // The moderator closed the key sheet: nothing was signed, and there is nothing to say.
+    if (error instanceof CriticalKeyCancelledError) return { success: false, errorCode: 'CANCELLED' };
     const msg = extractErrorMessage(error);
     logger.error('Moderation failed:', msg);
     const lower = msg.toLowerCase();
-    if (lower.includes('critical key required') || (lower.includes('security level') && lower.includes('critical'))) {
+    if (lower.includes(CRITICAL_KEY_REQUIRED) || (lower.includes('security level') && lower.includes('critical'))) {
       return { success: false, error: 'Moderation needs your CRITICAL key to authorize', errorCode: 'NEEDS_CRITICAL_KEY' };
     }
     // Held back unsent behind an earlier write whose outcome is not known yet.

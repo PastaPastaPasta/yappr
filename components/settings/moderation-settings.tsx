@@ -36,6 +36,8 @@ export function ModerationSettings() {
       : tokenService.destroyFrozen
     const result = await fn.call(tokenService, user.identityId, id, note.trim() || undefined)
     setBusy(null)
+    // The sheet asking for the CRITICAL key was closed: nothing was sent.
+    if (result.errorCode === 'CANCELLED') return
 
     if (result.success) {
       toast.success(

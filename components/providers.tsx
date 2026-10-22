@@ -19,6 +19,7 @@ import { QueryInspectorGate } from '@/components/query-inspector/inspector-gate'
 import { yappIsLocked } from '@/lib/contract-topology'
 import { AppConnectSessionNotices } from '@/components/auth/app-connect-session-notices'
 import { PasskeyPrompts } from '@/components/auth/passkey-prompts'
+import { CriticalKeySheet } from '@/components/auth/critical-key-sheet'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -47,6 +48,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <QueryInspectorGate />
           {isAppConnectBuild() && <AppConnectSessionNotices />}
           <PasskeyPrompts />
+          {/* Last, so it opens above the dialog whose action asked for the key. */}
+          <CriticalKeySheet />
         </AuthProvider>
       </SdkProvider>
     </ThemeProvider>
