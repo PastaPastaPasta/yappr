@@ -3,8 +3,7 @@ import type { CompositeDocumentsQuery, CompositeSubQuery } from '@dashevo/wasm-s
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '@/lib/constants';
 import { profileBaseSource, profileExtensionSource } from '@/lib/profile/v10-profile';
 import { likesAreIndexOnly, listingsCarryModLane } from '@/lib/contract-topology';
-import { moderationViewAll } from '@/lib/moderation-view';
-import { withoutHiddenItems } from '@/lib/feed/post-moderation';
+import { moderationViewAll, withoutHiddenItems } from '@/lib/moderation-view';
 import { logger } from '@/lib/logger';
 import { loadCompositeFeedPage, usernamesByIdentity, type CompositeFeedPage } from '@/lib/feed/composite-feed-page';
 import { dpnsService } from '@/lib/services/dpns-service';

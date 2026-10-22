@@ -20,7 +20,8 @@ import { quoteFieldsAreSplit, quoteFieldFor, targetKindOf } from '@/lib/contract
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants';
 import type { PostEmbed } from '@/lib/poll-embed';
 import { BLOG_POST_EMBED_DOC_TYPE, bumpGeneration, generationOf, quoteTargetOf } from './quote-targets';
-import { isHiddenItem, isQuoteHidden, markQuoteHidden } from './post-moderation';
+import { isHiddenItem } from '@/lib/moderation-view';
+import { isQuoteHidden, markQuoteHidden } from './post-moderation';
 
 /** The write-side counterpart of `quoteTargetOf`: where a new quote's reference goes. */
 export interface QuoteReference {

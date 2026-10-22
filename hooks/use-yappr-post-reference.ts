@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Post } from '@/lib/types'
 import { replyToPost } from '@/lib/services/post-service'
 import { extractYapprPostId } from '@/lib/link-preview/urls'
-import { isHiddenItem } from '@/lib/feed/post-moderation'
+import { isHiddenItem } from '@/lib/moderation-view'
 
 interface UseYapprPostReferenceOptions {
   disabled?: boolean

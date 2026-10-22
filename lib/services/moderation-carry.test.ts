@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   blogAuthorsCanBeRestricted, blogListedLivePin, blogLiveValue, blogModPin, lanePinOrderBy,
 } from '../constants';
-import { carryModerationIntoReplace, isDropped, moderationFieldOf, withoutHidden } from './moderation-carry';
+import { carryModerationIntoReplace, moderationFieldOf } from './moderation-carry';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -54,18 +54,5 @@ describe('moderator marks carried by a service', () => {
     const listed: Record<string, unknown> = { title: 'T' };
     carryModerationIntoReplace(listed, {});
     expect(listed).toEqual({ title: 'T' });
-  });
-
-  it('drops hidden documents from a public list, and keeps them on an archival build', () => {
-    const listed = { id: 'a' };
-    const hidden = { id: 'b', moderation: { mod: 1 } };
-    const held = { id: 'c', moderation: { mod: 2 } };
-    expect(withoutHidden([listed, hidden, held])).toEqual([listed]);
-    expect(isDropped(hidden)).toBe(true);
-    expect(isDropped(listed)).toBe(false);
-    expect(isDropped(null)).toBe(false);
-    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all');
-    expect(withoutHidden([listed, hidden, held])).toEqual([listed, hidden, held]);
-    expect(isDropped(hidden)).toBe(false);
   });
 });

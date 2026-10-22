@@ -5,7 +5,8 @@ import type { Blog } from '@/lib/types'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
 import { YAPPR_BLOG_CONTRACT_ID, blogIsV7, blogIsV9, blogModPin } from '@/lib/constants'
-import { carryModerationIntoReplace, moderationFieldOf, withoutHidden } from './moderation-carry'
+import { carryModerationIntoReplace, moderationFieldOf } from './moderation-carry'
+import { withoutHiddenItems } from '@/lib/moderation-view'
 import { labelsFromStored, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { normalizeBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
@@ -153,7 +154,7 @@ class BlogService extends BaseDocumentService<Blog> {
   async getMany(blogIds: string[], options: { throwOnError?: boolean } = {}): Promise<Blog[]> {
     if (!this.isConfigured()) return []
     const ids = blogIds.filter((id) => !useDeletedBlogs.getState().ids.has(id))
-    return withoutHidden(this.withoutDeleted(await super.getMany(ids, options)))
+    return withoutHiddenItems(this.withoutDeleted(await super.getMany(ids, options)))
   }
 
   /**
@@ -169,7 +170,7 @@ class BlogService extends BaseDocumentService<Blog> {
     }
     const result = await this.query(options)
     const blogs = this.withoutDeleted(result.documents)
-    return includeHidden ? blogs : withoutHidden(blogs)
+    return includeHidden ? blogs : withoutHiddenItems(blogs)
   }
 
   /**

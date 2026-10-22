@@ -40,7 +40,8 @@ import { getPrimaryUsername } from '@/lib/utils/username';
 import { dpnsRecordOwner } from '@/lib/utils/dpns-record-owner';
 import { postTimelineClauses, type QueryOptions } from '@/lib/services/document-service';
 import { transformRawPost } from './transform-raw-post';
-import { isHiddenItem, markQuoteHidden } from './post-moderation';
+import { isHiddenItem } from '@/lib/moderation-view';
+import { markQuoteHidden } from './post-moderation';
 import type { OwnQuote } from './quote-reposts';
 
 /**

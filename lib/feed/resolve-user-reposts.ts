@@ -1,6 +1,6 @@
 import type { Post } from '@/lib/types'
 import type { RepostDocument } from '@/lib/services/repost-service'
-import { isHiddenItem } from './post-moderation'
+import { isHiddenItem } from '@/lib/moderation-view'
 
 /** Newest activity first: a repost sorts by when it was reposted, not written. */
 export function byNewestActivity(a: Post, b: Post): number {

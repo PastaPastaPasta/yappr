@@ -44,8 +44,7 @@ import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
 import { getEvoSdk } from './evo-sdk-service';
-import { moderationViewAll } from '@/lib/moderation-view';
-import { withoutHiddenItems } from '@/lib/feed/post-moderation';
+import { moderationViewAll, withoutHiddenItems } from '@/lib/moderation-view';
 import { inlineTags, listingsCarryModLane, postOwnerIndexPrefix, referencesMayDangle, trendLanePin, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**

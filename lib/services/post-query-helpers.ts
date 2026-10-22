@@ -6,7 +6,7 @@ import type { PostStats } from './post-service';
 import { identifierToHex, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, rangeDistinctCount } from './pagination-utils';
 import { getEvoSdk } from './evo-sdk-service';
-import { withoutHiddenItems } from '../feed/post-moderation';
+import { withoutHiddenItems } from '../moderation-view';
 import { authorPostCountsAreRanked, isLiveMarker, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {

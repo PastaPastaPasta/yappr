@@ -9,7 +9,7 @@ import { logger } from '@/lib/logger';
 import type { Cart, CartItem, ShippingLine, Store, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
 import { storeService } from './store-service';
-import { isDropped } from './moderation-carry';
+import { isHiddenItem } from '../moderation-view';
 import { MAX_LINE_QUANTITY } from './digital-delivery-plan';
 import { combinationImageUrl, variantOptionPairs, type VariantOptionPairs } from '../storefront/variant-codec';
 import { storefrontListingsCarryModLane, storefrontVariantsAreTyped } from '../constants';
@@ -234,8 +234,8 @@ class CartService {
    */
   addStoreItem(storeItem: StoreItem, variantId?: string, quantity: number = 1, store?: Pick<Store, 'moderation'> | null): void {
     // A moderator-hidden item, or one from a hidden store, is not for sale on this build (archival builds still show it).
-    if (isDropped(storeItem)) throw new Error(HIDDEN_ITEM_MESSAGE);
-    if (isDropped(store)) throw new Error(HIDDEN_STORE_MESSAGE);
+    if (isHiddenItem(storeItem)) throw new Error(HIDDEN_ITEM_MESSAGE);
+    if (isHiddenItem(store)) throw new Error(HIDDEN_STORE_MESSAGE);
     const stock = storeItemService.getStock(storeItem, variantId);
     const combination = storeItemService.getCombination(storeItem, variantId);
     const { variantOptions } = this.lineIdentity(storeItem, variantId);
@@ -396,7 +396,7 @@ class CartService {
         if (!item || item.status !== 'active') {
           return { item: cartItem, maxQuantity: 0, stockTracked: false, reason: 'Item is no longer available' };
         }
-        if (isDropped(item)) {
+        if (isHiddenItem(item)) {
           return { item: cartItem, maxQuantity: 0, stockTracked: false, reason: HIDDEN_ITEM_MESSAGE };
         }
         if ((item.variants || cartItem.variantId) && !storeItemService.getLineCombination(item, cartItem)) {
@@ -440,7 +440,7 @@ class CartService {
     if (!storefrontListingsCarryModLane()) return hidden;
     await Promise.all(Array.from(new Set(items.map(item => item.storeId))).map(async (storeId) => {
       try {
-        hidden.set(storeId, isDropped(await storeService.getCurrent(storeId)));
+        hidden.set(storeId, isHiddenItem(await storeService.getCurrent(storeId)));
       } catch (error) {
         logger.warn(`cart: could not read store ${storeId} to check it is listed`, error);
       }

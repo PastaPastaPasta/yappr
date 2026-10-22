@@ -13,7 +13,7 @@ import type { Post } from '@/lib/types';
 import { postService } from '@/lib/services/post-service';
 import { hasFlatThreads, repliesOutliveTheirParent, type TargetKind } from '@/lib/contract-topology';
 import { provenAbsent } from './prove-absent';
-import { isHiddenItem } from './post-moderation';
+import { isHiddenItem } from '@/lib/moderation-view';
 
 /** Which doctype a parent id names — `unknown` only on v2's polymorphic field. */
 type ParentTarget = { id: string; where: 'post' | 'reply' | 'unknown' };

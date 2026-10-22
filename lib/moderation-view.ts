@@ -53,10 +53,27 @@ export function dropsHidden(doc: { mod?: unknown } | null | undefined): boolean 
   return isHidden(doc) && !moderationViewAll()
 }
 
+/** The moderator marks a transformed document carries (`moderation`), if any. */
+export function moderationOf(doc: object | null | undefined): ModerationMarks | undefined {
+  if (!doc || !('moderation' in doc)) return undefined
+  const marks = doc.moderation
+  return typeof marks === 'object' && marks !== null ? (marks as ModerationMarks) : undefined
+}
+
+/** True when this build drops `item` from a list or a read: a moderator hid it and the build is not archival. Items without `moderation` are never dropped. */
+export function isHiddenItem(item: object | null | undefined): boolean {
+  return dropsHidden(moderationOf(item))
+}
+
+/** `items` without the ones this build drops as hidden ({@link isHiddenItem}), in order. */
+export function withoutHiddenItems<T extends object>(items: readonly T[]): T[] {
+  return items.filter((item) => !isHiddenItem(item))
+}
+
 /** Reads the moderator-only fields off a plain document (`mod`, `modLabel`, `$moderatedBy`, `$moderatedAt`). */
 export function moderationMarksOf(doc: Record<string, unknown>): ModerationMarks {
   const marks: ModerationMarks = {}
-  if (typeof doc.mod === 'number' && doc.mod > 0) marks.mod = doc.mod
+  if (isHidden(doc)) marks.mod = doc.mod as number
   if (typeof doc.modLabel === 'number' && doc.modLabel > 0) marks.modLabel = doc.modLabel
   const by = doc.$moderatedBy
   if (typeof by === 'string' && by) marks.moderatedBy = by

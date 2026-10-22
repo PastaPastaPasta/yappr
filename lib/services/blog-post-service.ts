@@ -14,7 +14,8 @@ import { extractErrorMessage, isRateLimitedError } from '@/lib/error-utils'
 import { BLOG_POST_TOMBSTONE, BLOG_POST_TOMBSTONE_KEEPS, isPublishedBlogPost, labelsFromStored, publishedPostsNewestFirst, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { logger } from '@/lib/logger'
 import { tombstoneDocument } from './tombstone-helpers'
-import { carryModerationIntoReplace, MODERATION_REPLACE_KEEPS, moderationFieldOf, withoutHidden } from './moderation-carry'
+import { carryModerationIntoReplace, MODERATION_REPLACE_KEEPS, moderationFieldOf } from './moderation-carry'
+import { withoutHiddenItems } from '@/lib/moderation-view'
 import { restrictionServiceFor } from './restriction-service'
 import { documentComparator, mergeLanePages, type LaneCursor, type LanePage } from '@/lib/moderation-lanes'
 import { isLiveMarker } from '@/lib/contract-topology'
@@ -349,7 +350,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
   /** Posts reached by id for a public list (a ranking, a notification): a hidden one is dropped, except on an archival build. */
   async getMany(postIds: string[], options: { throwOnError?: boolean } = {}): Promise<BlogPost[]> {
-    return withoutHidden(await super.getMany(postIds, options))
+    return withoutHiddenItems(await super.getMany(postIds, options))
   }
 
   async getPostBySlug(blogId: string, slug: string): Promise<BlogPost | null> {

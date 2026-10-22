@@ -13,7 +13,7 @@
  * moderator's name; components/moderation/moderation-label.tsx renders.
  */
 import { REPORT_REASONS } from '@/lib/reports'
-import type { ModerationMarks } from '@/lib/moderation-view'
+import { isHidden, type ModerationMarks } from '@/lib/moderation-view'
 
 /** One reason a moderator may hide or restrict for, and the label it writes. */
 export interface LabelOption {
@@ -79,6 +79,9 @@ export function relativeTime(atMs: number, now = Date.now()): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })
 }
 
+/** The label line of a restricted account's post; the component picks its icon by it. */
+export const RESTRICTED_LINE = 'Restricted account'
+
 export interface ModerationLabelInput {
   marks?: ModerationMarks | null
   /** Written while its author was restricted (`live: 2`), or the account itself is restricted. */
@@ -98,16 +101,21 @@ export interface ModerationLabelInput {
  */
 export function moderationLabelLines({ marks, restricted = false, reasonText = null, moderatorName = null, now = Date.now() }: ModerationLabelInput): string[] {
   const lines: string[] = []
-  if (typeof marks?.mod === 'number' && marks.mod > 0) {
-    // Never a bare label number: with neither reason nor moderator, "Hidden by moderators".
-    const parts = [marks.mod === 2 ? 'Hidden for legal reasons' : reasonText || moderatorName ? 'Hidden' : 'Hidden by moderators']
+  if (marks && isHidden(marks)) {
+    const parts = [hiddenLead(marks.mod === 2, Boolean(reasonText || moderatorName))]
     if (reasonText) parts.push(reasonText)
     if (moderatorName) parts.push(`by ${moderatorName}`)
     if (typeof marks.moderatedAt === 'number') parts.push(relativeTime(marks.moderatedAt, now))
     lines.push(parts.join(' · '))
   }
-  if (restricted) lines.push('Restricted account')
+  if (restricted) lines.push(RESTRICTED_LINE)
   return lines
+}
+
+/** The first part of a hide's line. Never a bare label number: with neither reason nor moderator, "Hidden by moderators". */
+function hiddenLead(legalHold: boolean, hasDetail: boolean): string {
+  if (legalHold) return 'Hidden for legal reasons'
+  return hasDetail ? 'Hidden' : 'Hidden by moderators'
 }
 
 /**

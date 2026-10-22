@@ -12,7 +12,7 @@
  */
 
 import type { Post, PostModeration } from '@/lib/types';
-import { dropsHidden, moderationMarksOf, moderationViewAll } from '@/lib/moderation-view';
+import { isHiddenItem, moderationMarksOf, moderationOf, moderationViewAll } from '@/lib/moderation-view';
 import { identifierToBase58 } from '@/lib/services/sdk-helpers';
 
 /** `post.moderation` for a stored post or reply: its moderator marks plus `restricted` for lane 2; undefined when neither applies. */
@@ -33,13 +33,6 @@ export function postModerationOf(doc: Record<string, unknown>, data: Record<stri
   return restricted ? { ...marks, restricted: true } : marks;
 }
 
-/** True when this build drops `item` from a list: a moderator hid it and the build is not archival. Items without `moderation` are never dropped. */
-export function isHiddenItem(item: object | null | undefined): boolean {
-  if (!item || !('moderation' in item)) return false;
-  const marks = item.moderation;
-  return typeof marks === 'object' && marks !== null && dropsHidden(marks as { mod?: unknown });
-}
-
 /**
  * True when a default build's listings do not list `item`: a moderator hid it,
  * or its author was restricted when they wrote it (lane `live == 2`). An
@@ -47,14 +40,8 @@ export function isHiddenItem(item: object | null | undefined): boolean {
  */
 export function isUnlistedItem(item: object | null | undefined): boolean {
   if (isHiddenItem(item)) return true;
-  if (moderationViewAll() || !item || !('moderation' in item)) return false;
-  const marks = item.moderation;
-  return typeof marks === 'object' && marks !== null && (marks as PostModeration).restricted === true;
-}
-
-/** `items` without the ones this build drops as hidden ({@link isHiddenItem}), in order. */
-export function withoutHiddenItems<T extends object>(items: readonly T[]): T[] {
-  return items.filter((item) => !isHiddenItem(item));
+  if (moderationViewAll()) return false;
+  return (moderationOf(item) as PostModeration | undefined)?.restricted === true;
 }
 
 /**

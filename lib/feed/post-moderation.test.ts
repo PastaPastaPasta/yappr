@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import bs58 from 'bs58';
 import type { Post } from '@/lib/types';
-import { isHiddenItem, isQuoteHidden, isUnlistedItem, markQuoteHidden, postModerationOf, withoutHiddenItems } from './post-moderation';
+import { isHiddenItem, withoutHiddenItems } from '@/lib/moderation-view';
+import { isQuoteHidden, isUnlistedItem, markQuoteHidden, postModerationOf } from './post-moderation';
 import { transformRawPost } from './transform-raw-post';
 
 afterEach(() => vi.unstubAllEnvs());

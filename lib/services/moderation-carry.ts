@@ -8,18 +8,9 @@
  *   did before).
  * - A replace must send `mod` and `modLabel` back unchanged: a write that drops
  *   or changes a moderator field is refused (41124).
- * - A list shown to the public drops hidden documents ({@link withoutHidden});
- *   an archival build keeps them.
  */
 
-import { dropsHidden, moderationMarksOf, type ModerationMarks } from '@/lib/moderation-view'
-
-/** The moderator marks a transformed document carries (`moderation`), if any. */
-export function moderationOf(doc: object | null | undefined): ModerationMarks | undefined {
-  if (!doc || !('moderation' in doc)) return undefined
-  const marks = doc.moderation
-  return typeof marks === 'object' && marks !== null ? (marks as ModerationMarks) : undefined
-}
+import { moderationMarksOf, moderationOf, type ModerationMarks } from '@/lib/moderation-view'
 
 /**
  * `{ moderation }` for a raw document that carries marks, `{}` otherwise.
@@ -45,13 +36,3 @@ export function carryModerationIntoReplace(fields: Record<string, unknown>, doc:
 
 /** The stored fields a tombstone or other raw replace must keep so the moderator marks survive it. */
 export const MODERATION_REPLACE_KEEPS: readonly string[] = ['mod', 'modLabel']
-
-/** The documents this build shows: hidden ones dropped on yap.pr and the official apps, kept on an archival build. */
-export function withoutHidden<T extends object>(docs: readonly T[]): T[] {
-  return docs.filter((doc) => !dropsHidden(moderationOf(doc)))
-}
-
-/** True when this build drops `doc` (hidden, and not an archival build). */
-export function isDropped(doc: object | null | undefined): boolean {
-  return dropsHidden(moderationOf(doc))
-}

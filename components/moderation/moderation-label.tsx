@@ -4,7 +4,7 @@ import { EyeSlashIcon, NoSymbolIcon } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
 import { useIsModerator } from '@/hooks/use-is-moderator'
 import { useModerationReasonText, useModeratorHandle } from '@/hooks/use-moderation-label'
-import { hiddenStubText, moderationLabelLines } from '@/lib/moderation-labels'
+import { hiddenStubText, moderationLabelLines, RESTRICTED_LINE } from '@/lib/moderation-labels'
 import { isHidden, moderationViewAll, type ModerationMarks } from '@/lib/moderation-view'
 import type { ModeratedContractKey } from '@/lib/moderated-contracts'
 
@@ -48,7 +48,7 @@ export function ModerationLabel({ contract = 'social', moderation, restricted = 
     >
       {lines.map((line) => (
         <span key={line} className="flex items-center gap-1.5">
-          {line === 'Restricted account' ? <NoSymbolIcon className="h-3.5 w-3.5 shrink-0" /> : <EyeSlashIcon className="h-3.5 w-3.5 shrink-0" />}
+          {line === RESTRICTED_LINE ? <NoSymbolIcon className="h-3.5 w-3.5 shrink-0" /> : <EyeSlashIcon className="h-3.5 w-3.5 shrink-0" />}
           {line}
         </span>
       ))}

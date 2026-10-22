@@ -5,7 +5,8 @@ import type { Post } from '@/lib/types'
 import { logger } from '@/lib/logger'
 import { getCachedQuotedPost, resolveQuotedPost } from '@/lib/feed/resolve-quoted-posts'
 import { quoteTargetOf } from '@/lib/feed/quote-targets'
-import { isHiddenItem, isQuoteHidden } from '@/lib/feed/post-moderation'
+import { isQuoteHidden } from '@/lib/feed/post-moderation'
+import { isHiddenItem } from '@/lib/moderation-view'
 
 export interface UseQuotedPostResult {
   /** The quoted post, from the batch pass or the fallback fetch. */

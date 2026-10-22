@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { dropsHidden, isHidden, moderationLogEnabled, moderationMarksOf, moderationViewAll } from './moderation-view'
+import { dropsHidden, isHidden, isHiddenItem, moderationLogEnabled, moderationMarksOf, moderationViewAll, withoutHiddenItems } from './moderation-view'
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -39,6 +39,21 @@ describe('isHidden and dropsHidden', () => {
     vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
     expect(dropsHidden({ mod: 1 })).toBe(false)
     expect(isHidden({ mod: 1 })).toBe(true)
+  })
+})
+
+describe('isHiddenItem and withoutHiddenItems', () => {
+  it('drop hidden documents from a public list, and keep them on an archival build', () => {
+    const listed = { id: 'a' }
+    const hidden = { id: 'b', moderation: { mod: 1 } }
+    const held = { id: 'c', moderation: { mod: 2 } }
+    expect(withoutHiddenItems([listed, hidden, held])).toEqual([listed])
+    expect(isHiddenItem(hidden)).toBe(true)
+    expect(isHiddenItem(listed)).toBe(false)
+    expect(isHiddenItem(null)).toBe(false)
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    expect(withoutHiddenItems([listed, hidden, held])).toEqual([listed, hidden, held])
+    expect(isHiddenItem(hidden)).toBe(false)
   })
 })
 

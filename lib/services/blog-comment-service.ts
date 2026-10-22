@@ -2,7 +2,8 @@ import { queryDocumentBundle } from './document-query-bundle'
 import { documentCount, groupedDocumentCount, mapLimit, paginateCount } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
 import { YAPPR_BLOG_CONTRACT_ID, blogCommentsCopyPostFlag, blogCommentsDerivePostOwner, blogIsV2, blogIsV8, blogModPin, lanePinOrderBy } from '@/lib/constants'
-import { carryModerationIntoReplace, moderationFieldOf, withoutHidden } from './moderation-carry'
+import { carryModerationIntoReplace, moderationFieldOf } from './moderation-carry'
+import { withoutHiddenItems } from '@/lib/moderation-view'
 import type { BlogComment } from '@/lib/types'
 import { identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { isPropertyAgreementError } from '@/lib/error-utils'
@@ -215,7 +216,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
       limit,
     })
     // `postOwnerAndTime` is not laned: a hidden comment is read too, and dropped here.
-    return withoutHidden(result.documents).filter((comment) => comment.ownerId !== ownerId)
+    return withoutHiddenItems(result.documents).filter((comment) => comment.ownerId !== ownerId)
   }
 }
 

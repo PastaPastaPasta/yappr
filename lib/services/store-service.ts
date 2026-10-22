@@ -9,7 +9,8 @@ import { logger } from '@/lib/logger';
 
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, lanePinOrderBy, storefrontIsV6, storefrontModPin } from '../constants';
-import { carryModerationIntoReplace, moderationFieldOf, withoutHidden } from './moderation-carry';
+import { carryModerationIntoReplace, moderationFieldOf } from './moderation-carry';
+import { withoutHiddenItems } from '@/lib/moderation-view';
 import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils';
 import { storeStatsService } from './store-stats-service';
 import type {
@@ -280,7 +281,7 @@ class StoreService extends BaseDocumentService<Store> {
         ? await storeStatsService.topRatedStores(limit, { throwOnError: true })
         : await storeStatsService.mostOrderedStores(limit, { throwOnError: true });
       // A ranking reaches stores by id, so a hidden one is dropped here (an archival build keeps it).
-      const byId = new Map(withoutHidden(await this.getMany(ranked.map((entry) => entry.id), { throwOnError: true })).map((store) => [store.id, store]));
+      const byId = new Map(withoutHiddenItems(await this.getMany(ranked.map((entry) => entry.id), { throwOnError: true })).map((store) => [store.id, store]));
       const stores = ranked.flatMap((entry) => {
         const store = byId.get(entry.id);
         return store?.status === 'active' ? [store] : [];
