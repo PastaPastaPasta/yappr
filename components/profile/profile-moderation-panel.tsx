@@ -76,9 +76,9 @@ export function ProfileModerationPanel({ userId, enrichProgressively, getPostEnr
       <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-4 py-3 text-sm dark:border-gray-800">
         {content.lanes.length === 0
           ? <span className="text-gray-500">Nothing from this account is hidden or restricted.</span>
-          : content.lanes.map(({ lane, count }) => (
+          : content.lanes.map(({ lane, count, more }) => (
             <span key={laneKey(lane)} data-testid={`profile-moderation-lane-${laneKey(lane)}`} className="rounded-full bg-amber-50 px-3 py-1 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-              {laneLabel(lane)} · {count}{content.more ? '+' : ''}
+              {laneLabel(lane)} · {count}{more ? '+' : ''}
             </span>
           ))}
         <Link href={HIDDEN_CONTENT_HREF} className="ml-auto text-yappr-600 hover:underline dark:text-yappr-400">All hidden &amp; restricted</Link>

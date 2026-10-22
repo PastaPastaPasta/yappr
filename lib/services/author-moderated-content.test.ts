@@ -52,14 +52,17 @@ describe('mergeAuthorLanes', () => {
     ])
     expect(merged.items.map((item) => item.id)).toEqual(['h2', 'r1', 'h1'])
     expect(merged.lanes).toEqual([
-      { lane: { live: 1, mod: 1 }, count: 2 },
-      { lane: { live: 2, mod: null }, count: 1 },
+      { lane: { live: 1, mod: 1 }, count: 2, more: false },
+      { lane: { live: 2, mod: null }, count: 1, more: false },
     ])
-    expect(merged.more).toBe(false)
   })
 
-  it('says there may be more when a read filled its page', () => {
-    expect(mergeAuthorLanes([{ items: [], full: true }]).more).toBe(true)
+  it('says a lane may hold more when a read of it filled its page', () => {
+    const merged = mergeAuthorLanes([
+      { items: [post('h1', 10, { mod: 1 })], full: true },
+      { items: [post('r1', 20, { restricted: true })], full: false },
+    ])
+    expect(merged.lanes.map(({ more }) => more)).toEqual([true, false])
     expect(mergeAuthorLanes([]).lanes).toEqual([])
   })
 })

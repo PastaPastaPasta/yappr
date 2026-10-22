@@ -43,16 +43,17 @@ export function laneLabel(lane: AuthorLane): string {
 
 export interface LaneCount {
   lane: AuthorLane
+  /** How many of `items` the lane holds. */
   count: number
+  /** True when a read of the lane filled its page, so it may hold more than `count`. */
+  more: boolean
 }
 
 export interface AuthorModeratedContent {
   /** Posts and replies, newest first, once each. */
   items: Post[]
-  /** Each lane with anything in it, in a fixed order, with how many of `items` it holds. */
+  /** Each lane with anything in it, in a fixed order. */
   lanes: LaneCount[]
-  /** True when some read filled its page, so the account may have more than `items`. */
-  more: boolean
 }
 
 const LANE_ORDER: AuthorLane[] = [
@@ -62,7 +63,15 @@ const LANE_ORDER: AuthorLane[] = [
 /** Merges what the lane reads returned: once each (a read may return another lane's too), newest first, counted per lane. */
 export function mergeAuthorLanes(pages: readonly { items: readonly Post[]; full: boolean }[]): AuthorModeratedContent {
   const byId = new Map<string, Post>()
-  for (const page of pages) for (const post of page.items) if (laneOf(post) && !byId.has(post.id)) byId.set(post.id, post)
+  const truncated = new Set<string>()
+  for (const page of pages) {
+    for (const post of page.items) {
+      const lane = laneOf(post)
+      if (!lane) continue
+      if (page.full) truncated.add(laneKey(lane))
+      if (!byId.has(post.id)) byId.set(post.id, post)
+    }
+  }
   const items = Array.from(byId.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
   const counts = new Map<string, number>()
   for (const post of items) {
@@ -71,8 +80,10 @@ export function mergeAuthorLanes(pages: readonly { items: readonly Post[]; full:
   }
   return {
     items,
-    lanes: LANE_ORDER.flatMap((lane) => (counts.get(laneKey(lane)) ? [{ lane, count: counts.get(laneKey(lane)) ?? 0 }] : [])),
-    more: pages.some((page) => page.full),
+    lanes: LANE_ORDER.flatMap((lane) => {
+      const count = counts.get(laneKey(lane)) ?? 0
+      return count > 0 ? [{ lane, count, more: truncated.has(laneKey(lane)) }] : []
+    }),
   }
 }
 

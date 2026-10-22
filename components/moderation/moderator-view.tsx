@@ -53,10 +53,10 @@ export function ModeratorViewBar() {
   )
 }
 
-/** A small switch for a feed's header; nothing for anyone who is not a seated moderator. */
+/** A small switch for a social feed's header; nothing for anyone who is not a seated social moderator. */
 export function ModeratorViewChip({ className }: { className?: string }) {
   const { seated, active, setEnabled } = useModeratorView()
-  if (seated.length === 0) return null
+  if (!seated.includes('social')) return null
   const Icon = active ? EyeIcon : EyeSlashIcon
   return (
     <button

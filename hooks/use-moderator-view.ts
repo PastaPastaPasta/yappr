@@ -42,14 +42,35 @@ function writeToggle(identityId: string, on: boolean): void {
   }
 }
 
+/** How long to wait before each new try at a seat read that failed. */
+const SEAT_RETRY_MS = [2_000, 8_000]
+
+/**
+ * Whether `identityId` sits on `key`'s seated team, read off the chain and
+ * tried again on failure (a gateway timeout must not hide the controls from a
+ * moderator for the session). False once every try failed.
+ */
+async function readSeat(key: ModeratedContractKey, identityId: string, cancelled: () => boolean): Promise<boolean> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await moderationServiceFor(key).isSeatedMember(identityId)
+    } catch (error) {
+      if (attempt >= SEAT_RETRY_MS.length || cancelled()) {
+        logger.warn(`Moderator view: could not read the ${key} seated team`, error)
+        return false
+      }
+      await new Promise((resolve) => setTimeout(resolve, SEAT_RETRY_MS[attempt]))
+    }
+  }
+}
+
 /**
  * The contracts `identityId` sits on the seated team of, among those whose
  * listings carry moderation lanes (social v18, blog v10, storefront v11).
- * Read off the chain; a contract whose team cannot be read is left out.
  */
-export async function seatedModeratorContracts(identityId: string): Promise<ModeratedContractKey[]> {
+async function seatedModeratorContracts(identityId: string, cancelled: () => boolean): Promise<ModeratedContractKey[]> {
   const laned = MODERATED_CONTRACTS.filter((key) => moderatedContract(key).hidesInsteadOfDeleting())
-  const seats = await Promise.all(laned.map((key) => moderationServiceFor(key).isSeatedMember(identityId)))
+  const seats = await Promise.all(laned.map((key) => readSeat(key, identityId, cancelled)))
   return laned.filter((_, index) => seats[index])
 }
 
@@ -96,10 +117,7 @@ export function syncModeratorViewer(identityId: string | null): () => void {
   useModeratorViewStore.getState().setViewer(identityId)
   if (!identityId) return () => {}
   let cancelled = false
-  seatedModeratorContracts(identityId).catch((error: unknown): ModeratedContractKey[] => {
-    logger.warn('Moderator view: could not read the seated teams', error)
-    return []
-  }).then((seated) => {
+  seatedModeratorContracts(identityId, () => cancelled).then((seated) => {
     if (!cancelled) useModeratorViewStore.getState().setSeated(identityId, seated)
   }).catch((error: unknown) => logger.error('Moderator view: could not apply the seated teams', error))
   return () => {
