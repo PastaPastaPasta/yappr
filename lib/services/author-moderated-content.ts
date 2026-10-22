@@ -36,7 +36,9 @@ export const laneKey = (lane: AuthorLane) => `${lane.live}:${lane.mod ?? 'null'}
 
 /** How moderators read a lane's name. */
 export function laneLabel(lane: AuthorLane): string {
-  const hidden = lane.mod === 2 ? 'Hidden for legal reasons' : lane.mod === 1 ? 'Hidden' : null
+  let hidden: string | null = null
+  if (lane.mod === 2) hidden = 'Hidden for legal reasons'
+  else if (lane.mod === 1) hidden = 'Hidden'
   if (lane.live === 1) return hidden ?? 'Listed'
   return hidden ? `Restricted · ${hidden.charAt(0).toLowerCase()}${hidden.slice(1)}` : 'Restricted'
 }
@@ -63,23 +65,21 @@ const LANE_ORDER: AuthorLane[] = [
 /** Merges what the lane reads returned: once each (a read may return another lane's too), newest first, counted per lane. */
 export function mergeAuthorLanes(pages: readonly { items: readonly Post[]; full: boolean }[]): AuthorModeratedContent {
   const byId = new Map<string, Post>()
+  const counts = new Map<string, number>()
   const truncated = new Set<string>()
   for (const page of pages) {
     for (const post of page.items) {
       const lane = laneOf(post)
       if (!lane) continue
-      if (page.full) truncated.add(laneKey(lane))
-      if (!byId.has(post.id)) byId.set(post.id, post)
+      const key = laneKey(lane)
+      if (page.full) truncated.add(key)
+      if (byId.has(post.id)) continue
+      byId.set(post.id, post)
+      counts.set(key, (counts.get(key) ?? 0) + 1)
     }
   }
-  const items = Array.from(byId.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-  const counts = new Map<string, number>()
-  for (const post of items) {
-    const lane = laneOf(post)
-    if (lane) counts.set(laneKey(lane), (counts.get(laneKey(lane)) ?? 0) + 1)
-  }
   return {
-    items,
+    items: Array.from(byId.values()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
     lanes: LANE_ORDER.flatMap((lane) => {
       const count = counts.get(laneKey(lane)) ?? 0
       return count > 0 ? [{ lane, count, more: truncated.has(laneKey(lane)) }] : []

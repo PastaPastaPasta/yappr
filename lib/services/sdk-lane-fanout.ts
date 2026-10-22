@@ -13,6 +13,7 @@ import {
   type LaneCursor,
   type LanePage,
   type OrderClause,
+  type WhereClause,
 } from '@/lib/moderation-lanes'
 import { documentToPlainObject } from './sdk-helpers'
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils'
@@ -277,6 +278,11 @@ function fansOut(contractId: unknown): boolean {
   return key !== null && moderationViewAll(key)
 }
 
+/** The lanes a read covers: every variant of its `where` while {@link fansOut} holds for its contract, none otherwise. */
+function lanesOf<C extends WhereClause>(request: { dataContractId?: unknown; where?: readonly C[] }): C[][] {
+  return fansOut(request.dataContractId) ? laneVariants(request.where) : []
+}
+
 /**
  * Shadow `sdk.documents` so every laned read covers every lane while
  * {@link fansOut} holds for its contract. Installed once per constructed SDK
@@ -298,24 +304,24 @@ export function installLaneFanout(sdk: EvoSDK): void {
 
   // A read that does not fan out is handed to the SDK untouched.
   shadow('query', ((request: Query) => {
-    const variants = fansOut(request.dataContractId) ? laneVariants(request.where) : []
+    const variants = lanesOf(request)
     return variants.length > 1 ? queryLanes(originals.query, request, variants) : originals.query(request)
   }) as DocumentsFacade['query'])
 
   shadow('count', ((request: Query) => {
-    const variants = fansOut(request.dataContractId) ? laneVariants(request.where) : []
+    const variants = lanesOf(request)
     if (variants.length < 2) return originals.count(request)
     return Promise.all(variants.map((where) => originals.count({ ...request, where }))).then(sumLaneMaps)
   }) as DocumentsFacade['count'])
 
   shadow('average', ((request: Query, property: string) => {
-    const variants = fansOut(request.dataContractId) ? laneVariants(request.where) : []
+    const variants = lanesOf(request)
     if (variants.length < 2) return originals.average(request, property)
     return Promise.all(variants.map((where) => originals.average({ ...request, where }, property))).then(sumLaneAverages)
   }) as DocumentsFacade['average'])
 
   shadow('ranked', ((request: RankedQuery) => {
-    const variants = fansOut(request.dataContractId) ? laneVariants(request.where) : []
+    const variants = lanesOf(request)
     return variants.length > 1 ? rankedLanes(originals, request, variants) : originals.ranked(request)
   }) as DocumentsFacade['ranked'])
 
