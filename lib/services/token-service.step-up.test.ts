@@ -9,8 +9,9 @@ import { getPublicKey } from '@/lib/crypto/keys'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { privateKeyToWif } from '@/lib/crypto/wif'
 
-const { claim, signedWith, session } = vi.hoisted(() => ({
+const { claim, freeze, signedWith, session } = vi.hoisted(() => ({
   claim: vi.fn(),
+  freeze: vi.fn(),
   signedWith: [] as string[],
   session: { record: null as { wif: string; fromPasskey: boolean } | null, wallet: false, signedIn: true as boolean, signOutDuringFetch: false, signOutAtSigner: false },
 }))
@@ -20,7 +21,7 @@ const CRITICAL = privateKeyToWif(priv(1), 'testnet', true)
 const HIGH = privateKeyToWif(priv(2), 'testnet', true)
 const KEYS = vi.hoisted(() => [] as unknown[])
 
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ tokens: { claim }, identities: { fetch: async () => { if (session.signOutDuringFetch) session.signedIn = false; return { publicKeys: KEYS } } } }) }))
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ tokens: { claim, freeze }, identities: { fetch: async () => { if (session.signOutDuringFetch) session.signedIn = false; return { publicKeys: KEYS } } } }) }))
 vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (_owner: string, _contract: string, write: () => Promise<unknown>) => write() }))
 vi.mock('./signer-service', () => ({
   signerService: { createSignerFromWasmKey: (wif: string) => { signedWith.push(wif); if (session.signOutAtSigner) session.signedIn = false; return { signer: true, identityKey: true } } },
@@ -61,6 +62,7 @@ let unbind: () => void
 beforeEach(() => {
   KEYS.splice(0, KEYS.length, key(1, 1, SecurityLevel.CRITICAL), key(2, 2, SecurityLevel.HIGH))
   claim.mockReset().mockResolvedValue(undefined)
+  freeze.mockReset().mockResolvedValue(undefined)
   signedWith.length = 0
   session.record = { wif: HIGH, fromPasskey: false }
   session.wallet = false
@@ -153,6 +155,20 @@ describe('the starter claim', () => {
     session.signOutAtSigner = true
     expect(await tokenService.claimStarterGrant(ME)).toEqual({ success: false, errorCode: 'CANCELLED' })
     expect(claim).not.toHaveBeenCalled()
+  })
+
+  it('a token authority action (freeze) takes the CRITICAL key too: held, or asked for from a HIGH session', async () => {
+    holdCriticalKey(ME, CRITICAL, 'typed')
+    expect(await tokenService.freeze(ME, 'Tgt1')).toEqual({ success: true })
+    expect(asked).toBe(0)
+    expect(signedWith).toEqual([CRITICAL])
+    forgetCriticalKey(ME)
+    expect(await tokenService.freeze(ME, 'Tgt1')).toEqual({ success: true })
+    expect(asked).toBe(1)
+    expect(signedWith).toEqual([CRITICAL, CRITICAL])
+    reply = 'cancel'
+    expect(await tokenService.freeze(ME, 'Tgt1')).toEqual({ success: false, errorCode: 'CANCELLED' })
+    expect(freeze).toHaveBeenCalledTimes(2)
   })
 
   it('canSignTokenTransitions counts a held key, and not a HIGH session alone', async () => {

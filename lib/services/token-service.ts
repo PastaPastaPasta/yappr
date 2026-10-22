@@ -2,10 +2,8 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { Identifier } from '@dashevo/wasm-sdk';
-import { matchIdentityKey } from '@/lib/crypto/keys';
-import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
-import { TOKEN_HISTORY_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants';
+import { TOKEN_HISTORY_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
 import { starterGrantAmount, yappIsLocked } from '../contract-topology';
 import { UNCONFIRMED_WRITE_MESSAGE, extractErrorMessage, isOncePerIdentityAlreadyClaimedError, sentWriteOutcomeUnknown } from '../error-utils';
 import { withSdkSignedWrite } from './identity-nonce';
@@ -152,7 +150,7 @@ class TokenService {
 
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey, assertLive } = await this.getAuthSigner(buyerId, { requireCritical: true });
+      const { signer, identityKey, assertLive } = await this.getAuthSigner(buyerId);
 
       await sendTokenWrite(buyerId, () => sdk.tokens.directPurchase({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -199,7 +197,7 @@ class TokenService {
     }
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey, assertLive } = await this.getAuthSigner(senderId, { requireCritical: true });
+      const { signer, identityKey, assertLive } = await this.getAuthSigner(senderId);
 
       await sendTokenWrite(senderId, () => sdk.tokens.transfer({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -279,7 +277,7 @@ class TokenService {
     let signingKey: SigningKey | undefined;
     try {
       const sdk = await getEvoSdk();
-      const auth = await this.getAuthSigner(identityId, { requireCritical: true, keyRing: true });
+      const auth = await this.getAuthSigner(identityId, { keyRing: true });
       const { signer, identityKey, assertLive } = auth;
       signingKey = auth.signingKey;
       await sendTokenWrite(identityId, () => sdk.tokens.claim({
@@ -325,7 +323,7 @@ class TokenService {
   ): Promise<TokenResult> {
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey } = await this.getAuthSigner(authorityId);
+      const { signer, identityKey, assertLive } = await this.getAuthSigner(authorityId);
 
       const options = {
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -345,7 +343,7 @@ class TokenService {
         } else {
           await sdk.tokens.destroyFrozen(options as Parameters<typeof sdk.tokens.destroyFrozen>[0]);
         }
-      });
+      }, assertLive);
       return { success: true };
     } catch (error) {
       return this.toResult(error, `${action} failed`);
@@ -367,12 +365,13 @@ class TokenService {
   }
 
   /**
-   * Build an IdentitySigner + matching AUTHENTICATION key for an identity.
-   * With `requireCritical`, only a CRITICAL key signs: the session's own (not
-   * a passkey's), else the one held for the tab, else the step-up sheet asks
-   * for it (lib/auth/critical-key.ts). Closing the sheet throws
-   * CriticalKeyCancelledError; with no sheet mounted, the NEEDS_CRITICAL_KEY
-   * marker. Otherwise the stored key, CRITICAL or HIGH.
+   * An IdentitySigner and the CRITICAL AUTHENTICATION key it signs with:
+   * Platform takes nothing less for a batch carrying a token transition. The
+   * session's own key (not a passkey's), else the one held for the tab, else
+   * the step-up sheet asks for it (lib/auth/critical-key.ts). Closing the
+   * sheet throws CriticalKeyCancelledError; with no sheet mounted, the
+   * NEEDS_CRITICAL_KEY marker. `assertLive` is for the write wrapper to run
+   * right before the SDK signs.
    *
    * An App Connect session signs what `keyRing` allows (the starter claim,
    * with the CRITICAL group key) from its key ring; every other token
@@ -380,10 +379,9 @@ class TokenService {
    */
   private async getAuthSigner(
     identityId: string,
-    opts?: { requireCritical?: boolean; keyRing?: boolean }
-  ): Promise<{ signer: Awaited<ReturnType<typeof signerService.createSigner>>; identityKey: WasmIdentityPublicKey; signingKey?: SigningKey; assertLive?: () => void }> {
-    const appConnect = hasAppConnectSession(identityId);
-    if (appConnect && opts?.keyRing) {
+    opts?: { keyRing?: boolean }
+  ): Promise<{ signer: Awaited<ReturnType<typeof signerService.createSigner>>; identityKey: WasmIdentityPublicKey; signingKey?: SigningKey; assertLive: () => void }> {
+    if (hasAppConnectSession(identityId) && opts?.keyRing) {
       // The wallet session this signs for must still be the one signed in when the claim goes out.
       const assertLive = liveSessionCheck(identityId, criticalKeySession());
       const sdk = await getEvoSdk();
@@ -396,56 +394,16 @@ class TokenService {
       };
       return { ...(await signerService.createSignerFromWasmKey(signingKey.wif, signingKey.identityKey)), signingKey, assertLive: live };
     }
-    if (opts?.requireCritical) {
-      // The session's own key when it is CRITICAL, else the key held for the tab, else the sheet asks
-      // for it now (lib/auth/critical-key.ts). Taken before the key is read: a sign-out or switch while
-      // the identity is fetched stops the action.
-      const session = criticalKeySession();
-      const sessionKey = await this.sessionCriticalCandidate(identityId);
-      const sdk = await getEvoSdk();
-      const identity = await sdk.identities.fetch(identityId);
-      if (!identity) throw new Error('Identity not found');
-      const critical = await criticalKeyFor(identityId, identity.publicKeys, 'token', sessionKey, session);
-      await assertRawKeyCovers(identityId, critical.key, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
-      return { ...(await signerService.createSignerFromWasmKey(critical.wif, critical.key)), assertLive: critical.assertLive };
-    }
-    if (appConnect) throw new Error(CRITICAL_KEY_REQUIRED);
-    const { getPrivateKeyRecord } = await import('../secure-storage');
-    // One read: the key that signs and its provenance come from the same record.
-    const stored = getPrivateKeyRecord(identityId);
-    if (!stored) {
-      const { promptForAuthKey } = await import('../auth-utils');
-      promptForAuthKey();
-      throw new Error('Private key not found — please re-authenticate');
-    }
-    // A moderator's CRITICAL key from a passkey never signs token transitions.
-    if (stored.fromPasskey) throw new Error(CRITICAL_KEY_REQUIRED);
-    const wif = stored.wif.trim();
-
+    // Taken before the key is read: a sign-out or switch while the identity is fetched stops the action.
+    const session = criticalKeySession();
+    const sessionKey = await this.sessionCriticalCandidate(identityId);
     const sdk = await getEvoSdk();
     const identity = await sdk.identities.fetch(identityId);
     if (!identity) throw new Error('Identity not found');
-
-    const authKey = this.findMatchingAuthKey(wif, identity.publicKeys, [SecurityLevel.CRITICAL, SecurityLevel.HIGH]);
-    if (!authKey) throw new Error('No matching AUTHENTICATION key (CRITICAL/HIGH) found for the stored private key');
+    const critical = await criticalKeyFor(identityId, identity.publicKeys, 'token', sessionKey, session);
     // Every transition here is on the YAPP token: a bound or limited key must cover it.
-    await assertRawKeyCovers(identityId, authKey, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
-
-    return signerService.createSignerFromWasmKey(wif, authKey);
-  }
-
-  /** The AUTHENTICATION key at an allowed security level that matches the provided WIF. */
-  private findMatchingAuthKey(
-    wif: string,
-    wasmPublicKeys: WasmIdentityPublicKey[],
-    allowedLevels: number[]
-  ): WasmIdentityPublicKey | null {
-    const result = matchIdentityKey(wif, wasmPublicKeys, {
-      network: keyNetwork(),
-      purpose: KeyPurpose.AUTHENTICATION,
-      allowedSecurityLevels: allowedLevels,
-    });
-    return result.ok ? result.key : null;
+    await assertRawKeyCovers(identityId, critical.key, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
+    return { ...(await signerService.createSignerFromWasmKey(critical.wif, critical.key)), assertLive: critical.assertLive };
   }
 
   private toResult(error: unknown, fallback: string): TokenResult {
