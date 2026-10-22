@@ -23,7 +23,7 @@ import {
 } from '@/lib/upload/inventory-parser'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
-import { storefrontSupportsItemZones } from '@/lib/constants'
+import { storefrontListingsCarryModLane, storefrontSupportsItemZones } from '@/lib/constants'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
 import { inventoryCsvTemplate, optionTypesSummary } from '@/lib/storefront/inventory-csv'
@@ -171,11 +171,12 @@ export function InventoryUploadModal({
           successCount++
         } catch (err) {
           logger.error(`Failed to upload item ${item.title}:`, err)
-          // Closed until the storefront's moderators are elected, or the seller
-          // barred: every later listing would be refused the same way, and each
+          // Closed until the storefront's moderators are elected, or (before
+          // storefront v11, which keeps no ban or suspension list) the seller
+          // banned: every later listing would be refused the same way, and each
           // refusal is paid, so the upload stops at the first.
           const refusal = moderationClosedCopy(err, 'storefront')
-            ?? (isBarredFromContractError(err) ? 'Moderators have barred your account from Yappr stores.' : null)
+            ?? (!storefrontListingsCarryModLane() && isBarredFromContractError(err) ? 'Moderators have barred your account from Yappr stores.' : null)
           // A listing too large to save says why, in words for the seller.
           const reason = refusal ?? (err instanceof ListLimitError ? err.message : 'It could not be saved. Please try again.')
           newErrors.push(`${item.title}: ${reason}`)

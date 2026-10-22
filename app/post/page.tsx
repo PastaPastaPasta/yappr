@@ -20,7 +20,9 @@ import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
-import { referencesMayDangle, replyThreadsCarryLiveMarker } from '@/lib/contract-topology'
+import { moderatorsCannotDelete, referencesMayDangle, replyThreadsCarryLiveMarker, targetKindOf } from '@/lib/contract-topology'
+import { useSeesHidden } from '@/components/moderation/moderation-label'
+import { isHidden } from '@/lib/moderation-view'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 import { countVisibleReplies, recordVisibleReplies } from '@/lib/feed/visible-reply-counts'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -91,9 +93,15 @@ function PostDetailContent() {
   // Until the root has been looked up (a cached reply shows first, and a failed
   // load never looks it up), whether it was removed is unknown, so nothing is
   // offered yet either.
+  // v18: a post the moderators hid is a stub for everyone else, with nothing to reply to.
+  const seesHidden = useSeesHidden()
+  const postHiddenFromViewer = isHidden(post?.moderation) && !seesHidden
   const replyBlockedReason = threadRootRemoved
-    ? 'The post that started this thread was removed, so nothing in it can be replied to.'
-    : replyRootPending ? 'Replies open once this thread has been checked. Reload the page if this stays.' : undefined
+    ? moderatorsCannotDelete()
+      ? 'The post that started this thread is unavailable, so nothing in it can be replied to.'
+      : 'The post that started this thread was removed, so nothing in it can be replied to.'
+    : replyRootPending ? 'Replies open once this thread has been checked. Reload the page if this stays.'
+    : postHiddenFromViewer && post ? `This ${targetKindOf(post) === 'reply' ? 'reply' : 'post'} is hidden by moderators, so it cannot be replied to.` : undefined
 
   // Once the whole thread is on screen, the count on this post's cards is what
   // the thread shows: an author's deleted reply stays in the proved count but
@@ -131,7 +139,7 @@ function PostDetailContent() {
     const replyMap = new Map<string, Post>(
       // A deleted-parent stub is no document, and a v11 tombstone renders as a
       // stub with no counts, so neither has anything to enrich.
-      flattenReplyThreads(replyThreads).filter((thread) => !thread.content.deletedStub && !isHiddenTombstone(thread.content)).map((thread): [string, Post] => [
+      flattenReplyThreads(replyThreads).filter((thread) => !thread.content.deletedStub && !thread.content.hiddenStub && !isHiddenTombstone(thread.content)).map((thread): [string, Post] => [
         thread.content.id,
         replyToPost(thread.content)
       ])

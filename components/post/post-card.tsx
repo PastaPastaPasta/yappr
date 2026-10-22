@@ -3,11 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, EyeSlashIcon, FlagIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, FlagIcon, LockOpenIcon, NoSymbolIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
-import type { Post } from '@/lib/types'
+import type { Post, PostModeration } from '@/lib/types'
+import { useAuthorRestricted } from '@/hooks/use-author-restriction'
+import { postHideTarget, useModeratorHideModal, type ModeratorHideAction } from '@/hooks/use-moderator-hide-modal'
+import { HiddenContentStub, ModerationLabel } from '@/components/moderation/moderation-label'
+import { isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { cn } from '@/lib/utils'
 import { useAppStore, useSettingsStore } from '@/lib/store'
 import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
@@ -133,7 +137,7 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
   const { user } = useAuth()
   const viewerId = user?.identityId
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
-  const { quotedPost, loading, unavailable } = useQuotedPost(post)
+  const { quotedPost, loading, unavailable, hidden: quoteHidden } = useQuotedPost(post)
   const [enriched, setEnriched] = useState<Post | null>(null)
   const [removed, setRemoved] = useState(false)
   const [removing, setRemoving] = useState(false)
@@ -226,7 +230,9 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
         ? <AuthorDeletedStub documentId={target.id} kind={targetKindOf(target)} className="ml-9" />
         : unavailable && !loading
         ? quotedTarget && quotedTarget.where !== 'blogPost'
-          ? <RemovedPostStub documentId={quotedTarget.id} kind={quotedTarget.where} proven={post.quotedPostRemoved === true} className="ml-9" />
+          ? quoteHidden
+            ? <HiddenContentStub noun={quotedTarget.where === 'reply' ? 'reply' : 'post'} documentId={quotedTarget.id} variant="embed" className="ml-9" />
+            : <RemovedPostStub documentId={quotedTarget.id} kind={quotedTarget.where} proven={post.quotedPostRemoved === true} className="ml-9" />
           : <EmbeddedPostUnavailable className="ml-9" />
         : <EmbeddedPostSkeleton className="ml-9" />}
       {/* The reposted post is gone; its reposter can still delete the repost. */}
@@ -287,6 +293,12 @@ function PostCardView({
   const [locallyRemoved, setLocallyRemoved] = useState(false)
   // v10: the author deleted it from this card, and the document is gone too.
   const [locallyDeleted, setLocallyDeleted] = useState(false)
+  // v18: a moderator hid or unhid it from this card; undefined until then.
+  const [localModeration, setLocalModeration] = useState<PostModeration | null | undefined>(undefined)
+  const moderation = localModeration === undefined ? post.moderation : localModeration ?? undefined
+  const hiddenByModerators = isHidden(moderation)
+  // v18: the moderator menu reads the author's restriction only once it is opened.
+  const [menuOpen, setMenuOpen] = useState(false)
   // Beats EVERY content branch (tip, poll, quote, media), or a freshly
   // tombstoned card keeps exposing its former attachments until Platform data arrives.
   const isTombstoned = Boolean(post.deleted) || locallyTombstoned
@@ -390,9 +402,29 @@ function PostCardView({
   // (v9). Their own posts they tombstone like everyone else, and a post by a
   // protected identity (a moderator, or an ownerProtected owner) nobody
   // removes: Drive refuses it, paid (41102).
+  // On v18 nobody deletes: the team hides and unhides instead, and restricts
+  // the author or lifts the restriction.
   const { isModerator, isProtected, protectedIds } = useModerationRole()
-  const canModerate = isModerator && !isOwnPost && !protectedIds.has(post.author.id) && moderatorDeletableTypes().includes(targetKind)
+  const hides = moderationService.hidesInsteadOfDeleting()
+  const canModerate = isModerator && !isOwnPost && !protectedIds.has(post.author.id)
+    && (hides ? moderationService.canHide(targetKind) : moderatorDeletableTypes().includes(targetKind))
   const canAuthorize = useModerationAuthorization(canModerate)
+  const { open: openModeratorHideModal } = useModeratorHideModal()
+  const authorRestrictedRead = useAuthorRestricted('social', post.author.id, canModerate && hides && menuOpen && moderationService.canRestrict())
+  const [authorRestrictedHere, setAuthorRestrictedHere] = useState<boolean | null>(null)
+  const authorRestricted = authorRestrictedHere ?? authorRestrictedRead
+  // Moderators and archival builds see a hidden post in full, labelled; everyone else a calm stub.
+  const seesHidden = moderationViewAll() || isModerator
+  const openHideAction = (action: ModeratorHideAction) => {
+    openModeratorHideModal(postHideTarget(post, action), (outcome) => {
+      if (outcome.restricted !== undefined) setAuthorRestrictedHere(outcome.restricted)
+      if (outcome.moderation !== undefined) {
+        setLocalModeration(outcome.moderation
+          ? { ...outcome.moderation, ...(moderation?.restricted ? { restricted: true } : {}) }
+          : moderation?.restricted ? { restricted: true } : null)
+      }
+    })
+  }
   const { open: openReportModal } = useReportPostModal()
   // Anyone but the author may report a live post or reply to the moderators
   // (v9); consensus refuses a self-report (10419) anyway. A moderator removes
@@ -416,7 +448,7 @@ function PostCardView({
   const authorIsFollowing = followLoading ? progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing : isFollowing
   const mediaGate = useMediaGate(post.author.id, authorIsFollowing)
   // Batch-resolved when the loader attached one, otherwise fetched here.
-  const { quotedPost, loading: quotedPostLoading, unavailable: quotedPostUnavailable } = useQuotedPost(post)
+  const { quotedPost, loading: quotedPostLoading, unavailable: quotedPostUnavailable, hidden: quotedPostHidden } = useQuotedPost(post)
   // A blog quote that fails is "unavailable"; a social quote that fails on a
   // moderated contract is most likely a takedown, and the stub says so.
   const quotedTarget = quotedPostUnavailable ? quoteTargetOf(post) : null
@@ -591,6 +623,12 @@ function PostCardView({
   // author just deleted) it is a stub with nothing to like, reply to, quote,
   // repost or bookmark: consensus would accept all of those.
   if (isTombstoned && tombstonesAreHidden()) return <AuthorDeletedStub documentId={post.id} kind={targetKind} variant="card" />
+  // v18: hidden by the moderators. Lists drop it; reached by link it is a
+  // stub with nothing of its content, except to its moderators and on an
+  // archival build, which show it in full with a label.
+  if (hiddenByModerators && !seesHidden) {
+    return <HiddenContentStub noun={isReply ? 'reply' : 'post'} moderation={moderation} documentId={post.id} variant="card" />
+  }
 
   return (
     <article
@@ -633,7 +671,7 @@ function PostCardView({
             </div>
 
             <div className="flex items-center gap-1 flex-shrink-0">
-              <DropdownMenu.Root>
+              <DropdownMenu.Root onOpenChange={setMenuOpen}>
                 <Tooltip.Provider>
                   <Tooltip.Root>
                     <Tooltip.Trigger asChild>
@@ -708,7 +746,51 @@ function PostCardView({
                       </DropdownMenu.Item>
                     )}
                     {canModerate && <ModerationKeyNotice authorized={canAuthorize} />}
-                    {canModerate && (
+                    {canModerate && hides && (
+                      <>
+                        <DropdownMenu.Item
+                          disabled={!canAuthorize}
+                          data-testid={`moderator-${hiddenByModerators ? 'unhide' : 'hide'}-${post.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (canAuthorize) openHideAction(hiddenByModerators ? 'unhide' : 'hide')
+                          }}
+                          className={cn(CARD_MENU_ITEM, 'flex items-center gap-2', !hiddenByModerators && 'text-red-500')}
+                        >
+                          {hiddenByModerators ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
+                          {hiddenByModerators ? `Unhide ${isReply ? 'reply' : 'post'}` : `Hide ${isReply ? 'reply' : 'post'}`}
+                        </DropdownMenu.Item>
+                        {moderationService.canRestrict() && authorRestricted !== null && (
+                          <DropdownMenu.Item
+                            disabled={!canAuthorize}
+                            data-testid={`moderator-${authorRestricted ? 'lift' : 'restrict'}-${post.id}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (canAuthorize) openHideAction(authorRestricted ? 'lift' : 'restrict')
+                            }}
+                            className={cn(CARD_MENU_ITEM, 'flex items-center gap-2', !authorRestricted && 'text-red-500')}
+                          >
+                            {authorRestricted ? <LockOpenIcon className="h-4 w-4" /> : <NoSymbolIcon className="h-4 w-4" />}
+                            {authorRestricted ? `Lift ${authorLabel}'s restriction` : `Restrict ${authorLabel}`}
+                          </DropdownMenu.Item>
+                        )}
+                        {moderationService.canWarn() && (
+                          <DropdownMenu.Item
+                            disabled={!canAuthorize}
+                            data-testid={`moderator-warn-${post.id}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (canAuthorize) router.push(`/settings?${new URLSearchParams({ section: 'moderation', contract: 'social', author: post.author.id, cite: `${targetKind}:${post.id}` }).toString()}`)
+                            }}
+                            className={cn(CARD_MENU_ITEM, 'flex items-center gap-2')}
+                          >
+                            <ExclamationTriangleIcon className="h-4 w-4" />
+                            Warn {authorLabel}
+                          </DropdownMenu.Item>
+                        )}
+                      </>
+                    )}
+                    {canModerate && !hides && (
                       <DropdownMenu.Item
                         disabled={!canAuthorize}
                         data-testid={`moderator-remove-${post.id}`}
@@ -734,6 +816,9 @@ function PostCardView({
             </div>
           </div>
 
+          {seesHidden && (hiddenByModerators || moderation?.restricted) && (
+            <ModerationLabel moderation={moderation} restricted={moderation?.restricted === true} className="mt-1" />
+          )}
           <SensitiveContentGate postId={post.id} active={gateSensitive}>
             {isTombstoned ? (
               <p className="mt-2 text-sm italic text-gray-500 dark:text-gray-400">{isReply ? 'This reply was deleted.' : 'This post was deleted.'}</p>
@@ -764,7 +849,9 @@ function PostCardView({
             {!isTombstoned && embeddedPollId && !privatePost && <PollCard pollId={embeddedPollId} postContent={displayContent} postAuthorId={post.author.id} nativeEmbed={nativePollId !== null} />}
 
             {!isTombstoned && quotedPostLoading && <EmbeddedPostSkeleton />}
-            {!isTombstoned && quotedPostUnavailable && (quotedTarget && quotedTarget.where !== 'blogPost' && referencesMayDangle()
+            {!isTombstoned && quotedPostUnavailable && (quotedTarget && quotedTarget.where !== 'blogPost' && quotedPostHidden
+              ? <HiddenContentStub noun={quotedTarget.where === 'reply' ? 'reply' : 'post'} documentId={quotedTarget.id} variant="embed" />
+              : quotedTarget && quotedTarget.where !== 'blogPost' && referencesMayDangle()
               ? <RemovedPostStub documentId={quotedTarget.id} kind={quotedTarget.where} proven={post.quotedPostRemoved === true} />
               : <EmbeddedPostUnavailable />)}
             {!isTombstoned && quotedPost && (isEmbeddedBlogPostLike(quotedPost) ? <EmbeddedBlogPostCard post={quotedPost} /> : <EmbeddedPostCard post={quotedPost} />)}

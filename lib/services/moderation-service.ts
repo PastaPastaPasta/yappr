@@ -1,10 +1,11 @@
 import { logger } from '@/lib/logger';
 import { reconcileFeePot } from '@/lib/reconcile-fee-pot';
 import { Document, PlatformVersion } from '@dashevo/wasm-sdk';
-import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
+import type { EvoSDK, Identity, IdentityPublicKey, IdentitySigner } from '@dashevo/evo-sdk';
+import { nextIdentityContractNonce } from '@/lib/document-id';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { keyNetwork } from '@/lib/constants';
-import { authorDeletesLeaveHoles, settledDeletionFor, type ElectedModerationDeclaration, type SettledDeletionRule } from '@/lib/contract-topology';
+import { authorDeletesLeaveHoles, moderatorsCannotDelete, settledDeletionFor, type ElectedModerationDeclaration, type SettledDeletionRule } from '@/lib/contract-topology';
 import { registeredDeleteWindow, registeredOr, registeredOwnerProtected, registeredSettledRule, rememberRegisteredContract } from '@/lib/registered-contracts';
 import { documentNoun, moderatedContract, type ModeratedContract, type ModeratedContractKey } from '@/lib/moderated-contracts';
 import { storedTags } from '@/lib/post-helpers';
@@ -15,7 +16,9 @@ import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/r
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
 import { withSdkSignedWrite } from './identity-nonce';
-import { identifierToBase58 } from './sdk-helpers';
+import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
+import { moderationMarksOf, type ModerationMarks } from '@/lib/moderation-view';
+import { restrictionServiceFor, type Restriction, type RestrictionContract } from './restriction-service';
 import { signerService } from './signer-service';
 
 /**
@@ -108,8 +111,45 @@ export interface ModerationResult {
    * DAPI gateway 504s even when a transition lands), so the action may well
    * have happened — the caller says "check again", never "failed".
    */
-  errorCode?: 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | 'DOCUMENT_GONE' | ModerationErrorKind;
+  errorCode?: 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | 'DOCUMENT_GONE'
+    | 'INVALID_LABEL' | 'ALREADY_RESTRICTED' | 'NOT_RESTRICTED' | ModerationErrorKind;
 }
+
+/**
+ * How a moderator hides a document on a "hide, don't delete" cut (social v18,
+ * blog v10, storefront v11): `label` is the `modLabel` (1–63, the charter
+ * reason's place in the seated team's list; see lib/moderation-labels.ts),
+ * `legalHold` sets `mod` 2 instead of 1, and `reason` is the transition's
+ * reason, which a seated team must cite from its charter (41203).
+ */
+export interface HideOptions {
+  label: number;
+  legalHold?: boolean;
+  reason?: string | ModerationReasonInput;
+}
+
+/** The `mod` values a moderator writes: 1 hidden, 2 legal hold (`mod` is absent while listed). */
+export const MOD_HIDDEN = 1;
+export const MOD_LEGAL_HOLD = 2;
+
+/** `modLabel` and `restriction.reason` are integers 1–63 in every v18-set contract. */
+export const MAX_MODERATION_LABEL = 63;
+
+export function isModerationLabel(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_MODERATION_LABEL;
+}
+
+/** The fields a hide writes: `mod` and its required `modLabel` (the `modReason` rule, 10422 without it). */
+export function hideFields(label: number, legalHold = false): { mod: number; modLabel: number } {
+  return { mod: legalHold ? MOD_LEGAL_HOLD : MOD_HIDDEN, modLabel: label };
+}
+
+/**
+ * The fields an unhide writes: `mod` cleared. `modLabel` stays, as the sakura
+ * battery proved it (an unhidden document keeps its last label, which nothing
+ * shows while `mod` is absent).
+ */
+export const UNHIDE_FIELDS: Readonly<{ mod: null }> = Object.freeze({ mod: null });
 
 /**
  * Why a moderator acted, as `ContractModerationReason` carries it: free text
@@ -473,6 +513,14 @@ export function protectedIdentities(team: ModerationTeam, ownerProtected: boolea
 interface ModeratorAuth {
   identity: Identity;
   signer: IdentitySigner;
+  /** The CRITICAL key and its WIF, for the one moderator write built by hand (a restriction's create). */
+  identityKey?: IdentityPublicKey;
+  wif?: string;
+}
+
+/** A restriction's create fields: the target as identifier bytes, in force (`state` 1), with the charter reason. */
+export function restrictionCreateFields(identityId: string, reason: number): { target: Uint8Array; state: 1; reason: number } {
+  return { target: identifierStringToDocumentBytes(identityId), state: 1, reason };
 }
 
 /** Sends one moderation transition under the write lock (see `withSdkSignedWrite`). */
@@ -589,8 +637,10 @@ export function toKeptFields(keptFields: Readonly<Record<string, unknown>> | und
 export function missingDocumentState(
   removal: DocumentRemoval | null,
   proven: boolean,
-  { recordsRead = false, authorsDelete = authorDeletesLeaveHoles() }: { recordsRead?: boolean; authorsDelete?: boolean } = {}
+  { recordsRead = false, authorsDelete = authorDeletesLeaveHoles(), moderatorsDelete = !moderatorsCannotDelete() }: { recordsRead?: boolean; authorsDelete?: boolean; moderatorsDelete?: boolean } = {}
 ): 'removed' | 'deleted' | 'loadFailed' | 'unavailable' {
+  // v18: no moderator deletes anything, so a hole is never a takedown.
+  if (!moderatorsDelete) return proven && authorsDelete ? 'deleted' : 'unavailable';
   if (removal?.restoredAt === null) return 'removed';
   if (removal) return proven && authorsDelete && recordsRead ? 'deleted' : 'loadFailed';
   if (!proven) return 'unavailable';
@@ -768,9 +818,37 @@ class ModerationService {
     return this.contract.deletableTypes().some((type) => this.contract.authorsDelete(type));
   }
 
-  /** The document types a moderator may remove (`post`, `reply` on v9). */
+  /**
+   * The document types a moderator may remove (`post`, `reply` on v9). Never
+   * on a "hide, don't delete" cut, where no type declares a moderator delete.
+   */
   canRemove(kind: string): boolean {
-    return this.contract.deletableTypes().includes(kind);
+    return !this.contract.hidesInsteadOfDeleting() && this.contract.deletableTypes().includes(kind);
+  }
+
+  /** True on a "hide, don't delete" cut (social v18, blog v10, storefront v11). */
+  hidesInsteadOfDeleting(): boolean {
+    return this.contract.hidesInsteadOfDeleting();
+  }
+
+  /** True when a moderator may hide (and unhide) a `kind`: its `changeFields` name `mod`. */
+  canHide(kind: string): boolean {
+    return this.contract.hideableTypes().includes(kind);
+  }
+
+  /** True when the moderators restrict accounts with a `restriction` document (social v18, blog v10). */
+  canRestrict(): boolean {
+    return this.contract.restrictsAuthors();
+  }
+
+  /** True when the contract keeps a banlist (none on a "hide, don't delete" cut). */
+  canBan(): boolean {
+    return this.contract.listsKept().includes('banlist');
+  }
+
+  /** True when the contract keeps a suspension list (none on a "hide, don't delete" cut). */
+  canSuspend(): boolean {
+    return this.contract.listsKept().includes('suspensions');
   }
 
   /** True when the contract keeps a warning list (`warnings: true`, as v9 declares). */
@@ -1094,12 +1172,14 @@ class ModerationService {
   // ---- Writes -------------------------------------------------------------
 
   async ban(moderatorId: string, identityId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
+    if (!this.canBan()) return NO_BANLIST;
     return this.moderate(moderatorId, async (sdk, auth, send) => {
       await send(() => sdk.contracts.banUser({ ...auth, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
     }, identityId, reason);
   }
 
   async unban(moderatorId: string, identityId: string): Promise<ModerationResult> {
+    if (!this.canBan()) return NO_BANLIST;
     return this.moderate(moderatorId, async (sdk, auth, send) => {
       await send(() => sdk.contracts.unbanUser({ ...auth, contractId: this.contract.contractId, identityId }));
     }, identityId);
@@ -1107,6 +1187,7 @@ class ModerationService {
 
   /** `until` is the block time, in ms, at which the suspension lapses; it must be in the future (41106). */
   async suspend(moderatorId: string, identityId: string, until: number, reason: string | ModerationReasonInput): Promise<ModerationResult> {
+    if (!this.canSuspend()) return NO_SUSPENSIONS;
     let targetBanned = false;
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       try {
@@ -1126,6 +1207,7 @@ class ModerationService {
   }
 
   async unsuspend(moderatorId: string, identityId: string): Promise<ModerationResult> {
+    if (!this.canSuspend()) return NO_SUSPENSIONS;
     return this.moderate(moderatorId, async (sdk, auth, send) => {
       await send(() => sdk.contracts.unsuspendUser({ ...auth, contractId: this.contract.contractId, identityId }));
     }, identityId);
@@ -1153,6 +1235,191 @@ class ModerationService {
     }
     return this.moderate(moderatorId, async (sdk, auth, send) => {
       await send(() => sdk.contracts.clearUserWarnings({ ...auth, contractId: this.contract.contractId, identityId }));
+    }, identityId);
+  }
+
+  // ---- Hide, don't delete (social v18, blog v10, storefront v11) ---------
+
+  /**
+   * Hides a document as a moderator: sets its moderator-only `mod` (1, or 2
+   * for a legal hold) and `modLabel` with `moderatorChangeDocumentFields`.
+   * Nothing is deleted: the document keeps its content and stays readable by
+   * id, it leaves every listing yap.pr reads (`mod == null`), and the change
+   * is stamped `$moderatedBy`/`$moderatedAt`. No window and no approvals: any
+   * one moderator hides, and any one unhides ({@link unhide}).
+   */
+  async hide(moderatorId: string, kind: string, documentId: string, options: HideOptions): Promise<ModerationResult> {
+    if (!this.canHide(kind)) {
+      return { success: false, error: `Moderators cannot hide a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
+    }
+    if (!isModerationLabel(options.label)) {
+      return { success: false, error: 'Choose the reason it is hidden for', errorCode: 'INVALID_LABEL' };
+    }
+    const result = await this.changeFields(moderatorId, kind, documentId, hideFields(options.label, options.legalHold), options.reason);
+    if (result.errorCode === 'NOTHING_TO_CHANGE') return { ...result, error: `This ${documentNoun(kind)} is already hidden for that reason` };
+    if (result.errorCode === 'MAYBE_APPLIED') {
+      return { ...result, error: `The network did not confirm in time: the ${documentNoun(kind)} may already be hidden. Check again before retrying.` };
+    }
+    return result;
+  }
+
+  /** Lists a hidden document again: clears its `mod`. Any moderator may unhide whatever another hid. */
+  async unhide(moderatorId: string, kind: string, documentId: string, reason?: string | ModerationReasonInput): Promise<ModerationResult> {
+    if (!this.canHide(kind)) {
+      return { success: false, error: `Moderators cannot unhide a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
+    }
+    const result = await this.changeFields(moderatorId, kind, documentId, { ...UNHIDE_FIELDS }, reason);
+    if (result.errorCode === 'NOTHING_TO_CHANGE') return { ...result, error: `This ${documentNoun(kind)} is not hidden` };
+    if (result.errorCode === 'MAYBE_APPLIED') {
+      return { ...result, error: `The network did not confirm in time: the ${documentNoun(kind)} may already be visible again. Check again before retrying.` };
+    }
+    return result;
+  }
+
+  /**
+   * Restricts an account (social v18, blog v10): what it posts from now on is
+   * filed out of the public listings (`live: 2`) until a moderator lifts the
+   * restriction. The first restriction of an identity is a `restriction`
+   * document the moderator creates (`state` 1, the charter reason); a later
+   * one flips that same document back to `state` 1, since `byTarget` is
+   * unique (40105 on a second create). Its own standing cache is refreshed
+   * either way.
+   */
+  async restrict(moderatorId: string, identityId: string, reason: number, transitionReason?: string | ModerationReasonInput): Promise<ModerationResult> {
+    if (!this.canRestrict()) return NO_RESTRICTIONS;
+    if (!isModerationLabel(reason)) return { success: false, error: 'Choose the reason the account is restricted for', errorCode: 'INVALID_LABEL' };
+    const restrictions = restrictionServiceFor(this.restrictionContract());
+    let existing: Restriction | null;
+    try {
+      existing = await restrictions.read(identityId);
+    } catch (error) {
+      return this.toResult(error);
+    }
+    if (existing?.state === 1 && existing.reason === reason) {
+      return { success: false, error: 'This account is already restricted', errorCode: 'ALREADY_RESTRICTED' };
+    }
+    let result = existing
+      ? await this.changeFields(moderatorId, 'restriction', existing.id, { state: 1, reason }, transitionReason)
+      : await this.createRestriction(moderatorId, identityId, reason);
+    if (!existing && result.errorCode === 'UNIQUE_VALUE_TAKEN') {
+      // Another moderator restricted it first (or an earlier attempt landed): flip that one.
+      const raced = await restrictions.read(identityId).catch(() => null);
+      result = raced?.state === 1
+        ? { success: false, error: 'This account is already restricted', errorCode: 'ALREADY_RESTRICTED' }
+        : raced
+          ? await this.changeFields(moderatorId, 'restriction', raced.id, { state: 1, reason }, transitionReason)
+          : result;
+    }
+    await restrictions.refresh(identityId);
+    if (result.errorCode === 'MAYBE_APPLIED') {
+      return { ...result, error: 'The network did not confirm in time: the account may already be restricted. Check again before retrying.' };
+    }
+    return result;
+  }
+
+  /** Lifts a restriction: flips its document to `state` 2. What the account posted while restricted stays unlisted. */
+  async liftRestriction(moderatorId: string, identityId: string, transitionReason?: string | ModerationReasonInput): Promise<ModerationResult> {
+    if (!this.canRestrict()) return NO_RESTRICTIONS;
+    const restrictions = restrictionServiceFor(this.restrictionContract());
+    let existing: Restriction | null;
+    try {
+      existing = await restrictions.read(identityId);
+    } catch (error) {
+      return this.toResult(error);
+    }
+    if (existing?.state !== 1) return { success: false, error: 'This account is not restricted', errorCode: 'NOT_RESTRICTED' };
+    const result = await this.changeFields(moderatorId, 'restriction', existing.id, { state: 2 }, transitionReason);
+    await restrictions.refresh(identityId);
+    if (result.errorCode === 'MAYBE_APPLIED') {
+      return { ...result, error: 'The network did not confirm in time: the restriction may already be lifted. Check again before retrying.' };
+    }
+    return result;
+  }
+
+  /**
+   * An identity's profile extension (`yapprProfile`, social v18) as a hide
+   * targets it: its document id and moderator marks, or null when it has none
+   * or the cut does not hide profiles. Read fresh, by `$ownerId`. Rejects when
+   * the read fails.
+   */
+  async readProfileModeration(ownerId: string): Promise<{ documentId: string; moderation: ModerationMarks } | null> {
+    if (!this.canHide('yapprProfile') || !ownerId) return null;
+    const sdk = await getEvoSdk();
+    const response = await sdk.documents.query({
+      dataContractId: this.contract.contractId,
+      documentTypeName: 'yapprProfile',
+      where: [['$ownerId', '==', ownerId]],
+      limit: 1,
+    });
+    const [doc] = normalizeSDKResponse(response);
+    const documentId = doc ? identifierToBase58(doc.$id ?? doc.id) : null;
+    if (!doc || !documentId) return null;
+    const moderatedBy = identifierToBase58(doc.$moderatedBy);
+    return { documentId, moderation: moderationMarksOf({ ...doc, ...(moderatedBy ? { $moderatedBy: moderatedBy } : {}) }) };
+  }
+
+  /** Which restriction service reads this contract's `restriction` type. */
+  private restrictionContract(): RestrictionContract {
+    return this.contract.key === 'blog' ? 'blog' : 'social';
+  }
+
+  /** One `moderatorChangeDocumentFields` on `kind`/`documentId`, as every other moderation write is sent. */
+  private changeFields(
+    moderatorId: string,
+    kind: string,
+    documentId: string,
+    fields: Record<string, unknown>,
+    reason?: string | ModerationReasonInput
+  ): Promise<ModerationResult> {
+    return this.moderate(moderatorId, async (sdk, auth, send) => {
+      await send(() => sdk.contracts.moderatorChangeDocumentFields({
+        identity: auth.identity,
+        signer: auth.signer,
+        contractId: this.contract.contractId,
+        documentTypeName: kind,
+        documentId,
+        fields,
+        ...(reason === undefined ? {} : { reason: reasonOf(reason) }),
+      }));
+    }, undefined, reason);
+  }
+
+  /**
+   * Creates the identity's `restriction` document, signed by the moderator's
+   * CRITICAL key under its contract nonce: an ordinary document create, which
+   * only a moderator may make (`state` is a moderator field, 41124 for anyone
+   * else). The id is derived from the nonce (protocol 14), so it is built by
+   * hand like every other create (lib/manual-batch.ts).
+   */
+  private createRestriction(moderatorId: string, identityId: string, reason: number): Promise<ModerationResult> {
+    return this.moderate(moderatorId, async (sdk, auth, send) => {
+      if (!auth.wif || !auth.identityKey) throw new Error('critical key required');
+      const { wif, identityKey } = auth;
+      await send(async () => {
+        const [{ documentBuilderService }, { buildSignedCreateTransition }, { PrivateKey }] = await Promise.all([
+          import('./document-builder-service'),
+          import('@/lib/manual-batch'),
+          import('@dashevo/wasm-sdk'),
+        ]);
+        const nonce = nextIdentityContractNonce(await sdk.identities.contractNonce(moderatorId, this.contract.contractId));
+        const entropy = crypto.getRandomValues(new Uint8Array(32));
+        const document = await documentBuilderService.buildDocumentForCreate(
+          this.contract.contractId,
+          'restriction',
+          moderatorId,
+          restrictionCreateFields(identityId, reason),
+          { entropy, identityContractNonce: nonce }
+        );
+        const transition = buildSignedCreateTransition({
+          document,
+          ownerId: moderatorId,
+          identityContractNonce: nonce,
+          privateKey: PrivateKey.fromWIF(wif),
+          identityKey,
+        });
+        await sdk.stateTransitions.broadcastStateTransition(transition);
+        await sdk.stateTransitions.waitForResponse(transition);
+      });
     }, identityId);
   }
 
@@ -1545,8 +1812,8 @@ class ModerationService {
     });
     try {
       const sdk = await getEvoSdk();
-      const { identity, signer } = await this.getCriticalSigner(moderatorId);
-      await action(sdk, { identity, signer }, send);
+      const auth = await this.getCriticalSigner(moderatorId);
+      await action(sdk, auth, send);
       if (moderatedIdentityId) this.standingCache.delete(moderatedIdentityId);
       return { success: true };
     } catch (error) {
@@ -1566,7 +1833,7 @@ class ModerationService {
    * authentication key: the only key a moderation transition may be signed
    * with. A HIGH login key answers NEEDS_CRITICAL_KEY without broadcasting.
    */
-  private async getCriticalSigner(identityId: string) {
+  private async getCriticalSigner(identityId: string): Promise<ModeratorAuth> {
     // A wallet (App Connect) session holds no key that may moderate, and it
     // must not reach past its grant to a raw key left in storage either:
     // moderating takes a raw-key sign-in.
@@ -1589,7 +1856,7 @@ class ModerationService {
     });
     if (!match.ok) throw new Error('critical key required');
     const signer = await signerService.createSigner(wif);
-    return { identity, signer };
+    return { identity, signer, identityKey: match.key, wif };
   }
 
   private toResult(error: unknown, started = false): ModerationResult {
@@ -1624,6 +1891,10 @@ class ModerationService {
     return { success: false, error: msg, errorCode: 'NETWORK_ERROR' };
   }
 }
+
+const NO_BANLIST: ModerationResult = { success: false, error: 'This contract keeps no ban list: restrict the account instead', errorCode: 'NOT_MODERATED' };
+const NO_SUSPENSIONS: ModerationResult = { success: false, error: 'This contract keeps no suspension list: restrict the account instead', errorCode: 'NOT_MODERATED' };
+const NO_RESTRICTIONS: ModerationResult = { success: false, error: 'Accounts cannot be restricted on this contract', errorCode: 'NOT_MODERATED' };
 
 /** Refusals that prove the cached standing of their target stale, or may have changed it. */
 const STANDING_STALE = new Set<ModerationResult['errorCode']>(['ALREADY_BANNED', 'NOT_BANNED', 'NOT_SUSPENDED', 'MAYBE_APPLIED']);

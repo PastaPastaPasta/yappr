@@ -10,6 +10,7 @@ import { RatingStars } from './rating-stars'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { ModerationLabel } from '@/components/moderation/moderation-label'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { formatDate } from '@/lib/utils/format'
 import { dpnsService } from '@/lib/services/dpns-service'
@@ -135,6 +136,7 @@ export function ReviewCard({ review, index = 0, onRemoved }: ReviewCardProps) {
               />
             )}
           </div>
+          <ModerationLabel contract="storefront" moderation={review.moderation} className="mt-1" />
 
           {/* Review title */}
           {review.title && (

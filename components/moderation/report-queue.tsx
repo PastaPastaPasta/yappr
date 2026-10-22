@@ -5,17 +5,20 @@ import { LimitedTextarea } from '@/components/ui/limited-text'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
-import { CheckCircleIcon, ExclamationTriangleIcon, FlagIcon, LockOpenIcon, ShieldExclamationIcon, TrashIcon, UserIcon } from '@heroicons/react/24/outline'
+import { CheckCircleIcon, ExclamationTriangleIcon, EyeSlashIcon, FlagIcon, LockOpenIcon, NoSymbolIcon, ShieldExclamationIcon, TrashIcon, UserIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
 import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { postRemovalTarget, useModeratorRemoveModal } from '@/hooks/use-moderator-remove-modal'
+import { postHideTarget, useModeratorHideModal } from '@/hooks/use-moderator-hide-modal'
 import { logger } from '@/lib/logger'
+import { isHidden } from '@/lib/moderation-view'
+import { ModerationLabel } from './moderation-label'
 import {
   OPEN_REPORTS,
-  REPORT_STATUSES,
+  reportStatuses,
   groupReports,
   isReportGoneError,
   reportMatchesView,
@@ -112,9 +115,9 @@ function ReportedPrivateContent({ group, post, moderatorId }: { group: ReportedT
 }
 
 /** The views a moderator can switch between where reports are resolved (v10). */
-const RESOLVED_VIEWS: ReadonlyArray<{ label: string; view: ReportView }> = [
+const resolvedViews = (): ReadonlyArray<{ label: string; view: ReportView }> => [
   { label: 'Open', view: OPEN_REPORTS },
-  ...REPORT_STATUSES.map((status) => ({ label: status.label, view: { kind: 'status' as const, status: status.code } })),
+  ...reportStatuses().map((status) => ({ label: status.label, view: { kind: 'status' as const, status: status.code } })),
 ]
 
 const sameView = (a: ReportView, b: ReportView) => JSON.stringify(a) === JSON.stringify(b)
@@ -166,7 +169,11 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
   const { user } = useAuth()
   const canAuthorize = useModerationAuthorization()
   const { open: openModeratorRemoveModal } = useModeratorRemoveModal()
+  const { open: openModeratorHideModal } = useModeratorHideModal()
   const resolving = moderationService.canResolveReports()
+  /** v18: the moderators hide the reported post or restrict its author; nothing is deleted, reports included. */
+  const hides = moderationService.hidesInsteadOfDeleting()
+  const canPurge = moderationService.canDismissReports()
   const [view, setView] = useState<ReportView>(OPEN_REPORTS)
   const [reports, setReports] = useState<ReportRecord[]>([])
   const [next, setNext] = useState<ReportCursor | undefined>()
@@ -193,7 +200,8 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     const ids = (kind: ReportTargetKind) => groups.filter((group) => group.kind === kind).map((group) => group.targetId)
     const people = page.flatMap((report) => [report.reporterId, report.targetOwnerId, ...(report.moderatedBy ? [report.moderatedBy] : [])])
     const [posts, replies, usernames] = await Promise.all([
-      postService.getPostsByIds(ids('post')),
+      // A hidden target (v18) is kept: the moderators see it, labelled.
+      postService.getPostsByIds(ids('post'), { keepHidden: true }),
       replyService.getRepliesByIds(ids('reply')),
       dpnsService.resolveUsernamesBatch(people),
     ])
@@ -413,8 +421,12 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     toast.success(`${reportsNoun(total)} ${done}.${keptNote}`, { duration: kept > 0 ? 8000 : 4000 })
   }
 
+  /** A row's target is out of public view: removed (before v18) or hidden (v18). */
+  const targetActioned = (target: TargetState | undefined) =>
+    target?.state === 'removed' || (target?.state === 'live' && isHidden(target.post.moderation))
+
   const openResolveForm = (group: ReportedTarget) => {
-    const { status, note } = resolutionFormStart(group.reports, targets.get(keyOf(group))?.state === 'removed')
+    const { status, note } = resolutionFormStart(group.reports, targetActioned(targets.get(keyOf(group))))
     setResolveForm({ key: keyOf(group), status, note })
   }
 
@@ -492,8 +504,38 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     })
   }
 
+  /**
+   * v18: hides the reported post or reply (or unhides it), or restricts its
+   * author, from the shared moderator dialog. The row then shows it hidden and
+   * its resolution form starts at "content hidden" or "author actioned".
+   */
+  const moderate = (group: ReportedTarget, post: Post, action: 'hide' | 'unhide') => {
+    openModeratorHideModal(postHideTarget(post, action), (outcome) => {
+      if (group.kind === 'post') postService.clearCache(group.targetId)
+      else replyService.clearCache(group.targetId)
+      if (outcome.moderation !== undefined) {
+        const moderation = outcome.moderation ?? undefined
+        setTargets((previous) => new Map(previous).set(keyOf(group), { state: 'live', post: { ...post, moderation } }))
+      }
+      if (action === 'hide') setResolveForm((form) => (form?.key === keyOf(group) ? { ...form, status: 2 } : form))
+    })
+  }
+
+  /** v18: restricts the reported content's author (or the reported profile's owner). */
+  const restrictAuthor = (group: ReportedTarget) => {
+    const target = targets.get(keyOf(group))
+    openModeratorHideModal({
+      action: 'restrict',
+      contract: 'social',
+      authorId: group.targetOwnerId,
+      noun: group.kind,
+      ...(group.kind !== 'profile' ? { docType: group.kind, documentId: group.targetId } : {}),
+      ...(target?.state === 'live' ? { preview: target.post.content } : {}),
+    }, () => setResolveForm((form) => (form?.key === keyOf(group) ? { ...form, status: 3 } : form)))
+  }
+
   const myView: ReportView | null = user ? { kind: 'moderatedBy', moderatorId: user.identityId } : null
-  const views = resolving ? [...RESOLVED_VIEWS, ...(myView ? [{ label: 'Resolved by me', view: myView }] : [])] : []
+  const views = resolving ? [...resolvedViews(), ...(myView ? [{ label: 'Resolved by me', view: myView }] : [])] : []
   const viewingOpen = view.kind === 'open'
 
   return (
@@ -603,12 +645,15 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                     Open {nameOf(group.targetId)}&apos;s profile
                   </Link>
                 ) : (
+                  <>
+                  <ModerationLabel moderation={target.post.moderation} restricted={target.post.moderation?.restricted === true} />
                   <Link href={`/post?id=${group.targetId}`} className="block text-sm p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700">
                     <span className="line-clamp-4 whitespace-pre-wrap break-words">
                       {target.post.encryptedContent ? `Private ${noun}: its content is encrypted to the author's followers.` : target.post.content || '(no text)'}
                     </span>
                     {(target.post.media?.length ?? 0) > 0 && <span className="block mt-1 text-xs text-gray-500">+ media</span>}
                   </Link>
+                  </>
                 )}
                 {target?.state === 'live' && target.post.encryptedContent && user && (
                   <ReportedPrivateContent group={group} post={target.post} moderatorId={user.identityId} />
@@ -645,7 +690,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                       {differ?.statusesDiffer && (
                         <p className="text-xs text-amber-700 dark:text-amber-400 mb-1">These reports were resolved differently. The outcome chosen here applies to all of them.</p>
                       )}
-                      {REPORT_STATUSES.map((option) => (
+                      {reportStatuses().map((option) => (
                         <label key={option.code} className="flex items-start gap-2 py-1 text-sm cursor-pointer">
                           <input
                             type="radio"
@@ -693,16 +738,44 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                   </div>
                 )}
                 <div className="flex flex-wrap gap-2">
-                  {target?.state === 'live' && !protectedIds.has(group.targetOwnerId) && (
-                    <Button variant="destructive" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => remove(group, target.post)} className="gap-1">
-                      <ShieldExclamationIcon className="h-4 w-4" /> Remove {noun}
-                    </Button>
-                  )}
-                  {/* A protected author (a moderator, or an ownerProtected owner) is moderated by nobody: 41102, paid. */}
-                  {!protectedIds.has(group.targetOwnerId) && (
-                    <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
-                      <UserIcon className="h-4 w-4" /> Warn, suspend or ban the author
-                    </Button>
+                  {hides ? (
+                    <>
+                      {target?.state === 'live' && group.kind !== 'profile' && !protectedIds.has(group.targetOwnerId) && moderationService.canHide(group.kind) && (
+                        isHidden(target.post.moderation) ? (
+                          <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => moderate(group, target.post, 'unhide')} className="gap-1">
+                            <EyeSlashIcon className="h-4 w-4" /> Unhide {noun}
+                          </Button>
+                        ) : (
+                          <Button variant="destructive" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => moderate(group, target.post, 'hide')} className="gap-1">
+                            <EyeSlashIcon className="h-4 w-4" /> Hide {noun}
+                          </Button>
+                        )
+                      )}
+                      {target !== undefined && !protectedIds.has(group.targetOwnerId) && moderationService.canRestrict() && (
+                        <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => restrictAuthor(group)} className="gap-1">
+                          <NoSymbolIcon className="h-4 w-4" /> Restrict the author
+                        </Button>
+                      )}
+                      {!protectedIds.has(group.targetOwnerId) && moderationService.canWarn() && (
+                        <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
+                          <UserIcon className="h-4 w-4" /> Warn the author
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {target?.state === 'live' && !protectedIds.has(group.targetOwnerId) && (
+                        <Button variant="destructive" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => remove(group, target.post)} className="gap-1">
+                          <ShieldExclamationIcon className="h-4 w-4" /> Remove {noun}
+                        </Button>
+                      )}
+                      {/* A protected author (a moderator, or an ownerProtected owner) is moderated by nobody: 41102, paid. */}
+                      {!protectedIds.has(group.targetOwnerId) && (
+                        <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null} onClick={() => onModerateAuthor(group.targetOwnerId, group.kind, group.targetId)} className="gap-1">
+                          <UserIcon className="h-4 w-4" /> Warn, suspend or ban the author
+                        </Button>
+                      )}
+                    </>
                   )}
                   {resolving ? (
                     <>
@@ -711,7 +784,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                           <CheckCircleIcon className="h-4 w-4" /> {viewingOpen ? 'Resolve reports' : 'Change resolution'}
                         </Button>
                       )}
-                      <Button
+                      {canPurge && <Button
                         variant="ghost"
                         size="sm"
                         title="Delete these reports outright, for spam reports: no record is kept and their reporters see nothing"
@@ -721,7 +794,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                       >
                         <TrashIcon className="h-4 w-4" />
                         {busy && dismissing?.verb === 'Purging' ? `Purging ${dismissing.done} of ${dismissing.total}…` : 'Purge as spam'}
-                      </Button>
+                      </Button>}
                     </>
                   ) : (
                     <Button variant="outline" size="sm" disabled={!canAuthorize || dismissing !== null || loading || target === undefined || target.state === 'unknown'} onClick={() => { dismiss(group).catch(() => { /* reported inside */ }) }} className="gap-1">

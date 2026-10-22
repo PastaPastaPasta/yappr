@@ -26,7 +26,7 @@
  */
 import { fieldLimits } from './field-limits'
 import { fitsText } from './text-limits'
-import { declaredActionFee, reportShape, reportsWithdrawOnlyWhilePending, type TargetKind } from './contract-topology'
+import { declaredActionFee, moderatorsCannotDelete, reportShape, reportsWithdrawOnlyWhilePending, type TargetKind } from './contract-topology'
 import { categorizeError, extractErrorMessage, hasConsensusCode, isDeleteConstraintError, isReferenceNotFoundError } from './error-utils'
 import { normalizeBytes } from './bytes'
 import { identifierToBase58 } from './services/sdk-helpers'
@@ -132,8 +132,13 @@ export function isAlreadyReportedError(error: unknown): boolean {
 /** What to tell a reporter whose report was refused. */
 export function reportFailureMessage(error: unknown, noun: ReportTargetKind): string {
   if (isAlreadyReportedError(error)) return `You have already reported this ${noun}.`
-  // 40120 on postId/replyId: a moderator removed it (or it never existed).
-  if (noun !== 'profile' && isReferenceNotFoundError(error)) return `This ${noun} has been removed, so there is nothing to report.`
+  // 40120 on postId/replyId: a moderator removed it (or it never existed). On
+  // v18 nothing is removed by moderators, so it never existed.
+  if (noun !== 'profile' && isReferenceNotFoundError(error)) {
+    return moderatorsCannotDelete()
+      ? `This ${noun} is unavailable, so there is nothing to report.`
+      : `This ${noun} has been removed, so there is nothing to report.`
+  }
   return categorizeError(error)
 }
 
@@ -186,11 +191,27 @@ export const REPORT_STATUSES: ReadonlyArray<Readonly<{ code: ReportStatus; label
   { code: 3 as const, label: 'Author actioned', hint: 'The author was warned, suspended or banned' },
 ].map((status) => Object.freeze(status)))
 
+/**
+ * The same codes on a "hide, don't delete" cut (social v18, blog v10,
+ * storefront v11): nothing is taken down, so code 2 means the moderators hid
+ * it, and code 3 that they warned or restricted its author.
+ */
+export const HIDE_REPORT_STATUSES: typeof REPORT_STATUSES = Object.freeze([
+  { code: 1 as const, label: 'No action taken', hint: 'Reviewed: nothing here breaks the rules' },
+  { code: 2 as const, label: 'Content hidden', hint: 'The moderators hid it' },
+  { code: 3 as const, label: 'Author actioned', hint: 'The author was warned or restricted' },
+].map((status) => Object.freeze(status)))
+
+/** The resolutions offered and shown: {@link HIDE_REPORT_STATUSES} where moderators hide (`hides`, social v18 by default). */
+export function reportStatuses(hides = moderatorsCannotDelete()): typeof REPORT_STATUSES {
+  return hides ? HIDE_REPORT_STATUSES : REPORT_STATUSES
+}
+
 /** `report.resolution` maxLength (v10). */
 export const REPORT_RESOLUTION_MAX_LENGTH = 200
 
-export function reportStatusLabel(status: number): string {
-  return REPORT_STATUSES.find((known) => known.code === status)?.label ?? `Status ${status}`
+export function reportStatusLabel(status: number, hides = moderatorsCannotDelete()): string {
+  return reportStatuses(hides).find((known) => known.code === status)?.label ?? `Status ${status}`
 }
 
 function isReportStatus(value: unknown): value is ReportStatus {

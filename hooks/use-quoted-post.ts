@@ -5,14 +5,17 @@ import type { Post } from '@/lib/types'
 import { logger } from '@/lib/logger'
 import { getCachedQuotedPost, resolveQuotedPost } from '@/lib/feed/resolve-quoted-posts'
 import { quoteTargetOf } from '@/lib/feed/quote-targets'
+import { isHiddenItem, isQuoteHidden } from '@/lib/feed/post-moderation'
 
 export interface UseQuotedPostResult {
   /** The quoted post, from the batch pass or the fallback fetch. */
   quotedPost: Post | null
   /** True while the fallback fetch is pending (including the grace period). */
   loading: boolean
-  /** True when resolution finished and the target could not be loaded. */
+  /** True when resolution finished and the target could not be loaded (or is hidden). */
   unavailable: boolean
+  /** v18: the target is hidden by the moderators and this build does not show it. */
+  hidden: boolean
 }
 
 /**
@@ -79,12 +82,17 @@ export function useQuotedPost(post: Post): UseQuotedPostResult {
     }
   }, [attached, targetId])
 
-  const quotedPost = attached ?? fetched
+  // v18: a target the moderators hid is never shown here (an archival build
+  // keeps it, labelled): the card renders the hidden stub instead.
+  const fetchedHidden = isHiddenItem(fetched)
+  const hidden = isQuoteHidden(post) || fetchedHidden
+  const quotedPost = attached ?? (fetchedHidden ? null : fetched)
   // A target we don't have yet is either still resolving or known-missing.
   const unresolved = !!targetId && !quotedPost
   return {
     quotedPost,
-    loading: unresolved && !settled,
-    unavailable: (unresolved && settled) || post.quotedPostRemoved === true,
+    loading: unresolved && !settled && !hidden,
+    unavailable: (unresolved && settled) || post.quotedPostRemoved === true || hidden,
+    hidden,
   }
 }

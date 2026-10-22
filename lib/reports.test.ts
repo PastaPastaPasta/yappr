@@ -20,6 +20,7 @@ import {
   reportMatchesView,
   reportReasonLabel,
   reportStatusLabel,
+  reportStatuses,
   reportsNeedingResolution,
   resolutionFormStart,
   resolutionInputProblem,
@@ -283,6 +284,13 @@ describe('report resolution (v10)', () => {
     expect(reportStatusLabel(2)).toBe('Content removed')
     expect(reportStatusLabel(3)).toBe('Author actioned')
     expect(reportStatusLabel(9)).toBe('Status 9')
+  })
+
+  it('says "hidden", never "removed", where moderators hide instead of deleting (v18 set)', () => {
+    expect(reportStatuses(true).map((status) => status.code)).toEqual(REPORT_STATUSES.map((status) => status.code))
+    expect(reportStatusLabel(2, true)).toBe('Content hidden')
+    expect(reportStatuses(true).map((status) => `${status.label} ${status.hint}`).join(' ')).not.toMatch(/removed|taken down|suspended|banned/i)
+    expect(reportStatuses(false)).toBe(REPORT_STATUSES)
   })
 
   it('refuses a missing status or an overlong note before anything is signed', () => {

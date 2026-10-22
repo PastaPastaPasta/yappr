@@ -7,6 +7,8 @@ import { ChatBubbleLeftIcon } from '@heroicons/react/24/outline'
 import { blogCommentService, blogPostService, blogService } from '@/lib/services'
 import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { ModerationLabel } from '@/components/moderation/moderation-label'
+import { useLocalModeration } from '@/hooks/use-local-moderation'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { blogPostDate, commentsAreEnabled, estimateReadingTime, formatLabels, getBlogPostUrl, getPostExcerpt, publishedPostsNewestFirst } from '@/lib/blog/content-utils'
 import type { Blog, BlogPost } from '@/lib/types'
@@ -27,6 +29,8 @@ interface BlogHomeProps {
 
 export function BlogHome({ blog, username, usernamePending }: BlogHomeProps) {
   const router = useRouter()
+  // Blog v10: kept current after this page's own hide or unhide.
+  const [moderation, setModeration] = useLocalModeration(blog.moderation)
   const [posts, setPosts] = useState<BlogPost[]>([])
   // null until read, so a post never shows 0 comments it may not have.
   const [commentCounts, setCommentCounts] = useState<Record<string, number> | null>(null)
@@ -126,13 +130,18 @@ export function BlogHome({ blog, username, usernamePending }: BlogHomeProps) {
           )}
           <ContractReportButton contract="blog" docType="blog" targetId={blog.id} ownerId={blog.ownerId} />
           <ModeratorContentMenu
-            target={documentRemovalTarget('blog', 'blog', 'blog', blog, blog.name)}
+            target={documentRemovalTarget('blog', 'blog', 'blog', { ...blog, moderation }, blog.name)}
             ownerId={blog.ownerId}
             onRemoved={() => {
               blogService.clearCache(blog.id)
               router.push('/blog')
             }}
+            onChanged={(outcome) => {
+              blogService.clearCache(blog.id)
+              setModeration(outcome)
+            }}
           />
+          <ModerationLabel contract="blog" moderation={moderation} className="w-full" />
         </div>
       )}
     >

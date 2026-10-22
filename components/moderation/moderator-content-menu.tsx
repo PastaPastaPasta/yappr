@@ -1,14 +1,18 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { NoSymbolIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
+import { ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, LockOpenIcon, NoSymbolIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
 import { IconButton } from '@/components/ui/icon-button'
 import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
 import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
+import { useAuthorRestricted } from '@/hooks/use-author-restriction'
 import { useModerationRole } from '@/hooks/use-is-moderator'
+import { useModeratorHideModal, type ModeratorHideAction, type ModeratorHideOutcome } from '@/hooks/use-moderator-hide-modal'
 import { useModeratorRemoveModal, type ModeratorRemoveTarget } from '@/hooks/use-moderator-remove-modal'
+import { isHidden } from '@/lib/moderation-view'
 import { moderationServiceFor } from '@/lib/services/moderation-service'
 import { cn } from '@/lib/utils'
 
@@ -29,29 +33,72 @@ interface ModeratorContentMenuProps {
   target: ModeratorRemoveTarget
   /** The document's owner. Nothing is offered on the moderator's own documents, nor on a protected identity's (41102). */
   ownerId: string
-  /** Runs once the removal landed, so the view drops the document. */
+  /** Runs once the removal (or, on a hide cut without `onChanged`, the hide) landed, so the view drops the document. */
   onRemoved: () => void
+  /**
+   * On a hide cut: runs after a hide, an unhide, a restriction or a lift,
+   * with what changed, for a view that keeps the document and relabels it
+   * (a detail page). Without it a hide drops the document (`onRemoved`).
+   */
+  onChanged?: (outcome: ModeratorHideOutcome) => void
   className?: string
 }
 
 /**
  * What a member of a contract's moderation team may do to one document of
- * it, beside the document: remove it (the same dialog as a post's, with the
- * deletion window and team rules its type declares), or open the moderation
- * settings on its author, to ban, suspend or warn them on that contract with
- * the document cited. Renders nothing for anyone else, so readers never see
- * it. Mirrors the moderator items of a post's menu.
+ * it, beside the document. Renders nothing for anyone else, so readers never
+ * see it. Mirrors the moderator items of a post's menu.
+ *
+ * - Before the "hide, don't delete" cuts: remove it (the same dialog as a
+ *   post's, with the deletion window and team rules its type declares), or
+ *   open the moderation settings on its author to ban, suspend or warn them.
+ * - On social v18, blog v10 and storefront v11: hide or unhide it, restrict
+ *   its author or lift the restriction (social and blog), or warn the author
+ *   from the moderation settings with the document cited.
  */
-export function ModeratorContentMenu({ target, ownerId, onRemoved, className }: ModeratorContentMenuProps) {
+export function ModeratorContentMenu({ target, ownerId, onRemoved, onChanged, className }: ModeratorContentMenuProps) {
   const router = useRouter()
   const { user } = useAuth()
   const { isModerator, protectedIds } = useModerationRole(target.contract)
   const canAuthorize = useModerationAuthorization(isModerator)
   const { open } = useModeratorRemoveModal()
-  if (!isModerator || !user || !ownerId || ownerId === user.identityId || protectedIds.has(ownerId)) return null
+  const { open: openHide } = useModeratorHideModal()
+  const service = moderationServiceFor(target.contract)
+  const hides = service.hidesInsteadOfDeleting()
+  const shown = isModerator && !!user && !!ownerId && ownerId !== user.identityId && !protectedIds.has(ownerId)
+  const readRestricted = useAuthorRestricted(target.contract, ownerId, shown && hides && service.canRestrict())
+  /** Set by this menu's own restriction or lift, until the next read. */
+  const [restrictedHere, setRestrictedHere] = useState<boolean | null>(null)
+  const [hiddenHere, setHiddenHere] = useState<boolean | null>(null)
+  if (!shown) return null
 
-  const settled = moderationServiceFor(target.contract).isSettled(target.docType, target.createdAt)
   const label = `Moderate this ${target.noun}`
+  const hidden = hiddenHere ?? isHidden(target.moderation)
+  const restricted = restrictedHere ?? readRestricted
+  const openAction = (action: ModeratorHideAction) => {
+    openHide({ action, contract: target.contract, docType: target.docType, documentId: target.documentId, authorId: ownerId, noun: target.noun, preview: target.preview }, (outcome) => {
+      if (outcome.restricted !== undefined) setRestrictedHere(outcome.restricted)
+      if (outcome.moderation !== undefined) setHiddenHere(isHidden(outcome.moderation))
+      // A list drops what was just hidden; a detail page (`onChanged`) keeps it and relabels it.
+      if (action === 'hide' && !onChanged) onRemoved()
+      else onChanged?.(outcome)
+    })
+  }
+  const item = (testId: string, onSelect: () => void, children: React.ReactNode, tone?: string) => (
+    <DropdownMenu.Item
+      disabled={!canAuthorize}
+      data-testid={`${testId}-${target.documentId}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        if (!canAuthorize) return
+        onSelect()
+      }}
+      className={cn(MENU_ITEM, tone)}
+    >
+      {children}
+    </DropdownMenu.Item>
+  )
+
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -69,32 +116,27 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, className }: 
       <DropdownMenu.Portal>
         <DropdownMenu.Content className="min-w-[220px] max-w-[min(24rem,calc(100vw-2rem))] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
           <ModerationKeyNotice authorized={canAuthorize} />
-          <DropdownMenu.Item
-            disabled={!canAuthorize}
-            data-testid={`moderator-remove-${target.documentId}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              if (!canAuthorize) return
-              open(target, onRemoved)
-            }}
-            className={cn(MENU_ITEM, 'text-red-500')}
-          >
-            <ShieldExclamationIcon className="h-4 w-4" />
-            {settled ? `Remove ${target.noun} (settled: team only)` : `Remove ${target.noun}`}
-          </DropdownMenu.Item>
-          <DropdownMenu.Item
-            disabled={!canAuthorize}
-            data-testid={`moderator-author-${target.documentId}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              if (!canAuthorize) return
-              router.push(moderateAuthorHref(target, ownerId))
-            }}
-            className={MENU_ITEM}
-          >
-            <NoSymbolIcon className="h-4 w-4" />
-            Ban, suspend or warn the author
-          </DropdownMenu.Item>
+          {hides ? (
+            <>
+              {service.canHide(target.docType) && (hidden
+                ? item('moderator-unhide', () => openAction('unhide'), <><EyeIcon className="h-4 w-4" />Unhide {target.noun}</>)
+                : item('moderator-hide', () => openAction('hide'), <><EyeSlashIcon className="h-4 w-4" />Hide {target.noun}</>, 'text-red-500'))}
+              {service.canRestrict() && restricted !== null && (restricted
+                ? item('moderator-lift', () => openAction('lift'), <><LockOpenIcon className="h-4 w-4" />Lift the author&apos;s restriction</>)
+                : item('moderator-restrict', () => openAction('restrict'), <><NoSymbolIcon className="h-4 w-4" />Restrict the author</>, 'text-red-500'))}
+              {service.canWarn() && item('moderator-author', () => router.push(moderateAuthorHref(target, ownerId)), <><ExclamationTriangleIcon className="h-4 w-4" />Warn the author</>)}
+            </>
+          ) : (
+            <>
+              {item('moderator-remove', () => open(target, onRemoved), (
+                <>
+                  <ShieldExclamationIcon className="h-4 w-4" />
+                  {service.isSettled(target.docType, target.createdAt) ? `Remove ${target.noun} (settled: team only)` : `Remove ${target.noun}`}
+                </>
+              ), 'text-red-500')}
+              {item('moderator-author', () => router.push(moderateAuthorHref(target, ownerId)), <><NoSymbolIcon className="h-4 w-4" />Ban, suspend or warn the author</>)}
+            </>
+          )}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

@@ -52,7 +52,7 @@ import { OwnWarningsNotice } from '@/components/moderation/own-warnings-notice'
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import { DeveloperSettings } from '@/components/settings/developer-settings'
 import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
-import { postsHaveLanguage, privateFeedClientSupported, yappCanBeFrozen } from '@/lib/contract-topology'
+import { moderatorsCannotDelete, postsHaveLanguage, privateFeedClientSupported, yappCanBeFrozen } from '@/lib/contract-topology'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDashPayContactsModal } from '@/hooks/use-dashpay-contacts-modal'
 import { useCopy } from '@/hooks/use-copy'
@@ -65,7 +65,15 @@ import { SOURCE_URL } from '@/lib/legal'
 type SettingsSection = 'main' | 'account' | 'contacts' | 'notifications' | 'privacy' | 'privateFeed' | 'storage' | 'appearance' | 'developer' | 'about' | 'moderation'
 const VALID_SECTIONS: SettingsSection[] = ['main', 'account', 'contacts', 'notifications', 'privacy', 'privateFeed', 'storage', 'appearance', 'developer', 'about', 'moderation']
 
-const MODERATION_SECTION = { id: 'moderation', label: 'Moderation', icon: NoSymbolIcon, description: 'Ban, suspend and remove content; freeze or slash YAPP (moderators only)' }
+// v18: moderators hide and restrict; nothing is banned or deleted.
+const MODERATION_SECTION = {
+  id: 'moderation',
+  label: 'Moderation',
+  icon: NoSymbolIcon,
+  description: moderatorsCannotDelete()
+    ? 'Hide content, restrict and warn accounts; freeze or slash YAPP (moderators only)'
+    : 'Ban, suspend and remove content; freeze or slash YAPP (moderators only)',
+}
 
 const settingsSections = [
   { id: 'account', label: 'Account', icon: UserIcon, description: 'Manage your account details' },

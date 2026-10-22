@@ -20,6 +20,13 @@ import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useBlockProvenance } from '@/hooks/use-block'
 import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
+import { useModerationRole } from '@/hooks/use-is-moderator'
+import { useAuthorRestricted } from '@/hooks/use-author-restriction'
+import type { ModeratorHideOutcome } from '@/hooks/use-moderator-hide-modal'
+import { HiddenContentStub, ModerationLabel } from '@/components/moderation/moderation-label'
+import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { isHidden, moderationViewAll, type ModerationMarks } from '@/lib/moderation-view'
+import { moderationService } from '@/lib/services/moderation-service'
 import { POSTING_CLOSED_COPY } from '@/lib/error-utils'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { useTipModal } from '@/hooks/use-tip-modal'
@@ -129,6 +136,36 @@ function UserProfileContent() {
   let documentTitle: string | null = null
   if (!isLoading) documentTitle = dpnsLabel ? `${displayName} (@${dpnsLabel})` : displayName
   useDocumentTitle(documentTitle)
+
+  // Social v18: the moderators may hide the profile extension (`yapprProfile`)
+  // or restrict the account. Its moderators (and everyone on an archival
+  // build) see it labelled; everyone else sees the DPNS name and a calm note
+  // in place of the extension's fields.
+  const hidesProfiles = moderationService.hidesInsteadOfDeleting() && moderationService.canHide('yapprProfile')
+  const { isModerator } = useModerationRole()
+  const seesHidden = moderationViewAll() || isModerator
+  const [profileModeration, setProfileModeration] = useState<{ documentId: string; moderation: ModerationMarks } | null>(null)
+  const authorRestricted = useAuthorRestricted('social', userId, hidesProfiles && seesHidden)
+  const [restrictedHere, setRestrictedHere] = useState<boolean | null>(null)
+  useEffect(() => {
+    setProfileModeration(null)
+    setRestrictedHere(null)
+    if (!hidesProfiles || !userId) return
+    let cancelled = false
+    moderationService.readProfileModeration(userId).then((read) => {
+      if (!cancelled) setProfileModeration(read)
+    }).catch((error: unknown) => logger.warn('Profile: could not read the profile\'s moderation', error))
+    return () => {
+      cancelled = true
+    }
+  }, [hidesProfiles, userId])
+  const profileHidden = isHidden(profileModeration?.moderation)
+  const showsHiddenProfileStub = profileHidden && !seesHidden
+  const onProfileModerated = (outcome: ModeratorHideOutcome) => {
+    if (outcome.restricted !== undefined) setRestrictedHere(outcome.restricted)
+    // The marks are read fresh above, never from the profile cache, so only this state moves.
+    if (outcome.moderation !== undefined) setProfileModeration((current) => current && { ...current, moderation: outcome.moderation ?? {} })
+  }
 
   useEffect(() => {
     setNsfwAcknowledged(false)
@@ -563,8 +600,11 @@ function UserProfileContent() {
           <>
             <ProfileHeader
               userId={userId}
-              profile={profile}
-              displayName={displayName}
+              profile={showsHiddenProfileStub && profile
+                // Hidden: nothing of the extension (an empty banner reads no image).
+                ? { displayName: dpnsLabel || displayName, followersCount: profile.followersCount, followingCount: profile.followingCount, bannerUri: '' }
+                : profile}
+              displayName={showsHiddenProfileStub ? dpnsLabel || displayName : displayName}
               isDisplayNameLoading={isDisplayNameLoading}
               profileMissing={profileDocumentMissing}
               username={username}
@@ -589,6 +629,31 @@ function UserProfileContent() {
                 startEdit().catch((err) => logger.error('Failed to start editing:', err))
               }}
             />
+
+            {showsHiddenProfileStub && profileModeration && (
+              <HiddenContentStub noun="profile" moderation={profileModeration.moderation} documentId={userId} />
+            )}
+            {hidesProfiles && seesHidden && (profileHidden || (restrictedHere ?? authorRestricted) === true || isModerator) && (
+              <div className="flex items-start gap-2 px-4 pb-3">
+                <ModerationLabel moderation={profileModeration?.moderation} restricted={(restrictedHere ?? authorRestricted) === true} className="flex-1" />
+                <ModeratorContentMenu
+                  className="ml-auto"
+                  target={{
+                    contract: 'social',
+                    // No extension to hide: the menu still restricts and warns.
+                    docType: profileModeration ? 'yapprProfile' : 'profile',
+                    documentId: profileModeration?.documentId ?? userId,
+                    createdAt: Number.NaN,
+                    preview: profile?.bio ?? '',
+                    noun: 'profile',
+                    ...(profileModeration ? { moderation: profileModeration.moderation } : {}),
+                  }}
+                  ownerId={userId}
+                  onRemoved={() => { /* a profile stays on its page; onChanged relabels it */ }}
+                  onChanged={onProfileModerated}
+                />
+              </div>
+            )}
 
             <YappFlow identityId={userId} isOwnProfile={isOwnProfile} />
 

@@ -23,7 +23,9 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
-import { cartService } from '@/lib/services/cart-service'
+import { HIDDEN_ITEM_MESSAGE, HIDDEN_STORE_MESSAGE, cartService } from '@/lib/services/cart-service'
+import { dropsHidden, isHidden, moderationViewAll } from '@/lib/moderation-view'
+import { ModerationLabel } from '@/components/moderation/moderation-label'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { shipsToLabel } from '@/lib/storefront/item-zones'
@@ -40,6 +42,10 @@ import type { Store, StoreItem, ItemRatingSummary, ItemVariants } from '@/lib/ty
 function unavailableReasonFor(item: StoreItem, store: Store | null, viewerId: string | undefined): string | null {
   // The seller learns what to fix on their own store; buyers hear about the item and store first.
   if (isOwnStore(store, viewerId)) return storeTakesPayment(store) ? OWN_STORE_ORDER_MESSAGE : ADD_PAYMENT_METHOD_HINT
+  // Storefront v11: a listing or store the moderators hid is not sold on a
+  // default build (an archival build sells it, labelled, as cart-service does).
+  if (dropsHidden(item.moderation)) return HIDDEN_ITEM_MESSAGE
+  if (dropsHidden(store?.moderation)) return HIDDEN_STORE_MESSAGE
   if (item.status === 'sold_out') return 'This item is sold out'
   if (item.status !== 'active') return 'This item is no longer available'
   if (item.unreadableVariants !== undefined) return "This item can't be bought right now"
@@ -224,7 +230,7 @@ function ItemDetailContent() {
     if (!item) return
 
     try {
-      cartService.addStoreItem(item, variantId, quantity)
+      cartService.addStoreItem(item, variantId, quantity, store)
       setCartError(null)
       setAddedToCart(true)
     } catch (err) {
@@ -320,8 +326,18 @@ function ItemDetailContent() {
                   storeItemService.clearCache(item.id)
                   router.push(store ? `/store/view?id=${store.id}` : '/store')
                 }}
+                onChanged={(outcome) => {
+                  storeItemService.clearCache(item.id)
+                  if (outcome.moderation !== undefined) setItem((current) => current && { ...current, moderation: outcome.moderation ?? undefined })
+                }}
               />
             </div>
+            <ModerationLabel contract="storefront" moderation={item.moderation} />
+            {store && isHidden(store.moderation) && <ModerationLabel contract="storefront" moderation={store.moderation} />}
+            {/* An archival build sells what the moderators hid on Yappr, and says so. */}
+            {moderationViewAll() && (isHidden(item.moderation) || isHidden(store?.moderation)) && (
+              <p className="text-sm text-amber-700 dark:text-amber-400">Hidden by the moderators on Yappr</p>
+            )}
 
             {rating && rating.reviewCount > 0 && (
               <div className="flex items-center gap-2">

@@ -31,6 +31,9 @@ import { APP_URL } from '@/lib/constants'
 import { useRouter } from 'next/navigation'
 import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { HiddenContentStub, ModerationLabel, useSeesHidden } from '@/components/moderation/moderation-label'
+import { isHidden } from '@/lib/moderation-view'
+import { useLocalModeration } from '@/hooks/use-local-moderation'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { blogPostService } from '@/lib/services'
 
@@ -155,10 +158,19 @@ export function BlogPostView({ blog, post, username, usernamePending }: BlogPost
   }
 
   const readingTime = useMemo(() => estimateReadingTime(post.content), [post.content])
+  const seesHidden = useSeesHidden('blog')
+  // Blog v10: kept current after this page's own hide or unhide.
+  const [moderation, setModeration] = useLocalModeration(post.moderation)
   const blogLayout = normalizeBlogThemeConfig(blog.themeConfig).layout
 
   const scrollToComments = () => {
     commentsRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  // Blog v10: a post the moderators hid is a calm stub for everyone but its
+  // moderators (and everyone on an archival build).
+  if (isHidden(moderation) && !seesHidden) {
+    return <HiddenContentStub contract="blog" noun="blog post" moderation={moderation} documentId={post.id} variant="embed" className="mx-auto max-w-5xl" />
   }
 
   return (
@@ -225,14 +237,19 @@ export function BlogPostView({ blog, post, username, usernamePending }: BlogPost
             )}
             <ContractReportButton contract="blog" docType="blogPost" targetId={post.id} ownerId={post.ownerId} />
             <ModeratorContentMenu
-              target={documentRemovalTarget('blog', 'blogPost', 'blog post', post, post.title)}
+              target={documentRemovalTarget('blog', 'blogPost', 'blog post', { ...post, moderation }, post.title)}
               ownerId={post.ownerId}
               onRemoved={() => {
                 blogPostService.clearCache(post.id)
                 router.push(getBlogUrl(blog.id))
               }}
+              onChanged={(outcome) => {
+                blogPostService.clearCache(post.id)
+                setModeration(outcome)
+              }}
             />
           </div>
+          <ModerationLabel contract="blog" moderation={moderation} restricted={post.live === 2} className="mt-3" />
 
           {/* Meta / action row */}
           <div

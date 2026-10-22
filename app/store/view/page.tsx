@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { ModerationLabel } from '@/components/moderation/moderation-label'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner, DigitalBadge } from '@/components/store'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
@@ -486,8 +487,13 @@ function StoreDetailContent() {
                         storeService.clearCache(store.id)
                         router.push('/store')
                       }}
+                      onChanged={(outcome) => {
+                        storeService.clearCache(store.id)
+                        if (outcome.moderation !== undefined) setStore((current) => current && { ...current, moderation: outcome.moderation ?? undefined })
+                      }}
                     />
                   </div>
+                  <ModerationLabel contract="storefront" moderation={store.moderation} className="mt-1" />
                   {ratingSummary && ratingSummary.reviewCount > 0 && (
                     <div className="flex items-center gap-2 mt-1">
                       <RatingStars rating={ratingSummary.averageRating} size="lg" />

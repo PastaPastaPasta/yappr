@@ -6,6 +6,7 @@ import { ReplyThread, Post } from '@/lib/types'
 import { replyToPost } from '@/lib/services/post-service'
 import { PostCard, ProgressiveEnrichment } from './post-card'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
+import { HiddenContentStub } from '@/components/moderation/moderation-label'
 
 interface ReplyThreadItemProps {
   thread: ReplyThread
@@ -57,6 +58,9 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment, re
       {/* A reply proved deleted (v10) holds its place so its replies stay in the thread. */}
       {content.deletedStub ? (
         <RemovedPostStub documentId={content.id} kind="reply" variant="card" proven />
+      ) : content.hiddenStub ? (
+        // v18: a hidden reply with visible replies under it holds its place without its content.
+        <HiddenContentStub noun="reply" documentId={content.id} variant="card" text="This reply is hidden by moderators." />
       ) : (
         <PostCard
           post={postLike}
