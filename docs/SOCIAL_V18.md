@@ -45,11 +45,11 @@ Drive serves a `skipIfAbsent` index only to a read that pins its skip property, 
 | Mentions | `mentionedUserIds contains me`, `mod == null`, `$createdAt > t` | `$createdAt desc` |
 | Trending posts, trending tags, top in a tag | `postLive == 1` in the window | ranked as on v17 |
 | A post's like count, a feed page's like counts, top liked | `postId ==` (or `in`, grouped by `postId`); the lane is not needed | ranked at `postId` |
-| Have I liked it | `postId ==`, `postLive == <the post's live>`, `$ownerId == me` (`byPost` is `[postId, postLive]`) | — |
+| Have I liked it | `postId ==`, `postLive == <the post's live>`, `$ownerId == me` (`byPost` is `[postId, postLive]`); for a tombstone, which has no `live`, lane 1 then lane 2 | — |
 
 ### Likes and unlikes
 
-An unlike is an indexOnly delete: the client rebuilds the like from its values, and every index the like is in must be located. A non-`outlivesDelete` window would need the like's own `$createdAt`, which no client can recover, so v18's first cut (`byTrendPost` without `outlivesDelete`) refused every unlike ("requires $createdAt, but the document being deleted does not carry one", measured). Both windows now keep `outlivesDelete`, as on v17: an unlike rebuilt from the post alone (author, tags, its `live` as `postLive`) succeeds, the like counts drop, and a like again lands. The windows keep an unliked entry until it ages out, and a like again reuses it, so **an unlike does not lower trending** (as on v17; measured: the post stayed at 1 in the 72 h window through like, unlike, like again).
+An unlike is an indexOnly delete: the client rebuilds the like from its values, and every index the like is in must be located. A non-`outlivesDelete` window would need the like's own `$createdAt`, which no client can recover, so v18's first cut (`byTrendPost` without `outlivesDelete`) refused every unlike ("requires $createdAt, but the document being deleted does not carry one", measured). Both windows now keep `outlivesDelete`, as on v17: an unlike rebuilt from the post alone (author, tags, its `live` as `postLive`; for a post tombstoned after the like, which has no `live`, the lane "have I liked it" finds in lane 1, then lane 2) succeeds, the like counts drop, and a like again lands. The windows keep an unliked entry until it ages out, and a like again reuses it, so **an unlike does not lower trending** (as on v17; measured: the post stayed at 1 in the 72 h window through like, unlike, like again).
 
 Platform admits an indexOnly property only if some index that is neither `skipIfAbsent` nor `outlivesDelete` and names no typed array carries it, so `postLive` needs a plain home. A sakura lab (one contract, four like types against the same posts, `DdgHPY1jer1qiwpfeKjX1gB68sUbyMN8qrY5c4TbpH3g`) measured the homes:
 
@@ -62,7 +62,22 @@ Platform admits an indexOnly property only if some index that is neither `skipIf
 | **Both windows `outlivesDelete` + `postLive` last in the counters (chosen)** | **accepted** | **20.84M / 18.45M / 19.33M (+0)** | **yes** |
 | v17's like exactly (no `postLive`) | accepted | 19.50M / 18.86M / 19.74M | no |
 
-The chosen shape costs likes nothing extra in that lab, but the counters are preallocated with each post, so the extra `postLive` level raises a post's fee: see [Fees](#fees).
+The like counters are preallocated with each post (per tag too), so the `postLive` level in them raises a post's fee instead. To weigh that against a separate lane index, one stripped contract per shape (v18's `post`, `reply` and `restriction` exactly, plus that `like`) took the same writes from the same warmed identities (sakura, 08:14–08:20Z; a fourth copy, `byPostLane` with `postLive` also in the post window, ran out of maker credit, and its likes match the third's in the lab above):
+
+| Write | v17's like (no lane) | **Chosen: lane last in the counters** | v17's post window + `byPostLane [postId, postLive]` |
+| --- | ---: | ---: | ---: |
+| Post, no tags | 101.83M | 117.45M (+15.6M, +15%) | 101.88M (≈0) |
+| Post, 1 tag | 158.91M | 182.53M (+23.6M, +15%) | 159.41M (≈0) |
+| Post, 4 tags | 313.78M | 359.67M (+45.9M, +15%) | 313.83M (≈0) |
+| Post, 1 known tag | 134.03M | 157.59M (+23.6M, +18%) | 134.08M (≈0) |
+| Like, untagged post | 14.48M | 15.39M (+0.9M, +6%) | 35.11M (+20.6M, +142%) |
+| Like, 1 tag | 20.74M | 22.39M (+1.7M, +8%) | 42.00M (+21.3M, +103%) |
+| Like, 4 tags | 33.81M | 35.50M (+1.7M, +5%) | 54.60M (+20.8M, +61%) |
+| Like, 4 tags, a post's second like | 30.62M | 31.62M (+1.0M, +3%) | 38.87M (+8.3M, +27%) |
+| Unlike, 4 tags (refund) | −2.04M | −1.56M | −9.02M |
+| Registration (stripped contract) | 62.48e9 | 62.49e9 | 63.49e9 |
+
+(Ids: `HCmaU2pX…`, `9ttohsk2…`, `7MVKnKLw…`; 1M credits ≈ 0.06¢.) The separate index keeps posts at v17's price but adds 20M (about 1.2¢) to a post's first like and 8M to each later one; the chosen shape adds 16–46M (1–2.8¢) to a post once and 1–2M to each like. It is the cheaper of the two once a post has about two likes, and the only one that keeps every write within the owner's +25–50% ceiling. The pure "v17's like, no lane" shape costs nothing extra, but restricted authors' posts would then count in trending tags.
 | My standing before a compose | `restriction`: `target == me` | — |
 
 A hidden post's likes still count in `byPost`, `byHashtagPost` and `byAuthorPost` (accepted), and a ranked list can return a hidden post id: the client already hydrates ranked ids, and it skips any with `mod` set (DECISIONS-FINAL, Trending). Quote lists (`quotesOfPost`/`quotesOfReply`), the reply notification windows, follows and bookmarks are not laned: one read returns every lane, and the client drops hidden items when it hydrates them.
@@ -308,7 +323,7 @@ Moderator writes on v18 (paid by the moderator; v17's removal cost 16.5–18.7M 
 | Blog: hide post / comment / blog | 93.41M / 57.38M / 49.15M |
 | Storefront: hide review / item / item review / store | 118.47M / 82.61M / 98.24M / 92.11M |
 
-A hide re-keys every listing the document is in, count and rank trees included, so it costs 5–12¢, well above the 10–25M the plans estimated. Replies cost what they did on v17: the `mod` level and the `countOf` read are inside the noise (the first cut, without the like fix, measured posts within ±1% too). **Posts cost 12–17% more (+16M to +47M, 1.0–2.8¢)** and likes 10–21% more: the like counters are preallocated with each post, per tag, and now carry the `postLive` level. That is the price of a working unlike with the hashtag trend laned; within the owner's +25–50% ceiling, above the "about 0" target. The cheaper alternative is v17's like exactly (no lane: restricted authors' posts count in trending tags, and the client skips them in post lists).
+A hide re-keys every listing the document is in, count and rank trees included, so it costs 5–12¢, well above the 10–25M the plans estimated. Replies cost what they did on v17: the `mod` level and the `countOf` read are inside the noise (the first cut, without the like fix, measured posts within ±1% too). **Posts cost 12–18% more (+16M to +47M, 1.0–2.8¢)**, because the like counters are preallocated with each post, per tag, and now carry the `postLive` level; likes cost 3–8% more in the same-frame comparison above (the 10–21% in this table is one sample each, on a busier contract). That is the price of a working unlike with the hashtag trend laned; within the owner's +25–50% ceiling, above the "about 0" target. The cheaper alternative is v17's like exactly (no lane: restricted authors' posts count in trending tags, and the client skips them in post lists).
 
 ## Registering it on testnet
 
@@ -336,6 +351,7 @@ The ids hold only if the maker spends no other nonce first. The estimate does no
 From DECISIONS-FINAL, as built:
 
 - Likes by restricted users still count toward trending, and a hidden post's likes still count toward its tags' totals.
+- A like of a post that is later tombstoned keeps its lane, which the post no longer shows: unliking it, or asking whether one liked it, probes lane 1 then lane 2 (one more read at most).
 - An unlike does not lower trending: both windows keep the entry (`outlivesDelete`, as on v17) until it ages out (72 h posts, 24 h tags), and a like again reuses it.
 - Likes, replies, quotes, bookmarks and orders of hidden content are accepted on chain.
 - Illegal text stays in state (media is off-chain).

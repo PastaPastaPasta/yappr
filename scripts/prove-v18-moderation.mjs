@@ -17,6 +17,11 @@
  *
  * Steps: register | social | blog | storefront | fees | catalogue | elected | report
  *
+ * Writes are journaled and skipped on a re-run; reads are not. Each content step is one-shot per
+ * copy: its reads expect the state the step itself builds, and fees, catalogue or a second run add
+ * documents (and the like trend windows keep an unliked entry for 72 h), so re-running a step on the
+ * same copy reports false FAILs. Register a fresh copy (another --state) to run it again.
+ *
  * `--accounts` names a module exporting `accountFor(key)` -> `{ identityId,
  * wifs }` for the roles below (devnet keys; nothing here prints one). The state
  * file journals every registration, write, read and proof height, so each step
@@ -60,7 +65,14 @@ const ROLES = {
   SELLER: 'corpus:79', BUYER: 'corpus:14',
 };
 
-const argValue = (flag) => { const i = process.argv.indexOf(flag); return i === -1 ? null : process.argv[i + 1]; };
+/** A flag's value, null when the flag is absent; a flag given without a value is an error. */
+const argValue = (flag) => {
+  const i = process.argv.indexOf(flag);
+  if (i === -1) return null;
+  const value = process.argv[i + 1];
+  if (value === undefined || value.startsWith('--')) throw new Error(`${flag} takes a value`);
+  return value;
+};
 const args = (() => {
   const argv = process.argv.slice(2);
   const value = (flag) => { const i = argv.indexOf(flag); return i === -1 ? null : argv[i + 1]; };
@@ -303,19 +315,30 @@ async function modDelete(label, role, docType, target) {
 
 /**
  * An unlike as a fresh client sends it, knowing only the like's owner and its post: every value
- * comes from the post document (author, tags, its `live` as `postLive`); no `$createdAt`.
+ * comes from the post document (author, tags, its `live` as `postLive`); no `$createdAt`. A
+ * tombstone has no `live`, so for one the like's lane is found the way the client finds it:
+ * "have I liked it" in lane 1, then lane 2.
  */
+async function likedLane(post, ownerId) {
+  for (const lane of [1, 2]) {
+    const found = await retry(() => sdk.documents.query({ dataContractId: cid(), documentTypeName: 'like', where: [['postId', '==', docId(post)], ['postLive', '==', lane], ['$ownerId', '==', ownerId]], limit: 1 }));
+    if (docsOf(found).length > 0) return lane;
+  }
+  return null;
+}
 async function unlike(label, role, post, expect = 'ok') {
   if (done(label)) return done(label);
   const w = await who(ROLES[role] ?? role);
   const stored = await fetchDoc('post', docId(post));
-  const lane = schemaOf('like').properties.postLive !== undefined;
-  const data = { postId: bs58.decode(docId(post)), postAuthor: bs58.decode(stored.$ownerId), ...(stored.tags ? { tags: stored.tags } : {}), ...(lane ? { postLive: stored.live } : {}) };
+  const hasLane = schemaOf('like').properties.postLive !== undefined;
+  const postLive = hasLane ? (stored.live ?? await likedLane(post, w.ownerId)) : undefined;
+  const data = { postId: bs58.decode(docId(post)), postAuthor: bs58.decode(stored.$ownerId), ...(stored.tags ? { tags: stored.tags } : {}), ...(hasLane ? { postLive } : {}) };
   const counted = [['postId', '==', docId(post)]];
   const before = await balanceOf(w.ownerId);
   const countBefore = await countOf('like', counted);
   let error = null;
   try {
+    if (hasLane && postLive === null) throw new Error(`no like of ${post} by ${w.key} in lane 1 or 2`);
     const { document } = buildDocument({ contractId: cid(), docType: 'like', ownerId: w.ownerId, data, id: randomIdBytes() });
     await sdk.documents.delete({ document, identityKey: w.doc.identityKey, signer: w.signer });
   } catch (e) { error = err(e); }
@@ -729,10 +752,12 @@ async function fees() {
 async function elected() {
   C = 'elected';
   const member = argValue('--seated-member');
+  const reason = argValue('--reason');
+  if (member && !reason) throw new Error('--seated-member needs --reason <a reason document its charter lists>: a seated team must cite one');
   const at = new Date().toISOString().slice(0, 16);
   const label = member ? `post once the team is seated (${at})` : `post while no team is seated (${at})`;
   await create(label, 'AUTHOR', 'post', { content: body('elected'), live: 1 }, member ? 'ok' : 'refused');
-  if (member) await modChange(`a seated member hides it (${at})`, member, 'post', label, { mod: 1, modLabel: 1 }, 'ok', argValue('--reason'));
+  if (member) await modChange(`a seated member hides it (${at})`, member, 'post', label, { mod: 1, modLabel: 1 }, 'ok', reason);
   const contract = await retry(() => sdk.contracts.fetch(cid()));
   const declared = contract.toJSON(PlatformVersion.latest()).config.moderation.moderators;
   state.electedDeclaration = { interim: declared.interim, joinWindow: declared.joinWindow, voteWindow: declared.voteWindow, electionDelay: declared.electionDelay, challengeCoolDown: declared.challengeCoolDown };
