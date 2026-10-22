@@ -150,4 +150,11 @@ describe('the moderation model the legal copy describes', () => {
     const { moderationHidesOnly } = await contractsUnder({ NEXT_PUBLIC_CONTRACT_TOPOLOGY: topology })
     expect(moderationHidesOnly()).toBe(false)
   })
+
+  it('switches to the hide wording on the v18 set, and only when blog and storefront hide too', async () => {
+    const set = { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v18', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v10', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v11' }
+    expect((await contractsUnder(set)).moderationHidesOnly()).toBe(true)
+    expect((await contractsUnder({ ...set, NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v10' })).moderationHidesOnly()).toBe(false)
+    expect((await contractsUnder({ ...set, NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9' })).moderationHidesOnly()).toBe(false)
+  })
 })
