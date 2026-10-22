@@ -324,11 +324,21 @@ class ModerationElectionService {
     const laterPages: VoteState[] = [];
     try {
       for (let page = state.contenders ?? []; page.length === CONTENDER_PAGE && laterPages.length < MAX_CONTENDER_PAGES - 1;) {
-        const startAtContenderId = identifierToBase58(page[page.length - 1].identityId);
+        // The getter hands back a fresh wasm Identifier: freed once read.
+        const lastId = page[page.length - 1].identityId;
+        let startAtContenderId: string | null;
+        try {
+          startAtContenderId = identifierToBase58(lastId);
+        } finally {
+          lastId?.free?.();
+        }
         if (!startAtContenderId) throw new Error('a contender without an identity id');
         const next = await sdk.voting.contestedResourceVoteState({ ...poll, startAtContenderId, startAtIncluded: false });
         laterPages.push(next);
         page = next.contenders ?? [];
+      }
+      if (laterPages.length === MAX_CONTENDER_PAGES - 1 && (laterPages[laterPages.length - 1].contenders?.length ?? 0) === CONTENDER_PAGE) {
+        logger.warn('moderationElection: the contest filled every contender page; later contenders were not read');
       }
     } catch (error) {
       state.free();

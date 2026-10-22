@@ -104,6 +104,7 @@ export function ProposalView({ contract, proposalId, election }: {
   const fees = useCreateFees({ descriptionBytes: 600, reasons: 3, members: Math.max(members.length, 1) })
 
   const loadRequests = useCallback(async () => {
+    setRequestsFailed(false)
     try {
       setRequests(await charterService.joinRequests(proposalId))
       setRequestsFailed(false)

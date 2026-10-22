@@ -28,6 +28,8 @@ const storage = vi.hoisted(() => {
 const settle = vi.hoisted(() => vi.fn())
 const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), next: 1n }))
 const locks = vi.hoisted(() => vi.fn())
+const sdkLocks = vi.hoisted(() => vi.fn())
+const keys = vi.hoisted(() => ({ match: vi.fn(), stepUp: vi.fn() }))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
 vi.mock('@dashevo/wasm-sdk', () => ({
@@ -50,9 +52,10 @@ vi.mock('./identity-nonce', () => ({
   allocateNonce: () => 1n,
   reserveNonce: nonces.reserve,
   releaseNonce: nonces.release,
-  withSdkSignedWrite: (_o: string, _c: string, write: () => Promise<unknown>) => write(),
+  withSdkSignedWrite: async (_o: string, _c: string, write: () => Promise<unknown>) => { await sdkLocks(); return write() },
 }))
-vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true, key: { keyId: 1 }, match: { keyId: 1 } }) }))
+vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: keys.match }))
+vi.mock('@/lib/auth/key-step-up', async (original: () => Promise<Record<string, unknown>>) => ({ ...(await original()), requestKeyStepUp: keys.stepUp, cancelKeyStepUp: () => undefined }))
 vi.mock('@/lib/secure-storage', () => ({ getPrivateKey: () => 'wif' }))
 vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => false }))
 vi.mock('@/lib/retry-utils', () => ({ sleep: async () => undefined }))
@@ -79,6 +82,7 @@ const stored = (type: string, slot: string) => {
 }
 
 beforeEach(() => {
+  keys.match.mockReset().mockReturnValue({ ok: true, key: { keyId: 1 }, match: { keyId: 1 } })
   vi.clearAllMocks()
   storage.clear()
   builders.consumed.mockResolvedValue(false)
@@ -355,6 +359,13 @@ describe('a write queued behind another', () => {
     expect(builders.sign).not.toHaveBeenCalled()
   })
 
+  it('refuses with nothing sent when the re-check cannot read the election', async () => {
+    const offline = vi.fn(async () => { throw new Error('Request timed out') })
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], offline)).rejects.toMatchObject({ outcome: 'refused' })
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], offline)).rejects.toThrow('Nothing was sent')
+    expect(builders.sign).not.toHaveBeenCalled()
+  })
+
   it('resends an application already signed without re-checking it', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
     builders.exists.mockResolvedValue(null)
@@ -364,6 +375,68 @@ describe('a write queued behind another', () => {
     await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], open)).rejects.toMatchObject({ outcome: 'uncertain' })
     expect(open).toHaveBeenCalledTimes(1)
     expect(builders.sign).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('a session forgotten mid-write', () => {
+  it('signs no queued team-change delete, and keeps its marker', async () => {
+    const seated = { electedCharterId: 'e2', submittedCharterId: 'p1' }
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.addMember(OWNER, seated, 'm1')).resolves.toBe('doc-1')
+    let release: () => void = () => undefined
+    sdkLocks.mockImplementationOnce(() => new Promise<void>((done) => { release = done }))
+    const undoing = charterService.undoTeamChange(OWNER, 'addedModerator', { documentId: 'doc-1', electedCharterId: 'e2', memberId: 'm1' })
+    await vi.waitFor(() => expect(sdkLocks).toHaveBeenCalled())
+    charterService.forgetKeys()
+    release()
+    await expect(undoing).rejects.toMatchObject({ outcome: 'cancelled' })
+    expect(sdk.documents.delete).not.toHaveBeenCalled()
+    expect(stored('addedModerator', 'e2:m1')).toMatchObject({ landed: 'doc-1' })
+  })
+})
+
+describe('the charter key', () => {
+  const secp = async () => import('@noble/secp256k1')
+  const leaderKeyOnChain = (data: Uint8Array) => ({
+    keyId: 7, purpose: 'DECRYPTION', securityLevel: 'MEDIUM', keyType: 'ECDSA_SECP256K1', data,
+    contractBounds: { toJSON: () => ({ $type: 'documentType', id: CHARTERS_CONTRACT_ID, documentTypeName: 'submittedCharter' }) },
+  })
+
+  it('unlocks from the MASTER key that made it after that key was rotated out, and not from its replacement', async () => {
+    const { getPublicKey } = await secp()
+    const { deriveCharterKey } = await import('@/lib/moderation-charters/charter-keys')
+    const original = new Uint8Array(32).fill(3)
+    const charter = deriveCharterKey(original, OWNER, 'leader')
+    sdk.identities.fetch.mockResolvedValue({ publicKeys: [leaderKeyOnChain(getPublicKey(charter, true))] })
+    // The original MASTER is disabled: it no longer matches an enabled key.
+    keys.match.mockReturnValue({ ok: false, reason: 'not-found' })
+    keys.stepUp.mockResolvedValueOnce(Buffer.from(original).toString('hex'))
+    await expect(charterService.charterKey(OWNER, 'leader', { create: false })).resolves.toEqual(charter)
+    charterService.forgetKeys()
+    keys.match.mockReturnValue({ ok: true, key: { keyId: 9 }, match: { keyId: 9 } })
+    keys.stepUp.mockResolvedValueOnce(Buffer.from(new Uint8Array(32).fill(4)).toString('hex'))
+    await expect(charterService.charterKey(OWNER, 'leader', { create: false })).rejects.toThrow("doesn't fit")
+  })
+})
+
+describe('an edited join message', () => {
+  it('is refused while the first request may still land, never sent as the first one', async () => {
+    const charterKey = vi.spyOn(charterService, 'charterKey').mockImplementation(async () => new Uint8Array(32).fill(1))
+    const build = vi.fn(async () => ({ toObject: () => ({ encryptedMessage: new Uint8Array([7]) }), free: () => undefined }))
+    Object.assign(sdk, { moderationCharters: { buildJoinRequest: build } })
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    try {
+      await expect(charterService.requestToJoin(OWNER, 'p-edit', 'hello')).rejects.toMatchObject({ outcome: 'uncertain' })
+      sdk.stateTransitions.broadcastAndWait.mockClear()
+      await expect(charterService.requestToJoin(OWNER, 'p-edit', 'hello, edited')).rejects.toThrow('may still go through')
+      expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled()
+      expect(build).toHaveBeenCalledTimes(1)
+      expect(storage.getItem(slotKey('joinRequest', 'p-edit'))).not.toContain('hello')
+    } finally {
+      charterKey.mockRestore()
+    }
   })
 })
 

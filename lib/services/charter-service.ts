@@ -471,7 +471,9 @@ class CharterService {
       const bytes = readPrivateKeyInput(typed)
       if (onChainData && keyMatches(bytes, onChainData)) return bytes
       try {
-        if (!isMaster(privateKeyToWif(bytes, keyNetwork()))) return null
+        // Unlocking a key already on the account needs only the secret it was made from (a MASTER key
+        // rotated out since still makes it); adding a new one needs an enabled MASTER key.
+        if (!onChainData && !isMaster(privateKeyToWif(bytes, keyNetwork()))) return null
         const derived = deriveCharterKey(bytes, identityId, role)
         if (!onChainData || keyMatches(derived, onChainData)) return derived
         derived.fill(0)
@@ -598,7 +600,10 @@ class CharterService {
     fingerprint: string
     targetContractId?: string
     fund?: boolean
-    /** Re-checks, right before a new create is signed (after every prompt and wait), that it may still be filed; throws when not. */
+    /**
+     * Re-checks, right before a new create is signed (after every prompt and wait), that it may still be
+     * filed; throws when not. It runs under the cross-tab write lock, so its reads hold other writes back.
+     */
     beforeSigning?: () => Promise<void>
   }): Promise<string> {
     const key = `${input.ownerId}:${input.type}:${input.slot}`
@@ -697,7 +702,11 @@ class CharterService {
         if (slot.kind === 'landed') return slot.id
         if (slot.kind === 'pending') return send(slot.entry)
         this.assertSameSession(generation)
-        await input.beforeSigning?.()
+        await input.beforeSigning?.().catch((error: unknown) => {
+          if (error instanceof CharterActionError) throw error
+          logger.warn('charters: the eligibility re-check failed; nothing signed', extractErrorMessage(error))
+          throw new CharterActionError("Nothing was sent: the election couldn't be read. Try again in a moment.", 'refused')
+        })
         const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
         this.assertSameSession(generation)
         const privateKey = w.PrivateKey.fromWIF(fresh.signing.wif)
@@ -859,7 +868,10 @@ class CharterService {
         memberKey.fill(0)
       }
     }
-    return this.file('join', { ownerId, type: 'joinRequest', data, slot: submittedCharterId, fingerprint: submittedCharterId })
+    // The message tells a retry from an edited request: hashed, so its text is never stored.
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`yappr/join-request:${ownerId}:${submittedCharterId}:${message}`)))
+    const fingerprint = `${submittedCharterId}:${bytesToBase64(digest)}`
+    return this.file('join', { ownerId, type: 'joinRequest', data, slot: submittedCharterId, fingerprint })
   }
 
   /**
@@ -911,16 +923,21 @@ class CharterService {
   async undoTeamChange(ownerId: string, type: 'addedModerator' | 'removedModerator', change: { documentId: string; electedCharterId: string; memberId: string }): Promise<void> {
     const { documentId } = change
     const key = `${ownerId}:${type}:${change.electedCharterId}:${change.memberId}`
+    const generation = this.generation
+    let sent = false
     try {
       const { wif, identityKey } = await this.signingKey(ownerId)
       const sdk = await getEvoSdk()
       const w = await wasmModule()
       // The SDK picks this nonce itself: the coordinator holds other writes off it.
       await withSdkSignedWrite(ownerId, CHARTERS_CONTRACT_ID, async () => {
+        // Queued behind another write: nothing is signed for a session forgotten meanwhile.
+        this.assertSameSession(generation)
         const signer = new w.IdentitySigner()
         const privateKey = w.PrivateKey.fromWIF(wif)
         try {
           signer.addKey(privateKey)
+          sent = true
           await sdk.documents.delete({ document: { id: documentId, ownerId, dataContractId: CHARTERS_CONTRACT_ID, documentTypeName: type }, identityKey, signer })
         } finally {
           signer.free()
@@ -930,8 +947,8 @@ class CharterService {
     } catch (error) {
       throw charterActionError('undo-team-change', error)
     } finally {
-      // Whatever the delete's outcome: a stale "filed" is worse than a refused duplicate.
-      await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
+      // Once the delete was sent, whatever its outcome: a stale "filed" is worse than a refused duplicate.
+      if (sent) await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
         try {
           const stored = loadSlot(key, { dropExpired: true })
           if (stored && isLanded(stored) && stored.landed === documentId) localStorage.removeItem(PENDING_PREFIX + key)
