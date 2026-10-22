@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  DOCUMENTS_PER_TRANSITION,
   HIDE_FEE_CREDITS,
   MAX_PENDING_WAITS,
   PACE_MS,
@@ -123,7 +122,6 @@ describe('runBulk', () => {
   const items = [item('a', 1), item('b', 2), item('c', 3, 'reply')]
 
   it('sends one transition per document, newest first, paced', async () => {
-    expect(DOCUMENTS_PER_TRANSITION).toBe(1)
     const d = deps()
     const summary = await runBulk(items, d)
     expect(d.apply.mock.calls.map(([i]) => i.id)).toEqual(['a', 'b', 'c'])

@@ -32,8 +32,12 @@ export function bulkHideAvailable(): boolean {
   return listingsCarryModLane() && moderationService.canHide('post') && moderationService.canHide('reply')
 }
 
+function docId(doc: Record<string, unknown>): string | null {
+  return identifierToBase58(doc.$id ?? doc.id)
+}
+
 function toItem(doc: Record<string, unknown>, kind: BulkKind): BulkItem | null {
-  const id = identifierToBase58(doc.$id ?? doc.id)
+  const id = docId(doc)
   if (!id) return null
   const content = typeof doc.content === 'string' ? doc.content.trim() : ''
   return { id, kind, createdAt: Number(doc.$createdAt ?? doc.createdAt ?? 0), preview: content.slice(0, PREVIEW_CHARS) }
@@ -56,7 +60,7 @@ class BulkHideService {
       ...(startAfter ? { startAfter } : {}),
     })
     const docs = normalizeSDKResponse(response)
-    const last = docs.length > 0 ? identifierToBase58(docs[docs.length - 1].$id ?? docs[docs.length - 1].id) : null
+    const last = docs.length > 0 ? docId(docs[docs.length - 1]) : null
     const items = docs.filter((doc) => inLane(doc, mode)).map((doc) => toItem(doc, kind)).filter((item): item is BulkItem => item !== null)
     return { items, ...(docs.length >= PAGE_SIZE && last ? { next: last } : {}) }
   }
@@ -119,7 +123,7 @@ class BulkHideService {
           limit: batch.length,
         })
         for (const doc of normalizeSDKResponse(response)) {
-          const id = identifierToBase58(doc.$id ?? doc.id)
+          const id = docId(doc)
           if (id && inLane(doc, mode)) still.add(id)
         }
       }

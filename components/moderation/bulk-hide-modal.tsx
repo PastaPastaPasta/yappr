@@ -116,7 +116,7 @@ export function BulkHideModal() {
     }
   }, [isOpen, target])
 
-  /** Reads `mode`'s lane afresh from the chain. A later read wins over an earlier one still out. */
+  /** Reads `which`'s lane afresh from the chain. A later read wins over an earlier one still out. */
   const load = useCallback((which: BulkMode) => {
     if (!authorId) return
     const read = ++readRef.current
@@ -166,7 +166,7 @@ export function BulkHideModal() {
   const reasonReady = !seatedReasons.loading && !seatedReasons.failed
     && (mode === 'unhide' || chosen !== null)
     && (!seatedReasons.required || charterReasonId !== '')
-  const ready = canAuthorize && !running && reasonReady && selectedItems.length > 0 && !!user
+  const canRun = canAuthorize && !running && reasonReady && !!user
 
   const switchMode = (next: BulkMode) => {
     if (running || next === mode) return
@@ -254,18 +254,14 @@ export function BulkHideModal() {
     setStopping(true)
   }
 
-  // Closing stops a run after the transition under way (see `current` in `run`); what is done stays done.
-  const handleClose = close
-
   const verb = mode === 'hide' ? 'Hide' : 'Unhide'
   const percent = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
   // Failures still to do: once the lists are read again, one that landed after all drops out.
   const listed = new Set(items.map((item) => item.id))
   const failures = list.status === 'ready' ? (summary?.failures ?? []).filter((failure) => listed.has(failure.item.id)) : []
-  const canRetry = canAuthorize && !running && reasonReady && failures.length > 0 && !!user
 
   return (
-    <Modal open={isOpen} onOpenChange={(open) => !open && handleClose()} className="w-[560px] max-w-[94vw]">
+    <Modal open={isOpen} onOpenChange={(open) => !open && close()} className="w-[560px] max-w-[94vw]">
       <ModalTitle>
         {mode === 'hide' ? <EyeSlashIcon className="h-6 w-6 text-amber-600" /> : <EyeIcon className="h-6 w-6 text-amber-600" />}
         {mode === 'hide' ? `Hide posts by ${name}` : `Unhide posts by ${name}`}
@@ -431,7 +427,7 @@ export function BulkHideModal() {
               <div className="mt-2 min-h-0 flex-1 flex flex-col" data-testid="bulk-hide-failures">
                 <div className="flex items-center justify-between gap-3">
                   <p className="font-medium text-red-600 dark:text-red-400">{plural(failures.length, 'post')} didn&apos;t go through</p>
-                  <Button size="sm" variant="outline" disabled={!canRetry} onClick={() => start(failures.map((failure) => failure.item))} data-testid="bulk-hide-retry">Try again</Button>
+                  <Button size="sm" variant="outline" disabled={!canRun} onClick={() => start(failures.map((failure) => failure.item))} data-testid="bulk-hide-retry">Try again</Button>
                 </div>
                 <ul className="mt-1 min-h-0 flex-1 overflow-y-auto text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
                   {failures.map(({ item, error }) => (
@@ -450,11 +446,11 @@ export function BulkHideModal() {
             {stopping ? 'Stopping after this one…' : 'Stop'}
           </Button>
         ) : (
-          <Button onClick={() => start(selectedItems)} disabled={!ready} className="w-full" data-testid="bulk-hide-confirm">
+          <Button onClick={() => start(selectedItems)} disabled={!canRun || selectedItems.length === 0} className="w-full" data-testid="bulk-hide-confirm">
             {selectedItems.length > 0 ? `${verb} ${plural(selectedItems.length, 'post')}` : `${verb} posts`}
           </Button>
         )}
-        <Button onClick={handleClose} variant="ghost" className="w-full">Close</Button>
+        <Button onClick={close} variant="ghost" className="w-full">Close</Button>
         <p className="text-xs text-center text-gray-500 dark:text-gray-400">
           You can close this at any time. What&apos;s done stays done, and opening it again picks up the rest.
         </p>

@@ -18,9 +18,6 @@
  * always read back from the chain rather than trusted to this tab.
  */
 
-/** Documents per moderation transition: one (see the module comment). */
-export const DOCUMENTS_PER_TRANSITION = 1
-
 /** Hide the listed documents, or list the hidden ones again. */
 export type BulkMode = 'hide' | 'unhide'
 
@@ -190,7 +187,6 @@ export interface BulkSummary extends BulkProgress {
   /** What stopped it, when `stopped` is `fatal`. */
   error?: string
 }
-
 
 /** Between two transitions, and after one the network did not confirm. */
 export const PACE_MS = 400
