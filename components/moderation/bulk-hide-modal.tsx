@@ -8,13 +8,13 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
-import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
+import { useBulkHideModal, useBulkModeratedMarks } from '@/hooks/use-bulk-hide-modal'
 import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
 import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, runBulk, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
+import { MOD_HIDDEN, moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
 import { cn } from '@/lib/utils'
 import { CharterReasonPicker, useSeatedReasons } from './charter-reason-picker'
 
@@ -67,6 +67,7 @@ function bulkStatusLine(mode: BulkMode, state: BulkProgress | BulkSummary): stri
 export function BulkHideModal() {
   const { user, controller } = useAuth()
   const { isOpen, target, close } = useBulkHideModal()
+  const recordMarks = useBulkModeratedMarks((state) => state.record)
   const canAuthorize = useModerationAuthorization(isOpen)
   const seatedReasons = useSeatedReasons(isOpen, 'social')
   const [mode, setMode] = useState<BulkMode>('hide')
@@ -105,8 +106,10 @@ export function BulkHideModal() {
     setCounts(NO_COUNTS)
     setAuthorName(target.authorName ?? null)
     if (!target.authorName) {
+      // Only for this opening: a lookup that answers after the dialog was opened for someone else is dropped.
+      const opening = openingRef.current
       dpnsService.resolveUsername(target.authorId).then((name) => {
-        if (name) setAuthorName(`@${name.replace(/\.dash$/, '')}`)
+        if (openingRef.current === opening && name) setAuthorName(`@${name.replace(/\.dash$/, '')}`)
       }).catch(() => { /* the dialog says "this account" */ })
     }
   }, [isOpen, target])
@@ -230,6 +233,8 @@ export function BulkHideModal() {
         ? batch.hide(item.kind, item.id, { label: hideLabel, reason: reasonFor(item) })
         : batch.unhide(item.kind, item.id, reasonFor(item)),
       pending: (pendingItems) => bulkHideService.pending(pendingItems, mode),
+      // The cards already on screen show the change as soon as it is proved.
+      onDone: (item) => recordMarks(item.id, mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: Date.now() } : null),
       onProgress: (next) => {
         if (current()) setProgress(next)
       },

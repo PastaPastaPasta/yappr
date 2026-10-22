@@ -10,7 +10,7 @@ import toast from 'react-hot-toast'
 import type { Post, PostModeration } from '@/lib/types'
 import { useAuthorRestricted } from '@/hooks/use-author-restriction'
 import { postHideTarget, useModeratorHideModal, type ModeratorHideAction } from '@/hooks/use-moderator-hide-modal'
-import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
+import { useBulkHideModal, useBulkModeratedMarks } from '@/hooks/use-bulk-hide-modal'
 import { HiddenContentStub, ModerationLabel } from '@/components/moderation/moderation-label'
 import { isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { cn } from '@/lib/utils'
@@ -297,7 +297,10 @@ function PostCardView({
   const [locallyDeleted, setLocallyDeleted] = useState(false)
   // v18: a moderator hid or unhid it from this card; undefined until then.
   const [localModeration, setLocalModeration] = useState<PostModeration | null | undefined>(undefined)
-  const moderation = localModeration === undefined ? post.moderation : localModeration ?? undefined
+  // A bulk hide or unhide of this post since its read (components/moderation/bulk-hide-modal.tsx); this card's own change wins.
+  const bulkModeration = useBulkModeratedMarks((state) => state.marks[post.id])
+  const changedModeration = localModeration !== undefined ? localModeration : bulkModeration
+  const moderation = changedModeration === undefined ? post.moderation : changedModeration ?? undefined
   const hiddenByModerators = isHidden(moderation)
   // A default build offers nothing to build on a hidden post (reply, repost, quote), even to the moderators who read it; an archival build keeps them.
   const hiddenOnThisBuild = hiddenByModerators && !moderationViewAll()

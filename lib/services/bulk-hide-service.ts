@@ -1,7 +1,7 @@
 import { listingsCarryModLane } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
 import { moderatedContract } from '@/lib/moderated-contracts'
-import { inLane, laneMod, newestFirst, readEveryPage, type BulkItem, type BulkKind, type BulkMode, type BulkPage } from '@/lib/moderation-bulk'
+import { chainState, inLane, laneMod, newestFirst, readEveryPage, type BulkChainRead, type BulkItem, type BulkKind, type BulkMode, type BulkPage } from '@/lib/moderation-bulk'
 import { getEvoSdk } from './evo-sdk-service'
 import { moderationService } from './moderation-service'
 import { moderationViewAll } from '@/lib/moderation-view'
@@ -105,13 +105,14 @@ class BulkHideService {
   }
 
   /**
-   * The ids of `items` still in `mode`'s lane, read from the chain (`$id in`,
-   * at most 100 per read): for a hide, the ones not hidden yet. A document
-   * gone from state is not pending. Rejects when a read fails.
+   * Where each of `items` stands against `mode`, read from the chain (`$id in`,
+   * at most 100 per read; lib/moderation-bulk.ts `chainState`): still to do,
+   * changed some other way (an unhide target put under legal hold, or gone),
+   * or, in neither set, done. Rejects when a read fails.
    */
-  async pending(items: readonly BulkItem[], mode: BulkMode): Promise<Set<string>> {
+  async pending(items: readonly BulkItem[], mode: BulkMode): Promise<BulkChainRead> {
     const sdk = await getEvoSdk()
-    const still = new Set<string>()
+    const found = new Map<string, Record<string, unknown>>()
     for (const kind of KINDS) {
       const ids = items.filter((item) => item.kind === kind).map((item) => item.id)
       for (let start = 0; start < ids.length; start += MAX_IN_CLAUSE_VALUES) {
@@ -124,12 +125,17 @@ class BulkHideService {
         })
         for (const doc of normalizeSDKResponse(response)) {
           const id = docId(doc)
-          if (id && inLane(doc, mode)) still.add(id)
+          if (id) found.set(id, doc)
         }
       }
     }
-    logger.info(`bulkHide: ${still.size} of ${items.length} still to ${mode}`)
-    return still
+    const read: BulkChainRead = { todo: new Set(), changed: new Set() }
+    for (const item of items) {
+      const state = chainState(found.get(item.id), mode)
+      if (state !== 'done') read[state].add(item.id)
+    }
+    logger.info(`bulkHide: ${read.todo.size} of ${items.length} still to ${mode}, ${read.changed.size} changed`)
+    return read
   }
 }
 

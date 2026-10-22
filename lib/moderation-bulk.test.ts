@@ -9,12 +9,14 @@ import {
   creditsToCents,
   formatCents,
   formatCredits,
+  chainState,
   idsWithin,
   inLane,
   newestFirst,
   readEveryPage,
   runBulk,
   type BulkApplyResult,
+  type BulkChainRead,
   type BulkItem,
   type BulkPage,
   type BulkProgress,
@@ -50,6 +52,18 @@ describe('selection', () => {
     expect(inLane({ live: 2 }, 'hide')).toBe(false)
     // A tombstone (no `live`) is no one's listing.
     expect(inLane({}, 'hide')).toBe(false)
+  })
+
+  it('reads where a document stands against a run', () => {
+    expect(chainState({ live: 1 }, 'hide')).toBe('todo')
+    expect(chainState({ live: 1, mod: 1 }, 'hide')).toBe('done')
+    expect(chainState({ live: 1, mod: 2 }, 'hide')).toBe('done')
+    expect(chainState(undefined, 'hide')).toBe('done')
+    expect(chainState({ live: 1, mod: 1 }, 'unhide')).toBe('todo')
+    expect(chainState({ live: 1 }, 'unhide')).toBe('done')
+    // A legal hold is still hidden: an unhide never counts it done.
+    expect(chainState({ live: 1, mod: 2 }, 'unhide')).toBe('changed')
+    expect(chainState(undefined, 'unhide')).toBe('changed')
   })
 })
 
@@ -108,19 +122,25 @@ describe('cost', () => {
 describe('runBulk', () => {
   const ok: BulkApplyResult = { success: true }
   type Apply = (item: BulkItem) => Promise<BulkApplyResult>
+  /** The ids a chain read finds still to do; `changed` ones changed some other way. */
   type Pending = (items: readonly BulkItem[]) => Promise<Set<string>>
-  const deps = ({ apply, pending, cancelled, onProgress }: {
+  const deps = ({ apply, pending, changed = [], cancelled, onProgress }: {
     apply?: Apply
     pending?: Pending
+    changed?: string[]
     cancelled?: () => boolean
     onProgress?: (progress: BulkProgress) => void
-  } = {}) => ({
-    apply: vi.fn<Apply>(apply ?? (async () => ok)),
-    pending: vi.fn<Pending>(pending ?? (async (asked) => new Set(asked.map((i) => i.id)))),
-    pause: vi.fn<(ms: number) => Promise<void>>(async () => {}),
-    cancelled,
-    onProgress,
-  })
+  } = {}) => {
+    const todo: Pending = pending ?? (async (asked) => new Set(asked.map((i) => i.id)))
+    return {
+      apply: vi.fn<Apply>(apply ?? (async () => ok)),
+      pending: vi.fn(async (asked: readonly BulkItem[]): Promise<BulkChainRead> => ({ todo: await todo(asked), changed: new Set(changed) })),
+      onDone: vi.fn<(item: BulkItem) => void>(),
+      pause: vi.fn<(ms: number) => Promise<void>>(async () => {}),
+      cancelled,
+      onProgress,
+    }
+  }
   const items = [item('a', 1), item('b', 2), item('c', 3, 'reply')]
 
   it('sends one transition per document, newest first, paced', async () => {
@@ -136,6 +156,17 @@ describe('runBulk', () => {
     const summary = await runBulk(items, d)
     expect(d.apply.mock.calls.map(([i]) => i.id)).toEqual(['c'])
     expect(summary.done).toBe(3)
+    // Every document counted done is announced, for the cards on screen.
+    expect(d.onDone.mock.calls.map(([i]) => i.id).sort()).toEqual(['a', 'b', 'c'])
+  })
+
+  it('never counts a document that changed some other way as done', async () => {
+    const d = deps({ pending: async () => new Set(['c']), changed: ['b'] })
+    const summary = await runBulk(items, d)
+    expect(d.apply.mock.calls.map(([i]) => i.id)).toEqual(['c'])
+    expect(summary.done).toBe(2)
+    expect(summary.failures.map((f) => f.item.id)).toEqual(['b'])
+    expect(d.onDone.mock.calls.map(([i]) => i.id)).not.toContain('b')
   })
 
   it('sends everything when the first read fails, and counts "already that way" as done', async () => {
