@@ -40,6 +40,7 @@ import { getPrimaryUsername } from '@/lib/utils/username';
 import { dpnsRecordOwner } from '@/lib/utils/dpns-record-owner';
 import { postTimelineClauses, type QueryOptions } from '@/lib/services/document-service';
 import { transformRawPost } from './transform-raw-post';
+import { isHiddenItem, markQuoteHidden } from './post-moderation';
 import type { OwnQuote } from './quote-reposts';
 
 /**
@@ -466,7 +467,10 @@ async function decodeFeedPage(
       const source = sourceById?.get(doc.$id as string);
       return source ? { ...source, author: { ...source.author } } : transformRawPost(doc);
     })
-    .filter((post) => !post.deleted);
+    // A page read by id is how a hidden post gets past the listings (a ranked
+    // list, a quote list, a bookmark): this build drops it. Posts the caller
+    // brought along were already judged by the caller.
+    .filter((post) => !post.deleted && (sourceById !== undefined || !isHiddenItem(post)));
   const pageIds = rawPosts
     .map((doc) => doc.$id)
     .filter((id): id is string => typeof id === 'string');
@@ -537,9 +541,17 @@ async function decodeFeedPage(
   // lookups, and logged-in pages also need their profiles.
   // v11 keeps a tombstoned target: the quote then says its author deleted it
   // (and a bare repost of it hides) without a per-card fetch of the same.
-  const quotedPosts = documentsAt(result, slots.quotedPosts)
+  const quotedCandidates = documentsAt(result, slots.quotedPosts)
     .map((doc) => transformRawPost(doc))
     .filter((post) => !post.deleted || tombstonesAreHidden());
+  // A quote of a hidden post reads as an unavailable quote, never its text.
+  const hiddenQuotes = new Set(quotedCandidates.filter((post) => isHiddenItem(post)).map((post) => post.id));
+  const quotedPosts = quotedCandidates.filter((post) => !hiddenQuotes.has(post.id));
+  if (hiddenQuotes.size > 0) {
+    for (const post of posts) {
+      if (post.quotedPostId && hiddenQuotes.has(post.quotedPostId)) markQuoteHidden(post);
+    }
+  }
   if (quotedPosts.length > 0) {
     const quotedAuthorIds = Array.from(new Set(quotedPosts.map((post) => post.author.id).filter(Boolean)));
     if (slots.quotedAuthorExtensions >= 0) {

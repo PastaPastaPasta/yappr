@@ -18,7 +18,8 @@ import {
 } from '@/components/checkout'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { cartService, getCartCurrency } from '@/lib/services/cart-service'
+import { cartService, getCartCurrency, HIDDEN_STORE_MESSAGE } from '@/lib/services/cart-service'
+import { isDropped } from '@/lib/services/moderation-carry'
 import { isDigitalLine } from '@/lib/services/digital-delivery-plan'
 import { storeService } from '@/lib/services/store-service'
 import { SHIPPING_CHECK_FAILED_MESSAGE, SHIPPING_UNAVAILABLE_MESSAGE, checkShipping, finalShippingCheck, shippingZoneService, type ShippingCheck } from '@/lib/services/shipping-zone-service'
@@ -56,6 +57,7 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
 type CheckoutReadinessBlocker =
   | 'own-store'
   | 'store-unavailable'
+  | 'store-hidden'
   | 'store-check-failed'
   | 'no-payment-methods'
   | 'missing-buyer-key'
@@ -77,6 +79,7 @@ function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null, o
   const messages: Record<CheckoutReadinessBlocker, string> = {
     'own-store': OWN_STORE_ORDER_MESSAGE,
     'store-unavailable': 'This store is not accepting orders right now.',
+    'store-hidden': HIDDEN_STORE_MESSAGE,
     'store-check-failed': 'Could not confirm this store is open. Please try again.',
     'no-payment-methods': `${NOT_FOR_SALE_YET_MESSAGE}.`,
     'missing-buyer-key': 'Add your encryption key to continue to payment.',
@@ -244,8 +247,8 @@ function CheckoutPage() {
         setCheckoutReadiness(state)
         return state
       }
-      if (current?.status !== 'active') {
-        const state = blocked('store-unavailable')
+      if (current?.status !== 'active' || isDropped(current)) {
+        const state = blocked(isDropped(current) ? 'store-hidden' : 'store-unavailable')
         setCheckoutReadiness(state)
         return state
       }
@@ -339,7 +342,7 @@ function CheckoutPage() {
         }
 
         const readiness = await validateCheckoutReadiness(storeData)
-        if (readiness.blocker === 'store-unavailable' || readiness.blocker === 'own-store') setError(readiness.blockerMessage)
+        if (readiness.blocker === 'store-unavailable' || readiness.blocker === 'store-hidden' || readiness.blocker === 'own-store') setError(readiness.blockerMessage)
       } catch (error) {
         logger.error('Failed to load checkout data:', error)
         router.push('/cart')
@@ -494,7 +497,7 @@ function CheckoutPage() {
   }, [store, cartItems, includeShipping, shippingAddress, buyerContact, shippingCost, selectedPaymentUri, currency])
 
   const handleDetailsSubmit = () => {
-    if (checkoutReadiness.blocker === 'store-unavailable') {
+    if (checkoutReadiness.blocker === 'store-unavailable' || checkoutReadiness.blocker === 'store-hidden') {
       setError(checkoutReadiness.blockerMessage)
       return
     }

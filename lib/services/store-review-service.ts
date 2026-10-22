@@ -10,7 +10,8 @@
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV2 } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, lanePinOrderBy, storefrontIsV2, storefrontModPin } from '../constants';
+import { carryModerationIntoReplace, moderationFieldOf } from './moderation-carry';
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { storeStatsService } from './store-stats-service';
@@ -19,6 +20,13 @@ import type { StoreReview, StoreReviewDocument } from '../../types';
 class StoreReviewService extends BaseDocumentService<StoreReview> {
   constructor() {
     super(STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, YAPPR_STOREFRONT_CONTRACT_ID);
+  }
+
+  /** A replace (the client writes none today) sends a moderator's `mod`/`modLabel` back unchanged (41124 otherwise). */
+  protected extractContentFields(doc: StoreReview): Record<string, unknown> {
+    const fields = super.extractContentFields(doc);
+    carryModerationIntoReplace(fields, doc);
+    return fields;
   }
 
   protected transformDocument(doc: Record<string, unknown>): StoreReview {
@@ -36,14 +44,15 @@ class StoreReviewService extends BaseDocumentService<StoreReview> {
       rating: data.rating,
       title: data.title,
       content: data.content,
+      ...moderationFieldOf(doc),
     };
   }
 
   /** Reviews of a store, newest first. */
   async getStoreReviews(storeId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ reviews: StoreReview[]; nextCursor?: string }> {
     const { documents } = await this.query({
-      where: [['storeId', '==', storeId]],
-      orderBy: [['storeId', 'asc'], ['$createdAt', 'desc']],
+      where: [['storeId', '==', storeId], ...storefrontModPin()],
+      orderBy: [['storeId', 'asc'], ...lanePinOrderBy(storefrontModPin()), ['$createdAt', 'desc']],
       limit: options.limit || 20,
       startAfter: options.startAfter,
     });
@@ -59,6 +68,8 @@ class StoreReviewService extends BaseDocumentService<StoreReview> {
         orderBy: [['orderId', 'asc']],
         limit: batch.length,
       });
+      // The buyer's own order page: `orderId` is not a laned index, so the review is read with its marks
+      // (the page labels a hidden one for its author) and a public list drops it.
       for (const review of documents) result.set(review.orderId, review);
     }
     return result;

@@ -11,6 +11,8 @@ import { chunk, documentCount, groupedDocumentCount, groupIdsByRoot, MAX_IN_CLAU
 import type { DocumentWhereClause } from './sdk-helpers';
 import { profileDataByOwnerId } from './post-enrichment-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
+import { createInLiveLane } from './live-lane';
+import { postModerationOf } from '@/lib/feed/post-moderation';
 import { readNotificationWindow } from './notification-windows';
 import {
   deletesAreTombstones,
@@ -26,7 +28,6 @@ import {
   replyOwnerIndexPrefix,
   replyOwnersAreDerived,
   replyThreadIndexPrefix,
-  repliesCarryLiveMarker,
   repliesNameRootOwner,
   threadRootIdOf,
   tombstonePreservationFor,
@@ -122,6 +123,9 @@ class ReplyService extends BaseDocumentService<Reply> {
     const feed = (data.feed ?? doc.feed) as number | undefined;
     const rawNonce = data.nonce || doc.nonce;
 
+    // v18: the moderators' hide marks, and lane 2 for a restricted author's reply.
+    const moderation = postModerationOf(doc, data);
+
     // Normalize byte arrays
     const encryptedContent = rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined;
     const nonce = rawNonce ? normalizeBytes(rawNonce) ?? undefined : undefined;
@@ -151,6 +155,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       keyGeneration,
       nonce,
       feed,
+      ...(moderation ? { moderation } : {}),
     };
 
     return reply;
@@ -309,9 +314,8 @@ class ReplyService extends BaseDocumentService<Reply> {
 
     // v17: a reply is on its author's `ownerAndTime` while it carries `live`;
     // the tombstone leaves it out (the `live` rule refuses anything else).
-    if (repliesCarryLiveMarker()) data.live = true;
-
-    return this.create(ownerId, data);
+    // v18 makes it a lane, set by the author's restriction standing.
+    return createInLiveLane('reply', ownerId, data, (fields) => this.create(ownerId, fields));
   }
 
   /**

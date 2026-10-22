@@ -44,7 +44,9 @@ import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
 import { getEvoSdk } from './evo-sdk-service';
-import { inlineTags, postOwnerIndexPrefix, referencesMayDangle, trendLanePin, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
+import { moderationViewAll } from '@/lib/moderation-view';
+import { withoutHiddenItems } from '@/lib/feed/post-moderation';
+import { inlineTags, listingsCarryModLane, postOwnerIndexPrefix, referencesMayDangle, trendLanePin, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
  * Which slice of time a ranking covers. `'all'` is the all-time axis;
@@ -287,6 +289,21 @@ export async function topAuthorsByPostCount(limit: number = 100): Promise<Ranked
   return rankedGroupCounts('post', '$ownerId', limit, null, true, postOwnerIndexPrefix());
 }
 
+/** The most ids Platform ranks in one read. */
+const MAX_RANKED_READ = 100;
+
+/**
+ * How many ranked ids to read for a page of `limit` posts. A v18 ranking
+ * counts a hidden post's likes, so some ids come back hidden and are skipped
+ * after hydration; reading a quarter more (at least 5) keeps the page full
+ * without a second read. Elsewhere, and on an archival build that skips
+ * nothing, it is `limit`.
+ */
+function rankedReadLimit(limit: number): number {
+  if (!listingsCarryModLane() || moderationViewAll()) return limit;
+  return Math.min(MAX_RANKED_READ, limit + Math.max(5, Math.ceil(limit / 4)));
+}
+
 export interface HydratedTopPostsOptions {
   postAuthor?: string;
   /** Pin the per-hashtag axis. Storage form (lowercase, no '#'), never `''`. */
@@ -370,8 +387,8 @@ export async function topLikedPostsHydrated(options: HydratedTopPostsOptions = {
   }
 
   const cacheKey = `${window}:${limit}:${postAuthor ? `author:${postAuthor}` : hashtag === undefined ? 'global' : `tag:${hashtag}`}`;
-  return hydrateRankedCached(cacheKey, force, throwOnError, () =>
-    topLikedPosts({ ...(postAuthor ? { postAuthor } : hashtag === undefined ? {} : { hashtag }), limit, window, throwOnError: true })
+  return hydrateRankedCached(cacheKey, force, throwOnError, limit, () =>
+    topLikedPosts({ ...(postAuthor ? { postAuthor } : hashtag === undefined ? {} : { hashtag }), limit: rankedReadLimit(limit), window, throwOnError: true })
   );
 }
 
@@ -406,15 +423,16 @@ export async function topLikedPostsByAuthorsHydrated(options: HydratedTopPostsBy
   if (authorIds.length === 0) return [];
 
   const cacheKey = `${window}:${limit}:authors:${authorIds.join(',')}`;
-  return hydrateRankedCached(cacheKey, force, throwOnError, async () => {
+  const readLimit = rankedReadLimit(limit);
+  return hydrateRankedCached(cacheKey, force, throwOnError, limit, async () => {
     const { mapLimit } = await import('./pagination-utils');
     const perAuthor = await mapLimit(authorIds, TOP_BY_AUTHORS_CONCURRENCY, (postAuthor) =>
-      topLikedPosts({ postAuthor, limit, window, throwOnError: true })
+      topLikedPosts({ postAuthor, limit: readLimit, window, throwOnError: true })
     );
     return perAuthor
       .flat()
       .sort((a, b) => b.likes - a.likes)
-      .slice(0, limit);
+      .slice(0, readLimit);
   });
 }
 
@@ -440,6 +458,7 @@ async function hydrateRankedCached(
   cacheKey: string,
   force: boolean,
   throwOnError: boolean,
+  limit: number,
   rank: () => Promise<RankedLikedPost[]>
 ): Promise<Post[]> {
   const { getCurrentUserId } = await import('./sdk-helpers');
@@ -459,7 +478,7 @@ async function hydrateRankedCached(
   const quotesAsOf = latestGeneration();
   try {
     const ranked = await rank();
-    const posts = await hydrateRankedPosts(ranked, currentUserId);
+    const posts = await hydrateRankedPosts(ranked, currentUserId, limit);
     const quoteGenerations = quoteGenerationSnapshot(posts);
     // The page still answers this caller; it is cached only if no later read
     // of it started and none of its quote targets was forgotten meanwhile.
@@ -488,7 +507,7 @@ async function hydrateRankedCached(
  * still two batch lookups: neither is a document of the page, and the cards'
  * relation hooks would otherwise fan out one query per author.
  */
-async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId?: string): Promise<Post[]> {
+async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId: string | undefined, limit: number): Promise<Post[]> {
   if (ranked.length === 0) return [];
 
   // Dynamic: composite-feed-page imports the enrichment helpers, which import
@@ -518,7 +537,10 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId?: str
 
   // Preserve the proved ranking order; carry the proved count onto the card;
   // author identity comes off the page's proven profile and name lookups.
-  const byId = new Map(page.posts.map((post) => [post.id, post]));
+  // v18: a ranking counts a hidden post's likes, so its id can be on the list:
+  // this build skips it (an archival build keeps it, labelled). The list was
+  // read with a little headroom for that, and is cut back to the page asked for.
+  const byId = new Map(withoutHiddenItems(page.posts).map((post) => [post.id, post]));
   const { usernames, profiles, avatars } = page.preloaded;
   const ordered = ranked.flatMap((entry) => {
     const post = byId.get(entry.postId);
@@ -543,7 +565,7 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId?: str
         authorAvatarUrl: avatar,
       },
     }];
-  });
+  }).slice(0, limit);
 
   if (!currentUserId || ordered.length === 0) return ordered;
 

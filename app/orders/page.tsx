@@ -22,6 +22,8 @@ import { storeOrderService } from '@/lib/services/store-order-service'
 import { orderStatusService, openStatusNotesAsBuyer } from '@/lib/services/order-status-service'
 import { storeService } from '@/lib/services/store-service'
 import { storeReviewService } from '@/lib/services/store-review-service'
+import { ModerationLabel } from '@/components/moderation/moderation-label'
+import { isHidden, type ModerationMarks } from '@/lib/moderation-view'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { storefrontIsV2, storefrontStatusIsSealed, storefrontSupportsDigital } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
@@ -107,6 +109,7 @@ function OrdersPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null)
   const [reviewedOrders, setReviewedOrders] = useState<Set<string>>(new Set())
+  const [hiddenReviews, setHiddenReviews] = useState<Map<string, ModerationMarks>>(new Map())
   const [reviewModalData, setReviewModalData] = useState<{ order: StoreOrder; store: Store } | null>(null)
 
   // Digital delivery (storefront v6)
@@ -178,10 +181,15 @@ function OrdersPage() {
         let stores: Store[]
         let reviewedOrderIds: string[]
         let statusMap: Map<string, OrderStatusUpdate>
+        // The buyer's own reviews a moderator hid: neither read is laned, so they arrive with their marks
+        // and the order shows them labelled instead of dropping the review.
+        const hiddenReviewMarks = new Map<string, ModerationMarks>()
 
         if (composite) {
           stores = composite.stores.map((doc) => storeService.fromDocument(doc))
-          reviewedOrderIds = composite.reviews.map((doc) => storeReviewService.fromDocument(doc).orderId)
+          const ownReviews = composite.reviews.map((doc) => storeReviewService.fromDocument(doc))
+          reviewedOrderIds = ownReviews.map((review) => review.orderId)
+          for (const review of ownReviews) if (isHidden(review.moderation)) hiddenReviewMarks.set(review.orderId, review.moderation ?? {})
           statusMap = orderStatusService.latestPerOrder(composite.statuses.map((doc) => orderStatusService.fromDocument(doc)))
         } else {
           const orderIds = userOrders.map((order) => order.id)
@@ -192,6 +200,7 @@ function OrdersPage() {
           ])
           stores = fetchedStores
           reviewedOrderIds = [...reviews.keys()]
+          for (const [orderId, review] of reviews) if (isHidden(review.moderation)) hiddenReviewMarks.set(orderId, review.moderation ?? {})
           statusMap = statuses
         }
         const storeMap = new Map(stores.map((store) => [store.id, store]))
@@ -242,6 +251,7 @@ function OrdersPage() {
         setOrderStatuses(readableStatuses(statusMap, userOrders, user.identityId, sellerKeysRef.current))
         setStores(storeMap)
         setReviewedOrders(reviewedSet)
+        setHiddenReviews(hiddenReviewMarks)
         await refreshDeliveries(userOrders)
       } catch (error) {
         logger.error('Failed to load orders:', error)
@@ -363,24 +373,33 @@ function OrdersPage() {
                 // (storefront v4 refuses it in consensus, sellerId distinctFrom $ownerId).
                 const canReview = !reviewedOrders.has(order.id) && order.sellerId !== user?.identityId
 
+                const hiddenReview = hiddenReviews.get(order.id)
+
                 return (
-                  <OrderCard
-                    key={order.id}
-                    order={order}
-                    payload={orderPayloads.get(order.id)}
-                    status={status}
-                    store={store}
-                    expanded={expandedOrder === order.id}
-                    onToggle={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)}
-                    index={index}
-                    canReview={canReview}
-                    onLeaveReview={() => {
-                      if (store) {
-                        setReviewModalData({ order, store })
-                      }
-                    }}
-                    deliveries={supportsDigital ? deliveries.get(order.id) ?? [] : undefined}
-                  />
+                  <div key={order.id}>
+                    <OrderCard
+                      order={order}
+                      payload={orderPayloads.get(order.id)}
+                      status={status}
+                      store={store}
+                      expanded={expandedOrder === order.id}
+                      onToggle={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)}
+                      index={index}
+                      canReview={canReview}
+                      onLeaveReview={() => {
+                        if (store) {
+                          setReviewModalData({ order, store })
+                        }
+                      }}
+                      deliveries={supportsDigital ? deliveries.get(order.id) ?? [] : undefined}
+                    />
+                    {hiddenReview && (
+                      <div className="px-4 pb-3">
+                        <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">Your review of this order is hidden by the moderators.</p>
+                        <ModerationLabel contract="storefront" moderation={hiddenReview} />
+                      </div>
+                    )}
+                  </div>
                 )
               })}
             </div>

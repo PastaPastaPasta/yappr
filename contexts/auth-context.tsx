@@ -3,6 +3,7 @@
 import { logger } from '@/lib/logger'
 import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { observeSignOut } from '@/lib/auth/cross-tab-sign-out'
+import { clearRestrictionsOnIdentityChange } from '@/lib/auth/restriction-standing-reset'
 import { hasSkippedUsername } from '@/lib/username-skip'
 import { signInDestination } from '@/lib/auth/intent-destination'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
@@ -107,7 +108,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unbind = bindCurrentIdentity(() => controller.getState().user?.identityId ?? null)
     const unsubscribe = controller.subscribe(setControllerState)
-    return () => { unbind(); unsubscribe() }
+    // Sign-out by any route, or a switch of account: the next one's restriction standing is read fresh.
+    const unwatchRestrictions = clearRestrictionsOnIdentityChange(controller.getState(), (listener) => controller.subscribe(listener))
+    return () => { unbind(); unsubscribe(); unwatchRestrictions() }
   }, [controller])
 
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */

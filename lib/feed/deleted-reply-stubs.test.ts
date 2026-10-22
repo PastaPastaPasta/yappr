@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Reply } from '@/lib/types'
 
 const shape = vi.hoisted(() => ({ liveThreads: false, outlive: true }))
@@ -47,6 +47,76 @@ describe('deletedReplyStubs', () => {
   it('does not stub a parent that is loaded, including an earlier stub', () => {
     const stub = deletedReplyStubs([reply('r2', 'gone', 2)], new Set(['gone']))
     expect(deletedReplyStubs([...stub, reply('r2', 'gone', 2), reply('r5', 'gone', 5)], new Set(['gone']))).toEqual([])
+  })
+})
+
+describe('a reply under a hidden parent (v18)', () => {
+  const hiddenReply = (id: string, replyToReplyId: string | undefined, at: number): Reply => ({
+    ...reply(id, replyToReplyId, at), content: 'secret text', media: [{ id: 'm', type: 'image', url: 'https://x/y.png' }], moderation: { mod: 1, modLabel: 2 },
+  })
+  const root = { id: 'ROOT', author: { ...author, id: 'B' }, content: 'root', createdAt: new Date(0), likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0 }
+  const reads = (stored: Reply[]) => ({
+    getMany: vi.fn(async (ids: string[]) => stored.filter((r) => ids.includes(r.id))),
+    provenAbsent: vi.fn(async () => new Set<string>()),
+  })
+
+  beforeEach(() => {
+    shape.liveThreads = true
+    shape.outlive = false
+  })
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('keeps the reply under a placeholder with no content, in the hidden reply\'s place', async () => {
+    // h2 is hidden and nests under h1, also hidden; the child c1 sits under h2.
+    const r = reads([hiddenReply('h1', undefined, 1), hiddenReply('h2', 'h1', 2)])
+    const replies = await withMissingReplyParents([reply('c1', 'h2', 10)], r)
+    expect(r.getMany.mock.calls).toEqual([[['h2']], [['h1']]])
+    const stubs = replies.filter((x) => x.hiddenStub)
+    expect(stubs.map((x) => x.id).sort()).toEqual(['h1', 'h2'])
+    for (const stub of stubs) {
+      expect(stub).toMatchObject({ content: '', likes: 0, rootPostId: 'ROOT' })
+      expect(stub.media).toBeUndefined()
+      expect(stub.moderation).toBeUndefined()
+      expect(stub.author.id).toBe('')
+      expect(stub.deletedStub).toBeUndefined()
+    }
+    const thread = assembleFlatThread(root, replies)
+    const shown = (threads: typeof thread): unknown[] => threads.map((t) => [t.content.id, shown(t.nestedReplies)])
+    expect(shown(thread)).toEqual([['h1', [['h2', [['c1', []]]]]]])
+  })
+
+  it('still stubs a deleted parent the usual way, and mixes with hidden ones', async () => {
+    const tomb: Reply = { ...reply('t1', undefined, 1), content: '', deleted: true }
+    const r = reads([tomb, hiddenReply('h1', undefined, 2)])
+    const replies = await withMissingReplyParents([reply('c1', 't1', 10), reply('c2', 'h1', 11)], r)
+    expect(replies.filter((x) => x.hiddenStub).map((x) => x.id)).toEqual(['h1'])
+    expect(replies.find((x) => x.id === 't1')).toBe(tomb)
+  })
+
+  it('does not stub a parent that is merely unlisted for another reason', async () => {
+    const r = reads([reply('plain', undefined, 1)])
+    const replies = await withMissingReplyParents([reply('c1', 'plain', 10)], r)
+    expect(replies.map((x) => x.id)).toEqual(['c1'])
+  })
+
+  it('stubs nothing on an archival build, which lists the hidden reply itself', async () => {
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    const r = reads([hiddenReply('h1', undefined, 1)])
+    const replies = await withMissingReplyParents([reply('c1', 'h1', 10)], r)
+    expect(replies.map((x) => x.id)).toEqual(['c1'])
+  })
+
+  it('is pruned with the tombstones when nothing live nests under it', async () => {
+    const { pruneHiddenTombstones } = await import('./hidden-tombstones')
+    const stub: Reply = { ...reply('h1', undefined, 1), content: '', hiddenStub: true }
+    const tomb: Reply = { ...reply('t1', 'h1', 2), content: '', deleted: true }
+    expect(pruneHiddenTombstones([stub, tomb]).map((x) => x.id)).toEqual([])
+    expect(pruneHiddenTombstones([stub, tomb, reply('c1', 't1', 3)]).map((x) => x.id)).toEqual(['h1', 't1', 'c1'])
+  })
+
+  it('does not count as a reply in the visible total', async () => {
+    const { countVisibleReplies } = await import('./visible-reply-counts')
+    expect(countVisibleReplies([{ content: { hiddenStub: true }, nestedReplies: [{ content: {}, nestedReplies: [] }] }])).toBe(1)
   })
 })
 

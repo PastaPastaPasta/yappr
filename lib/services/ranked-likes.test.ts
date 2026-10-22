@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ ranked: vi.fn(), hydrate: vi.fn(), viewer: 'viewerA' }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { ranked: mocks.ranked } }) }));
@@ -212,6 +212,84 @@ it('reads the Following Top all-time on v10 (per-author has no window there)', a
   const { topLikedPostsByAuthorsHydrated } = await import('./ranked-likes');
   await topLikedPostsByAuthorsHydrated({ authorIds: ['authorA', 'authorB'], window: 'today' });
   expect(mocks.ranked.mock.calls.map(([query]) => ('timeRange' in query ? 'windowed' : query.documentTypeName))).toEqual(['like', 'like']);
+});
+
+/** A hydrated post as the composite page returns it; `hidden` marks it the way `transformRawPost` does for a post with `mod` set. */
+function rankedCard(id: string, hidden = false) {
+  return {
+    id, targetKind: 'post', content: id, createdAt: new Date(0), author: fenceAuthor,
+    likes: 0, replies: 0, reposts: 0, quotes: 0, views: 0,
+    ...(hidden ? { moderation: { mod: 1 } } : {}),
+  };
+}
+
+describe('hidden posts in a ranked list (v18)', () => {
+  const ids = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'];
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v18');
+    mocks.viewer = '';
+    mocks.ranked.mockResolvedValue({ entries: ids.map((id, index) => ({ groupValue: id, value: BigInt(10 - index) })) });
+  });
+
+  it('skips a hidden post and still fills the page, reading a little extra to do so', async () => {
+    mocks.hydrate.mockImplementation(async (request: { documentIds: string[] }) => {
+      const posts = request.documentIds.map((id) => rankedCard(id, id === 'p1' || id === 'p3'));
+      return { rawPosts: posts.map((post) => ({ $id: post.id })), posts, preloaded: {} };
+    });
+    const { topLikedPostsHydrated } = await import('./ranked-likes');
+
+    const page = await topLikedPostsHydrated({ limit: 3 });
+
+    expect(mocks.ranked.mock.calls[0][0].limit).toBe(8);
+    expect(page.map((post) => post.id)).toEqual(['p2', 'p4', 'p5']);
+    // The proved like count rides on the posts that are shown.
+    expect(page.map((post) => post.likes)).toEqual([9, 7, 6]);
+  });
+
+  it('shows fewer, not a hole, when more are hidden than the headroom covers', async () => {
+    mocks.hydrate.mockImplementation(async (request: { documentIds: string[] }) => {
+      const posts = request.documentIds.map((id) => rankedCard(id, id !== 'p8'));
+      return { rawPosts: posts.map((post) => ({ $id: post.id })), posts, preloaded: {} };
+    });
+    const { topLikedPostsHydrated } = await import('./ranked-likes');
+    expect((await topLikedPostsHydrated({ limit: 3 })).map((post) => post.id)).toEqual(['p8']);
+  });
+
+  it('skips the same posts in a merge across authors', async () => {
+    mocks.ranked.mockResolvedValue({ entries: [{ groupValue: 'p1', value: BigInt(9) }, { groupValue: 'p2', value: BigInt(8) }] });
+    mocks.hydrate.mockImplementation(async (request: { documentIds: string[] }) => {
+      const posts = request.documentIds.map((id) => rankedCard(id, id === 'p1'));
+      return { rawPosts: posts.map((post) => ({ $id: post.id })), posts, preloaded: {} };
+    });
+    const { topLikedPostsByAuthorsHydrated } = await import('./ranked-likes');
+    const page = await topLikedPostsByAuthorsHydrated({ authorIds: ['authorA'], limit: 1 });
+    expect(mocks.ranked.mock.calls[0][0].limit).toBe(6);
+    expect(page.map((post) => post.id)).toEqual(['p2']);
+  });
+
+  it('keeps hidden posts, and reads no extra, on an archival build', async () => {
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all');
+    mocks.hydrate.mockImplementation(async (request: { documentIds: string[] }) => {
+      const posts = request.documentIds.map((id) => rankedCard(id, id === 'p1'));
+      return { rawPosts: posts.map((post) => ({ $id: post.id })), posts, preloaded: {} };
+    });
+    const { topLikedPostsHydrated } = await import('./ranked-likes');
+    const page = await topLikedPostsHydrated({ limit: 3 });
+    expect(mocks.ranked.mock.calls[0][0].limit).toBe(3);
+    expect(page.map((post) => post.id)).toEqual(['p1', 'p2', 'p3']);
+  });
+
+  it('reads exactly the page asked for before v18', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17');
+    mocks.hydrate.mockImplementation(async (request: { documentIds: string[] }) => {
+      const posts = request.documentIds.map((id) => rankedCard(id));
+      return { rawPosts: posts.map((post) => ({ $id: post.id })), posts, preloaded: {} };
+    });
+    const { topLikedPostsHydrated } = await import('./ranked-likes');
+    await topLikedPostsHydrated({ limit: 3 });
+    expect(mocks.ranked.mock.calls[0][0].limit).toBe(3);
+  });
 });
 
 it('drops the zero-count groups of v11\'s preallocated like trees, which rank last', async () => {

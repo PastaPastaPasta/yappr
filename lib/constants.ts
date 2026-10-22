@@ -1,4 +1,5 @@
 import type { PollrTopology } from '@/lib/pollr-rules'
+import type { LanePin } from '@/lib/contract-topology'
 
 /**
  * Application constants
@@ -330,6 +331,37 @@ export const blogIsV9 = () => blogTopologyAtLeast('v9')
 export const blogListingsCarryModLane = () => blogTopologyAtLeast('v10')
 /** True on v10 and later: a post's `live` is 1 (listed) or 2 (its author was restricted when it was written), forced on create by the blog's `restriction` documents. */
 export const blogAuthorsCanBeRestricted = () => blogTopologyAtLeast('v10')
+/**
+ * The `live` pin a blog post listing (`timeline`, `blogAndTime`) starts with:
+ * `live == true` on v9, the listed lane `live == 1` on v10, nothing before v9.
+ * Paired with {@link blogModPin} (`mod == null` follows `live` on v10).
+ */
+export function blogListedLivePin(): LanePin[] {
+  if (!blogIsV9()) return []
+  return [['live', '==', blogListingsCarryModLane() ? 1 : true]]
+}
+/** The `mod == null` pin a v10 blog, post or comment listing carries after its leading property; nothing before v10. */
+export function blogModPin(): LanePin[] {
+  return blogListingsCarryModLane() ? [['mod', '==', null]] : []
+}
+/** The `mod == null` pin a v11 store, item or review listing (or rating tree) carries; nothing before v11. */
+export function storefrontModPin(): LanePin[] {
+  return storefrontListingsCarryModLane() ? [['mod', '==', null]] : []
+}
+/** The `orderBy` entries matching a lane prefix: each pinned property, ascending (an orderBy over an index is a contiguous run of its properties). */
+export function lanePinOrderBy(pins: readonly LanePin[]): Array<[string, 'asc']> {
+  return pins.map(([field]): [string, 'asc'] => [field, 'asc'])
+}
+/**
+ * The `live` a new blog post is written with: v10's lane (2 while its author
+ * has a blog restriction in force, 1 otherwise; the contract refuses the
+ * other), `true` on v9, and `undefined` before v9.
+ */
+export function blogLiveValue(restricted: boolean): true | 1 | 2 | undefined {
+  if (!blogIsV9()) return undefined
+  if (blogAuthorsCanBeRestricted()) return restricted ? 2 : 1
+  return true
+}
 /** True on v2–v6: a comment costs {@link BLOG_YAPP_TOKEN_COSTS} YAPP (v7 charges an action fee instead). */
 export const blogCommentsCostYapp = () => blogIsV2() && !blogIsV7()
 // ---- profile topology ----

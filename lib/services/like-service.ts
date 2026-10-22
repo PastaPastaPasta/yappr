@@ -7,7 +7,7 @@ import { paginateFetchAll, documentCount, groupedDocumentCount, mapLimit, queryO
 import { isFrozenBalanceError, isInsufficientTokenError, isTokenPausedError } from '../error-utils';
 import type { getEvoSdk } from './evo-sdk-service';
 import type { RecentTarget } from '../like-notification-snapshot';
-import { indexOnlyLikeShapeFor, likeIndexFor, selfLikesAreRefused, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, replyOwnerIndexOrderPrefix, replyOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor, inlineTags } from '../contract-topology';
+import { indexOnlyLikeShapeFor, likeIndexFor, likesCarryPostLive, selfLikesAreRefused, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, replyOwnerIndexOrderPrefix, replyOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor, inlineTags } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -38,6 +38,32 @@ export interface LikeDocument {
 export interface LikeTargetInfo {
   author?: string;
   tags?: string[];
+  /**
+   * v18 posts: the lane the target post was stored with (`live`, 1 listed or 2
+   * written while its author was restricted). A like repeats it as `postLive`
+   * and the reference `where` binds the two (40127 on a mismatch). Read off the
+   * post when absent; it is never guessed.
+   */
+  live?: PostLane;
+}
+
+/** A v18 post's stored `live` lane. */
+type PostLane = 1 | 2;
+
+/** The agreement-bound values a like repeats from its target. */
+interface ResolvedTarget {
+  author: string;
+  tags: string[] | null;
+  /** v18 post likes: the post's stored lane; null when the post has none (a tombstone) or the like carries none. */
+  live: PostLane | null;
+}
+
+/** The v18 `like` property that copies the post's `live`. */
+const POST_LIVE_FIELD = 'postLive';
+
+/** Whether this kind of like repeats the post's lane (v18 `like`; `likeReply` names the reply alone). */
+function likeCopiesLane(kind: TargetKind): boolean {
+  return kind === 'post' && likesCarryPostLive();
 }
 
 /** The delete tuple an indexOnly unlike needs beyond the content values. */
@@ -207,6 +233,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
         return await this.likeIndexOnly(postId, ownerId, kind, shape, {
           author: target?.author ?? postOwnerId,
           tags: target?.tags,
+          live: target?.live,
         });
       }
 
@@ -290,9 +317,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     kind: TargetKind,
     shape: IndexOnlyLikeShape,
     target?: LikeTargetInfo
-  ): Promise<{ author: string; tags: string[] | null }> {
+  ): Promise<ResolvedTarget> {
     // v13 `likeReply` names the reply alone: nothing to agree with.
-    if (shape.authorField === null && shape.hashtagField === null) return { author: target?.author ?? '', tags: null };
+    if (shape.authorField === null && shape.hashtagField === null) return { author: target?.author ?? '', tags: null, live: null };
     let author = target?.author;
     let tags: string[] | undefined = shape.hashtagField ? target?.tags : undefined;
 
@@ -312,7 +339,21 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     }
 
     if (!author) throw new Error(`Cannot resolve like target author for ${targetId}`);
-    return { author, tags: shape.hashtagField !== null ? tags ?? [] : null };
+    // v18: the like repeats the post's lane. The stored document is the source of truth.
+    const live = likeCopiesLane(kind) ? target?.live ?? await this.readPostLane(targetId) : null;
+    return { author, tags: shape.hashtagField !== null ? tags ?? [] : null, live };
+  }
+
+  /** The `live` lane a post is stored with (1 or 2), or null when it has none (an author's tombstone) or is gone. */
+  private async readPostLane(postId: string): Promise<PostLane | null> {
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
+    const stored = await sdk.documents.get(this.contractId, 'post', postId);
+    if (!stored) return null;
+    const raw = documentToPlainObject(stored);
+    const data = (raw.data || raw) as Record<string, unknown>;
+    const live = data.live ?? raw.live;
+    return live === 1 || live === 2 ? live : null;
   }
 
   /**
@@ -335,12 +376,13 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     targetId: string,
     shape: IndexOnlyLikeShape,
     kind: TargetKind,
-    info: { author: string; tags: string[] | null }
+    info: ResolvedTarget
   ): Record<string, unknown> {
     const { field } = likeIndexFor(kind);
     const tags = info.tags ?? [];
     return {
       [field]: identifierStringToDocumentBytes(targetId),
+      ...(info.live !== null && likeCopiesLane(kind) ? { [POST_LIVE_FIELD]: info.live } : {}),
       ...(shape.authorField !== null ? { [shape.authorField]: identifierStringToDocumentBytes(info.author) } : {}),
       ...(shape.hashtagField !== null && tags.length > 0
         ? { [shape.hashtagField]: inlineTags()?.isArray ? [...tags] : tags[0] }
@@ -379,6 +421,8 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     target?: LikeTargetInfo
   ): Promise<boolean> {
     const info = await this.resolveTargetInfo(targetId, kind, shape, target);
+    // v18 refuses a like of a post with no lane (an author's tombstone): never send it.
+    if (likeCopiesLane(kind) && info.live === null) throw new Error(`Cannot like post ${targetId}: it has no live lane (deleted)`);
     const { docType } = likeIndexFor(kind);
     const likeData = this.indexOnlyLikeData(targetId, shape, kind, info);
 
@@ -511,20 +555,26 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       return true;
     }
     const info = await this.resolveTargetInfo(targetId, kind, shape, target);
-    const result = await stateTransitionService.deleteDocumentByValues(
-      this.contractId,
-      likeIndexFor(kind).docType,
-      ownerId,
-      {
-        documentId: typeof like.$id === 'string' && like.$id ? like.$id : bs58.encode(crypto.getRandomValues(new Uint8Array(32))),
-        data: this.indexOnlyLikeData(targetId, shape, kind, info),
+    const documentId = typeof like.$id === 'string' && like.$id ? like.$id : bs58.encode(crypto.getRandomValues(new Uint8Array(32)));
+    // v18: the delete must repeat the lane the like was written with. The post's
+    // lane never changes, but a tombstoned post has none to read, so the like's
+    // own is tried instead: 1, then 2.
+    const lanes: (PostLane | null)[] = likeCopiesLane(kind) && info.live === null ? [1, 2] : [info.live];
+    for (const live of lanes) {
+      const result = await stateTransitionService.deleteDocumentByValues(
+        this.contractId,
+        likeIndexFor(kind).docType,
+        ownerId,
+        { documentId, data: this.indexOnlyLikeData(targetId, shape, kind, { ...info, live }) }
+      );
+      // As on v9/v10: an unconfirmed or failed report is settled by the chain.
+      if (result.success) return true;
+      if (await this.waitForLikeGone(targetId, ownerId, kind)) {
+        logger.warn('Unlike reported failure but the like is gone from the chain — treating as success');
+        return true;
       }
-    );
-    // As on v9/v10: an unconfirmed or failed report is settled by the chain.
-    if (result.success) return true;
-    if (!(await this.waitForLikeGone(targetId, ownerId, kind))) return false;
-    logger.warn('Unlike reported failure but the like is gone from the chain — treating as success');
-    return true;
+    }
+    return false;
   }
 
   /**

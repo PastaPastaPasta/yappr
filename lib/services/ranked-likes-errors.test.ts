@@ -13,6 +13,10 @@ vi.mock('../contract-topology', () => ({
   windowedRankingsAvailable: () => true,
   windowedRankingFor: () => ({ docType: 'like', index: 'byTrendPost', grid: { range: 259200, step: 86400 }, selector: 'oldest' }),
   referencesMayDangle: () => false,
+  // Before v18: no hidden-post headroom, so every read asks for exactly the limit.
+  listingsCarryModLane: () => false,
+  // A windowed like read pins `postLive == 1` on v18 only.
+  trendLanePin: () => [],
 }));
 
 function ranking(count: number, prefix = 'post') {

@@ -3,6 +3,7 @@ import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
 import { extractPostEmbedFields } from '@/lib/poll-embed';
 import { mediaFromDocument } from '@/lib/media/media-fields';
 import { inlinePostTags } from '@/lib/contract-topology';
+import { postModerationOf } from './post-moderation';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
@@ -118,6 +119,8 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
 
   const resolvedId = getFirstValidIdentifier(doc.$id, doc.id);
   const id = resolvedId || createPlaceholderPostId(doc, data);
+  // v18: the moderators' hide marks, and lane 2 for a restricted author's post.
+  const moderation = postModerationOf(doc, data);
 
   // Same media mapping as postService.transformDocument — without it, feed
   // cards render without the post's image while the detail page shows it.
@@ -164,5 +167,6 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     keyGeneration,
     nonce: rawNonce ? normalizeBytes(rawNonce) ?? undefined : undefined,
     feed,
+    ...(moderation ? { moderation } : {}),
   };
 }

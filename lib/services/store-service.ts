@@ -8,7 +8,8 @@ import { logger } from '@/lib/logger';
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6 } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, lanePinOrderBy, storefrontIsV6, storefrontModPin } from '../constants';
+import { carryModerationIntoReplace, moderationFieldOf, withoutHidden } from './moderation-carry';
 import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils';
 import { storeStatsService } from './store-stats-service';
 import type {
@@ -86,6 +87,8 @@ class StoreService extends BaseDocumentService<Store> {
     const fields = super.extractContentFields(doc);
     if (Array.isArray(fields.paymentUris)) fields.paymentUris = paymentListToStore(fields.paymentUris, storedPaymentLists.get(doc));
     if (fields.contactMethods && typeof fields.contactMethods === 'object') fields.contactMethods = JSON.stringify(fields.contactMethods);
+    // A replace sends a moderator's `mod`/`modLabel` back unchanged (a dropped or changed one is refused, 41124).
+    carryModerationIntoReplace(fields, doc);
     return fields;
   }
 
@@ -122,7 +125,8 @@ class StoreService extends BaseDocumentService<Store> {
       policies: data.policies,
       location: data.location,
       contactMethods: parseContactMethods(data.contactMethods),
-      category: data.category
+      category: data.category,
+      ...moderationFieldOf(doc)
     };
     storedPaymentLists.set(store, data.paymentUris);
     return store;
@@ -254,8 +258,8 @@ class StoreService extends BaseDocumentService<Store> {
   async getNewestActiveStores(limit = 50): Promise<{ stores: Store[]; complete: boolean }> {
     if (storefrontIsV6()) {
       const { documents } = await this.query({
-        where: [['status', '==', 'active']],
-        orderBy: [['status', 'asc'], ['$createdAt', 'desc']],
+        where: [['status', '==', 'active'], ...storefrontModPin()],
+        orderBy: [['status', 'asc'], ...lanePinOrderBy(storefrontModPin()), ['$createdAt', 'desc']],
         limit,
       });
       return { stores: documents, complete: true };
@@ -275,7 +279,8 @@ class StoreService extends BaseDocumentService<Store> {
       const ranked = sort === 'topRated'
         ? await storeStatsService.topRatedStores(limit, { throwOnError: true })
         : await storeStatsService.mostOrderedStores(limit, { throwOnError: true });
-      const byId = new Map((await this.getMany(ranked.map((entry) => entry.id), { throwOnError: true })).map((store) => [store.id, store]));
+      // A ranking reaches stores by id, so a hidden one is dropped here (an archival build keeps it).
+      const byId = new Map(withoutHidden(await this.getMany(ranked.map((entry) => entry.id), { throwOnError: true })).map((store) => [store.id, store]));
       const stores = ranked.flatMap((entry) => {
         const store = byId.get(entry.id);
         return store?.status === 'active' ? [store] : [];
@@ -290,8 +295,8 @@ class StoreService extends BaseDocumentService<Store> {
   /** The newest active stores in one category (v6 `byCategory [status, category, $createdAt]`), `limit` at most. */
   async getNewestActiveStoresInCategory(category: string, limit = 50): Promise<Store[]> {
     const { documents } = await this.query({
-      where: [['status', '==', 'active'], ['category', '==', category]],
-      orderBy: [['status', 'asc'], ['category', 'asc'], ['$createdAt', 'desc']],
+      where: [['status', '==', 'active'], ...storefrontModPin(), ['category', '==', category]],
+      orderBy: [['status', 'asc'], ...lanePinOrderBy(storefrontModPin()), ['category', 'asc'], ['$createdAt', 'desc']],
       limit,
     });
     return documents;

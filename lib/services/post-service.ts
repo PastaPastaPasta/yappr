@@ -8,11 +8,13 @@ import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, postListingWherePrefix, postListingsCarryLiveMarker, privateFeedClientSupported, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, postListingWherePrefix, postListingsCarryLiveMarker, privateFeedClientSupported, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { extractMentions, indexedTags } from '@/lib/post-helpers';
 import { tagLimitProblem } from '@/lib/compose/limits';
 import { tombstoneDocument } from './tombstone-helpers';
+import { createInLiveLane } from './live-lane';
+import { postModerationOf, withoutHiddenItems } from '@/lib/feed/post-moderation';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes, type AuthorPostCounts } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
@@ -102,6 +104,7 @@ export function replyToPost(reply: Reply): Post {
     deleted: reply.deleted,
     sensitive: reply.sensitive,
     _enrichment: reply._enrichment,
+    ...(reply.moderation ? { moderation: reply.moderation } : {}),
   };
 }
 
@@ -279,6 +282,9 @@ class PostService extends BaseDocumentService<Post> {
     const feed = (data.feed ?? doc.feed) as number | undefined;
     const rawNonce = data.nonce || doc.nonce;
 
+    // v18: the moderators' hide marks, and lane 2 for a restricted author's post.
+    const moderation = postModerationOf(doc, data);
+
     // Normalize byte arrays (SDK may return as base64 string, Uint8Array, or regular array)
     // normalizeBytes returns null on decode failure to avoid treating malformed data as encrypted
     const encryptedContent = rawEncryptedContent ? normalizeBytes(rawEncryptedContent) ?? undefined : undefined;
@@ -320,6 +326,7 @@ class PostService extends BaseDocumentService<Post> {
       keyGeneration,
       nonce,
       feed,
+      ...(moderation ? { moderation } : {}),
     };
 
     return post;
@@ -558,9 +565,8 @@ class PostService extends BaseDocumentService<Post> {
     }
     // v13: a post is in its author's `ownerAndTime` while it carries `live`;
     // the tombstone leaves it out (the `live` rule refuses anything else).
-    if (postsCarryLiveMarker()) data.live = true;
-
-    return this.create(ownerId, data);
+    // v18 makes it a lane, set by the author's restriction standing.
+    return createInLiveLane('post', ownerId, data, (fields) => this.create(ownerId, fields));
   }
 
   /**
@@ -929,13 +935,23 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Fetch content by IDs, trying posts first and then replies for any not found.
    * Replies are converted to Post format for unified feed rendering.
+   *
+   * A hidden post or reply (v18) is dropped on a default build, after the
+   * lookup: it is still found as what it is, so it is not probed again as a
+   * reply or a blog post. `keepHidden` keeps them, for a caller that marks the
+   * card that points at them.
    */
-  async fetchPostsOrReplies(ids: string[]): Promise<Post[]> {
+  async fetchPostsOrReplies(ids: string[], options: { keepHidden?: boolean } = {}): Promise<Post[]> {
+    const found = await this.lookUpPostsOrReplies(ids);
+    return options.keepHidden ? found : withoutHiddenItems(found);
+  }
+
+  private async lookUpPostsOrReplies(ids: string[]): Promise<Post[]> {
     if (ids.length === 0) return [];
 
     const { replyService } = await import('./reply-service');
 
-    const posts = await this.getPostsByIds(ids);
+    const posts = await this.getPostsByIds(ids, { keepHidden: true });
     const foundPostIds = new Set(posts.map((post) => post.id));
     const missingIds = ids.filter((id) => !foundPostIds.has(id));
 
@@ -964,6 +980,10 @@ class PostService extends BaseDocumentService<Post> {
    * retried against the next doctype. v9 splits those into `quotedPostId`,
    * `quotedReplyId` and the cross-contract embed triple, so the caller already
    * knows where each id lives and nothing is probed.
+   *
+   * Hidden targets (v18) are returned WITH their marks, not dropped: the
+   * caller attaches only the visible ones and marks the card that quotes a
+   * hidden one (`markQuoteHidden`), so it reads "hidden" rather than "removed".
    */
   async fetchQuotedTargets(ids: {
     postIds: string[];
@@ -972,7 +992,7 @@ class PostService extends BaseDocumentService<Post> {
   }): Promise<Post[]> {
     const { replyService } = await import('./reply-service');
     const [posts, replies, blogPosts] = await Promise.all([
-      ids.postIds.length > 0 ? this.getPostsByIds(ids.postIds) : Promise.resolve<Post[]>([]),
+      ids.postIds.length > 0 ? this.getPostsByIds(ids.postIds, { keepHidden: true }) : Promise.resolve<Post[]>([]),
       ids.replyIds.length > 0 ? replyService.getRepliesByIds(ids.replyIds) : Promise.resolve<Reply[]>([]),
       fetchBlogPostsAsQuotes(ids.blogPostIds),
     ]);
@@ -1034,7 +1054,8 @@ class PostService extends BaseDocumentService<Post> {
     const byId = new Map(pages.flatMap(page => page.documents).map(post => [post.id, post]));
     const { mergePostEnrichment } = await import('@/lib/feed/load-post-enrichment');
     return {
-      posts: ids.flatMap(id => { const post = byId.get(id); return post ? [post] : []; }),
+      // A hidden post (v18) is not shown in a referenced-post list on a default build.
+      posts: withoutHiddenItems(ids.flatMap(id => { const post = byId.get(id); return post ? [post] : []; })),
       preloaded: mergePostEnrichment(pages.map(page => page.preloaded ?? {})),
     };
   }
@@ -1048,16 +1069,21 @@ class PostService extends BaseDocumentService<Post> {
    * proved not to exist — it consumes no limit and is not a transport failure.
    * Results are returned in the caller's id order. Author info is resolved for
    * each post (deduped by author) unless `skipEnrichment` is set.
+   *
+   * A post a moderator hid (v18) is dropped on a default build; `keepHidden`
+   * returns it with its marks for a caller that shows or marks it. A single post
+   * opened by id ({@link getPostById}) always keeps its marks.
    */
-  async getPostsByIds(postIds: string[], options: PostQueryOptions = {}): Promise<Post[]> {
+  async getPostsByIds(postIds: string[], options: PostQueryOptions & { keepHidden?: boolean } = {}): Promise<Post[]> {
     if (postIds.length === 0) return [];
 
     // getMany handles cache reuse, in-clause chunking and the per-id fallback
     // for a failed chunk; it dedupes ids internally.
     const byId = new Map((await this.getMany(postIds)).map((post) => [post.id, post]));
-    const posts = Array.from(new Set(postIds))
+    const found = Array.from(new Set(postIds))
       .map((id) => byId.get(id))
       .filter((p): p is Post => p !== undefined);
+    const posts = options.keepHidden ? found : withoutHiddenItems(found);
 
     // Authors resolve by default, deduped by author inside the batch helper;
     // callers that batch-enrich afterwards pass skipEnrichment to avoid

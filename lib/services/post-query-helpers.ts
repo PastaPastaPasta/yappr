@@ -6,7 +6,8 @@ import type { PostStats } from './post-service';
 import { identifierToHex, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, rangeDistinctCount } from './pagination-utils';
 import { getEvoSdk } from './evo-sdk-service';
-import { authorPostCountsAreRanked, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
+import { withoutHiddenItems } from '../feed/post-moderation';
+import { authorPostCountsAreRanked, isLiveMarker, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -293,7 +294,7 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<AuthorP
       });
 
       for (const doc of documents) {
-        if (doc.$ownerId && (!liveOnly || doc.live === true)) {
+        if (doc.$ownerId && (!liveOnly || isLiveMarker(doc.live))) {
           const ownerId = doc.$ownerId as string;
           authorCounts.set(ownerId, (authorCounts.get(ownerId) || 0) + 1);
         }
@@ -352,8 +353,7 @@ export async function fetchQuotePosts(
       limit,
     });
 
-    return documents
-      .map((doc) => transformDocument(doc))
+    return withoutHiddenItems(documents.map((doc) => transformDocument(doc)))
       // Read back through the SAME field the query keyed on. Compare the literal
       // field name: on v2 BOTH kinds resolve to 'quotedPostId' (the polymorphic
       // field), so testing against quoteFieldFor('reply') would route every v2

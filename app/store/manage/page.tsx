@@ -46,6 +46,7 @@ import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { ModerationClosedBanner } from '@/components/moderation/moderation-closed-notice'
+import { ModerationLabel } from '@/components/moderation/moderation-label'
 import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 
 function StoreManagePage() {
@@ -117,7 +118,7 @@ function StoreManagePage() {
 
         // Load items, zones, pending orders count, and check encryption key - handle each independently
         const [itemsResult, zonesResult, ordersResult, encKeyResult] = await Promise.allSettled([
-          storeItemService.getAllByStore(currentStoreId),
+          storeItemService.getAllByStore(currentStoreId, { includeHidden: true }),
           shippingZoneService.getByStore(currentStoreId),
           // v2: O(1) countable index (v6: on the store); v1: the legacy capped page length.
           storefrontIsV2()
@@ -167,7 +168,7 @@ function StoreManagePage() {
 
     setIsReloadingItems(true)
     try {
-      const allItems = await storeItemService.getAllByStore(store.id)
+      const allItems = await storeItemService.getAllByStore(store.id, { includeHidden: true })
       setItems(allItems.filter(item => item.status !== 'deleted'))
       setItemsLoadError(false)
     } catch (error) {
@@ -399,6 +400,7 @@ function StoreManagePage() {
                 <p className="text-sm text-gray-500">
                   {getStoreStatusLabel(store.status)}
                 </p>
+                <ModerationLabel contract="storefront" moderation={store.moderation} className="mt-1" />
               </div>
               <Button
                 variant="outline"
@@ -603,6 +605,7 @@ function StoreManagePage() {
                             {item.stockQuantity !== undefined && ` • ${item.stockQuantity} in stock`}
                           </p>
                           {shipsTo && <p className="text-xs text-gray-500 truncate">{shipsTo}</p>}
+                          <ModerationLabel contract="storefront" moderation={item.moderation} className="mt-1" />
                         </div>
                         <div className="flex gap-1">
                           <button

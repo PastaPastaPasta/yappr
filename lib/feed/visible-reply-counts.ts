@@ -12,17 +12,17 @@
  */
 
 interface ReplyNode {
-  content: { deleted?: boolean; deletedStub?: boolean }
+  content: { deleted?: boolean; deletedStub?: boolean; hiddenStub?: boolean }
   nestedReplies: ReplyNode[]
 }
 
 const seen = new Map<string, { counted: number; visible: number }>()
 
-/** Replies a loaded thread shows as readable replies: tombstones and deleted-parent stubs are not replies. */
+/** Replies a loaded thread shows as readable replies: tombstones and deleted- or hidden-parent stubs are not replies. */
 export function countVisibleReplies(threads: readonly ReplyNode[]): number {
   let total = 0
   for (const thread of threads) {
-    if (!thread.content.deleted && !thread.content.deletedStub) total++
+    if (!thread.content.deleted && !thread.content.deletedStub && !thread.content.hiddenStub) total++
     total += countVisibleReplies(thread.nestedReplies)
   }
   return total

@@ -79,6 +79,12 @@ export interface Post {
    * renders the removed stub and fetches nothing.
    */
   quotedPostRemoved?: boolean
+  /**
+   * v18: the quoted post/reply is hidden by the moderators (`mod` set) and
+   * this build does not show hidden content. The card renders the hidden
+   * stub and fetches nothing.
+   */
+  quotedPostHidden?: boolean
   // Cross-contract embed (e.g. a Pollr poll). All three are set together.
   embedContractId?: string // base58 contract id the embedded document lives on
   embedDocType?: string    // document type name on that contract (e.g. 'poll')
@@ -156,6 +162,12 @@ export interface Reply {
   deleted?: boolean       // v9 tombstone marker (see Post.deleted)
   /** v10: a stand-in for a reply proved deleted, holding its children's place in the thread; never a real document. */
   deletedStub?: boolean
+  /**
+   * v18: a stand-in for a reply the moderators hid, keeping its children's place in the thread on a
+   * default build ("This reply is hidden by moderators"). Carries no content or author; never a real
+   * document. An archival build shows the hidden reply itself, labelled from `moderation`.
+   */
+  hiddenStub?: boolean
   sensitive?: boolean     // author-declared NSFW flag (see Post.sensitive)
   parentContent?: Post | Reply  // Lazy-loaded parent
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries

@@ -9,6 +9,8 @@ import { truncateId } from '../utils';
 import { isBlogPostTombstone, isPublishedBlogPost } from '../blog/content-utils';
 import { privateFeedClientSupported, likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
 import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
+import { isHiddenItem, withoutHiddenItems } from '../feed/post-moderation';
+import { dropsHidden } from '../moderation-view';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
 import { readNotificationWindow } from './notification-windows';
 import { mentionsOfUserQuery } from './mention-service';
@@ -465,7 +467,8 @@ class NotificationService {
     if (!window && !preloaded) return [];
     const documents = preloaded ?? (window ? await readNotificationWindow(window, userId, sinceTimestamp) : []);
     const { transformRawPost } = await import('../feed/transform-raw-post');
-    return documents.map((doc) => transformRawPost(doc)).flatMap((post): RawNotification[] => {
+    // The quote windows are not laned (v18): a hidden quote is dropped here.
+    return withoutHiddenItems(documents.map((doc) => transformRawPost(doc))).flatMap((post): RawNotification[] => {
       const targetId = quotedTargetIdOf(post);
       if (!targetId) return [];
       const type = quoteNotificationType(post);
@@ -493,7 +496,8 @@ class NotificationService {
 
     // v11: a tombstoned reply keeps its parent linkage, so it stays in the
     // window; its author deleted it, and there is nothing to announce.
-    return withoutHiddenTombstones(replies)
+    // v18: the reply windows are not laned either, so a hidden reply is dropped too.
+    return withoutHiddenItems(withoutHiddenTombstones(replies))
       .map(reply => ({
         id: `reply-${reply.id}`,
         type: 'reply' as const,
@@ -606,7 +610,8 @@ class NotificationService {
     const { blogCommentService } = await import('./blog-comment-service');
     const { blogPostService } = await import('./blog-post-service');
 
-    const comments = await blogCommentService.getCommentsOnMyPosts(userId, sinceTimestamp, NOTIFICATION_QUERY_LIMIT);
+    // Blog v10's comment index is not laned: a hidden comment is dropped here.
+    const comments = withoutHiddenItems(await blogCommentService.getCommentsOnMyPosts(userId, sinceTimestamp, NOTIFICATION_QUERY_LIMIT));
     if (comments.length === 0) return [];
 
     const posts = new Map(
@@ -621,7 +626,7 @@ class NotificationService {
       // post — this drops only rows whose post did not come back (a read
       // failure), since there is no title or link to render without it, and
       // rows on a post its author has since deleted (a v7 tombstone).
-      if (!post || isBlogPostTombstone(post)) return [];
+      if (!post || isBlogPostTombstone(post) || isHiddenItem(post)) return [];
       return [{
         id: `blogComment-${comment.id}`, type: 'blogComment' as const, fromUserId: comment.ownerId,
         postId: post.id, blogId: post.blogId, blogPostTitle: post.title, blogPostSlug: post.slug,
@@ -816,6 +821,12 @@ class NotificationService {
         // Check both top-level and nested locations for content
         const content = (docData.content as string) || (nestedData?.content as string) || '';
 
+        // v18: a notification about a hidden post shows none of its text.
+        if (dropsHidden({ mod: docData.mod ?? nestedData?.mod })) {
+          foundPostIds.add(id);
+          continue;
+        }
+
         const post: Post = {
           id,
           author: {
@@ -869,6 +880,7 @@ class NotificationService {
           const createdAt = docData.$createdAt as number;
           // Check both top-level and nested locations for content
           const content = (docData.content as string) || (nestedData?.content as string) || '';
+          if (dropsHidden({ mod: docData.mod ?? nestedData?.mod })) continue;
 
           // Extract the reply's parent linkage in whichever fields this topology
           // declares, so the notification can link into the thread.

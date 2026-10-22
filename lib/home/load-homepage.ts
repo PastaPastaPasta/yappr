@@ -2,7 +2,9 @@ import type { Post } from '@/lib/types';
 import type { CompositeDocumentsQuery, CompositeSubQuery } from '@dashevo/wasm-sdk';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '@/lib/constants';
 import { profileBaseSource, profileExtensionSource } from '@/lib/profile/v10-profile';
-import { likesAreIndexOnly } from '@/lib/contract-topology';
+import { likesAreIndexOnly, listingsCarryModLane } from '@/lib/contract-topology';
+import { moderationViewAll } from '@/lib/moderation-view';
+import { withoutHiddenItems } from '@/lib/feed/post-moderation';
 import { logger } from '@/lib/logger';
 import { loadCompositeFeedPage, usernamesByIdentity, type CompositeFeedPage } from '@/lib/feed/composite-feed-page';
 import { dpnsService } from '@/lib/services/dpns-service';
@@ -72,6 +74,13 @@ const FEATURED_LIMIT = 10;
  * so a little headroom is read for the featured cards.
  */
 const RANKED_LIMIT = FEATURED_LIMIT + 2;
+/**
+ * v18: a ranking counts a hidden post's likes, so some ranked ids are skipped
+ * after hydration (an archival build skips none): a little more headroom.
+ */
+function rankedLimit(): number {
+  return listingsCarryModLane() && !moderationViewAll() ? FEATURED_LIMIT + 6 : RANKED_LIMIT;
+}
 const TOP_USERS_LIMIT = 6;
 /** Grouped author counts stop at this many groups (Drive's cap). */
 const AUTHOR_GROUP_CAP = 100;
@@ -146,7 +155,8 @@ async function lookUpContributors(ids: readonly string[]): Promise<ContributorId
 /** A composite page's posts carrying the author names, profiles and avatars it proved with them. */
 function postsWithAuthors(page: CompositeFeedPage | null, likesById: ReadonlyMap<string, number>): Post[] {
   if (!page) return [];
-  return page.posts.map((post) => {
+  // A hidden post (v18) is skipped here too, whatever the page already dropped.
+  return withoutHiddenItems(page.posts).map((post) => {
     const authorId = post.author.id;
     const username = page.preloaded.usernames?.get(authorId);
     const displayName = page.preloaded.profiles?.get(authorId)?.displayName;
@@ -191,7 +201,7 @@ async function loadHomepageRanked(onFeatured?: (posts: Post[]) => void): Promise
 
 /** The proved like ranking hydrated as one composite page, topped up with the newest posts. */
 async function loadFeaturedPosts(): Promise<Post[]> {
-  const ranked = await topLikedPosts({ limit: RANKED_LIMIT, window: 'all' });
+  const ranked = await topLikedPosts({ limit: rankedLimit(), window: 'all' });
   // Every ranked id, headroom included: a removed post drops out of the page.
   const featuredIds = ranked.map((entry) => entry.postId);
   const rank = new Map(featuredIds.map((id, index) => [id, index]));

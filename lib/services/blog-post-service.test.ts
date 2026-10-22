@@ -4,6 +4,8 @@ import bs58 from 'bs58';
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: {} }) }));
 const tombstones = vi.hoisted(() => ({ tombstoneDocument: vi.fn() }));
 vi.mock('./tombstone-helpers', () => tombstones);
+const restrictions = vi.hoisted(() => ({ isRestricted: vi.fn(), refresh: vi.fn() }));
+vi.mock('./restriction-service', () => ({ restrictionServiceFor: () => restrictions }));
 import { PrePublishRateLimitError, blogPostService } from './blog-post-service';
 import type { BlogPost } from '@/lib/types';
 
@@ -343,5 +345,123 @@ describe('parent-independent owner management', () => {
     tombstones.tombstoneDocument.mockResolvedValue(true);
     await expect(blogPostService.deletePost(orphan.id, ownerId)).resolves.toBe(true);
     expect(tombstones.tombstoneDocument).toHaveBeenCalledWith(expect.objectContaining({ documentId: 'orphan', clearableReferences: ['blogId'] }));
+  });
+});
+
+describe('blog v10: the listed lane, the live lane on a write, and moderator marks', () => {
+  const content = [{ type: 'paragraph', content: [{ type: 'text', text: 'hi' }] }];
+  type Create = (ownerId: string, data: Record<string, unknown>) => Promise<BlogPost>;
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v10');
+    restrictions.isRestricted.mockReset();
+    restrictions.refresh.mockReset();
+    vi.spyOn(blogPostService, 'getPostBySlug').mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const spyCreate = () => vi.spyOn(blogPostService as unknown as { create: Create }, 'create');
+
+  it('pins live == 1 then mod == null on the timeline and a blog\'s listing, in the index order', async () => {
+    const query = vi.spyOn(blogPostService, 'query').mockResolvedValue({ documents: [] } as never);
+    await blogPostService.getLatestPosts({ limit: 3 });
+    expect(query).toHaveBeenLastCalledWith({
+      where: [['live', '==', 1], ['mod', '==', null], ['$createdAt', '>', 0]],
+      orderBy: [['$createdAt', 'desc']], limit: 3, startAfter: undefined,
+    });
+    await blogPostService.getPostsByBlog(blogId, { limit: 5 });
+    expect(query).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: [['live', '==', 1], ['mod', '==', null], ['blogId', '==', blogId]],
+      orderBy: [['live', 'asc'], ['mod', 'asc'], ['blogId', 'asc'], ['$createdAt', 'desc']],
+    }));
+  });
+
+  it('writes live: 1 while the author is not restricted', async () => {
+    restrictions.isRestricted.mockResolvedValue(false);
+    const create = spyCreate().mockResolvedValue({ id: 'new' } as BlogPost);
+    await blogPostService.createPost(ownerId, { blogId, title: 'Hello', content });
+    expect(create.mock.calls[0][1]).toMatchObject({ live: 1 });
+  });
+
+  it('writes live: 2 while the author has a blog restriction in force', async () => {
+    restrictions.isRestricted.mockResolvedValue(true);
+    const create = spyCreate().mockResolvedValue({ id: 'new' } as BlogPost);
+    await blogPostService.createPost(ownerId, { blogId, title: 'Hello', content });
+    expect(restrictions.isRestricted).toHaveBeenCalledWith(ownerId);
+    expect(create.mock.calls[0][1]).toMatchObject({ live: 2 });
+  });
+
+  it('writes live: true on v9 without reading any restriction', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9');
+    const create = spyCreate().mockResolvedValue({ id: 'new' } as BlogPost);
+    await blogPostService.createPost(ownerId, { blogId, title: 'Hello', content });
+    expect(create.mock.calls[0][1]).toMatchObject({ live: true });
+    expect(restrictions.isRestricted).not.toHaveBeenCalled();
+    expect(restrictions.refresh).not.toHaveBeenCalled();
+  });
+
+  it('re-reads the standing after a refused create and retries once with the corrected lane', async () => {
+    restrictions.isRestricted.mockResolvedValue(false);
+    restrictions.refresh.mockResolvedValue({ state: 1 });
+    const refused = new Error('document property constraint violated (10422)');
+    const create = spyCreate().mockRejectedValueOnce(refused).mockResolvedValueOnce({ id: 'new' } as BlogPost);
+    await expect(blogPostService.createPost(ownerId, { blogId, title: 'Hello', content })).resolves.toMatchObject({ id: 'new' });
+    expect(restrictions.refresh).toHaveBeenCalledWith(ownerId);
+    expect(create.mock.calls.map(([, data]) => data.live)).toEqual([1, 2]);
+  });
+
+  it('does not retry when the standing did not change', async () => {
+    restrictions.isRestricted.mockResolvedValue(false);
+    restrictions.refresh.mockResolvedValue(null);
+    const refused = new Error('refused for another reason');
+    const create = spyCreate().mockRejectedValue(refused);
+    await expect(blogPostService.createPost(ownerId, { blogId, title: 'Hello', content })).rejects.toBe(refused);
+    expect(restrictions.refresh).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it('reads the author\'s own pane across both lanes and merges them newest first', async () => {
+    const post = (id: string, createdAt: number) => ({ id, ownerId, blogId, title: id, content: [], slug: id, createdAt: new Date(createdAt) } as BlogPost);
+    const query = vi.spyOn(blogPostService, 'query').mockImplementation(async (options) => {
+      const live = options?.where?.find(([field]) => field === 'live')?.[2];
+      return { documents: live === 1 ? [post('listed-new', 30), post('listed-old', 10)] : [post('restricted', 20)] } as never;
+    });
+    const page = await blogPostService.getOwnerPostsPage(ownerId, { limit: 5 });
+    expect(page.posts.map((p) => p.id)).toEqual(['listed-new', 'restricted', 'listed-old']);
+    expect(page.nextCursor).toBeUndefined();
+    expect(query.mock.calls.map(([options]) => options?.where)).toEqual([
+      [['$ownerId', '==', ownerId], ['live', '==', 1]],
+      [['$ownerId', '==', ownerId], ['live', '==', 2]],
+    ]);
+  });
+
+  it('carries a moderator\'s mod and modLabel through a replace, and keeps the post\'s own live lane', () => {
+    const hidden = { moderation: { mod: 1, modLabel: 7, moderatedBy: 'someone', moderatedAt: 5 }, live: 2 };
+    const payload = replacePayload({ publishedAt: 1, ...hidden } as Partial<BlogPost>);
+    expect(payload).toMatchObject({ mod: 1, modLabel: 7, live: 2 });
+    expect(payload).not.toHaveProperty('moderation');
+    expect(replacePayload({ publishedAt: 1 })).toMatchObject({ live: 1 });
+    expect(replacePayload({ publishedAt: 1 })).not.toHaveProperty('mod');
+  });
+
+  it('keeps mod and modLabel on the author\'s tombstone', async () => {
+    tombstones.tombstoneDocument.mockReset();
+    tombstones.tombstoneDocument.mockResolvedValue(true);
+    await blogPostService.deletePost('post', ownerId);
+    const { preserve } = tombstones.tombstoneDocument.mock.calls[0][0];
+    expect(preserve.scalars).toEqual(expect.arrayContaining(['slug', 'publishedAt', 'mod', 'modLabel']));
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v9');
+    await blogPostService.deletePost('post', ownerId);
+    expect(tombstones.tombstoneDocument.mock.calls[1][0].preserve.scalars).not.toContain('mod');
+  });
+
+  it('returns a post by id with its moderation marks', () => {
+    const service = blogPostService as unknown as { transformDocument(doc: Record<string, unknown>): BlogPost };
+    const hidden = service.transformDocument({ $id: 'p', $ownerId: ownerId, blogId, mod: 1, modLabel: 3, $moderatedBy: 'm', $moderatedAt: 9, live: 1 });
+    expect(hidden).toMatchObject({ moderation: { mod: 1, modLabel: 3, moderatedBy: 'm', moderatedAt: 9 } });
+    expect(service.transformDocument({ $id: 'q', $ownerId: ownerId, blogId, live: 1 })).not.toHaveProperty('moderation');
   });
 });

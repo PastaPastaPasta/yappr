@@ -10,6 +10,7 @@ import { blogIsV9 } from '@/lib/constants'
 import { MyBlogPosts } from './my-blog-posts'
 import { isBlogPostTombstone } from '@/lib/blog/content-utils'
 import { CreateBlogModal } from './create-blog-modal'
+import { ModerationLabel } from '@/components/moderation/moderation-label'
 
 interface MyBlogsListProps {
   ownerId: string
@@ -31,7 +32,7 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
       setLoading(true)
       setError(null)
       try {
-        const result = await blogService.getBlogsByOwner(ownerId)
+        const result = await blogService.getBlogsByOwner(ownerId, { includeHidden: true })
         if (cancelled) return
         setBlogs(result)
 
@@ -72,15 +73,17 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
       ) : visibleBlogs.length === 0 ? null : (
         <div className="space-y-3">
           {visibleBlogs.map((blog) => (
-            <button
-              key={blog.id}
-              onClick={() => onSelectBlog?.(blog)}
-              className="w-full rounded-xl border border-gray-200 bg-white p-4 text-left hover:border-gray-300 dark:border-gray-800 dark:bg-neutral-950 dark:hover:border-gray-700"
-            >
-              <p className="text-lg font-semibold">{blog.name}</p>
-              {blog.description && <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{blog.description}</p>}
-              <p className="mt-2 text-xs text-gray-500">{counts[blog.id] || 0} posts</p>
-            </button>
+            <div key={blog.id}>
+              <button
+                onClick={() => onSelectBlog?.(blog)}
+                className="w-full rounded-xl border border-gray-200 bg-white p-4 text-left hover:border-gray-300 dark:border-gray-800 dark:bg-neutral-950 dark:hover:border-gray-700"
+              >
+                <p className="text-lg font-semibold">{blog.name}</p>
+                {blog.description && <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{blog.description}</p>}
+                <p className="mt-2 text-xs text-gray-500">{counts[blog.id] || 0} posts</p>
+              </button>
+              <ModerationLabel contract="blog" moderation={blog.moderation} className="mt-2" />
+            </div>
           ))}
         </div>
       )}

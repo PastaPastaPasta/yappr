@@ -20,6 +20,7 @@ import { quoteFieldsAreSplit, quoteFieldFor, targetKindOf } from '@/lib/contract
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants';
 import type { PostEmbed } from '@/lib/poll-embed';
 import { BLOG_POST_EMBED_DOC_TYPE, bumpGeneration, generationOf, quoteTargetOf } from './quote-targets';
+import { isHiddenItem, isQuoteHidden, markQuoteHidden } from './post-moderation';
 
 /** The write-side counterpart of `quoteTargetOf`: where a new quote's reference goes. */
 export interface QuoteReference {
@@ -68,7 +69,16 @@ export function resolveQuoteReference(quotingPost: Post | null | undefined): Quo
 
 /** True when this post references a quote target that has not been resolved yet. */
 function needsQuoteResolution(post: Post): boolean {
-  return !post.quotedPost && quoteTargetOf(post) !== null;
+  return !post.quotedPost && !isQuoteHidden(post) && quoteTargetOf(post) !== null;
+}
+
+/**
+ * Attaches a resolved quote target. A hidden one (v18) is not attached: the
+ * quote reads as unavailable, with no text of the hidden post.
+ */
+function attachTarget(post: Post, target: Post): void {
+  if (isHiddenItem(target)) markQuoteHidden(post);
+  else post.quotedPost = target;
 }
 
 // Shared between the batch pass and the per-card fallback so the two paths
@@ -140,7 +150,7 @@ export async function attachQuotedPosts(posts: Post[]): Promise<void> {
       if (inflight) {
         joins.push(
           inflight
-            .then((found) => { if (found) post.quotedPost = found; })
+            .then((found) => { if (found) attachTarget(post, found); })
             .catch(() => { /* the owning lookup already logged it */ })
         );
         continue;
@@ -174,8 +184,9 @@ export async function attachQuotedPosts(posts: Post[]): Promise<void> {
         for (const { post, targetId } of stillNeeded) {
           const found = byId.get(targetId);
           if (found) {
-            post.quotedPost = found;
-            if (generationOf(targetId) === startGenerations.get(targetId)) resolvedQuoteCache.set(found.id, found);
+            attachTarget(post, found);
+            // A hidden target is never cached: the per-card fallback would show it.
+            if (!isHiddenItem(found) && generationOf(targetId) === startGenerations.get(targetId)) resolvedQuoteCache.set(found.id, found);
           }
         }
       } finally {
@@ -236,6 +247,8 @@ export async function resolveQuotedPost(post: Post): Promise<Post | null> {
         found = await attempt();
       }
 
+      // A hidden target (v18) reads as unavailable and is not cached.
+      if (found && isHiddenItem(found)) return null;
       if (found && generationOf(target.id) === startGeneration) resolvedQuoteCache.set(target.id, found);
       return found;
     } finally {

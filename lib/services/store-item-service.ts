@@ -9,7 +9,8 @@
 
 import { BaseDocumentService, StaleRevisionError } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontIsV10, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, lanePinOrderBy, storefrontArraysAreTyped, storefrontIsV10, storefrontListingsCarryModLane, storefrontModPin, storefrontSupportsItemZones, storefrontVariantsAreTyped } from '../constants';
+import { carryModerationIntoReplace, moderationFieldOf } from './moderation-carry';
 import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeIdentifierList, decodeStringList, encodeIdentifierList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
@@ -145,6 +146,9 @@ function assertStorable(fields: Record<string, unknown>, table: ItemVariants | u
   if (sizeError) throw new ListLimitError(sizeError);
 }
 
+/** The moderator lanes a seller's own view reads besides the listed one: hidden (1) and legal hold (2). */
+const HIDDEN_LANES = [1, 2] as const;
+
 class StoreItemService extends BaseDocumentService<StoreItem> {
   constructor() {
     super(STOREFRONT_DOCUMENT_TYPES.STORE_ITEM, YAPPR_STOREFRONT_CONTRACT_ID);
@@ -175,6 +179,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       fields.variants = doc.unreadableVariants;
       fields.imageUrls = doc.unreadableImageUrls;
     }
+    // A replace sends a moderator's `mod`/`modLabel` back unchanged (a dropped or changed one is refused, 41124).
+    carryModerationIntoReplace(fields, doc);
     return fields;
   }
 
@@ -206,7 +212,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       variants,
       ...(data.variants !== undefined && data.variants !== null && !variants ? { unreadableVariants: data.variants, unreadableImageUrls: data.imageUrls } : {}),
       fulfillment: data.fulfillment === 'digital' ? 'digital' : undefined,
-      shippingZoneIds: zoneIdsOf(data.shippingZoneIds)
+      shippingZoneIds: zoneIdsOf(data.shippingZoneIds),
+      ...moderationFieldOf(doc)
     };
   }
 
@@ -255,9 +262,12 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
    */
   async getByStore(storeId: string, options: { limit?: number; startAfter?: string; activeOnly?: boolean } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
     const activeOnly = options.activeOnly === true && storefrontIsV10();
+    // v11 keys both indexes `[storeId, mod, ...]`: the listed lane, `mod == null`, follows the store.
+    const lane = storefrontModPin();
+    const laneOrder = lanePinOrderBy(lane);
     const { documents } = await this.query({
-      where: activeOnly ? [['storeId', '==', storeId], ['status', '==', 'active']] : [['storeId', '==', storeId]],
-      orderBy: activeOnly ? [['storeId', 'asc'], ['status', 'asc'], ['$createdAt', 'asc']] : [['storeId', 'asc'], ['$createdAt', 'asc']],
+      where: activeOnly ? [['storeId', '==', storeId], ...lane, ['status', '==', 'active']] : [['storeId', '==', storeId], ...lane],
+      orderBy: activeOnly ? [['storeId', 'asc'], ...laneOrder, ['status', 'asc'], ['$createdAt', 'asc']] : [['storeId', 'asc'], ...laneOrder, ['$createdAt', 'asc']],
       limit: options.limit || 20,
       startAfter: options.startAfter
     });
@@ -272,13 +282,36 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
    * Get the complete product list for store management.
    * Keep each query within Platform's 100-document page limit.
    */
-  async getAllByStore(storeId: string): Promise<StoreItem[]> {
+  async getAllByStore(storeId: string, options: { includeHidden?: boolean } = {}): Promise<StoreItem[]> {
+    const listed = await this.walkAll((startAfter) => this.getByStore(storeId, { limit: 100, startAfter }));
+    // The seller's own view (v11): the listed lane above leaves out what a moderator hid, so the
+    // `mod == 1` (hidden) and `mod == 2` (legal hold) lanes of `storeAndTime` are read too, by
+    // plain equality (no fan-out needed), and merged by creation time with their marks.
+    if (!options.includeHidden || !storefrontListingsCarryModLane()) return listed;
+    const lanes = await Promise.all(HIDDEN_LANES.map((mod) =>
+      this.walkAll((startAfter) => this.getByStoreLane(storeId, mod, { limit: 100, startAfter }))));
+    return [...listed, ...lanes.flat()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1));
+  }
+
+  /** One page of a store's items in the moderator lane `mod` (1 hidden, 2 legal hold), oldest first. */
+  private async getByStoreLane(storeId: string, mod: number, options: { limit: number; startAfter?: string }): Promise<{ items: StoreItem[]; nextCursor?: string }> {
+    const { documents } = await this.query({
+      where: [['storeId', '==', storeId], ['mod', '==', mod]],
+      orderBy: [['storeId', 'asc'], ['mod', 'asc'], ['$createdAt', 'asc']],
+      limit: options.limit,
+      startAfter: options.startAfter,
+    });
+    return { items: documents, nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined };
+  }
+
+  /** Every item of a paged read, 100 to a page, until a short page. */
+  private async walkAll(readPage: (startAfter?: string) => Promise<{ items: StoreItem[]; nextCursor?: string }>): Promise<StoreItem[]> {
     const items = new Map<string, StoreItem>();
     const seenCursors = new Set<string>();
     let startAfter: string | undefined;
 
     while (true) {
-      const page = await this.getByStore(storeId, { limit: 100, startAfter });
+      const page = await readPage(startAfter);
       for (const item of page.items) items.set(item.id, item);
       if (page.items.length < 100) return Array.from(items.values());
 

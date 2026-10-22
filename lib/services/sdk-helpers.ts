@@ -160,7 +160,7 @@ export function requireDocumentIdentifierBytes(id: string, fieldName: string): U
   return bytes
 }
 
-const DOCUMENT_SYSTEM_IDENTIFIER_FIELDS = new Set(['$id', '$ownerId', '$dataContractId']);
+const DOCUMENT_SYSTEM_IDENTIFIER_FIELDS = new Set(['$id', '$ownerId', '$dataContractId', '$moderatedBy']);
 
 /**
  * Convert a bigint to the JSON-safe value the rest of the app expects.

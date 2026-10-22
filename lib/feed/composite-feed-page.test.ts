@@ -159,6 +159,42 @@ describe('composite feed page', { timeout: 20_000 }, () => {
     expect(posts[0].quotedPostRemoved).toBeUndefined();
   });
 
+  it('drops hidden posts from a page read by id, but keeps them in the raw page and on an archival build', async () => {
+    mocks.composite.mockResolvedValue(result(names, docs.map((doc, i) => ({ ...doc, ...(i === 1 ? { mod: 1, modLabel: 5 } : i === 2 ? { live: 2 } : {}) }))));
+    const ids = docs.map(doc => doc.$id);
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 4, documentIds: ids });
+    expect(page.rawPosts).toHaveLength(4);
+    // The hidden post is gone; the restricted author's post is not hidden (only an archival build lists it at all).
+    expect(page.posts.map(post => post.id)).toEqual([ids[0], ids[2], ids[3]]);
+    expect(page.posts[1].moderation).toEqual({ restricted: true });
+
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all');
+    const archival = await loadCompositeFeedPage({ language: 'en', limit: 4, documentIds: ids });
+    expect(archival.posts.map(post => post.id)).toEqual(ids);
+    expect(archival.posts[1].moderation).toEqual({ mod: 1, modLabel: 5 });
+  });
+
+  it('shows a quote of a hidden post as an unavailable quote, without its text', async () => {
+    const page = docs.map((doc, i) => ({ ...doc, ...(i === 1 ? { quotedPostId: 'hiddenAAA' } : i === 2 ? { quotedPostId: 'quotedBBB' } : {}) }));
+    const response: { pageDocuments: unknown[]; subResults: unknown[] } = result(names, page);
+    response.subResults[4] = {
+      kind: 'documents',
+      documents: [
+        { $id: 'hiddenAAA', $ownerId: ownerIds[3], $createdAt: 900, content: 'hidden text', language: 'en', mod: 1 },
+        { $id: 'quotedBBB', $ownerId: ownerIds[3], $createdAt: 900, content: 'quoted', language: 'en' },
+      ],
+    };
+    mocks.composite.mockResolvedValue(response);
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const { posts } = await loadCompositeFeedPage({ language: 'en', limit: 4 });
+    expect(posts[1].quotedPost).toBeUndefined();
+    expect(posts[1].quotedPostRemoved).toBe(true);
+    expect((posts[1] as { quotedPostHidden?: boolean }).quotedPostHidden).toBe(true);
+    expect(posts[2].quotedPost?.id).toBe('quotedBBB');
+    expect(posts[2].quotedPostRemoved).toBeUndefined();
+  });
+
   it('should keep tombstones in the raw cursor page and remove them from cards', async () => {
     mocks.composite.mockResolvedValue(result(names, docs.map((doc, i) => ({ ...doc, deleted: i === 3 }))));
     const { loadCompositeFeedPage } = await import('./composite-feed-page');

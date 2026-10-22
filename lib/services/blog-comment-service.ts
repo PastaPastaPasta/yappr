@@ -1,7 +1,8 @@
 import { queryDocumentBundle } from './document-query-bundle'
 import { documentCount, groupedDocumentCount, mapLimit, paginateCount } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
-import { YAPPR_BLOG_CONTRACT_ID, blogCommentsCopyPostFlag, blogCommentsDerivePostOwner, blogIsV2, blogIsV8 } from '@/lib/constants'
+import { YAPPR_BLOG_CONTRACT_ID, blogCommentsCopyPostFlag, blogCommentsDerivePostOwner, blogIsV2, blogIsV8, blogModPin, lanePinOrderBy } from '@/lib/constants'
+import { carryModerationIntoReplace, moderationFieldOf, withoutHidden } from './moderation-carry'
 import type { BlogComment } from '@/lib/types'
 import { identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { isPropertyAgreementError } from '@/lib/error-utils'
@@ -22,6 +23,13 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     super('blogComment', YAPPR_BLOG_CONTRACT_ID)
   }
 
+  /** A replace (the client writes none today) sends a moderator's `mod`/`modLabel` back unchanged (41124 otherwise). */
+  protected extractContentFields(doc: BlogComment): Record<string, unknown> {
+    const fields = super.extractContentFields(doc)
+    carryModerationIntoReplace(fields, doc)
+    return fields
+  }
+
   protected transformDocument(doc: Record<string, unknown>): BlogComment {
     const data = (doc.data || doc) as Record<string, unknown>
 
@@ -32,6 +40,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
       blogPostId: identifierToBase58(data.blogPostId || doc.blogPostId) || '',
       blogPostOwnerId: identifierToBase58(data.blogPostOwnerId || doc.blogPostOwnerId) || undefined,
       content: (data.content || doc.content || '') as string,
+      ...moderationFieldOf(doc),
     }
   }
 
@@ -125,8 +134,8 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
 
   async getCommentsByPost(blogPostId: string, options: BlogCommentQueryOptions = {}): Promise<BlogComment[]> {
     const queryOptions: QueryOptions = {
-      where: [['blogPostId', '==', blogPostId]],
-      orderBy: [['blogPostId', 'asc'], ['$createdAt', 'asc']],
+      where: [['blogPostId', '==', blogPostId], ...blogModPin()],
+      orderBy: [['blogPostId', 'asc'], ...lanePinOrderBy(blogModPin()), ['$createdAt', 'asc']],
       limit: options.limit,
       startAfter: options.startAfter,
     }
@@ -146,7 +155,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
         return await documentCount(sdk, {
           dataContractId: this.contractId,
           documentTypeName: this.documentType,
-          where: [['blogPostId', '==', blogPostId]],
+          where: [['blogPostId', '==', blogPostId], ...blogModPin()],
         })
       }
       const { count } = await paginateCount(sdk, () => ({
@@ -173,7 +182,8 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
       const sdk = await getEvoSdk()
       return groupedDocumentCount(
         sdk,
-        { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: 'blogPostId' },
+        // v10: the listed lane, `mod == null`, is pinned beside the grouped `in` (index `[blogPostId, mod, $createdAt]`).
+        { dataContractId: this.contractId, documentTypeName: this.documentType, groupField: 'blogPostId', where: blogModPin() },
         ids,
         (id) => this.countCommentsByPost(id)
       )
@@ -204,7 +214,8 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
       orderBy: [[postOwner, 'asc'], ['$createdAt', 'desc']],
       limit,
     })
-    return result.documents.filter((comment) => comment.ownerId !== ownerId)
+    // `postOwnerAndTime` is not laned: a hidden comment is read too, and dropped here.
+    return withoutHidden(result.documents).filter((comment) => comment.ownerId !== ownerId)
   }
 }
 

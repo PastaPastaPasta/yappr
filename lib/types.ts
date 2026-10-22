@@ -4,6 +4,7 @@ export * from '../types/store'
 export * from '../types/notification'
 
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
+import type { ModerationMarks } from '@/lib/moderation-view'
 
 // V3 DM contract document types (raw from platform)
 // Decrypted message for UI display
@@ -83,6 +84,8 @@ export interface Blog {
   themeConfig?: BlogThemeConfig
   commentsEnabledDefault?: boolean
   labels?: string[]
+  /** Blog v10: hidden by the blog's moderators (`mod`), with the reason, who and when. */
+  moderation?: ModerationMarks
 }
 
 export interface BlogPost {
@@ -102,6 +105,10 @@ export interface BlogPost {
   publishedAt?: number
   /** Blog v7: the author deleted this post; only blogId, slug and publishedAt remain (a tombstone). */
   deleted?: boolean
+  /** The stored `live` marker: `true` on v9, the lane on v10 (1 listed, 2 written while restricted); absent on a tombstone. */
+  live?: number | boolean
+  /** Blog v10: hidden by the blog's moderators (`mod`), with the reason, who and when. */
+  moderation?: ModerationMarks
 }
 
 export interface BlogComment {
@@ -112,6 +119,8 @@ export interface BlogComment {
   /** The post owner a v2–v5 comment copies; absent on v6, which derives it through `blogPostId`. */
   blogPostOwnerId?: string
   content: string
+  /** Blog v10: hidden by the blog's moderators (`mod`), with the reason, who and when. */
+  moderation?: ModerationMarks
 }
 
 export interface BlogPostWithAuthor extends BlogPost {

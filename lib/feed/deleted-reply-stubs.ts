@@ -1,5 +1,30 @@
 import type { Reply } from '@/lib/types';
 import { replyThreadsCarryLiveMarker, repliesOutliveTheirParent } from '@/lib/contract-topology';
+import { isHiddenItem } from './post-moderation';
+
+/**
+ * A reply the moderators hid, as the placeholder a default build shows in its
+ * place: it keeps its thread position (so its children stay under it) and
+ * nothing else of the reply, not its text, media, author or marks.
+ */
+function hiddenReplyStub(hidden: Reply): Reply {
+  return {
+    id: hidden.id,
+    author: { ...hidden.author, id: '', username: '', displayName: '', avatar: '' },
+    content: '',
+    createdAt: hidden.createdAt,
+    likes: 0,
+    reposts: 0,
+    replies: 0,
+    views: 0,
+    parentId: hidden.parentId,
+    parentOwnerId: hidden.parentOwnerId,
+    rootPostId: hidden.rootPostId,
+    rootOwnerId: hidden.rootOwnerId,
+    replyToReplyId: hidden.replyToReplyId,
+    hiddenStub: true,
+  };
+}
 
 /** The reads {@link withMissingReplyParents} makes; both reject when the read or proof fails. */
 export interface MissingParentReads {
@@ -23,6 +48,10 @@ export interface MissingParentReads {
  * - Where a reply can outlive its parent (`repliesOutliveTheirParent`), the
  *   parents still missing are proved absent and stubbed
  *   ({@link deletedReplyStubs}).
+ * - A reply the moderators hid (v18) is not listed either, so its children
+ *   would lose their parent. A default build reads it by id and stands in a
+ *   `hiddenStub` placeholder (no content, same place in the thread). An
+ *   archival build lists the hidden reply itself, labelled, so nothing here.
  *
  * `loaded` names replies already shown from earlier pages: a parent among
  * them is not missing, so it is neither read again nor proved.
@@ -36,9 +65,11 @@ export async function withMissingReplyParents(replies: readonly Reply[], reads: 
       if (missing.length === 0) break;
       missing.forEach((id) => tried.add(id));
       const have = new Set(all.map((reply) => reply.id));
-      const tombstones = (await reads.getMany(missing)).filter((reply) => reply.deleted === true && !have.has(reply.id));
-      if (tombstones.length === 0) break;
-      all = [...tombstones, ...all];
+      const found = (await reads.getMany(missing)).filter((reply) => !have.has(reply.id));
+      // A parent the moderators hid (v18) is not listed either: it holds its place as a stub with no content.
+      const stubs = found.map((reply) => (reply.deleted === true ? reply : isHiddenItem(reply) ? hiddenReplyStub(reply) : null)).filter((reply) => reply !== null);
+      if (stubs.length === 0) break;
+      all = [...stubs, ...all];
     }
   }
   if (!repliesOutliveTheirParent()) return all;

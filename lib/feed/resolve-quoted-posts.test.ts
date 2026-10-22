@@ -37,6 +37,44 @@ async function freshModule() {
 
 afterEach(() => vi.unstubAllEnvs())
 
+describe('a hidden quote target (v18)', () => {
+  const hidden = () => targetPost({ moderation: { mod: 1 } })
+
+  it('is not attached, not cached, and marks the quote as hidden', async () => {
+    const { attachQuotedPosts, getCachedQuotedPost } = await freshModule()
+    fetchQuotedTargets.mockResolvedValue([hidden()])
+
+    const post = quotingPost()
+    await attachQuotedPosts([post])
+    expect(post.quotedPost).toBeUndefined()
+    expect(post.quotedPostRemoved).toBe(true)
+    expect((post as { quotedPostHidden?: boolean }).quotedPostHidden).toBe(true)
+    expect(getCachedQuotedPost('target1')).toBeNull()
+
+    // A later pass leaves it alone instead of reading the target again.
+    fetchQuotedTargets.mockClear()
+    await attachQuotedPosts([post])
+    expect(fetchQuotedTargets).not.toHaveBeenCalled()
+  })
+
+  it('resolves to nothing for the per-card fallback', async () => {
+    const { resolveQuotedPost, getCachedQuotedPost } = await freshModule()
+    fetchQuotedTargets.mockResolvedValue([hidden()])
+    expect(await resolveQuotedPost(quotingPost())).toBeNull()
+    expect(getCachedQuotedPost('target1')).toBeNull()
+  })
+
+  it('is attached as usual on an archival build', async () => {
+    const { attachQuotedPosts } = await freshModule()
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    fetchQuotedTargets.mockResolvedValue([hidden()])
+    const post = quotingPost()
+    await attachQuotedPosts([post])
+    expect(post.quotedPost?.moderation).toEqual({ mod: 1 })
+    expect(post.quotedPostRemoved).toBeUndefined()
+  })
+})
+
 describe('resolve-quoted-posts caches', () => {
   it('drops a resolved quote target from the shared cache (item 1/11: a delete forgets it)', async () => {
     const { attachQuotedPosts, forgetQuotedPosts, getCachedQuotedPost } = await freshModule()
