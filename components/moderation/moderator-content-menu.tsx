@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, LockOpenIcon, NoSymbolIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
+import { ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, LockOpenIcon, NoSymbolIcon, QueueListIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
 import { IconButton } from '@/components/ui/icon-button'
 import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
 import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
@@ -12,6 +12,8 @@ import { useAuthorRestricted } from '@/hooks/use-author-restriction'
 import { useModerationRole } from '@/hooks/use-is-moderator'
 import { useModeratorHideModal, type ModeratorHideAction, type ModeratorHideOutcome } from '@/hooks/use-moderator-hide-modal'
 import { useModeratorRemoveModal, type ModeratorRemoveTarget } from '@/hooks/use-moderator-remove-modal'
+import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
+import { bulkHideAvailable } from '@/lib/services/bulk-hide-service'
 import { isHidden } from '@/lib/moderation-view'
 import { moderationServiceFor } from '@/lib/services/moderation-service'
 import { cn } from '@/lib/utils'
@@ -63,6 +65,7 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, onChanged, cl
   const canAuthorize = useModerationAuthorization(isModerator)
   const { open } = useModeratorRemoveModal()
   const { open: openHide } = useModeratorHideModal()
+  const { open: openBulkHide } = useBulkHideModal()
   const service = moderationServiceFor(target.contract)
   const hides = service.hidesInsteadOfDeleting()
   const shown = isModerator && !!user && !!ownerId && ownerId !== user.identityId && !protectedIds.has(ownerId)
@@ -131,6 +134,7 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, onChanged, cl
                 : restricted
                   ? item('moderator-lift', () => openAction('lift'), <><LockOpenIcon className="h-4 w-4" />Lift the author&apos;s restriction</>)
                   : item('moderator-restrict', () => openAction('restrict'), <><NoSymbolIcon className="h-4 w-4" />Restrict the author</>, 'text-red-500'))}
+              {target.contract === 'social' && bulkHideAvailable() && item('moderator-bulk-hide', () => openBulkHide({ authorId: ownerId }), <><QueueListIcon className="h-4 w-4" />Hide posts by this account…</>)}
               {service.canWarn() && item('moderator-author', () => router.push(moderateAuthorHref(target, ownerId)), <><ExclamationTriangleIcon className="h-4 w-4" />Warn the author</>)}
             </>
           ) : (

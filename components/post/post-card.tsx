@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, FlagIcon, LockOpenIcon, NoSymbolIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, FlagIcon, LockOpenIcon, NoSymbolIcon, QueueListIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
 import type { Post, PostModeration } from '@/lib/types'
 import { useAuthorRestricted } from '@/hooks/use-author-restriction'
 import { postHideTarget, useModeratorHideModal, type ModeratorHideAction } from '@/hooks/use-moderator-hide-modal'
+import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { HiddenContentStub, ModerationLabel } from '@/components/moderation/moderation-label'
 import { isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { cn } from '@/lib/utils'
@@ -56,6 +57,7 @@ import { SensitiveContentGate } from './sensitive-content-gate'
 import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from './embedded-post-card'
 import { AuthorDeletedStub, RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { moderationService } from '@/lib/services/moderation-service'
+import { bulkHideAvailable } from '@/lib/services/bulk-hide-service'
 import { GatedPostMedia } from './gated-media'
 import { PostActionBar, stopAndRun } from './post-action-bar'
 import { PostAuthorLine, hasRealProfile, resolveUsernameState, type UsernameState } from './post-author-line'
@@ -416,6 +418,7 @@ function PostCardView({
     && (hides ? moderationService.canHide(targetKind) : moderatorDeletableTypes().includes(targetKind))
   const canAuthorize = useModerationAuthorization(canModerate)
   const { open: openModeratorHideModal } = useModeratorHideModal()
+  const { open: openBulkHide } = useBulkHideModal()
   const authorRestrictedRead = useAuthorRestricted('social', post.author.id, canModerate && hides && menuPrimed && moderationService.canRestrict())
   const [authorRestrictedHere, setAuthorRestrictedHere] = useState<boolean | null>(null)
   const authorRestricted = authorRestrictedHere ?? authorRestrictedRead
@@ -789,6 +792,20 @@ function PostCardView({
                           >
                             {authorRestricted ? <LockOpenIcon className="h-4 w-4" /> : <NoSymbolIcon className="h-4 w-4" />}
                             {authorRestricted ? `Lift ${authorLabel}'s restriction` : `Restrict ${authorLabel}`}
+                          </DropdownMenu.Item>
+                        )}
+                        {bulkHideAvailable() && (
+                          <DropdownMenu.Item
+                            disabled={!canAuthorize}
+                            data-testid={`moderator-bulk-hide-${post.id}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (canAuthorize) openBulkHide({ authorId: post.author.id, ...(usernameState ? { authorName: `@${usernameState}` } : {}) })
+                            }}
+                            className={cn(CARD_MENU_ITEM, 'flex items-center gap-2')}
+                          >
+                            <QueueListIcon className="h-4 w-4" />
+                            Hide posts by {authorLabel}…
                           </DropdownMenu.Item>
                         )}
                         {moderationService.canWarn() && (

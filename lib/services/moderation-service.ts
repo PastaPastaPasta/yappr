@@ -128,6 +128,12 @@ export interface HideOptions {
   reason?: string | ModerationReasonInput;
 }
 
+/** Hides and unhides that all sign with one signer, resolved once ({@link ModerationService.openBatch}). */
+export interface ModerationBatch {
+  hide(kind: string, documentId: string, options: HideOptions): Promise<ModerationResult>;
+  unhide(kind: string, documentId: string, reason?: string | ModerationReasonInput): Promise<ModerationResult>;
+}
+
 /** The `mod` values a moderator writes: 1 hidden, 2 legal hold (`mod` is absent while listed). */
 export const MOD_HIDDEN = 1;
 export const MOD_LEGAL_HOLD = 2;
@@ -1248,14 +1254,18 @@ class ModerationService {
    * is stamped `$moderatedBy`/`$moderatedAt`. No window and no approvals: any
    * one moderator hides, and any one unhides ({@link unhide}).
    */
-  async hide(moderatorId: string, kind: string, documentId: string, options: HideOptions): Promise<ModerationResult> {
+  hide(moderatorId: string, kind: string, documentId: string, options: HideOptions): Promise<ModerationResult> {
+    return this.hideWith(moderatorId, kind, documentId, options);
+  }
+
+  private async hideWith(moderatorId: string, kind: string, documentId: string, options: HideOptions, auth?: ModeratorAuth): Promise<ModerationResult> {
     if (!this.canHide(kind)) {
       return { success: false, error: `Moderators cannot hide a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
     }
     if (!isModerationLabel(options.label)) {
       return { success: false, error: 'Choose the reason it is hidden for', errorCode: 'INVALID_LABEL' };
     }
-    const result = await this.changeFields(moderatorId, kind, documentId, hideFields(options.label, options.legalHold), options.reason);
+    const result = await this.changeFields(moderatorId, kind, documentId, hideFields(options.label, options.legalHold), options.reason, auth);
     if (result.errorCode === 'NOTHING_TO_CHANGE') return { ...result, error: `This ${documentNoun(kind)} is already hidden for that reason` };
     if (result.errorCode === 'MAYBE_APPLIED') {
       return { ...result, error: `The network did not confirm in time: the ${documentNoun(kind)} may already be hidden. Check again before retrying.` };
@@ -1264,16 +1274,45 @@ class ModerationService {
   }
 
   /** Lists a hidden document again: clears its `mod`. Any moderator may unhide whatever another hid. */
-  async unhide(moderatorId: string, kind: string, documentId: string, reason?: string | ModerationReasonInput): Promise<ModerationResult> {
+  unhide(moderatorId: string, kind: string, documentId: string, reason?: string | ModerationReasonInput): Promise<ModerationResult> {
+    return this.unhideWith(moderatorId, kind, documentId, reason);
+  }
+
+  private async unhideWith(moderatorId: string, kind: string, documentId: string, reason?: string | ModerationReasonInput, auth?: ModeratorAuth): Promise<ModerationResult> {
     if (!this.canHide(kind)) {
       return { success: false, error: `Moderators cannot unhide a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
     }
-    const result = await this.changeFields(moderatorId, kind, documentId, { ...UNHIDE_FIELDS }, reason);
+    const result = await this.changeFields(moderatorId, kind, documentId, { ...UNHIDE_FIELDS }, reason, auth);
     if (result.errorCode === 'NOTHING_TO_CHANGE') return { ...result, error: `This ${documentNoun(kind)} is not hidden` };
     if (result.errorCode === 'MAYBE_APPLIED') {
       return { ...result, error: `The network did not confirm in time: the ${documentNoun(kind)} may already be visible again. Check again before retrying.` };
     }
     return result;
+  }
+
+  /**
+   * Resolves the moderator's CRITICAL signer once for a run of hides or
+   * unhides (components/moderation/bulk-hide-modal.tsx). Every change in the
+   * batch signs with it, so the key is asked for (or matched) once, not once
+   * per document. It lives only as long as the returned batch. Each change is
+   * still its own transition under the next contract nonce (one action per
+   * transition, lib/moderation-bulk.ts). Answers the refusal when no key here
+   * may moderate.
+   */
+  async openBatch(moderatorId: string): Promise<{ batch: ModerationBatch } | { refused: ModerationResult }> {
+    if (!this.contract.moderated()) return { refused: { success: false, error: 'This contract declares no moderation', errorCode: 'NOT_MODERATED' } };
+    let auth: ModeratorAuth;
+    try {
+      auth = await this.getCriticalSigner(moderatorId);
+    } catch (error) {
+      return { refused: this.toResult(error) };
+    }
+    return {
+      batch: {
+        hide: (kind, documentId, options) => this.hideWith(moderatorId, kind, documentId, options, auth),
+        unhide: (kind, documentId, reason) => this.unhideWith(moderatorId, kind, documentId, reason, auth),
+      },
+    };
   }
 
   /**
@@ -1369,7 +1408,8 @@ class ModerationService {
     kind: string,
     documentId: string,
     fields: Record<string, unknown>,
-    reason?: string | ModerationReasonInput
+    reason?: string | ModerationReasonInput,
+    heldAuth?: ModeratorAuth
   ): Promise<ModerationResult> {
     return this.moderate(moderatorId, async (sdk, auth, send) => {
       await send(() => sdk.contracts.moderatorChangeDocumentFields({
@@ -1381,7 +1421,7 @@ class ModerationService {
         fields,
         ...(reason === undefined ? {} : { reason: reasonOf(reason) }),
       }));
-    }, undefined, reason);
+    }, undefined, reason, heldAuth);
   }
 
   /**
@@ -1790,7 +1830,8 @@ class ModerationService {
     moderatorId: string,
     action: (sdk: EvoSDK, auth: ModeratorAuth, send: ModerationSend) => Promise<void>,
     moderatedIdentityId?: string,
-    reason?: string | ModerationReasonInput
+    reason?: string | ModerationReasonInput,
+    heldAuth?: ModeratorAuth
   ): Promise<ModerationResult> {
     if (!this.contract.moderated()) {
       return { success: false, error: 'This contract declares no moderation', errorCode: 'NOT_MODERATED' };
@@ -1812,7 +1853,7 @@ class ModerationService {
     });
     try {
       const sdk = await getEvoSdk();
-      const auth = await this.getCriticalSigner(moderatorId);
+      const auth = heldAuth ?? await this.getCriticalSigner(moderatorId);
       await action(sdk, auth, send);
       if (moderatedIdentityId) this.standingCache.delete(moderatedIdentityId);
       return { success: true };
