@@ -31,12 +31,12 @@ describe('moderation election mappers', () => {
 
   it('maps a submittedCharter, including reasons given as bytes', () => {
     const proposal = toProposal({
-      $id: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', $ownerId: leader, $createdAt: 5,
+      $id: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', $ownerId: leader, $createdAt: 5, targetContractId: new Uint8Array(32).fill(2),
       description: 'We moderate spam', reasons: [new Uint8Array(32).fill(2)],
       moderatorsShare: 80, rewardSplit: { leader: 20, equal: 30, actions: 50 },
     });
     expect(proposal).toEqual({
-      id: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', leaderId: leader, description: 'We moderate spam',
+      id: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', leaderId: leader, targetContractId: reasonA, description: 'We moderate spam',
       reasonIds: [reasonA], moderatorsShare: 80, rewardSplit: { leader: 20, equal: 30, actions: 50 }, createdAt: 5,
     });
     expect(toProposal({ $id: leader, $ownerId: leader }).moderatorsShare).toBeNull();
@@ -213,6 +213,12 @@ describe('registered election declarations', () => {
     await expect(moderationElectionService.getStatus(target)).rejects.toThrow('offline');
     sdk.contracts.fetch.mockResolvedValueOnce(null);
     await expect(moderationElectionService.getStatus(target)).rejects.toThrow('could not be read');
+  });
+
+  it("opens applications at the contract JSON's creation time plus the registered delay", async () => {
+    sdk.contracts.fetch.mockResolvedValueOnce({ config: { moderation: { moderators: { ...registered.moderators, electionDelay: 1500 } } },
+      toJSON: () => ({ createdAt: 1_792_697_540_319 }), free: vi.fn() });
+    expect((await moderationElectionService.getStatus(target))?.electionOpensAtMs).toBe(1_792_697_540_319 + 1_500_000);
   });
 
   it('returns null for a registered contract without elected moderation', async () => {

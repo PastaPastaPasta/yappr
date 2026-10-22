@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { ArrowPathIcon, ScaleIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -9,6 +10,7 @@ import { logger } from '@/lib/logger'
 import { electionResult } from '@/lib/election-result'
 import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import { createElectionStatusLoader } from '@/lib/election-status-loader'
+import { teamsHref } from '@/lib/moderation-charters/links'
 import { electionView, moderationElectionService, type ElectionStatus } from '@/lib/services/moderation-election-service'
 
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id)
@@ -182,6 +184,9 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
             only from a later epoch, so an election may not be possible yet.
           </p>
         )}
+        <Link href={teamsHref(contract)} data-testid="moderation-teams-link" className="inline-block font-medium text-yappr-700 dark:text-yappr-400 hover:underline">
+          {seated ? 'See the team and its charter' : 'Start a team, join one, or follow the election'}
+        </Link>
       </CardContent>
     </Card>
   )
