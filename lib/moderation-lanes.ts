@@ -27,15 +27,13 @@ function isPin(clause: unknown, field: string): boolean {
 
 /**
  * Every lane of `where`, the request itself first. A request is laned when
- * it pins `mod == null` (then a `live == 1` beside it is a lane too);
- * anything else (DPNS, follows, `live == true` on v17, a
- * moderation log read on `mod == 1`) has one lane: itself.
+ * it reads the listed lane: it pins `mod == null`, and any `live` it pins is
+ * `live == 1` (then that `live` is a lane too). Anything else (DPNS, follows,
+ * `live == true` on v17, a moderation log read on `mod == 1`, a read of one
+ * named restricted lane `live == 2, mod == null`) has one lane: itself.
  */
 export function laneVariants<C extends WhereClause>(where: readonly C[] | undefined): C[][] {
   const clauses = where ?? []
-  // Only the listed lane fans out. A read that names another `live` lane
-  // (`live == 2, mod == null`: one restricted lane, as the profile's
-  // Moderation tab reads it) asks for exactly that lane.
   const laned = clauses.some((clause) => isPin(clause, 'mod'))
     && clauses.every((clause) => clause[0] !== 'live' || isPin(clause, 'live'))
   const slots: Array<{ at: number; values: readonly unknown[] }> = []

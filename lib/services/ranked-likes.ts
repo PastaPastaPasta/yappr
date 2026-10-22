@@ -465,10 +465,11 @@ async function hydrateRankedCached(
 ): Promise<Post[]> {
   const { getCurrentUserId } = await import('./sdk-helpers');
   const currentUserId = getCurrentUserId() ?? undefined;
-  // Keyed by the moderator view the read starts under: a page hydrated with
-  // hidden posts kept is never served to a read without it, even one that
-  // lands after the view changed.
-  const viewerKey = `${currentUserId ?? 'anonymous'}:${moderationViewAll() ? 'all-lanes:' : ''}${cacheKey}`;
+  // Keyed by the moderator view the read starts under, and cached only if the
+  // view is unchanged when it lands (hydration judges hidden posts by the view
+  // at its end): a page with hidden posts kept is never served without it.
+  const allLanes = moderationViewAll();
+  const viewerKey = `${currentUserId ?? 'anonymous'}:${allLanes ? 'all-lanes:' : ''}${cacheKey}`;
   // A forced read means the caller knows the cached page is out of date, so it
   // goes: should this read fail, nothing after it (its retry, a later
   // background read) falls back to that page.
@@ -488,7 +489,7 @@ async function hydrateRankedCached(
     // The page still answers this caller; it is cached only if no later read
     // of it started and none of its quote targets was forgotten meanwhile.
     const quotesForgotten = Array.from(quoteGenerations.values()).some((generation) => generation > quotesAsOf);
-    if (latestReads.get(viewerKey) === read && !quotesForgotten) {
+    if (latestReads.get(viewerKey) === read && !quotesForgotten && moderationViewAll() === allLanes) {
       hydratedCache.set(viewerKey, { posts, quoteGenerations });
     }
     return posts;

@@ -106,7 +106,8 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
       // The featured cards render as soon as they are proved; the stats and
       // contributors follow with the full snapshot.
       const snapshot = await loadHomepage((posts) => setFeaturedPosts({ posts, loading: false, error: null }))
-      cache = { data: snapshot, timestamp: Date.now(), allLanes }
+      // Hidden posts are judged when the read lands: keep it only if the view did not change meanwhile.
+      if (moderationViewAll() === allLanes) cache = { data: snapshot, timestamp: Date.now(), allLanes }
       applySnapshot(snapshot)
     } catch (error) {
       logger.error('Error loading homepage:', error)
