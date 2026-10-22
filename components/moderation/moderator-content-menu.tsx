@@ -5,8 +5,6 @@ import { useRouter } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, LockOpenIcon, NoSymbolIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
 import { IconButton } from '@/components/ui/icon-button'
-import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
-import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { useAuthorRestricted } from '@/hooks/use-author-restriction'
 import { useModerationRole } from '@/hooks/use-is-moderator'
@@ -60,7 +58,6 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, onChanged, cl
   const router = useRouter()
   const { user } = useAuth()
   const { isModerator, protectedIds } = useModerationRole(target.contract)
-  const canAuthorize = useModerationAuthorization(isModerator)
   const { open } = useModeratorRemoveModal()
   const { open: openHide } = useModeratorHideModal()
   const service = moderationServiceFor(target.contract)
@@ -86,11 +83,9 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, onChanged, cl
   }
   const item = (testId: string, onSelect: () => void, children: React.ReactNode, tone?: string) => (
     <DropdownMenu.Item
-      disabled={!canAuthorize}
       data-testid={`${testId}-${target.documentId}`}
       onClick={(e) => {
         e.stopPropagation()
-        if (!canAuthorize) return
         onSelect()
       }}
       className={cn(MENU_ITEM, tone)}
@@ -115,7 +110,6 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, onChanged, cl
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content className="min-w-[220px] max-w-[min(24rem,calc(100vw-2rem))] bg-white dark:bg-neutral-900 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800 py-2 z-50" sideOffset={5}>
-          <ModerationKeyNotice authorized={canAuthorize} />
           {hides ? (
             <>
               {service.canHide(target.docType) && (hidden

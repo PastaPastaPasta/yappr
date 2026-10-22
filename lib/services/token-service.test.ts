@@ -21,6 +21,8 @@ vi.mock('./evo-sdk-service', () => ({
 vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (...args: [string, string, () => Promise<unknown>]) => signedWrite(...args) }))
 vi.mock('./signer-service', () => ({ signerService: { createSignerFromWasmKey: () => ({ signer: true, identityKey: true }) } }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true, key: {} }) }))
+// A session signed in with its CRITICAL key (every key matches here): it signs without asking.
+vi.mock('../secure-storage', () => ({ getPrivateKeyRecord: () => ({ wif: 'wif', fromPasskey: false }) }))
 vi.mock('../contract-topology', () => ({ starterGrantAmount: () => BigInt(100), yappIsLocked: () => topology.locked }))
 vi.mock('@dashevo/wasm-sdk', () => ({ Identifier: class { constructor(readonly value: string) {} } }))
 
@@ -43,13 +45,13 @@ describe('claimStarterGrant: an identity that already claimed', () => {
     ['the prose alone, as an older node sends it', { code: -1, message: PROSE, name: 'Protocol' }],
   ])('is told apart by %s', async (_label, error) => {
     claim.mockRejectedValue(error)
-    const result = await tokenService.claimStarterGrant(CLAIMANT, 'wif')
+    const result = await tokenService.claimStarterGrant(CLAIMANT)
     expect(result).toMatchObject({ success: false, errorCode: 'ALREADY_CLAIMED' })
   })
 
   it('does not read an unrelated refusal as already claimed', async () => {
     claim.mockRejectedValue({ code: 1, message: 'rejected', name: 'Protocol' })
-    const result = await tokenService.claimStarterGrant(CLAIMANT, 'wif')
+    const result = await tokenService.claimStarterGrant(CLAIMANT)
     expect(result.errorCode).not.toBe('ALREADY_CLAIMED')
   })
 })
@@ -57,8 +59,8 @@ describe('claimStarterGrant: an identity that already claimed', () => {
 describe('a locked YAPP (v10)', () => {
   it('refuses purchases and transfers without broadcasting', async () => {
     topology.locked = true
-    expect(await tokenService.buyYapp(CLAIMANT, BigInt(100), BigInt(1), 'wif')).toMatchObject({ success: false, errorCode: 'NOT_AUTHORIZED' })
-    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5), undefined, 'wif')).toMatchObject({ success: false, errorCode: 'NOT_AUTHORIZED' })
+    expect(await tokenService.buyYapp(CLAIMANT, BigInt(100), BigInt(1))).toMatchObject({ success: false, errorCode: 'NOT_AUTHORIZED' })
+    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5))).toMatchObject({ success: false, errorCode: 'NOT_AUTHORIZED' })
     expect(directPurchase).not.toHaveBeenCalled()
     expect(transfer).not.toHaveBeenCalled()
   })
@@ -66,14 +68,14 @@ describe('a locked YAPP (v10)', () => {
   it('still pays out the starter grant', async () => {
     topology.locked = true
     claim.mockResolvedValue(undefined)
-    expect(await tokenService.claimStarterGrant(CLAIMANT, 'wif')).toEqual({ success: true })
+    expect(await tokenService.claimStarterGrant(CLAIMANT)).toEqual({ success: true })
   })
 
   it('leaves purchases and transfers alone where YAPP is not locked', async () => {
     directPurchase.mockResolvedValue(undefined)
     transfer.mockResolvedValue(undefined)
-    expect(await tokenService.buyYapp(CLAIMANT, BigInt(100), BigInt(1), 'wif')).toEqual({ success: true })
-    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5), undefined, 'wif')).toEqual({ success: true })
+    expect(await tokenService.buyYapp(CLAIMANT, BigInt(100), BigInt(1))).toEqual({ success: true })
+    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5))).toEqual({ success: true })
   })
 })
 
@@ -89,8 +91,8 @@ describe('a token write whose answer could not be verified', () => {
   ])('reports a purchase or transfer sent into %s as unconfirmed, never as a failure to retry', async (_label, error) => {
     directPurchase.mockRejectedValue(error)
     transfer.mockRejectedValue(error)
-    expect(await tokenService.buyYapp(CLAIMANT, BigInt(100), BigInt(1), 'wif')).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
-    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5), undefined, 'wif')).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+    expect(await tokenService.buyYapp(CLAIMANT, BigInt(100), BigInt(1))).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5))).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
     expect(directPurchase).toHaveBeenCalledTimes(1)
     expect(transfer).toHaveBeenCalledTimes(1)
   })
@@ -98,7 +100,7 @@ describe('a token write whose answer could not be verified', () => {
   it('reports a read that failed before anything was sent as a plain failure', async () => {
     // The nonce read under the write lock hit the gap: the transfer was never handed to the SDK.
     signedWrite.mockRejectedValue(QKU)
-    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5), undefined, 'wif')).toMatchObject({ success: false, errorCode: 'NETWORK_ERROR' })
+    expect(await tokenService.transfer(CLAIMANT, 'Rcp1', BigInt(5))).toMatchObject({ success: false, errorCode: 'NETWORK_ERROR' })
     expect(transfer).not.toHaveBeenCalled()
   })
 })

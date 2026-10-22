@@ -69,6 +69,11 @@ export function sessionKey(keys: readonly PhraseKey[]): PhraseKey | undefined {
   return authenticationAt(keys, SecurityLevel.HIGH) ?? authenticationAt(keys, SecurityLevel.CRITICAL)
 }
 
+/** The phrase's CRITICAL authentication key: what moderation and token transitions sign with (lib/auth/critical-key.ts). */
+export function criticalKey(keys: readonly PhraseKey[]): PhraseKey | undefined {
+  return authenticationAt(keys, SecurityLevel.CRITICAL)
+}
+
 export function masterKey(keys: readonly PhraseKey[]): PhraseKey | undefined {
   return authenticationAt(keys, SecurityLevel.MASTER)
 }

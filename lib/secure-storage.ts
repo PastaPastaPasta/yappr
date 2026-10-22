@@ -13,6 +13,7 @@ import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { bytesToHex, hexToBytes } from '@/lib/bytes'
 import { purgeRetiredSecrets } from '@/lib/auth/retired-secrets'
+import { forgetCriticalKey } from '@/lib/auth/critical-key'
 import { sha256 } from '@noble/hashes/sha2.js'
 
 const SECRET_PREFIX = scopedKey('yappr_secure_')
@@ -163,6 +164,7 @@ export function hasPrivateKey(identityId: string): boolean {
 /** Remote sign-out must destroy this tab's key without deleting a newer shared login. */
 export function clearTabSecrets(identityId: string): void {
   sessionOnlyMemory.delete(identityId)
+  forgetCriticalKey(identityId)
   expectedPasskeyKeys.delete(identityId)
   try {
     sessionStorage.removeItem(SESSION_ONLY_KEY_PREFIX + identityId)

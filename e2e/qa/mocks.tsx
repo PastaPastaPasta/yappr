@@ -6,10 +6,6 @@ const user = { identityId: 'offline-identity', dpnsUsername: 'alice.dash' }
 export function useAuth() {
   return { user, controller: { getState: () => ({ user: { username: 'alice.dash' } }) }, refreshDpnsUsernames: async () => undefined, login: async () => undefined }
 }
-// These offline views mock the signer; payout tests model an authorized moderator.
-export function useModerationAuthorization() {
-  return new URLSearchParams(location.search).get('authorization') !== 'wallet'
-}
 export function useModerationRole() {
   return { isModerator: true, isProtected: false, protectedIds: new Set<string>() }
 }

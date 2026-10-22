@@ -11,6 +11,7 @@ import { UNCONFIRMED_WRITE_MESSAGE, extractErrorMessage, isOncePerIdentityAlread
 import { withSdkSignedWrite } from './identity-nonce';
 import { SigningUnavailableError, assertRawKeyCovers, hasAppConnectSession, reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
 import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
+import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, availableCriticalKey, criticalKeyFor } from '@/lib/auth/critical-key';
 import { starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
 import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 
@@ -22,6 +23,8 @@ export interface TokenResult {
   error?: string;
   errorCode?:
     | 'INVALID_KEY' | 'INSUFFICIENT_CREDITS' | 'BELOW_MINIMUM' | 'NOT_AUTHORIZED' | 'NETWORK_ERROR' | 'NEEDS_CRITICAL_KEY' | 'ALREADY_CLAIMED'
+    /** The user closed the sheet asking for the highest-security key: nothing was signed (say nothing). */
+    | 'CANCELLED'
     /**
      * Sent, but no verdict came back: the confirmation timed out, or its proof
      * could not be checked (a quorum rotation). It may have landed, so the UI
@@ -131,14 +134,13 @@ class TokenService {
    * than silently overspending.
    *
    * Drive only accepts a CRITICAL auth key for direct purchase (it spends
-   * credits). If the stored login key is HIGH, this returns
-   * NEEDS_CRITICAL_KEY without broadcasting; the UI should prompt for the
-   * CRITICAL key and retry with `criticalKeyWif` (used to sign, never stored).
+   * credits). A session that holds none is asked for it before anything is
+   * built (lib/auth/critical-key.ts); closing that sheet answers CANCELLED.
    *
    * Refused without a broadcast where YAPP is locked (v10): the token has no
    * purchase price and no one can ever set one, so Drive would refuse it.
    */
-  async buyYapp(buyerId: string, amount: bigint, maxTotalCost: bigint, criticalKeyWif?: string): Promise<TokenResult> {
+  async buyYapp(buyerId: string, amount: bigint, maxTotalCost: bigint): Promise<TokenResult> {
     if (yappIsLocked()) {
       return { success: false, error: 'YAPP can\'t be bought', errorCode: 'NOT_AUTHORIZED' };
     }
@@ -148,10 +150,7 @@ class TokenService {
 
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey } = await this.getAuthSigner(buyerId, {
-        requireCritical: true,
-        overrideWif: criticalKeyWif,
-      });
+      const { signer, identityKey } = await this.getAuthSigner(buyerId, { requireCritical: true });
 
       await sendTokenWrite(buyerId, () => sdk.tokens.directPurchase({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -172,10 +171,10 @@ class TokenService {
   /**
    * Transfer `amount` YAPP to another identity, signing locally.
    *
-   * Like every token transition this needs a CRITICAL auth key, so a
-   * wallet-login user (whose stored key is HIGH) gets NEEDS_CRITICAL_KEY
-   * without a broadcast; the UI then either collects one or hands the unsigned
-   * transition to the wallet (`buildUnsignedYappTipTransition`).
+   * Like every token transition this needs a CRITICAL auth key: one the tab
+   * does not hold is asked for (lib/auth/critical-key.ts), and the UI may
+   * instead hand the unsigned transition to the wallet
+   * (`buildUnsignedYappTipTransition`).
    *
    * `publicNote` is written verbatim into the token-history `transfer`
    * document and signed along with the amount and the recipient.
@@ -191,18 +190,14 @@ class TokenService {
     senderId: string,
     recipientId: string,
     amount: bigint,
-    publicNote?: string,
-    criticalKeyWif?: string
+    publicNote?: string
   ): Promise<TokenResult> {
     if (yappIsLocked()) {
       return { success: false, error: 'YAPP can\'t be sent to other accounts', errorCode: 'NOT_AUTHORIZED' };
     }
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey } = await this.getAuthSigner(senderId, {
-        requireCritical: true,
-        overrideWif: criticalKeyWif,
-      });
+      const { signer, identityKey } = await this.getAuthSigner(senderId, { requireCritical: true });
 
       await sendTokenWrite(senderId, () => sdk.tokens.transfer({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -222,24 +217,20 @@ class TokenService {
   }
 
   /**
-   * Whether the key this browser holds for `identityId` is a CRITICAL
-   * authentication key — i.e. whether a token transition can be signed here at
-   * all, or has to go out to a wallet. Answered without broadcasting anything;
-   * any failure (no stored key, identity unreachable) answers false, which
-   * only ever routes the user to the wallet path.
+   * Whether this tab already holds a CRITICAL authentication key for
+   * `identityId` that may sign a token transition (the session's own, or one
+   * held for the tab, lib/auth/critical-key.ts): if not, the user is offered
+   * their wallet first, and asked for the key only if they choose it.
+   * Answered without broadcasting or asking anything; any failure answers
+   * false, which only ever routes the user to the wallet path.
    */
   async canSignTokenTransitions(identityId: string): Promise<boolean> {
     try {
-      const { getPrivateKeyRecord } = await import('../secure-storage');
-      const record = getPrivateKeyRecord(identityId);
-      // One read: the key and its provenance from the same record.
-      if (!record || record.fromPasskey) return false;
-      const wif = record.wif.trim();
-      if (!wif) return false;
+      const sessionKey = await this.sessionCriticalCandidate(identityId);
       const sdk = await getEvoSdk();
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) return false;
-      return this.findMatchingAuthKey(wif, identity.publicKeys, [SecurityLevel.CRITICAL]) !== null;
+      return availableCriticalKey(identityId, identity.publicKeys, 'token', sessionKey) !== null;
     } catch (error) {
       logger.debug('tokenService: critical-key probe failed', error);
       return false;
@@ -279,18 +270,14 @@ class TokenService {
    * (40722), which comes back as ALREADY_CLAIMED so the prompt can stop for
    * good. Like every token transition it needs a CRITICAL key.
    */
-  async claimStarterGrant(identityId: string, criticalKeyWif?: string): Promise<TokenResult> {
+  async claimStarterGrant(identityId: string): Promise<TokenResult> {
     if (starterGrantAmount() === null) {
       return { success: false, error: 'This contract declares no starter grant', errorCode: 'NOT_AUTHORIZED' };
     }
     let signingKey: SigningKey | undefined;
     try {
       const sdk = await getEvoSdk();
-      const auth = await this.getAuthSigner(identityId, {
-        requireCritical: true,
-        overrideWif: criticalKeyWif,
-        keyRing: true,
-      });
+      const auth = await this.getAuthSigner(identityId, { requireCritical: true, keyRing: true });
       const { signer, identityKey } = auth;
       signingKey = auth.signingKey;
       await sendTokenWrite(identityId, () => sdk.tokens.claim({
@@ -363,58 +350,73 @@ class TokenService {
   }
 
   /**
+   * The stored key the session itself may offer as its CRITICAL step-up key,
+   * for the caller to match: never a wallet session's stored leftovers, nor a
+   * passkey's CRITICAL key (token transitions ask for the key itself, owner
+   * decision V2).
+   */
+  private async sessionCriticalCandidate(identityId: string): Promise<string | null> {
+    if (hasAppConnectSession(identityId)) return null;
+    const { getPrivateKeyRecord } = await import('../secure-storage');
+    // One read: the key and its provenance from the same record.
+    const record = getPrivateKeyRecord(identityId);
+    return record && !record.fromPasskey ? record.wif.trim() || null : null;
+  }
+
+  /**
    * Build an IdentitySigner + matching AUTHENTICATION key for an identity.
-   * Uses `overrideWif` when given (a key the user just entered), otherwise the
-   * private key from secure storage. Mirrors tip-service's transfer-key flow.
-   * With `requireCritical`, only a CRITICAL key may match — throws the
-   * NEEDS_CRITICAL_KEY marker otherwise so callers can prompt for one.
+   * With `requireCritical`, only a CRITICAL key signs: the session's own (not
+   * a passkey's), else the one held for the tab, else the step-up sheet asks
+   * for it (lib/auth/critical-key.ts). Closing the sheet throws
+   * CriticalKeyCancelledError; with no sheet mounted, the NEEDS_CRITICAL_KEY
+   * marker. Otherwise the stored key, CRITICAL or HIGH.
    *
-   * An App Connect session signs only what `keyRing` allows (the starter
-   * claim, with the CRITICAL group key); every other token transition needs a
-   * key the user enters, so it answers the same marker.
+   * An App Connect session signs what `keyRing` allows (the starter claim,
+   * with the CRITICAL group key) from its key ring; every other token
+   * transition takes the step-up key.
    */
   private async getAuthSigner(
     identityId: string,
-    opts?: { requireCritical?: boolean; overrideWif?: string; keyRing?: boolean }
+    opts?: { requireCritical?: boolean; keyRing?: boolean }
   ): Promise<{ signer: Awaited<ReturnType<typeof signerService.createSigner>>; identityKey: WasmIdentityPublicKey; signingKey?: SigningKey }> {
-    let wif = opts?.overrideWif?.trim();
-    if (!wif && hasAppConnectSession(identityId)) {
-      if (!opts?.keyRing) throw new Error('critical key required');
+    const appConnect = hasAppConnectSession(identityId);
+    if (appConnect && opts?.keyRing) {
       const sdk = await getEvoSdk();
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) throw new Error('Identity not found');
       const signingKey = await resolveSigningKey(identityId, identity.publicKeys, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
       return { ...(await signerService.createSignerFromWasmKey(signingKey.wif, signingKey.identityKey)), signingKey };
     }
-    if (!wif) {
-      const { getPrivateKeyRecord } = await import('../secure-storage');
-      // One read: the key that signs and its provenance come from the same record.
-      const stored = getPrivateKeyRecord(identityId);
-      if (!stored) {
-        const { promptForAuthKey } = await import('../auth-utils');
-        promptForAuthKey();
-        throw new Error('Private key not found — please re-authenticate');
-      }
-      // A moderator's CRITICAL key from a passkey never signs token transitions: they ask for the key itself.
-      if (stored.fromPasskey) throw new Error('critical key required');
-      wif = stored.wif.trim();
+    if (opts?.requireCritical) {
+      // The session's own key when it is CRITICAL, else the key held for the tab, else the sheet asks
+      // for it now (lib/auth/critical-key.ts).
+      const sessionKey = await this.sessionCriticalCandidate(identityId);
+      const sdk = await getEvoSdk();
+      const identity = await sdk.identities.fetch(identityId);
+      if (!identity) throw new Error('Identity not found');
+      const critical = await criticalKeyFor(identityId, identity.publicKeys, 'token', sessionKey);
+      await assertRawKeyCovers(identityId, critical.key, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
+      return signerService.createSignerFromWasmKey(critical.wif, critical.key);
     }
+    if (appConnect) throw new Error(CRITICAL_KEY_REQUIRED);
+    const { getPrivateKeyRecord } = await import('../secure-storage');
+    // One read: the key that signs and its provenance come from the same record.
+    const stored = getPrivateKeyRecord(identityId);
+    if (!stored) {
+      const { promptForAuthKey } = await import('../auth-utils');
+      promptForAuthKey();
+      throw new Error('Private key not found — please re-authenticate');
+    }
+    // A moderator's CRITICAL key from a passkey never signs token transitions.
+    if (stored.fromPasskey) throw new Error(CRITICAL_KEY_REQUIRED);
+    const wif = stored.wif.trim();
 
     const sdk = await getEvoSdk();
     const identity = await sdk.identities.fetch(identityId);
     if (!identity) throw new Error('Identity not found');
 
-    const allowedLevels = opts?.requireCritical
-      ? [SecurityLevel.CRITICAL]
-      : [SecurityLevel.CRITICAL, SecurityLevel.HIGH];
-    const authKey = this.findMatchingAuthKey(wif, identity.publicKeys, allowedLevels);
-    if (!authKey) {
-      throw new Error(
-        opts?.requireCritical
-          ? 'critical key required'
-          : 'No matching AUTHENTICATION key (CRITICAL/HIGH) found for the stored private key'
-      );
-    }
+    const authKey = this.findMatchingAuthKey(wif, identity.publicKeys, [SecurityLevel.CRITICAL, SecurityLevel.HIGH]);
+    if (!authKey) throw new Error('No matching AUTHENTICATION key (CRITICAL/HIGH) found for the stored private key');
     // Every transition here is on the YAPP token: a bound or limited key must cover it.
     await assertRawKeyCovers(identityId, authKey, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
 
@@ -436,6 +438,8 @@ class TokenService {
   }
 
   private toResult(error: unknown, fallback: string): TokenResult {
+    // The user closed the sheet asking for the key: nothing was signed.
+    if (error instanceof CriticalKeyCancelledError) return { success: false, errorCode: 'CANCELLED' };
     if (error instanceof SigningUnavailableError) return { success: false, error: error.message, errorCode: 'NOT_AUTHORIZED' };
     if (error instanceof UnconfirmedTokenWriteError) {
       logger.warn(`${fallback} unconfirmed:`, error.message);
@@ -447,7 +451,7 @@ class TokenService {
     // Local marker from getAuthSigner, or Drive's rejection ("Invalid public
     // key security level HIGH. The state transition requires one of CRITICAL").
     if (
-      lower.includes('critical key required') ||
+      lower.includes(CRITICAL_KEY_REQUIRED) ||
       (lower.includes('invalid public key security level') && lower.includes('critical'))
     ) {
       return {

@@ -88,20 +88,62 @@ export function checkLoginKey(
   if (result.ok) return { isValid: true, ...keyFacts(result.match) }
 
   // A disabled sign-in key is named as such, even when the same key is also enabled under another purpose or level.
-  const disabledSignInKeys = publicKeys
+  const disabled = disabledMatch(privateKeyWif, publicKeys, network, LOGIN_LEVELS)
+  if (disabled) return disabled
+  if (result.reason === 'rejected') return rejection(result.match)
+  return { isValid: false, error: 'This key does not match this identity', errorType: 'NO_MATCH' }
+}
+
+/** The refusal of a key matching one of the identity's disabled authentication keys at `levels`, or null. */
+function disabledMatch(
+  privateKeyWif: string,
+  publicKeys: readonly IdentityKeyLike[],
+  network: 'testnet' | 'mainnet',
+  levels: readonly number[],
+): LoginKeyResult | null {
+  const disabledKeys = publicKeys
     .filter((key) => key.disabledAt)
     .map(toKeyInfo)
     .filter((info): info is IdentityPublicKeyInfo => info !== null
-      && info.purpose === KeyPurpose.AUTHENTICATION && LOGIN_LEVELS.some((level) => level === info.securityLevel))
-  const disabledMatch = findMatchingKeyIndex(privateKeyWif, disabledSignInKeys, network)
-  if (disabledMatch) {
+      && info.purpose === KeyPurpose.AUTHENTICATION && levels.includes(info.securityLevel))
+  const match = findMatchingKeyIndex(privateKeyWif, disabledKeys, network)
+  if (!match) return null
+  return {
+    isValid: false,
+    ...keyFacts(match),
+    error: 'This key has been turned off for this account. Use another key.',
+    errorType: 'DISABLED',
+  }
+}
+
+/**
+ * Whether a typed-in key is the identity's enabled CRITICAL authentication
+ * key: the step-up key moderation and token transitions sign with
+ * (lib/auth/critical-key.ts), by the same rule the signer applies. A disabled
+ * key, or another of the account's keys, is named as such.
+ */
+export function checkCriticalKey(
+  privateKeyWif: string,
+  publicKeys: readonly IdentityKeyLike[],
+  network: 'testnet' | 'mainnet',
+): LoginKeyResult {
+  const malformed = checkLoginKeyFormat(privateKeyWif, network)
+  if (malformed) return malformed
+  const result = matchIdentityKey(privateKeyWif, publicKeys, {
+    network,
+    purpose: KeyPurpose.AUTHENTICATION,
+    allowedSecurityLevels: [SecurityLevel.CRITICAL],
+  })
+  if (result.ok) return { isValid: true, ...keyFacts(result.match) }
+  const disabled = disabledMatch(privateKeyWif, publicKeys, network, [SecurityLevel.CRITICAL])
+  if (disabled) return disabled
+  if (result.reason === 'rejected') {
     return {
       isValid: false,
-      ...keyFacts(disabledMatch),
-      error: 'This key has been turned off for this account. Use another key.',
-      errorType: 'DISABLED',
+      ...keyFacts(result.match),
+      error: 'That\'s another of this account\'s keys. Use its highest-security (CRITICAL) key.',
+      errorType: result.match.purpose === KeyPurpose.AUTHENTICATION ? 'WRONG_SECURITY_LEVEL' : 'WRONG_PURPOSE',
     }
   }
-  if (result.reason === 'rejected') return rejection(result.match)
-  return { isValid: false, error: 'This key does not match this identity', errorType: 'NO_MATCH' }
+  return { isValid: false, error: 'This key doesn\'t belong to this account.', errorType: 'NO_MATCH' }
 }

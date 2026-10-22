@@ -26,6 +26,8 @@ export interface TipResult {
     | 'BELOW_MINIMUM'
     | 'ALREADY_CLAIMED'
     | 'NEEDS_CRITICAL_KEY'
+    /** The user closed the sheet asking for the highest-security key: nothing was sent. */
+    | 'CANCELLED'
     /**
      * The transfer was broadcast, the confirmation wait failed (a timeout, or
      * a result proof that could not be checked during a quorum rotation), and
@@ -247,35 +249,27 @@ class TipService {
    * is read back off chain rather than taken on the tipper's word.
    *
    * Every batch carrying a token transition needs a CRITICAL authentication
-   * key. Wallet-login users don't have one in the browser: they get
-   * NEEDS_CRITICAL_KEY here, and the caller hands
-   * `buildUnsignedYappTipTransition` to their wallet instead.
+   * key: a tab that holds none asks for it (lib/auth/critical-key.ts; closing
+   * that sheet answers CANCELLED), or the caller hands
+   * `buildUnsignedYappTipTransition` to the user's wallet instead.
    *
    * @param senderId - The tipper
    * @param recipientId - The tipped author
    * @param amount - Whole YAPP tokens
    * @param target - The tipped post/reply the note should name, if any
    * @param message - Optional text signed with the transfer
-   * @param criticalKeyWif - A CRITICAL key the user just entered (never stored)
    */
   async sendYappTipLocal(
     senderId: string,
     recipientId: string,
     amount: bigint,
     target?: { kind: TipTargetKind; id: string },
-    message?: string,
-    criticalKeyWif?: string
+    message?: string
   ): Promise<TipResult> {
     const invalid = this.validateYappTip(senderId, recipientId, amount);
     if (invalid) return invalid;
 
-    const result = await tokenService.transfer(
-      senderId,
-      recipientId,
-      amount,
-      this.tipNoteFor(target, message),
-      criticalKeyWif
-    );
+    const result = await tokenService.transfer(senderId, recipientId, amount, this.tipNoteFor(target, message));
     if (!result.success) {
       // Sent, and no verdict came back (a timeout, a proof that could not be
       // checked, a transport failure, "already in mempool"): never a failure to

@@ -4,7 +4,7 @@
  * them off contracts that do not declare the capability. Moutai has no
  * contracts to write to, so the SDK is mocked; the live check is PR C's.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
   contracts: {
@@ -102,6 +102,8 @@ import {
   SETTLE_MARGIN_MS, countedSigners, deletionPhase, missingDocumentState, moderationService, neededApprovals, protectedIdentities, teamActionTargetState,
   moderatedTypeOpenFor, postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
 } from './moderation-service'
+import { answerCriticalKeyRequest, cancelCriticalKeyRequest, currentCriticalKeyRequest, subscribeCriticalKeyRequests } from '@/lib/auth/critical-key'
+import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
 const MODERATOR = 'Mod111111111111111111111111111111111111111'
@@ -130,6 +132,50 @@ describe('moderation signs only with a raw key', () => {
     const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
     expect(result).toMatchObject({ success: false, errorCode: 'NEEDS_CRITICAL_KEY' })
     expect(sdk.contracts.warnUser).not.toHaveBeenCalled()
+  })
+})
+
+describe('step-up: a wallet session asks for the CRITICAL key when the action is confirmed', () => {
+  let unbind: () => void
+  beforeEach(() => { unbind = bindCurrentIdentity(() => MODERATOR) })
+  afterEach(() => unbind())
+
+  function sheet(reply: 'key' | 'cancel') {
+    const asked: string[] = []
+    const stop = subscribeCriticalKeyRequests(() => {
+      const request = currentCriticalKeyRequest()
+      if (!request) return
+      asked.push(`${request.identityId}:${request.use}`)
+      queueMicrotask(() => {
+        if (reply === 'cancel') cancelCriticalKeyRequest(request)
+        else answerCriticalKeyRequest(request, { wif: 'critical-wif', source: 'typed', keep: false })
+      })
+    })
+    return { asked, stop }
+  }
+
+  it('asks once, then moderates with the key given', async () => {
+    topology.lists = ['banlist', 'suspensions', 'warnings']
+    walletSession.active = true
+    sdk.contracts.warnUser.mockResolvedValue(undefined)
+    const { asked, stop } = sheet('key')
+    const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
+    stop()
+    expect(result).toEqual({ success: true })
+    expect(asked).toEqual([`${MODERATOR}:moderation`])
+    expect(sdk.contracts.warnUser).toHaveBeenCalledTimes(1)
+  })
+
+  it('closing the sheet signs and sends nothing, and says nothing', async () => {
+    topology.lists = ['banlist', 'suspensions', 'warnings']
+    walletSession.active = true
+    sdkSignedWrites.count = 0
+    const { stop } = sheet('cancel')
+    const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
+    stop()
+    expect(result).toEqual({ success: false, errorCode: 'CANCELLED' })
+    expect(sdk.contracts.warnUser).not.toHaveBeenCalled()
+    expect(sdkSignedWrites.count).toBe(0)
   })
 })
 
