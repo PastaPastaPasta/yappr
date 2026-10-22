@@ -22,6 +22,7 @@ import { hashtagsAreInline, likesAreIndexOnly } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { usePostingClosed } from '@/hooks/use-posting-opening'
 
 const PAGE_SIZE = 50
 
@@ -30,6 +31,7 @@ function HashtagPageContent() {
   const searchParams = useSearchParams()
   const tag = searchParams.get('tag') || ''
   const { user } = useAuth()
+  const postingClosed = usePostingClosed()
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
   const [posts, setPosts] = useState<Post[]>([])
@@ -331,7 +333,9 @@ function HashtagPageContent() {
                 <TagIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
                 <h2 className="text-xl font-semibold mb-2">No posts yet</h2>
                 <p className="text-gray-500 mb-4">
-                  Be the first to post with {tagSymbol}{displayTag}
+                  {postingClosed
+                    ? `Posts with ${tagSymbol}${displayTag} will show up here once posting opens.`
+                    : `Be the first to post with ${tagSymbol}${displayTag}`}
                 </p>
               </div>
             ) : (

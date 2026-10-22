@@ -15,6 +15,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/explore/trending-hashtag-row'
 import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
 import { KeptPanel } from '@/components/ui/kept-panel'
@@ -33,6 +34,7 @@ type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
+  const blogPostsOpen = useModeratedTypeOpen('blogPost', true, 'blog')
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
   const [searchQuery, setSearchQuery] = useState('')
@@ -432,7 +434,9 @@ export default function ExplorePage() {
                   <div className="p-8 text-center">
                     <DocumentTextIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                     <p className="text-gray-500">No blog posts yet</p>
-                    <p className="text-sm text-gray-400 mt-1">Be the first to publish an article!</p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      {blogPostsOpen ? 'Be the first to publish an article!' : 'Articles will show up here once posting opens.'}
+                    </p>
                   </div>
                 ) : (
                   <div className="divide-y divide-gray-200 dark:divide-gray-800">

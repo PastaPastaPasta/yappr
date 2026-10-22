@@ -297,6 +297,9 @@ function PostCardView({
   const [localModeration, setLocalModeration] = useState<PostModeration | null | undefined>(undefined)
   const moderation = localModeration === undefined ? post.moderation : localModeration ?? undefined
   const hiddenByModerators = isHidden(moderation)
+  // A default build offers nothing to build on a hidden post (reply, repost, quote), even to the moderators who read it; an archival build keeps them.
+  const hiddenOnThisBuild = hiddenByModerators && !moderationViewAll()
+  const hiddenActionReason = `This ${isReply ? 'reply' : 'post'} is hidden, so it can’t be replied to, reposted or quoted.`
   // v18: the moderator menu reads the author's restriction once the viewer
   // reaches for it (hover, focus or press of its trigger), so the answer is
   // usually in before the menu opens; until then its item holds its place.
@@ -901,8 +904,8 @@ function PostCardView({
             deleted={isTombstoned}
             reply={{
               count: replyCount,
-              enabled: canReplyToPrivate && !isTombstoned && !replyBlockedReason,
-              reason: isTombstoned ? `This ${isReply ? 'reply' : 'post'} was deleted` : replyBlockedReason ?? cantReplyReason,
+              enabled: canReplyToPrivate && !isTombstoned && !replyBlockedReason && !hiddenOnThisBuild,
+              reason: isTombstoned ? `This ${isReply ? 'reply' : 'post'} was deleted` : hiddenOnThisBuild ? hiddenActionReason : replyBlockedReason ?? cantReplyReason,
               onClick: handleReply,
             }}
             repost={{
@@ -910,6 +913,7 @@ function PostCardView({
               active: engagement.reposted,
               loading: engagement.repostLoading,
               allowed: repostable,
+              unavailableReason: hiddenOnThisBuild ? hiddenActionReason : undefined,
               undoLabel: ownQuote && !ownQuote.bare ? 'Delete your quote' : undefined,
               onClick: handleRepost,
             }}

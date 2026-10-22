@@ -167,8 +167,7 @@ function ContractLog({ contract }: { contract: LogContract }) {
   return (
     <div data-testid="moderation-log">
       <p className="border-b border-gray-200 px-4 py-3 text-sm text-gray-600 dark:border-gray-800 dark:text-gray-400">
-        What the moderators have hidden, the accounts they restricted or restored, and the warnings they gave, newest first.
-        It lists what is hidden right now: once something is unhidden, it leaves this list.
+        Posts and replies moderators have hidden, and accounts they&apos;ve restricted or warned, newest first. Unhidden items drop off the list.
       </p>
       {!stuck && (state.loading || !sdkReady) && state.rows.length === 0 && <SkeletonRows />}
       {state.rows.map((row) => <LogRowItem key={row.key} contract={contract} row={row} names={names} />)}
