@@ -163,9 +163,10 @@ export interface Reply {
   /** v10: a stand-in for a reply proved deleted, holding its children's place in the thread; never a real document. */
   deletedStub?: boolean
   /**
-   * v18: a stand-in for a reply the moderators hid, keeping its children's place in the thread on a
-   * default build ("This reply is hidden by moderators"). Carries no content or author; never a real
-   * document. An archival build shows the hidden reply itself, labelled from `moderation`.
+   * v18: a stand-in for a reply a default build does not list, keeping its children's place in the thread:
+   * one the moderators hid, or one written while its author was restricted (the two are not told apart, so
+   * the copy must not single out an account; e.g. "This reply isn't shown"). Carries no content or author;
+   * never a real document. An archival build shows the reply itself, labelled from `moderation`.
    */
   hiddenStub?: boolean
   sensitive?: boolean     // author-declared NSFW flag (see Post.sensitive)

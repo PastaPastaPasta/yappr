@@ -291,7 +291,7 @@ class StoreStatsService {
   topRatedStores(limit = 20, { throwOnError = false } = {}): Promise<RankedEntry[]> {
     return this.rankedPage(`stores:avg:${limit}`, {
       documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, groupBy: 'storeId', aggregate: { type: 'avg', property: 'rating' },
-      where: storefrontModPin(), limit,
+      ...(storefrontModPin().length > 0 ? { where: storefrontModPin() } : {}), limit,
     }, throwOnError);
   }
 

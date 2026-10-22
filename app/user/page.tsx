@@ -145,22 +145,38 @@ function UserProfileContent() {
   const { isModerator } = useModerationRole()
   const seesHidden = moderationViewAll() || isModerator
   const [profileModeration, setProfileModeration] = useState<{ documentId: string; moderation: ModerationMarks } | null>(null)
+  /**
+   * Where that read stands. The header waits for it (the skeleton stays), so
+   * a hidden profile's fields never flash, and a read that failed counts as
+   * hidden for everyone who is not shown hidden content (fail closed).
+   */
+  const [profileModerationRead, setProfileModerationRead] = useState<'pending' | 'done' | 'failed'>('pending')
   const authorRestricted = useAuthorRestricted('social', userId, hidesProfiles && seesHidden)
   const [restrictedHere, setRestrictedHere] = useState<boolean | null>(null)
   useEffect(() => {
     setProfileModeration(null)
     setRestrictedHere(null)
-    if (!hidesProfiles || !userId) return
+    if (!hidesProfiles || !userId) {
+      setProfileModerationRead('done')
+      return
+    }
+    setProfileModerationRead('pending')
     let cancelled = false
     moderationService.readProfileModeration(userId).then((read) => {
-      if (!cancelled) setProfileModeration(read)
-    }).catch((error: unknown) => logger.warn('Profile: could not read the profile\'s moderation', error))
+      if (cancelled) return
+      setProfileModeration(read)
+      setProfileModerationRead('done')
+    }).catch((error: unknown) => {
+      logger.warn('Profile: could not read the profile\'s moderation', error)
+      if (!cancelled) setProfileModerationRead('failed')
+    })
     return () => {
       cancelled = true
     }
   }, [hidesProfiles, userId])
   const profileHidden = isHidden(profileModeration?.moderation)
-  const showsHiddenProfileStub = profileHidden && !seesHidden
+  const showsHiddenProfileStub = (profileHidden || profileModerationRead === 'failed') && !seesHidden
+  const awaitingProfileModeration = profileModerationRead === 'pending'
   const onProfileModerated = (outcome: ModeratorHideOutcome) => {
     if (outcome.restricted !== undefined) setRestrictedHere(outcome.restricted)
     // The marks are read fresh above, never from the profile cache, so only this state moves.
@@ -578,7 +594,7 @@ function UserProfileContent() {
           </div>
         </PageHeader>
 
-        {isLoading ? (
+        {isLoading || awaitingProfileModeration ? (
           <ProfileSkeleton userId={userId} />
         ) : showNsfwInterstitial ? (
           <div data-testid="nsfw-interstitial" className="flex flex-col items-center justify-center gap-4 px-8 py-24 text-center">
@@ -630,9 +646,9 @@ function UserProfileContent() {
               }}
             />
 
-            {showsHiddenProfileStub && profileModeration && (
-              <HiddenContentStub noun="profile" moderation={profileModeration.moderation} documentId={userId} />
-            )}
+            {showsHiddenProfileStub && (profileHidden
+              ? <HiddenContentStub noun="profile" moderation={profileModeration?.moderation} documentId={userId} />
+              : <HiddenContentStub noun="profile" documentId={userId} text="This profile's details can't be shown right now." />)}
             {hidesProfiles && seesHidden && (profileHidden || (restrictedHere ?? authorRestricted) === true || isModerator) && (
               <div className="flex items-start gap-2 px-4 pb-3">
                 <ModerationLabel moderation={profileModeration?.moderation} restricted={(restrictedHere ?? authorRestricted) === true} className="flex-1" />

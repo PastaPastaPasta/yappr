@@ -60,6 +60,8 @@ describe('a reply under a hidden parent (v18)', () => {
     provenAbsent: vi.fn(async () => new Set<string>()),
   })
 
+  const shownIds = (threads: ReturnType<typeof assembleFlatThread>): unknown[] => threads.map((t) => [t.content.id, shownIds(t.nestedReplies)])
+
   beforeEach(() => {
     shape.liveThreads = true
     shape.outlive = false
@@ -91,6 +93,19 @@ describe('a reply under a hidden parent (v18)', () => {
     const replies = await withMissingReplyParents([reply('c1', 't1', 10), reply('c2', 'h1', 11)], r)
     expect(replies.filter((x) => x.hiddenStub).map((x) => x.id)).toEqual(['h1'])
     expect(replies.find((x) => x.id === 't1')).toBe(tomb)
+  })
+
+  it('stubs a parent written under a restriction (lane 2) the same way, and shows it on an archival build', async () => {
+    const restrictedReply = (id: string, at: number): Reply => ({ ...reply(id, undefined, at), content: 'from a restricted account', moderation: { restricted: true } })
+    const r = reads([restrictedReply('r1', 1)])
+    const replies = await withMissingReplyParents([reply('c1', 'r1', 10)], r)
+    const [stub] = replies.filter((x) => x.hiddenStub)
+    expect(stub).toMatchObject({ id: 'r1', content: '', hiddenStub: true })
+    expect(stub.moderation).toBeUndefined()
+    expect(shownIds(assembleFlatThread(root, replies))).toEqual([['r1', [['c1', []]]]])
+
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    expect((await withMissingReplyParents([reply('c1', 'r1', 10)], reads([restrictedReply('r1', 1)]))).map((x) => x.id)).toEqual(['c1'])
   })
 
   it('does not stub a parent that is merely unlisted for another reason', async () => {

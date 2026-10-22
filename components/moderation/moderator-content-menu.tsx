@@ -121,9 +121,16 @@ export function ModeratorContentMenu({ target, ownerId, onRemoved, onChanged, cl
               {service.canHide(target.docType) && (hidden
                 ? item('moderator-unhide', () => openAction('unhide'), <><EyeIcon className="h-4 w-4" />Unhide {target.noun}</>)
                 : item('moderator-hide', () => openAction('hide'), <><EyeSlashIcon className="h-4 w-4" />Hide {target.noun}</>, 'text-red-500'))}
-              {service.canRestrict() && restricted !== null && (restricted
-                ? item('moderator-lift', () => openAction('lift'), <><LockOpenIcon className="h-4 w-4" />Lift the author&apos;s restriction</>)
-                : item('moderator-restrict', () => openAction('restrict'), <><NoSymbolIcon className="h-4 w-4" />Restrict the author</>, 'text-red-500'))}
+              {/* Holds its place while the author's standing is read, so nothing shifts under the pointer. */}
+              {service.canRestrict() && (restricted === null
+                ? (
+                  <DropdownMenu.Item disabled aria-busy data-testid={`moderator-restrict-${target.documentId}`} className={cn(MENU_ITEM, 'opacity-50')}>
+                    <NoSymbolIcon className="h-4 w-4" />Restrict the author
+                  </DropdownMenu.Item>
+                )
+                : restricted
+                  ? item('moderator-lift', () => openAction('lift'), <><LockOpenIcon className="h-4 w-4" />Lift the author&apos;s restriction</>)
+                  : item('moderator-restrict', () => openAction('restrict'), <><NoSymbolIcon className="h-4 w-4" />Restrict the author</>, 'text-red-500'))}
               {service.canWarn() && item('moderator-author', () => router.push(moderateAuthorHref(target, ownerId)), <><ExclamationTriangleIcon className="h-4 w-4" />Warn the author</>)}
             </>
           ) : (

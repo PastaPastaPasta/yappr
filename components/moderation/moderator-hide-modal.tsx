@@ -149,7 +149,11 @@ export function ModeratorHideModal() {
     }
     setBusy(false)
     if (result.errorCode === 'MAYBE_APPLIED') {
-      toast(result.error ?? 'The network did not confirm in time. Check again before retrying.', { duration: 8000 })
+      // The DAPI gateway often times out on a write that landed: show it as
+      // done, drop the reads that could contradict it, and say to look again.
+      toast(`${copy.done}. The network hasn't confirmed it yet, so check back in a moment.`, { duration: 8000 })
+      forgetModeratedReads(contract)
+      onDone?.(outcome)
       close()
       return
     }

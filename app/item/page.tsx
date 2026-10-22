@@ -25,7 +25,7 @@ import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { HIDDEN_ITEM_MESSAGE, HIDDEN_STORE_MESSAGE, cartService } from '@/lib/services/cart-service'
 import { dropsHidden, isHidden, moderationViewAll } from '@/lib/moderation-view'
-import { ModerationLabel } from '@/components/moderation/moderation-label'
+import { HiddenContentStub, ModerationLabel, useSeesHidden } from '@/components/moderation/moderation-label'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { shipsToLabel } from '@/lib/storefront/item-zones'
@@ -92,6 +92,7 @@ function ItemDetailContent() {
   const itemId = searchParams.get('id')
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
+  const seesHidden = useSeesHidden('storefront')
 
   const [item, setItem] = useState<StoreItem | null>(null)
   const [store, setStore] = useState<Store | null>(null)
@@ -256,6 +257,22 @@ function ItemDetailContent() {
             <Button className="mt-4" onClick={() => router.push('/store')}>
               Browse Stores
             </Button>
+      </PageShell>
+    )
+  }
+
+  // Storefront v11: a listing (or its store) the moderators hid is a calm stub
+  // for everyone but its moderators (and everyone on an archival build).
+  const hiddenItem = isHidden(item.moderation)
+  if ((hiddenItem || isHidden(store?.moderation)) && !seesHidden) {
+    return (
+      <PageShell>
+        <HiddenContentStub
+          contract="storefront"
+          noun={hiddenItem ? 'listing' : 'store'}
+          moderation={hiddenItem ? item.moderation : store?.moderation}
+          documentId={hiddenItem ? item.id : store?.id ?? item.id}
+        />
       </PageShell>
     )
   }

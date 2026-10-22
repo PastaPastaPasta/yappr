@@ -126,6 +126,21 @@ describe('planV10ProfileWrite', () => {
     })
   })
 
+  it('carries the moderators\' mod and modLabel through an edit unchanged (v18: dropping one is refused, 41124)', async () => {
+    const { planV10ProfileWrite } = await profileModule('v18')
+    const base = { displayName: 'Ava' }
+    // Hidden: both set.
+    expect(planV10ProfileWrite({ base, extension: { $id: 'ext', location: 'Lisbon', avatar: recipe, mod: 1, modLabel: 3 }, fallbackAvatar: recipe, patch: { location: 'Porto' } }))
+      .toEqual({ base: null, extension: { location: 'Porto', avatar: recipe, mod: 1, modLabel: 3 } })
+    // Unhidden: mod cleared, modLabel left behind.
+    expect(planV10ProfileWrite({ base, extension: { $id: 'ext', avatar: recipe, modLabel: 2 }, fallbackAvatar: recipe, patch: { pronouns: 'she/her' } }))
+      .toEqual({ base: null, extension: { avatar: recipe, pronouns: 'she/her', modLabel: 2 } })
+    // They decide nothing about whether the author changed it, and a patch cannot set them.
+    expect(planV10ProfileWrite({ base, extension: { $id: 'ext', avatar: recipe, mod: 1, modLabel: 3 }, fallbackAvatar: recipe, patch: { avatar: recipe } }).extension).toBeNull()
+    expect(planV10ProfileWrite({ base, extension: { $id: 'ext', avatar: recipe }, fallbackAvatar: recipe, patch: { location: 'Porto' } }).extension)
+      .toEqual({ avatar: recipe, location: 'Porto' })
+  })
+
   it('keeps an image that could not be fingerprinted in the extension, and drops DashPay\'s old one', async () => {
     const { planV10ProfileWrite } = await profileModule('v10')
     const base = { displayName: 'Ava', avatarUrl: 'https://x/a.png', avatarHash: digest.hash, avatarFingerprint: digest.fingerprint }

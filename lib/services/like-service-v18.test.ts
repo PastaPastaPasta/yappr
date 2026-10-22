@@ -110,17 +110,52 @@ describe('v18 unlike of a post', () => {
     mocks.deleteDocumentByValues
       .mockResolvedValueOnce({ success: false, error: 'mismatch (code=40127)' })
       .mockResolvedValueOnce({ success: true, confirmed: true })
-    // The refused delete is settled by the chain, which still holds the like, so the next lane is tried.
-    vi.useFakeTimers()
-    try {
-      const service = await likeService()
-      const work = service.unlikePost(POST, VIEWER, 'post', { author: AUTHOR, tags: [] })
-      await vi.runAllTimersAsync()
-      await expect(work).resolves.toBe(true)
-    } finally {
-      vi.useRealTimers()
-    }
+    // A refusal means the delete did not run: the next lane is tried at once, with no read-back wait.
+    const service = await likeService()
+
+    await expect(service.unlikePost(POST, VIEWER, 'post', { author: AUTHOR, tags: [] })).resolves.toBe(true)
 
     expect(deletedTuples().map((data) => data.postLive)).toEqual([1, 2])
+    // Only the liked-state read before the delete: no read-back between the two tries.
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+  })
+
+  it('settles an unconfirmed delete by the chain before trying another lane', async () => {
+    mocks.get.mockResolvedValue(storedPost({ deleted: true }))
+    mocks.deleteDocumentByValues
+      .mockResolvedValueOnce({ success: false, error: 'wait for state transition result timed out' })
+      .mockResolvedValueOnce({ success: true, confirmed: true })
+    // The like is gone on the read-back: the first delete landed.
+    mocks.query.mockResolvedValueOnce([likeRow]).mockResolvedValue([])
+    const service = await likeService()
+
+    await expect(service.unlikePost(POST, VIEWER, 'post', { author: AUTHOR, tags: [] })).resolves.toBe(true)
+
+    expect(deletedTuples()).toHaveLength(1)
+  })
+
+  it('does not read the post when the card already knows its lane', async () => {
+    const service = await likeService()
+
+    await service.unlikePost(POST, VIEWER, 'post', { author: AUTHOR, tags: [], live: 2 })
+
+    expect(mocks.get).not.toHaveBeenCalled()
+    expect(deletedTuples()).toEqual([expect.objectContaining({ postLive: 2 })])
+  })
+})
+
+describe('the lane a card already knows', () => {
+  it('is 1 without marks, 2 for a restricted author, and unknown for a tombstone, a reply or an older cut', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v18')
+    const v18 = await import('./like-service')
+    expect(v18.knownPostLane({}, 'post')).toBe(1)
+    expect(v18.knownPostLane({ moderation: { restricted: false } }, 'post')).toBe(1)
+    expect(v18.knownPostLane({ moderation: { restricted: true } }, 'post')).toBe(2)
+    expect(v18.knownPostLane({ deleted: true }, 'post')).toBeUndefined()
+    expect(v18.knownPostLane({}, 'reply')).toBeUndefined()
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
+    expect((await import('./like-service')).knownPostLane({}, 'post')).toBeUndefined()
   })
 })

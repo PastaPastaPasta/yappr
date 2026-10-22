@@ -256,6 +256,36 @@ describe('installLaneFanout, flag on', () => {
     })
   })
 
+  it('re-reads an average ranking\'s groups in batches no larger than one `in` clause', async () => {
+    const { documents, spies, sdk } = fakeSdk()
+    // Three lanes, each ranking its own 60 groups: 180 distinct groups to re-average.
+    const groupEntry = (seed: number) => ({ groupKeyHex: hexOf(identifier(seed)), groupValue: identifier(seed), value: 400n, valueAsNumber: 4, rank: 0n })
+    const laneSeeds: Record<string, number[]> = { null: [], '1': [], '2': [] }
+    Object.keys(laneSeeds).forEach((lane, at) => { laneSeeds[lane] = Array.from({ length: 60 }, (_, i) => 1 + at * 60 + i) })
+    documents.ranked.mockImplementation(async (request) => ({
+      entries: (laneSeeds[String(laneOf(request.where).mod)] ?? []).map(groupEntry), startingRank: 0n, valueScale: 100n,
+    }))
+    // Every group has one 4-star review in the listed lane and one 2-star review in lane 1: 3 stars on average.
+    documents.average.mockImplementation(async (request) => {
+      const mod = laneOf(request.where).mod
+      const wanted = (request.where?.at(-1)?.[2] ?? []) as string[]
+      return new Map(mod === null || mod === 1 ? wanted.map((id) => [hexOf(id), { count: 1n, sum: mod === null ? 4n : 2n }]) : [])
+    })
+    installLaneFanout(sdk)
+    const result = await sdk.documents.ranked({
+      dataContractId: 'c', documentTypeName: 'storeReview', groupBy: 'storeId',
+      aggregate: { type: 'avg', property: 'rating' }, direction: 'desc', limit: 100, where: [['mod', '==', null]],
+    } as never)
+
+    const sizes = spies.average.mock.calls.map(([request]) => ((request as { where: Where[] }).where.at(-1)?.[2] as string[]).length)
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(100)
+    // 180 groups: two batches (100 + 80) in each of the three lanes.
+    expect(sizes.sort((a, b) => a - b)).toEqual([80, 80, 80, 100, 100, 100])
+    expect(result.entries).toHaveLength(100)
+    // Batches add up with the lanes: (4 + 2) / 2 = 3.00 for every group.
+    expect(new Set(result.entries.map((row) => row.value))).toEqual(new Set([300n]))
+  })
+
   describe('composite', () => {
     const subQueries = [
       { documentType: 'reply', kind: 'counts', where: [['live', '==', 1], ['mod', '==', null]], bind: { source: 'page', sourceProperty: '$id', field: 'rootPostId' } },

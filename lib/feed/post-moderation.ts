@@ -12,7 +12,7 @@
  */
 
 import type { Post, PostModeration } from '@/lib/types';
-import { dropsHidden, moderationMarksOf } from '@/lib/moderation-view';
+import { dropsHidden, moderationMarksOf, moderationViewAll } from '@/lib/moderation-view';
 import { identifierToBase58 } from '@/lib/services/sdk-helpers';
 
 /** `post.moderation` for a stored post or reply: its moderator marks plus `restricted` for lane 2; undefined when neither applies. */
@@ -38,6 +38,18 @@ export function isHiddenItem(item: object | null | undefined): boolean {
   if (!item || !('moderation' in item)) return false;
   const marks = item.moderation;
   return typeof marks === 'object' && marks !== null && dropsHidden(marks as { mod?: unknown });
+}
+
+/**
+ * True when a default build's listings do not list `item`: a moderator hid it,
+ * or its author was restricted when they wrote it (lane `live == 2`). An
+ * archival build lists both, labelled, so for it nothing is unlisted.
+ */
+export function isUnlistedItem(item: object | null | undefined): boolean {
+  if (isHiddenItem(item)) return true;
+  if (moderationViewAll() || !item || !('moderation' in item)) return false;
+  const marks = item.moderation;
+  return typeof marks === 'object' && marks !== null && (marks as PostModeration).restricted === true;
 }
 
 /** `items` without the ones this build drops as hidden ({@link isHiddenItem}), in order. */

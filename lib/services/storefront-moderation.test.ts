@@ -103,7 +103,7 @@ describe('storefront v11 reads pin the listed lane in the index order', () => {
       where: [['storeId', '==', storeId]], orderBy: [['storeId', 'asc'], ['$createdAt', 'asc']],
     }));
     await storeStatsService.topRatedStores(5);
-    expect(ranked).toHaveBeenLastCalledWith(expect.objectContaining({ where: [] }));
+    expect(ranked.mock.lastCall?.[0]).not.toHaveProperty('where');
     await storeStatsService.getItemRatingSummary(itemId, storeId);
     expect(average.mock.calls[0][0].where).toEqual([['storeId', '==', storeId], ['itemId', '==', itemId]]);
   });

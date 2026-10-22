@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import bs58 from 'bs58';
 import type { Post } from '@/lib/types';
-import { isHiddenItem, isQuoteHidden, markQuoteHidden, postModerationOf, withoutHiddenItems } from './post-moderation';
+import { isHiddenItem, isQuoteHidden, isUnlistedItem, markQuoteHidden, postModerationOf, withoutHiddenItems } from './post-moderation';
 import { transformRawPost } from './transform-raw-post';
 
 afterEach(() => vi.unstubAllEnvs());
@@ -73,6 +73,16 @@ describe('hidden items', () => {
     const posts = [card('a'), card('b', { mod: 1 })];
     expect(withoutHiddenItems(posts)).toHaveLength(2);
     expect(isHiddenItem(posts[1])).toBe(false);
+  });
+
+  it('calls a post unlisted when it is hidden or written under a restriction, on a default build only', () => {
+    expect(isUnlistedItem(card('a', { mod: 1 }))).toBe(true);
+    expect(isUnlistedItem(card('b', { restricted: true }))).toBe(true);
+    expect(isUnlistedItem(card('c'))).toBe(false);
+    expect(isUnlistedItem(null)).toBe(false);
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all');
+    expect(isUnlistedItem(card('a', { mod: 1 }))).toBe(false);
+    expect(isUnlistedItem(card('b', { restricted: true }))).toBe(false);
   });
 
   it('never drops an object that carries no marks at all', () => {

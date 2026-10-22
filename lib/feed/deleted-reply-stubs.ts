@@ -1,11 +1,13 @@
 import type { Reply } from '@/lib/types';
 import { replyThreadsCarryLiveMarker, repliesOutliveTheirParent } from '@/lib/contract-topology';
-import { isHiddenItem } from './post-moderation';
+import { isUnlistedItem } from './post-moderation';
 
 /**
- * A reply the moderators hid, as the placeholder a default build shows in its
- * place: it keeps its thread position (so its children stay under it) and
- * nothing else of the reply, not its text, media, author or marks.
+ * A reply a default build does not list (hidden by the moderators, or written
+ * while its author was restricted), as the placeholder shown in its place: it
+ * keeps its thread position (so its children stay under it) and nothing else
+ * of the reply, not its text, media, author or marks. One flag serves both, so
+ * the placeholder's wording never singles out an account.
  */
 function hiddenReplyStub(hidden: Reply): Reply {
   return {
@@ -48,10 +50,11 @@ export interface MissingParentReads {
  * - Where a reply can outlive its parent (`repliesOutliveTheirParent`), the
  *   parents still missing are proved absent and stubbed
  *   ({@link deletedReplyStubs}).
- * - A reply the moderators hid (v18) is not listed either, so its children
- *   would lose their parent. A default build reads it by id and stands in a
- *   `hiddenStub` placeholder (no content, same place in the thread). An
- *   archival build lists the hidden reply itself, labelled, so nothing here.
+ * - A reply the moderators hid, or one written while its author was
+ *   restricted (v18, lane 2), is not listed either, so its children would lose
+ *   their parent. A default build reads it by id and stands in a `hiddenStub`
+ *   placeholder (no content, same place in the thread). An archival build
+ *   lists the reply itself, labelled, so nothing here.
  *
  * `loaded` names replies already shown from earlier pages: a parent among
  * them is not missing, so it is neither read again nor proved.
@@ -66,8 +69,9 @@ export async function withMissingReplyParents(replies: readonly Reply[], reads: 
       missing.forEach((id) => tried.add(id));
       const have = new Set(all.map((reply) => reply.id));
       const found = (await reads.getMany(missing)).filter((reply) => !have.has(reply.id));
-      // A parent the moderators hid (v18) is not listed either: it holds its place as a stub with no content.
-      const stubs = found.map((reply) => (reply.deleted === true ? reply : isHiddenItem(reply) ? hiddenReplyStub(reply) : null)).filter((reply) => reply !== null);
+      // A parent a default build does not list (v18: hidden by the moderators, or written under a restriction,
+      // lane 2) would take its listed children with it: it holds its place as a stub with no content.
+      const stubs = found.map((reply) => (reply.deleted === true ? reply : isUnlistedItem(reply) ? hiddenReplyStub(reply) : null)).filter((reply) => reply !== null);
       if (stubs.length === 0) break;
       all = [...stubs, ...all];
     }

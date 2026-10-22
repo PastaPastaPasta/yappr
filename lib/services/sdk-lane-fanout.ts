@@ -13,6 +13,7 @@ import {
   type OrderClause,
 } from '@/lib/moderation-lanes'
 import { documentToPlainObject } from './sdk-helpers'
+import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils'
 
 /**
  * The archival build's lane fan-out (`NEXT_PUBLIC_MODERATION_VIEW=all`,
@@ -30,7 +31,7 @@ import { documentToPlainObject } from './sdk-helpers'
  * - counts and averages: summed per key;
  * - rankings: summed per group (counts and sums) and re-ranked; an average
  *   ranking is re-read per lane as `{count, sum}` for the groups on any
- *   lane's page and re-averaged. Each lane contributes its own top `limit`,
+ *   lane's page (in batches of at most one `in` clause) and re-averaged. Each lane contributes its own top `limit`,
  *   so a group just outside every lane's page can be missed; the ranking is
  *   the best of what the lanes returned;
  * - a composite page: the page is resolved through the merged documents read
@@ -159,13 +160,15 @@ async function rankedLanes(
   const scale = first?.valueScale ?? 1n
   if (aggregate.type === 'avg' && groups.size > 0) {
     // Re-average from each lane's {count, sum} for the groups any lane ranked.
-    const values = Array.from(groups.values()).map((entry) => entry.groupValue).filter((value) => value !== undefined)
-    const sums = await Promise.all(variants.map((where) => originals.average({
+    const values = Array.from(new Set(Array.from(groups.values()).map((entry) => entry.groupValue).filter((value) => value !== undefined)));
+    // Up to lanes x limit groups can be ranked, over what one `in` clause may hold: read them in batches.
+    // The batches hold different groups, so their per-group {count, sum} simply add up with the lanes'.
+    const sums = await Promise.all(variants.flatMap((where) => chunk(values, MAX_IN_CLAUSE_VALUES).map((batch) => originals.average({
       dataContractId: query.dataContractId,
       documentTypeName: query.documentTypeName,
-      where: [...where, [query.groupBy, 'in', values]],
+      where: [...where, [query.groupBy, 'in', batch]],
       groupBy: [query.groupBy],
-    }, aggregate.property)))
+    }, aggregate.property))))
     const totals = sumLaneAverages(sums.map((map) => new Map(Array.from(map.entries()).map(([k, v]) => [k.toLowerCase(), v]))))
     for (const [hex, entry] of groups) {
       const total = totals.get(hex.toLowerCase())

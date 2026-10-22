@@ -4,7 +4,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { documentToPlainObject, identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, mapLimit, queryOwnedPostIds } from './pagination-utils';
-import { isFrozenBalanceError, isInsufficientTokenError, isTokenPausedError } from '../error-utils';
+import { isConsensusRefusal, isFrozenBalanceError, isInsufficientTokenError, isTokenPausedError } from '../error-utils';
 import type { getEvoSdk } from './evo-sdk-service';
 import type { RecentTarget } from '../like-notification-snapshot';
 import { indexOnlyLikeShapeFor, likeIndexFor, likesCarryPostLive, selfLikesAreRefused, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, replyOwnerIndexOrderPrefix, replyOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor, inlineTags } from '../contract-topology';
@@ -60,6 +60,18 @@ interface ResolvedTarget {
 
 /** The v18 `like` property that copies the post's `live`. */
 const POST_LIVE_FIELD = 'postLive';
+
+/**
+ * v18: the lane a card's post was stored in, for the like's `postLive` without
+ * reading the post again. A post built from its document carries `moderation`
+ * only when it is hidden or in lane 2, so no mark means lane 1. A tombstone has
+ * no lane (undefined: the service reads the document, and refuses a like).
+ * Undefined too off v18 and for a reply, whose like names the reply alone.
+ */
+export function knownPostLane(post: { deleted?: boolean; moderation?: { restricted?: boolean } }, kind: TargetKind): PostLane | undefined {
+  if (!likeCopiesLane(kind) || post.deleted) return undefined;
+  return post.moderation?.restricted ? 2 : 1;
+}
 
 /** Whether this kind of like repeats the post's lane (v18 `like`; `likeReply` names the reply alone). */
 function likeCopiesLane(kind: TargetKind): boolean {
@@ -569,6 +581,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
       );
       // As on v9/v10: an unconfirmed or failed report is settled by the chain.
       if (result.success) return true;
+      // Platform refused it (the wrong lane's values match no row): it did not run, so there is
+      // nothing to wait for and the next lane is tried at once. Only an unconfirmed outcome is settled by the chain.
+      if (isConsensusRefusal(result.error)) continue;
       if (await this.waitForLikeGone(targetId, ownerId, kind)) {
         logger.warn('Unlike reported failure but the like is gone from the chain — treating as success');
         return true;

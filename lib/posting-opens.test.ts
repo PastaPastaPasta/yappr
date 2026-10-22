@@ -62,7 +62,7 @@ describe('postingOpensText', () => {
   const format = (ms: number) => `T${ms - NOW}`
 
   it('words each state, and says nothing for open or unknown', () => {
-    expect(postingOpensText({ kind: 'at', atMs: NOW + HOUR }, format)).toBe(`Posting opens on T${HOUR}`)
+    expect(postingOpensText({ kind: 'at', atMs: NOW + HOUR }, format, NOW)).toBe(`Posting opens on T${HOUR}`)
     expect(postingOpensText({ kind: 'soon' }, format)).toBe('Posting opens shortly')
     expect(postingOpensText({ kind: 'pending' }, format)).toBe('Posting opens once the first moderators are elected')
     expect(postingOpensText({ kind: 'open' }, format)).toBeNull()
@@ -70,27 +70,39 @@ describe('postingOpensText', () => {
   })
 
   it('formats a date by default', () => {
-    expect(postingOpensText({ kind: 'at', atMs: NOW }) ?? '').toMatch(/^Posting opens on .*2027/)
+    expect(postingOpensText({ kind: 'at', atMs: NOW }, undefined, NOW - 1) ?? '').toMatch(/^Posting opens on .*2027/)
+  })
+
+  it('says "shortly", never a past date, once the remembered time has passed', () => {
+    expect(postingOpensText({ kind: 'at', atMs: NOW }, format, NOW)).toBe('Posting opens shortly')
+    expect(postingOpensText({ kind: 'at', atMs: NOW }, format, NOW + HOUR)).toBe('Posting opens shortly')
   })
 
   it('never uses removal words', () => {
     for (const opening of [{ kind: 'at', atMs: NOW }, { kind: 'soon' }, { kind: 'pending' }] as const) {
-      expect(postingOpensText(opening)).not.toMatch(/remov|delet/i)
+      expect(postingOpensText(opening, undefined, NOW - 1)).not.toMatch(/remov|delet/i)
     }
   })
 
   it('announces exactly the states that have text', () => {
     for (const opening of [{ kind: 'open' }, { kind: 'unknown' }, { kind: 'soon' }, { kind: 'pending' }, { kind: 'at', atMs: NOW }] as const) {
-      expect(announcesOpening(opening)).toBe(postingOpensText(opening) !== null)
+      expect(announcesOpening(opening)).toBe(postingOpensText(opening, undefined, NOW - 1) !== null)
     }
   })
 })
 
 describe('remembered opening', () => {
   it('round-trips the states a banner can paint', () => {
-    for (const opening of [{ kind: 'at', atMs: NOW + HOUR }, { kind: 'soon' }, { kind: 'pending' }] as const) {
+    for (const opening of [{ kind: 'at', atMs: NOW + 2 * HOUR }, { kind: 'soon' }, { kind: 'pending' }] as const) {
       expect(parseCachedOpening(serializeOpening(opening, NOW), NOW + HOUR)).toEqual(opening)
     }
+  })
+
+  it('turns a remembered date that has passed into "soon"', () => {
+    const raw = serializeOpening({ kind: 'at', atMs: NOW + HOUR }, NOW)
+    expect(parseCachedOpening(raw, NOW + HOUR - 1)).toEqual({ kind: 'at', atMs: NOW + HOUR })
+    expect(parseCachedOpening(raw, NOW + HOUR)).toEqual({ kind: 'soon' })
+    expect(parseCachedOpening(raw, NOW + 2 * HOUR)).toEqual({ kind: 'soon' })
   })
 
   it('does not paint open or unknown, and drops stale, future-dated and malformed entries', () => {

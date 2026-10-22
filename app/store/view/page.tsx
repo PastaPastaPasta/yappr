@@ -20,7 +20,8 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
-import { ModerationLabel } from '@/components/moderation/moderation-label'
+import { HiddenContentStub, ModerationLabel, useSeesHidden } from '@/components/moderation/moderation-label'
+import { isHidden } from '@/lib/moderation-view'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner, DigitalBadge } from '@/components/store'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
@@ -87,6 +88,7 @@ function StoreDetailContent() {
   const [sellerHasEncryptionKey, setSellerHasEncryptionKey] = useState<boolean | null>(null)
 
   // Search, filter, sort state
+  const seesHidden = useSeesHidden('storefront')
   const [searchQuery, setSearchQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [sortField, setSortField] = useState<'newest' | 'title' | 'price' | 'rating'>('newest')
@@ -376,6 +378,17 @@ function StoreDetailContent() {
             <Button className="mt-4" onClick={() => router.push('/store')}>
               Browse Stores
             </Button>
+      </PageShell>
+    )
+  }
+
+  // Storefront v11: a store the moderators hid is a calm stub, its listings
+  // and reviews included, for everyone but its moderators (and everyone on an
+  // archival build).
+  if (isHidden(store.moderation) && !seesHidden) {
+    return (
+      <PageShell>
+        <HiddenContentStub contract="storefront" noun="store" moderation={store.moderation} documentId={store.id} />
       </PageShell>
     )
   }

@@ -297,8 +297,11 @@ function PostCardView({
   const [localModeration, setLocalModeration] = useState<PostModeration | null | undefined>(undefined)
   const moderation = localModeration === undefined ? post.moderation : localModeration ?? undefined
   const hiddenByModerators = isHidden(moderation)
-  // v18: the moderator menu reads the author's restriction only once it is opened.
-  const [menuOpen, setMenuOpen] = useState(false)
+  // v18: the moderator menu reads the author's restriction once the viewer
+  // reaches for it (hover, focus or press of its trigger), so the answer is
+  // usually in before the menu opens; until then its item holds its place.
+  const [menuPrimed, setMenuPrimed] = useState(false)
+  const primeMenu = () => setMenuPrimed(true)
   // Beats EVERY content branch (tip, poll, quote, media), or a freshly
   // tombstoned card keeps exposing its former attachments until Platform data arrives.
   const isTombstoned = Boolean(post.deleted) || locallyTombstoned
@@ -410,9 +413,17 @@ function PostCardView({
     && (hides ? moderationService.canHide(targetKind) : moderatorDeletableTypes().includes(targetKind))
   const canAuthorize = useModerationAuthorization(canModerate)
   const { open: openModeratorHideModal } = useModeratorHideModal()
-  const authorRestrictedRead = useAuthorRestricted('social', post.author.id, canModerate && hides && menuOpen && moderationService.canRestrict())
+  const authorRestrictedRead = useAuthorRestricted('social', post.author.id, canModerate && hides && menuPrimed && moderationService.canRestrict())
   const [authorRestrictedHere, setAuthorRestrictedHere] = useState<boolean | null>(null)
   const authorRestricted = authorRestrictedHere ?? authorRestrictedRead
+  // What this card set locally belongs to the post it was set on: a new post,
+  // or new marks from a re-read, replace it.
+  useEffect(() => {
+    setLocalModeration(undefined)
+  }, [post.id, post.moderation])
+  useEffect(() => {
+    setAuthorRestrictedHere(null)
+  }, [post.id, post.author.id])
   // Moderators and archival builds see a hidden post in full, labelled; everyone else a calm stub.
   const seesHidden = moderationViewAll() || isModerator
   const openHideAction = (action: ModeratorHideAction) => {
@@ -671,12 +682,13 @@ function PostCardView({
             </div>
 
             <div className="flex items-center gap-1 flex-shrink-0">
-              <DropdownMenu.Root onOpenChange={setMenuOpen}>
+              <DropdownMenu.Root onOpenChange={(open) => { if (open) primeMenu() }}>
                 <Tooltip.Provider>
                   <Tooltip.Root>
                     <Tooltip.Trigger asChild>
                       <DropdownMenu.Trigger asChild>
-                        <IconButton data-testid={`more-btn-${post.id}`} aria-label={optionsLabel} onClick={stopPropagation}>
+                        <IconButton data-testid={`more-btn-${post.id}`} aria-label={optionsLabel} onClick={stopPropagation}
+                          onPointerEnter={primeMenu} onFocus={primeMenu} onPointerDown={primeMenu}>
                           <EllipsisHorizontalIcon className="h-5 w-5" />
                         </IconButton>
                       </DropdownMenu.Trigger>
@@ -760,15 +772,17 @@ function PostCardView({
                           {hiddenByModerators ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
                           {hiddenByModerators ? `Unhide ${isReply ? 'reply' : 'post'}` : `Hide ${isReply ? 'reply' : 'post'}`}
                         </DropdownMenu.Item>
-                        {moderationService.canRestrict() && authorRestricted !== null && (
+                        {/* Holds its place while the author's standing is read, so nothing shifts under the pointer. */}
+                        {moderationService.canRestrict() && (
                           <DropdownMenu.Item
-                            disabled={!canAuthorize}
+                            disabled={!canAuthorize || authorRestricted === null}
+                            aria-busy={authorRestricted === null}
                             data-testid={`moderator-${authorRestricted ? 'lift' : 'restrict'}-${post.id}`}
                             onClick={(e) => {
                               e.stopPropagation()
-                              if (canAuthorize) openHideAction(authorRestricted ? 'lift' : 'restrict')
+                              if (canAuthorize && authorRestricted !== null) openHideAction(authorRestricted ? 'lift' : 'restrict')
                             }}
-                            className={cn(CARD_MENU_ITEM, 'flex items-center gap-2', !authorRestricted && 'text-red-500')}
+                            className={cn(CARD_MENU_ITEM, 'flex items-center gap-2', authorRestricted === false && 'text-red-500', authorRestricted === null && 'opacity-50')}
                           >
                             {authorRestricted ? <LockOpenIcon className="h-4 w-4" /> : <NoSymbolIcon className="h-4 w-4" />}
                             {authorRestricted ? `Lift ${authorLabel}'s restriction` : `Restrict ${authorLabel}`}

@@ -59,8 +59,9 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment, re
       {content.deletedStub ? (
         <RemovedPostStub documentId={content.id} kind="reply" variant="card" proven />
       ) : content.hiddenStub ? (
-        // v18: a hidden reply with visible replies under it holds its place without its content.
-        <HiddenContentStub noun="reply" documentId={content.id} variant="card" text="This reply is hidden by moderators." />
+        // v18: a reply not shown here (hidden, or written while its author was
+        // restricted) with visible replies under it holds its place without its content.
+        <HiddenContentStub noun="reply" documentId={content.id} variant="card" text="This reply isn't shown." />
       ) : (
         <PostCard
           post={postLike}

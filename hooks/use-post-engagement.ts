@@ -113,10 +113,11 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     setLikeLoading(true)
     try {
       await settle()
-      const { likeService } = await import('@/lib/services/like-service')
+      const { likeService, knownPostLane } = await import('@/lib/services/like-service')
       // On devnet cuts the like repeats the target's author and tags under a
       // consensus-checked agreement; passing them saves the service a fetch.
-      const targetInfo = { author: post.author.id, tags: post.tags }
+      // v18 adds the post's lane (`postLive`), which the card already knows.
+      const targetInfo = { author: post.author.id, tags: post.tags, live: knownPostLane({ deleted: post.deleted, moderation: { restricted: post.moderation?.restricted } }, targetKind) }
       const ok = wasLiked
         ? await likeService.unlikePost(post.id, viewerId, targetKind, targetInfo)
         : await likeService.likePost(post.id, viewerId, post.author.id, targetKind, targetInfo)
@@ -129,7 +130,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     } finally {
       setLikeLoading(false)
     }
-  }, [viewerId, likeLoading, liked, likes, settle, post.id, post.author.id, post.tags, targetKind])
+  }, [viewerId, likeLoading, liked, likes, settle, post.id, post.author.id, post.tags, post.deleted, post.moderation?.restricted, targetKind])
 
   /**
    * v10: delete the viewer's quote or repost of the post. Callers confirm a

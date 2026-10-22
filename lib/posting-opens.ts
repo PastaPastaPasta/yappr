@@ -68,11 +68,14 @@ export function formatOpeningTime(ms: number): string {
   return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-/** The banner's line, or null when there is nothing to announce. */
-export function postingOpensText(opening: PostingOpening, formatTime: (ms: number) => string = formatOpeningTime): string | null {
+/**
+ * The banner's line, or null when there is nothing to announce. A date that
+ * has passed by `nowMs` reads "shortly", never "opens on <past date>".
+ */
+export function postingOpensText(opening: PostingOpening, formatTime: (ms: number) => string = formatOpeningTime, nowMs: number = Date.now()): string | null {
   switch (opening.kind) {
     case 'at':
-      return `Posting opens on ${formatTime(opening.atMs)}`
+      return opening.atMs > nowMs ? `Posting opens on ${formatTime(opening.atMs)}` : 'Posting opens shortly'
     case 'soon':
       return 'Posting opens shortly'
     case 'pending':
@@ -94,7 +97,8 @@ export function parseCachedOpening(raw: string | null, nowMs: number): PostingOp
     const { kind, atMs, savedAt } = value as { kind?: unknown; atMs?: unknown; savedAt?: unknown }
     if (typeof savedAt !== 'number' || nowMs - savedAt > OPENING_CACHE_MAX_AGE_MS || nowMs < savedAt) return null
     if (kind === 'soon' || kind === 'pending') return { kind }
-    if (kind === 'at' && typeof atMs === 'number' && Number.isFinite(atMs) && atMs > 0) return { kind, atMs }
+    // A remembered date that has passed is no date to promise: the seat is due, "shortly".
+    if (kind === 'at' && typeof atMs === 'number' && Number.isFinite(atMs) && atMs > 0) return atMs > nowMs ? { kind, atMs } : { kind: 'soon' }
     return null
   } catch {
     return null
