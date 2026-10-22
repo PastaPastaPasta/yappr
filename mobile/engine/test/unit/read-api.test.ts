@@ -5,7 +5,7 @@
  * the review regressions (shared list caches, stale thread refresh, tag
  * authenticity, repost ordering).
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import bs58 from 'bs58'
 import type { Post, Reply, User } from '@/lib/types'
 
@@ -30,6 +30,8 @@ const m = vi.hoisted(() => ({
   getPoll: vi.fn(), getTally: vi.fn(), getMyVotes: vi.fn(),
   loadFollowingFeed: vi.fn(),
   documentExists: vi.fn(),
+  documentFields: vi.fn(),
+  charterReasonText: vi.fn(async (...args: [string, number | undefined]) => (args[1] === 4 ? 'Spam' : null)),
 }))
 
 const FLAGS = ['likesAreIndexOnly', 'repostsAreQuotes', 'hasFlatThreads', 'hashtagsAreInline', 'repliesOutliveTheirParent', 'replyThreadsCarryLiveMarker', 'referencesMayDangle']
@@ -37,6 +39,7 @@ vi.mock('@/lib/contract-topology', async (load) => {
   const actual = await load<Record<string, unknown>>()
   return { ...actual, ...Object.fromEntries(FLAGS.map(flag => [flag, () => m.topology[flag] === true])) }
 })
+vi.mock('@/lib/services/charter-reasons', () => ({ charterReasonText: m.charterReasonText }))
 vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>(), getCurrentUserId: () => m.viewer }))
 vi.mock('@/lib/services/post-service', async (load) => ({ ...await load<object>(), postService: m.postService }))
 vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>(), replyService: m.replyService }))
@@ -49,7 +52,7 @@ vi.mock('@/lib/feed/resolve-user-reposts', async (load) => ({ ...await load<obje
 vi.mock('@/lib/feed/prove-absent', () => ({ provenAbsent: m.provenAbsent }))
 vi.mock('@/lib/feed/load-following-feed', () => ({ loadFollowingFeed: m.loadFollowingFeed }))
 vi.mock('@/lib/services/pollr-poll-service', async (load) => ({ ...await load<object>(), pollrPollService: { getPoll: m.getPoll } }))
-vi.mock('../../src/writes/lib-results', async (load) => ({ ...await load<object>(), documentExists: m.documentExists }))
+vi.mock('../../src/writes/lib-results', async (load) => ({ ...await load<object>(), documentExists: m.documentExists, documentFields: m.documentFields }))
 vi.mock('@/lib/services/pollr-vote-service', async (load) => ({ ...await load<object>(), pollrVoteService: { getTally: m.getTally, getMyVotes: m.getMyVotes } }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => {
   const actual = await load<{ unifiedProfileService: object }>()
@@ -210,6 +213,23 @@ describe('posts.thread on flat threads (v9/v10)', () => {
     ])
   })
 
+  it('keeps a reply under a parent the moderators hid below a hidden stub, withheld and never "deleted" (social v18)', async () => {
+    m.topology = { ...m.topology, replyThreadsCarryLiveMarker: true }
+    const theirs = (r: Reply): Reply => ({ ...r, author: user(id('Other')) })
+    m.replyService.getReplies.mockResolvedValue({ documents: [theirs(reply('Kid', 5, 'Hid'))] })
+    m.replyService.getManyOrThrow.mockResolvedValue([{ ...theirs(reply('Hid', 4)), content: 'secret', moderation: { mod: 1, modLabel: 2 } }])
+    m.provenAbsent.mockResolvedValue(new Set())
+    const thread = await posts.thread(id('Root'))
+    expect(validate(threadDTO, thread)).toEqual([])
+    expect(thread.replies.items.map(item => [item.id, item.depth, item.deleted, item.deletedStub ?? false, item.hiddenStub ?? false])).toEqual([
+      [id('Hid'), 0, false, false, true], [id('Kid'), 1, false, false, false],
+    ])
+    const [stub] = thread.replies.items
+    expect(stub).toMatchObject({ content: '', moderation: { hidden: true, withheld: true }, author: { id: '' } })
+    // The hidden reply's own text and marks never reach the host.
+    expect(JSON.stringify(stub)).not.toMatch(/secret/)
+  })
+
   it('rejects the page when a missing parent cannot be read, instead of dropping the replies under it', async () => {
     m.topology = { ...m.topology, replyThreadsCarryLiveMarker: true }
     m.replyService.getReplies.mockResolvedValue({ documents: [reply('Orphan', 5, 'Tomb')] })
@@ -255,6 +275,93 @@ describe('posts.get and posts.thread: missing vs unreadable', () => {
 
     m.postService.getPostById.mockResolvedValue(null)
     await expect(posts.get(POST_ID)).rejects.toMatchObject({ code: 'NETWORK' })
+  })
+
+  describe('a post the moderators hid (social v18)', () => {
+    const hidden = { mod: 1, modLabel: 4, $moderatedBy: id('Mod'), $moderatedAt: 7000 }
+    const withheld = { id: POST_ID, content: '', moderation: { hidden: true, withheld: true } }
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      m.documentFields.mockReset()
+    })
+
+    it('is a withheld stub, not "missing" or a read failure, when lib answers null for it', async () => {
+      m.postService.getPostById.mockResolvedValue(null)
+      m.replyService.getReplyById.mockResolvedValue(null)
+      m.documentExists.mockResolvedValue(true)
+      m.documentFields.mockImplementation(async (doc: { type: string }) => doc.type === 'post' ? { $ownerId: AUTHOR, $createdAt: 5000, content: 'secret', ...hidden } : null)
+      const dto = await posts.get(POST_ID)
+      expect(dto).toMatchObject(withheld)
+      expect(dto?.createdAt).toEqual(new Date(5000))
+      expect(validate(postDTO, dto)).toEqual([])
+      m.topology = { hasFlatThreads: true, repliesOutliveTheirParent: true }
+      m.provenAbsent.mockResolvedValue(new Set())
+      m.replyService.getReplies.mockResolvedValue({ documents: [] })
+      expect((await posts.thread(POST_ID)).focus).toMatchObject(withheld)
+    })
+
+    it('stays a read failure when the hidden-or-not read fails too', async () => {
+      m.postService.getPostById.mockResolvedValue(null)
+      m.replyService.getReplyById.mockResolvedValue(null)
+      m.documentExists.mockResolvedValue(true)
+      m.documentFields.mockRejectedValue(new Error('transport error: Failed to fetch'))
+      await expect(posts.get(POST_ID)).rejects.toMatchObject({ code: 'NETWORK' })
+    })
+
+    it('withholds a hidden post lib handed over, content and author included', async () => {
+      m.postService.getPostById.mockResolvedValue({ ...post('Gone', 1), id: POST_ID, content: 'secret', moderation: { mod: 1, modLabel: 4 } })
+      const dto = await posts.get(POST_ID)
+      expect(dto).toMatchObject(withheld)
+      expect(dto?.author.id).toBe('')
+    })
+
+    it('labels it on an archival build, with the content', async () => {
+      vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+      m.postService.getPostById.mockResolvedValue({
+        ...post('Gone', 1), id: POST_ID, content: 'secret', moderation: { mod: 1, modLabel: 4, moderatedBy: AUTHOR, moderatedAt: 7000, restricted: true },
+      })
+      const dto = await posts.get(POST_ID)
+      expect(dto).toMatchObject({ content: 'secret', moderation: { hidden: true, restricted: true, label: 4, by: AUTHOR, at: new Date(7000) } })
+      expect(validate(postDTO, dto)).toEqual([])
+    })
+
+    it('is not listed in a browsing list on an official build', async () => {
+      m.topology = { hashtagsAreInline: true }
+      m.postService.queryForDisplay.mockResolvedValue({
+        documents: [post('Shown', 2), { ...post('Hid', 1), moderation: { mod: 1, modLabel: 4 } }],
+      })
+      expect(ids((await feed.hashtag({ tag: 'dash' })).items)).toEqual([id('Shown')])
+    })
+
+    it('is listed, labelled, on an archival build', async () => {
+      vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+      m.topology = { hashtagsAreInline: true }
+      m.postService.queryForDisplay.mockResolvedValue({
+        documents: [post('Shown', 2), { ...post('Hid', 1), moderation: { mod: 1, modLabel: 4 } }],
+      })
+      const { items } = await feed.hashtag({ tag: 'dash' })
+      expect(ids(items)).toEqual([id('Shown'), id('Hid')])
+      expect(items[1].moderation).toMatchObject({ hidden: true, label: 4, reason: 'Spam' })
+      expect(validate(page(postDTO), { items, cursor: null, hasMore: false })).toEqual([])
+    })
+
+    it('sends the charter\'s text for a label, and none for a label it does not resolve (never a number)', async () => {
+      vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+      m.topology = { hashtagsAreInline: true }
+      m.postService.queryForDisplay.mockResolvedValue({
+        documents: [
+          { ...post('Known', 3), moderation: { mod: 1, modLabel: 4 } },
+          { ...post('Unknown', 2), moderation: { mod: 1, modLabel: 9 } },
+          { ...post('Quoting', 1, { quotedPost: { ...post('QuotedHid', 0), moderation: { mod: 1, modLabel: 4 } } }) },
+        ],
+      })
+      const { items } = await feed.hashtag({ tag: 'dash' })
+      expect(items[0].moderation?.reason).toBe('Spam')
+      expect(items[1].moderation).not.toHaveProperty('reason')
+      expect(items[2].quoted?.moderation?.reason).toBe('Spam')
+      expect(m.charterReasonText.mock.calls.map(([, label]) => label).sort()).toEqual([4, 9])
+    })
   })
 
   it('flat threads: reports a root as removed only when proved absent', async () => {

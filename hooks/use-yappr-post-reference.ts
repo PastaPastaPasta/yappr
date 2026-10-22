@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Post } from '@/lib/types'
 import { replyToPost } from '@/lib/services/post-service'
 import { extractYapprPostId } from '@/lib/link-preview/urls'
+import { isHiddenItem } from '@/lib/moderation-view'
 
 interface UseYapprPostReferenceOptions {
   disabled?: boolean
@@ -15,15 +16,28 @@ export interface UseYapprPostReferenceResult {
   post: Post | null
   loading: boolean
   resolved: boolean
+  /**
+   * v18: the linked post or reply is hidden by the moderators and this build
+   * does not show hidden content. `post` is then null and nothing of its
+   * content is kept; the embed is the hidden stub.
+   */
+  hidden: boolean
 }
 
-const referenceCache = new Map<string, Post | null>()
-const pendingReferences = new Map<string, Promise<Post | null>>()
+/** What a link resolved to: the post to embed, or only that it is hidden (no content kept). */
+type Reference = { post: Post } | { hidden: true }
 
-async function fetchReferencedPost(postId: string): Promise<Post | null> {
-  if (referenceCache.has(postId)) {
-    return referenceCache.get(postId) ?? null
-  }
+const referenceCache = new Map<string, Reference>()
+const pendingReferences = new Map<string, Promise<Reference | null>>()
+
+/** The reference as this build may keep it: a hidden target's content is dropped at once. */
+function toReference(post: Post): Reference {
+  return isHiddenItem(post) ? { hidden: true } : { post }
+}
+
+async function fetchReferencedPost(postId: string): Promise<Reference | null> {
+  const cached = referenceCache.get(postId)
+  if (cached) return cached
 
   const pending = pendingReferences.get(postId)
   if (pending) {
@@ -35,19 +49,19 @@ async function fetchReferencedPost(postId: string): Promise<Post | null> {
       const { postService } = await import('@/lib/services')
       const post = await postService.getPostById(postId)
       if (post) {
-        referenceCache.set(postId, post)
-        return post
+        const reference = toReference(post)
+        referenceCache.set(postId, reference)
+        return reference
       }
 
       const { replyService } = await import('@/lib/services/reply-service')
       const reply = await replyService.getReplyById(postId)
-      const convertedReply = reply ? replyToPost(reply) : null
       // Only cache hits: the services swallow network errors into null, so a
       // cached miss would pin a transient DAPI failure for the whole session.
-      if (convertedReply) {
-        referenceCache.set(postId, convertedReply)
-      }
-      return convertedReply
+      if (!reply) return null
+      const reference = toReference(replyToPost(reply))
+      referenceCache.set(postId, reference)
+      return reference
     } catch (error) {
       logger.error('useYapprPostReference: Failed to resolve linked post:', error)
       return null
@@ -75,39 +89,40 @@ export function useYapprPostReference(
   }, [url])
 
   const matched = referencedPostId !== null
-  const [post, setPost] = useState<Post | null>(null)
+  const [reference, setReference] = useState<Reference | null>(null)
   const [loading, setLoading] = useState(false)
   const [resolved, setResolved] = useState(false)
 
   useEffect(() => {
     if (disabled || !matched || !referencedPostId) {
-      setPost(null)
+      setReference(null)
       setLoading(false)
       setResolved(false)
       return
     }
 
-    if (referenceCache.has(referencedPostId)) {
-      setPost(referenceCache.get(referencedPostId) ?? null)
+    const cached = referenceCache.get(referencedPostId)
+    if (cached) {
+      setReference(cached)
       setLoading(false)
       setResolved(true)
       return
     }
 
     let cancelled = false
-    setPost(null)
+    setReference(null)
     setLoading(true)
     setResolved(false)
 
-    fetchReferencedPost(referencedPostId).then((resolvedPost) => {
+    fetchReferencedPost(referencedPostId).then((resolvedReference) => {
       if (cancelled) return
-      setPost(resolvedPost)
+      setReference(resolvedReference)
       setLoading(false)
       setResolved(true)
     }).catch((error) => {
       if (cancelled) return
       logger.error('useYapprPostReference: Failed to apply linked post state:', error)
-      setPost(null)
+      setReference(null)
       setLoading(false)
       setResolved(true)
     })
@@ -119,8 +134,9 @@ export function useYapprPostReference(
 
   return {
     matched,
-    post,
+    post: reference && 'post' in reference ? reference.post : null,
     loading,
     resolved,
+    hidden: reference !== null && 'hidden' in reference,
   }
 }

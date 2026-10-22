@@ -9,7 +9,8 @@
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, lanePinOrderBy, storefrontModPin } from '../constants';
+import { carryModerationIntoReplace, moderationFieldOf } from './moderation-carry';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { storeStatsService } from './store-stats-service';
 import type { ItemReview, ItemReviewDocument } from '../../types';
@@ -17,6 +18,13 @@ import type { ItemReview, ItemReviewDocument } from '../../types';
 class ItemReviewService extends BaseDocumentService<ItemReview> {
   constructor() {
     super(STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW, YAPPR_STOREFRONT_CONTRACT_ID);
+  }
+
+  /** A replace (the client writes none today) sends a moderator's `mod`/`modLabel` back unchanged (41124 otherwise). */
+  protected extractContentFields(doc: ItemReview): Record<string, unknown> {
+    const fields = super.extractContentFields(doc);
+    carryModerationIntoReplace(fields, doc);
+    return fields;
   }
 
   protected transformDocument(doc: Record<string, unknown>): ItemReview {
@@ -32,14 +40,15 @@ class ItemReviewService extends BaseDocumentService<ItemReview> {
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       rating: data.rating,
       content: data.content,
+      ...moderationFieldOf(doc),
     };
   }
 
   /** Reviews of one item, newest first. */
   async getItemReviews(itemId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ reviews: ItemReview[]; nextCursor?: string }> {
     const { documents } = await this.query({
-      where: [['itemId', '==', itemId]],
-      orderBy: [['itemId', 'asc'], ['$createdAt', 'desc']],
+      where: [['itemId', '==', itemId], ...storefrontModPin()],
+      orderBy: [['itemId', 'asc'], ...lanePinOrderBy(storefrontModPin()), ['$createdAt', 'desc']],
       limit: options.limit || 20,
       startAfter: options.startAfter,
     });

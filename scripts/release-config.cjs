@@ -48,6 +48,22 @@ const EMPTY_KEYS = [
   'NEXT_PUBLIC_INSIGHT_API_URL',
 ]
 const STORAGE_EPOCH_PATTERN = /^[a-zA-Z0-9_-]+$/
+// The archival ("uncensored") frontend flags (docs/ARCHIVE_FRONTEND.md). yap.pr
+// and the official apps never enable them: a release build refuses any value
+// that is not "off". The view flag has no off value but unset or empty; the log
+// flag also accepts an explicit 0, the only other value lib/moderation-view.ts
+// reads as off.
+const ARCHIVE_FLAGS = {
+  NEXT_PUBLIC_MODERATION_VIEW: [undefined, ''],
+  NEXT_PUBLIC_MODERATION_LOG: [undefined, '', '0'],
+}
+
+/** The archival flags in `env` that are on (or set to anything but an off value), as error lines. */
+function archiveFlagErrors(env, where) {
+  return Object.entries(ARCHIVE_FLAGS)
+    .filter(([key, off]) => !off.includes(env[key]))
+    .map(([key]) => `${key} must be unset or empty in a release build (${where}); it turns the build into an archival frontend, see docs/ARCHIVE_FRONTEND.md`)
+}
 
 function isIdentifier(value) {
   if (typeof value !== 'string' || value !== value.trim()) return false
@@ -74,6 +90,7 @@ function assertReleaseConfig(env) {
   for (const key of EMPTY_KEYS) {
     if (env[key] !== '') errors.push(`${key} must be explicitly empty (retired or devnet-only)`)
   }
+  errors.push(...archiveFlagErrors(env, 'the effective environment'))
   if (!STORAGE_EPOCH_PATTERN.test(env.STORAGE_EPOCH ?? '')) errors.push('STORAGE_EPOCH must be a non-empty scope containing only letters, digits, _ or -')
 
   const members = new Set()
@@ -130,10 +147,20 @@ function loadReleaseEnv(file, ambient = process.env) {
   } catch (error) {
     throw new Error(`Cannot load ${file}: ${error.message}\nComplete the public release configuration before building; see docs/TESTNET_DEPLOY.md.`)
   }
+  // Ambient NEXT_PUBLIC_* values are dropped below, which would also hide an
+  // archival flag set in the shell. Refuse it out loud instead, so nobody ships
+  // a build they believe is archival (or, worse, expects the flag to apply).
+  const ambientFlags = archiveFlagErrors(ambient, 'the ambient environment')
+  if (ambientFlags.length) throw new Error(`Release configuration is incomplete or malformed:\n - ${ambientFlags.join('\n - ')}`)
   const env = Object.fromEntries(Object.entries(ambient).filter(([key]) =>
     !key.startsWith('NEXT_PUBLIC_') && key !== 'STORAGE_EPOCH' && key !== 'YAPPR_STAGING_OLD'))
   Object.assign(env, configured, { NEXT_PUBLIC_RELEASE: '1' })
   assertReleaseConfig(env)
+  // Pin the flags to an explicit "off" in the environment `next build` inherits.
+  // Next loads .env.local, .env.production and .env for any variable that is
+  // UNSET (and never overrides one that is set), so an unset flag could still be
+  // supplied by a stray file; next.config.js re-checks after those files load.
+  for (const key of Object.keys(ARCHIVE_FLAGS)) env[key] ??= ''
   return env
 }
 

@@ -1,7 +1,10 @@
 import { queryDocumentBundle } from './document-query-bundle'
 import { mapLimit } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
-import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID, blogIsV7, blogIsV9 } from '@/lib/constants'
+import {
+  BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID,
+  blogAuthorsCanBeRestricted, blogIsV7, blogIsV9, blogListedLivePin, blogListingsCarryModLane, blogLiveValue, blogModPin, lanePinOrderBy,
+} from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
 import { identifierToBase58, normalizeBytes, requireDocumentIdentifierBytes, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers'
 import { compressContent, decompressContent, joinChunks, splitIntoChunks } from '@/lib/utils/compression'
@@ -11,15 +14,46 @@ import { extractErrorMessage, isRateLimitedError } from '@/lib/error-utils'
 import { BLOG_POST_TOMBSTONE, BLOG_POST_TOMBSTONE_KEEPS, isPublishedBlogPost, labelsFromStored, publishedPostsNewestFirst, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { logger } from '@/lib/logger'
 import { tombstoneDocument } from './tombstone-helpers'
+import { carryModerationIntoReplace, MODERATION_REPLACE_KEEPS, moderationFieldOf } from './moderation-carry'
+import { withoutHiddenItems } from '@/lib/moderation-view'
+import { restrictionServiceFor } from './restriction-service'
+import { documentComparator, mergeLanePages, type LaneCursor, type LanePage } from '@/lib/moderation-lanes'
+import { isLiveMarker } from '@/lib/contract-topology'
 
 /**
  * Blog v9 keys the post listings (`timeline [live, $createdAt]`, `blogAndTime
  * [live, blogId, $createdAt]`) on the `live` marker every published post
  * carries and its tombstone leaves out, both `skipIfAbsent`: a read pins
  * `live == true` (Drive refuses an unpinned one) and never sees a tombstone.
+ * Blog v10 keys them `[live, mod, ...]`: a read pins the listed lane, `live ==
+ * 1, mod == null`, in that order.
  */
-const listingWhere = (): DocumentWhereClause[] => (blogIsV9() ? [['live', '==', true]] : [])
-const listingOrder = (): DocumentOrderByClause[] => (blogIsV9() ? [['live', 'asc']] : [])
+const listingWhere = (): DocumentWhereClause[] => [...blogListedLivePin(), ...blogModPin()]
+const listingOrder = (): DocumentOrderByClause[] => lanePinOrderBy([...blogListedLivePin(), ...blogModPin()])
+
+/** The lanes an author sees in their own "My posts" pane on v10: listed (1) and written while restricted (2). */
+const OWNER_LANES = [1, 2] as const
+const OWNER_CURSOR_PREFIX = 'lanes:'
+
+/** Per-lane cursors out of the opaque string a previous owner page returned. */
+function decodeOwnerCursor(startAfter: string | undefined): LaneCursor[] {
+  const fresh: LaneCursor[] = OWNER_LANES.map(() => null)
+  if (!startAfter?.startsWith(OWNER_CURSOR_PREFIX)) return fresh
+  try {
+    const parsed: unknown = JSON.parse(startAfter.slice(OWNER_CURSOR_PREFIX.length))
+    if (!Array.isArray(parsed) || parsed.length !== OWNER_LANES.length) return fresh
+    return parsed.map((cursor): LaneCursor => (cursor === 'done' ? 'done' : typeof cursor === 'string' ? cursor : null))
+  } catch {
+    return fresh
+  }
+}
+
+/** The `live` a stored post carries (`1` or `2` on v10, `true` on v9), when it has one. */
+function storedLive(doc: Record<string, unknown>): number | boolean | undefined {
+  const data = (doc.data || doc) as Record<string, unknown>
+  const live = data.live ?? doc.live
+  return isLiveMarker(live) ? (live as number | boolean) : undefined
+}
 
 export interface BlogPostQueryOptions {
   limit?: number
@@ -96,7 +130,13 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     // Store the app's label list as the configured cut does.
     if ('labels' in fields) fields.labels = storedLabels(doc.labels, 'post')
     // v9: an edit of a published post keeps it on the listings; only a tombstone leaves `live` out.
-    if (blogIsV9() && !doc.deleted) fields.live = true
+    // v10: `live` is frozen while the post is not deleted, so the stored lane (1 or 2) goes back as it was.
+    if (blogIsV9() && !doc.deleted) {
+      const stored = (doc as unknown as Record<string, unknown>).live
+      fields.live = blogAuthorsCanBeRestricted() ? (stored === 2 ? 2 : 1) : true
+    }
+    // A replace sends a moderator's `mod`/`modLabel` back unchanged (a dropped or changed one is refused, 41124).
+    carryModerationIntoReplace(fields, doc)
     // Re-compress and chunk content into data0–data3 (only set chunks that exist)
     if (doc.content && Array.isArray(doc.content) && doc.content.length > 0) {
       const compressed = compressContent(doc.content)
@@ -147,6 +187,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       slug: (data.slug || doc.slug || '') as string,
       publishedAt: (data.publishedAt ?? doc.publishedAt) as number | undefined,
       ...((data.deleted ?? doc.deleted) === true ? { deleted: true } : {}),
+      ...(storedLive(doc) !== undefined ? { live: storedLive(doc) } : {}),
+      ...moderationFieldOf(doc),
     }
   }
 
@@ -176,15 +218,18 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     }
 
     const chunks = splitIntoChunks(compressed, BLOG_CHUNK_SIZE)
+    let restricted = await this.authorIsRestricted(ownerId)
     const buildPayload = (finalSlug: string): Record<string, unknown> => {
+      const live = blogLiveValue(restricted)
       const payload: Record<string, unknown> = {
         blogId: requireDocumentIdentifierBytes(data.blogId, 'blogId'),
         title: data.title,
         data0: chunks[0],
         slug: finalSlug,
         publishedAt: data.publishedAt ?? Date.now(),
-        // v9: required on a post until its tombstone, which leaves it out.
-        ...(blogIsV9() ? { live: true } : {}),
+        // v9: required on a post until its tombstone, which leaves it out (`true`).
+        // v10: the lane, 2 while the author has a restriction in force, else 1.
+        ...(live !== undefined ? { live } : {}),
       }
       for (let i = 1; i < chunks.length; i++) {
         payload[`data${i}`] = chunks[i]
@@ -199,16 +244,46 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       return payload
     }
 
-    try {
-      return await this.create(ownerId, buildPayload(slug))
-    } catch (error) {
-      // Retry once with a fresh timestamp suffix on duplicate slug rejection
-      const message = error instanceof Error ? error.message : String(error)
-      if (message.includes('duplicate') || message.includes('already exists') || message.includes('unique')) {
-        slug = appendTimestampSuffix(slug)
-        return this.create(ownerId, buildPayload(slug))
+    const attempt = async (): Promise<BlogPost> => {
+      try {
+        return await this.create(ownerId, buildPayload(slug))
+      } catch (error) {
+        // Retry once with a fresh timestamp suffix on duplicate slug rejection
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes('duplicate') || message.includes('already exists') || message.includes('unique')) {
+          slug = appendTimestampSuffix(slug)
+          return this.create(ownerId, buildPayload(slug))
+        }
+        throw error
       }
-      throw error
+    }
+    try {
+      return await attempt()
+    } catch (error) {
+      // v10 refuses the wrong lane (10422). The standing this write was built on may be
+      // stale (a moderator restricted or lifted the author since it was read): read it
+      // again and, when it changed, retry once with the corrected lane.
+      if (!blogAuthorsCanBeRestricted()) throw error
+      const standing = await restrictionServiceFor('blog').refresh(ownerId)
+      const nowRestricted = standing?.state === 1
+      if (nowRestricted === restricted) throw error
+      restricted = nowRestricted
+      return attempt()
+    }
+  }
+
+  /**
+   * True while the author has a blog restriction in force (their new posts must
+   * carry `live: 2`). A failed read counts as not restricted: the create is
+   * refused if that was wrong, and the retry reads the standing again.
+   */
+  private async authorIsRestricted(ownerId: string): Promise<boolean> {
+    if (!blogAuthorsCanBeRestricted()) return false
+    try {
+      return await restrictionServiceFor('blog').isRestricted(ownerId)
+    } catch (error) {
+      logger.warn('Could not read the blog restriction standing; assuming none:', error)
+      return false
     }
   }
 
@@ -257,7 +332,10 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       documentType: this.documentType,
       documentId: postId,
       ownerId,
-      preserve: BLOG_POST_TOMBSTONE_KEEPS,
+      // v10: a moderator's `mod`/`modLabel` survive the author's tombstone (a dropped one is refused, 41124).
+      preserve: blogListingsCarryModLane()
+        ? { ...BLOG_POST_TOMBSTONE_KEEPS, scalars: [...BLOG_POST_TOMBSTONE_KEEPS.scalars, ...MODERATION_REPLACE_KEEPS] }
+        : BLOG_POST_TOMBSTONE_KEEPS,
       base: BLOG_POST_TOMBSTONE,
       clearableReferences: blogIsV9() ? ['blogId'] : [],
     })
@@ -265,8 +343,14 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     return deleted
   }
 
+  /** One post by id, hidden or not: the page decides how to show it (the post carries its `moderation` marks). */
   async getPost(postId: string): Promise<BlogPost | null> {
     return this.get(postId)
+  }
+
+  /** Posts reached by id for a public list (a ranking, a notification): a hidden one is dropped, except on an archival build. */
+  async getMany(postIds: string[], options: { throwOnError?: boolean } = {}): Promise<BlogPost[]> {
+    return withoutHiddenItems(await super.getMany(postIds, options))
   }
 
   async getPostBySlug(blogId: string, slug: string): Promise<BlogPost | null> {
@@ -281,6 +365,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   /** Author management never depends on the parent blog still existing. */
   async getOwnerPostsPage(ownerId: string, options: BlogPostQueryOptions = {}): Promise<LatestBlogPostsPage> {
     if (!blogIsV9()) return { posts: [] }
+    if (blogAuthorsCanBeRestricted()) return this.getOwnerPostsAcrossLanes(ownerId, options)
     const page = await this.cursorPage({
       where: [['$ownerId', '==', ownerId], ['live', '==', true]],
       orderBy: [['$ownerId', 'asc'], ['live', 'asc'], ['$createdAt', 'desc']],
@@ -288,6 +373,38 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       startAfter: options.startAfter,
     })
     return { posts: page.documents, nextCursor: page.nextCursor }
+  }
+
+  /**
+   * v10: the author's own pane shows both lanes, listed (`live == 1`) and
+   * written while restricted (`live == 2`), hidden posts included (the post
+   * carries its `moderation` marks). One read per lane on `ownerAndTime
+   * [$ownerId, live, $createdAt]`, merged newest first; `nextCursor` holds
+   * each lane's own cursor (opaque to the caller).
+   */
+  private async getOwnerPostsAcrossLanes(ownerId: string, options: BlogPostQueryOptions): Promise<LatestBlogPostsPage> {
+    const limit = Math.min(options.limit ?? 20, 100)
+    const previous = decodeOwnerCursor(options.startAfter)
+    const pages = await Promise.all(OWNER_LANES.map(async (live, lane): Promise<LanePage<BlogPost>> => {
+      if (previous[lane] === 'done') return { docs: [], full: false }
+      const startAfter = previous[lane]
+      const { documents } = await this.query({
+        where: [['$ownerId', '==', ownerId], ['live', '==', live]],
+        orderBy: [['$ownerId', 'asc'], ['live', 'asc'], ['$createdAt', 'desc']],
+        limit,
+        startAfter: startAfter ?? undefined,
+      })
+      return { docs: documents, full: documents.length === limit }
+    }))
+    const compare = documentComparator<BlogPost>(
+      [['$ownerId', 'asc'], ['live', 'asc'], ['$createdAt', 'desc']],
+      (post, field) => (field === '$createdAt' ? post.createdAt.getTime() : field === '$id' ? post.id : post.ownerId),
+    )
+    const merged = mergeLanePages(pages, previous, limit, compare, (post) => post.id)
+    return {
+      posts: merged.docs,
+      nextCursor: merged.more ? `${OWNER_CURSOR_PREFIX}${JSON.stringify(merged.cursors)}` : undefined,
+    }
   }
 
   async getPostsByBlog(blogId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {

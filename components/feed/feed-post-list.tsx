@@ -5,6 +5,7 @@ import ErrorBoundary from '@/components/error-boundary';
 import { LoadingState } from '@/components/ui/loading-state';
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel';
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll';
+import { usePostingClosed } from '@/hooks/use-posting-opening';
 import { PostCard } from '@/components/post/post-card';
 import { useSettingsStore } from '@/lib/store';
 import { useAuth } from '@/contexts/auth-context';
@@ -51,6 +52,7 @@ export function FeedPostList({
 }: FeedPostListProps) {
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode);
   const { user } = useAuth();
+  const postingClosed = usePostingClosed();
   // 'hide' filters at render time so pagination cursors stay untouched — a
   // short page is fine, a broken cursor is not.
   // v10: one card per reposted target (render time too, for the same reason).
@@ -88,7 +90,9 @@ export function FeedPostList({
         emptyDescription={
           activeTab === 'following'
             ? 'Follow some people to see their posts here!'
-            : 'Be the first to share something!'
+            : postingClosed
+              ? 'Posts will show up here once posting opens.'
+              : 'Be the first to share something!'
         }
       >
         <div data-testid="feed-post-list">

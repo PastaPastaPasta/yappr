@@ -16,6 +16,7 @@ import { tagMaxLength } from '@/lib/contract-topology'
 import { MentionLink } from './mention-link'
 import { cn, isEmojiOnly } from '@/lib/utils'
 import { EmbeddedPostCard, EmbeddedPostSkeleton } from './embedded-post-card'
+import { HiddenContentStub } from '@/components/moderation/moderation-label'
 
 interface PostContentProps {
   content: string
@@ -72,8 +73,11 @@ export function PostContent({
     matched: internalReferenceMatched,
     post: internalReferencePost,
     loading: internalReferenceLoading,
-    resolved: internalReferenceResolved
+    resolved: internalReferenceResolved,
+    hidden: internalReferenceHidden,
   } = useYapprPostReference(firstUrl, { disabled: !shouldResolveInternalReference })
+  /** The link resolved to something embedded in its place: the post, or the hidden stub (v18). */
+  const internalReferenceEmbedded = internalReferencePost !== null || internalReferenceHidden
 
   // Only fetch preview if link previews are enabled and the author isn't
   // follow-gated — a gated author's URL must not be fetched at all. Internal
@@ -85,7 +89,7 @@ export function PostContent({
   )
 
   const shouldHideFirstUrl = (
-    (internalReferenceMatched && (internalReferenceLoading || internalReferencePost !== null)) ||
+    (internalReferenceMatched && (internalReferenceLoading || internalReferenceEmbedded)) ||
     (linkPreviewsEnabled && !!firstUrl && (previewLoading || !!previewData))
   )
 
@@ -270,7 +274,7 @@ export function PostContent({
         internalReferenceMatched &&
         firstUrl &&
         cleanHref === firstUrl &&
-        (internalReferenceLoading || internalReferencePost !== null)
+        (internalReferenceLoading || internalReferenceEmbedded)
       ) {
         return trailingPunctuation ? <Fragment key={key}>{trailingPunctuation}</Fragment> : null
       }
@@ -410,11 +414,15 @@ export function PostContent({
       {shouldResolveInternalReference && internalReferenceMatched && internalReferencePost && (
         <EmbeddedPostCard post={internalReferencePost} />
       )}
+      {/* v18: a linked post the moderators hid embeds as the hidden stub, never its content. */}
+      {shouldResolveInternalReference && internalReferenceMatched && internalReferenceHidden && (
+        <HiddenContentStub noun="post" documentId="linked" variant="embed" />
+      )}
       {/* Link preview */}
-      {!disableLinkPreview && linkPreviewsEnabled && (!internalReferenceMatched || (internalReferenceResolved && !internalReferencePost)) && previewLoading && (
+      {!disableLinkPreview && linkPreviewsEnabled && (!internalReferenceMatched || (internalReferenceResolved && !internalReferenceEmbedded)) && previewLoading && (
         <LinkPreviewSkeleton url={firstUrl ?? undefined} />
       )}
-      {!disableLinkPreview && linkPreviewsEnabled && (!internalReferenceMatched || (internalReferenceResolved && !internalReferencePost)) && previewData && (
+      {!disableLinkPreview && linkPreviewsEnabled && (!internalReferenceMatched || (internalReferenceResolved && !internalReferenceEmbedded)) && previewData && (
         <LinkPreview data={previewData} />
       )}
       {/* Follow-gated preview: nothing was fetched; offer click-to-reveal */}

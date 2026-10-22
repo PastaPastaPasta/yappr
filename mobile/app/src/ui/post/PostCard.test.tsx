@@ -5,7 +5,9 @@ import { singleAspectRatio } from './MediaGrid';
 import { displayHost } from './LinkPreviewCard';
 import { clearPollSelections, pollEndLabel, pollEndSpoken, pollPercents } from './poll-ballot';
 import { PostCard } from './PostCard';
+import { moderationLabelText } from './ModerationLabel';
 import { PostStub, stubText } from './PostStub';
+import type { CardPost } from './types';
 import { Text } from '../Text';
 import { AUTHORS, POSTS, SAMPLE_POLL, SAMPLE_PREVIEW, VIEWER_ID, fixturePost } from './fixtures';
 
@@ -708,6 +710,74 @@ describe('stubs', () => {
     rerender(<PostStub state="deleted" reason="Spam" />);
     expect(screen.getByLabelText('This post was deleted by its author.')).toBeTruthy();
     expect(screen.queryByText(/Reason:/)).toBeNull();
+  });
+});
+
+describe('moderated posts (social v18)', () => {
+  const WITHHELD = { hidden: true, restricted: false, withheld: true } as const;
+  const withheldPost = (overrides: Partial<CardPost> = {}) =>
+    fixturePost({
+      id: 'post-hidden',
+      author: { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false },
+      content: '',
+      stats: { likes: 0, reposts: 0, replies: 0, quotes: 0 },
+      viewer: undefined,
+      moderation: WITHHELD,
+      ...overrides,
+    });
+
+  it('reads "hidden" for a post and a reply, never "removed" or "deleted"', () => {
+    expect(stubText('hidden', 'post')).toBe('This post is hidden by moderators.');
+    expect(stubText('hidden', 'reply')).toBe('This reply is hidden by moderators.');
+    expect(stubText('hidden', 'post')).not.toMatch(/removed|deleted|banned/i);
+  });
+
+  it('shows a withheld post as the calm hidden stub: no content, no actions', () => {
+    render(<PostCard post={withheldPost()} actions={{ onLike: jest.fn(), onPress: jest.fn() }} />);
+    expect(screen.getByLabelText('This post is hidden by moderators.')).toBeTruthy();
+    expect(screen.getByTestId('stub-hidden-post-hidden')).toBeTruthy();
+    expect(screen.queryByTestId('like-btn-post-hidden')).toBeNull();
+    expect(screen.queryByText(/removed|deleted/i)).toBeNull();
+  });
+
+  it('shows a withheld reply as a hidden reply, in the detail card too', () => {
+    render(<PostCard post={withheldPost({ kind: 'reply' })} variant="detail" />);
+    expect(screen.getByLabelText('This reply is hidden by moderators.')).toBeTruthy();
+  });
+
+  it('replaces a withheld quoted post with the hidden stub inside the quote frame', () => {
+    const quoted = withheldPost({ id: 'post-hidden-quoted' });
+    render(<PostCard post={fixturePost({ quoted, quotedPostId: quoted.id })} />);
+    expect(screen.getByLabelText('This post is hidden by moderators.')).toBeTruthy();
+    expect(screen.queryByTestId('quote-embed')).toBeNull();
+    expect(byId('post-card-post-basic').props.accessibilityLabel).toContain('Quote: This post is hidden by moderators.');
+  });
+
+  it.each([
+    ['hidden with a reason and a date', { hidden: true, restricted: false, label: 7, reason: 'Spam', at: new Date(2026, 9, 21, 12) }, 'Hidden · Spam · Oct 21, 2026'],
+    ['hidden, its reason unresolved (never a number)', { hidden: true, restricted: false, label: 7, at: new Date(2026, 9, 21, 12) }, 'Hidden by moderators · Oct 21, 2026'],
+    ['hidden without a reason', { hidden: true, restricted: false }, 'Hidden by moderators'],
+    ['written by a restricted account', { hidden: false, restricted: true }, 'Restricted account'],
+    ['both', { hidden: true, restricted: true, label: 3, reason: 'Harassment', at: new Date(2026, 9, 21, 12) }, 'Hidden · Harassment · Oct 21, 2026 · Restricted account'],
+  ] as const)('labels an archival build\'s post that is %s above its content', (_name, moderation, label) => {
+    render(<PostCard post={fixturePost({ moderation })} />);
+    expect(moderationLabelText(moderation)).toBe(label);
+    expect(label).not.toMatch(/Reason \d/);
+    expect(screen.getByTestId('moderation-label')).toHaveAccessibleName(label);
+    expect(screen.getByText('Shipping the design system today.', { exact: false })).toBeTruthy();
+    expect(byId('post-card-post-basic').props.accessibilityLabel).toContain(`${label}.`);
+  });
+
+  it('labels a moderated quoted post inside its frame, keeping its content', () => {
+    const quoted = fixturePost({ id: 'post-q', content: 'archived words', moderation: { hidden: true, restricted: false, label: 2, reason: 'Spam' } });
+    render(<PostCard post={fixturePost({ quoted, quotedPostId: quoted.id })} />);
+    expect(screen.getByTestId('quote-moderation-label')).toHaveAccessibleName('Hidden · Spam');
+    expect(screen.getByText('archived words')).toBeTruthy();
+  });
+
+  it('draws no label for an ordinary post', () => {
+    render(<PostCard post={fixturePost()} />);
+    expect(screen.queryByTestId('moderation-label')).toBeNull();
   });
 });
 

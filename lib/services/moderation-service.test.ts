@@ -83,6 +83,10 @@ vi.mock('@/lib/contract-topology', () => ({
   isV11: () => topology.v11,
   moderatorDeleteWindowSeconds: (type: string) => (topology.v11 && (type === 'post' || type === 'reply') ? SETTLED_RULE.windowSeconds : null),
   settledDeletionFor: (type: string) => (topology.v11 && (type === 'post' || type === 'reply') ? SETTLED_RULE : null),
+  // The v18 "hide, don't delete" answers; lib/services/moderation-service.v18.test.ts runs the real v18 topology.
+  moderatorsCannotDelete: () => false,
+  authorsCanBeRestricted: () => false,
+  moderatorAbilitiesFor: () => null,
 }))
 
 const storage = new Map<string, string>()

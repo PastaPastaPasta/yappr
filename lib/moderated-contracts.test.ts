@@ -81,6 +81,58 @@ describe('blog moderation by topology', () => {
   })
 })
 
+describe('hide, don\'t delete (social v18, blog v10, storefront v11)', () => {
+  const SOCIAL = 'Soc1111111111111111111111111111111111111111'
+  const BLOG = 'Blg1111111111111111111111111111111111111111'
+  const STORE = 'Sto1111111111111111111111111111111111111111'
+  const set = (social: string, blog: string, storefront: string) => contractsUnder({
+    NEXT_PUBLIC_YAPPR_CONTRACT_ID: SOCIAL, NEXT_PUBLIC_CONTRACT_TOPOLOGY: social,
+    NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID: BLOG, NEXT_PUBLIC_BLOG_TOPOLOGY: blog,
+    NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID: STORE, NEXT_PUBLIC_STOREFRONT_TOPOLOGY: storefront,
+  })
+
+  it('reads the v18-set files: nothing deletable, mod and modLabel changeable, warnings only', async () => {
+    const { moderatedContract } = await set('v18', 'v10', 'v11')
+    const social = moderatedContract('social')
+    expect([social.hidesInsteadOfDeleting(), social.restrictsAuthors()]).toEqual([true, true])
+    expect(social.deletableTypes()).toEqual([])
+    expect(social.hideableTypes()).toEqual(['post', 'reply', 'yapprProfile'])
+    expect(social.listsKept()).toEqual(['warnings'])
+    expect(social.settledDeletionFor('post')).toBeNull()
+
+    const blog = moderatedContract('blog')
+    expect([blog.hidesInsteadOfDeleting(), blog.restrictsAuthors()]).toEqual([true, true])
+    expect(blog.deletableTypes()).toEqual([])
+    expect(blog.hideableTypes()).toEqual(['blog', 'blogPost', 'blogComment'])
+    expect(blog.listsKept()).toEqual(['warnings'])
+    expect([blog.settledDeletionFor('blogPost'), blog.keepsRecord('blogPost')]).toEqual([null, false])
+    expect(blog.elected()?.moderatedDocumentTypes.blogPost).toEqual(['changeDocumentFields', 'warn'])
+
+    const storefront = moderatedContract('storefront')
+    // Storefront v11 has no `live` lane, so no restriction type.
+    expect([storefront.hidesInsteadOfDeleting(), storefront.restrictsAuthors()]).toEqual([true, false])
+    expect(storefront.deletableTypes()).toEqual([])
+    expect(storefront.hideableTypes()).toEqual(['store', 'storeItem', 'storeReview', 'itemReview'])
+    expect(storefront.listsKept()).toEqual(['warnings'])
+    expect(storefront.reportsResolved()).toBe(true)
+    // Stable answers (React effects depend on them).
+    expect(storefront.hideableTypes()).toBe(storefront.hideableTypes())
+    expect(social.hideableTypes()).toBe(social.hideableTypes())
+  })
+
+  it('keeps the delete cuts (social v17, blog v9, storefront v10) exactly as they were', async () => {
+    const { moderatedContract } = await set('v17', 'v9', 'v10')
+    for (const key of ['social', 'blog', 'storefront'] as const) {
+      const contract = moderatedContract(key)
+      expect([contract.hidesInsteadOfDeleting(), contract.restrictsAuthors(), contract.hideableTypes()]).toEqual([false, false, []])
+      expect(contract.deletableTypes().length).toBeGreaterThan(0)
+      expect(contract.listsKept()).toContain('banlist')
+    }
+    expect(moderatedContract('blog').deletableTypes()).toContain('blogPost')
+    expect(moderatedContract('storefront').deletableTypes()).toContain('storeReview')
+  })
+})
+
 describe('documentNoun', () => {
   it('names storefront and blog types as people say them', async () => {
     const { documentNoun } = await contractsUnder({})
@@ -97,5 +149,12 @@ describe('the moderation model the legal copy describes', () => {
   it.each(['v2', 'v9', 'v16', 'v17'])('keeps the removal wording on social %s', async (topology) => {
     const { moderationHidesOnly } = await contractsUnder({ NEXT_PUBLIC_CONTRACT_TOPOLOGY: topology })
     expect(moderationHidesOnly()).toBe(false)
+  })
+
+  it('switches to the hide wording on the v18 set, and only when blog and storefront hide too', async () => {
+    const set = { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v18', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v10', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v11' }
+    expect((await contractsUnder(set)).moderationHidesOnly()).toBe(true)
+    expect((await contractsUnder({ ...set, NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v10' })).moderationHidesOnly()).toBe(false)
+    expect((await contractsUnder({ ...set, NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9' })).moderationHidesOnly()).toBe(false)
   })
 })

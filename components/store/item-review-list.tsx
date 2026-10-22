@@ -6,6 +6,7 @@ import { CheckBadgeIcon } from '@heroicons/react/24/solid'
 import { RatingStars } from './rating-stars'
 import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { ModerationLabel } from '@/components/moderation/moderation-label'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { formatDate } from '@/lib/utils/format'
 import { itemReviewService } from '@/lib/services/item-review-service'
@@ -73,6 +74,7 @@ export function ItemReviewList({ itemId, limit = 10, onReviewRemoved }: ItemRevi
                 }}
               />
             </div>
+            <ModerationLabel contract="storefront" moderation={review.moderation} className="mt-1" />
             {review.content && (
               <p className="mt-1 text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{review.content}</p>
             )}

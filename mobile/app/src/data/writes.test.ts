@@ -17,7 +17,7 @@ import { queryKeys } from './keys';
 import { isExhausted, ticketJob } from './reconcile';
 import { advance, fakeEngine, ticket } from './testing/fake-engine';
 import { useSessionStore } from './session';
-import { adoptRestoredWrites, OFFLINE_MESSAGE, REPAIR_RETRY_MS, resetWriteTracking, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
+import { adoptRestoredWrites, OFFLINE_MESSAGE, REPAIR_RETRY_MS, resetWriteTracking, retryWrite, runWrite, submitWrite, useWrite, writeFailureText, type WriteSpec } from './writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 let mockOffline = false;
@@ -764,6 +764,31 @@ describe('submitWrite', () => {
       const pending = await submitPending();
       act(() => fakeEngine.emit('write.status', advance(pending, { state: 'failed', error: refusal(code, web) })));
       expect(currentToast()?.message).toBe(mobile);
+    }
+  });
+
+  it('says a v18 lane or moderator-only refusal in calm copy, with Retry only where reading the standing again helps', async () => {
+    const refusal = (code: 'STANDING_CHANGED' | 'MODERATOR_ONLY', retryable: boolean) => ({
+      code,
+      consensusCode: code === 'STANDING_CHANGED' ? 10422 : 41115,
+      outcome: 'refused' as const,
+      retryable,
+      userMessage: "The network doesn't allow this combination of values.",
+    });
+    const standing = await submitPending();
+    act(() => fakeEngine.emit('write.status', advance(standing, { state: 'failed', retryable: true, error: refusal('STANDING_CHANGED', true) })));
+    expect(currentToast()).toMatchObject({
+      message: "Your account's status changed while this was sending. Try again.",
+      action: { label: 'Retry' },
+    });
+
+    target = { ...target, id: `${target.id}-moderator` };
+    const moderator = await submitPending();
+    act(() => fakeEngine.emit('write.status', advance(moderator, { state: 'failed', error: refusal('MODERATOR_ONLY', false) })));
+    expect(currentToast()?.message).toBe("You can't do this from this account.");
+    expect(currentToast()?.action).toBeUndefined();
+    for (const message of [writeFailureText(refusal('STANDING_CHANGED', true), ''), writeFailureText(refusal('MODERATOR_ONLY', false), '')]) {
+      expect(message).not.toMatch(/banned|suspended|removed|deleted/i);
     }
   });
 

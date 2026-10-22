@@ -1,9 +1,10 @@
 import {
   canBookmark, canRepost, contentLimits, contractTakesReports, dashpayProfileExtension, deletesAreTombstones,
-  followRankingsAvailable, hasFlatThreads, hashtagsAreInline, inlineTags, likesAreIndexOnly, mediaItemLimit, postsHaveLanguage,
+  followRankingsAvailable, hasFlatThreads, hashtagsAreInline, inlineTags, likesAreIndexOnly, mediaItemLimit, moderatorsCannotDelete, postsHaveLanguage,
   prefixRankingsAvailable, privateFeedClientSupported, profilesAreReportable, reportShape, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
 } from '@/lib/contract-topology'
-import { dmIsV5, pollrHasEditableBallots, pollrIsConfigured, pollrIsV3 } from '@/lib/constants'
+import { dmIsV5, pollrHasEditableBallots, pollrIsConfigured, pollrIsV3, storefrontListingsCarryModLane } from '@/lib/constants'
+import { moderatedContract } from '@/lib/moderated-contracts'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import { reportFeeCredits } from '@/lib/reports'
@@ -45,6 +46,9 @@ export function platformInfo(): PlatformInfoDTO {
       deletesAreTombstones: deletesAreTombstones(),
       reports: contractTakesReports(),
       reportsResolved: reportsAreResolved(),
+      moderatorsHide: moderatorsCannotDelete(),
+      storefrontModeratorsHide: storefrontListingsCarryModLane(),
+      postingMayBeClosed: moderatedContract('social').elected()?.interim === 'notYetUsable',
       reportReasonMax: reportShape().maxReason,
       profileReports: profilesAreReportable(),
       reportFeeCredits: reportFee === null ? null : Number(reportFee),

@@ -14,13 +14,15 @@ import { usePostDetail } from '@/hooks/use-post-detail'
 import { useAppStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { useCanReplyToPrivate } from '@/hooks/use-can-reply-to-private'
+import { usePostingClosed } from '@/hooks/use-posting-opening'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
-import { referencesMayDangle, replyThreadsCarryLiveMarker } from '@/lib/contract-topology'
+import { moderatorsCannotDelete, referencesMayDangle, replyThreadsCarryLiveMarker, targetKindOf } from '@/lib/contract-topology'
+import { isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 import { countVisibleReplies, recordVisibleReplies } from '@/lib/feed/visible-reply-counts'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -32,6 +34,7 @@ function PostDetailContent() {
   const { user } = useAuth()
   const { setReplyingTo, setComposeOpen } = useAppStore()
   const openLoginModal = useLoginModal((s) => s.open)
+  const postingClosed = usePostingClosed()
 
   // All post loading and enrichment handled by hook
   // Uses cached post data for instant navigation when available
@@ -91,9 +94,16 @@ function PostDetailContent() {
   // Until the root has been looked up (a cached reply shows first, and a failed
   // load never looks it up), whether it was removed is unknown, so nothing is
   // offered yet either.
+  // v18: a post the moderators hid is a stub for everyone else, and its moderators
+  // read it with a label; on a default build nothing is built on it, so there is
+  // no reply prompt for anyone. An archival build keeps them.
+  const hiddenOnThisBuild = isHidden(post?.moderation) && !moderationViewAll()
   const replyBlockedReason = threadRootRemoved
-    ? 'The post that started this thread was removed, so nothing in it can be replied to.'
-    : replyRootPending ? 'Replies open once this thread has been checked. Reload the page if this stays.' : undefined
+    ? moderatorsCannotDelete()
+      ? 'The post that started this thread is unavailable, so nothing in it can be replied to.'
+      : 'The post that started this thread was removed, so nothing in it can be replied to.'
+    : replyRootPending ? 'Replies open once this thread has been checked. Reload the page if this stays.'
+    : hiddenOnThisBuild && post ? `This ${targetKindOf(post) === 'reply' ? 'reply' : 'post'} is hidden by moderators, so it cannot be replied to.` : undefined
 
   // Once the whole thread is on screen, the count on this post's cards is what
   // the thread shows: an author's deleted reply stays in the proved count but
@@ -131,7 +141,7 @@ function PostDetailContent() {
     const replyMap = new Map<string, Post>(
       // A deleted-parent stub is no document, and a v11 tombstone renders as a
       // stub with no counts, so neither has anything to enrich.
-      flattenReplyThreads(replyThreads).filter((thread) => !thread.content.deletedStub && !isHiddenTombstone(thread.content)).map((thread): [string, Post] => [
+      flattenReplyThreads(replyThreads).filter((thread) => !thread.content.deletedStub && !thread.content.hiddenStub && !isHiddenTombstone(thread.content)).map((thread): [string, Post] => [
         thread.content.id,
         replyToPost(thread.content)
       ])
@@ -228,7 +238,7 @@ function PostDetailContent() {
               <div className="p-4 border-b border-gray-200 dark:border-gray-800 text-center">
                 <p className="text-gray-500 text-sm">{replyBlockedReason}</p>
               </div>
-            ) : user ? (
+            ) : hiddenOnThisBuild ? null : user ? (
               isCheckingAccess || replyRootPending ? (
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800">
                   <Button
@@ -272,7 +282,7 @@ function PostDetailContent() {
                 </div>
               ) : replyThreads.length === 0 ? !error && (
                 <div className="p-8 text-center">
-                  <p className="text-gray-500">{!user || isDeleted || replyBlockedReason || !canReplyToPrivate ? 'No replies yet.' : 'No replies yet. Be the first to reply!'}</p>
+                  <p className="text-gray-500">{!user || isDeleted || replyBlockedReason || postingClosed || !canReplyToPrivate ? 'No replies yet.' : 'No replies yet. Be the first to reply!'}</p>
                 </div>
               ) : (
                 replyThreads.map((thread) => (

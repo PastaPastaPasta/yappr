@@ -10,9 +10,10 @@ import { Button } from '@/components/ui/button'
 import { LimitedTextarea } from '@/components/ui/limited-text'
 import { documentNoun } from '@/lib/moderated-contracts'
 import { categorizeError } from '@/lib/error-utils'
-import { REPORT_STATUSES, isUrgentReason, reportReasonLabel, reportStatusLabel, resolutionInputProblem, type ReportStatus, type ReportView } from '@/lib/reports'
+import { isUrgentReason, reportReasonLabel, reportStatusLabel, reportStatuses, resolutionInputProblem, type ReportStatus, type ReportView } from '@/lib/reports'
 import { contractReportService, type ContractReport, type ContractReportCursor, type ReportingContract } from '@/lib/services/contract-report-service'
 import { moderationServiceFor } from '@/lib/services/moderation-service'
+import { useModeratorHideModal, type ModeratorHideAction } from '@/hooks/use-moderator-hide-modal'
 import { CharterReasonPicker, type SeatedReasonsState } from './charter-reason-picker'
 
 export function ContractReportQueue({ contract, seatedReasons }: { contract: ReportingContract; seatedReasons: SeatedReasonsState }) {
@@ -45,12 +46,13 @@ export function ContractReportQueue({ contract, seatedReasons }: { contract: Rep
     pending.catch(error => toast.error(categorizeError(error)))
     return () => { generation.current = request + 1 }
   }, [load])
+  const hides = moderationServiceFor(contract).hidesInsteadOfDeleting()
   return <section className="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
     <h3 className="font-semibold">Reports</h3>
     <ModerationKeyNotice authorized={canAuthorize} />
     <label className="text-sm">Show <select value={view} onChange={e => setView(e.target.value)} className="bg-transparent border rounded p-1">
       <option value="open">Waiting for review</option>
-      {REPORT_STATUSES.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
+      {reportStatuses(hides).map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
       <option value="mine">Resolved by me</option>
     </select></label>
     <Button variant="outline" disabled={loading} onClick={() => load()}>Refresh</Button>
@@ -70,12 +72,27 @@ function ReportRow({ contract, report, seatedReasons, canAuthorize, changed }: {
   useEffect(() => { setStatus(report.status ?? 1); setNote(report.resolution ?? '') }, [report.status, report.resolution])
   const problem = resolutionInputProblem(status, note)
   const unchanged = status === report.status && (note.trim() || null) === report.resolution
+  const service = moderationServiceFor(contract)
+  /** Blog v10 / storefront v11: the report is resolved after hiding its target or restricting its author. */
+  const hides = service.hidesInsteadOfDeleting()
+  const { open: openHide } = useModeratorHideModal()
+  const act = (action: ModeratorHideAction) => {
+    openHide({
+      action,
+      contract,
+      docType: report.docType,
+      documentId: report.targetId,
+      authorId: report.targetOwnerId,
+      noun: documentNoun(report.docType),
+      preview: destination?.preview,
+    }, () => setStatus(action === 'hide' ? 2 : 3))
+  }
   const resolve = async () => {
     if (!canAuthorize || !user || busy || problem) return
     setBusy(true)
     try {
       const result = await moderationServiceFor(contract).resolveReports(user.identityId, [report], { status, note }, {
-        text: note.trim() || reportStatusLabel(status),
+        text: note.trim() || reportStatusLabel(status, hides),
         documents: [{ documentTypeName: report.docType, documentId: report.targetId }],
         ...(charter ? { reasonDocumentId: charter } : {}),
       })
@@ -99,12 +116,22 @@ function ReportRow({ contract, report, seatedReasons, canAuthorize, changed }: {
     <p className={isUrgentReason(report.reason) ? 'font-semibold text-red-500' : 'font-medium'}>{documentNoun(report.docType)} · {reportReasonLabel(report.reason)}</p>
     <p className="text-xs text-gray-500">Reported {new Date(report.createdAt).toLocaleDateString()} by <Link className="underline" href={`/user?id=${report.reporterId}`}>{report.reporterId.slice(0, 8)}…</Link></p>
     {report.note && <p className="whitespace-pre-wrap break-words">{report.note}</p>}
-    <p>{report.status === null ? 'Waiting for review' : reportStatusLabel(report.status)}</p>
+    <p>{report.status === null ? 'Waiting for review' : reportStatusLabel(report.status, hides)}</p>
     {destination?.preview && <p className="whitespace-pre-wrap break-words">{destination.preview}</p>}
     {destination && <Link href={destination.href} className="underline mr-3">View {documentNoun(report.docType)}</Link>}
-    <Link href={citation} className="underline">Moderate author</Link>
+    <Link href={citation} className="underline">{hides ? 'Warn the author' : 'Moderate author'}</Link>
+    {hides && (
+      <div className="flex flex-wrap gap-2">
+        {service.canHide(report.docType) && (
+          <Button size="sm" variant="outline" disabled={!canAuthorize || busy} onClick={() => act('hide')}>Hide {documentNoun(report.docType)}</Button>
+        )}
+        {service.canRestrict() && (
+          <Button size="sm" variant="outline" disabled={!canAuthorize || busy} onClick={() => act('restrict')}>Restrict the author</Button>
+        )}
+      </div>
+    )}
     <label className="block">Outcome <select value={status} onChange={e => setStatus(Number(e.target.value) as ReportStatus)} className="bg-transparent border rounded p-1">
-      {REPORT_STATUSES.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
+      {reportStatuses(hides).map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
     </select></label>
     <label className="block">Resolution (optional, public)<LimitedTextarea contract={contract} document="report" field="resolution" value={note} onChange={e => setNote(e.target.value)} disabled={busy} /></label>
     <CharterReasonPicker id={`report-charter-${report.id}`} state={seatedReasons} value={charter} onChange={setCharter} />

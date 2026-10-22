@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
-import { ArrowUturnLeftIcon, BanknotesIcon, ClockIcon, ExclamationTriangleIcon, NoSymbolIcon } from '@heroicons/react/24/outline'
+import { ArrowUturnLeftIcon, BanknotesIcon, ClockIcon, ExclamationTriangleIcon, LockOpenIcon, NoSymbolIcon } from '@heroicons/react/24/outline'
+import { useModeratorHideModal } from '@/hooks/use-moderator-hide-modal'
+import { restrictionServiceFor, type Restriction } from '@/lib/services/restriction-service'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
@@ -175,6 +177,18 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   const [seatedTeam, setSeatedTeam] = useState<SeatedTeamSeats | null>(null)
   /** The last status check: the proved standing, or the read failure (never a clean record in its place). */
   const [standing, setStanding] = useState<{ identityId: string; standing: ModerationStanding | null; error: string | null } | null>(null)
+  /**
+   * Social v18, blog v10 and storefront v11 keep no ban or suspension list and
+   * delete nothing: the team restricts accounts (social and blog) and warns
+   * them, and hides content from beside it.
+   */
+  const hides = service.hidesInsteadOfDeleting()
+  const canBan = service.canBan()
+  const canSuspend = service.canSuspend()
+  const canRestrict = service.canRestrict()
+  /** The checked identity's restriction (in force, lifted, or none), read with its standing. */
+  const [restriction, setRestriction] = useState<{ identityId: string; value: Restriction | null } | null>(null)
+  const { open: openHide } = useModeratorHideModal()
 
   const refresh = useCallback(async () => {
     try {
@@ -333,12 +347,37 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
     const id = identityId.trim()
     if (!id) return
     try {
-      setStanding({ identityId: id, standing: await service.readStanding(id), error: null })
+      const [read, restricted] = await Promise.all([
+        service.readStanding(id),
+        // A fresh read: the panel decides Restrict or Lift from it.
+        canRestrict && contract !== 'storefront' ? restrictionServiceFor(contract).read(id) : Promise.resolve(null),
+      ])
+      setStanding({ identityId: id, standing: read, error: null })
+      setRestriction({ identityId: id, value: restricted })
     } catch (error) {
       logger.warn('ContractModerationSettings: status check failed', error)
       setStanding({ identityId: id, standing: null, error: 'Could not read this identity\'s moderation status.' })
+      setRestriction(null)
     }
-  }, [service])
+  }, [service, canRestrict, contract])
+
+  /** v18 / blog v10: restricts the entered account, or lifts its restriction, from the shared moderator dialog. */
+  const restrictAction = (action: 'restrict' | 'lift') => {
+    const id = targetId.trim()
+    if (!id) {
+      toast.error('Enter the identity ID to moderate')
+      return
+    }
+    const cite = Object.entries(cited).find(([, ids]) => ids.trim())
+    openHide({
+      action,
+      contract,
+      authorId: id,
+      noun: 'account',
+      ...(cite ? { docType: cite[0], documentId: cite[1].split(/[\s,]+/).filter(Boolean)[0] } : {}),
+    }, () => { lookUp(id).catch(() => { /* reported inside */ }) })
+  }
+  const shownRestriction = restriction && restriction.identityId === targetId.trim() ? restriction.value : undefined
 
   // Arrived from a document's moderator menu: show where its author stands.
   const citedAuthor = citation?.authorId
@@ -358,8 +397,17 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
           <CardTitle>{social ? 'Contract Moderation' : `${moderatedContract(contract).label} Moderation`}</CardTitle>
           <CardDescription>
             On-chain moderation teams are elected by the community through masternode votes and are independent of Yappr.{' '}
-            {copy.barred} Both refusals are recorded with your reason, which anyone can read.
-            {social && <> Only deleting their own documents (an unlike, an unfollow) still goes through for them{barredOwnDeleteNote()}</>}
+            {hides ? (
+              <>
+                Moderators hide content and restrict accounts; nothing is ever deleted. Hide or unhide a post from its menu.
+                {canRestrict && ' A restricted account can still post, but what it posts stays out of feeds, search and profiles until a moderator lifts the restriction.'}
+              </>
+            ) : (
+              <>
+                {copy.barred} Both refusals are recorded with your reason, which anyone can read.
+                {social && <> Only deleting their own documents (an unlike, an unfollow) still goes through for them{barredOwnDeleteNote()}</>}
+              </>
+            )}
             {canWarn && ' A warning bars nothing: it is a public, reasoned note, and at most 16 accumulate until cleared.'}
           </CardDescription>
         </CardHeader>
@@ -384,14 +432,16 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
                 placeholder={placeholder} className={`${INPUT} font-mono`} />
             </div>
           ))}
-          <div>
-            <label htmlFor={fieldId('days')} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Suspension length</label>
-            <select id={fieldId('days')} value={days} onChange={(e) => setDays(Number(e.target.value))} className={INPUT}>
-              {SUSPENSION_DAYS.map((d) => <option key={d} value={d}>{dayLabel(d)}</option>)}
-            </select>
-          </div>
+          {canSuspend && (
+            <div>
+              <label htmlFor={fieldId('days')} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Suspension length</label>
+              <select id={fieldId('days')} value={days} onChange={(e) => setDays(Number(e.target.value))} className={INPUT}>
+                {SUSPENSION_DAYS.map((d) => <option key={d} value={d}>{dayLabel(d)}</option>)}
+              </select>
+            </div>
+          )}
           {standing && standing.identityId === targetId.trim() && (standing.standing
-            ? <StandingSummary standing={standing.standing} />
+            ? <StandingSummary standing={standing.standing} restriction={canRestrict ? shownRestriction : undefined} />
             : (
               <div role="alert" className="flex items-center justify-between gap-2 text-sm rounded-lg border border-red-300 dark:border-red-800 p-3 text-red-600 dark:text-red-400">
                 <span>{standing.error}</span>
@@ -404,18 +454,35 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
             <Button variant="outline" disabled={busy !== null || !targetId.trim()} onClick={() => { lookUp(targetId).catch(() => { /* reported inside */ }) }}>
               Check status
             </Button>
-            <Button variant="destructive" disabled={!canAuthorize || busy !== null} onClick={() => run('ban')} className="gap-2">
-              <NoSymbolIcon className="h-4 w-4" /> {busy?.action === 'ban' ? 'Banning…' : 'Ban'}
-            </Button>
-            <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('unban')} className="gap-2">
-              <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unban' ? 'Unbanning…' : 'Unban'}
-            </Button>
-            <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('suspend')} className="gap-2">
-              <ClockIcon className="h-4 w-4" /> {busy?.action === 'suspend' ? 'Suspending…' : 'Suspend'}
-            </Button>
-            <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('unsuspend')} className="gap-2">
-              <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unsuspend' ? 'Lifting…' : 'Unsuspend'}
-            </Button>
+            {canRestrict && (shownRestriction?.state === 1 ? (
+              <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => restrictAction('lift')} className="gap-2">
+                <LockOpenIcon className="h-4 w-4" /> Lift restriction
+              </Button>
+            ) : (
+              <Button variant="destructive" disabled={!canAuthorize || busy !== null || !targetId.trim()} onClick={() => restrictAction('restrict')} className="gap-2">
+                <NoSymbolIcon className="h-4 w-4" /> Restrict
+              </Button>
+            ))}
+            {canBan && (
+              <>
+                <Button variant="destructive" disabled={!canAuthorize || busy !== null} onClick={() => run('ban')} className="gap-2">
+                  <NoSymbolIcon className="h-4 w-4" /> {busy?.action === 'ban' ? 'Banning…' : 'Ban'}
+                </Button>
+                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('unban')} className="gap-2">
+                  <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unban' ? 'Unbanning…' : 'Unban'}
+                </Button>
+              </>
+            )}
+            {canSuspend && (
+              <>
+                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('suspend')} className="gap-2">
+                  <ClockIcon className="h-4 w-4" /> {busy?.action === 'suspend' ? 'Suspending…' : 'Suspend'}
+                </Button>
+                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('unsuspend')} className="gap-2">
+                  <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unsuspend' ? 'Lifting…' : 'Unsuspend'}
+                </Button>
+              </>
+            )}
             {canWarn && (
               <>
                 <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('warn')} className="gap-2">
@@ -457,18 +524,22 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
         </CardContent>
       </Card>
 
-      <EntryList title="Banned identities" empty="Nobody is banned." entries={banned}
-        render={(entry) => <>{entry.identityId}{entry.reason ? ` — ${entry.reason}` : ''}</>}
-        onPick={(entry) => setTargetId(entry.identityId)} />
-      <EntryList title="Suspended identities" empty="Nobody is suspended." entries={suspended}
-        render={(entry) => <>{entry.identityId} until {entry.until ? new Date(entry.until).toLocaleString() : '?'}{entry.reason ? ` — ${entry.reason}` : ''}</>}
-        onPick={(entry) => setTargetId(entry.identityId)} />
+      {canBan && (
+        <EntryList title="Banned identities" empty="Nobody is banned." entries={banned}
+          render={(entry) => <>{entry.identityId}{entry.reason ? ` — ${entry.reason}` : ''}</>}
+          onPick={(entry) => setTargetId(entry.identityId)} />
+      )}
+      {canSuspend && (
+        <EntryList title="Suspended identities" empty="Nobody is suspended." entries={suspended}
+          render={(entry) => <>{entry.identityId} until {entry.until ? new Date(entry.until).toLocaleString() : '?'}{entry.reason ? ` — ${entry.reason}` : ''}</>}
+          onPick={(entry) => setTargetId(entry.identityId)} />
+      )}
       {canWarn && (
         <EntryList title="Warned identities" empty="Nobody carries a warning." entries={warned}
           render={(entry) => <>{entry.identityId} — {entry.warnings?.length ?? 1} warning{(entry.warnings?.length ?? 1) === 1 ? '' : 's'}{entry.reason ? `, latest: ${entry.reason}` : ''}</>}
           onPick={(entry) => setTargetId(entry.identityId)} />
       )}
-      <EntryList title={copy.removalsTitle} empty="Nothing has been removed." entries={removals}
+      {!hides && <EntryList title={copy.removalsTitle} empty="Nothing has been removed." entries={removals}
         render={(removal) => (
           <>
             {!social && `${kindLabel(removal.kind)} `}
@@ -483,7 +554,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
           <Button variant="outline" size="sm" disabled={!canAuthorize || busy !== null} onClick={() => restore(removal)} className="shrink-0">
             {busy?.action === 'restore' && busy.id === removalKey(removal) ? 'Restoring…' : 'Restore'}
           </Button>
-        )} />
+        )} />}
     </div>
   )
 }
@@ -519,11 +590,18 @@ function TeamCounts({ team, counts }: { team: SeatedTeamSeats; counts: ReadonlyM
 }
 
 /** What the chain says about one identity: banned, suspended until, and each warning with its reason. */
-function StandingSummary({ standing }: { standing: ModerationStanding }) {
-  const clean = !standing.banned && standing.suspendedUntil === null && standing.warnings.length === 0
+function StandingSummary({ standing, restriction }: { standing: ModerationStanding; restriction?: Restriction | null }) {
+  const restricted = restriction?.state === 1
+  const clean = !standing.banned && standing.suspendedUntil === null && standing.warnings.length === 0 && !restricted
   return (
     <div className="text-sm rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-1">
       {clean && <p className="text-gray-500 dark:text-gray-400">In good standing.</p>}
+      {restricted && (
+        <p>Restricted{restriction.moderatedAt ? ` since ${new Date(restriction.moderatedAt).toLocaleDateString()}` : ''}: new posts stay out of feeds until the restriction is lifted.</p>
+      )}
+      {restriction?.state === 2 && (
+        <p className="text-gray-500 dark:text-gray-400">A restriction was lifted{restriction.moderatedAt ? ` on ${new Date(restriction.moderatedAt).toLocaleDateString()}` : ''}.</p>
+      )}
       {standing.banned && <p>Banned{standing.banReason ? `: ${standing.banReason}` : ''}</p>}
       {standing.suspendedUntil !== null && (
         <p>Suspended until {new Date(standing.suspendedUntil).toLocaleString()}{standing.suspensionReason ? `: ${standing.suspensionReason}` : ''}</p>

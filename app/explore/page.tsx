@@ -15,9 +15,12 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/explore/trending-hashtag-row'
 import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
 import { KeptPanel } from '@/components/ui/kept-panel'
+import { PostingOpensBanner } from '@/components/moderation/posting-opens-banner'
+import { usePostingClosed } from '@/hooks/use-posting-opening'
 import { likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
@@ -32,6 +35,8 @@ type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
+  const postingClosed = usePostingClosed()
+  const blogPostsOpen = useModeratedTypeOpen('blogPost', true, 'blog')
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
   const [searchQuery, setSearchQuery] = useState('')
@@ -261,6 +266,7 @@ export default function ExplorePage() {
 
   return (
     <PageShell>
+          <PostingOpensBanner />
           <PageHeader borderless={!searchQuery}>
             <div className="flex items-center gap-4 p-4">
               {isSearchFocused && (
@@ -381,7 +387,7 @@ export default function ExplorePage() {
                     <div className="p-8 text-center">
                       <HashtagIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                       <p className="text-gray-500">No trending tags yet</p>
-                      <p className="text-sm text-gray-400 mt-1">Post with #hashtags or $cashtags to see them here!</p>
+                      <p className="text-sm text-gray-400 mt-1">{postingClosed ? 'Trending tags will show up here once posting opens.' : 'Post with #hashtags or $cashtags to see them here!'}</p>
                     </div>
                   ) : (
                     trendingHashtags.map((trend, index) => <TrendingHashtagRow key={trend.hashtag} trend={trend} index={index} />)
@@ -430,7 +436,9 @@ export default function ExplorePage() {
                   <div className="p-8 text-center">
                     <DocumentTextIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                     <p className="text-gray-500">No blog posts yet</p>
-                    <p className="text-sm text-gray-400 mt-1">Be the first to publish an article!</p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      {blogPostsOpen ? 'Be the first to publish an article!' : 'Articles will show up here once posting opens.'}
+                    </p>
                   </div>
                 ) : (
                   <div className="divide-y divide-gray-200 dark:divide-gray-800">

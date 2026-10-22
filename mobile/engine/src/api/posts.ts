@@ -12,7 +12,9 @@ import { pollrPollService, type Poll } from '@/lib/services/pollr-poll-service'
 import { pollIsClosed, pollrVoteService, type PollTally, type SetVoteResult } from '@/lib/services/pollr-vote-service'
 import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
-import { base58ToBytes } from '@/lib/services/sdk-helpers'
+import { createDefaultUser, base58ToBytes } from '@/lib/services/sdk-helpers'
+import { isHidden } from '@/lib/moderation-view'
+import { moderationFieldOf } from '@/lib/services/moderation-carry'
 import { repostService } from '@/lib/services/repost-service'
 import { loadEngagementCounts } from '@/lib/services/social-stats-service'
 import type { Post, Reply } from '@/lib/types'
@@ -23,17 +25,17 @@ import {
 } from '../dto/hydrate'
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
-import { assembleFlatThread, assembleV2Thread, flattenThreads, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
+import { assembleFlatThread, assembleV2Thread, flattenThreads, isHiddenStub, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
 import { assertId, assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { pollVoting } from '../dto/capabilities'
-import { documentExists, fromDeleteBoolean } from '../writes/lib-results'
+import { documentExists, documentFields, fromDeleteBoolean } from '../writes/lib-results'
 import { createPublishHandler, validateDraft, type DraftDTO, type FindOwnDocuments, type OwnDocument } from '../writes/publish'
 import { classify } from '../writes/classify'
 import { NotSentError, type TicketStore, type WriteResult } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
 import {
-  toPostDTO,
-  type AuthorDTO, type EngagementCountsDTO, type EngagementDTO, type EngagementPage, type PollDTO, type PostDTO, type ThreadDTO,
+  BLANK_AUTHOR, toPostDTO,
+  type EngagementCountsDTO, type EngagementDTO, type EngagementPage, type PollDTO, type PostDTO, type ThreadDTO,
   type ThreadReplyDTO, type UserSummaryDTO,
 } from './dto'
 
@@ -75,8 +77,6 @@ const quoteSplits = new TtlMap<string, QuoteSplit>(60_000)
 /** Raw thread reply pages by `root:startAfter`, so widening a thread re-reads only its new page. */
 const replyPages = new TtlMap<string, { documents: Reply[]; nextCursor?: string }>(60_000)
 
-/** A deleted-reply stub has no author: nothing to name or render an avatar for. */
-const STUB_AUTHOR: AuthorDTO = { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false }
 
 /** A post, or a reply as a Post, the way web's post page looks an id up. lib answers a failed read as null too. */
 export async function readPostOrReply(id: string): Promise<Post | null> {
@@ -117,9 +117,36 @@ async function provedMissing<T>(
   throw new RpcError(`This ${types[0]} could not be read. Try again.`, 'NETWORK')
 }
 
-/** `read`, with `null` kept for a post or reply proved missing; a failed read rejects. */
+/**
+ * A post or reply the moderators hid, which lib's by-id reads may answer with
+ * `null` on a build that lists only the listed lane. It carries no content
+ * here, only the marks and enough to place it (its DTO is withheld,
+ * `moderationOfPost`). `null` for a document that is there but not hidden.
+ */
+async function readHiddenStub(id: string): Promise<Post | null> {
+  for (const type of ['post', 'reply'] as const) {
+    const plain = await documentFields({ contractId: YAPPR_CONTRACT_ID, type, id })
+    if (!plain) continue
+    const { moderation } = moderationFieldOf(plain)
+    if (!moderation || !isHidden(moderation)) return null
+    const owner = typeof plain.$ownerId === 'string' ? plain.$ownerId : ''
+    const created = Number(plain.$createdAt)
+    return {
+      id, targetKind: type, author: createDefaultUser(owner), content: '',
+      createdAt: new Date(Number.isFinite(created) ? created : 0),
+      likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0, moderation,
+    }
+  }
+  return null
+}
+
+/**
+ * `read`, with `null` kept for a post or reply proved missing; a failed read
+ * rejects. A hidden one lib answered `null` for comes back as a stub.
+ */
 export async function loadPostProved(id: string): Promise<Post | null> {
-  return (await readPostOrReply(id)) ?? provedMissing(id, ['post', 'reply'], () => readPostOrReply(id))
+  const read = async () => (await readPostOrReply(id)) ?? readHiddenStub(id).catch(() => null)
+  return (await readPostOrReply(id)) ?? provedMissing(id, ['post', 'reply'], read)
 }
 
 /** The most documents of each type publish's probe reads (Platform's page). */
@@ -168,7 +195,7 @@ async function loadAncestors(focus: Post): Promise<{ chain: Post[]; removed: str
     const rootId = threadRootIdOf(focus)
     const readRoot = () => postService.getPostById(rootId, { skipEnrichment: true })
     // Only a proved absence is a removed root: a failed read rejects rather than claim a takedown.
-    const root = (await readRoot()) ?? await provedMissing(rootId, ['post'], readRoot)
+    const root = (await readRoot()) ?? await provedMissing(rootId, ['post'], async () => (await readRoot()) ?? readHiddenStub(rootId).catch(() => null))
     if (root) return { chain: [root], removed: [] }
     return { chain: [], removed: referencesMayDangle() ? [rootId] : [] }
   }
@@ -435,22 +462,27 @@ export const posts = {
     ])
 
     // One enrichment batch for the page; deleted-reply stubs are not documents and skip it.
-    const live = replies.filter(entry => !entry.reply.deletedStub)
+    const isStub = (reply: Reply) => reply.deletedStub === true || isHiddenStub(reply)
+    const live = replies.filter(entry => !isStub(entry.reply))
     const batch = [focus, ...chain, ...live.map(entry => replyToPost(entry.reply))]
     // This page's own quote targets, read again: a quote of a post deleted
     // since the last load must not keep showing the text it had (RC16-I-04).
     rereadQuotedPosts(quoteTargetIds(batch))
     const enriched = await postService.enrichPostsBatch(batch.map(withLoadingAuthor))
     // Stub authors have id '', which the avatar read skips; the stub's author is blanked below.
-    const stubs = replies.filter(entry => entry.reply.deletedStub).map(entry => ({ ...replyToPost(entry.reply), deleted: true }))
+    // A hidden reply's stand-in is withheld like a hidden post (`moderationOfPost`); a deleted one is a tombstone.
+    const stubs = replies.filter(entry => isStub(entry.reply)).map(entry => ({
+      ...replyToPost(entry.reply),
+      ...(isHiddenStub(entry.reply) ? { moderation: { mod: 1 } } : { deleted: true }),
+    }))
     const dtos = new Map((await toPostDTOs([...enriched, ...stubs])).map(dto => [dto.id, dto]))
 
     const items = replies.flatMap(({ reply, depth, isAuthorThread, hiddenReplyCount }): ThreadReplyDTO[] => {
       const dto = dtos.get(reply.id)
       if (!dto) return []
-      return [reply.deletedStub
-        ? { ...dto, author: STUB_AUTHOR, depth, isAuthorThread, hiddenReplyCount, deletedStub: true }
-        : { ...dto, depth, isAuthorThread, hiddenReplyCount }]
+      if (reply.deletedStub) return [{ ...dto, author: BLANK_AUTHOR, depth, isAuthorThread, hiddenReplyCount, deletedStub: true }]
+      if (isHiddenStub(reply)) return [{ ...dto, author: BLANK_AUTHOR, depth, isAuthorThread, hiddenReplyCount, hiddenStub: true }]
+      return [{ ...dto, depth, isAuthorThread, hiddenReplyCount }]
     })
     return {
       focus: dtos.get(focus.id) ?? null,

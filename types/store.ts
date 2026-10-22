@@ -1,3 +1,4 @@
+import type { ModerationMarks } from '@/lib/moderation-view'
 import type { ParsedPaymentUri, SocialLink } from './user'
 
 // Store policy for arbitrary seller-defined policies
@@ -73,6 +74,8 @@ export interface Store {
   ownerDisplayName?: string
   averageRating?: number
   reviewCount?: number
+  /** Storefront v11: hidden by the storefront's moderators (`mod`), with the reason, who and when. */
+  moderation?: ModerationMarks
 }
 
 /**
@@ -197,6 +200,8 @@ export interface StoreItem {
   // Enriched fields
   storeName?: string
   storeLogoUrl?: string
+  /** Storefront v11: hidden by the storefront's moderators (`mod`), with the reason, who and when. */
+  moderation?: ModerationMarks
 }
 
 // Shipping tier definition (legacy format)
@@ -460,6 +465,8 @@ export interface StoreReview {
   reviewerUsername?: string
   reviewerDisplayName?: string
   reviewerAvatar?: string
+  /** Storefront v11: hidden by the storefront's moderators (`mod`), with the reason, who and when. */
+  moderation?: ModerationMarks
 }
 
 // Item review document (v2, one per order line)
@@ -489,6 +496,8 @@ export interface ItemReview {
   reviewerUsername?: string
   reviewerDisplayName?: string
   reviewerAvatar?: string
+  /** Storefront v11: hidden by the storefront's moderators (`mod`), with the reason, who and when. */
+  moderation?: ModerationMarks
 }
 
 // Proved rating summary (count + sum from the contract's average tree; the client divides)

@@ -13,7 +13,16 @@ const MAX_NESTED_DEPTH = 2
 /** Nesting levels `posts.thread` fetches below a focused reply: the rendered depth (web's `renderedDepth`). */
 export const RENDERED_DEPTH = MAX_NESTED_DEPTH + 1
 
-const byCreatedAtAsc = (a: Reply, b: Reply) => a.createdAt.getTime() - b.createdAt.getTime()
+/**
+ * A stand-in for a reply the moderators hid, holding its children's place in a
+ * thread on a build that lists only the listed lane (`Reply.hiddenStub`,
+ * lib/feed). An archival build is handed the hidden reply itself, labelled.
+ */
+export function isHiddenStub(reply: Reply): boolean {
+  return reply.hiddenStub === true
+}
+
+const byCreatedAtAsc =(a: Reply, b: Reply) => a.createdAt.getTime() - b.createdAt.getTime()
 
 function countHiddenDescendants(rootId: string, childrenOf: Map<string, Reply[]>, exclude: Set<string>): number {
   let count = 0

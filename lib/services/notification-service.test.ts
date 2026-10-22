@@ -308,6 +308,37 @@ describe('v10 windowed notification sources', () => {
   })
 })
 
+describe('hidden content in notifications (v18)', () => {
+  it('announces no quote the moderators hid, and announces it on an archival build', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v18')
+    const { notificationService } = await import('./notification-service')
+    const bs58 = (await import('bs58')).default
+    const id = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
+    const [MY_POST, SHOWN, HIDDEN, ALICE, BOB, ME] = [1, 2, 3, 4, 5, 6].map(id)
+    const windowDocs = [
+      { $id: SHOWN, $ownerId: ALICE, $createdAt: 3, content: 'fine', quotedPostId: MY_POST, quotedPostOwnerId: ME },
+      { $id: HIDDEN, $ownerId: BOB, $createdAt: 2, content: 'hidden', quotedPostId: MY_POST, quotedPostOwnerId: ME, mod: 1 },
+    ]
+    expect((await notificationService.getQuoteNotifications(ME, 0, windowDocs)).map((n) => n.id)).toEqual([`quote-${SHOWN}`])
+
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    expect((await notificationService.getQuoteNotifications(ME, 0, windowDocs)).map((n) => n.id)).toEqual([`quote-${SHOWN}`, `quote-${HIDDEN}`])
+  })
+
+  it('announces no reply the moderators hid', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v18')
+    const { notificationService } = await import('./notification-service')
+    const { replyService } = await import('./reply-service')
+    const reply = (id: string, moderation?: { mod: number }) => ({
+      id, author: { id: 'alice' }, content: id, createdAt: new Date(5), parentId: 'mine', rootPostId: 'mine', likes: 0, reposts: 0, replies: 0, views: 0,
+      ...(moderation ? { moderation } : {}),
+    })
+    vi.spyOn(replyService, 'getRepliesToMyContent').mockResolvedValue([reply('shown'), reply('hidden', { mod: 1 })] as never)
+    const raw = await notificationService.getReplyNotifications('me', 0)
+    expect(raw.map((n) => n.postId)).toEqual(['shown'])
+  })
+})
+
 describe('v11 timeless like notifications', () => {
   const store = new Map<string, string>()
   const likes = { counts: vi.fn(), likers: vi.fn() }
@@ -590,6 +621,25 @@ describe('blog comment notifications', () => {
     ])
     const notifications = await notificationService.getBlogCommentNotifications('me', 0)
     expect(notifications.map((n) => n.postId)).toEqual(['live'])
+  })
+
+  it('skips a comment the moderators hid, and a comment on a post they hid', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7')
+    const { notificationService } = await import('./notification-service')
+    const { blogCommentService } = await import('./blog-comment-service')
+    const { blogPostService } = await import('./blog-post-service')
+    const comment = (id: string, blogPostId: string, moderation?: { mod: number }) => ({
+      id, ownerId: 'reader', blogPostId, content: 'hi', createdAt: new Date(5), ...(moderation ? { moderation } : {}),
+    })
+    vi.spyOn(blogCommentService, 'getCommentsOnMyPosts').mockResolvedValue([
+      comment('c1', 'live'), comment('c2', 'live', { mod: 1 }), comment('c3', 'hiddenPost'),
+    ] as never)
+    vi.spyOn(blogPostService, 'getMany').mockResolvedValue([
+      { id: 'live', blogId: 'b', ownerId: 'me', title: 'Live', slug: 'live', createdAt: new Date(1), content: [] },
+      { id: 'hiddenPost', blogId: 'b', ownerId: 'me', title: 'Hidden', slug: 'hidden', createdAt: new Date(1), content: [], moderation: { mod: 1 } },
+    ] as never)
+    const notifications = await notificationService.getBlogCommentNotifications('me', 0)
+    expect(notifications.map((n) => n.id)).toEqual(['blogComment-c1'])
   })
 })
 

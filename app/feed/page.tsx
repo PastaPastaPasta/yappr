@@ -15,6 +15,7 @@ import { FeedPostList } from '@/components/feed/feed-post-list';
 import { FeedSortToggle, type FeedSortMode } from '@/components/feed/feed-sort-toggle';
 import { FeedTopList } from '@/components/feed/feed-top-list';
 import { KeptPanel } from '@/components/ui/kept-panel';
+import { PostingOpensBanner } from '@/components/moderation/posting-opens-banner';
 import { useFeedData, type FeedTab } from '@/hooks/use-feed-data';
 import { useTopFeed } from '@/hooks/use-top-feed';
 
@@ -73,6 +74,7 @@ function FeedPage() {
 
   return (
     <PageShell>
+          <PostingOpensBanner />
           <FeedHeader
             activeTab={activeTab}
             onTabChange={handleTabChange}

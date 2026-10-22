@@ -44,7 +44,7 @@ interface PostActionBarProps {
    * `undoLabel` names the undo when it is not a plain "Undo repost" (v10: the
    * viewer's slot holds a quote with text, and undoing deletes it).
    */
-  repost: { count: number; active: boolean; loading: boolean; allowed: boolean; undoLabel?: string; onClick: () => void }
+  repost: { count: number; active: boolean; loading: boolean; allowed: boolean; unavailableReason?: string; undoLabel?: string; onClick: () => void }
   /** `allowed` false: the viewer may not like it (their own post or reply, where the network refuses self-likes). */
   like: { count: number; active: boolean; loading: boolean; allowed?: boolean; onClick: () => void }
   /** Absent where the topology has no bookmark doctype for this kind. */
@@ -68,7 +68,7 @@ export function stopAndRun(e: React.MouseEvent, action: () => void | Promise<voi
 
 /** The reply / repost / like / tip / bookmark / share row under a post. */
 export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like, bookmark, onQuote, quoteLabel = 'Quote', onTip, onShare }: PostActionBarProps) {
-  const repostLabel = repost.allowed ? 'Repost or quote' : 'Quote'
+  const repostLabel = repost.unavailableReason ?? (repost.allowed ? 'Repost or quote' : 'Quote')
   const showRepostItem = repost.allowed && (!deleted || repost.active)
   const likeRefused = like.allowed === false && !like.active
   const likeDisabled = like.loading || (deleted && !like.active) || likeRefused
@@ -99,10 +99,11 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
                 data-testid={`repost-menu-btn-${postId}`}
                 aria-label={repost.allowed ? `${repostLabel}, ${repost.count} repost${repost.count === 1 ? '' : 's'}${repost.active ? ', reposted' : ''}` : repostLabel}
                 onClick={stopPropagation}
-                disabled={repost.loading || (deleted && !showRepostItem)}
+                disabled={repost.loading || (deleted && !showRepostItem) || Boolean(repost.unavailableReason)}
                 className={cn(
                   'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-green-50 dark:hover:bg-green-950',
                   repost.loading && 'opacity-50 cursor-wait',
+                  repost.unavailableReason && 'opacity-50 cursor-not-allowed',
                   repost.active && 'text-green-500'
                 )}
               >

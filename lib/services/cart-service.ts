@@ -6,12 +6,18 @@ import { logger } from '@/lib/logger';
  * No on-chain storage - purely browser-based.
  */
 
-import type { Cart, CartItem, ShippingLine, StoreItem } from '../../types';
+import type { Cart, CartItem, ShippingLine, Store, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
+import { storeService } from './store-service';
+import { isHiddenItem } from '../moderation-view';
 import { MAX_LINE_QUANTITY } from './digital-delivery-plan';
 import { combinationImageUrl, variantOptionPairs, type VariantOptionPairs } from '../storefront/variant-codec';
-import { storefrontVariantsAreTyped } from '../constants';
+import { storefrontListingsCarryModLane, storefrontVariantsAreTyped } from '../constants';
 import { scopedKey } from '@/lib/storage-scope';
+
+/** What a buyer reads when a moderator hid the product or its store (never "removed" or "deleted"). */
+export const HIDDEN_ITEM_MESSAGE = 'This item is hidden by the moderators';
+export const HIDDEN_STORE_MESSAGE = 'This store is hidden by the moderators';
 
 const CART_STORAGE_KEY = scopedKey('yappr_cart');
 
@@ -226,7 +232,10 @@ class CartService {
    * Add item from StoreItem with variant selection (`variantId`, the
    * canonical id of the chosen combination; required on a variant item).
    */
-  addStoreItem(storeItem: StoreItem, variantId?: string, quantity: number = 1): void {
+  addStoreItem(storeItem: StoreItem, variantId?: string, quantity: number = 1, store?: Pick<Store, 'moderation'> | null): void {
+    // A moderator-hidden item, or one from a hidden store, is not for sale on this build (archival builds still show it).
+    if (isHiddenItem(storeItem)) throw new Error(HIDDEN_ITEM_MESSAGE);
+    if (isHiddenItem(store)) throw new Error(HIDDEN_STORE_MESSAGE);
     const stock = storeItemService.getStock(storeItem, variantId);
     const combination = storeItemService.getCombination(storeItem, variantId);
     const { variantOptions } = this.lineIdentity(storeItem, variantId);
@@ -371,8 +380,13 @@ class CartService {
    * stored cart, and returned updated, so it checks out the way it now ships.
    */
   async getAvailability(items: CartItem[] = this.getItems()): Promise<CartItemAvailability[]> {
+    // v11: a store a moderator hid takes no orders either; its lines read one fresh store each.
+    const hiddenStores = await this.hiddenStoreIds(items);
     return Promise.all(items.map(async (cartItem) => {
       try {
+        if (hiddenStores.get(cartItem.storeId)) {
+          return { item: cartItem, maxQuantity: 0, stockTracked: false, reason: HIDDEN_STORE_MESSAGE };
+        }
         // query() propagates read failures; get() caches and converts failures to null.
         const { documents } = await storeItemService.query({
           where: [['$id', '==', cartItem.itemId]],
@@ -381,6 +395,9 @@ class CartService {
         const item = documents[0];
         if (!item || item.status !== 'active') {
           return { item: cartItem, maxQuantity: 0, stockTracked: false, reason: 'Item is no longer available' };
+        }
+        if (isHiddenItem(item)) {
+          return { item: cartItem, maxQuantity: 0, stockTracked: false, reason: HIDDEN_ITEM_MESSAGE };
         }
         if ((item.variants || cartItem.variantId) && !storeItemService.getLineCombination(item, cartItem)) {
           return { item: cartItem, maxQuantity: 0, stockTracked: false, reason: 'Selected option is no longer available' };
@@ -410,6 +427,25 @@ class CartService {
         };
       }
     }));
+  }
+
+  /**
+   * Which of the lines' stores a moderator hid (store id → true), read past
+   * the cache. Only storefront v11 can hide a store, so earlier cuts read
+   * nothing. A store that cannot be read is not reported hidden: the line's
+   * own availability read decides, and checkout re-reads the store itself.
+   */
+  private async hiddenStoreIds(items: readonly CartItem[]): Promise<Map<string, boolean>> {
+    const hidden = new Map<string, boolean>();
+    if (!storefrontListingsCarryModLane()) return hidden;
+    await Promise.all(Array.from(new Set(items.map(item => item.storeId))).map(async (storeId) => {
+      try {
+        hidden.set(storeId, isHiddenItem(await storeService.getCurrent(storeId)));
+      } catch (error) {
+        logger.warn(`cart: could not read store ${storeId} to check it is listed`, error);
+      }
+    }));
+    return hidden;
   }
 
   /** Store `line`'s fulfillment on every stored line of the same item. */

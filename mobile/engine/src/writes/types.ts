@@ -20,6 +20,9 @@ export type EngineErrorCode =
   | 'RENEW_REQUIRED' | 'NEEDS_WALLET'
   // writes (classify(), from lib/error-utils.ts predicates)
   | 'MODERATION_BARRED' | 'MODERATION_NOT_SEATED' | 'TOO_LONG' | 'RULE_VIOLATION' | 'ALREADY_CLAIMED'
+  // v18: the post's lane did not match the author's standing, which changed meanwhile (retry reads it again);
+  // a moderator-only action (a moderator delete, a moderator field) from an account that is not a moderator
+  | 'STANDING_CHANGED' | 'MODERATOR_ONLY'
   | 'PARENT_TOO_YOUNG' | 'PARENT_UNCONFIRMED' | 'FEE_UNPAYABLE' | 'FEE_SHARE_MISMATCH' | 'EXPIRED' | 'CONTEST'
   | 'FEE_CHANGED' | 'NONCE_CONFLICT' | 'NOT_RECORDED' | 'PENDING_WRITE' | 'STORAGE' | 'APP_OUTDATED'
   | 'BUILD_DEFECT' | 'IMMUTABLE' | 'TARGET_GONE' | 'NOT_OWNER' | 'STALE' | 'FROZEN' | 'INSUFFICIENT_YAPP' | 'INSUFFICIENT_CREDITS'

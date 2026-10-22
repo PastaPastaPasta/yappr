@@ -20,6 +20,7 @@ import { blogCommentService } from '@/lib/services'
 import { COMMENTS_OFF_MESSAGE } from '@/lib/services/blog-comment-service'
 import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { ModerationLabel } from '@/components/moderation/moderation-label'
 import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
 import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
@@ -258,6 +259,7 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
                       }}
                     />
                   </div>
+                  <ModerationLabel contract="blog" moderation={comment.moderation} className="mt-1" />
                   <p className="mt-1 whitespace-pre-wrap break-words text-sm text-[var(--blog-text)]">{comment.content}</p>
                 </div>
               </div>

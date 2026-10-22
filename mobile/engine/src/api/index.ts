@@ -14,6 +14,7 @@ import { createMobileAuthController, createSessionModule, foregroundBalanceRefre
 import { settings } from './settings'
 import { createEngineTicketStore, createWritesModule } from './writes'
 import { setNoticeSink } from '../shims/toast'
+import { moderation } from './moderation'
 import { createStoreModule } from './store'
 import { blogReads, createBlogWrites } from './blog'
 
@@ -81,6 +82,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     privateFeed: { ...privateFeedReads, ...createPrivateFeedWrites(tickets) },
     dpns: createDpnsModule(tickets, controller),
     blogs: { ...blogReads, ...createBlogWrites(tickets) },
+    moderation,
   }
 }
 
@@ -101,6 +103,7 @@ export type * from './settings'
 export type * from './writes'
 export type { EngineNotice } from '../shims/toast'
 export type * from './store'
+export type { PostingOpeningDTO } from './moderation'
 export type * from './store-orders'
 export type * from './store-writes'
 export type { PlatformInfoDTO } from '../dto/capabilities'

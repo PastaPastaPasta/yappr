@@ -46,3 +46,5 @@ export {
   getCurrencyDecimals,
   toSmallestUnit,
 } from '@/lib/utils/format';
+// The "Posting opens on <date>" sentence. Pure: no imports. The date comes from the engine (`moderation.postingOpening`).
+export { postingOpensText } from '@/lib/posting-opens';

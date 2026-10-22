@@ -1,6 +1,18 @@
 import type { TargetKind } from '@/lib/contract-topology'
 import type { OwnQuote } from '@/lib/feed/quote-reposts'
+import type { ModerationMarks } from '@/lib/moderation-view'
 import type { User } from './user'
+
+/**
+ * What the moderators did to a document (social v18, blog v10, storefront
+ * v11): hidden (`mod`), with the charter reason, the member who did it and
+ * when, and whether its author was restricted when they wrote it (`live: 2`).
+ * Absent when neither applies.
+ */
+export interface PostModeration extends ModerationMarks {
+  /** Written while its author was restricted (`live: 2`): not listed on yap.pr. */
+  restricted?: boolean
+}
 
 export interface Media {
   id: string
@@ -67,6 +79,12 @@ export interface Post {
    * renders the removed stub and fetches nothing.
    */
   quotedPostRemoved?: boolean
+  /**
+   * v18: the quoted post/reply is hidden by the moderators (`mod` set) and
+   * this build does not show hidden content. The card renders the hidden
+   * stub and fetches nothing.
+   */
+  quotedPostHidden?: boolean
   // Cross-contract embed (e.g. a Pollr poll). All three are set together.
   embedContractId?: string // base58 contract id the embedded document lives on
   embedDocType?: string    // document type name on that contract (e.g. 'poll')
@@ -118,6 +136,8 @@ export interface Post {
   keyGeneration?: number         // Revocation key generation at post creation
   nonce?: Uint8Array             // Random nonce for encryption
   feed?: number                  // Which of the author's private feeds encrypted it (social v17)
+  /** v18: hidden by the moderators or written while restricted; see {@link PostModeration}. */
+  moderation?: PostModeration
 }
 
 /** A reply to a post or another reply */
@@ -142,6 +162,13 @@ export interface Reply {
   deleted?: boolean       // v9 tombstone marker (see Post.deleted)
   /** v10: a stand-in for a reply proved deleted, holding its children's place in the thread; never a real document. */
   deletedStub?: boolean
+  /**
+   * v18: a stand-in for a reply a default build does not list, keeping its children's place in the thread:
+   * one the moderators hid, or one written while its author was restricted (the two are not told apart, so
+   * the copy must not single out an account; e.g. "This reply isn't shown"). Carries no content or author;
+   * never a real document. An archival build shows the reply itself, labelled from `moderation`.
+   */
+  hiddenStub?: boolean
   sensitive?: boolean     // author-declared NSFW flag (see Post.sensitive)
   parentContent?: Post | Reply  // Lazy-loaded parent
   _enrichment?: PostEnrichment  // Pre-fetched data to avoid N+1 queries
@@ -151,6 +178,8 @@ export interface Reply {
   nonce?: Uint8Array
   /** The feed that encrypted it: the root owner's for a reply in a private thread, else the replier's own */
   feed?: number
+  /** v18: hidden by the moderators or written while restricted (see Post.moderation). */
+  moderation?: PostModeration
 }
 
 /** Reply thread structure for threaded post display */

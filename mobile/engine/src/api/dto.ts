@@ -4,6 +4,7 @@ import { DEFAULT_AVATAR_STYLE, DICEBEAR_STYLES } from '@/lib/services/unified-pr
 import { isImageAvatar } from '@/lib/profile/v10-profile'
 import { isBareRepost } from '@/lib/feed/quote-reposts'
 import { findPollrPollLink, getEmbeddedPollId } from '@/lib/poll-embed'
+import { isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { rememberPrivatePost } from '../dto/private-content'
 
 /**
@@ -92,6 +93,34 @@ export interface ViewerStateDTO {
   followsAuthor: boolean
 }
 
+/**
+ * What the moderators did to a post or reply (social v18): hidden, with the
+ * charter reason, who did it and when; and/or written while its author was
+ * restricted. Present only where the build shows it:
+ *
+ * - hidden: on every build. An official build (listed lanes only) reaches a
+ *   hidden post only by id, through a quote or a link, and gets
+ *   `withheld: true`: render "This post is hidden" and nothing of its content.
+ *   An archival build (`NEXT_PUBLIC_MODERATION_VIEW=all`) gets the content
+ *   with the marks, to label it;
+ * - restricted: archival builds only (an official build lists no such post).
+ */
+export interface ModerationDTO {
+  /** A moderator hid it (or put it on legal hold). */
+  hidden: boolean
+  /** Its author was restricted when they wrote it. */
+  restricted: boolean
+  /** The charter reason or label class the moderator gave (1-63). Never shown as a number. */
+  label?: number
+  /** `label` as text (the seated charter's reason), when it resolves. */
+  reason?: string
+  /** The moderator who last set or cleared it (base58 identity id), and when. */
+  by?: string
+  at?: Date
+  /** The content is withheld (see above): `content` is empty and the author blank. */
+  withheld?: true
+}
+
 export interface PostDTO {
   id: string
   kind: TargetKind
@@ -130,6 +159,8 @@ export interface PostDTO {
    * web hides from the displayed text (`linkUrl`).
    */
   poll?: { id: string; linkUrl?: string }
+  /** What the moderators did to it; absent for an ordinary post. */
+  moderation?: ModerationDTO
 }
 
 /** One row of a thread's replies, flattened to the one indent level mobile renders. */
@@ -146,6 +177,13 @@ export interface ThreadReplyDTO extends PostDTO {
    * avatar) and its content empty.
    */
   deletedStub?: true
+  /**
+   * A stand-in for a reply the moderators hid, holding its children's place
+   * (an official build; an archival one gets the reply itself, labelled).
+   * Blank author, empty content and `moderation.withheld`: render the hidden
+   * stub, never "deleted" or "removed".
+   */
+  hiddenStub?: true
 }
 
 export interface ThreadDTO {
@@ -209,6 +247,19 @@ export interface CapabilitiesDTO {
   deletesAreTombstones: boolean
   reports: boolean
   reportsResolved: boolean
+  /**
+   * "Hide, don't delete" (social v18, blog v10, storefront v11): the moderators hide content and
+   * restrict accounts, and never delete or ban (`moderatorsCannotDelete`). Words about their actions
+   * say "hidden" and "restricted" then, never "removed" or "banned".
+   */
+  moderatorsHide: boolean
+  /** The same for the storefront (v11, `storefrontListingsCarryModLane`): its reports resolve to "hidden". */
+  storefrontModeratorsHide: boolean
+  /**
+   * The social contract is closed by a `notYetUsable` interim until the first moderation team is
+   * seated: ask `moderation.postingOpening()` for the "Posting opens on <date>" banner.
+   */
+  postingMayBeClosed: boolean
   /** The highest report reason code the contract accepts: 8, or 9 (sexual content involving minors) on v13. */
   reportReasonMax: number
   /** v13: profiles can be reported too (web only for now; the engine reports posts and replies). */
@@ -467,7 +518,54 @@ function pollOf(post: Post): PostDTO['poll'] {
   return link ? { id: link.pollId, linkUrl: link.url } : undefined
 }
 
+/** The author of a stand-in (a deleted reply, a withheld post): nothing to name or draw an avatar for. */
+export const BLANK_AUTHOR: AuthorDTO = { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false }
+
+/**
+ * The moderators' marks as the host shows them. A hidden post is withheld on a
+ * build that lists only the listed lane (the official apps), whatever lib
+ * hands over, and labelled on an archival one; a restricted author's post is
+ * labelled on archival builds only.
+ */
+function moderationOfPost(post: Post): ModerationDTO | undefined {
+  const marks = post.moderation
+  if (!marks) return undefined
+  const hidden = isHidden(marks)
+  const archival = moderationViewAll()
+  if (hidden && !archival) return { hidden: true, restricted: false, withheld: true }
+  const restricted = archival && marks.restricted === true
+  if (!hidden && !restricted) return undefined
+  return omitUndefined<ModerationDTO>({
+    hidden,
+    restricted,
+    label: marks.modLabel,
+    by: marks.moderatedBy,
+    at: marks.moderatedAt === undefined ? undefined : new Date(marks.moderatedAt),
+  })
+}
+
+/** What a hidden post becomes on an official build: its place in a list or thread, and none of its content. */
+function withheldPostDTO(post: Post, moderation: ModerationDTO): PostDTO {
+  return {
+    id: post.id,
+    kind: post.targetKind ?? 'post',
+    author: BLANK_AUTHOR,
+    content: '',
+    createdAt: post.createdAt,
+    stats: { likes: 0, reposts: 0, replies: 0, quotes: 0 },
+    media: [],
+    sensitive: false,
+    deleted: false,
+    encrypted: false,
+    quotedRemoved: false,
+    bareRepost: false,
+    moderation,
+  }
+}
+
 export function toPostDTO(post: Post, options: PostMappingOptions): PostDTO {
+  const moderation = moderationOfPost(post)
+  if (moderation?.withheld) return withheldPostDTO(post, moderation)
   // `privateFeed.read` decrypts by id: the DTO itself carries no ciphertext.
   rememberPrivatePost(post)
   return omitUndefined<PostDTO>({
@@ -512,6 +610,7 @@ export function toPostDTO(post: Post, options: PostMappingOptions): PostDTO {
       ? { contractId: post.embedContractId, documentType: post.embedDocType, id: post.embedId }
       : undefined,
     poll: post.deleted || post.encryptedContent ? undefined : pollOf(post),
+    moderation,
   })
 }
 

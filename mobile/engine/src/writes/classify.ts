@@ -2,7 +2,9 @@ import {
   CREATE_NOT_RECORDED_ERROR,
   NONCE_STORE_ERROR,
   PENDING_WRITE_ERROR,
+  brokenPropertyRule,
   categorizeError,
+  classifyModerationError,
   consensusCodeOf,
   extractErrorMessage,
   hasConsensusCode,
@@ -124,6 +126,12 @@ function isRenewRequiredError(error: unknown): boolean {
     (signingUnavailable(error) === 'renew' || hasConsensusCode(error, [20015, 20016, 40218]))
 }
 
+/** The `propertyConstraints` rule that forces a restricted author's `live` lane (social v18, blog v10). */
+const RESTRICTED_LANE_RULE = 'restrictedLane'
+
+/** Moderator-ability refusals (`classifyModerationError`): no moderator delete, and the moderator fields are the team's. */
+const MODERATOR_ONLY_KINDS: ReadonlySet<string> = new Set(['TYPE_NOT_DELETABLE', 'NOT_MODERATOR', 'FIELD_NOT_CHANGEABLE'])
+
 type Outcome = EngineErrorData['outcome']
 
 /** `matches(error, message, userMessage)`: `message` is the error's own text, `userMessage` categorizeError's. */
@@ -142,6 +150,16 @@ const RULES: readonly Rule[] = [
   ['MODERATION_BARRED', 'refused', false, isModerationBarredError],
   ['MODERATION_NOT_SEATED', 'refused', false, isModerationNotYetSeatedError],
   ['TOO_LONG', 'refused', false, isPropertyMaxBytesError],
+  // v18 (docs/SOCIAL_V18.md "Restriction"): a post, reply or blog post must carry the lane its author's
+  // standing sets, and the contract refuses the other one (10422 `restrictedLane`). lib already reads the
+  // standing again and sends once more (`createInLiveLane`); this is the refusal that outlasted that, so the
+  // standing is changing under the user. A retry reads it afresh. Before RULE_VIOLATION, whose 10422 it is.
+  ['STANDING_CHANGED', 'refused', true, error => brokenPropertyRule(error) === RESTRICTED_LANE_RULE],
+  // v18 hides content and restricts accounts; it never lets a moderator delete (41115), and only the
+  // seated team writes the moderator fields. The app has no moderator tools, so these mean the account
+  // is not one. 41124 (a replace that dropped or changed `mod`) is a client defect, below.
+  ['MODERATOR_ONLY', 'refused', false, error => MODERATOR_ONLY_KINDS.has(classifyModerationError(error) ?? '')],
+  ['BUILD_DEFECT', 'refused', false, error => classifyModerationError(error) === 'MODERATOR_FIELD'],
   ['RULE_VIOLATION', 'refused', false, (error, _message, userMessage) =>
     userMessage === NOT_DISTINCT_MESSAGE || isDocumentPropertyRuleError(error) || isDeleteConstraintError(error)],
   ['ALREADY_CLAIMED', 'refused', false, isOncePerIdentityAlreadyClaimedError],

@@ -20,6 +20,8 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ContractReportButton } from '@/components/moderation/contract-report-button'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
+import { HiddenContentStub, ModerationLabel, useSeesHidden } from '@/components/moderation/moderation-label'
+import { isHidden } from '@/lib/moderation-view'
 import { documentRemovalTarget } from '@/hooks/use-moderator-remove-modal'
 import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner, DigitalBadge } from '@/components/store'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
@@ -86,6 +88,7 @@ function StoreDetailContent() {
   const [sellerHasEncryptionKey, setSellerHasEncryptionKey] = useState<boolean | null>(null)
 
   // Search, filter, sort state
+  const seesHidden = useSeesHidden('storefront')
   const [searchQuery, setSearchQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [sortField, setSortField] = useState<'newest' | 'title' | 'price' | 'rating'>('newest')
@@ -379,6 +382,17 @@ function StoreDetailContent() {
     )
   }
 
+  // Storefront v11: a store the moderators hid is a calm stub, its listings
+  // and reviews included, for everyone but its moderators (and everyone on an
+  // archival build).
+  if (isHidden(store.moderation) && !seesHidden) {
+    return (
+      <PageShell>
+        <HiddenContentStub contract="storefront" noun="store" moderation={store.moderation} documentId={store.id} />
+      </PageShell>
+    )
+  }
+
   const isOwner = user?.identityId === store.ownerId
 
   return (
@@ -486,8 +500,13 @@ function StoreDetailContent() {
                         storeService.clearCache(store.id)
                         router.push('/store')
                       }}
+                      onChanged={(outcome) => {
+                        storeService.clearCache(store.id)
+                        if (outcome.moderation !== undefined) setStore((current) => current && { ...current, moderation: outcome.moderation ?? undefined })
+                      }}
                     />
                   </div>
+                  <ModerationLabel contract="storefront" moderation={store.moderation} className="mt-1" />
                   {ratingSummary && ratingSummary.reviewCount > 0 && (
                     <div className="flex items-center gap-2 mt-1">
                       <RatingStars rating={ratingSummary.averageRating} size="lg" />

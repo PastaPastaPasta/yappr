@@ -69,7 +69,7 @@ function ContractReportDialog({ target, reporterId, close }: { target: ContractR
     {loading ? <p>Checking your reports…</p> : failed ? <p role="alert">Could not check your reports. Close this window and try again.</p> : own ? <div className="space-y-3">
       <p>You reported it for {reportReasonLabel(own.reason)}.</p>
       {own.note && <p className="whitespace-pre-wrap break-words">{own.note}</p>}
-      <p>{own.status === null ? 'Waiting for moderator review.' : `Resolved: ${reportStatusLabel(own.status)}.`}</p>
+      <p>{own.status === null ? 'Waiting for moderator review.' : `Resolved: ${reportStatusLabel(own.status, moderatedContract(contract).hidesInsteadOfDeleting())}.`}</p>
       {own.resolution && <p className="whitespace-pre-wrap break-words">{own.resolution}</p>}
       {own.status === null && <Button variant="outline" disabled={busy} onClick={() => withdraw().catch(error => toast.error(categorizeError(error)))}>Withdraw report</Button>}
     </div> : <div className="space-y-3">

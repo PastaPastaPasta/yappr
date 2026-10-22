@@ -4,7 +4,9 @@ import { BaseDocumentService, type QueryOptions } from './document-service'
 import type { Blog } from '@/lib/types'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
-import { YAPPR_BLOG_CONTRACT_ID, blogIsV7, blogIsV9 } from '@/lib/constants'
+import { YAPPR_BLOG_CONTRACT_ID, blogIsV7, blogIsV9, blogModPin } from '@/lib/constants'
+import { carryModerationIntoReplace, moderationFieldOf } from './moderation-carry'
+import { withoutHiddenItems } from '@/lib/moderation-view'
 import { labelsFromStored, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { normalizeBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
@@ -80,6 +82,8 @@ class BlogService extends BaseDocumentService<Blog> {
     }
     // Store the app's label list as the configured cut does.
     if ('labels' in fields) fields.labels = storedLabels(doc.labels, 'blog')
+    // A replace sends a moderator's `mod`/`modLabel` back unchanged (a dropped or changed one is refused, 41124).
+    carryModerationIntoReplace(fields, doc)
     return fields
   }
 
@@ -99,6 +103,7 @@ class BlogService extends BaseDocumentService<Blog> {
       themeConfig: deserializeThemeConfig(data.themeConfig || doc.themeConfig),
       commentsEnabledDefault: (data.commentsEnabledDefault ?? doc.commentsEnabledDefault) as boolean | undefined,
       labels: labelsFromStored(data.labels ?? doc.labels),
+      ...moderationFieldOf(doc),
     }
   }
 
@@ -149,17 +154,23 @@ class BlogService extends BaseDocumentService<Blog> {
   async getMany(blogIds: string[], options: { throwOnError?: boolean } = {}): Promise<Blog[]> {
     if (!this.isConfigured()) return []
     const ids = blogIds.filter((id) => !useDeletedBlogs.getState().ids.has(id))
-    return this.withoutDeleted(await super.getMany(ids, options))
+    return withoutHiddenItems(this.withoutDeleted(await super.getMany(ids, options)))
   }
 
-  async getBlogsByOwner(ownerId: string): Promise<Blog[]> {
+  /**
+   * An owner's blogs. `owner` is not a laned index, so a hidden blog is read
+   * too: the public profile never shows it (dropped here), while the owner's
+   * own pane passes `includeHidden` and labels it from its `moderation` marks.
+   */
+  async getBlogsByOwner(ownerId: string, { includeHidden = false }: { includeHidden?: boolean } = {}): Promise<Blog[]> {
     if (!this.isConfigured()) return []
     const options: QueryOptions = {
       where: [['$ownerId', '==', ownerId]],
       orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
     }
     const result = await this.query(options)
-    return this.withoutDeleted(result.documents)
+    const blogs = this.withoutDeleted(result.documents)
+    return includeHidden ? blogs : withoutHiddenItems(blogs)
   }
 
   /**
@@ -170,6 +181,11 @@ class BlogService extends BaseDocumentService<Blog> {
     if (!this.isConfigured()) return { blogs: [] }
     const { documents, nextCursor } = await this.newestFirstPage(Math.min(options.limit ?? BLOG_PAGE_SIZE, BLOG_PAGE_SIZE), options.startAfter)
     return { blogs: this.withoutDeleted(documents), nextCursor }
+  }
+
+  /** The timeline, newest first: `mod == null` pinned on v10 (the listed lane). */
+  protected newestFirstPage(limit: number, startAfter?: string): Promise<{ documents: Blog[]; nextCursor?: string }> {
+    return this.cursorPage({ where: [...blogModPin(), ['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit, startAfter })
   }
 
   /** The newest `limit` blogs on v7's `blog.timeline`, page by page. */

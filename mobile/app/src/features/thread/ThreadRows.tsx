@@ -125,11 +125,16 @@ function RepliesEmpty({ invite }: { invite: boolean }) {
   );
 }
 
-/** The reply row: a reply proved deleted, or deleted on this device, keeps its place as a stub (PRD POST-04). */
+/**
+ * The reply row: a reply proved deleted, or deleted on this device, keeps its
+ * place as a stub (PRD POST-04); so does one the moderators hid (social v18),
+ * as the hidden stub, which keeps the replies under it.
+ */
 function ReplyRow({ row }: { row: Extract<ThreadRow, { type: 'reply' }> }) {
   const { reply } = row;
   const removedHere = usePostRemoved(reply.id);
-  const gone = reply.deletedStub || reply.deleted || removedHere;
+  const hiddenByModerators = reply.hiddenStub === true;
+  const gone = hiddenByModerators || reply.deletedStub || reply.deleted || removedHere;
   return (
     <View testID={`thread-reply-${reply.id}`} className={reply.depth === 1 ? INDENT : undefined}>
       {row.highlighted ? <Highlight /> : null}
@@ -137,7 +142,7 @@ function ReplyRow({ row }: { row: Extract<ThreadRow, { type: 'reply' }> }) {
       <View>
         {row.lineAbove ? <ThreadLine position="above" /> : null}
         {gone ? (
-          <PostStub state="deleted" kind="reply" testID={`reply-stub-${reply.id}`} />
+          <PostStub state={hiddenByModerators ? 'hidden' : 'deleted'} kind="reply" testID={`reply-stub-${reply.id}`} />
         ) : (
           <PostItem post={reply} replyingTo={row.replyingTo} />
         )}

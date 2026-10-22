@@ -1,5 +1,6 @@
 import type { Post } from '@/lib/types'
 import type { RepostDocument } from '@/lib/services/repost-service'
+import { isHiddenItem } from '@/lib/moderation-view'
 
 /** Newest activity first: a repost sorts by when it was reposted, not written. */
 export function byNewestActivity(a: Post, b: Post): number {
@@ -29,7 +30,8 @@ export async function resolveUserReposts(userId: string, reposts: RepostDocument
   const entries: Post[] = []
   for (const repost of reposts) {
     const original = originals.get(repost.postId)
-    if (original && original.author.id !== userId) {
+    // A repost of a hidden post (v18) shows nothing of it.
+    if (original && !isHiddenItem(original) && original.author.id !== userId) {
       entries.push({
         ...original,
         repostedBy: { id: userId, displayName, username },

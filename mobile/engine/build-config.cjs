@@ -11,6 +11,28 @@ const VARIANTS = {
   devnet: { envFile: '.env.devnet', basePath: '/devnet' },
 }
 
+/**
+ * The archival and moderation-log flags (docs/ARCHIVE_FRONTEND.md). Only a
+ * non-release variant (devnet) may carry them, and they reach its bundle like
+ * any other NEXT_PUBLIC key. The official apps (testnet, staging-testnet) must
+ * have both off. This check is the engine's own and does not rely on the web
+ * loader's, so it still holds if that one changes.
+ */
+const MODERATION_FLAGS = ['NEXT_PUBLIC_MODERATION_VIEW', 'NEXT_PUBLIC_MODERATION_LOG']
+
+/** As the web check (scripts/release-config.cjs): the view flag must be unset or empty, the log flag unset, empty or `0`. */
+const OFF_VALUES = {
+  NEXT_PUBLIC_MODERATION_VIEW: [undefined, ''],
+  NEXT_PUBLIC_MODERATION_LOG: [undefined, '', '0'],
+}
+
+function assertModerationFlagsOff(variant, env) {
+  const set = MODERATION_FLAGS.filter(key => !OFF_VALUES[key].includes(env[key]))
+  if (set.length) {
+    throw new Error(`The ${variant} engine is an official release build and must not enable ${set.join(', ')} (archival and moderation-log builds are not shipped by the official apps).`)
+  }
+}
+
 /** @returns {{env: Record<string, string>, storageEpoch: string, webBasePath: string, networkKey: string}} */
 function variantConfig(root, variant) {
   const selected = VARIANTS[variant]
@@ -19,6 +41,7 @@ function variantConfig(root, variant) {
   const configured = variant === 'devnet'
     ? parseEnv(readFileSync(file, 'utf8'))
     : loadReleaseEnv(file, {})
+  if (variant !== 'devnet') assertModerationFlagsOff(variant, configured)
   const network = variant === 'devnet' ? 'devnet' : 'testnet'
   if (configured.NEXT_PUBLIC_NETWORK !== network) throw new Error(`${selected.envFile} must select ${network}`)
   if (configured.BASE_PATH !== undefined && configured.BASE_PATH !== selected.basePath) {
@@ -38,4 +61,4 @@ function variantConfig(root, variant) {
   }
 }
 
-module.exports = { VARIANTS, variantConfig }
+module.exports = { VARIANTS, MODERATION_FLAGS, assertModerationFlagsOff, variantConfig }

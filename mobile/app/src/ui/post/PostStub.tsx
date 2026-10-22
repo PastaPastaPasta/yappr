@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 import {
   ExclamationTriangleIcon,
+  EyeSlashIcon,
   NoSymbolIcon,
   ShieldExclamationIcon,
   TrashIcon,
@@ -14,10 +15,12 @@ import { tw, useColors } from '../tokens';
 import { EMBED_FRAME } from './embed-frame';
 import type { CardKind } from './types';
 
-export type StubState = 'removed' | 'deleted' | 'failed' | 'unavailable' | 'blocked';
+/** `hidden`: the moderators hid it (social v18), which never deletes: the post is still on the network. */
+export type StubState = 'removed' | 'deleted' | 'hidden' | 'failed' | 'unavailable' | 'blocked';
 
 const ICONS = {
   removed: ShieldExclamationIcon,
+  hidden: EyeSlashIcon,
   deleted: TrashIcon,
   failed: ExclamationTriangleIcon,
   unavailable: ExclamationTriangleIcon,
@@ -32,6 +35,8 @@ export function stubText(state: StubState, kind: CardKind): string {
       return `This ${noun} was removed by community moderators.`;
     case 'deleted':
       return `This ${noun} was deleted by its author.`;
+    case 'hidden':
+      return `This ${noun} is hidden by moderators.`;
     case 'failed':
       return `This ${noun} could not be loaded. Try again later.`;
     case 'unavailable':

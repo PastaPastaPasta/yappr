@@ -1636,13 +1636,19 @@ describe('contract topology', () => {
       expect(v18.topologyDescriptor().replyLinkage).toEqual(v17.topologyDescriptor().replyLinkage)
     })
 
-    it('fails closed in the v17-shaped listing builders until the v18 ones are wired', async () => {
+    it('pins the listed lane (live == 1, mod == null) in every v18 listing builder', async () => {
       const v18 = await topologyModule('v18')
-      for (const builder of [v18.postOwnerIndexPrefix, v18.postListingWherePrefix, v18.replyOwnerIndexPrefix, v18.replyThreadIndexPrefix, v18.postOwnerIndexOrderPrefix, v18.replyOwnerIndexOrderPrefix]) {
-        expect(() => builder(), builder.name).toThrow(/v18 listing builders are not wired yet/)
+      const listed = [['live', '==', 1], ['mod', '==', null]]
+      for (const builder of [v18.postOwnerIndexPrefix, v18.postListingWherePrefix, v18.replyOwnerIndexPrefix, v18.replyThreadIndexPrefix]) {
+        expect(builder(), builder.name).toEqual(listed)
       }
+      for (const builder of [v18.postOwnerIndexOrderPrefix, v18.replyOwnerIndexOrderPrefix]) {
+        expect(builder(), builder.name).toEqual([['live', 'asc'], ['mod', 'asc']])
+      }
+      expect(v18.modLanePin()).toEqual([['mod', '==', null]])
       const v17 = await topologyModule('v17')
       expect(v17.postListingWherePrefix()).toEqual([['live', '==', true]])
+      expect(v17.modLanePin()).toEqual([])
     })
 
     it('gates blog v10 and storefront v11 on their own topologies', async () => {

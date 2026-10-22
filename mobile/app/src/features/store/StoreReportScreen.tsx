@@ -6,9 +6,9 @@ import { Pressable, View } from 'react-native';
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { requireAuth } from '~/data/require-auth';
-import { useViewerId } from '~/data/session';
+import { useCapabilities, useViewerId } from '~/data/session';
 import { useWrite } from '~/data/writes';
-import { OTHER_REASON_CODE, REPORT_NOTE_MAX_LENGTH, REPORT_STATUSES, reportReasonsUpTo } from '~/features/safety/report-reasons';
+import { OTHER_REASON_CODE, REPORT_NOTE_MAX_LENGTH, reportReasonsUpTo, reportStatusLabel } from '~/features/safety/report-reasons';
 import { Button } from '~/ui/Button';
 import { ErrorState } from '~/ui/EmptyState';
 import { RadioGroup } from '~/ui/RadioGroup';
@@ -49,6 +49,7 @@ export function StoreReportScreen() {
   const docType = DOC_TYPES.find((type) => type === params.docType);
   const target: StoreReportTarget | null = docType && params.targetId && params.ownerId ? { docType, targetId: params.targetId, ownerId: params.ownerId } : null;
   const noun = params.noun ?? 'listing';
+  const moderatorsHide = useCapabilities()?.storefrontModeratorsHide === true;
   const own = useEngineQuery(queryKeys.store.ownReport(params.targetId ?? ''), (api) => (target ? api.store.ownReport(target) : Promise.resolve(null)), { enabled: target !== null });
   const [reason, setReason] = useState<string>('');
   const [note, setNote] = useState('');
@@ -78,7 +79,7 @@ export function StoreReportScreen() {
             <Text variant="bodyStrong">You reported this {noun}.</Text>
             {own.data.note ? <Text>{own.data.note}</Text> : null}
             <Text tone="secondary">
-              {own.data.status === null ? 'Waiting for moderator review.' : `Resolved: ${REPORT_STATUSES.find((s) => s.code === own.data?.status)?.label ?? 'Resolved'}.`}
+              {own.data.status === null ? 'Waiting for moderator review.' : `Resolved: ${reportStatusLabel(own.data.status, moderatorsHide)}.`}
             </Text>
             {own.data.status === null ? (
               <Button variant="outline" label="Withdraw report" loading={withdraw.status === 'pending'} onPress={() => own.data && withdraw.run({ reportId: own.data.id, targetId: target.targetId })} />

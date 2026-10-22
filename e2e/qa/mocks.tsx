@@ -13,6 +13,9 @@ export function useModerationAuthorization() {
 export function useModerationRole() {
   return { isModerator: true, isProtected: false, protectedIds: new Set<string>() }
 }
+export function useIsModerator() {
+  return useModerationRole().isModerator
+}
 export const entry: PasskeyEntryView = { entryId: 'removed-id', credentialId: 'credential', updatedAt: 1700000000000, name: null, marker: 'marker', addedAt: 1700000000000, thisDevice: true, needsUpdate: false }
 export async function listPasskeys() { return [entry] } // A node still behind the confirmed delete.
 export async function passkeyEligibility() { return null }
@@ -63,6 +66,12 @@ export function exposeIntermediatePayoutHistory() { historyEpoch = 122 }
 const moderation = {
   isSettled: () => false,
   canWarn: () => false,
+  // The offline fixture runs the pre-v18 cuts: moderators delete, ban and suspend.
+  hidesInsteadOfDeleting: () => false,
+  canHide: () => false,
+  canRestrict: () => false,
+  canBan: () => true,
+  canSuspend: () => true,
   contract: { countsActions: () => false },
   listEntries: async () => ({ entries: [] }),
   listRemovals: async () => ({ removals: [] }),

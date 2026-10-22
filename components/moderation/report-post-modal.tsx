@@ -10,7 +10,7 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useReportPostModal, type ReportSubject } from '@/hooks/use-report-post-modal'
-import { reportsAreResolved } from '@/lib/contract-topology'
+import { moderatorsCannotDelete, reportsAreResolved } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
 import {
   MODERATION_EMAIL,
@@ -201,7 +201,9 @@ export function ReportPostModal() {
             On {new Date(filed.createdAt).toLocaleDateString()} you reported it for <strong>{reportReasonLabel(filed.reason)}</strong>.
             {resolving
               ? filed.status === null ? ' The community-elected moderators have not resolved it yet.' : ''
-              : ` The community-elected moderators can remove the ${noun} or dismiss the report.`}
+              : moderatorsCannotDelete()
+                ? ` The community-elected moderators can hide the ${noun} or dismiss the report.`
+                : ` The community-elected moderators can remove the ${noun} or dismiss the report.`}
           </Dialog.Description>
           {filed.note && (
             <p className="text-sm p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 whitespace-pre-wrap break-words">{filed.note}</p>

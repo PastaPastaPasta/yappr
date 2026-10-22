@@ -24,6 +24,7 @@ import { storefrontIsV2, storefrontIsV6 } from '@/lib/constants'
 import { storeCategoryLabel } from '@/lib/storefront/storefront-contract'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import { useTabKeyboard } from '@/hooks/use-tab-keyboard'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import type { Store, StoreRatingSummary } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { ModerationClosedBanner } from '@/components/moderation/moderation-closed-notice'
@@ -34,6 +35,7 @@ const SORT_OPTIONS: ReadonlyArray<[StoreSort, string]> = [['newest', 'Newest'], 
 export default function StoreBrowsePage() {
   const router = useRouter()
   const { user } = useAuth()
+  const storesOpen = useModeratedTypeOpen('store', true, 'storefront')
   const { isReady: sdkReady } = useSdk()
   const [stores, setStores] = useState<Store[]>([])
   const [storeRatings, setStoreRatings] = useState<Map<string, StoreRatingSummary>>(new Map())
@@ -313,7 +315,9 @@ export default function StoreBrowsePage() {
                     ? 'Try a different search term'
                     : allStoresHidden
                       ? 'Stores from accounts you block are hidden'
-                      : 'Be the first to open one.'}
+                      : storesOpen
+                        ? 'Be the first to open one.'
+                        : 'Stores will show up here once posting opens.'}
                 </p>
                 {!searchQuery && user && !hasStore && (
                   <Button

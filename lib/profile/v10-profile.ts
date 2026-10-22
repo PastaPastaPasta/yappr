@@ -264,6 +264,25 @@ function extensionContentFrom(extension: PlainDocument | null): PlainDocument {
 }
 
 /**
+ * The moderators' fields on social v18's `yapprProfile` (`mod`, `modLabel`):
+ * only the team writes them, and a replace that drops or changes one is
+ * refused (41124). An unhide clears `mod` alone, so `modLabel` can stand by
+ * itself. They ride through every edit exactly as stored and are never
+ * edited here.
+ */
+const EXTENSION_MODERATOR_FIELDS = ['mod', 'modLabel'] as const
+
+function extensionModeratorFieldsFrom(extension: PlainDocument | null): PlainDocument {
+  if (!extension) return {}
+  const content = contentOf(extension)
+  const out: PlainDocument = {}
+  for (const field of EXTENSION_MODERATOR_FIELDS) {
+    if (content[field] !== undefined && content[field] !== null) out[field] = content[field]
+  }
+  return out
+}
+
+/**
  * The DashPay profile and extension a profile edit produces. A document is
  * written only when it is missing or its content changes, so a user who
  * already has a DashPay profile and keeps its name, bio and avatar adds only
@@ -337,9 +356,11 @@ export function planV10ProfileWrite({ base, extension, patch, avatarDigest, fall
     ? `The avatar image could not be read to fingerprint it, and its address is over ${EXTENSION_AVATAR_MAX_LENGTH} characters; try uploading it instead`
     : `The avatar settings must be at most ${EXTENSION_AVATAR_MAX_LENGTH} characters; try a shorter seed`)
 
+  // The moderators' fields go back as stored, after every check and outside
+  // the comparison: they decide nothing about whether the author changed it.
   return {
     base: writeBase ? nextBase : null,
-    extension: extension && sameContent(storedExtension, nextExtension) ? null : nextExtension,
+    extension: extension && sameContent(storedExtension, nextExtension) ? null : { ...nextExtension, ...extensionModeratorFieldsFrom(extension) },
   }
 }
 

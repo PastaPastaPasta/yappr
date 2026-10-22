@@ -4,7 +4,7 @@ Social v18, blog v10 and storefront v11 re-cut the three moderated contracts of 
 
 The decisions are the owner's (`DECISIONS-FINAL.md` in the release audit's `moderation-redesign/`, which overrides the option papers beside it). [TESTNET_RELEASE.md](TESTNET_RELEASE.md) records them as D42–D44.
 
-**Status.** Not registered on testnet. Throwaway copies of the exact files were registered on sakura and run through the battery below ([Sakura proof](#sakura-proof)). The registration tooling appends the three as new members of the existing App Connect group `4MjVAxDY…` under app `D8benQGn…` ([Registering it](#registering-it-on-testnet)). The client still reads v17 until its own branch moves to the flags below.
+**Status.** Not registered on testnet. Throwaway copies of the exact files were registered on sakura and run through the battery below ([Sakura proof](#sakura-proof)). The registration tooling appends the three as new members of the existing App Connect group `4MjVAxDY…` under app `D8benQGn…` ([Registering it](#registering-it-on-testnet)). The client reads the set behind the flags below; an archival or "uncensored" frontend is described in [ARCHIVE_FRONTEND.md](ARCHIVE_FRONTEND.md).
 
 | # | Decision | What changes |
 | --- | --- | --- |
@@ -86,6 +86,8 @@ The like counters are preallocated with each post (per tag too), so a `postLive`
 A hidden or restricted post's likes still count in `byPost`, `byHashtagPost`, `byAuthorPost` and both windows (accepted), and a ranked list can return such a post id: the client already hydrates ranked ids, and it skips any with `mod` set or `live == 2` (DECISIONS-FINAL, Trending). Quote lists (`quotesOfPost`/`quotesOfReply`), the reply notification windows, follows and bookmarks are not laned: one read returns every lane, and the client drops hidden items when it hydrates them.
 
 ### Archive and moderation-log queries
+
+How to build and run a frontend that reads these lanes, and what each flag shows, is in [ARCHIVE_FRONTEND.md](ARCHIVE_FRONTEND.md).
 
 The owner's archival / "uncensored" frontend support (env flags, off on every yap.pr build) reads every lane of each listing with the same order and its own `startAfter` cursor, and k-way merges the pages. A count is the sum of its lanes. The moderation log reads the `moderated` index of each type (newest action first), the restriction log, and the warning list. These are the exact reads, from `scripts/hide-moderation-queries.mjs`: `lib/contract-query-conformance.test.ts` judges every one of them, in every lane, against the committed files, and `scripts/prove-v18-moderation.mjs catalogue` ran every one on sakura, proved (180/180). `L` is a `live` lane, `M` a `mod` lane, `S` a restriction state.
 
@@ -376,7 +378,6 @@ Also from the cut:
 - A restricted author's blogs (`blog.timeline [mod, $createdAt]`), blog comments and storefront writes are not laned: there is no `live` on them, so the team hides them one by one.
 - There is one moderation log per type, `[mod, $moderatedAt]` (DECISIONS-FINAL); RECONCILED's per-moderator `moderatedBy [mod, $moderatedBy, $moderatedAt]` is not in the cut, so a per-moderator view filters the log by `$moderatedBy`.
 - The v17 social, v9 blog and v10 storefront stay in the group: never file charters on them, never point builds at them.
-- **Do not select `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v18` before the client's v18 builders land.** Until then the v17-shaped listing builders (`postListingWherePrefix`, `postOwnerIndexPrefix`, `replyOwnerIndexPrefix`, `replyThreadIndexPrefix`) throw on v18 instead of sending reads every v18 index refuses.
 
 ## Owner decisions
 

@@ -10,7 +10,7 @@
 
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
-import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID, storefrontIsV6 } from '../constants';
+import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID, storefrontIsV6, storefrontModPin } from '../constants';
 import type { ItemRatingSummary, StoreRatingSummary } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
 import { chunk, documentCount, groupedCountEntries, groupedDocumentCount, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
@@ -71,7 +71,7 @@ async function groupedAverages(sdk: Sdk, storeIds: string[]): Promise<Map<string
     {
       dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
       documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW,
-      where: [['storeId', 'in', storeIds]],
+      where: [...storefrontModPin(), ['storeId', 'in', storeIds]],
       groupBy: ['storeId'],
     },
     'rating'
@@ -99,10 +99,19 @@ async function groupedAverages(sdk: Sdk, storeIds: string[]): Promise<Map<string
   return averages;
 }
 
-/** v6 reads item ratings through `storeItemRating`, whose prefix is the store; earlier cuts index `itemId` alone. */
+/**
+ * v6 reads item ratings through `storeItemRating`, whose prefix is the store; earlier cuts index `itemId` alone.
+ * v11 keys it `[mod, storeId, itemId]`: the listed lane comes first.
+ */
 function storePin(storeId: string): DocumentWhereClause[] {
-  return storefrontIsV6() ? [['storeId', '==', storeId]] : [];
+  return storefrontIsV6() ? [...storefrontModPin(), ['storeId', '==', storeId]] : [];
 }
+
+/** The store-review rating trees: `storeRating [mod, storeId]` on v11, `[storeId]` before. */
+function storeRatingPin(storeId: string): DocumentWhereClause[] {
+  return [...storefrontModPin(), ['storeId', '==', storeId]];
+}
+
 
 function summaryFrom({ count, sum }: { count: number; sum: number }): ItemRatingSummary {
   return { reviewCount: count, averageRating: count > 0 ? round1(sum / count) : 0 };
@@ -141,7 +150,7 @@ class StoreStatsService {
     if (cached) return cached;
     const sdk = await getEvoSdk();
     const [average, distribution] = await Promise.all([
-      averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, [['storeId', '==', storeId]]),
+      averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, storeRatingPin(storeId)),
       this.ratingDistribution(sdk, storeId).catch((error) => {
         logger.warn(`storeStats: rating distribution for ${storeId} failed`, error);
         return emptyDistribution();
@@ -180,7 +189,7 @@ class StoreStatsService {
         logger.warn('storeStats: grouped store averages failed, reading each store', error);
         await mapLimit(batch, 6, async (storeId) => {
           try {
-            result.set(storeId, cardSummary(await averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, [['storeId', '==', storeId]])));
+            result.set(storeId, cardSummary(await averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, storeRatingPin(storeId))));
           } catch (storeError) {
             logger.warn(`storeStats: average for store ${storeId} failed`, storeError);
           }
@@ -195,7 +204,8 @@ class StoreStatsService {
     const raw = await sdk.documents.count({
       dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
       documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW,
-      where: [['storeId', '==', storeId], ['rating', 'in', [...RATINGS]]],
+      // v11: `storeRatingDistribution [storeId, mod, rating]`.
+      where: [['storeId', '==', storeId], ...storefrontModPin(), ['rating', 'in', [...RATINGS]]],
       groupBy: ['rating'],
     });
     for (const [key, value] of groupedCountEntries(raw)) {
@@ -280,7 +290,8 @@ class StoreStatsService {
   /** Stores ranked by proved average rating (the `storeRating` average axis). */
   topRatedStores(limit = 20, { throwOnError = false } = {}): Promise<RankedEntry[]> {
     return this.rankedPage(`stores:avg:${limit}`, {
-      documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, groupBy: 'storeId', aggregate: { type: 'avg', property: 'rating' }, limit,
+      documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_REVIEW, groupBy: 'storeId', aggregate: { type: 'avg', property: 'rating' },
+      ...(storefrontModPin().length > 0 ? { where: storefrontModPin() } : {}), limit,
     }, throwOnError);
   }
 
@@ -299,7 +310,7 @@ class StoreStatsService {
   topStoreCategories(limit = 20): Promise<RankedEntry[]> {
     return this.rankedPage(`stores:categories:${limit}`, {
       documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE, groupBy: 'category', aggregate: { type: 'count' },
-      where: [['status', '==', 'active']], limit,
+      where: [['status', '==', 'active'], ...storefrontModPin()], limit,
     });
   }
 
@@ -307,7 +318,7 @@ class StoreStatsService {
   topItemsInStore(storeId: string, limit = 100): Promise<RankedEntry[]> {
     return this.rankedPage(`items:${storeId}:${limit}`, {
       documentTypeName: STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW, groupBy: 'itemId', aggregate: { type: 'avg', property: 'rating' },
-      where: [['storeId', '==', storeId]], limit,
+      where: [...storefrontModPin(), ['storeId', '==', storeId]], limit,
     });
   }
 

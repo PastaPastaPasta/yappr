@@ -20,16 +20,32 @@
  * read from the chain (`moderationService`); only the shape comes from here.
  */
 import blogContract from '@/contracts/yappr-blog-contract.json'
+import blogContractV10 from '@/contracts/yappr-blog-contract-v10.json'
 import storefrontContract from '@/contracts/yappr-storefront-contract.json'
-import { YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, blogIsV7, blogIsV9, storefrontIsV10, storefrontIsV6 } from '@/lib/constants'
+import storefrontContractV11 from '@/contracts/yappr-storefront-contract-v11.json'
+import {
+  YAPPR_BLOG_CONTRACT_ID,
+  YAPPR_CONTRACT_ID,
+  YAPPR_STOREFRONT_CONTRACT_ID,
+  blogAuthorsCanBeRestricted,
+  blogIsV7,
+  blogIsV9,
+  blogListingsCarryModLane,
+  storefrontIsV10,
+  storefrontIsV6,
+  storefrontListingsCarryModLane,
+} from '@/lib/constants'
 import {
   authorDeletesLeaveHoles,
+  authorsCanBeRestricted,
   contractIsModerated,
   contractTakesReports,
   electedModeration,
   isV11,
   moderationListsKept,
+  moderatorAbilitiesFor,
   moderatorDeletableTypes,
+  moderatorsCannotDelete,
   moderatorDeleteWindowSeconds,
   moderatorDeletionKeepsRecord,
   reportsAreResolved,
@@ -80,6 +96,16 @@ export interface ModeratedContract {
   reportTargets(): readonly ReportTarget[]
   /** True when the contract counts each seated member's actions for the pot's action share. */
   countsActions(): boolean
+  /**
+   * True on a "hide, don't delete" cut (social v18, blog v10, storefront
+   * v11): no moderator deletes anything, so there is no removal, restore,
+   * settled deletion or team action; the moderators hide and unhide instead.
+   */
+  hidesInsteadOfDeleting(): boolean
+  /** The document types the moderators hide (`changeFields` names `mod`); empty off a hide cut. */
+  hideableTypes(): readonly string[]
+  /** True when the moderators restrict an author with a `restriction` document (social v18, blog v10). */
+  restrictsAuthors(): boolean
 }
 
 /** One thing a report can name: the `report` property and the document type it refers to. */
@@ -155,7 +181,14 @@ interface DeclaredView {
   schemas: Record<string, DeclaredSchema>
   declaration: ElectedModerationDeclaration | null
   deletable: readonly string[]
+  /** Types whose `changeFields` name `mod`: what the moderators hide (blog v10, storefront v11). */
+  hideable: readonly string[]
   targets: readonly ReportTarget[]
+}
+
+/** Pure: the types a contract's moderators hide, those whose `changeFields` name `mod`. */
+export function hideableTypesOf(schemas: Readonly<Record<string, DeclaredSchema>>): string[] {
+  return Object.entries(schemas).filter(([, schema]) => schema.moderatorAbilities?.changeFields?.includes('mod') === true).map(([name]) => name)
 }
 
 /** Pure: the targets a contract's `report` type names, each a property referring to another of its types. */
@@ -171,27 +204,40 @@ export function reportTargetsOf(schemas: Readonly<Record<string, DeclaredSchema>
  * registered cut may predate is named in `laterTypes` with its own gate
  * (storefront's and blog's `report`, new in storefront v10 and blog v9): off
  * its gate, every answer leaves it out, as the older registered cut does.
+ *
+ * `cut` names the committed file the registered cut was made from: the
+ * hide-don't-delete re-cuts (blog v10, storefront v11) have files of their
+ * own, with no moderator delete and `mod`/`modLabel` under `changeFields`;
+ * `hides` and `restricts` say which ability set it is.
  */
-function declaredContract(
-  key: ModeratedContractKey,
-  label: string,
-  contractId: string,
-  json: ContractJson,
-  enabled: () => boolean,
-  laterTypes: Readonly<Record<string, () => boolean>> = {}
-): ModeratedContract {
-  const moderation = json.config.moderation as DeclaredModeration | undefined
-  const allSchemas = json.documentSchemas as Record<string, DeclaredSchema>
-  const lists = Object.freeze(listsKeptOf(moderation))
-  const on = () => contractId !== '' && enabled()
-  // Frozen once per set of types the registered cut has: React effects depend
-  // on the declaration, and a fresh object per call would re-run them on every
-  // render.
-  const views = new Map<string, DeclaredView>()
+interface DeclaredCut {
+  json: () => ContractJson
+  enabled: () => boolean
+  laterTypes?: Readonly<Record<string, () => boolean>>
+  hides: () => boolean
+  restricts: () => boolean
+}
+
+function declaredContract(key: ModeratedContractKey, label: string, contractId: string, cut: DeclaredCut): ModeratedContract {
+  const laterTypes = cut.laterTypes ?? {}
+  const on = () => contractId !== '' && cut.enabled()
+  // Frozen once per file and set of types the registered cut has: React
+  // effects depend on the declaration, and a fresh object per call would
+  // re-run them on every render.
+  const views = new Map<ContractJson, Map<string, DeclaredView>>()
+  const lists = new Map<ContractJson, readonly ModerationList[]>()
   const view = (): DeclaredView => {
+    const json = cut.json()
+    const moderation = json.config.moderation as DeclaredModeration | undefined
+    const allSchemas = json.documentSchemas as Record<string, DeclaredSchema>
     const present = Object.keys(allSchemas).filter((type) => laterTypes[type]?.() ?? true)
     const cacheKey = present.join(',')
-    let found = views.get(cacheKey)
+    let byTypes = views.get(json)
+    if (!byTypes) {
+      byTypes = new Map()
+      views.set(json, byTypes)
+    }
+    let found = byTypes.get(cacheKey)
     if (!found) {
       const schemas = Object.fromEntries(present.map((type) => [type, allSchemas[type]]))
       const elected = moderation?.moderators
@@ -202,11 +248,21 @@ function declaredContract(
         schemas,
         declaration: electedDeclarationOf(declared),
         deletable: Object.entries(schemas).filter(([, schema]) => schema.moderatorAbilities?.delete === true).map(([name]) => name),
+        hideable: hideableTypesOf(schemas),
         targets: reportTargetsOf(schemas),
       })
-      views.set(cacheKey, found)
+      byTypes.set(cacheKey, found)
     }
     return found
+  }
+  const listsOf = (): readonly ModerationList[] => {
+    const json = cut.json()
+    let kept = lists.get(json)
+    if (!kept) {
+      kept = Object.freeze(listsKeptOf(json.config.moderation as DeclaredModeration | undefined))
+      lists.set(json, kept)
+    }
+    return kept
   }
   const abilities = (docType: string): ModeratorAbilities | null => (on() ? view().schemas[docType]?.moderatorAbilities ?? null : null)
   return {
@@ -214,7 +270,7 @@ function declaredContract(
     contractId,
     label,
     moderated: on,
-    listsKept: () => (on() ? lists : []),
+    listsKept: () => (on() ? listsOf() : []),
     elected: () => (on() ? view().declaration : null),
     deletableTypes: () => (on() ? view().deletable : []),
     keepsRecord: (docType) => {
@@ -223,11 +279,14 @@ function declaredContract(
     },
     settledDeletionFor: (docType) => settledRuleOf(abilities(docType)),
     deleteWindowSeconds: (docType) => abilities(docType)?.deleteWithin ?? null,
-    authorsDelete: (docType) => allSchemas[docType]?.canBeDeleted !== false,
+    authorsDelete: (docType) => (cut.json().documentSchemas as Record<string, DeclaredSchema>)[docType]?.canBeDeleted !== false,
     reportsResolved: () => (abilities('report')?.changeFields?.length ?? 0) > 0,
     reportTargets: () => (on() ? view().targets : []),
     // Every elected 5.0 contract counts its seated members' actions.
     countsActions: () => on() && view().declaration !== null,
+    hidesInsteadOfDeleting: () => on() && cut.hides(),
+    hideableTypes: () => (on() && cut.hides() ? view().hideable : []),
+    restrictsAuthors: () => on() && cut.restricts(),
   }
 }
 
@@ -254,10 +313,41 @@ const SOCIAL: ModeratedContract = {
   reportsResolved: () => reportsAreResolved(),
   reportTargets: () => (contractTakesReports() ? SOCIAL_REPORT_TARGETS : []),
   countsActions: () => isV11() && electedModeration() !== null,
+  hidesInsteadOfDeleting: () => contractIsModerated() && moderatorsCannotDelete(),
+  hideableTypes: () => (contractIsModerated() && moderatorsCannotDelete() ? socialHideableTypes() : []),
+  restrictsAuthors: () => contractIsModerated() && authorsCanBeRestricted(),
 }
 
-const STOREFRONT = declaredContract('storefront', 'Storefront', YAPPR_STOREFRONT_CONTRACT_ID, storefrontContract, storefrontIsV6, { report: storefrontIsV10 })
-const BLOG_DECLARED = declaredContract('blog', 'Blogs', YAPPR_BLOG_CONTRACT_ID, blogContract, blogIsV7, { report: blogIsV9 })
+/** The social types a moderator may hide on v18: post, reply and the profile extension. */
+const SOCIAL_HIDEABLE_CANDIDATES = ['post', 'reply', 'yapprProfile'] as const
+/** Stable answers per set (React effects may depend on them). */
+const socialHideable = new Map<string, readonly string[]>()
+function socialHideableTypes(): readonly string[] {
+  const types = SOCIAL_HIDEABLE_CANDIDATES.filter((type) => moderatorAbilitiesFor(type)?.changeFields?.includes('mod') === true)
+  const key = types.join(',')
+  let found = socialHideable.get(key)
+  if (!found) {
+    found = Object.freeze(types)
+    socialHideable.set(key, found)
+  }
+  return found
+}
+
+const STOREFRONT = declaredContract('storefront', 'Storefront', YAPPR_STOREFRONT_CONTRACT_ID, {
+  json: () => (storefrontListingsCarryModLane() ? storefrontContractV11 : storefrontContract),
+  enabled: storefrontIsV6,
+  laterTypes: { report: storefrontIsV10 },
+  hides: storefrontListingsCarryModLane,
+  // Storefront v11 has no `live` lane, so no restriction type.
+  restricts: () => false,
+})
+const BLOG_DECLARED = declaredContract('blog', 'Blogs', YAPPR_BLOG_CONTRACT_ID, {
+  json: () => (blogListingsCarryModLane() ? blogContractV10 : blogContract),
+  enabled: blogIsV7,
+  laterTypes: { report: blogIsV9 },
+  hides: blogListingsCarryModLane,
+  restricts: blogAuthorsCanBeRestricted,
+})
 const BLOG: ModeratedContract = {
   ...BLOG_DECLARED,
   settledDeletionFor: (docType) => blogIsV9() ? BLOG_DECLARED.settledDeletionFor(docType) : null,
@@ -278,16 +368,16 @@ export function moderatedContract(key: ModeratedContractKey): ModeratedContract 
  * and About pages say so. False wherever any contract still lets moderators
  * delete content (/devnet, /staging-old and today's release cut) and on the
  * unmoderated legacy v2 cut; there the copy keeps describing removals.
- * Reports are not content, so a moderator delete of a report doesn't count.
  *
- * Placeholder until the v18 contract work (`feat/v18-hide-moderation-contracts`)
- * adds a topology flag for the hide model; switch to that flag when it lands.
+ * The social cut decides it (`moderatorsCannotDelete()`, social v18); blog
+ * and storefront, when this build moderates them, must be on their hide-only
+ * cuts too (blog v10, storefront v11), so the pages never promise hiding
+ * while one of them still deletes.
  */
 export function moderationHidesOnly(): boolean {
-  return SOCIAL.moderated() && MODERATED_CONTRACTS.every((key) => {
-    const contract = CONTRACTS[key]
-    return !contract.moderated() || contract.deletableTypes().every((docType) => docType === 'report')
-  })
+  if (!SOCIAL.moderated() || !moderatorsCannotDelete()) return false
+  return (!CONTRACTS.blog.moderated() || blogListingsCarryModLane())
+    && (!CONTRACTS.storefront.moderated() || storefrontListingsCarryModLane())
 }
 
 /** How a moderated document type is named to people ("listing", not "storeItem"). */

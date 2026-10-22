@@ -16,6 +16,7 @@ import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { SensitiveGate, useSensitiveReveal } from './SensitiveGate';
 import { EMBED_FRAME } from './embed-frame';
 import { DeletedLine, stubText } from './PostStub';
+import { ModerationLabel } from './ModerationLabel';
 import type { CardPost } from './types';
 
 const FRAME = cn(EMBED_FRAME, 'p-3');
@@ -71,6 +72,7 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onReve
         </Text>
         <RelativeTime date={post.createdAt} prefix="· " variant="subhead" tone="secondary" />
       </View>
+      <ModerationLabel moderation={post.moderation} testID="quote-moderation-label" />
       {post.deleted ? (
         <DeletedLine kind={post.kind} />
       ) : post.encrypted ? (

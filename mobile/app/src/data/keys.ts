@@ -210,4 +210,6 @@ export const queryKeys = {
     followers: [...root, 'privateFeed', 'owner', 'followers'] as const,
     renewal: [...root, 'privateFeed', 'owner', 'renewal'] as const,
   },
+  /** `moderation.postingOpening`: when posting opens, while the contract waits for its first team. */
+  postingOpening: [...root, 'moderation', 'postingOpening'] as const,
 } as const;

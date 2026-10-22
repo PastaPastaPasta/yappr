@@ -2,8 +2,9 @@ import type { Post } from '@/lib/types'
 import { targetKindOf } from '@/lib/contract-topology'
 import { createModalStore } from '@/lib/modal-store'
 import type { ModeratedContractKey } from '@/lib/moderated-contracts'
+import type { ModerationMarks } from '@/lib/moderation-view'
 
-/** One document a moderator may take down, on any of Yappr's moderated contracts. */
+/** One document a moderator may take down (or, on a hide cut, hide), on any of Yappr's moderated contracts. */
 export interface ModeratorRemoveTarget {
   contract: ModeratedContractKey
   /** The document type, as the contract names it (`post`, `storeReview`, `blogComment`, …). */
@@ -15,6 +16,8 @@ export interface ModeratorRemoveTarget {
   preview: string
   /** How the dialog names it ("post", "listing", "review", "comment", …). */
   noun: string
+  /** Its moderator marks on a hide cut (social v18, blog v10, storefront v11): hidden ones offer Unhide. */
+  moderation?: ModerationMarks
 }
 
 interface ModeratorRemovePayload {
@@ -28,7 +31,7 @@ export function documentRemovalTarget(
   contract: ModeratedContractKey,
   docType: string,
   noun: string,
-  doc: { id: string; createdAt?: Date | string | number | null; updatedAt?: Date | string | number | null },
+  doc: { id: string; createdAt?: Date | string | number | null; updatedAt?: Date | string | number | null; moderation?: ModerationMarks | null },
   preview: string
 ): ModeratorRemoveTarget {
   const windowStart = doc.updatedAt ?? doc.createdAt
@@ -39,6 +42,7 @@ export function documentRemovalTarget(
     createdAt: windowStart != null ? new Date(windowStart).getTime() : Number.NaN,
     preview,
     noun,
+    ...(doc.moderation ? { moderation: doc.moderation } : {}),
   }
 }
 
