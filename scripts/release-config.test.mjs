@@ -195,6 +195,126 @@ describe('release build configuration', () => {
       }
     })
 
+  describe('archival frontend flags (docs/ARCHIVE_FRONTEND.md)', () => {
+    /** A scratch copy of the release entry point, with a stand-in `next` that records the env it was given. */
+    function scratchRelease(file = '.env.testnet') {
+      const dir = mkdtempSync(join(tmpdir(), 'yappr-release-archive-'))
+      mkdirSync(join(dir, 'scripts'))
+      for (const name of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+        copyFileSync(new URL(name, import.meta.url), join(dir, 'scripts', name))
+      }
+      mkdirSync(join(dir, 'node_modules/next/dist/bin'), { recursive: true })
+      symlinkSync(fileURLToPath(new URL('../node_modules/bs58', import.meta.url)), join(dir, 'node_modules/bs58'), 'dir')
+      writeFileSync(join(dir, 'node_modules/next/dist/bin/next'), `
+        const fs = require('node:fs');
+        fs.mkdirSync('out');
+        fs.writeFileSync('out/effective-env.json', JSON.stringify({
+          view: process.env.NEXT_PUBLIC_MODERATION_VIEW ?? null,
+          log: process.env.NEXT_PUBLIC_MODERATION_LOG ?? null,
+        }));
+      `)
+      const run = (fileEnv, ambient) => {
+        writeFileSync(join(dir, file), Object.entries({ ...completeEnv(), ...fileEnv }).map(([key, value]) => `${key}=${value}`).join('\n'))
+        return spawnSync(process.execPath, [join(dir, 'scripts/build-release.mjs'), ...(file === '.env.testnet' ? [] : [file])], {
+          cwd: dir, encoding: 'utf8', env: { ...process.env, ...ambient, ...(file === '.env.staging-old' ? { BASE_PATH: '/staging-old' } : {}) },
+        })
+      }
+      return { dir, run }
+    }
+    const effective = dir => JSON.parse(readFileSync(join(dir, 'out/effective-env.json'), 'utf8'))
+
+    it.each([
+      ['NEXT_PUBLIC_MODERATION_VIEW', ['all', 'default', '0', '1', 'true', ' ']],
+      ['NEXT_PUBLIC_MODERATION_LOG', ['1', 'true', 'all', ' ']],
+    ])('a release refuses %s set to anything but off', (key, values) => {
+      for (const value of values) {
+        expect(() => assertReleaseConfig({ ...completeEnv(), [key]: value }), `${key}=${JSON.stringify(value)}`).toThrow(key)
+      }
+    })
+
+    it.each([
+      ['NEXT_PUBLIC_MODERATION_VIEW', [undefined, '']],
+      ['NEXT_PUBLIC_MODERATION_LOG', [undefined, '', '0']],
+    ])('a release accepts %s unset or off', (key, values) => {
+      for (const value of values) expect(() => assertReleaseConfig({ ...completeEnv(), [key]: value })).not.toThrow()
+    })
+
+    it('names every flag that is on, and leaves non-release builds alone', () => {
+      const flags = { NEXT_PUBLIC_MODERATION_VIEW: 'all', NEXT_PUBLIC_MODERATION_LOG: '1' }
+      expect(() => assertReleaseConfig({ ...completeEnv(), ...flags })).toThrow(/NEXT_PUBLIC_MODERATION_VIEW[\s\S]*NEXT_PUBLIC_MODERATION_LOG/)
+      // An archival build is exactly what a non-release build (devnet, /testing, mobile non-release variants) may be.
+      expect(() => assertReleaseConfig(flags)).not.toThrow()
+      expect(() => assertReleaseConfig({ ...flags, NEXT_PUBLIC_RELEASE: '0' })).not.toThrow()
+    })
+
+    it.each(['.env.testnet', '.env.staging-old'])('%s: a flag in the env file fails the build before next runs', file => {
+      const { dir, run } = scratchRelease(file)
+      try {
+        for (const fileEnv of [{ NEXT_PUBLIC_MODERATION_VIEW: 'all' }, { NEXT_PUBLIC_MODERATION_LOG: '1' }]) {
+          const result = run(fileEnv, {})
+          expect(result.status).toBe(1)
+          expect(result.stderr).toContain(Object.keys(fileEnv)[0])
+          expect(result.stdout).not.toContain('Creating an optimized production build')
+          expect(() => readFileSync(join(dir, 'out/effective-env.json'))).toThrow()
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('an ambient flag fails the build too, instead of being dropped silently', () => {
+      const { dir, run } = scratchRelease()
+      try {
+        for (const ambient of [{ NEXT_PUBLIC_MODERATION_VIEW: 'all' }, { NEXT_PUBLIC_MODERATION_LOG: '1' }]) {
+          const result = run({}, ambient)
+          expect(result.status).toBe(1)
+          expect(result.stderr).toContain(Object.keys(ambient)[0])
+          expect(result.stderr).toContain('ambient')
+          expect(() => readFileSync(join(dir, 'out/effective-env.json'))).toThrow()
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('hands next an explicit off value, so a stray .env.local cannot supply a flag', () => {
+      const { dir, run } = scratchRelease()
+      try {
+        const result = run({}, { NEXT_PUBLIC_MODERATION_LOG: '0', NEXT_PUBLIC_MODERATION_VIEW: '' })
+        expect(result.status, result.stderr).toBe(0)
+        expect(effective(dir)).toEqual({ view: '', log: '' })
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('keeps an explicit 0 from the env file', () => {
+      const { dir, run } = scratchRelease()
+      try {
+        const result = run({ NEXT_PUBLIC_MODERATION_LOG: '0' }, {})
+        expect(result.status, result.stderr).toBe(0)
+        expect(effective(dir)).toEqual({ view: '', log: '0' })
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('next.config.js re-checks the environment after Next has loaded its env files', () => {
+      const root = fileURLToPath(new URL('../', import.meta.url))
+      const check = flags => spawnSync(process.execPath, ['-e', "require('./next.config.js')('phase-production-build')"], {
+        cwd: root, encoding: 'utf8', env: { ...process.env, ...completeEnv(), ...flags },
+      })
+      // Control: the same environment without a flag builds its config.
+      const clean = check({ NEXT_PUBLIC_MODERATION_VIEW: '', NEXT_PUBLIC_MODERATION_LOG: '' })
+      expect(clean.status, clean.stderr).toBe(0)
+      for (const flags of [{ NEXT_PUBLIC_MODERATION_VIEW: 'all' }, { NEXT_PUBLIC_MODERATION_LOG: '1' }]) {
+        const result = check(flags)
+        expect(result.status).not.toBe(0)
+        expect(result.stderr).toContain(Object.keys(flags)[0])
+      }
+    })
+  })
+
   it.each(['', '/staging'])('builds root and /staging (base %j) from .env.testnet, never ambient pins', basePath => {
     const dir = mkdtempSync(join(tmpdir(), 'yappr-release-entry-'))
     try {
