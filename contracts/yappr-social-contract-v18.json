@@ -1,0 +1,2514 @@
+{
+  "$formatVersion": "1",
+  "version": 1,
+  "config": {
+    "$formatVersion": "2",
+    "canBeDeleted": false,
+    "readonly": false,
+    "keepsHistory": false,
+    "documentsKeepHistoryContractDefault": false,
+    "documentsMutableContractDefault": true,
+    "documentsCanBeDeletedContractDefault": true,
+    "requiresIdentityEncryptionBoundedKey": null,
+    "requiresIdentityDecryptionBoundedKey": null,
+    "sizedIntegerTypes": true,
+    "moderation": {
+      "warnings": true,
+      "moderators": {
+        "$type": "elected",
+        "joinWindow": 604800,
+        "voteWindow": 259200,
+        "seatContestable": true,
+        "challengeCoolDown": 1209600,
+        "maxAddedModerators": 10,
+        "moderatedDocumentTypes": {
+          "post": [
+            "changeDocumentFields",
+            "warn"
+          ],
+          "reply": [
+            "changeDocumentFields",
+            "warn"
+          ],
+          "report": [
+            "changeDocumentFields"
+          ],
+          "restriction": [
+            "changeDocumentFields"
+          ],
+          "yapprProfile": [
+            "changeDocumentFields"
+          ]
+        },
+        "interim": {
+          "$type": "notYetUsable"
+        },
+        "ownerProtected": false
+      }
+    }
+  },
+  "documentSchemas": {
+    "bookmark": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerPost",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "ownerTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "postId"
+      ],
+      "properties": {
+        "postId": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "post"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "follow": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "pair",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "followingId": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "following",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true
+        },
+        {
+          "name": "followers",
+          "properties": [
+            {
+              "followingId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "followingId"
+          }
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "followingId"
+      ],
+      "properties": {
+        "followingId": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "identity"
+          },
+          "distinctFrom": "$ownerId"
+        }
+      },
+      "additionalProperties": false
+    },
+    "followRequest": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "pair",
+          "properties": [
+            {
+              "targetId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "target",
+          "properties": [
+            {
+              "targetId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "targetId"
+      ],
+      "properties": {
+        "targetId": {
+          "type": "identifier",
+          "position": 0,
+          "distinctFrom": "$ownerId"
+        },
+        "publicKey": {
+          "type": "bytes",
+          "position": 1,
+          "size": 33
+        }
+      },
+      "additionalProperties": false,
+      "immutable": [
+        "targetId"
+      ]
+    },
+    "like": {
+      "type": "object",
+      "indexOnly": true,
+      "documentsMutable": false,
+      "indices": [
+        {
+          "name": "byPost",
+          "properties": [
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": true,
+          "preallocated": true
+        },
+        {
+          "name": "byHashtagPost",
+          "properties": [
+            {
+              "tags": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "summableOffCountIndex": "byPost",
+          "rangeCountable": true,
+          "rangeSummable": true,
+          "rankedCountable": {
+            "at": [
+              "tags",
+              "postId"
+            ]
+          },
+          "preallocated": true
+        },
+        {
+          "name": "byAuthorPost",
+          "properties": [
+            {
+              "postAuthor": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "summableOffCountIndex": "byPost",
+          "rangeCountable": true,
+          "rangeSummable": true,
+          "rankedCountable": {
+            "at": [
+              "postAuthor",
+              "postId"
+            ]
+          },
+          "preallocated": true
+        },
+        {
+          "name": "byTrendPost",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "postLive": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": true,
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 259200,
+            "step": 86400,
+            "ttl": 604800
+          }
+        },
+        {
+          "name": "byTrendHashtagPost",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "postLive": "asc"
+            },
+            {
+              "tags": "asc"
+            },
+            {
+              "postId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": [
+              "tags",
+              "postId"
+            ]
+          },
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 86400,
+            "step": 21600,
+            "ttl": 604800
+          },
+          "outlivesDelete": true
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "postId",
+        "postAuthor",
+        "postLive"
+      ],
+      "properties": {
+        "postId": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "post",
+            "where": {
+              "tags": "tags",
+              "$ownerId": "postAuthor",
+              "live": "postLive"
+            }
+          }
+        },
+        "tags": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,61}$",
+            "maxLength": 61
+          },
+          "position": 1
+        },
+        "postAuthor": {
+          "type": "identifier",
+          "position": 2,
+          "distinctFrom": "$ownerId"
+        },
+        "postLive": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 3
+        }
+      },
+      "tokenCost": {
+        "create": {
+          "tokenPosition": 0,
+          "amount": 1,
+          "optional": true,
+          "gasFeesPaidBy": 2,
+          "effect": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "likeReply": {
+      "type": "object",
+      "indexOnly": true,
+      "documentsMutable": false,
+      "indices": [
+        {
+          "name": "byReply",
+          "properties": [
+            {
+              "replyId": "asc"
+            }
+          ],
+          "terminal": "$ownerId",
+          "countable": "countable",
+          "preallocated": true
+        }
+      ],
+      "required": [
+        "replyId"
+      ],
+      "properties": {
+        "replyId": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "reply",
+            "where": {
+              "$ownerId": {
+                "notEqual": "$ownerId"
+              }
+            }
+          }
+        }
+      },
+      "tokenCost": {
+        "create": {
+          "tokenPosition": 0,
+          "amount": 1,
+          "optional": true,
+          "gasFeesPaidBy": 2,
+          "effect": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "post": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "live": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "$ownerId"
+          },
+          "skipIfAbsent": [
+            "live"
+          ]
+        },
+        {
+          "name": "timeline",
+          "properties": [
+            {
+              "live": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "skipIfAbsent": [
+            "live"
+          ]
+        },
+        {
+          "name": "quotesOfPost",
+          "properties": [
+            {
+              "quotedPostId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "quotesOfReply",
+          "properties": [
+            {
+              "quotedReplyId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "quotedPostOwnerRecent",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "quotedPostOwnerId": "asc"
+            }
+          ],
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 302400,
+            "step": 302400,
+            "ttl": 604800
+          },
+          "skipIfAbsent": true
+        },
+        {
+          "name": "tagAndTime",
+          "properties": [
+            {
+              "live": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "tags": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "live"
+          ]
+        },
+        {
+          "name": "ownerAndQuotedPost",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "quotedPostId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "ownerAndQuotedReply",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "quotedReplyId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "mentionedUserAndTime",
+          "properties": [
+            {
+              "mentionedUserIds": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "moderated",
+          "properties": [
+            {
+              "mod": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "mod"
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "$updatedAt"
+      ],
+      "properties": {
+        "content": {
+          "type": "string",
+          "position": 0,
+          "maxLength": 1000,
+          "maxBytes": 2000
+        },
+        "mediaUrls": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "position": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^(https|ipfs)://.+$",
+            "maxLength": 512,
+            "maxBytes": 512
+          }
+        },
+        "quotedPostId": {
+          "type": "identifier",
+          "position": 2,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "post",
+            "where": {
+              "$ownerId": "quotedPostOwnerId"
+            }
+          }
+        },
+        "sensitive": {
+          "type": "boolean",
+          "position": 3
+        },
+        "encryptedContent": {
+          "type": "array",
+          "maxItems": 2048,
+          "minItems": 1,
+          "position": 4,
+          "byteArray": true
+        },
+        "keyGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 5
+        },
+        "nonce": {
+          "type": "bytes",
+          "position": 6,
+          "size": 24
+        },
+        "quotedPostOwnerId": {
+          "type": "identifier",
+          "position": 7
+        },
+        "embedContractId": {
+          "type": "identifier",
+          "position": 8
+        },
+        "embedDocType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "position": 9,
+          "maxBytes": 64
+        },
+        "embedId": {
+          "type": "identifier",
+          "position": 10
+        },
+        "quotedReplyId": {
+          "type": "identifier",
+          "position": 11,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "reply",
+            "where": {
+              "$ownerId": "quotedPostOwnerId"
+            }
+          }
+        },
+        "tags": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,61}$",
+            "maxLength": 61
+          },
+          "position": 12
+        },
+        "mediaDigests": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 40,
+          "maxItems": 160,
+          "position": 13
+        },
+        "mediaKinds": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 4,
+          "position": 14
+        },
+        "deleted": {
+          "type": "boolean",
+          "position": 16
+        },
+        "live": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 17
+        },
+        "mentionedUserIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "identifier",
+            "refersTo": {
+              "type": "identity"
+            }
+          },
+          "position": 15
+        },
+        "feed": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 18
+        },
+        "mod": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 19
+        },
+        "modLabel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63,
+          "position": 20
+        }
+      },
+      "tokenCost": {
+        "create": {
+          "tokenPosition": 0,
+          "amount": 10,
+          "optional": true,
+          "gasFeesPaidBy": 2,
+          "effect": 1
+        }
+      },
+      "additionalProperties": false,
+      "moderatorAbilities": {
+        "changeFields": [
+          "mod",
+          "modLabel"
+        ]
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 20000000
+        }
+      },
+      "propertyConstraints": {
+        "embed": {
+          "in": [
+            {
+              "countPresent": [
+                "embedContractId",
+                "embedDocType",
+                "embedId"
+              ]
+            },
+            [
+              0,
+              3
+            ]
+          ]
+        },
+        "oneQuote": {
+          "not": {
+            "allOf": [
+              {
+                "present": "quotedPostId"
+              },
+              {
+                "present": "quotedReplyId"
+              }
+            ]
+          }
+        },
+        "private": {
+          "in": [
+            {
+              "countPresent": [
+                "encryptedContent",
+                "keyGeneration",
+                "nonce",
+                "feed"
+              ]
+            },
+            [
+              0,
+              4
+            ]
+          ]
+        },
+        "privateNoMedia": {
+          "not": {
+            "allOf": [
+              {
+                "present": "encryptedContent"
+              },
+              {
+                "present": "mediaUrls"
+              }
+            ]
+          }
+        },
+        "quoteOwner": {
+          "in": [
+            {
+              "countPresent": [
+                "quotedPostId",
+                "quotedReplyId",
+                "quotedPostOwnerId"
+              ]
+            },
+            [
+              0,
+              2
+            ]
+          ]
+        },
+        "notEmpty": {
+          "anyOf": [
+            {
+              "greaterThan": [
+                {
+                  "length": "content"
+                },
+                0
+              ]
+            },
+            {
+              "greaterThanOrEqual": [
+                {
+                  "countPresent": [
+                    "encryptedContent",
+                    "mediaUrls",
+                    "embedId",
+                    "quotedPostId",
+                    "quotedReplyId",
+                    "deleted"
+                  ]
+                },
+                1
+              ]
+            }
+          ]
+        },
+        "blankTombstone": {
+          "anyOf": [
+            {
+              "absent": "deleted"
+            },
+            {
+              "allOf": [
+                {
+                  "equal": [
+                    "deleted",
+                    1
+                  ]
+                },
+                {
+                  "equal": [
+                    {
+                      "countPresent": [
+                        "content",
+                        "mediaUrls",
+                        "mediaDigests",
+                        "mediaKinds",
+                        "sensitive",
+                        "encryptedContent",
+                        "keyGeneration",
+                        "nonce",
+                        "embedContractId",
+                        "embedDocType",
+                        "embedId",
+                        "mentionedUserIds",
+                        "quotedPostId",
+                        "quotedReplyId",
+                        "quotedPostOwnerId",
+                        "feed"
+                      ]
+                    },
+                    0
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "media": {
+          "allOf": [
+            {
+              "equal": [
+                {
+                  "multiply": [
+                    {
+                      "count": "mediaUrls"
+                    },
+                    40
+                  ]
+                },
+                {
+                  "count": "mediaDigests"
+                }
+              ]
+            },
+            {
+              "equal": [
+                {
+                  "count": "mediaUrls"
+                },
+                {
+                  "count": "mediaKinds"
+                }
+              ]
+            }
+          ]
+        },
+        "live": {
+          "equal": [
+            {
+              "countPresent": [
+                "deleted",
+                "live"
+              ]
+            },
+            1
+          ]
+        },
+        "restrictedLane": {
+          "ifThen": [
+            {
+              "equal": [
+                "$revision",
+                1
+              ]
+            },
+            {
+              "equal": [
+                "live",
+                {
+                  "add": [
+                    1,
+                    {
+                      "min": [
+                        {
+                          "countOf": [
+                            "restriction",
+                            {
+                              "target": "$ownerId",
+                              "state": 1
+                            }
+                          ]
+                        },
+                        1
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "modReason": {
+          "anyOf": [
+            {
+              "absent": "mod"
+            },
+            {
+              "present": "modLabel"
+            }
+          ]
+        }
+      },
+      "canBeDeleted": false,
+      "immutable": [
+        "tags",
+        {
+          "property": "deleted",
+          "when": {
+            "present": "$old.deleted"
+          }
+        },
+        {
+          "property": "content",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaUrls",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaDigests",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaKinds",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "sensitive",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "encryptedContent",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "keyGeneration",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "nonce",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "embedContractId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "embedDocType",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "embedId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mentionedUserIds",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "quotedPostId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "quotedReplyId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "quotedPostOwnerId",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "feed",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "live",
+          "when": {
+            "absent": "deleted"
+          }
+        }
+      ]
+    },
+    "privateFeed": {
+      "type": "object",
+      "canBeDeleted": false,
+      "indices": [
+        {
+          "name": "feed",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "feed": "asc"
+            }
+          ],
+          "unique": true
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "feed",
+        "treeCapacity",
+        "maxKeyGeneration",
+        "keyId",
+        "encryptedSeed"
+      ],
+      "properties": {
+        "feed": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 0
+        },
+        "treeCapacity": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 32768,
+          "position": 1
+        },
+        "maxKeyGeneration": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 65535,
+          "position": 2
+        },
+        "keyId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "position": 3
+        },
+        "encryptedSeed": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 256,
+          "position": 4
+        },
+        "carry": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 512,
+          "position": 5
+        },
+        "audience": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255,
+          "position": 6
+        },
+        "label": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 64,
+          "position": 7
+        }
+      },
+      "additionalProperties": false
+    },
+    "privateFeedGrant": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "recipient",
+          "properties": [
+            {
+              "recipientId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "feed": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "leaf",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "feed": "asc"
+            },
+            {
+              "leafIndex": "asc"
+            }
+          ],
+          "unique": true
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "feed",
+        "recipientId",
+        "leafIndex",
+        "keyGeneration",
+        "encryptedPayload"
+      ],
+      "properties": {
+        "feed": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 0
+        },
+        "recipientId": {
+          "type": "identifier",
+          "position": 1,
+          "distinctFrom": "$ownerId",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "followRequest",
+            "findBy": {
+              "targetId": "$ownerId",
+              "$ownerId": "."
+            }
+          }
+        },
+        "leafIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32767,
+          "position": 2
+        },
+        "keyGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 3
+        },
+        "encryptedPayload": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 704,
+          "position": 4
+        }
+      },
+      "additionalProperties": false,
+      "ownerRefersTo": {
+        "type": "permanentDocument",
+        "documentType": "privateFeed",
+        "findBy": {
+          "$ownerId": ".",
+          "feed": "feed"
+        },
+        "where": {
+          "treeCapacity": {
+            "greaterThan": "leafIndex"
+          },
+          "maxKeyGeneration": {
+            "greaterThanOrEqual": "keyGeneration"
+          }
+        }
+      }
+    },
+    "privateFeedRekey": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "generation",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "feed": "asc"
+            },
+            {
+              "keyGeneration": "asc"
+            }
+          ],
+          "unique": true
+        }
+      ],
+      "documentsMutable": false,
+      "required": [
+        "$createdAt",
+        "feed",
+        "keyGeneration",
+        "revokedLeaf",
+        "packets",
+        "encryptedCEK"
+      ],
+      "properties": {
+        "feed": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 0
+        },
+        "keyGeneration": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 65535,
+          "position": 1
+        },
+        "revokedLeaf": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32767,
+          "position": 2
+        },
+        "packets": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 2048,
+          "position": 3
+        },
+        "encryptedCEK": {
+          "type": "bytes",
+          "position": 4,
+          "size": 48
+        }
+      },
+      "additionalProperties": false,
+      "ownerRefersTo": {
+        "type": "permanentDocument",
+        "documentType": "privateFeed",
+        "findBy": {
+          "$ownerId": ".",
+          "feed": "feed"
+        },
+        "where": {
+          "treeCapacity": {
+            "greaterThan": "revokedLeaf"
+          },
+          "maxKeyGeneration": {
+            "greaterThanOrEqual": "keyGeneration"
+          }
+        }
+      },
+      "canBeDeleted": false
+    },
+    "reply": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "live": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "live"
+          ]
+        },
+        {
+          "name": "repliesOf",
+          "properties": [
+            {
+              "live": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "rootPostId": "asc"
+            },
+            {
+              "replyToReplyId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "rootPostId"
+          },
+          "skipIfAbsent": [
+            "live"
+          ]
+        },
+        {
+          "name": "mentionedUserAndTime",
+          "properties": [
+            {
+              "mentionedUserIds": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "rootOwnerRecent",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "rootPostId.$ownerId": "asc"
+            }
+          ],
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 302400,
+            "step": 302400,
+            "ttl": 604800
+          }
+        },
+        {
+          "name": "parentOwnerRecent",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "replyToReplyId.$ownerId": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "replyToReplyId.$ownerId"
+          ],
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 302400,
+            "step": 302400,
+            "ttl": 604800
+          }
+        },
+        {
+          "name": "moderated",
+          "properties": [
+            {
+              "mod": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "mod"
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "$updatedAt",
+        "rootPostId"
+      ],
+      "properties": {
+        "content": {
+          "type": "string",
+          "position": 0,
+          "maxLength": 1000,
+          "maxBytes": 2000
+        },
+        "mediaUrls": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "position": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^(https|ipfs)://.+$",
+            "maxLength": 512,
+            "maxBytes": 512
+          }
+        },
+        "rootPostId": {
+          "type": "identifier",
+          "position": 2,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "post"
+          }
+        },
+        "replyToReplyId": {
+          "type": "identifier",
+          "position": 3,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "reply",
+            "where": {
+              "rootPostId": "rootPostId"
+            }
+          }
+        },
+        "sensitive": {
+          "type": "boolean",
+          "position": 4
+        },
+        "encryptedContent": {
+          "type": "array",
+          "maxItems": 2048,
+          "minItems": 1,
+          "position": 5,
+          "byteArray": true
+        },
+        "keyGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 6
+        },
+        "nonce": {
+          "type": "bytes",
+          "position": 7,
+          "size": 24
+        },
+        "mediaDigests": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 40,
+          "maxItems": 160,
+          "position": 8
+        },
+        "mediaKinds": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 4,
+          "position": 9
+        },
+        "deleted": {
+          "type": "boolean",
+          "position": 11
+        },
+        "mentionedUserIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "identifier",
+            "refersTo": {
+              "type": "identity"
+            }
+          },
+          "position": 10
+        },
+        "live": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 12
+        },
+        "feed": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "position": 13
+        },
+        "mod": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 14
+        },
+        "modLabel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63,
+          "position": 15
+        }
+      },
+      "tokenCost": {
+        "create": {
+          "tokenPosition": 0,
+          "amount": 3,
+          "optional": true,
+          "gasFeesPaidBy": 2,
+          "effect": 1
+        }
+      },
+      "additionalProperties": false,
+      "moderatorAbilities": {
+        "changeFields": [
+          "mod",
+          "modLabel"
+        ]
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 10000000
+        }
+      },
+      "propertyConstraints": {
+        "private": {
+          "in": [
+            {
+              "countPresent": [
+                "encryptedContent",
+                "keyGeneration",
+                "nonce",
+                "feed"
+              ]
+            },
+            [
+              0,
+              4
+            ]
+          ]
+        },
+        "privateNoMedia": {
+          "not": {
+            "allOf": [
+              {
+                "present": "encryptedContent"
+              },
+              {
+                "present": "mediaUrls"
+              }
+            ]
+          }
+        },
+        "blankTombstone": {
+          "anyOf": [
+            {
+              "absent": "deleted"
+            },
+            {
+              "allOf": [
+                {
+                  "equal": [
+                    "deleted",
+                    1
+                  ]
+                },
+                {
+                  "equal": [
+                    {
+                      "countPresent": [
+                        "content",
+                        "mediaUrls",
+                        "mediaDigests",
+                        "mediaKinds",
+                        "sensitive",
+                        "encryptedContent",
+                        "keyGeneration",
+                        "nonce",
+                        "mentionedUserIds",
+                        "feed"
+                      ]
+                    },
+                    0
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "media": {
+          "allOf": [
+            {
+              "equal": [
+                {
+                  "multiply": [
+                    {
+                      "count": "mediaUrls"
+                    },
+                    40
+                  ]
+                },
+                {
+                  "count": "mediaDigests"
+                }
+              ]
+            },
+            {
+              "equal": [
+                {
+                  "count": "mediaUrls"
+                },
+                {
+                  "count": "mediaKinds"
+                }
+              ]
+            }
+          ]
+        },
+        "live": {
+          "equal": [
+            {
+              "countPresent": [
+                "deleted",
+                "live"
+              ]
+            },
+            1
+          ]
+        },
+        "notEmpty": {
+          "anyOf": [
+            {
+              "greaterThan": [
+                {
+                  "length": "content"
+                },
+                0
+              ]
+            },
+            {
+              "greaterThanOrEqual": [
+                {
+                  "countPresent": [
+                    "encryptedContent",
+                    "mediaUrls",
+                    "deleted"
+                  ]
+                },
+                1
+              ]
+            }
+          ]
+        },
+        "restrictedLane": {
+          "ifThen": [
+            {
+              "equal": [
+                "$revision",
+                1
+              ]
+            },
+            {
+              "equal": [
+                "live",
+                {
+                  "add": [
+                    1,
+                    {
+                      "min": [
+                        {
+                          "countOf": [
+                            "restriction",
+                            {
+                              "target": "$ownerId",
+                              "state": 1
+                            }
+                          ]
+                        },
+                        1
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "modReason": {
+          "anyOf": [
+            {
+              "absent": "mod"
+            },
+            {
+              "present": "modLabel"
+            }
+          ]
+        }
+      },
+      "canBeDeleted": false,
+      "immutable": [
+        "rootPostId",
+        "replyToReplyId",
+        {
+          "property": "deleted",
+          "when": {
+            "present": "$old.deleted"
+          }
+        },
+        {
+          "property": "content",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaUrls",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaDigests",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mediaKinds",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "sensitive",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "encryptedContent",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "keyGeneration",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "nonce",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "mentionedUserIds",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "feed",
+          "when": {
+            "absent": "deleted"
+          }
+        },
+        {
+          "property": "live",
+          "when": {
+            "absent": "deleted"
+          }
+        }
+      ]
+    },
+    "report": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "byPost",
+          "properties": [
+            {
+              "postId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byReply",
+          "properties": [
+            {
+              "replyId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byTarget",
+          "properties": [
+            {
+              "targetOwnerId": "asc"
+            },
+            {
+              "about": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byStatus",
+          "properties": [
+            {
+              "status": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byModerator",
+          "properties": [
+            {
+              "$moderatedBy": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ]
+        }
+      ],
+      "documentsMutable": false,
+      "moderatorAbilities": {
+        "changeFields": [
+          "status",
+          "resolution"
+        ]
+      },
+      "required": [
+        "$createdAt",
+        "targetOwnerId",
+        "reason"
+      ],
+      "properties": {
+        "postId": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "post",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "replyId": {
+          "type": "identifier",
+          "position": 1,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "reply",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "targetOwnerId": {
+          "type": "identifier",
+          "position": 2,
+          "distinctFrom": "$ownerId"
+        },
+        "reason": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31,
+          "position": 3
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "position": 4,
+          "maxBytes": 1500
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "position": 5
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "position": 6,
+          "maxBytes": 600
+        },
+        "about": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1,
+          "position": 7
+        },
+        "box": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 8
+        }
+      },
+      "propertyConstraints": {
+        "oneTarget": {
+          "equal": [
+            {
+              "countPresent": [
+                "postId",
+                "replyId",
+                "about"
+              ]
+            },
+            1
+          ]
+        },
+        "boxOnContent": {
+          "ifThen": [
+            {
+              "present": "box"
+            },
+            {
+              "absent": "about"
+            }
+          ]
+        },
+        "otherNote": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "reason",
+                8
+              ]
+            },
+            {
+              "present": "note"
+            }
+          ]
+        },
+        "resolvedStatus": {
+          "anyOf": [
+            {
+              "absent": "resolution"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        },
+        "staysResolved": {
+          "ifThen": [
+            {
+              "present": "$old.status"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        }
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 20000000
+        }
+      },
+      "additionalProperties": false,
+      "ttl": 7776000,
+      "deleteConstraints": {
+        "pending": {
+          "absent": "status"
+        }
+      }
+    },
+    "restriction": {
+      "type": "object",
+      "documentsMutable": false,
+      "canBeDeleted": false,
+      "indices": [
+        {
+          "name": "byTarget",
+          "properties": [
+            {
+              "target": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "standing",
+          "properties": [
+            {
+              "target": "asc"
+            },
+            {
+              "state": "asc"
+            }
+          ],
+          "countable": "countable"
+        },
+        {
+          "name": "log",
+          "properties": [
+            {
+              "state": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "identity"
+          }
+        },
+        "state": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 1
+        },
+        "reason": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63,
+          "position": 2
+        }
+      },
+      "moderatorAbilities": {
+        "changeFields": [
+          "state",
+          "reason"
+        ]
+      },
+      "propertyConstraints": {
+        "moderatorsOnly": {
+          "allOf": [
+            {
+              "present": "state"
+            },
+            {
+              "present": "reason"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "yapprProfile": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "owner",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true
+        },
+        {
+          "name": "moderated",
+          "properties": [
+            {
+              "mod": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "mod"
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "$updatedAt"
+      ],
+      "properties": {
+        "location": {
+          "type": "string",
+          "maxLength": 50,
+          "position": 0,
+          "maxBytes": 150
+        },
+        "website": {
+          "type": "string",
+          "pattern": "^https://.+$",
+          "maxLength": 200,
+          "position": 1,
+          "maxBytes": 200
+        },
+        "bannerUri": {
+          "type": "string",
+          "pattern": "^(https|ipfs)://.+$",
+          "maxLength": 512,
+          "position": 2,
+          "maxBytes": 512
+        },
+        "pronouns": {
+          "type": "string",
+          "maxLength": 20,
+          "position": 3,
+          "maxBytes": 60
+        },
+        "nsfw": {
+          "type": "boolean",
+          "position": 4
+        },
+        "paymentUris": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "position": 5,
+          "items": {
+            "type": "string",
+            "maxLength": 512,
+            "maxBytes": 512,
+            "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:.+$"
+          }
+        },
+        "socialLinks": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "position": 6,
+          "items": {
+            "type": "string",
+            "maxLength": 256,
+            "maxBytes": 256,
+            "pattern": "^[a-z]{1,16}:.+$"
+          }
+        },
+        "avatar": {
+          "type": "string",
+          "maxLength": 128,
+          "position": 7,
+          "pattern": "^(\\{.+\\}|(https|ipfs)://.+)$",
+          "maxBytes": 384
+        },
+        "mod": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 8
+        },
+        "modLabel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63,
+          "position": 9
+        }
+      },
+      "minProperties": 1,
+      "additionalProperties": false,
+      "ownerRefersTo": {
+        "type": "deletableDocument",
+        "contractId": "Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7",
+        "documentType": "profile",
+        "findBy": {
+          "$ownerId": "."
+        }
+      },
+      "moderatorAbilities": {
+        "changeFields": [
+          "mod",
+          "modLabel"
+        ]
+      },
+      "propertyConstraints": {
+        "modReason": {
+          "anyOf": [
+            {
+              "absent": "mod"
+            },
+            {
+              "present": "modLabel"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "tokens": {
+    "0": {
+      "$formatVersion": "1",
+      "conventions": {
+        "$formatVersion": "0",
+        "localizations": {
+          "en": {
+            "$formatVersion": "0",
+            "shouldCapitalize": true,
+            "singularForm": "yapp",
+            "pluralForm": "yapps"
+          }
+        },
+        "decimals": 0
+      },
+      "conventionsChangeRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "baseSupply": 0,
+      "maxSupply": null,
+      "keepsHistory": {
+        "$formatVersion": "0",
+        "keepsTransferHistory": true,
+        "keepsFreezingHistory": true,
+        "keepsMintingHistory": true,
+        "keepsBurningHistory": true,
+        "keepsDirectPricingHistory": true,
+        "keepsDirectPurchaseHistory": true
+      },
+      "startAsPaused": false,
+      "allowTransferToFrozenBalance": false,
+      "maxSupplyChangeRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "distributionRules": {
+        "$formatVersion": "1",
+        "perpetualDistribution": null,
+        "perpetualDistributionRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        },
+        "preProgrammedDistribution": null,
+        "newTokensDestinationIdentity": null,
+        "newTokensDestinationIdentityRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        },
+        "mintingAllowChoosingDestination": true,
+        "mintingAllowChoosingDestinationRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        },
+        "changeDirectPurchasePricingRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        },
+        "oncePerIdentityDistribution": {
+          "$formatVersion": "0",
+          "amount": 100
+        }
+      },
+      "marketplaceRules": {
+        "$formatVersion": "0",
+        "tradeMode": "NotTradeable",
+        "tradeModeChangeRules": {
+          "$formatVersion": "0",
+          "authorizedToMakeChange": {
+            "$type": "noOne"
+          },
+          "adminActionTakers": {
+            "$type": "noOne"
+          },
+          "changingAuthorizedActionTakersToNoOneAllowed": false,
+          "changingAdminActionTakersToNoOneAllowed": false,
+          "selfChangingAdminActionTakersAllowed": false
+        }
+      },
+      "manualMintingRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "manualBurningRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "freezeRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "unfreezeRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "destroyFrozenFundsRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "emergencyActionRules": {
+        "$formatVersion": "0",
+        "authorizedToMakeChange": {
+          "$type": "noOne"
+        },
+        "adminActionTakers": {
+          "$type": "noOne"
+        },
+        "changingAuthorizedActionTakersToNoOneAllowed": false,
+        "changingAdminActionTakersToNoOneAllowed": false,
+        "selfChangingAdminActionTakersAllowed": false
+      },
+      "mainControlGroup": null,
+      "mainControlGroupCanBeModified": {
+        "$type": "noOne"
+      },
+      "description": null,
+      "transferable": false
+    }
+  }
+}

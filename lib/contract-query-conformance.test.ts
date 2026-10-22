@@ -159,6 +159,10 @@ import type { Post } from '@/lib/types'
 import type { Poll } from '@/lib/services/pollr-poll-service'
 import socialV16 from '@/contracts/yappr-social-contract-v16.json'
 import socialV17 from '@/contracts/yappr-social-contract-v17.json'
+import socialV18 from '@/contracts/yappr-social-contract-v18.json'
+import blogV10 from '@/contracts/yappr-blog-contract-v10.json'
+import storefrontV11 from '@/contracts/yappr-storefront-contract-v11.json'
+import { HIDE_MODERATION_QUERIES, expandQueries } from '../scripts/hide-moderation-queries.mjs'
 import blogContract from '@/contracts/yappr-blog-contract.json'
 import storefrontContract from '@/contracts/yappr-storefront-contract.json'
 import pollrContract from '@/contracts/pollr-contract.json'
@@ -678,5 +682,63 @@ describe('the spec bites', () => {
     expect(checkDocumentsQuery(v16, unpinnedTimeline)).toEqual({ servable: true, route: 'index', index: 'timeline [$createdAt]' })
     expect(checkDocumentsQuery(v17, { ...unpinnedTimeline, where: [['live', '==', true], ['$createdAt', '>', 0]] }))
       .toEqual({ servable: true, route: 'index', index: 'timeline [live, $createdAt]' })
+  })
+})
+
+/**
+ * The "hide, don't delete" release set (social v18, blog v10, storefront v11;
+ * docs/SOCIAL_V18.md). The client still reads v17 above until it moves to v18;
+ * this judges the reads the new indexes are cut for, from the catalogue
+ * `scripts/hide-moderation-queries.mjs` (which `scripts/prove-v18-moderation.mjs`
+ * runs, proved, on sakura): yap.pr's default lane (`live == 1, mod == null`),
+ * every lane an archive merges, and the moderation log.
+ */
+describe('the v18 release set serves every default, archive and log read', () => {
+  const models = { social: parseContract(socialV18), blog: parseContract(blogV10), storefront: parseContract(storefrontV11) }
+  const values = {
+    author: ident(12), me: ident(11), post: ident(21), reply: ident(31), tag: 'dash', since: SINCE,
+    blog: ident(41), blogPost: ident(42), store: ident(51), item: ident(52), target: ident(12),
+  }
+  type Expanded = ReturnType<typeof expandQueries>[number]
+  const judgeQuery = (query: Expanded): Verdict => {
+    const type = models[query.contract as keyof typeof models].get(query.docType)
+    if (!type) throw new Error(`${query.contract}.${query.docType} missing`)
+    switch (query.kind) {
+      case 'documents': return checkDocumentsQuery(type, query.body)
+      case 'count': return checkCountQuery(type, query.body)
+      case 'ranked': return checkRankedQuery(type, query.body)
+      default: return checkAverageQuery(type, query.body)
+    }
+  }
+  const expanded = expandQueries(values)
+  const verdicts = expanded.map((query) => ({ query, verdict: judgeQuery(query) }))
+  const describeLane = (lane: unknown) => (lane ? ` ${JSON.stringify(lane)}` : '')
+  const servedBy = (verdict: Verdict | undefined) => (verdict?.servable ? verdict.index : null)
+  const defaultRead = (id: string) => verdicts.find(({ query }) => query.id === id && query.isDefault)?.verdict
+
+  it('serves every catalogued read in every lane', () => {
+    const refusedReads = verdicts
+      .filter(({ verdict }) => !verdict.servable)
+      .map(({ query, verdict }) => `${query.id}${describeLane(query.lane)}: ${verdict.servable ? '' : verdict.reason}`)
+    expect(refusedReads).toEqual([])
+  })
+
+  it('covers each kind of read and every lane an archive merges', () => {
+    expect(new Set(HIDE_MODERATION_QUERIES.map((query) => query.purpose))).toEqual(new Set(['default', 'archive', 'log']))
+    const timeline = expanded.filter((query) => query.id === 'post.timeline (Recent)')
+    expect(timeline.map((query) => query.lane)).toEqual([1, 2].flatMap((live) => [null, 1, 2].map((mod) => ({ live, mod }))))
+    expect(timeline.filter((query) => query.isDefault).map((query) => query.body.where.slice(0, 2))).toEqual([[['live', '==', 1], ['mod', '==', null]]])
+  })
+
+  it('reads the listings through the mod-laned indexes and the log through `moderated`', () => {
+    expect(servedBy(defaultRead('post.timeline (Recent)'))).toBe('timeline [live, mod, $createdAt]')
+    expect(servedBy(defaultRead('reply.repliesOf (a thread page)'))).toBe('repliesOf [live, mod, rootPostId, replyToReplyId, $createdAt]')
+    expect(servedBy(verdicts.find(({ query }) => query.id === 'post.moderated (hidden posts, newest action first)')?.verdict)).toBe('moderated [mod, $moderatedAt]')
+  })
+
+  it('refuses the v17 read shape on v18: a listing read must pin the mod lane', () => {
+    const post = models.social.get('post')
+    if (!post) throw new Error('post doctype missing')
+    expect(checkDocumentsQuery(post, { where: [['live', '==', 1], ['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']] }).servable).toBe(false)
   })
 })

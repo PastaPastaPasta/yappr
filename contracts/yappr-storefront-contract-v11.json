@@ -1,0 +1,1756 @@
+{
+  "config": {
+    "$formatVersion": "2",
+    "moderation": {
+      "warnings": true,
+      "moderators": {
+        "$type": "elected",
+        "seatContestable": true,
+        "challengeCoolDown": 1209600,
+        "joinWindow": 604800,
+        "voteWindow": 259200,
+        "maxAddedModerators": 10,
+        "moderatedDocumentTypes": {
+          "store": [
+            "changeDocumentFields",
+            "warn"
+          ],
+          "storeItem": [
+            "changeDocumentFields",
+            "warn"
+          ],
+          "storeReview": [
+            "changeDocumentFields",
+            "warn"
+          ],
+          "itemReview": [
+            "changeDocumentFields",
+            "warn"
+          ],
+          "report": [
+            "changeDocumentFields"
+          ]
+        },
+        "interim": {
+          "$type": "notYetUsable"
+        },
+        "ownerProtected": false
+      }
+    }
+  },
+  "documentSchemas": {
+    "store": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "owner",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byStatus",
+          "properties": [
+            {
+              "status": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byCategory",
+          "properties": [
+            {
+              "status": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "category": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "category"
+          }
+        },
+        {
+          "name": "moderated",
+          "properties": [
+            {
+              "mod": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "mod"
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "name",
+        "status",
+        "category"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "position": 0,
+          "maxLength": 100,
+          "minLength": 1,
+          "description": "Store name"
+        },
+        "description": {
+          "type": "string",
+          "position": 1,
+          "maxLength": 500,
+          "description": "Store description"
+        },
+        "logoUrl": {
+          "type": "string",
+          "pattern": "^(https|ipfs)://.+$",
+          "position": 2,
+          "maxLength": 512,
+          "description": "URL to store logo image"
+        },
+        "bannerUrl": {
+          "type": "string",
+          "pattern": "^(https|ipfs)://.+$",
+          "position": 3,
+          "maxLength": 512,
+          "description": "URL to store banner image"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "paused",
+            "closed"
+          ],
+          "position": 4,
+          "description": "Store status",
+          "maxLength": 6
+        },
+        "paymentUris": {
+          "type": "string",
+          "position": 5,
+          "maxLength": 2000,
+          "description": "JSON array of payment URIs (dash:, bitcoin:, etc.)"
+        },
+        "defaultCurrency": {
+          "type": "string",
+          "position": 6,
+          "maxLength": 10,
+          "description": "Default currency code (USD, EUR, DASH, etc.)",
+          "maxBytes": 10
+        },
+        "policies": {
+          "type": "string",
+          "position": 7,
+          "maxLength": 2000,
+          "description": "Store policies (shipping, returns, etc.)"
+        },
+        "location": {
+          "type": "string",
+          "position": 8,
+          "maxLength": 100,
+          "description": "Store location"
+        },
+        "contactMethods": {
+          "type": "string",
+          "position": 9,
+          "maxLength": 1000,
+          "description": "JSON object of contact methods (email, signal, twitter, telegram)"
+        },
+        "category": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "maxLength": 20,
+          "position": 10,
+          "description": "Seller-chosen category as a lowercase slug (e.g. vintage-clothing), so stores group under one key"
+        },
+        "mod": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 11
+        },
+        "modLabel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63,
+          "position": 12
+        }
+      },
+      "description": "A merchant store (one per user), listed by status and category. `closed` is the tombstone; moderators can remove it.",
+      "additionalProperties": false,
+      "canBeDeleted": false,
+      "moderatorAbilities": {
+        "changeFields": [
+          "mod",
+          "modLabel"
+        ]
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 500000000
+        }
+      },
+      "propertyConstraints": {
+        "modReason": {
+          "anyOf": [
+            {
+              "absent": "mod"
+            },
+            {
+              "present": "modLabel"
+            }
+          ]
+        }
+      }
+    },
+    "storeItem": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "storeAndTime",
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "storeStatusAndTime",
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "status": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "moderated",
+          "properties": [
+            {
+              "mod": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "mod"
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "storeId",
+        "title",
+        "status"
+      ],
+      "properties": {
+        "storeId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "ID of the store this item belongs to; only that store's owner may write it",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "store",
+            "where": {
+              "$ownerId": "$ownerId"
+            }
+          }
+        },
+        "title": {
+          "type": "string",
+          "position": 1,
+          "maxLength": 200,
+          "minLength": 1,
+          "description": "Product title"
+        },
+        "description": {
+          "type": "string",
+          "position": 2,
+          "maxLength": 2000,
+          "description": "Product description"
+        },
+        "section": {
+          "type": "string",
+          "position": 3,
+          "maxLength": 50,
+          "description": "Top-level category section (e.g., Toys and Games)"
+        },
+        "category": {
+          "type": "string",
+          "position": 4,
+          "maxLength": 50,
+          "description": "Category within section (e.g., Table Top Games)"
+        },
+        "subcategory": {
+          "type": "string",
+          "position": 5,
+          "maxLength": 50,
+          "description": "Subcategory (e.g., Catan Pieces)"
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "position": 6,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "maxBytes": 128
+          },
+          "description": "Search tags: at most 32 distinct tags of up to 64 characters"
+        },
+        "imageUrls": {
+          "type": "array",
+          "maxItems": 12,
+          "uniqueItems": true,
+          "position": 7,
+          "items": {
+            "type": "string",
+            "maxLength": 512,
+            "maxBytes": 512,
+            "pattern": "^(https|ipfs)://.+$"
+          },
+          "description": "Product image URLs (https:// or ipfs://), at most 12, no duplicates"
+        },
+        "basePrice": {
+          "type": "integer",
+          "minimum": 0,
+          "position": 8,
+          "description": "Price in the smallest currency unit; absent on a variant item (each combination has its own)",
+          "maximum": 9007199254740991
+        },
+        "currency": {
+          "type": "string",
+          "position": 9,
+          "maxLength": 10,
+          "description": "Currency code (USD, EUR, DASH, etc.)",
+          "maxBytes": 10
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "paused",
+            "sold_out",
+            "deleted"
+          ],
+          "position": 10,
+          "maxLength": 8,
+          "description": "Item status"
+        },
+        "weight": {
+          "type": "integer",
+          "minimum": 0,
+          "position": 11,
+          "description": "Weight in grams (for shipping calculation)",
+          "maximum": 4294967295
+        },
+        "stockQuantity": {
+          "type": "integer",
+          "minimum": 0,
+          "position": 12,
+          "description": "Available stock; absent when untracked or on a variant item",
+          "maximum": 4294967295
+        },
+        "sku": {
+          "type": "string",
+          "position": 13,
+          "maxLength": 50,
+          "description": "Stock keeping unit identifier"
+        },
+        "variants": {
+          "type": "object",
+          "position": 14,
+          "additionalProperties": false,
+          "required": [
+            "axes",
+            "options",
+            "optionIds",
+            "optionAxes",
+            "nextOptionId",
+            "selectors",
+            "prices"
+          ],
+          "properties": {
+            "axes": {
+              "type": "array",
+              "position": 0,
+              "minItems": 1,
+              "maxItems": 5,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "maxBytes": 64
+              }
+            },
+            "options": {
+              "type": "array",
+              "position": 1,
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40,
+                "maxBytes": 80
+              }
+            },
+            "optionIds": {
+              "type": "array",
+              "position": 2,
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 254
+              }
+            },
+            "optionAxes": {
+              "type": "array",
+              "position": 3,
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              }
+            },
+            "nextOptionId": {
+              "type": "integer",
+              "position": 4,
+              "minimum": 2,
+              "maximum": 255
+            },
+            "selectors": {
+              "type": "array",
+              "position": 5,
+              "minItems": 1,
+              "maxItems": 256,
+              "uniqueItems": true,
+              "items": {
+                "type": "array",
+                "byteArray": true,
+                "minItems": 1,
+                "maxItems": 5
+              }
+            },
+            "prices": {
+              "type": "array",
+              "position": 6,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "stocks": {
+              "type": "array",
+              "position": 7,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              }
+            },
+            "skus": {
+              "type": "array",
+              "position": 8,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "string",
+                "maxLength": 32,
+                "maxBytes": 64
+              }
+            },
+            "weights": {
+              "type": "array",
+              "position": 9,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              }
+            },
+            "images": {
+              "type": "array",
+              "position": 10,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 12
+              }
+            }
+          }
+        },
+        "fulfillment": {
+          "type": "string",
+          "enum": [
+            "shipped",
+            "digital"
+          ],
+          "position": 15,
+          "description": "`shipped` (a parcel; also what absent means) or `digital` (delivered on chain as an orderDelivery)",
+          "maxLength": 7
+        },
+        "shippingZoneIds": {
+          "type": "array",
+          "position": 16,
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "identifier"
+          },
+          "description": "The store's shipping zones this item ships under; absent = every zone of the store"
+        },
+        "mod": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 17
+        },
+        "modLabel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63,
+          "position": 18
+        }
+      },
+      "description": "A product listing, optionally with a variants table. Only the store owner writes it; status `deleted` is the tombstone.",
+      "additionalProperties": false,
+      "canBeDeleted": false,
+      "immutable": [
+        "storeId"
+      ],
+      "propertyConstraints": {
+        "pricedHasCurrency": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "absent": "basePrice"
+                },
+                {
+                  "absent": "variants"
+                }
+              ]
+            },
+            {
+              "present": "currency"
+            }
+          ]
+        },
+        "onePrice": {
+          "lessThanOrEqual": [
+            {
+              "countPresent": [
+                "basePrice",
+                "variants"
+              ]
+            },
+            1
+          ]
+        },
+        "oneStock": {
+          "lessThanOrEqual": [
+            {
+              "countPresent": [
+                "stockQuantity",
+                "variants"
+              ]
+            },
+            1
+          ]
+        },
+        "optionTable": {
+          "allOf": [
+            {
+              "equal": [
+                {
+                  "count": "variants.optionIds"
+                },
+                {
+                  "count": "variants.options"
+                }
+              ]
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.optionAxes"
+                },
+                {
+                  "count": "variants.options"
+                }
+              ]
+            }
+          ]
+        },
+        "comboTable": {
+          "equal": [
+            {
+              "count": "variants.selectors"
+            },
+            {
+              "count": "variants.prices"
+            }
+          ]
+        },
+        "comboStocks": {
+          "anyOf": [
+            {
+              "absent": "variants.stocks"
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.stocks"
+                },
+                {
+                  "count": "variants.prices"
+                }
+              ]
+            }
+          ]
+        },
+        "comboSkus": {
+          "anyOf": [
+            {
+              "absent": "variants.skus"
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.skus"
+                },
+                {
+                  "count": "variants.prices"
+                }
+              ]
+            }
+          ]
+        },
+        "comboWeights": {
+          "anyOf": [
+            {
+              "absent": "variants.weights"
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.weights"
+                },
+                {
+                  "count": "variants.prices"
+                }
+              ]
+            }
+          ]
+        },
+        "comboImages": {
+          "anyOf": [
+            {
+              "absent": "variants.images"
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.images"
+                },
+                {
+                  "count": "variants.prices"
+                }
+              ]
+            }
+          ]
+        },
+        "modReason": {
+          "anyOf": [
+            {
+              "absent": "mod"
+            },
+            {
+              "present": "modLabel"
+            }
+          ]
+        }
+      },
+      "moderatorAbilities": {
+        "changeFields": [
+          "mod",
+          "modLabel"
+        ]
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 20000000
+        }
+      }
+    },
+    "shippingZone": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "storeAndName",
+          "unique": true,
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "name": "asc"
+            }
+          ]
+        },
+        {
+          "name": "storeAndPriority",
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "priority": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "storeId",
+        "name",
+        "rateType"
+      ],
+      "properties": {
+        "storeId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "ID of the store this zone belongs to; only that store's owner may write it",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "store",
+            "where": {
+              "$ownerId": "$ownerId"
+            }
+          }
+        },
+        "name": {
+          "type": "string",
+          "position": 1,
+          "maxLength": 63,
+          "minLength": 1,
+          "description": "Zone name (e.g., Domestic, Europe, Local)"
+        },
+        "postalPatterns": {
+          "type": "string",
+          "position": 2,
+          "maxLength": 2000,
+          "description": "JSON array of regex patterns for postal codes"
+        },
+        "countryPattern": {
+          "type": "string",
+          "position": 3,
+          "maxLength": 200,
+          "description": "Regex pattern for country codes"
+        },
+        "rateType": {
+          "type": "string",
+          "enum": [
+            "flat",
+            "weight_tiered",
+            "price_tiered"
+          ],
+          "position": 4,
+          "description": "How shipping rate is calculated",
+          "maxLength": 13
+        },
+        "flatRate": {
+          "type": "integer",
+          "minimum": 0,
+          "position": 5,
+          "description": "Flat shipping rate (when rateType is flat)",
+          "maximum": 9007199254740991
+        },
+        "tiers": {
+          "type": "string",
+          "position": 6,
+          "maxLength": 5000,
+          "description": "JSON array of tier definitions [{min, max, rate}]"
+        },
+        "currency": {
+          "type": "string",
+          "position": 7,
+          "maxLength": 10,
+          "description": "Currency for shipping rates",
+          "maxBytes": 10
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "position": 8,
+          "description": "Zone matching priority (lower = higher priority)"
+        }
+      },
+      "description": "A shipping zone for a store. Only the store owner can create or edit one, and storeId is frozen.",
+      "additionalProperties": false,
+      "immutable": [
+        "storeId"
+      ],
+      "propertyConstraints": {
+        "flatRateHasCurrency": {
+          "anyOf": [
+            {
+              "absent": "flatRate"
+            },
+            {
+              "present": "currency"
+            }
+          ]
+        },
+        "tieredHasTiers": {
+          "anyOf": [
+            {
+              "equal": [
+                "rateType",
+                {
+                  "const": "flat"
+                }
+              ]
+            },
+            {
+              "present": "tiers"
+            }
+          ]
+        }
+      }
+    },
+    "itemDeliverable": {
+      "type": "object",
+      "description": "The seller's private kit for a digital item (files, links, codes), encrypted to the seller. One per item.",
+      "properties": {
+        "itemId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "ID of the digital item this kit fulfils; only that item's owner may write it",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "storeItem",
+            "where": {
+              "$ownerId": "$ownerId"
+            }
+          }
+        },
+        "encryptedPayload": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 1,
+          "description": "ECIES (secp256k1 + XChaCha20-Poly1305) ciphertext of the kit, encrypted to the seller's own encryption key"
+        }
+      },
+      "required": [
+        "$createdAt",
+        "itemId",
+        "encryptedPayload"
+      ],
+      "indices": [
+        {
+          "name": "itemDeliverable",
+          "unique": true,
+          "properties": [
+            {
+              "itemId": "asc"
+            }
+          ]
+        }
+      ],
+      "immutable": [
+        "itemId"
+      ],
+      "additionalProperties": false
+    },
+    "storeOrder": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "buyerOrders",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true
+        },
+        {
+          "name": "storeOrders",
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "storeId"
+          }
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "storeId",
+        "sellerId",
+        "encryptedPayload",
+        "nonce"
+      ],
+      "properties": {
+        "storeId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "ID of the store, which must be active; its owner is copied into sellerId",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "store",
+            "where": {
+              "$ownerId": "sellerId",
+              "status": {
+                "const": "active"
+              }
+            }
+          }
+        },
+        "sellerId": {
+          "type": "identifier",
+          "position": 1,
+          "description": "Store owner's identity, consensus-bound to the store's $ownerId",
+          "distinctFrom": "$ownerId"
+        },
+        "encryptedPayload": {
+          "type": "array",
+          "maxItems": 5120,
+          "minItems": 1,
+          "position": 2,
+          "byteArray": true,
+          "description": "XChaCha20-Poly1305 encrypted order data (items, address, payment info)"
+        },
+        "nonce": {
+          "type": "bytes",
+          "position": 3,
+          "description": "24-byte nonce for XChaCha20-Poly1305 encryption",
+          "size": 24
+        }
+      },
+      "description": "A buyer's encrypted order. Permanent; `sellerId` is bound to the store's owner, and the buyer is $ownerId.",
+      "additionalProperties": false,
+      "documentsMutable": false,
+      "canBeDeleted": false
+    },
+    "orderStatusUpdate": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "orderAndTime",
+          "properties": [
+            {
+              "orderId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "buyerFeed",
+          "properties": [
+            {
+              "orderId.$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "orderId",
+        "status"
+      ],
+      "properties": {
+        "orderId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "ID of the order being updated; only its seller may write this",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "storeOrder",
+            "where": {
+              "sellerId": "$ownerId"
+            }
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "payment_received",
+            "processing",
+            "shipped",
+            "delivered",
+            "cancelled",
+            "refunded",
+            "disputed"
+          ],
+          "position": 1,
+          "description": "Order status",
+          "maxLength": 16
+        },
+        "encryptedPayload": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 2560,
+          "position": 2,
+          "description": "Tracking and note, sealed like orderDelivery"
+        },
+        "nonce": {
+          "type": "bytes",
+          "position": 3,
+          "size": 24
+        }
+      },
+      "description": "One immutable status change for an order, written only by its seller; the order's documents are its history.",
+      "additionalProperties": false,
+      "documentsMutable": false,
+      "canBeDeleted": false,
+      "propertyConstraints": {
+        "sealed": {
+          "in": [
+            {
+              "countPresent": [
+                "encryptedPayload",
+                "nonce"
+              ]
+            },
+            [
+              0,
+              2
+            ]
+          ]
+        }
+      }
+    },
+    "orderDelivery": {
+      "type": "object",
+      "description": "Digital goods a seller delivered for an order, encrypted to the order's ECDH key. Permanent; written only by the seller.",
+      "properties": {
+        "orderId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "ID of the order being fulfilled; only its seller may write this",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "storeOrder",
+            "where": {
+              "sellerId": "$ownerId"
+            }
+          }
+        },
+        "encryptedPayload": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 1,
+          "description": "XChaCha20-Poly1305 ciphertext of the delivery, keyed from the order's buyer/seller ECDH secret"
+        },
+        "nonce": {
+          "type": "bytes",
+          "position": 2,
+          "description": "24-byte nonce for XChaCha20-Poly1305 encryption",
+          "size": 24
+        }
+      },
+      "required": [
+        "$createdAt",
+        "orderId",
+        "encryptedPayload",
+        "nonce"
+      ],
+      "indices": [
+        {
+          "name": "orderDeliveries",
+          "properties": [
+            {
+              "orderId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "buyerDeliveries",
+          "properties": [
+            {
+              "orderId.$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false,
+      "documentsMutable": false,
+      "canBeDeleted": false
+    },
+    "storeReview": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "storeReviews",
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "orderReview",
+          "unique": true,
+          "properties": [
+            {
+              "orderId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "storeRating",
+          "properties": [
+            {
+              "mod": "asc"
+            },
+            {
+              "storeId": "asc"
+            }
+          ],
+          "summable": "rating",
+          "averageable": "rating",
+          "rangeCountable": true,
+          "rangeSummable": true,
+          "rangeAverageable": true,
+          "rankedAverageable": true
+        },
+        {
+          "name": "storeRatingDistribution",
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "rating": "asc"
+            }
+          ],
+          "countable": "countable"
+        },
+        {
+          "name": "moderated",
+          "properties": [
+            {
+              "mod": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "mod"
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "storeId",
+        "orderId",
+        "sellerId",
+        "rating"
+      ],
+      "properties": {
+        "storeId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "ID of the store being reviewed",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "store"
+          }
+        },
+        "orderId": {
+          "type": "identifier",
+          "position": 1,
+          "description": "ID of the completed order (proves purchase); only its buyer may review it",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "storeOrder",
+            "where": {
+              "storeId": "storeId",
+              "sellerId": "sellerId",
+              "$ownerId": "$ownerId"
+            }
+          }
+        },
+        "sellerId": {
+          "type": "identifier",
+          "position": 2,
+          "description": "Store owner's identity, consensus-bound to the order's sellerId (for seller queries)",
+          "distinctFrom": "$ownerId"
+        },
+        "rating": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "position": 3,
+          "description": "Star rating (1-5)"
+        },
+        "title": {
+          "type": "string",
+          "position": 4,
+          "maxLength": 100,
+          "description": "Review title"
+        },
+        "content": {
+          "type": "string",
+          "position": 5,
+          "maxLength": 1000,
+          "description": "Review content"
+        },
+        "mod": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 6
+        },
+        "modLabel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63,
+          "position": 7
+        }
+      },
+      "description": "A buyer's review of a store, one per order, bound to an order this signer placed at this store.",
+      "additionalProperties": false,
+      "documentsMutable": false,
+      "moderatorAbilities": {
+        "changeFields": [
+          "mod",
+          "modLabel"
+        ]
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 10000000
+        }
+      },
+      "propertyConstraints": {
+        "modReason": {
+          "anyOf": [
+            {
+              "absent": "mod"
+            },
+            {
+              "present": "modLabel"
+            }
+          ]
+        }
+      }
+    },
+    "itemReview": {
+      "type": "object",
+      "documentsMutable": false,
+      "description": "A buyer's review of one item from an order, one per (order, item), written only by the order's owner.",
+      "indices": [
+        {
+          "name": "itemReviews",
+          "properties": [
+            {
+              "itemId": "asc"
+            },
+            {
+              "mod": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "orderItemReview",
+          "unique": true,
+          "properties": [
+            {
+              "orderId": "asc"
+            },
+            {
+              "itemId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "storeItemRating",
+          "properties": [
+            {
+              "mod": "asc"
+            },
+            {
+              "storeId": "asc"
+            },
+            {
+              "itemId": "asc"
+            }
+          ],
+          "summable": "rating",
+          "averageable": "rating",
+          "rangeCountable": true,
+          "rangeSummable": true,
+          "rangeAverageable": true,
+          "rankedAverageable": true
+        },
+        {
+          "name": "moderated",
+          "properties": [
+            {
+              "mod": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ],
+          "skipIfAbsent": [
+            "mod"
+          ]
+        }
+      ],
+      "properties": {
+        "storeId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "ID of the store the item belongs to",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "store"
+          }
+        },
+        "itemId": {
+          "type": "identifier",
+          "position": 1,
+          "description": "ID of the item being reviewed; must belong to storeId",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "storeItem",
+            "where": {
+              "storeId": "storeId"
+            }
+          }
+        },
+        "orderId": {
+          "type": "identifier",
+          "position": 2,
+          "description": "ID of the order the item was bought in; only its buyer may review it",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "storeOrder",
+            "where": {
+              "storeId": "storeId",
+              "$ownerId": "$ownerId"
+            }
+          }
+        },
+        "rating": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "position": 3,
+          "description": "Star rating (1-5)"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 1000,
+          "position": 4,
+          "description": "Review content"
+        },
+        "mod": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "position": 5
+        },
+        "modLabel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63,
+          "position": 6
+        }
+      },
+      "required": [
+        "$createdAt",
+        "storeId",
+        "itemId",
+        "orderId",
+        "rating"
+      ],
+      "additionalProperties": false,
+      "moderatorAbilities": {
+        "changeFields": [
+          "mod",
+          "modLabel"
+        ]
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 5000000
+        }
+      },
+      "propertyConstraints": {
+        "modReason": {
+          "anyOf": [
+            {
+              "absent": "mod"
+            },
+            {
+              "present": "modLabel"
+            }
+          ]
+        }
+      }
+    },
+    "savedAddress": {
+      "type": "object",
+      "indices": [
+        {
+          "name": "owner",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "encryptedPayload"
+      ],
+      "properties": {
+        "encryptedPayload": {
+          "type": "array",
+          "maxItems": 5000,
+          "minItems": 1,
+          "position": 0,
+          "byteArray": true,
+          "description": "ECIES encrypted JSON array of saved addresses"
+        }
+      },
+      "description": "Encrypted saved shipping addresses (one document per user)",
+      "additionalProperties": false
+    },
+    "report": {
+      "type": "object",
+      "documentsMutable": false,
+      "moderatorAbilities": {
+        "changeFields": [
+          "status",
+          "resolution"
+        ]
+      },
+      "required": [
+        "$createdAt",
+        "targetOwnerId",
+        "reason"
+      ],
+      "propertyConstraints": {
+        "oneTarget": {
+          "equal": [
+            {
+              "countPresent": [
+                "storeId",
+                "itemId",
+                "storeReviewId",
+                "itemReviewId"
+              ]
+            },
+            1
+          ]
+        },
+        "otherNote": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "reason",
+                8
+              ]
+            },
+            {
+              "present": "note"
+            }
+          ]
+        },
+        "resolvedStatus": {
+          "anyOf": [
+            {
+              "absent": "resolution"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        },
+        "staysResolved": {
+          "ifThen": [
+            {
+              "present": "$old.status"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        }
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 20000000
+        }
+      },
+      "additionalProperties": false,
+      "ttl": 7776000,
+      "deleteConstraints": {
+        "pending": {
+          "absent": "status"
+        }
+      },
+      "properties": {
+        "storeId": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "store",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "itemId": {
+          "type": "identifier",
+          "position": 1,
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "storeItem",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "storeReviewId": {
+          "type": "identifier",
+          "position": 2,
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "storeReview",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "itemReviewId": {
+          "type": "identifier",
+          "position": 3,
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "itemReview",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "targetOwnerId": {
+          "type": "identifier",
+          "position": 4,
+          "distinctFrom": "$ownerId"
+        },
+        "reason": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31,
+          "position": 5
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "maxBytes": 1500,
+          "position": 6
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "position": 7
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "maxBytes": 600,
+          "position": 8
+        }
+      },
+      "indices": [
+        {
+          "name": "byStore",
+          "properties": [
+            {
+              "storeId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byItem",
+          "properties": [
+            {
+              "itemId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byStoreReview",
+          "properties": [
+            {
+              "storeReviewId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byItemReview",
+          "properties": [
+            {
+              "itemReviewId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byStatus",
+          "properties": [
+            {
+              "status": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byModerator",
+          "properties": [
+            {
+              "$moderatedBy": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

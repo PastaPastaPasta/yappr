@@ -35,6 +35,7 @@ import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
 import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
 import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
+import socialContractV18 from '@/contracts/yappr-social-contract-v18.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { storedTags } from './post-helpers'
 import { indexLeadsOf, registeredActionFee, registeredIndexLead, registeredOr, settledRuleOf } from './registered-contracts'
@@ -579,6 +580,32 @@ const V17_DESCRIPTOR: ContractTopologyDescriptor = {
   topology: 'v17',
 }
 
+/** Moderators keep `mod` and `modLabel` on a v18 post or reply; an author's tombstone carries both through unchanged. */
+const V18_MODERATOR_FIELDS = ['mod', 'modLabel'] as const
+
+/**
+ * v18 — `contracts/yappr-social-contract-v18.json`, "hide, don't delete"
+ * (docs/SOCIAL_V18.md). v17's surfaces, with these contract changes:
+ *   - moderators never delete ({@link moderatorsCannotDelete}); they hide by
+ *     setting the moderator-only `mod` (1 hidden, 2 legal hold) with a
+ *     `modLabel` reason through `changeFields`, and every public listing is
+ *     keyed with a `mod` lane after `live` ({@link listingsCarryModLane});
+ *   - `live` is an integer lane, 1 listed and 2 posted while the author was
+ *     restricted, which a `restriction` document forces on create
+ *     ({@link authorsCanBeRestricted}); there is no banlist and no suspension list;
+ *   - a like copies its post's `live` as `postLive` ({@link likesCarryPostLive});
+ *   - a tombstone carries `mod` and `modLabel` through unchanged (a write that
+ *     drops one is a moderator-field change, refused 41124).
+ */
+const V18_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V17_DESCRIPTOR,
+  topology: 'v18',
+  tombstonePreserves: {
+    post: { identifiers: [], scalars: ['tags', ...V18_MODERATOR_FIELDS] },
+    reply: { ...V14_REPLY_LINKAGE_PRESERVED, scalars: [...V18_MODERATOR_FIELDS] },
+  },
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -599,6 +626,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v15: V15_DESCRIPTOR,
   v16: V16_DESCRIPTOR,
   v17: V17_DESCRIPTOR,
+  v18: V18_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -786,6 +814,55 @@ export function replyOwnerIndexPrefix(): Array<['live', '==', true]> {
 /** The `orderBy` entries matching {@link replyOwnerIndexPrefix}. */
 export function replyOwnerIndexOrderPrefix(): Array<['live', 'asc']> {
   return replyOwnerIndexPrefix().map(([field]): ['live', 'asc'] => [field, 'asc'])
+}
+
+/**
+ * True when every public listing carries the moderator-only `mod` lane (v18,
+ * docs/SOCIAL_V18.md): `post.timeline [live, mod, $createdAt]`,
+ * `post.tagAndTime [live, mod, tags, $createdAt]`, `post.ownerAndTime` and
+ * `reply.ownerAndTime [live, mod, $ownerId, $createdAt]`,
+ * `reply.repliesOf [live, mod, rootPostId, replyToReplyId, $createdAt]` and
+ * both `mentionedUserAndTime [mentionedUserIds, mod, $createdAt]`. `mod` sits
+ * before the ranked-at property, so counts and ranks hold visible documents
+ * only. yap.pr reads the default lane, `live == 1, mod == null`; an archive
+ * reads every (`live`, `mod`) lane and merges them. Each moderated type also
+ * keeps the moderation log `moderated [mod, $moderatedAt]`.
+ */
+export function listingsCarryModLane(): boolean {
+  return isAtLeast('v18')
+}
+
+/**
+ * True when no moderator can delete anything (v18): no type declares
+ * `moderatorAbilities.delete`, so there are no removal records to read and no
+ * restore; a moderator hides (`mod`) or labels (`modLabel`) instead, and every
+ * reference at a post or reply is a `permanentDocument` reference.
+ */
+export function moderatorsCannotDelete(): boolean {
+  return isAtLeast('v18')
+}
+
+/**
+ * True when the seated team restricts authors instead of banning them (v18):
+ * `live` is an integer lane (1 listed, 2 restricted), and a post or reply
+ * created while its author has a `restriction` in force (`state` 1) must carry
+ * `live: 2`, any other `live: 1` (`restrictedLane`, judged on create only). A
+ * lift flips the restriction's `state` to 2; what was posted while restricted
+ * stays in lane 2. The contract keeps a warning list but no banlist and no
+ * suspension list.
+ */
+export function authorsCanBeRestricted(): boolean {
+  return isAtLeast('v18')
+}
+
+/**
+ * True when a like copies its post's `live` lane as `postLive` (v18): the
+ * reference `where` binds it to the post, and both trend windows are keyed
+ * `[$createdAt, postLive, …]`, so trending reads pin `postLive == 1`. A like
+ * of a tombstone (no `live`) is refused.
+ */
+export function likesCarryPostLive(): boolean {
+  return isAtLeast('v18')
 }
 
 /**
@@ -1771,11 +1848,12 @@ interface SocialDocumentSchema {
   deleteConstraints?: Record<string, unknown>
 }
 
-type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14 | typeof socialContractV15 | typeof socialContractV16 | typeof socialContractV17
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14 | typeof socialContractV15 | typeof socialContractV16 | typeof socialContractV17 | typeof socialContractV18
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
   switch (topologyDescriptor().topology) {
+    case 'v18': return socialContractV18
     case 'v17': return socialContractV17
     case 'v16': return socialContractV16
     case 'v15': return socialContractV15
